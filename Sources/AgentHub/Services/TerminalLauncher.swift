@@ -91,6 +91,80 @@ public struct TerminalLauncher {
     }
   }
 
+  /// Launches Terminal with a new Claude session in the specified path
+  /// - Parameters:
+  ///   - path: The directory path to open
+  ///   - branchName: The branch to checkout (for non-worktrees)
+  ///   - isWorktree: Whether this is a worktree (skips branch checkout)
+  ///   - skipCheckout: If true, skips checkout even for non-worktrees (already on correct branch)
+  ///   - claudeClient: The Claude client with configuration
+  /// - Returns: An error if launching fails, nil on success
+  public static func launchTerminalInPath(
+    _ path: String,
+    branchName: String,
+    isWorktree: Bool,
+    skipCheckout: Bool = false,
+    claudeClient: ClaudeCode
+  ) -> Error? {
+    let claudeCommand = claudeClient.configuration.command
+
+    guard let claudeExecutablePath = findClaudeExecutable(
+      command: claudeCommand,
+      additionalPaths: claudeClient.configuration.additionalPaths
+    ) else {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(claudeCommand)' command. Please ensure Claude Code CLI is installed."]
+      )
+    }
+
+    let escapedPath = path.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+    let escapedClaudePath = claudeExecutablePath.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+    let escapedBranch = branchName.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+
+    // Build the command - for worktrees or when skipCheckout is true, just cd and run claude
+    // Otherwise, checkout the branch first
+    let command: String
+    if isWorktree || skipCheckout {
+      command = "cd \"\(escapedPath)\" && \"\(escapedClaudePath)\""
+    } else {
+      command = "cd \"\(escapedPath)\" && git checkout \"\(escapedBranch)\" && \"\(escapedClaudePath)\""
+    }
+
+    let tempDir = NSTemporaryDirectory()
+    let scriptPath = (tempDir as NSString).appendingPathComponent("claude_open_\(UUID().uuidString).command")
+
+    let scriptContent = """
+    #!/bin/bash
+    \(command)
+    """
+
+    do {
+      try scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+      let attributes = [FileAttributeKey.posixPermissions: 0o755]
+      try FileManager.default.setAttributes(attributes, ofItemAtPath: scriptPath)
+
+      let url = URL(fileURLWithPath: scriptPath)
+      NSWorkspace.shared.open(url)
+
+      DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+        try? FileManager.default.removeItem(atPath: scriptPath)
+      }
+
+      return nil
+    } catch {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to launch Terminal: \(error.localizedDescription)"]
+      )
+    }
+  }
+
   /// Finds the full path to the Claude executable
   /// - Parameters:
   ///   - command: The command name to search for (e.g., "claude")

@@ -20,6 +20,7 @@ public struct CLIRepositoryTreeView: View {
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
   let onCreateWorktree: () -> Void
+  let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
   var showLastMessage: Bool = false
 
   public init(
@@ -32,6 +33,7 @@ public struct CLIRepositoryTreeView: View {
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
     onCreateWorktree: @escaping () -> Void,
+    onOpenTerminalForWorktree: @escaping (WorktreeBranch) -> Void,
     showLastMessage: Bool = false
   ) {
     self.repository = repository
@@ -43,6 +45,7 @@ public struct CLIRepositoryTreeView: View {
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
     self.onCreateWorktree = onCreateWorktree
+    self.onOpenTerminalForWorktree = onOpenTerminalForWorktree
     self.showLastMessage = showLastMessage
   }
 
@@ -58,6 +61,7 @@ public struct CLIRepositoryTreeView: View {
             worktree: worktree,
             isExpanded: worktree.isExpanded,
             onToggleExpanded: { onToggleWorktreeExpanded(worktree) },
+            onOpenTerminal: { onOpenTerminalForWorktree(worktree) },
             onConnectSession: onConnectSession,
             onCopySessionId: onCopySessionId,
             isSessionMonitored: isSessionMonitored,
@@ -195,7 +199,8 @@ public struct CLIRepositoryTreeView: View {
       onCopySessionId: { _ in print("Copy") },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in print("Toggle monitoring") },
-      onCreateWorktree: { print("Create worktree") }
+      onCreateWorktree: { print("Create worktree") },
+      onOpenTerminalForWorktree: { _ in print("Open terminal") }
     )
 
     // Collapsed repository
@@ -219,7 +224,8 @@ public struct CLIRepositoryTreeView: View {
       onCopySessionId: { _ in print("Copy") },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in print("Toggle monitoring") },
-      onCreateWorktree: { print("Create worktree") }
+      onCreateWorktree: { print("Create worktree") },
+      onOpenTerminalForWorktree: { _ in print("Open terminal") }
     )
   }
   .padding()

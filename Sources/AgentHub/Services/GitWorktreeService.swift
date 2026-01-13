@@ -625,4 +625,22 @@ public actor GitWorktreeService {
 
     return output
   }
+
+  // MARK: - Git Status Helpers
+
+  /// Returns the current branch name at the given path
+  /// - Parameter repoPath: The path to the git repository
+  /// - Returns: The current branch name, or empty string if in detached HEAD state
+  public func getCurrentBranch(at repoPath: String) async throws -> String {
+    let output = try await runGitCommand(["branch", "--show-current"], at: repoPath)
+    return output.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Returns true if there are uncommitted changes (staged or unstaged)
+  /// - Parameter repoPath: The path to the git repository
+  /// - Returns: True if there are uncommitted changes
+  public func hasUncommittedChanges(at repoPath: String) async throws -> Bool {
+    let output = try await runGitCommand(["status", "--porcelain"], at: repoPath)
+    return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
 }

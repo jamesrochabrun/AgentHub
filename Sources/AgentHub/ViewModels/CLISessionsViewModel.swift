@@ -271,6 +271,79 @@ public final class CLISessionsViewModel {
     )
   }
 
+  /// Opens Terminal with a new Claude session in the specified worktree/branch
+  /// - Parameters:
+  ///   - worktree: The worktree to open
+  ///   - skipCheckout: If true, skips git checkout even for non-worktrees (already on correct branch)
+  /// - Returns: An error if launching failed, nil on success
+  public func openTerminalInWorktree(_ worktree: WorktreeBranch, skipCheckout: Bool = false) -> Error? {
+    guard let claudeClient = claudeClient else {
+      return NSError(
+        domain: "CLISessionsViewModel",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Claude client not configured"]
+      )
+    }
+
+    return TerminalLauncher.launchTerminalInPath(
+      worktree.path,
+      branchName: worktree.name,
+      isWorktree: worktree.isWorktree,
+      skipCheckout: skipCheckout,
+      claudeClient: claudeClient
+    )
+  }
+
+  /// Result of pre-flight check before opening terminal
+  public struct TerminalOpenCheck: Sendable {
+    public let needsCheckout: Bool
+    public let hasUncommittedChanges: Bool
+    public let currentBranch: String
+    public let targetBranch: String
+  }
+
+  /// Checks conditions before opening terminal in a worktree
+  /// - Parameter worktree: The worktree to check
+  /// - Returns: Check results indicating if checkout is needed and if there are uncommitted changes
+  public func checkBeforeOpeningTerminal(_ worktree: WorktreeBranch) async -> TerminalOpenCheck {
+    // Worktrees don't need checkout - they're already on their branch
+    guard !worktree.isWorktree else {
+      return TerminalOpenCheck(
+        needsCheckout: false,
+        hasUncommittedChanges: false,
+        currentBranch: worktree.name,
+        targetBranch: worktree.name
+      )
+    }
+
+    do {
+      let currentBranch = try await worktreeService.getCurrentBranch(at: worktree.path)
+      let needsCheckout = currentBranch != worktree.name
+
+      // Only check for uncommitted changes if we need to checkout
+      var hasChanges = false
+      if needsCheckout {
+        hasChanges = try await worktreeService.hasUncommittedChanges(at: worktree.path)
+      }
+
+      return TerminalOpenCheck(
+        needsCheckout: needsCheckout,
+        hasUncommittedChanges: hasChanges,
+        currentBranch: currentBranch,
+        targetBranch: worktree.name
+      )
+    } catch {
+      // If we can't check, assume no checkout needed to avoid blocking
+      print("[CLISessionsVM] Error checking git status: \(error)")
+      return TerminalOpenCheck(
+        needsCheckout: false,
+        hasUncommittedChanges: false,
+        currentBranch: worktree.name,
+        targetBranch: worktree.name
+      )
+    }
+  }
+
   /// Copies the full session ID to the clipboard
   /// - Parameter session: The session whose ID to copy
   public func copySessionId(_ session: CLISession) {

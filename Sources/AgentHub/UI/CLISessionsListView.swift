@@ -11,9 +11,17 @@ import SwiftUI
 // MARK: - CLISessionsListView
 
 /// Main list view for displaying CLI sessions with repository-based organization
+/// State for terminal branch switch confirmation
+private struct TerminalConfirmation: Identifiable {
+  let id = UUID()
+  let worktree: WorktreeBranch
+  let currentBranch: String
+}
+
 public struct CLISessionsListView: View {
   @Bindable var viewModel: CLISessionsViewModel
   @State private var createWorktreeRepository: SelectedRepository?
+  @State private var terminalConfirmation: TerminalConfirmation?
   @Environment(\.colorScheme) private var colorScheme
 
   public init(viewModel: CLISessionsViewModel) {
@@ -62,6 +70,26 @@ public struct CLISessionsListView: View {
           )
         }
       )
+    }
+    .alert(
+      "Switch Branch?",
+      isPresented: Binding(
+        get: { terminalConfirmation != nil },
+        set: { if !$0 { terminalConfirmation = nil } }
+      ),
+      presenting: terminalConfirmation
+    ) { confirmation in
+      Button("Cancel", role: .cancel) {
+        terminalConfirmation = nil
+      }
+      Button("Switch & Open") {
+        if let error = viewModel.openTerminalInWorktree(confirmation.worktree, skipCheckout: false) {
+          print("Failed to open terminal: \(error.localizedDescription)")
+        }
+        terminalConfirmation = nil
+      }
+    } message: { confirmation in
+      Text("You have uncommitted changes on '\(confirmation.currentBranch)'. Switching to '\(confirmation.worktree.name)' may fail or carry changes over.")
     }
   }
 
@@ -143,6 +171,29 @@ public struct CLISessionsListView: View {
             },
             onCreateWorktree: {
               createWorktreeRepository = repository
+            },
+            onOpenTerminalForWorktree: { worktree in
+              Task {
+                let check = await viewModel.checkBeforeOpeningTerminal(worktree)
+
+                if !check.needsCheckout {
+                  // Already on correct branch or is a worktree - open directly
+                  if let error = viewModel.openTerminalInWorktree(worktree, skipCheckout: true) {
+                    print("Failed to open terminal: \(error.localizedDescription)")
+                  }
+                } else if check.hasUncommittedChanges {
+                  // Need checkout but have uncommitted changes - show confirmation
+                  terminalConfirmation = TerminalConfirmation(
+                    worktree: worktree,
+                    currentBranch: check.currentBranch
+                  )
+                } else {
+                  // Need checkout but no uncommitted changes - proceed with checkout
+                  if let error = viewModel.openTerminalInWorktree(worktree, skipCheckout: false) {
+                    print("Failed to open terminal: \(error.localizedDescription)")
+                  }
+                }
+              }
             },
             showLastMessage: viewModel.showLastMessage
           )

@@ -15,6 +15,7 @@ public struct CLIWorktreeBranchRow: View {
   let worktree: WorktreeBranch
   let isExpanded: Bool
   let onToggleExpanded: () -> Void
+  let onOpenTerminal: () -> Void
   let onConnectSession: (CLISession) -> Void
   let onCopySessionId: (CLISession) -> Void
   let isSessionMonitored: (String) -> Bool
@@ -32,6 +33,7 @@ public struct CLIWorktreeBranchRow: View {
     worktree: WorktreeBranch,
     isExpanded: Bool,
     onToggleExpanded: @escaping () -> Void,
+    onOpenTerminal: @escaping () -> Void,
     onConnectSession: @escaping (CLISession) -> Void,
     onCopySessionId: @escaping (CLISession) -> Void,
     isSessionMonitored: @escaping (String) -> Bool,
@@ -41,6 +43,7 @@ public struct CLIWorktreeBranchRow: View {
     self.worktree = worktree
     self.isExpanded = isExpanded
     self.onToggleExpanded = onToggleExpanded
+    self.onOpenTerminal = onOpenTerminal
     self.onConnectSession = onConnectSession
     self.onCopySessionId = onCopySessionId
     self.isSessionMonitored = isSessionMonitored
@@ -93,6 +96,16 @@ public struct CLIWorktreeBranchRow: View {
           }
 
           Spacer()
+
+          // Open terminal button
+          Button(action: onOpenTerminal) {
+            Image(systemName: "terminal")
+              .font(.caption)
+              .foregroundColor(.brandSecondary)
+              .agentHubChip()
+          }
+          .buttonStyle(.plain)
+          .help("Start Claude in Terminal")
 
           // Session count
           if !worktree.sessions.isEmpty {
@@ -178,6 +191,7 @@ public struct CLIWorktreeBranchRow: View {
       ),
       isExpanded: true,
       onToggleExpanded: {},
+      onOpenTerminal: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
       isSessionMonitored: { _ in false },
@@ -206,6 +220,7 @@ public struct CLIWorktreeBranchRow: View {
       ),
       isExpanded: false,
       onToggleExpanded: {},
+      onOpenTerminal: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
       isSessionMonitored: { _ in false },
@@ -224,6 +239,7 @@ public struct CLIWorktreeBranchRow: View {
       ),
       isExpanded: true,
       onToggleExpanded: {},
+      onOpenTerminal: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
       isSessionMonitored: { _ in false },
