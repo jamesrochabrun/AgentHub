@@ -116,7 +116,8 @@ public actor CLISessionMonitorService {
       var mergedWorktrees: [WorktreeBranch] = []
       for detected in detectedWorktrees {
         if var existing = selectedRepositories[index].worktrees.first(where: { $0.path == detected.path }) {
-          // Keep existing worktree (preserves isExpanded state)
+          // Keep existing worktree (preserves isExpanded state), but update branch name
+          existing.name = detected.name  // Update branch name from git
           existing.sessions = []  // Will be repopulated below
           mergedWorktrees.append(existing)
         } else {

@@ -181,7 +181,7 @@ public struct SelectedRepository: Identifiable, Sendable, Equatable, Codable {
 /// A branch or worktree within a repository
 public struct WorktreeBranch: Identifiable, Sendable, Equatable, Codable {
   public var id: String { path }
-  public let name: String
+  public var name: String
   public let path: String
   public let isWorktree: Bool
   public var sessions: [CLISession]
