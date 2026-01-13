@@ -19,6 +19,7 @@ public struct CLIRepositoryTreeView: View {
   let onCopySessionId: (CLISession) -> Void
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
+  let onCreateWorktree: () -> Void
   var showLastMessage: Bool = false
 
   public init(
@@ -30,6 +31,7 @@ public struct CLIRepositoryTreeView: View {
     onCopySessionId: @escaping (CLISession) -> Void,
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
+    onCreateWorktree: @escaping () -> Void,
     showLastMessage: Bool = false
   ) {
     self.repository = repository
@@ -40,6 +42,7 @@ public struct CLIRepositoryTreeView: View {
     self.onCopySessionId = onCopySessionId
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
+    self.onCreateWorktree = onCreateWorktree
     self.showLastMessage = showLastMessage
   }
 
@@ -117,6 +120,15 @@ public struct CLIRepositoryTreeView: View {
         .cornerRadius(4)
       }
 
+      // Create worktree button
+      Button(action: onCreateWorktree) {
+        Image(systemName: "arrow.triangle.branch")
+          .font(.caption)
+          .foregroundColor(.brandPrimary)
+      }
+      .buttonStyle(.plain)
+      .help("Create worktree")
+
       // Remove button
       Button(action: onRemove) {
         Image(systemName: "xmark.circle.fill")
@@ -182,7 +194,8 @@ public struct CLIRepositoryTreeView: View {
       onConnectSession: { _ in print("Connect") },
       onCopySessionId: { _ in print("Copy") },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in print("Toggle monitoring") }
+      onToggleMonitoring: { _ in print("Toggle monitoring") },
+      onCreateWorktree: { print("Create worktree") }
     )
 
     // Collapsed repository
@@ -205,7 +218,8 @@ public struct CLIRepositoryTreeView: View {
       onConnectSession: { _ in print("Connect") },
       onCopySessionId: { _ in print("Copy") },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in print("Toggle monitoring") }
+      onToggleMonitoring: { _ in print("Toggle monitoring") },
+      onCreateWorktree: { print("Create worktree") }
     )
   }
   .padding()

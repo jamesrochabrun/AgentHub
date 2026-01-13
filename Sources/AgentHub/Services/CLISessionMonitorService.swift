@@ -106,6 +106,29 @@ public actor CLISessionMonitorService {
       return
     }
 
+    // Re-detect worktrees for all repositories to pick up newly created ones
+    print("[CLIMonitorService] Re-detecting worktrees...")
+    for index in selectedRepositories.indices {
+      let repoPath = selectedRepositories[index].path
+      let detectedWorktrees = await detectWorktrees(at: repoPath)
+
+      // Merge: keep existing worktrees (preserves isExpanded), add new ones, remove deleted
+      var mergedWorktrees: [WorktreeBranch] = []
+      for detected in detectedWorktrees {
+        if var existing = selectedRepositories[index].worktrees.first(where: { $0.path == detected.path }) {
+          // Keep existing worktree (preserves isExpanded state)
+          existing.sessions = []  // Will be repopulated below
+          mergedWorktrees.append(existing)
+        } else {
+          // Add new worktree
+          print("[CLIMonitorService] Found new worktree: \(detected.path)")
+          mergedWorktrees.append(detected)
+        }
+      }
+      selectedRepositories[index].worktrees = mergedWorktrees
+    }
+    print("[CLIMonitorService] Worktree re-detection complete")
+
     // Get all paths to filter by (including worktree paths)
     let allPaths = getAllMonitoredPaths()
     print("[CLIMonitorService] Monitoring \(allPaths.count) paths")

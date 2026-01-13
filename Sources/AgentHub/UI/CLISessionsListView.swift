@@ -13,6 +13,7 @@ import SwiftUI
 /// Main list view for displaying CLI sessions with repository-based organization
 public struct CLISessionsListView: View {
   @Bindable var viewModel: CLISessionsViewModel
+  @State private var createWorktreeRepository: SelectedRepository?
 
   public init(viewModel: CLISessionsViewModel) {
     self.viewModel = viewModel
@@ -33,6 +34,21 @@ public struct CLISessionsListView: View {
       if viewModel.hasRepositories {
         viewModel.refresh()
       }
+    }
+    .sheet(item: $createWorktreeRepository) { repository in
+      CreateWorktreeSheet(
+        repositoryPath: repository.path,
+        repositoryName: repository.name,
+        onDismiss: { createWorktreeRepository = nil },
+        onCreate: { branchName, directory, baseBranch in
+          try await viewModel.createWorktree(
+            for: repository,
+            branchName: branchName,
+            directoryName: directory,
+            baseBranch: baseBranch
+          )
+        }
+      )
     }
   }
 
@@ -98,6 +114,9 @@ public struct CLISessionsListView: View {
             },
             onToggleMonitoring: { session in
               viewModel.toggleMonitoring(for: session)
+            },
+            onCreateWorktree: {
+              createWorktreeRepository = repository
             },
             showLastMessage: viewModel.showLastMessage
           )

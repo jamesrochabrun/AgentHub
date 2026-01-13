@@ -24,6 +24,7 @@ public final class CLISessionsViewModel {
 
   private let monitorService: CLISessionMonitorService
   private let claudeClient: ClaudeCode?
+  private let worktreeService = GitWorktreeService()
 
   // MARK: - State
 
@@ -192,6 +193,29 @@ public final class CLISessionsViewModel {
       await monitorService.removeRepository(repository.path)
       persistSelectedRepositories()
     }
+  }
+
+  /// Creates a new worktree for the given repository
+  /// - Parameters:
+  ///   - repository: The repository to create the worktree in
+  ///   - branchName: The name for the new branch
+  ///   - directoryName: The directory name for the worktree
+  ///   - baseBranch: The branch to base the new branch on (nil = HEAD)
+  public func createWorktree(
+    for repository: SelectedRepository,
+    branchName: String,
+    directoryName: String,
+    baseBranch: String?
+  ) async throws {
+    _ = try await worktreeService.createWorktreeWithNewBranch(
+      at: repository.path,
+      newBranchName: branchName,
+      directoryName: directoryName,
+      startPoint: baseBranch
+    )
+
+    // Refresh to show the new worktree
+    refresh()
   }
 
   /// Refreshes sessions for all selected repositories
