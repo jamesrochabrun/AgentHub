@@ -582,9 +582,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference "../../AgentHub" */ = {
+		7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference ".." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../AgentHub;
+			relativePath = ..;
 		};
 /* End XCLocalSwiftPackageReference section */
 

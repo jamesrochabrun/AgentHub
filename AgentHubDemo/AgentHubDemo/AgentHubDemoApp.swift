@@ -6,12 +6,25 @@
 //
 
 import SwiftUI
+import AgentHub
 
 @main
 struct AgentHubDemoApp: App {
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
+  @State private var statsService = GlobalStatsService()
+
+  var body: some Scene {
+    WindowGroup {
+      ContentView()
     }
+
+    MenuBarExtra {
+      GlobalStatsMenuView(service: statsService)
+    } label: {
+      HStack(spacing: 4) {
+        Image(systemName: "sparkle")
+        Text(statsService.formattedTotalTokens)
+      }
+    }
+    .menuBarExtraStyle(.window)
+  }
 }
