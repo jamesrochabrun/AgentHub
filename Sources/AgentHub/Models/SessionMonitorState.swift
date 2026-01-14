@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import PierreDiffsSwift
 
 // MARK: - SessionMonitorState
 
@@ -197,6 +198,44 @@ public struct CodeChangeInput: Equatable, Sendable {
 
   public var fileName: String {
     URL(fileURLWithPath: filePath).lastPathComponent
+  }
+}
+
+// MARK: - CodeChangeInput Extensions for PierreDiffsSwift
+
+extension CodeChangeInput.ToolType {
+  /// Converts to PierreDiffsSwift's EditTool enum
+  public var editTool: EditTool {
+    switch self {
+    case .edit: return .edit
+    case .write: return .write
+    case .multiEdit: return .multiEdit
+    }
+  }
+}
+
+extension CodeChangeInput {
+  /// Converts to tool parameters dictionary for DiffEditsView
+  public func toToolParameters() -> [String: String] {
+    var params: [String: String] = ["file_path": filePath]
+
+    switch toolType {
+    case .edit:
+      if let old = oldString { params["old_string"] = old }
+      if let new = newString { params["new_string"] = new }
+      if let replaceAll = replaceAll { params["replace_all"] = String(replaceAll) }
+
+    case .write:
+      if let content = newString { params["content"] = content }
+
+    case .multiEdit:
+      if let edits = edits,
+         let data = try? JSONSerialization.data(withJSONObject: edits),
+         let string = String(data: data, encoding: .utf8) {
+        params["edits"] = string
+      }
+    }
+    return params
   }
 }
 

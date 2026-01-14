@@ -240,44 +240,106 @@ public struct CodeChangesView: View {
     for input: CodeChangeInput,
     projectPath: String
   ) async throws -> DiffInputData {
-    // Don't read from disk - files are already modified
-    // Use captured tool parameters directly
+    // Try to read full file and apply edits for proper line numbers
+    // Fall back to snippets if file can't be read
+    let fileReader = DefaultFileDataReader(projectPath: projectPath)
+
     switch input.toolType {
     case .edit:
-      // Show the edit diff (old_string -> new_string)
-      return DiffInputData(
-        oldContent: input.oldString ?? "",
-        newContent: input.newString ?? "",
-        fileName: input.filePath
-      )
+      // The file on disk is the CURRENT version (after Claude's edit)
+      // We need to reconstruct the ORIGINAL by replacing newString back with oldString
+      if let currentFileContent = try? await fileReader.readFileContent(in: [input.filePath], maxTasks: 1).values.first,
+         let oldString = input.oldString,
+         let newString = input.newString {
+        // Reconstruct original content by finding newString and replacing with oldString
+        let originalContent: String
+        if input.replaceAll == true {
+          originalContent = currentFileContent.replacingOccurrences(of: newString, with: oldString)
+        } else if let range = currentFileContent.range(of: newString) {
+          originalContent = currentFileContent.replacingCharacters(in: range, with: oldString)
+        } else {
+          // newString not found in file - fall back to snippet mode
+          return DiffInputData(
+            oldContent: oldString,
+            newContent: newString,
+            fileName: input.filePath
+          )
+        }
+        return DiffInputData(
+          oldContent: originalContent,    // Reconstructed original (full file)
+          newContent: currentFileContent, // Current file as-is (full file)
+          fileName: input.filePath
+        )
+      } else {
+        // File read failed - fall back to snippet mode
+        return DiffInputData(
+          oldContent: input.oldString ?? "",
+          newContent: input.newString ?? "",
+          fileName: input.filePath
+        )
+      }
 
     case .write:
-      // For Write, original is empty (new file or overwrite)
-      return DiffInputData(
-        oldContent: "",
-        newContent: input.newString ?? "",
-        fileName: input.filePath
-      )
+      // Try to read existing file content
+      if let fileContent = try? await fileReader.readFileContent(in: [input.filePath], maxTasks: 1).values.first {
+        // Existing file - show full diff
+        return DiffInputData(
+          oldContent: fileContent,
+          newContent: input.newString ?? "",
+          fileName: input.filePath
+        )
+      } else {
+        // New file - empty original
+        return DiffInputData(
+          oldContent: "",
+          newContent: input.newString ?? "",
+          fileName: input.filePath
+        )
+      }
 
     case .multiEdit:
-      // Combine all edits into a single diff
-      var oldContent = ""
-      var newContent = ""
-      if let edits = input.edits {
-        for (index, edit) in edits.enumerated() {
-          if index > 0 {
-            oldContent += "\n...\n"
-            newContent += "\n...\n"
+      // The file on disk is the CURRENT version (after all edits)
+      // We need to reconstruct the ORIGINAL by reversing all edits
+      if let currentFileContent = try? await fileReader.readFileContent(in: [input.filePath], maxTasks: 1).values.first,
+         let edits = input.edits {
+        // Reverse edits: replace newString back with oldString
+        // Process in reverse order to handle overlapping edits correctly
+        var originalContent = currentFileContent
+        for edit in edits.reversed() {
+          guard let oldString = edit["old_string"],
+                let newString = edit["new_string"] else { continue }
+          let replaceAll = edit["replace_all"] == "true"
+          if replaceAll {
+            originalContent = originalContent.replacingOccurrences(of: newString, with: oldString)
+          } else if let range = originalContent.range(of: newString) {
+            originalContent = originalContent.replacingCharacters(in: range, with: oldString)
           }
-          oldContent += edit["old_string"] ?? ""
-          newContent += edit["new_string"] ?? ""
         }
+        return DiffInputData(
+          oldContent: originalContent,    // Reconstructed original (full file)
+          newContent: currentFileContent, // Current file as-is (full file)
+          fileName: input.filePath
+        )
+      } else {
+        // Fall back to snippet concatenation
+        var oldContent = ""
+        var newContent = ""
+        if let edits = input.edits {
+          for (index, edit) in edits.enumerated() {
+            if index > 0 {
+              oldContent += "\n...\n"
+              newContent += "\n...\n"
+            }
+            oldContent += edit["old_string"] ?? ""
+            newContent += edit["new_string"] ?? ""
+          }
+        }
+        return DiffInputData(
+          oldContent: oldContent,
+          newContent: newContent,
+          fileName: input.filePath
+        )
       }
-      return DiffInputData(
-        oldContent: oldContent,
-        newContent: newContent,
-        fileName: input.filePath
-      )
     }
   }
 }
