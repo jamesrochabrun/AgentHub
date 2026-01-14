@@ -54,7 +54,8 @@ public struct CodeChangesView: View {
         }
       }
     }
-    .frame(minWidth: 900, minHeight: 600)
+    .frame(minWidth: 1200, idealWidth: .infinity, maxWidth: .infinity,
+           minHeight: 800, idealHeight: .infinity, maxHeight: .infinity)
     .onAppear {
       // Auto-select first change
       if selectedChangeId == nil, let first = codeChangesState.changes.first {
@@ -189,8 +190,7 @@ public struct CodeChangesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
       } else if let diffData = diffInputs[selectedId] {
-        // Use PierreDiffView directly - bypasses DiffEditsView's internal @Observable state
-        PierreDiffView(
+        DiffViewWithHeader(
           oldContent: diffData.oldContent,
           newContent: diffData.newContent,
           fileName: URL(fileURLWithPath: diffData.fileName).lastPathComponent,
@@ -289,6 +289,127 @@ private struct DiffInputData {
   let oldContent: String
   let newContent: String
   let fileName: String
+}
+
+// MARK: - DiffViewWithHeader
+
+/// Wrapper that adds header controls to PierreDiffView without re-rendering issues
+/// Replicates the exact UI from DiffEditsView's PierreDiffContentView
+private struct DiffViewWithHeader: View {
+  let oldContent: String
+  let newContent: String
+  let fileName: String
+  @Binding var diffStyle: DiffStyle
+  @Binding var overflowMode: OverflowMode
+
+  @State private var webViewOpacity: Double = 1.0
+  @State private var isWebViewReady = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      // Header with file info and controls
+      headerView
+
+      // Diff view with loading skeleton
+      ZStack {
+        PierreDiffView(
+          oldContent: oldContent,
+          newContent: newContent,
+          fileName: fileName,
+          diffStyle: $diffStyle,
+          overflowMode: $overflowMode,
+          onReady: {
+            withAnimation(.easeInOut(duration: 0.3)) {
+              isWebViewReady = true
+            }
+          }
+        )
+        .opacity(isWebViewReady ? webViewOpacity : 0)
+
+        if !isWebViewReady {
+          VStack(spacing: 12) {
+            ProgressView()
+              .controlSize(.small)
+            Text("Loading diff...")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .transition(.opacity)
+        }
+      }
+      .animation(.easeInOut(duration: 0.3), value: isWebViewReady)
+    }
+  }
+
+  private var headerView: some View {
+    VStack(alignment: .leading) {
+      HStack {
+        // File name with icon
+        HStack {
+          Image(systemName: "doc.text.fill")
+            .foregroundStyle(.blue)
+          Text(fileName)
+            .font(.headline)
+        }
+
+        Spacer()
+
+        HStack(spacing: 8) {
+          // Split/Unified toggle button
+          Button {
+            toggleDiffStyle()
+          } label: {
+            Image(systemName: diffStyle == .split ? "rectangle.split.2x1" : "rectangle.stack")
+              .font(.system(size: 14))
+          }
+          .buttonStyle(.plain)
+          .help(diffStyle == .split ? "Switch to unified view" : "Switch to split view")
+
+          // Wrap toggle button
+          Button {
+            toggleOverflowMode()
+          } label: {
+            Image(systemName: overflowMode == .wrap ? "text.alignleft" : "text.aligncenter")
+              .font(.system(size: 14))
+              .foregroundStyle(overflowMode == .wrap ? .primary : .secondary)
+          }
+          .buttonStyle(.plain)
+          .help(overflowMode == .wrap ? "Disable word wrap" : "Enable word wrap")
+        }
+      }
+    }
+    .padding(.horizontal)
+    .padding(.vertical, 12)
+  }
+
+  // MARK: - Toggle Functions
+
+  private func toggleDiffStyle() {
+    Task {
+      withAnimation(.easeOut(duration: 0.15)) {
+        webViewOpacity = 0
+      }
+      try? await Task.sleep(for: .milliseconds(150))
+      diffStyle = diffStyle == .split ? .unified : .split
+      withAnimation(.easeIn(duration: 0.15)) {
+        webViewOpacity = 1
+      }
+    }
+  }
+
+  private func toggleOverflowMode() {
+    Task {
+      withAnimation(.easeOut(duration: 0.15)) {
+        webViewOpacity = 0
+      }
+      try? await Task.sleep(for: .milliseconds(150))
+      overflowMode = overflowMode == .scroll ? .wrap : .scroll
+      withAnimation(.easeIn(duration: 0.15)) {
+        webViewOpacity = 1
+      }
+    }
+  }
 }
 
 // MARK: - CodeChangeRow
