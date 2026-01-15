@@ -90,7 +90,7 @@ public struct CLISessionRow: View {
   private var sessionIdRow: some View {
     HStack(spacing: 6) {
       // Short session ID with monospace font
-      Text(session.shortId)
+      Text("Session: \(session.shortId)")
         .font(.system(.subheadline, design: .monospaced))
         .foregroundColor(.brandPrimary)
         .fontWeight(.semibold)
@@ -152,9 +152,17 @@ public struct CLISessionRow: View {
   private var monitorButton: some View {
     Button(action: onToggleMonitoring) {
       Image(systemName: isMonitoring ? "eye.fill" : "eye")
-        .font(.caption)
+        .font(.system(size: DesignTokens.IconSize.md))
         .foregroundColor(isMonitoring ? .brandPrimary : .secondary)
-        .agentHubChip(isActive: isMonitoring)
+        .frame(width: 28, height: 28)
+        .background(
+          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+            .fill(isMonitoring ? Color.brandPrimary.opacity(0.15) : Color.surfaceOverlay)
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+            .stroke(isMonitoring ? Color.brandPrimary.opacity(0.4) : Color.borderSubtle, lineWidth: 1)
+        )
     }
     .buttonStyle(.plain)
     .help(isMonitoring ? "Stop monitoring" : "Monitor session")
@@ -165,9 +173,17 @@ public struct CLISessionRow: View {
   private var connectButton: some View {
     Button(action: onConnect) {
       Image(systemName: "terminal")
-        .font(.caption)
-        .foregroundColor(.brandPrimary)
-        .agentHubChip()
+        .font(.system(size: DesignTokens.IconSize.md))
+        .foregroundColor(.secondary)
+        .frame(width: 28, height: 28)
+        .background(
+          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+            .fill(Color.surfaceOverlay)
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+            .stroke(Color.borderSubtle, lineWidth: 1)
+        )
     }
     .buttonStyle(.plain)
     .help("Open in Terminal")
