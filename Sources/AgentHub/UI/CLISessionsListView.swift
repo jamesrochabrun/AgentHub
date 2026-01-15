@@ -115,7 +115,14 @@ public struct CLISessionsListView: View {
       CLIRepositoryPickerView(onAddRepository: viewModel.showAddRepositoryPicker)
         .padding(.bottom, 10)
 
-      if viewModel.isLoading && !viewModel.hasRepositories {
+      // Search bar
+      searchBar
+        .padding(.bottom, 10)
+
+      // Conditional content based on search state
+      if viewModel.isSearchActive {
+        searchResultsView
+      } else if viewModel.isLoading && !viewModel.hasRepositories {
         loadingView
       } else if !viewModel.hasRepositories {
         CLIEmptyStateView(onAddRepository: viewModel.showAddRepositoryPicker)
@@ -123,6 +130,115 @@ public struct CLISessionsListView: View {
         repositoriesList
       }
     }
+  }
+
+  // MARK: - Search Bar
+
+  private var searchBar: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "magnifyingglass")
+        .font(.system(size: DesignTokens.IconSize.md))
+        .foregroundColor(.secondary)
+
+      // Folder filter button
+      Button(action: { viewModel.showSearchFilterPicker() }) {
+        Image(systemName: "folder")
+          .font(.system(size: DesignTokens.IconSize.md))
+          .foregroundColor(viewModel.hasSearchFilter ? .brandPrimary : .secondary)
+      }
+      .buttonStyle(.plain)
+      .help("Filter by repository")
+
+      // Filter chip (when active)
+      if let filterName = viewModel.searchFilterName {
+        HStack(spacing: 4) {
+          Text(filterName)
+            .font(.system(.caption, weight: .medium))
+            .foregroundColor(.brandPrimary)
+          Button(action: { viewModel.clearSearchFilter() }) {
+            Image(systemName: "xmark")
+              .font(.system(size: 8, weight: .bold))
+              .foregroundColor(.brandPrimary.opacity(0.8))
+          }
+          .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+          Capsule()
+            .fill(Color.brandPrimary.opacity(0.15))
+        )
+      }
+
+      TextField(
+        viewModel.hasSearchFilter ? "Search in \(viewModel.searchFilterName ?? "")..." : "Search all sessions...",
+        text: $viewModel.searchQuery
+      )
+        .textFieldStyle(.plain)
+        .font(.system(size: 13))
+        .onChange(of: viewModel.searchQuery) { _, _ in
+          viewModel.performSearch()
+        }
+
+      if !viewModel.searchQuery.isEmpty {
+        Button(action: { viewModel.clearSearch() }) {
+          Image(systemName: "xmark.circle.fill")
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+      }
+
+      if viewModel.isSearching {
+        ProgressView()
+          .scaleEffect(0.7)
+      }
+    }
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
+    .background(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+        .fill(Color.surfaceOverlay)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+        .stroke(viewModel.isSearchActive || viewModel.hasSearchFilter ? Color.brandPrimary.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+    )
+  }
+
+  // MARK: - Search Results View
+
+  private var searchResultsView: some View {
+    ScrollView {
+      LazyVStack(spacing: 8) {
+        if viewModel.searchResults.isEmpty && !viewModel.isSearching {
+          noSearchResultsView
+        } else {
+          ForEach(viewModel.searchResults) { result in
+            SearchResultRow(
+              result: result,
+              onSelect: { viewModel.selectSearchResult(result) }
+            )
+          }
+        }
+      }
+      .padding(.vertical, 8)
+    }
+  }
+
+  private var noSearchResultsView: some View {
+    VStack(spacing: 12) {
+      Image(systemName: "magnifyingglass")
+        .font(.system(size: 32))
+        .foregroundColor(.secondary.opacity(0.6))
+      Text("No sessions found")
+        .font(.system(.headline, weight: .medium))
+        .foregroundColor(.secondary)
+      Text("Try a different search term")
+        .font(.caption)
+        .foregroundColor(.secondary.opacity(0.8))
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .padding(.top, 60)
   }
 
   // MARK: - Loading View
@@ -244,7 +360,7 @@ public struct CLISessionsListView: View {
           )
         }
 
-        Text("\(viewModel.totalSessionCount) sessions in \(viewModel.selectedRepositories.count) modules")
+        Text("\(viewModel.selectedRepositories.count) \(viewModel.selectedRepositories.count == 1 ? "module" : "modules") selected · \(viewModel.totalSessionCount) sessions")
           .font(.caption)
           .foregroundColor(.secondary)
 

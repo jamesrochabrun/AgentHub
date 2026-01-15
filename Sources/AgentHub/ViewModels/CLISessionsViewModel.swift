@@ -23,6 +23,7 @@ public final class CLISessionsViewModel {
   // MARK: - Dependencies
 
   private let monitorService: CLISessionMonitorService
+  private let searchService: GlobalSearchService
   private let claudeClient: ClaudeCode?
   private let worktreeService = GitWorktreeService()
 
@@ -31,6 +32,33 @@ public final class CLISessionsViewModel {
   public private(set) var selectedRepositories: [SelectedRepository] = []
   public private(set) var loadingState: CLILoadingState = .idle
   public private(set) var error: Error?
+
+  // MARK: - Search State
+
+  public var searchQuery: String = ""
+  public private(set) var searchResults: [SessionSearchResult] = []
+  public private(set) var isSearching: Bool = false
+  private var searchTask: Task<Void, Never>?
+
+  /// Whether the search is active (has a query)
+  public var isSearchActive: Bool {
+    !searchQuery.isEmpty
+  }
+
+  // MARK: - Search Filter State
+
+  /// Optional repository path to filter search results
+  public var searchFilterPath: String? = nil
+
+  /// The repository name for the filter (derived from path)
+  public var searchFilterName: String? {
+    searchFilterPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+  }
+
+  /// Whether a search filter is active
+  public var hasSearchFilter: Bool {
+    searchFilterPath != nil
+  }
 
   // MARK: - Monitoring State
 
@@ -74,6 +102,7 @@ public final class CLISessionsViewModel {
   public init(monitorService: CLISessionMonitorService, claudeClient: ClaudeCode? = nil) {
     print("[CLISessionsVM] init called")
     self.monitorService = monitorService
+    self.searchService = GlobalSearchService()
     self.claudeClient = claudeClient
     self.fileWatcher = SessionFileWatcher()
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
@@ -446,5 +475,92 @@ public final class CLISessionsViewModel {
       .map { session in
         (session: session, state: monitorStates[session.id])
       }
+  }
+
+  // MARK: - Search
+
+  /// Performs a search across all sessions with debouncing
+  public func performSearch() {
+    // Cancel any existing search task
+    searchTask?.cancel()
+
+    guard !searchQuery.isEmpty else {
+      searchResults = []
+      isSearching = false
+      return
+    }
+
+    isSearching = true
+
+    searchTask = Task { [weak self] in
+      // Debounce: wait 300ms
+      try? await Task.sleep(for: .milliseconds(300))
+
+      guard !Task.isCancelled, let self = self else { return }
+
+      let query = self.searchQuery
+      let filterPath = self.searchFilterPath
+      let results = await self.searchService.search(query: query, filterPath: filterPath)
+
+      guard !Task.isCancelled else { return }
+
+      await MainActor.run { [weak self] in
+        guard let self = self else { return }
+        self.searchResults = results
+        self.isSearching = false
+      }
+    }
+  }
+
+  /// Clears the search query and results
+  public func clearSearch() {
+    searchTask?.cancel()
+    searchQuery = ""
+    searchResults = []
+    isSearching = false
+  }
+
+  /// Called when user selects a search result - adds the repo and clears search
+  /// - Parameter result: The selected search result
+  public func selectSearchResult(_ result: SessionSearchResult) {
+    // Add the repository if not already present
+    if !selectedRepositories.contains(where: { $0.path == result.projectPath }) {
+      addRepository(at: result.projectPath)
+    }
+
+    // Clear search
+    clearSearch()
+  }
+
+  // MARK: - Search Filter
+
+  /// Opens a folder picker to select a repository for filtering search results
+  public func showSearchFilterPicker() {
+    #if canImport(AppKit)
+    let panel = NSOpenPanel()
+    panel.title = "Filter by Repository"
+    panel.message = "Select a repository to filter search results"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = false
+
+    if panel.runModal() == .OK, let url = panel.url {
+      searchFilterPath = url.path
+      // Re-run search with new filter if there's an active query
+      if !searchQuery.isEmpty {
+        performSearch()
+      }
+    }
+    #endif
+  }
+
+  /// Clears the search filter
+  public func clearSearchFilter() {
+    searchFilterPath = nil
+    // Re-run search without filter if there's an active query
+    if !searchQuery.isEmpty {
+      performSearch()
+    }
   }
 }
