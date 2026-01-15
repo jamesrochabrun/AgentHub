@@ -30,6 +30,7 @@ public struct GlobalStatsPopoverButton: View {
       .padding(.vertical, 2)
     }
     .buttonStyle(.plain)
+    .contentShape(Rectangle())
     .help("Claude Code Stats: \(service.formattedTotalTokens) tokens")
     .popover(isPresented: $isShowingPopover, arrowEdge: .bottom) {
       GlobalStatsMenuView(service: service, showQuitButton: false)

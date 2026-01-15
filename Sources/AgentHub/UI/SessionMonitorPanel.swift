@@ -21,12 +21,13 @@ public struct SessionMonitorPanel: View {
   public var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       if let state = state {
-        // Status indicator
-        StatusBadge(status: state.status)
-
-        // Model (if available)
-        if let model = state.model {
-          ModelBadge(model: model)
+        // Status indicator and model
+        HStack {
+          StatusBadge(status: state.status)
+          Spacer()
+          if let model = state.model {
+            ModelBadge(model: model)
+          }
         }
 
         // Recent activity
@@ -136,7 +137,7 @@ private struct StatusBadge: View {
 
 // MARK: - ModelBadge
 
-private struct ModelBadge: View {
+struct ModelBadge: View {
   let model: String
 
   private var displayName: String {

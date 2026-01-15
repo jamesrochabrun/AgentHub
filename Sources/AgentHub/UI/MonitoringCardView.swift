@@ -85,7 +85,10 @@ public struct MonitoringCardView: View {
 
   private var header: some View {
     HStack {
-      // Session ID
+      // Session label and ID
+      Text("Session:")
+        .font(.subheadline)
+        .foregroundColor(.secondary)
       Text(session.shortId)
         .font(.system(.subheadline, design: .monospaced))
         .foregroundColor(.brandPrimary)

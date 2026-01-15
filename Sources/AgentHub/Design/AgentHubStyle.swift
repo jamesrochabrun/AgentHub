@@ -45,23 +45,19 @@ private struct AgentHubCardModifier: ViewModifier {
   let isHighlighted: Bool
 
   func body(content: Content) -> some View {
-    let highlight = isHighlighted ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.2 : 0.12) : Color.clear
     let strokeColor = isHighlighted
-      ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.55 : 0.35)
+      ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.8 : 0.6)
       : Color.surfaceStroke.opacity(colorScheme == .dark ? 0.4 : 0.6)
+    let strokeWidth: CGFloat = isHighlighted ? 2 : 1
 
     return content
       .background(
         RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
           .fill(Color.surfaceCard)
-          .overlay(
-            RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
-              .fill(highlight)
-          )
       )
       .overlay(
         RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
-          .stroke(strokeColor, lineWidth: 1)
+          .stroke(strokeColor, lineWidth: strokeWidth)
       )
       .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.25 : 0.08), radius: 6, x: 0, y: 2)
   }

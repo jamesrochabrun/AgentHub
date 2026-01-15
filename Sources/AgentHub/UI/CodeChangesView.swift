@@ -507,6 +507,7 @@ private struct ConsolidatedFileRow: View {
         RoundedRectangle(cornerRadius: 6)
           .stroke(isSelected ? Color.brandPrimary.opacity(0.3) : Color.clear, lineWidth: 1)
       )
+      .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
   }
