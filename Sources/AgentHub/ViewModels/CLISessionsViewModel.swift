@@ -149,6 +149,9 @@ public final class CLISessionsViewModel {
           guard let self = self else { return }
           self.selectedRepositories = repositories
 
+          // Persist after state is updated to ensure consistency
+          self.persistSelectedRepositories()
+
           // Check for pending auto-observe
           self.processPendingAutoObserve()
         }
@@ -219,8 +222,6 @@ public final class CLISessionsViewModel {
       print("[CLISessionsVM] Calling monitorService.addRepository...")
       await monitorService.addRepository(path)
       print("[CLISessionsVM] monitorService.addRepository completed")
-      persistSelectedRepositories()
-      print("[CLISessionsVM] Persisted repositories")
       loadingState = .idle
       print("[CLISessionsVM] loadingState = .idle")
     }
@@ -230,7 +231,6 @@ public final class CLISessionsViewModel {
   public func removeRepository(_ repository: SelectedRepository) {
     Task {
       await monitorService.removeRepository(repository.path)
-      persistSelectedRepositories()
     }
   }
 
