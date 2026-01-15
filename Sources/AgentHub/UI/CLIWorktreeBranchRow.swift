@@ -29,6 +29,21 @@ public struct CLIWorktreeBranchRow: View {
     CGFloat(maxVisibleSessions) * sessionRowHeight
   }
 
+  /// Sessions sorted with monitored ones at the top, then by last activity
+  private var sortedSessions: [CLISession] {
+    worktree.sessions.sorted { session1, session2 in
+      let isMonitored1 = isSessionMonitored(session1.id)
+      let isMonitored2 = isSessionMonitored(session2.id)
+
+      // Monitored sessions first
+      if isMonitored1 != isMonitored2 {
+        return isMonitored1
+      }
+      // Then by last activity
+      return session1.lastActivityAt > session2.lastActivityAt
+    }
+  }
+
   public init(
     worktree: WorktreeBranch,
     isExpanded: Bool,
@@ -133,7 +148,7 @@ public struct CLIWorktreeBranchRow: View {
           VStack(spacing: 0) {
             ScrollView {
               VStack(spacing: 8) {
-                ForEach(worktree.sessions) { session in
+                ForEach(sortedSessions) { session in
                   CLISessionRow(
                     session: session,
                     isMonitoring: isSessionMonitored(session.id),

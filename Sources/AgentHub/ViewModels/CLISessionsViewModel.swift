@@ -23,6 +23,7 @@ public final class CLISessionsViewModel {
   // MARK: - Dependencies
 
   private let monitorService: CLISessionMonitorService
+  private let searchService: GlobalSearchService
   private let claudeClient: ClaudeCode?
   private let worktreeService = GitWorktreeService()
 
@@ -31,6 +32,40 @@ public final class CLISessionsViewModel {
   public private(set) var selectedRepositories: [SelectedRepository] = []
   public private(set) var loadingState: CLILoadingState = .idle
   public private(set) var error: Error?
+
+  // MARK: - Search State
+
+  public var searchQuery: String = ""
+  public private(set) var searchResults: [SessionSearchResult] = []
+  public private(set) var isSearching: Bool = false
+  private var searchTask: Task<Void, Never>?
+
+  /// Whether the search is active (has a query)
+  public var isSearchActive: Bool {
+    !searchQuery.isEmpty
+  }
+
+  // MARK: - Search Filter State
+
+  /// Optional repository path to filter search results
+  public var searchFilterPath: String? = nil
+
+  /// The repository name for the filter (derived from path)
+  public var searchFilterName: String? {
+    searchFilterPath.map { URL(fileURLWithPath: $0).lastPathComponent }
+  }
+
+  /// Whether a search filter is active
+  public var hasSearchFilter: Bool {
+    searchFilterPath != nil
+  }
+
+  // MARK: - Auto-Observe State
+
+  /// Session ID pending auto-observe after repo loads
+  private var pendingAutoObserveSessionId: String? = nil
+  /// Project path for the pending auto-observe session
+  private var pendingAutoObserveProjectPath: String? = nil
 
   // MARK: - Monitoring State
 
@@ -74,6 +109,7 @@ public final class CLISessionsViewModel {
   public init(monitorService: CLISessionMonitorService, claudeClient: ClaudeCode? = nil) {
     print("[CLISessionsVM] init called")
     self.monitorService = monitorService
+    self.searchService = GlobalSearchService()
     self.claudeClient = claudeClient
     self.fileWatcher = SessionFileWatcher()
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
@@ -112,6 +148,9 @@ public final class CLISessionsViewModel {
         await MainActor.run { [weak self] in
           guard let self = self else { return }
           self.selectedRepositories = repositories
+
+          // Check for pending auto-observe
+          self.processPendingAutoObserve()
         }
       }
     }
@@ -446,5 +485,137 @@ public final class CLISessionsViewModel {
       .map { session in
         (session: session, state: monitorStates[session.id])
       }
+  }
+
+  // MARK: - Search
+
+  /// Performs a search across all sessions with debouncing
+  public func performSearch() {
+    // Cancel any existing search task
+    searchTask?.cancel()
+
+    guard !searchQuery.isEmpty else {
+      searchResults = []
+      isSearching = false
+      return
+    }
+
+    isSearching = true
+
+    searchTask = Task { [weak self] in
+      // Debounce: wait 300ms
+      try? await Task.sleep(for: .milliseconds(300))
+
+      guard !Task.isCancelled, let self = self else { return }
+
+      let query = self.searchQuery
+      let filterPath = self.searchFilterPath
+      let results = await self.searchService.search(query: query, filterPath: filterPath)
+
+      guard !Task.isCancelled else { return }
+
+      await MainActor.run { [weak self] in
+        guard let self = self else { return }
+        self.searchResults = results
+        self.isSearching = false
+      }
+    }
+  }
+
+  /// Clears the search query and results
+  public func clearSearch() {
+    searchTask?.cancel()
+    searchQuery = ""
+    searchResults = []
+    isSearching = false
+  }
+
+  /// Called when user selects a search result - adds the repo and clears search
+  /// - Parameter result: The selected search result
+  public func selectSearchResult(_ result: SessionSearchResult) {
+    let sessionId = result.id
+    let projectPath = result.projectPath
+
+    // Store for auto-observe
+    pendingAutoObserveSessionId = sessionId
+    pendingAutoObserveProjectPath = projectPath
+
+    // Add the repository if not already present
+    if !selectedRepositories.contains(where: { $0.path == projectPath }) {
+      addRepository(at: projectPath)
+    } else {
+      // Repo already exists - process immediately
+      processPendingAutoObserve()
+    }
+
+    // Clear search
+    clearSearch()
+  }
+
+  /// Processes pending auto-observe: finds the session, expands its container, and starts monitoring
+  private func processPendingAutoObserve() {
+    guard let sessionId = pendingAutoObserveSessionId,
+          let projectPath = pendingAutoObserveProjectPath else {
+      return
+    }
+
+    // Clear pending state
+    pendingAutoObserveSessionId = nil
+    pendingAutoObserveProjectPath = nil
+
+    // Find the repository containing this project path
+    guard let repoIndex = selectedRepositories.firstIndex(where: {
+      $0.path == projectPath || $0.worktrees.contains { $0.path == projectPath }
+    }) else {
+      return
+    }
+
+    // Expand the repository
+    selectedRepositories[repoIndex].isExpanded = true
+
+    // Find the worktree containing the session
+    for worktreeIndex in selectedRepositories[repoIndex].worktrees.indices {
+      let worktree = selectedRepositories[repoIndex].worktrees[worktreeIndex]
+      if let session = worktree.sessions.first(where: { $0.id == sessionId }) {
+        // Expand the worktree
+        selectedRepositories[repoIndex].worktrees[worktreeIndex].isExpanded = true
+
+        // Start monitoring the session
+        startMonitoring(session: session)
+        return
+      }
+    }
+  }
+
+  // MARK: - Search Filter
+
+  /// Opens a folder picker to select a repository for filtering search results
+  public func showSearchFilterPicker() {
+    #if canImport(AppKit)
+    let panel = NSOpenPanel()
+    panel.title = "Filter by Repository"
+    panel.message = "Select a repository to filter search results"
+    panel.canChooseFiles = false
+    panel.canChooseDirectories = true
+    panel.allowsMultipleSelection = false
+    panel.canCreateDirectories = false
+
+    if panel.runModal() == .OK, let url = panel.url {
+      searchFilterPath = url.path
+      // Re-run search with new filter if there's an active query
+      if !searchQuery.isEmpty {
+        performSearch()
+      }
+    }
+    #endif
+  }
+
+  /// Clears the search filter
+  public func clearSearchFilter() {
+    searchFilterPath = nil
+    // Re-run search without filter if there's an active query
+    if !searchQuery.isEmpty {
+      performSearch()
+    }
   }
 }
