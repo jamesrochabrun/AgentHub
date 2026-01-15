@@ -244,7 +244,7 @@ public struct CLISessionsListView: View {
           )
         }
 
-        Text("\(viewModel.totalSessionCount) total sessions")
+        Text("\(viewModel.totalSessionCount) sessions in \(viewModel.selectedRepositories.count) modules")
           .font(.caption)
           .foregroundColor(.secondary)
 
@@ -289,7 +289,7 @@ public struct CLISessionsListView: View {
           HStack(spacing: 6) {
             Image(systemName: viewModel.showLastMessage ? "arrow.down.to.line" : "arrow.up.to.line")
               .font(.system(size: DesignTokens.IconSize.sm))
-            Text(viewModel.showLastMessage ? "Last" : "First")
+            Text(viewModel.showLastMessage ? "Last message" : "First message")
               .font(.system(.caption, weight: .medium))
           }
           .foregroundColor(.secondary)
