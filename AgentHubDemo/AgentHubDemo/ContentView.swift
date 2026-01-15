@@ -74,6 +74,8 @@ struct ContentView: View {
         ToolbarItem(placement: .principal) {
           HStack {
             Spacer()
+            // Intelligence button - always visible
+            IntelligencePopoverButton()
             if let settings = displaySettings,
                settings.isPopoverMode,
                let service = statsService {
