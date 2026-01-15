@@ -12,9 +12,11 @@ import SwiftUI
 /// View for displaying global Claude Code stats in a menu bar dropdown
 public struct GlobalStatsMenuView: View {
   let service: GlobalStatsService
+  let showQuitButton: Bool
 
-  public init(service: GlobalStatsService) {
+  public init(service: GlobalStatsService, showQuitButton: Bool = true) {
     self.service = service
+    self.showQuitButton = showQuitButton
   }
 
   public var body: some View {
@@ -46,6 +48,18 @@ public struct GlobalStatsMenuView: View {
 
         // Footer with refresh
         footerSection
+
+        // Quit button at the bottom
+        if showQuitButton {
+          Divider()
+            .padding(.vertical, 8)
+
+          Button("Quit app") {
+            NSApplication.shared.terminate(nil)
+          }
+          .buttonStyle(.plain)
+          .font(.caption)
+        }
       } else {
         Text("Stats not available")
           .foregroundColor(.secondary)
@@ -172,12 +186,6 @@ public struct GlobalStatsMenuView: View {
       }
       .buttonStyle(.plain)
       .help("Refresh stats")
-
-      Button("Quit") {
-        NSApplication.shared.terminate(nil)
-      }
-      .buttonStyle(.plain)
-      .font(.caption)
     }
   }
 

@@ -11,13 +11,23 @@ import AgentHub
 @main
 struct AgentHubDemoApp: App {
   @State private var statsService = GlobalStatsService()
+  @State private var displaySettings = StatsDisplaySettings(.menuBar)
 
   var body: some Scene {
     WindowGroup {
-      ContentView()
+      ContentView(
+        statsService: statsService,
+        displaySettings: displaySettings
+      )
     }
+    .windowStyle(.hiddenTitleBar)
 
-    MenuBarExtra {
+    MenuBarExtra(
+      isInserted: Binding(
+        get: { displaySettings.isMenuBarMode },
+        set: { _ in }
+      )
+    ) {
       GlobalStatsMenuView(service: statsService)
     } label: {
       HStack(spacing: 4) {
