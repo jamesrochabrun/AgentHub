@@ -69,11 +69,6 @@ public struct CreateWorktreeSheet: View {
     .task {
       await loadBranches()
     }
-    .onAppear {
-      if branchName.isEmpty {
-        branchName = BranchNameGenerator.generate(moduleName: repositoryName)
-      }
-    }
     .alert("Error", isPresented: $showError) {
       Button("OK") { showError = false }
     } message: {
@@ -137,29 +132,16 @@ public struct CreateWorktreeSheet: View {
         .fontWeight(.medium)
         .foregroundColor(.secondary)
 
-      HStack(spacing: 8) {
-        TextField("feature/my-feature", text: $branchName)
-          .textFieldStyle(.roundedBorder)
-          .onChange(of: branchName) { _, newValue in
-            directoryName = GitWorktreeService.sanitizeBranchName(newValue)
-          }
-
-        Button(action: generateBranchName) {
-          Image(systemName: "dice")
-            .font(.system(size: 14))
+      TextField("feature/my-feature", text: $branchName)
+        .textFieldStyle(.roundedBorder)
+        .onChange(of: branchName) { _, newValue in
+          directoryName = GitWorktreeService.sanitizeBranchName(newValue)
         }
-        .buttonStyle(.bordered)
-        .help("Generate random branch name")
-      }
 
       Text("A new branch will be created with this name")
         .font(.caption2)
         .foregroundColor(.secondary)
     }
-  }
-
-  private func generateBranchName() {
-    branchName = BranchNameGenerator.generate(moduleName: repositoryName)
   }
 
   // MARK: - Base Branch Picker
