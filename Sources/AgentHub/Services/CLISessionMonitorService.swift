@@ -30,10 +30,6 @@ public actor CLISessionMonitorService {
 
   private var selectedRepositories: [SelectedRepository] = []
 
-  // Cache for history entries to avoid re-parsing entire file
-  private var historyCache: [String: [HistoryEntry]] = [:]  // sessionId -> entries
-  private var lastHistoryFileSize: UInt64 = 0
-
   // MARK: - Initialization
 
   public init(claudeDataPath: String? = nil) {
@@ -47,6 +43,7 @@ public actor CLISessionMonitorService {
   /// - Returns: The created SelectedRepository with detected worktrees
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
+    let startTotal = CFAbsoluteTimeGetCurrent()
     print("[CLIMonitorService] addRepository called for: \(path)")
 
     // Check if already added
@@ -57,7 +54,9 @@ public actor CLISessionMonitorService {
 
     // Detect worktrees for this repository
     print("[CLIMonitorService] Detecting worktrees...")
+    let startWorktrees = CFAbsoluteTimeGetCurrent()
     let worktrees = await detectWorktrees(at: path)
+    print("[CLIMonitorService] ⏱️ detectWorktrees: \(CFAbsoluteTimeGetCurrent() - startWorktrees)s")
     print("[CLIMonitorService] Detected \(worktrees.count) worktrees")
 
     let repository = SelectedRepository(
@@ -70,8 +69,9 @@ public actor CLISessionMonitorService {
     print("[CLIMonitorService] Repository added, now refreshing sessions...")
 
     // Scan for sessions in the new repository
-    await refreshSessions()
-    print("[CLIMonitorService] addRepository completed")
+    // Skip worktree re-detection since we just detected worktrees for this repo
+    await refreshSessions(skipWorktreeRedetection: true)
+    print("[CLIMonitorService] ⏱️ addRepository total: \(CFAbsoluteTimeGetCurrent() - startTotal)s")
 
     return repository
   }
@@ -97,7 +97,9 @@ public actor CLISessionMonitorService {
   // MARK: - Session Scanning
 
   /// Refreshes sessions for all selected repositories
-  public func refreshSessions() async {
+  /// - Parameter skipWorktreeRedetection: When true, skips worktree re-detection (used after adding a new repo)
+  public func refreshSessions(skipWorktreeRedetection: Bool = false) async {
+    let startRefresh = CFAbsoluteTimeGetCurrent()
     print("[CLIMonitorService] refreshSessions called")
 
     guard !selectedRepositories.isEmpty else {
@@ -107,28 +109,40 @@ public actor CLISessionMonitorService {
     }
 
     // Re-detect worktrees for all repositories to pick up newly created ones
-    print("[CLIMonitorService] Re-detecting worktrees...")
-    for index in selectedRepositories.indices {
-      let repoPath = selectedRepositories[index].path
-      let detectedWorktrees = await detectWorktrees(at: repoPath)
+    if !skipWorktreeRedetection {
+      let startWorktreeRedetect = CFAbsoluteTimeGetCurrent()
+      print("[CLIMonitorService] Re-detecting worktrees in parallel...")
 
-      // Merge: keep existing worktrees (preserves isExpanded), add new ones, remove deleted
-      var mergedWorktrees: [WorktreeBranch] = []
-      for detected in detectedWorktrees {
-        if var existing = selectedRepositories[index].worktrees.first(where: { $0.path == detected.path }) {
-          // Keep existing worktree (preserves isExpanded state), but update branch name
-          existing.name = detected.name  // Update branch name from git
-          existing.sessions = []  // Will be repopulated below
-          mergedWorktrees.append(existing)
-        } else {
-          // Add new worktree
-          print("[CLIMonitorService] Found new worktree: \(detected.path)")
-          mergedWorktrees.append(detected)
+      // Detect worktrees for all repos in parallel
+      let allWorktrees = await detectWorktreesBatch(
+        repoPaths: selectedRepositories.map { $0.path }
+      )
+
+      // Merge detected worktrees with existing state
+      for index in selectedRepositories.indices {
+        let repoPath = selectedRepositories[index].path
+        let detectedWorktrees = allWorktrees[repoPath] ?? []
+
+        // Merge: keep existing worktrees (preserves isExpanded), add new ones, remove deleted
+        var mergedWorktrees: [WorktreeBranch] = []
+        for detected in detectedWorktrees {
+          if var existing = selectedRepositories[index].worktrees.first(where: { $0.path == detected.path }) {
+            // Keep existing worktree (preserves isExpanded state), but update branch name
+            existing.name = detected.name  // Update branch name from git
+            existing.sessions = []  // Will be repopulated below
+            mergedWorktrees.append(existing)
+          } else {
+            // Add new worktree
+            print("[CLIMonitorService] Found new worktree: \(detected.path)")
+            mergedWorktrees.append(detected)
+          }
         }
+        selectedRepositories[index].worktrees = mergedWorktrees
       }
-      selectedRepositories[index].worktrees = mergedWorktrees
+      print("[CLIMonitorService] ⏱️ worktree re-detection: \(CFAbsoluteTimeGetCurrent() - startWorktreeRedetect)s")
+    } else {
+      print("[CLIMonitorService] Skipping worktree re-detection (just added repo)")
     }
-    print("[CLIMonitorService] Worktree re-detection complete")
 
     // Get all paths to filter by (including worktree paths)
     let allPaths = getAllMonitoredPaths()
@@ -140,22 +154,20 @@ public actor CLISessionMonitorService {
     print("[CLIMonitorService] Found \(runningProcesses.count) running processes")
 
     // Parse history for selected paths only
+    let startHistory = CFAbsoluteTimeGetCurrent()
     print("[CLIMonitorService] Parsing history...")
     let historyEntries = await parseHistoryForPaths(allPaths)
+    print("[CLIMonitorService] ⏱️ parseHistory: \(CFAbsoluteTimeGetCurrent() - startHistory)s")
     print("[CLIMonitorService] Found \(historyEntries.count) history entries")
 
     // Group entries by session ID
     let sessionEntries = Dictionary(grouping: historyEntries) { $0.sessionId }
     print("[CLIMonitorService] Grouped into \(sessionEntries.count) sessions")
 
-    // Build a map of session ID -> gitBranch (read from session files)
-    var sessionBranches: [String: String] = [:]
-    for (sessionId, entries) in sessionEntries {
-      if let firstEntry = entries.first,
-         let branch = readGitBranchFromSession(sessionId: sessionId, projectPath: firstEntry.project) {
-        sessionBranches[sessionId] = branch
-      }
-    }
+    // Build a map of session ID -> gitBranch (read from session files in parallel)
+    let startBranches = CFAbsoluteTimeGetCurrent()
+    let sessionBranches = await readBranchInfoBatch(sessionEntries: sessionEntries)
+    print("[CLIMonitorService] ⏱️ readBranchInfo: \(CFAbsoluteTimeGetCurrent() - startBranches)s")
     print("[CLIMonitorService] Read branch info for \(sessionBranches.count) sessions")
 
     // Debug: Print unique branches found
@@ -262,7 +274,7 @@ public actor CLISessionMonitorService {
     selectedRepositories = updatedRepositories
     print("[CLIMonitorService] Sending \(selectedRepositories.count) repositories to subject")
     repositoriesSubject.send(selectedRepositories)
-    print("[CLIMonitorService] refreshSessions completed")
+    print("[CLIMonitorService] ⏱️ refreshSessions total: \(CFAbsoluteTimeGetCurrent() - startRefresh)s")
   }
 
   // MARK: - Worktree Detection
@@ -301,6 +313,26 @@ public actor CLISessionMonitorService {
     }
   }
 
+  /// Detects worktrees for multiple repositories in parallel
+  /// - Parameter repoPaths: Array of repository paths to detect worktrees for
+  /// - Returns: Dictionary mapping repository paths to their detected worktrees
+  private func detectWorktreesBatch(repoPaths: [String]) async -> [String: [WorktreeBranch]] {
+    await withTaskGroup(of: (String, [WorktreeBranch]).self) { group in
+      for repoPath in repoPaths {
+        group.addTask {
+          let worktrees = await self.detectWorktrees(at: repoPath)
+          return (repoPath, worktrees)
+        }
+      }
+
+      var results: [String: [WorktreeBranch]] = [:]
+      for await (path, worktrees) in group {
+        results[path] = worktrees
+      }
+      return results
+    }
+  }
+
   // MARK: - Path Collection
 
   private func getAllMonitoredPaths() -> Set<String> {
@@ -325,32 +357,61 @@ public actor CLISessionMonitorService {
 
   // MARK: - Session File Parsing
 
-  /// Reads a session file and extracts the gitBranch field
-  /// - Parameters:
-  ///   - sessionId: The session ID
-  ///   - projectPath: The project path from history (used to find session file)
-  /// - Returns: The git branch name if found, nil otherwise
-  private func readGitBranchFromSession(sessionId: String, projectPath: String) -> String? {
-    let encodedPath = projectPath.replacingOccurrences(of: "/", with: "-")
-    let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
+  /// Reads gitBranch from multiple session files in parallel using Task.detached
+  /// - Parameter sessionEntries: Dictionary of session IDs to their history entries
+  /// - Returns: Dictionary mapping session IDs to their git branch names
+  private func readBranchInfoBatch(sessionEntries: [String: [HistoryEntry]]) async -> [String: String] {
+    let claudePath = claudeDataPath  // Capture for sendable closure
 
-    guard let data = FileManager.default.contents(atPath: sessionFilePath),
-          let content = String(data: data, encoding: .utf8) else {
-      return nil
-    }
-
-    // Parse lines looking for gitBranch field
-    for line in content.components(separatedBy: .newlines) {
-      guard !line.isEmpty,
-            let jsonData = line.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-            let gitBranch = json["gitBranch"] as? String else {
-        continue
+    return await Task.detached(priority: .userInitiated) {
+      // Build list of (sessionId, filePath) to read
+      var filesToRead: [(sessionId: String, filePath: String)] = []
+      for (sessionId, entries) in sessionEntries {
+        guard let firstEntry = entries.first else { continue }
+        let encodedPath = firstEntry.project.replacingOccurrences(of: "/", with: "-")
+        let filePath = "\(claudePath)/projects/\(encodedPath)/\(sessionId).jsonl"
+        filesToRead.append((sessionId, filePath))
       }
-      return gitBranch
-    }
 
-    return nil
+      // Read all files in parallel using withTaskGroup
+      return await withTaskGroup(of: (String, String?).self) { group in
+        for (sessionId, filePath) in filesToRead {
+          group.addTask {
+            // Read only first few KB to find gitBranch (it's in early lines)
+            guard let handle = FileHandle(forReadingAtPath: filePath) else {
+              return (sessionId, nil)
+            }
+            defer { try? handle.close() }
+
+            // Read first 4KB - gitBranch is typically in first message
+            guard let data = try? handle.read(upToCount: 4096),
+                  let content = String(data: data, encoding: .utf8) else {
+              return (sessionId, nil)
+            }
+
+            // Parse lines looking for gitBranch
+            for line in content.components(separatedBy: .newlines) {
+              guard !line.isEmpty,
+                    let jsonData = line.data(using: .utf8),
+                    let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                    let gitBranch = json["gitBranch"] as? String else {
+                continue
+              }
+              return (sessionId, gitBranch)
+            }
+            return (sessionId, nil)
+          }
+        }
+
+        var results: [String: String] = [:]
+        for await (sessionId, branch) in group {
+          if let branch = branch {
+            results[sessionId] = branch
+          }
+        }
+        return results
+      }
+    }.value
   }
 
   // MARK: - Filtered History Parsing
@@ -387,27 +448,4 @@ public actor CLISessionMonitorService {
     }.value
   }
 
-  // MARK: - Legacy Support (for backwards compatibility)
-
-  /// Performs a single scan for CLI sessions (legacy method)
-  @available(*, deprecated, message: "Use refreshSessions() instead")
-  public func scan() async -> [CLISession] {
-    await refreshSessions()
-    return selectedRepositories.flatMap { repo in
-      repo.worktrees.flatMap { $0.sessions }
-    }
-  }
-
-  /// Groups sessions by project path (legacy method)
-  @available(*, deprecated, message: "Use repositoriesPublisher instead")
-  public func groupSessionsByProject(_ sessions: [CLISession]) async -> [CLISessionGroup] {
-    let grouped = Dictionary(grouping: sessions) { $0.projectPath }
-
-    return grouped.map { (path, sessions) in
-      CLISessionGroup(
-        projectPath: path,
-        sessions: sessions.sorted { $0.lastActivityAt > $1.lastActivityAt }
-      )
-    }
-  }
 }
