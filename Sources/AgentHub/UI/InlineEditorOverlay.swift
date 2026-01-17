@@ -41,11 +41,10 @@ struct InlineEditorOverlay: View {
           lineNumber: state.lineNumber,
           side: state.side,
           fileName: state.fileName,
+          errorMessage: state.errorMessage,
           onSubmit: { message in
+            // Submit will open Terminal with resumed session
             onSubmit(message, state.lineNumber, state.side, state.fileName)
-            withAnimation(.easeOut(duration: 0.15)) {
-              state.dismiss()
-            }
           },
           onDismiss: {
             withAnimation(.easeOut(duration: 0.15)) {

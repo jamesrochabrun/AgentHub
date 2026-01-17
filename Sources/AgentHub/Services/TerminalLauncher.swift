@@ -12,16 +12,123 @@ import ClaudeCodeSDK
 /// Helper object to handle launching Terminal with Claude sessions
 public struct TerminalLauncher {
 
+  /// Runs a Claude session in the background without opening Terminal
+  /// - Parameters:
+  ///   - sessionId: The session ID to resume
+  ///   - claudeClient: The Claude client with configuration
+  ///   - projectPath: The project path to use as working directory
+  ///   - prompt: The prompt to send to Claude
+  ///   - onOutput: Called with each chunk of output text
+  ///   - onComplete: Called when the process finishes (with error if failed)
+  @MainActor
+  public static func runSessionInBackground(
+    _ sessionId: String,
+    claudeClient: ClaudeCode,
+    projectPath: String,
+    prompt: String,
+    onOutput: @escaping @MainActor (String) -> Void,
+    onComplete: @escaping @MainActor (Error?) -> Void
+  ) {
+    let claudeCommand = claudeClient.configuration.command
+
+    guard let claudeExecutablePath = findClaudeExecutable(
+      command: claudeCommand,
+      additionalPaths: claudeClient.configuration.additionalPaths
+    ) else {
+      let error = NSError(
+        domain: "TerminalLauncher",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(claudeCommand)' command. Please ensure Claude Code CLI is installed."]
+      )
+      onComplete(error)
+      return
+    }
+
+    Task.detached {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: claudeExecutablePath)
+      process.arguments = ["-r", sessionId, prompt]
+
+      if !projectPath.isEmpty {
+        process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
+      }
+
+      // Set up environment with PATH for child processes
+      var environment = ProcessInfo.processInfo.environment
+      let additionalPaths = claudeClient.configuration.additionalPaths.joined(separator: ":")
+      if let existingPath = environment["PATH"] {
+        environment["PATH"] = "\(additionalPaths):\(existingPath)"
+      } else {
+        environment["PATH"] = additionalPaths
+      }
+      process.environment = environment
+
+      let stdoutPipe = Pipe()
+      let stderrPipe = Pipe()
+      process.standardOutput = stdoutPipe
+      process.standardError = stderrPipe
+
+      // Handle stdout streaming
+      stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+        let data = handle.availableData
+        if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
+          Task { @MainActor in
+            onOutput(text)
+          }
+        }
+      }
+
+      // Handle stderr (also stream to output for visibility)
+      stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+        let data = handle.availableData
+        if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
+          Task { @MainActor in
+            onOutput(text)
+          }
+        }
+      }
+
+      process.terminationHandler = { process in
+        // Clean up handlers
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        Task { @MainActor in
+          if process.terminationStatus != 0 {
+            let error = NSError(
+              domain: "TerminalLauncher",
+              code: Int(process.terminationStatus),
+              userInfo: [NSLocalizedDescriptionKey: "Process exited with status \(process.terminationStatus)"]
+            )
+            onComplete(error)
+          } else {
+            onComplete(nil)
+          }
+        }
+      }
+
+      do {
+        try process.run()
+      } catch {
+        Task { @MainActor in
+          onComplete(error)
+        }
+      }
+    }
+  }
+
   /// Launches Terminal with a Claude session resume command
   /// - Parameters:
   ///   - sessionId: The session ID to resume
   ///   - claudeClient: The Claude client with configuration
   ///   - projectPath: The project path to change to before resuming
+  ///   - initialPrompt: Optional initial prompt to send to Claude
   /// - Returns: An error if launching fails, nil on success
   public static func launchTerminalWithSession(
     _ sessionId: String,
     claudeClient: ClaudeCode,
-    projectPath: String
+    projectPath: String,
+    initialPrompt: String? = nil
   ) -> Error? {
     // Get the claude command from configuration
     let claudeCommand = claudeClient.configuration.command
@@ -46,12 +153,26 @@ public struct TerminalLauncher {
     let escapedSessionId = sessionId.replacingOccurrences(of: "\\", with: "\\\\")
       .replacingOccurrences(of: "\"", with: "\\\"")
 
+    // Escape the initial prompt if provided
+    let escapedPrompt = initialPrompt?
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+      .replacingOccurrences(of: "'", with: "'\\''")
+
     // Construct the command
-    var command = ""
+    let command: String
     if !projectPath.isEmpty {
-      command = "cd \"\(escapedPath)\" && \"\(escapedClaudePath)\" -r \"\(escapedSessionId)\""
+      if let prompt = escapedPrompt {
+        command = "cd \"\(escapedPath)\" && \"\(escapedClaudePath)\" -r \"\(escapedSessionId)\" '\(prompt)'"
+      } else {
+        command = "cd \"\(escapedPath)\" && \"\(escapedClaudePath)\" -r \"\(escapedSessionId)\""
+      }
     } else {
-      command = "\"\(escapedClaudePath)\" -r \"\(escapedSessionId)\""
+      if let prompt = escapedPrompt {
+        command = "\"\(escapedClaudePath)\" -r \"\(escapedSessionId)\" '\(prompt)'"
+      } else {
+        command = "\"\(escapedClaudePath)\" -r \"\(escapedSessionId)\""
+      }
     }
 
     // Create a temporary script file

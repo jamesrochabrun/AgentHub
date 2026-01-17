@@ -7,6 +7,7 @@
 
 import SwiftUI
 import PierreDiffsSwift
+import ClaudeCodeSDK
 
 // MARK: - CodeChangesView
 
@@ -23,6 +24,7 @@ public struct CodeChangesView: View {
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
   @State private var inlineEditorState = InlineEditorState()
+  @State private var claudeClient: ClaudeCode = createClaudeClient()
 
   public init(
     session: CLISession,
@@ -205,9 +207,13 @@ public struct CodeChangesView: View {
           oldContent: diffData.oldContent,
           newContent: diffData.newContent,
           fileName: URL(fileURLWithPath: diffData.fileName).lastPathComponent,
+          filePath: diffData.fileName,
           diffStyle: $diffStyle,
           overflowMode: $overflowMode,
-          inlineEditorState: inlineEditorState
+          inlineEditorState: inlineEditorState,
+          claudeClient: claudeClient,
+          session: session,
+          onDismissView: onDismiss
         )
         .frame(minHeight: 400)
         .id(selectedId)
@@ -340,10 +346,22 @@ public struct CodeChangesView: View {
 
 // MARK: - DiffInputData
 
-/// Internal struct to hold diff data for rendering
+/// Value type that encapsulates the data needed to render a file diff.
+///
+/// Used internally by `CodeChangesView` to pass consolidated diff data to
+/// `DiffViewWithHeader` for rendering. This separates the data transformation
+/// logic (in `CodeChangesView`) from the rendering logic (in `DiffViewWithHeader`).
+///
+/// - Note: The `oldContent` and `newContent` are the full file contents,
+///   not just the changed lines. The diff algorithm computes the differences.
 private struct DiffInputData {
+  /// The original file content before changes (left side of diff)
   let oldContent: String
+
+  /// The modified file content after changes (right side of diff)
   let newContent: String
+
+  /// The file path/name displayed in the diff header
   let fileName: String
 }
 
@@ -354,10 +372,23 @@ private struct DiffInputData {
 private struct DiffViewWithHeader: View {
   let oldContent: String
   let newContent: String
+
+  /// The file name displayed in the header (e.g., "Example.swift")
   let fileName: String
+
+  /// The complete file path used for inline editor context (e.g., "/Users/.../Example.swift")
+  let filePath: String
+
   @Binding var diffStyle: DiffStyle
   @Binding var overflowMode: OverflowMode
   @Bindable var inlineEditorState: InlineEditorState
+  let claudeClient: ClaudeCode
+  let session: CLISession
+
+  /// Callback to dismiss the entire diff view.
+  /// Called when the user submits from the inline editor and Terminal opens successfully,
+  /// since the session continues in Terminal and the diff view won't receive updates.
+  let onDismissView: () -> Void
 
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
@@ -385,12 +416,18 @@ private struct DiffViewWithHeader: View {
               let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
               print("[CodeChangesView] anchorPoint: \(anchorPoint)")
 
+              // Determine which content to use based on the side
+              let fileContent = position.side == "left" ? oldContent : newContent
+              let lineContent = extractLine(from: fileContent, lineNumber: position.lineNumber)
+
               withAnimation(.easeOut(duration: 0.2)) {
                 inlineEditorState.show(
                   at: anchorPoint,
                   lineNumber: position.lineNumber,
                   side: position.side,
-                  fileName: fileName
+                  fileName: filePath,
+                  lineContent: lineContent,
+                  fullFileContent: fileContent
                 )
               }
             },
@@ -419,8 +456,28 @@ private struct DiffViewWithHeader: View {
             state: inlineEditorState,
             containerSize: geometry.size,
             onSubmit: { message, lineNumber, side, file in
-              // MVP: Print message to console (Claude integration later)
               print("[InlineEditor] Line \(lineNumber) (\(side)) in \(file): \(message)")
+
+              // Build contextual prompt with line context
+              let prompt = buildInlinePrompt(
+                question: message,
+                lineNumber: lineNumber,
+                lineContent: inlineEditorState.lineContent ?? "",
+                fileName: file
+              )
+
+              // Open Terminal with resumed session
+              if let error = TerminalLauncher.launchTerminalWithSession(
+                session.id,
+                claudeClient: claudeClient,
+                projectPath: session.projectPath,
+                initialPrompt: prompt
+              ) {
+                inlineEditorState.errorMessage = error.localizedDescription
+              } else {
+                // Dismiss entire diff view - session continues in Terminal
+                onDismissView()
+              }
             }
           )
         }
@@ -496,6 +553,64 @@ private struct DiffViewWithHeader: View {
         webViewOpacity = 1
       }
     }
+  }
+
+  /// Extracts a specific line from file content
+  private func extractLine(from content: String, lineNumber: Int) -> String {
+    let lines = content.components(separatedBy: .newlines)
+    let index = lineNumber - 1 // Convert 1-indexed to 0-indexed
+    guard index >= 0 && index < lines.count else {
+      return ""
+    }
+    return lines[index]
+  }
+
+  /// Builds a contextual prompt for the inline question
+  private func buildInlinePrompt(
+    question: String,
+    lineNumber: Int,
+    lineContent: String,
+    fileName: String
+  ) -> String {
+    return """
+      I'm looking at line \(lineNumber) in \(fileName):
+      ```
+      \(lineContent)
+      ```
+
+      \(question)
+      """
+  }
+}
+
+// MARK: - Claude Client Factory
+
+/// Creates a ClaudeCode client with standard configuration
+private func createClaudeClient() -> ClaudeCode {
+  do {
+    var config = ClaudeCodeConfiguration.withNvmSupport()
+    let homeDir = NSHomeDirectory()
+
+    // Add local Claude installation path (highest priority)
+    let localClaudePath = "\(homeDir)/.claude/local"
+    if FileManager.default.fileExists(atPath: localClaudePath) {
+      config.additionalPaths.insert(localClaudePath, at: 0)
+    }
+
+    // Add common development tool paths
+    config.additionalPaths.append(contentsOf: [
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+      "/usr/bin",
+      "\(homeDir)/.bun/bin",
+      "\(homeDir)/.deno/bin",
+      "\(homeDir)/.cargo/bin",
+      "\(homeDir)/.local/bin"
+    ])
+
+    return try ClaudeCodeClient(configuration: config)
+  } catch {
+    fatalError("Failed to create ClaudeCodeClient: \(error)")
   }
 }
 

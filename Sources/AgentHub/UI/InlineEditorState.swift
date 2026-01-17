@@ -25,17 +25,41 @@ final class InlineEditorState {
   /// The file name being edited
   var fileName: String = ""
 
-  /// Shows the editor at the specified position
-  func show(at point: CGPoint, lineNumber: Int, side: String, fileName: String) {
+  // MARK: - Context Properties (for prompt building)
+
+  /// The content of the clicked line
+  var lineContent: String?
+
+  /// The full file content for context
+  var fullFileContent: String?
+
+  // MARK: - Error State
+
+  /// Error message if request failed
+  var errorMessage: String?
+
+  /// Shows the editor at the specified position with context
+  func show(
+    at point: CGPoint,
+    lineNumber: Int,
+    side: String,
+    fileName: String,
+    lineContent: String? = nil,
+    fullFileContent: String? = nil
+  ) {
     self.anchorPoint = point
     self.lineNumber = lineNumber
     self.side = side
     self.fileName = fileName
+    self.lineContent = lineContent
+    self.fullFileContent = fullFileContent
+    self.errorMessage = nil
     self.isShowing = true
   }
 
-  /// Dismisses the editor
+  /// Dismisses the editor and resets state
   func dismiss() {
     isShowing = false
+    errorMessage = nil
   }
 }

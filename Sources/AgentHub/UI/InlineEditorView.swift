@@ -17,6 +17,7 @@ struct InlineEditorView: View {
   let lineNumber: Int
   let side: String
   let fileName: String
+  let errorMessage: String?
   let onSubmit: (String) -> Void
   let onDismiss: () -> Void
 
@@ -28,17 +29,27 @@ struct InlineEditorView: View {
   // MARK: - Body
 
   var body: some View {
-    HStack(spacing: 8) {
-      // Dismiss button
-      dismissButton
+    VStack(alignment: .leading, spacing: 0) {
+      inputView
 
-      // Text input
-      textEditorView
+      // Error message
+      if let error = errorMessage {
+        Divider()
+          .padding(.horizontal, 8)
 
-      // Send button (rounded square with arrow)
-      sendButton
+        HStack(spacing: 8) {
+          Image(systemName: "exclamationmark.triangle.fill")
+            .foregroundColor(.red)
+
+          Text(error)
+            .font(.system(.caption, design: .default))
+            .foregroundColor(.red)
+            .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+      }
     }
-    .padding(8)
     .frame(width: 700)
     .background(Color(NSColor.controlBackgroundColor))
     .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -50,6 +61,22 @@ struct InlineEditorView: View {
     .onAppear {
       isFocused = true
     }
+  }
+
+  // MARK: - Input View
+
+  private var inputView: some View {
+    HStack(spacing: 8) {
+      // Dismiss button
+      dismissButton
+
+      // Text input
+      textEditorView
+
+      // Send button (rounded square with arrow)
+      sendButton
+    }
+    .padding(8)
   }
 
   // MARK: - Text Editor
@@ -167,17 +194,31 @@ struct InlineEditorView: View {
 
 // MARK: - Preview
 
-#Preview {
+#Preview("Default - Input Mode") {
   InlineEditorView(
     lineNumber: 42,
     side: "right",
     fileName: "Example.swift",
+    errorMessage: nil,
     onSubmit: { message in
       print("Submitted: \(message)")
     },
     onDismiss: {
       print("Dismissed")
     }
+  )
+  .padding(40)
+  .background(Color.gray.opacity(0.2))
+}
+
+#Preview("With Error") {
+  InlineEditorView(
+    lineNumber: 42,
+    side: "right",
+    fileName: "Example.swift",
+    errorMessage: "Failed to connect to Claude",
+    onSubmit: { _ in },
+    onDismiss: {}
   )
   .padding(40)
   .background(Color.gray.opacity(0.2))
