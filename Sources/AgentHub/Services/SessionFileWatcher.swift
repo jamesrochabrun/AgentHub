@@ -27,6 +27,9 @@ public actor SessionFileWatcher {
   private nonisolated let stateSubject = PassthroughSubject<StateUpdate, Never>()
   private let claudePath: String
 
+  /// Serial queue for processing file events and status updates to prevent data races
+  private nonisolated let processingQueue = DispatchQueue(label: "com.agenthub.sessionwatcher.processing")
+
   /// Seconds to wait before considering a tool as awaiting approval
   private var approvalTimeoutSeconds: Int = 5
 
@@ -102,22 +105,43 @@ public actor SessionFileWatcher {
     // Capture timeout for use in closures
     let timeout = approvalTimeoutSeconds
 
+    // Shared state between closures - protected by processingQueue
+    var lastFileEventTime = Date()
+    var lastKnownFileSize = filePosition
+    var lastEmittedStatus: SessionStatus = parseResult.currentStatus
+
     source.setEventHandler { [weak self] in
       guard let self = self else { return }
 
-      // Read new content
-      let newLines = self.readNewLines(from: filePath, startingAt: &filePosition)
-      guard !newLines.isEmpty else { return }
+      self.processingQueue.async {
+        // Record that we received a file event
+        lastFileEventTime = Date()
 
-      print("[SessionFileWatcher] \(sessionId): \(newLines.count) new lines")
+        // Read new content
+        let newLines = self.readNewLines(from: filePath, startingAt: &filePosition)
 
-      // Parse new lines
-      SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
-      let updatedState = self.buildMonitorState(from: parseResult)
+        // Update known file size
+        lastKnownFileSize = filePosition
 
-      // Emit update
-      Task { @MainActor in
-        self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
+        guard !newLines.isEmpty else {
+          print("[SessionFileWatcher] \(sessionId): file event but no new lines")
+          return
+        }
+
+        print("[SessionFileWatcher] \(sessionId): \(newLines.count) new lines")
+
+        // Parse new lines
+        SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
+
+        // Keep lastEmittedStatus in sync to prevent redundant emissions from status timer
+        lastEmittedStatus = parseResult.currentStatus
+
+        let updatedState = self.buildMonitorState(from: parseResult)
+
+        // Emit update
+        Task { @MainActor in
+          self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
+        }
       }
     }
 
@@ -132,40 +156,65 @@ public actor SessionFileWatcher {
     let statusTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
     statusTimer.schedule(deadline: .now() + 1, repeating: 1.0)
 
-    var lastEmittedStatus: SessionStatus = parseResult.currentStatus
-
     statusTimer.setEventHandler { [weak self] in
       guard let self = self else { return }
 
-      // Re-evaluate status based on current time
-      let previousStatus = lastEmittedStatus
-      SessionJSONLParser.updateCurrentStatus(&parseResult, approvalTimeoutSeconds: timeout)
+      self.processingQueue.async {
+        // Health check: detect stale file watcher
+        let timeSinceLastEvent = Date().timeIntervalSince(lastFileEventTime)
+        let currentFileSize = self.getFileSize(filePath)
 
-      // Only emit if status actually changed
-      if parseResult.currentStatus != lastEmittedStatus {
-        // Detect transition TO awaitingApproval (for notification)
-        if case .awaitingApproval(let tool) = parseResult.currentStatus,
-           !self.isAwaitingApproval(previousStatus) {
-          // Get last user message for notification context
-          let lastMessage = parseResult.recentActivities
-            .last(where: { if case .userMessage = $0.type { return true }; return false })?
-            .description
+        // If file has grown but no events in 5+ seconds, watcher may be stale
+        if timeSinceLastEvent > 5 && currentFileSize > lastKnownFileSize {
+          print("[SessionFileWatcher] ⚠️ Stale watcher detected for \(sessionId): file grew from \(lastKnownFileSize) to \(currentFileSize) but no events in \(Int(timeSinceLastEvent))s")
 
-          // Send notification
-          ApprovalNotificationService.shared.sendApprovalNotification(
-            sessionId: sessionId,
-            toolName: tool,
-            projectPath: filePath,
-            model: parseResult.model,
-            lastMessage: lastMessage
-          )
+          // Recovery: re-read new content manually
+          var tempPosition = lastKnownFileSize
+          let newLines = self.readNewLines(from: filePath, startingAt: &tempPosition)
+
+          if !newLines.isEmpty {
+            print("[SessionFileWatcher] 🔄 Recovery: found \(newLines.count) missed lines, re-parsing...")
+            SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
+
+            // Update tracking
+            lastKnownFileSize = tempPosition
+            lastFileEventTime = Date()
+          } else {
+            // No new lines but file size changed - update tracking anyway
+            lastKnownFileSize = currentFileSize
+          }
         }
 
-        lastEmittedStatus = parseResult.currentStatus
-        let updatedState = self.buildMonitorState(from: parseResult)
+        // Re-evaluate status based on current time
+        let previousStatus = lastEmittedStatus
+        SessionJSONLParser.updateCurrentStatus(&parseResult, approvalTimeoutSeconds: timeout)
 
-        Task { @MainActor in
-          self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
+        // Only emit if status actually changed
+        if parseResult.currentStatus != lastEmittedStatus {
+          // Detect transition TO awaitingApproval (for notification)
+          if case .awaitingApproval(let tool) = parseResult.currentStatus,
+             !self.isAwaitingApproval(previousStatus) {
+            // Get last user message for notification context
+            let lastMessage = parseResult.recentActivities
+              .last(where: { if case .userMessage = $0.type { return true }; return false })?
+              .description
+
+            // Send notification
+            ApprovalNotificationService.shared.sendApprovalNotification(
+              sessionId: sessionId,
+              toolName: tool,
+              projectPath: filePath,
+              model: parseResult.model,
+              lastMessage: lastMessage
+            )
+          }
+
+          lastEmittedStatus = parseResult.currentStatus
+          let updatedState = self.buildMonitorState(from: parseResult)
+
+          Task { @MainActor in
+            self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
+          }
         }
       }
     }
@@ -177,7 +226,9 @@ public actor SessionFileWatcher {
       filePath: filePath,
       source: source,
       statusTimer: statusTimer,
-      parseResult: parseResult
+      parseResult: parseResult,
+      lastFileEventTime: lastFileEventTime,
+      lastKnownFileSize: lastKnownFileSize
     )
 
     print("[SessionFileWatcher] Started monitoring: \(sessionId)")
@@ -340,4 +391,8 @@ private struct FileWatcherInfo {
   let source: DispatchSourceFileSystemObject
   let statusTimer: DispatchSourceTimer
   var parseResult: SessionJSONLParser.ParseResult
+
+  // Health check tracking
+  var lastFileEventTime: Date
+  var lastKnownFileSize: UInt64
 }

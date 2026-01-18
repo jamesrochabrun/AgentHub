@@ -24,7 +24,7 @@ public final class CLISessionsViewModel {
 
   private let monitorService: CLISessionMonitorService
   private let searchService: GlobalSearchService
-  private let claudeClient: ClaudeCode?
+  public let claudeClient: (any ClaudeCode)?
   private let worktreeService = GitWorktreeService()
 
   // MARK: - State

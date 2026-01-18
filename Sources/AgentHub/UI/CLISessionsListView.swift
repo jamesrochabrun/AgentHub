@@ -51,7 +51,7 @@ public struct CLISessionsListView: View {
         .padding(.trailing, 4)
 
       // Right panel: Monitoring
-      MonitoringPanelView(viewModel: viewModel)
+      MonitoringPanelView(viewModel: viewModel, claudeClient: viewModel.claudeClient)
         .padding(12)
         .agentHubPanel()
         .frame(minWidth: 300, idealWidth: 350)

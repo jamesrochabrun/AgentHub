@@ -5,6 +5,7 @@
 //  Created by Assistant on 1/11/26.
 //
 
+import ClaudeCodeSDK
 import PierreDiffsSwift
 import SwiftUI
 
@@ -23,10 +24,12 @@ private struct SessionFileSheetItem: Identifiable {
 /// Right panel view showing all monitored sessions
 public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
+  let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
 
-  public init(viewModel: CLISessionsViewModel) {
+  public init(viewModel: CLISessionsViewModel, claudeClient: (any ClaudeCode)?) {
     self.viewModel = viewModel
+    self.claudeClient = claudeClient
   }
 
   public var body: some View {
@@ -123,6 +126,7 @@ public struct MonitoringPanelView: View {
             session: item.session,
             state: item.state,
             codeChangesState: codeChangesState,
+            claudeClient: claudeClient,
             onStopMonitoring: {
               viewModel.stopMonitoring(session: item.session)
             },
@@ -335,6 +339,6 @@ private struct MonitoringSessionFileSheetView: View {
   let service = CLISessionMonitorService()
   let viewModel = CLISessionsViewModel(monitorService: service)
 
-  return MonitoringPanelView(viewModel: viewModel)
+  MonitoringPanelView(viewModel: viewModel, claudeClient: nil)
     .frame(width: 350, height: 500)
 }
