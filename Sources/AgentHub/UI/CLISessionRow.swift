@@ -16,14 +16,18 @@ public struct CLISessionRow: View {
   let isMonitoring: Bool
   let onConnect: () -> Void
   let onCopyId: () -> Void
+  let onOpenFile: () -> Void
   let onToggleMonitoring: () -> Void
   var showLastMessage: Bool = false
+
+  @State private var showCopyConfirmation = false
 
   public init(
     session: CLISession,
     isMonitoring: Bool,
     onConnect: @escaping () -> Void,
     onCopyId: @escaping () -> Void,
+    onOpenFile: @escaping () -> Void,
     onToggleMonitoring: @escaping () -> Void,
     showLastMessage: Bool = false
   ) {
@@ -31,6 +35,7 @@ public struct CLISessionRow: View {
     self.isMonitoring = isMonitoring
     self.onConnect = onConnect
     self.onCopyId = onCopyId
+    self.onOpenFile = onOpenFile
     self.onToggleMonitoring = onToggleMonitoring
     self.showLastMessage = showLastMessage
   }
@@ -95,14 +100,35 @@ public struct CLISessionRow: View {
         .foregroundColor(.brandPrimary)
         .fontWeight(.semibold)
 
-      // Copy button
-      Button(action: onCopyId) {
-        Image(systemName: "doc.on.doc")
+      // Copy button with animated confirmation
+      Button {
+        onCopyId()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+          showCopyConfirmation = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+          withAnimation(.easeOut(duration: 0.2)) {
+            showCopyConfirmation = false
+          }
+        }
+      } label: {
+        Image(systemName: showCopyConfirmation ? "checkmark" : "doc.on.doc")
+          .font(.caption2)
+          .fontWeight(showCopyConfirmation ? .bold : .regular)
+          .foregroundColor(showCopyConfirmation ? .green : .secondary)
+          .contentTransition(.symbolEffect(.replace))
+      }
+      .buttonStyle(.plain)
+      .help("Copy full session ID")
+
+      // Open session file button
+      Button(action: onOpenFile) {
+        Image(systemName: "doc.text")
           .font(.caption2)
           .foregroundColor(.secondary)
       }
       .buttonStyle(.plain)
-      .help("Copy full session ID")
+      .help("Open session file")
 
       Spacer()
     }
@@ -220,6 +246,7 @@ extension Date {
       isMonitoring: false,
       onConnect: { print("Connect") },
       onCopyId: { print("Copy ID") },
+      onOpenFile: { print("Open file") },
       onToggleMonitoring: { print("Toggle monitoring") }
     )
 
@@ -238,6 +265,7 @@ extension Date {
       isMonitoring: true,
       onConnect: { print("Connect") },
       onCopyId: { print("Copy ID") },
+      onOpenFile: { print("Open file") },
       onToggleMonitoring: { print("Toggle monitoring") }
     )
 
@@ -256,6 +284,7 @@ extension Date {
       isMonitoring: false,
       onConnect: { print("Connect") },
       onCopyId: { print("Copy ID") },
+      onOpenFile: { print("Open file") },
       onToggleMonitoring: { print("Toggle monitoring") }
     )
   }

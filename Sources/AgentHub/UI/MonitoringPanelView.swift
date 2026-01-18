@@ -5,13 +5,25 @@
 //  Created by Assistant on 1/11/26.
 //
 
+import PierreDiffsSwift
 import SwiftUI
+
+// MARK: - SessionFileSheetItem
+
+/// Identifiable wrapper for session file sheet
+private struct SessionFileSheetItem: Identifiable {
+  let id = UUID()
+  let session: CLISession
+  let fileName: String
+  let content: String
+}
 
 // MARK: - MonitoringPanelView
 
 /// Right panel view showing all monitored sessions
 public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
+  @State private var sessionFileSheetItem: SessionFileSheetItem?
 
   public init(viewModel: CLISessionsViewModel) {
     self.viewModel = viewModel
@@ -32,6 +44,14 @@ public struct MonitoringPanelView: View {
       }
     }
     .frame(minWidth: 300)
+    .sheet(item: $sessionFileSheetItem) { item in
+      MonitoringSessionFileSheetView(
+        session: item.session,
+        fileName: item.fileName,
+        content: item.content,
+        onDismiss: { sessionFileSheetItem = nil }
+      )
+    }
   }
 
   // MARK: - Header
@@ -110,11 +130,201 @@ public struct MonitoringPanelView: View {
               if let error = viewModel.connectToSession(item.session) {
                 print("Failed to connect: \(error.localizedDescription)")
               }
+            },
+            onCopySessionId: {
+              viewModel.copySessionId(item.session)
+            },
+            onOpenSessionFile: {
+              openSessionFile(for: item.session)
             }
           )
         }
       }
       .padding(12)
+    }
+  }
+
+  // MARK: - Session File Opening
+
+  private func openSessionFile(for session: CLISession) {
+    // Build path: ~/.claude/projects/{encoded-project-path}/{sessionId}.jsonl
+    let encodedPath = session.projectPath.replacingOccurrences(of: "/", with: "-")
+    let homeDir = FileManager.default.homeDirectoryForCurrentUser
+    let filePath = homeDir
+      .appendingPathComponent(".claude/projects")
+      .appendingPathComponent(encodedPath)
+      .appendingPathComponent("\(session.id).jsonl")
+
+    // Read file content
+    if let data = FileManager.default.contents(atPath: filePath.path),
+       let content = String(data: data, encoding: .utf8) {
+      sessionFileSheetItem = SessionFileSheetItem(
+        session: session,
+        fileName: "\(session.id).jsonl",
+        content: content
+      )
+    }
+  }
+}
+
+// MARK: - JSONL Filtering
+
+/// Filters JSONL content for a clean transcript view
+/// Shows: user questions, assistant text (truncated), tool names only
+/// Removes: tool_result, thinking, file-history-snapshot, large content
+private func filterJSONLContent(_ content: String) -> String {
+  let lines = content.components(separatedBy: .newlines)
+  var result: [String] = []
+  let maxTextLength = 500
+
+  for line in lines {
+    let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+    if trimmed.isEmpty { continue }
+
+    guard let data = trimmed.data(using: .utf8) else { continue }
+    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+    guard let type = json["type"] as? String else { continue }
+
+    // Skip file-history-snapshot, summary, etc.
+    if type != "user" && type != "assistant" { continue }
+
+    guard let message = json["message"] as? [String: Any] else { continue }
+    guard let contentBlocks = message["content"] as? [[String: Any]] else { continue }
+
+    var textParts: [String] = []
+    var toolNames: [String] = []
+    var hasOnlyToolResults = true
+
+    for block in contentBlocks {
+      guard let blockType = block["type"] as? String else { continue }
+
+      switch blockType {
+      case "text":
+        hasOnlyToolResults = false
+        if let text = block["text"] as? String {
+          let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+          if !cleaned.isEmpty {
+            if cleaned.count > maxTextLength {
+              textParts.append(String(cleaned.prefix(maxTextLength)) + "...")
+            } else {
+              textParts.append(cleaned)
+            }
+          }
+        }
+
+      case "tool_use":
+        hasOnlyToolResults = false
+        if let name = block["name"] as? String {
+          var toolDesc = name
+          if let input = block["input"] as? [String: Any] {
+            if let filePath = input["file_path"] as? String {
+              let fileName = (filePath as NSString).lastPathComponent
+              toolDesc = "\(name)(\(fileName))"
+            } else if let pattern = input["pattern"] as? String {
+              let short = String(pattern.prefix(30))
+              toolDesc = "\(name)(\(short))"
+            } else if let command = input["command"] as? String {
+              let short = String(command.prefix(40))
+              toolDesc = "\(name)(\(short)...)"
+            }
+          }
+          toolNames.append(toolDesc)
+        }
+
+      case "tool_result", "thinking":
+        continue
+
+      default:
+        hasOnlyToolResults = false
+      }
+    }
+
+    // Skip entries that only had tool_result blocks
+    if hasOnlyToolResults { continue }
+
+    // Build clean output line
+    var output = "[\(type.uppercased())]"
+
+    if !textParts.isEmpty {
+      output += " " + textParts.joined(separator: " ")
+    }
+
+    if !toolNames.isEmpty {
+      output += " [Tools: " + toolNames.joined(separator: ", ") + "]"
+    }
+
+    // Only add if we have meaningful content
+    if textParts.isEmpty && toolNames.isEmpty { continue }
+
+    result.append(output)
+  }
+
+  if result.isEmpty {
+    return "[No conversation content found - this session may only contain file history snapshots or tool results]"
+  }
+
+  return result.joined(separator: "\n\n")
+}
+
+// MARK: - MonitoringSessionFileSheetView
+
+/// Sheet view that displays session JSONL content using PierreDiffView
+private struct MonitoringSessionFileSheetView: View {
+  let session: CLISession
+  let fileName: String
+  let content: String
+  let onDismiss: () -> Void
+
+  @State private var diffStyle: DiffStyle = .unified
+  @State private var overflowMode: OverflowMode = .wrap
+
+  var body: some View {
+    VStack(spacing: 0) {
+      // Header
+      HStack {
+        HStack(spacing: 8) {
+          Image(systemName: "doc.text.fill")
+            .foregroundColor(.brandPrimary)
+          Text(fileName)
+            .font(.system(.headline, design: .monospaced))
+        }
+
+        Spacer()
+
+        Text(session.shortId)
+          .font(.system(.caption, design: .monospaced))
+          .foregroundColor(.secondary)
+
+        if let branch = session.branchName {
+          Text("[\(branch)]")
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+
+        Spacer()
+
+        Button("Close") { onDismiss() }
+      }
+      .padding()
+      .background(Color.surfaceElevated)
+
+      Divider()
+
+      // Diff view showing filtered content
+      PierreDiffView(
+        oldContent: "",
+        newContent: filterJSONLContent(content),
+        fileName: fileName,
+        diffStyle: $diffStyle,
+        overflowMode: $overflowMode
+      )
+    }
+    .frame(minWidth: 900, idealWidth: 1100, maxWidth: .infinity,
+           minHeight: 700, idealHeight: 900, maxHeight: .infinity)
+    .onKeyPress(.escape) {
+      onDismiss()
+      return .handled
     }
   }
 }

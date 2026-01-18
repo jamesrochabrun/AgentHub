@@ -25,6 +25,8 @@ public struct MonitoringCardView: View {
   let codeChangesState: CodeChangesState?
   let onStopMonitoring: () -> Void
   let onConnect: () -> Void
+  let onCopySessionId: () -> Void
+  let onOpenSessionFile: () -> Void
 
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
 
@@ -33,13 +35,17 @@ public struct MonitoringCardView: View {
     state: SessionMonitorState?,
     codeChangesState: CodeChangesState? = nil,
     onStopMonitoring: @escaping () -> Void,
-    onConnect: @escaping () -> Void
+    onConnect: @escaping () -> Void,
+    onCopySessionId: @escaping () -> Void,
+    onOpenSessionFile: @escaping () -> Void
   ) {
     self.session = session
     self.state = state
     self.codeChangesState = codeChangesState
     self.onStopMonitoring = onStopMonitoring
     self.onConnect = onConnect
+    self.onCopySessionId = onCopySessionId
+    self.onOpenSessionFile = onOpenSessionFile
   }
 
   public var body: some View {
@@ -47,15 +53,10 @@ public struct MonitoringCardView: View {
       // Header with session info and actions
       header
 
-      // Project path (full path to distinguish worktrees)
-      Text(session.projectPath)
-        .font(.caption2)
-        .foregroundColor(.secondary)
-        .lineLimit(1)
-        .truncationMode(.middle)
-        .help(session.projectPath)
-
       Divider()
+
+      // Status row with model and path
+      statusRow
 
       // Monitoring panel content (reuses existing component)
       SessionMonitorPanel(state: state)
@@ -85,25 +86,49 @@ public struct MonitoringCardView: View {
 
   private var header: some View {
     HStack {
-      // Session label and ID
-      Text("Session:")
-        .font(.subheadline)
-        .foregroundColor(.secondary)
-      Text(session.shortId)
-        .font(.system(.subheadline, design: .monospaced))
-        .foregroundColor(.brandPrimary)
-        .fontWeight(.semibold)
+      // Session label + ID with adaptive layout
+      ViewThatFits(in: .horizontal) {
+        // Wide: show label and ID
+        HStack(spacing: 4) {
+          Text("Session:")
+            .font(.subheadline)
+            .foregroundColor(.secondary)
+          Text(session.shortId)
+            .font(.system(.subheadline, design: .monospaced))
+            .foregroundColor(.brandPrimary)
+            .fontWeight(.semibold)
+        }
 
-      // Branch name
-      if let branch = session.branchName {
-        Text("[\(branch)]")
-          .font(.subheadline)
-          .foregroundColor(.secondary)
+        // Narrow: just ID
+        Text(session.shortId)
+          .font(.system(.subheadline, design: .monospaced))
+          .foregroundColor(.brandPrimary)
+          .fontWeight(.semibold)
       }
+
+      // Copy session ID button (right after ID)
+      Button(action: onCopySessionId) {
+        Image(systemName: "doc.on.doc")
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .agentHubChip()
+      }
+      .buttonStyle(.plain)
+      .help("Copy session ID")
+
+      // View transcript button (right after copy)
+      Button(action: onOpenSessionFile) {
+        Image(systemName: "doc.text")
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .agentHubChip()
+      }
+      .buttonStyle(.plain)
+      .help("View session transcript")
 
       Spacer()
 
-      // Code changes button
+      // Code changes button (trailing)
       if let codeChangesState, codeChangesState.changeCount > 0 {
         Button(action: {
           codeChangesSheetItem = CodeChangesSheetItem(
@@ -124,7 +149,7 @@ public struct MonitoringCardView: View {
         .help("View code changes")
       }
 
-      // Connect button
+      // Connect button (trailing)
       Button(action: onConnect) {
         Image(systemName: "terminal")
           .font(.caption)
@@ -134,7 +159,7 @@ public struct MonitoringCardView: View {
       .buttonStyle(.plain)
       .help("Open in Terminal")
 
-      // Stop monitoring button
+      // Stop monitoring button (trailing)
       Button(action: onStopMonitoring) {
         Image(systemName: "xmark.circle.fill")
           .font(.caption)
@@ -143,6 +168,54 @@ public struct MonitoringCardView: View {
       }
       .buttonStyle(.plain)
       .help("Stop monitoring")
+    }
+  }
+
+  // MARK: - Status Row
+
+  private var statusRow: some View {
+    ViewThatFits(in: .horizontal) {
+      // Horizontal layout for wider spaces
+      HStack(spacing: 6) {
+        pathView
+        branchPill
+      }
+
+      // Vertical layout for narrower spaces
+      VStack(alignment: .leading, spacing: 4) {
+        pathView
+        branchPill
+      }
+    }
+    .help(session.projectPath)
+  }
+
+  private var pathView: some View {
+    HStack(spacing: 3) {
+      Image(systemName: "folder")
+        .font(.caption2)
+        .foregroundColor(.secondary.opacity(0.6))
+
+      Text(session.projectPath)
+        .font(.caption2)
+        .foregroundColor(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+  }
+
+  @ViewBuilder
+  private var branchPill: some View {
+    if let branch = session.branchName {
+      Text(branch)
+        .font(.caption2)
+        .foregroundColor(.brandPrimary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+          Capsule()
+            .fill(Color.brandPrimary.opacity(0.12))
+        )
     }
   }
 }
@@ -172,7 +245,9 @@ public struct MonitoringCardView: View {
         ]
       ),
       onStopMonitoring: {},
-      onConnect: {}
+      onConnect: {},
+      onCopySessionId: {},
+      onOpenSessionFile: {}
     )
 
     // Awaiting approval
@@ -193,7 +268,9 @@ public struct MonitoringCardView: View {
         recentActivities: []
       ),
       onStopMonitoring: {},
-      onConnect: {}
+      onConnect: {},
+      onCopySessionId: {},
+      onOpenSessionFile: {}
     )
 
     // Loading state
@@ -209,7 +286,9 @@ public struct MonitoringCardView: View {
       ),
       state: nil,
       onStopMonitoring: {},
-      onConnect: {}
+      onConnect: {},
+      onCopySessionId: {},
+      onOpenSessionFile: {}
     )
   }
   .padding()

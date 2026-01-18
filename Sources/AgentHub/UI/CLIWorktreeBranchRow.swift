@@ -19,6 +19,7 @@ public struct CLIWorktreeBranchRow: View {
   let onDeleteWorktree: (() -> Void)?
   let onConnectSession: (CLISession) -> Void
   let onCopySessionId: (CLISession) -> Void
+  let onOpenSessionFile: (CLISession) -> Void
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
   var showLastMessage: Bool = false
@@ -55,6 +56,7 @@ public struct CLIWorktreeBranchRow: View {
     onDeleteWorktree: (() -> Void)? = nil,
     onConnectSession: @escaping (CLISession) -> Void,
     onCopySessionId: @escaping (CLISession) -> Void,
+    onOpenSessionFile: @escaping (CLISession) -> Void,
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
     showLastMessage: Bool = false,
@@ -68,25 +70,12 @@ public struct CLIWorktreeBranchRow: View {
     self.onDeleteWorktree = onDeleteWorktree
     self.onConnectSession = onConnectSession
     self.onCopySessionId = onCopySessionId
+    self.onOpenSessionFile = onOpenSessionFile
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
     self.isDeleting = isDeleting
-  }
-
-  /// Truncates a path from the middle if too long
-  private func truncatedPath(_ path: String, maxLength: Int = 45) -> String {
-    guard path.count > maxLength else { return path }
-
-    let components = path.split(separator: "/").map(String.init)
-    guard components.count > 4 else { return path }
-
-    // Keep first component (Users) and last 2 components
-    let prefix = "/" + components.prefix(1).joined(separator: "/")
-    let suffix = components.suffix(2).joined(separator: "/")
-
-    return "\(prefix)/.../\(suffix)"
   }
 
   public var body: some View {
@@ -106,28 +95,28 @@ public struct CLIWorktreeBranchRow: View {
             .foregroundColor(worktree.isWorktree ? .brandSecondary : .brandPrimary)
 
           // Path + [branch] - like git worktree list
-          HStack(spacing: 4) {
-            // Path (truncated if needed)
-            Text(truncatedPath(worktree.path))
-              .font(.system(.subheadline, design: .monospaced))
-              .foregroundColor(worktree.isWorktree ? .brandSecondary : .brandPrimary)
-              .lineLimit(1)
-
-            // Branch name in brackets
-            Text("[\(worktree.name)]")
-              .font(.subheadline)
-              .foregroundColor(.secondary)
+          ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+              Text(worktree.path)
+                .font(.system(.subheadline, design: .monospaced))
+                .foregroundColor(worktree.isWorktree ? .brandSecondary : .brandPrimary)
+                .lineLimit(1)
+              Text("[\(worktree.name)]")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+              Text(worktree.path)
+                .font(.system(.subheadline, design: .monospaced))
+                .foregroundColor(worktree.isWorktree ? .brandSecondary : .brandPrimary)
+                .lineLimit(1)
+              Text("[\(worktree.name)]")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+            }
           }
 
           Spacer()
-
-          // Session count
-          if !worktree.sessions.isEmpty {
-            Text("\(worktree.sessions.count)")
-              .font(.caption)
-              .foregroundColor(worktree.activeSessionCount > 0 ? .brandPrimary : .secondary)
-              .agentHubChip(isActive: worktree.activeSessionCount > 0)
-          }
 
           // Delete worktree button (only for actual worktrees in debug mode)
           if isDebugMode && worktree.isWorktree {
@@ -145,6 +134,14 @@ public struct CLIWorktreeBranchRow: View {
               .buttonStyle(.plain)
               .help("Delete worktree")
             }
+          }
+
+          // Session count
+          if !worktree.sessions.isEmpty {
+            Text("\(worktree.sessions.count)")
+              .font(.caption)
+              .foregroundColor(worktree.activeSessionCount > 0 ? .brandPrimary : .secondary)
+              .agentHubChip(isActive: worktree.activeSessionCount > 0)
           }
 
           // Open terminal button
@@ -181,6 +178,7 @@ public struct CLIWorktreeBranchRow: View {
                     isMonitoring: isSessionMonitored(session.id),
                     onConnect: { onConnectSession(session) },
                     onCopyId: { onCopySessionId(session) },
+                    onOpenFile: { onOpenSessionFile(session) },
                     onToggleMonitoring: { onToggleMonitoring(session) },
                     showLastMessage: showLastMessage
                   )
@@ -236,6 +234,7 @@ public struct CLIWorktreeBranchRow: View {
       onOpenTerminal: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
+      onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in }
     )
@@ -265,6 +264,7 @@ public struct CLIWorktreeBranchRow: View {
       onOpenTerminal: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
+      onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in }
     )
@@ -284,6 +284,7 @@ public struct CLIWorktreeBranchRow: View {
       onOpenTerminal: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
+      onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in }
     )

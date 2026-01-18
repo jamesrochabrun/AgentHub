@@ -17,6 +17,7 @@ public struct CLIRepositoryTreeView: View {
   let onToggleWorktreeExpanded: (WorktreeBranch) -> Void
   let onConnectSession: (CLISession) -> Void
   let onCopySessionId: (CLISession) -> Void
+  let onOpenSessionFile: (CLISession) -> Void
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
   let onCreateWorktree: () -> Void
@@ -36,6 +37,7 @@ public struct CLIRepositoryTreeView: View {
     onToggleWorktreeExpanded: @escaping (WorktreeBranch) -> Void,
     onConnectSession: @escaping (CLISession) -> Void,
     onCopySessionId: @escaping (CLISession) -> Void,
+    onOpenSessionFile: @escaping (CLISession) -> Void,
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
     onCreateWorktree: @escaping () -> Void,
@@ -51,6 +53,7 @@ public struct CLIRepositoryTreeView: View {
     self.onToggleWorktreeExpanded = onToggleWorktreeExpanded
     self.onConnectSession = onConnectSession
     self.onCopySessionId = onCopySessionId
+    self.onOpenSessionFile = onOpenSessionFile
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
     self.onCreateWorktree = onCreateWorktree
@@ -80,6 +83,7 @@ public struct CLIRepositoryTreeView: View {
             },
             onConnectSession: onConnectSession,
             onCopySessionId: onCopySessionId,
+            onOpenSessionFile: onOpenSessionFile,
             isSessionMonitored: isSessionMonitored,
             onToggleMonitoring: onToggleMonitoring,
             showLastMessage: showLastMessage,
@@ -230,6 +234,7 @@ public struct CLIRepositoryTreeView: View {
       onToggleWorktreeExpanded: { _ in print("Toggle worktree") },
       onConnectSession: { _ in print("Connect") },
       onCopySessionId: { _ in print("Copy") },
+      onOpenSessionFile: { _ in print("Open file") },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in print("Toggle monitoring") },
       onCreateWorktree: { print("Create worktree") },
@@ -255,6 +260,7 @@ public struct CLIRepositoryTreeView: View {
       onToggleWorktreeExpanded: { _ in print("Toggle worktree") },
       onConnectSession: { _ in print("Connect") },
       onCopySessionId: { _ in print("Copy") },
+      onOpenSessionFile: { _ in print("Open file") },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in print("Toggle monitoring") },
       onCreateWorktree: { print("Create worktree") },
