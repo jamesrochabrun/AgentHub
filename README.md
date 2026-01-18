@@ -52,14 +52,39 @@ AgentHub can launch Claude Code sessions via Terminal:
 import AgentHub
 import SwiftUI
 
-struct ContentView: View {
-    var body: some View {
-        CLISessionsListView()
+@main
+struct MyApp: App {
+  @State private var provider = AgentHubProvider()
+
+  var body: some Scene {
+    WindowGroup {
+      AgentHubSessionsView()
+        .agentHub(provider)
     }
+    .windowStyle(.hiddenTitleBar)
+
+    MenuBarExtra(
+      isInserted: Binding(
+        get: { provider.displaySettings.isMenuBarMode },
+        set: { _ in }
+      )
+    ) {
+      AgentHubMenuBarContent()
+        .environment(\.agentHub, provider)
+    } label: {
+      AgentHubMenuBarLabel(provider: provider)
+    }
+    .menuBarExtraStyle(.window)
+  }
 }
 ```
 
-The `CLISessionsListView` provides the complete UI - a split view with repository browser and session monitoring panel.
+`AgentHubProvider` is the central service provider that:
+- Creates and wires all services (monitor, stats, git)
+- Configures the `ClaudeCodeClient` for Terminal integration
+- Provides view models with proper dependency injection
+
+The `AgentHubSessionsView` provides the complete UI - a split view with repository browser and session monitoring panel.
 
 ## User Experience
 
@@ -90,7 +115,23 @@ The `CLISessionsListView` provides the complete UI - a split view with repositor
 - Full-screen diff viewer for all file modifications
 - Shows Edit, Write, and MultiEdit tool calls
 - File-by-file navigation
-- Unified diff rendering via PierreDiffsSwift
+- Unified/split diff rendering via PierreDiffsSwift
+
+#### Inline Editor
+
+Click any line in the diff view to open an inline editor. Type a question about that line and submit to resume the session in Terminal with your question as context.
+
+**Requirements:** The inline editor requires `claudeClient` to be properly configured. Without it, line clicks are disabled since the editor needs the client to launch Terminal with the resumed session.
+
+The client flows through:
+```
+AgentHubProvider.claudeClient
+    → CLISessionsViewModel.claudeClient
+    → MonitoringPanelView
+    → MonitoringCardView
+    → CodeChangesView
+    → InlineEditorOverlay
+```
 
 ### Worktree Management
 

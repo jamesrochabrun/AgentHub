@@ -5,6 +5,7 @@
 //  Created by Assistant on 1/11/26.
 //
 
+import ClaudeCodeSDK
 import SwiftUI
 
 // MARK: - CodeChangesSheetItem
@@ -23,6 +24,7 @@ public struct MonitoringCardView: View {
   let session: CLISession
   let state: SessionMonitorState?
   let codeChangesState: CodeChangesState?
+  let claudeClient: (any ClaudeCode)?
   let onStopMonitoring: () -> Void
   let onConnect: () -> Void
   let onCopySessionId: () -> Void
@@ -34,6 +36,7 @@ public struct MonitoringCardView: View {
     session: CLISession,
     state: SessionMonitorState?,
     codeChangesState: CodeChangesState? = nil,
+    claudeClient: (any ClaudeCode)? = nil,
     onStopMonitoring: @escaping () -> Void,
     onConnect: @escaping () -> Void,
     onCopySessionId: @escaping () -> Void,
@@ -42,6 +45,7 @@ public struct MonitoringCardView: View {
     self.session = session
     self.state = state
     self.codeChangesState = codeChangesState
+    self.claudeClient = claudeClient
     self.onStopMonitoring = onStopMonitoring
     self.onConnect = onConnect
     self.onCopySessionId = onCopySessionId
@@ -67,7 +71,8 @@ public struct MonitoringCardView: View {
       CodeChangesView(
         session: item.session,
         codeChangesState: item.codeChangesState,
-        onDismiss: { codeChangesSheetItem = nil }
+        onDismiss: { codeChangesSheetItem = nil },
+        claudeClient: claudeClient
       )
     }
   }
