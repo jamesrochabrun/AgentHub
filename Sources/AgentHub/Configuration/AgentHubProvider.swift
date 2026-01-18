@@ -1,0 +1,152 @@
+//
+//  AgentHubProvider.swift
+//  AgentHub
+//
+//  Central service provider for AgentHub
+//
+
+import Foundation
+import ClaudeCodeSDK
+
+/// Central service provider that manages all AgentHub services
+///
+/// `AgentHubProvider` provides lazy initialization of services and a single
+/// factory for `ClaudeCodeClient` instances. Use this instead of manually
+/// creating and wiring services.
+///
+/// ## Example
+/// ```swift
+/// @State private var provider = AgentHubProvider()
+///
+/// var body: some Scene {
+///   WindowGroup {
+///     AgentHubSessionsView()
+///       .agentHub(provider)
+///   }
+/// }
+/// ```
+@MainActor
+public final class AgentHubProvider {
+
+  // MARK: - Configuration
+
+  /// The configuration used by this provider
+  public let configuration: AgentHubConfiguration
+
+  // MARK: - Lazy Services
+
+  /// Monitor service for tracking CLI sessions
+  public private(set) lazy var monitorService: CLISessionMonitorService = {
+    CLISessionMonitorService(claudeDataPath: configuration.claudeDataPath)
+  }()
+
+  /// Git worktree service for branch/worktree operations
+  public private(set) lazy var gitService: GitWorktreeService = {
+    GitWorktreeService()
+  }()
+
+  /// Global stats service for usage metrics
+  public private(set) lazy var statsService: GlobalStatsService = {
+    GlobalStatsService(claudePath: configuration.claudeDataPath)
+  }()
+
+  /// Display settings for stats visualization
+  public private(set) lazy var displaySettings: StatsDisplaySettings = {
+    StatsDisplaySettings(configuration.statsDisplayMode)
+  }()
+
+  /// Claude Code client for SDK communication
+  public private(set) lazy var claudeClient: (any ClaudeCode)? = {
+    createClaudeClient()
+  }()
+
+  // MARK: - View Models
+
+  /// Sessions view model - created lazily and cached
+  public private(set) lazy var sessionsViewModel: CLISessionsViewModel = {
+    CLISessionsViewModel(
+      monitorService: monitorService,
+      claudeClient: claudeClient
+    )
+  }()
+
+  /// Intelligence view model - created lazily and cached
+  public private(set) lazy var intelligenceViewModel: IntelligenceViewModel = {
+    IntelligenceViewModel(
+      claudeClient: claudeClient,
+      gitService: gitService,
+      monitorService: monitorService
+    )
+  }()
+
+  // MARK: - Initialization
+
+  /// Creates a provider with the specified configuration
+  /// - Parameter configuration: Configuration for services. Defaults to `.default`
+  public init(configuration: AgentHubConfiguration = .default) {
+    self.configuration = configuration
+  }
+
+  /// Creates a provider with default configuration
+  public convenience init() {
+    self.init(configuration: .default)
+  }
+
+  // MARK: - Claude Client Factory
+
+  /// Creates a configured ClaudeCodeClient instance
+  /// - Returns: A configured client, or nil if creation fails
+  private func createClaudeClient() -> (any ClaudeCode)? {
+    do {
+      var config = ClaudeCodeConfiguration.withNvmSupport()
+      config.enableDebugLogging = configuration.enableDebugLogging
+
+      let homeDir = NSHomeDirectory()
+
+      // Add local Claude installation path (highest priority)
+      let localClaudePath = "\(homeDir)/.claude/local"
+      if FileManager.default.fileExists(atPath: localClaudePath) {
+        config.additionalPaths.insert(localClaudePath, at: 0)
+      }
+
+      // Add configured additional paths
+      for path in configuration.additionalCLIPaths {
+        if !config.additionalPaths.contains(path) {
+          config.additionalPaths.append(path)
+        }
+      }
+
+      // Add common development tool paths
+      let defaultPaths = [
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/bin",
+        "\(homeDir)/.bun/bin",
+        "\(homeDir)/.deno/bin",
+        "\(homeDir)/.cargo/bin",
+        "\(homeDir)/.local/bin"
+      ]
+
+      for path in defaultPaths {
+        if !config.additionalPaths.contains(path) {
+          config.additionalPaths.append(path)
+        }
+      }
+
+      return try ClaudeCodeClient(configuration: config)
+    } catch {
+      print("[AgentHubProvider] Failed to create ClaudeCodeClient: \(error)")
+      return nil
+    }
+  }
+
+  // MARK: - Public Factory Methods
+
+  /// Creates a new Claude client with the provider's configuration
+  /// - Returns: A new ClaudeCodeClient, or nil if creation fails
+  ///
+  /// Use this when you need a fresh client instance rather than the shared one.
+  public func makeClaudeClient() -> (any ClaudeCode)? {
+    createClaudeClient()
+  }
+}

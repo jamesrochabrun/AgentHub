@@ -10,30 +10,25 @@ import AgentHub
 
 @main
 struct AgentHubDemoApp: App {
-  @State private var statsService = GlobalStatsService()
-  @State private var displaySettings = StatsDisplaySettings(.menuBar)
+  @State private var provider = AgentHubProvider()
 
   var body: some Scene {
     WindowGroup {
-      ContentView(
-        statsService: statsService,
-        displaySettings: displaySettings
-      )
+      AgentHubSessionsView()
+        .agentHub(provider)
     }
     .windowStyle(.hiddenTitleBar)
 
     MenuBarExtra(
       isInserted: Binding(
-        get: { displaySettings.isMenuBarMode },
+        get: { provider.displaySettings.isMenuBarMode },
         set: { _ in }
       )
     ) {
-      GlobalStatsMenuView(service: statsService)
+      AgentHubMenuBarContent()
+        .environment(\.agentHub, provider)
     } label: {
-      HStack(spacing: 4) {
-        Image(systemName: "sparkle")
-        Text(statsService.formattedTotalTokens)
-      }
+      AgentHubMenuBarLabel(provider: provider)
     }
     .menuBarExtraStyle(.window)
   }
