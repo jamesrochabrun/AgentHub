@@ -61,40 +61,36 @@ private struct StatusBadge: View {
   @State private var pulse = false
 
   var body: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 6) {
       // Animated indicator for active states
       ZStack {
         Circle()
           .fill(statusColor)
-          .frame(width: DesignTokens.StatusSize.md, height: DesignTokens.StatusSize.md)
-          .shadow(color: statusColor.opacity(0.5), radius: isActiveStatus ? 6 : 3)
+          .frame(width: 6, height: 6)
+          .shadow(color: statusColor.opacity(0.5), radius: isActiveStatus ? 4 : 2)
 
         if isActiveStatus {
           Circle()
-            .stroke(statusColor.opacity(0.3), lineWidth: 2)
-            .frame(width: 18, height: 18)
+            .stroke(statusColor.opacity(0.3), lineWidth: 1)
+            .frame(width: 10, height: 10)
             .scaleEffect(pulse ? 1.3 : 1.0)
             .opacity(pulse ? 0 : 1)
         }
       }
 
-      Image(systemName: status.icon)
-        .font(.system(size: DesignTokens.IconSize.md))
-        .foregroundColor(statusColor)
-
       Text(status.displayName)
-        .font(.subheadline)
+        .font(.caption)
         .fontWeight(.medium)
         .foregroundColor(statusColor)
     }
-    .padding(.horizontal, DesignTokens.Spacing.md)
-    .padding(.vertical, DesignTokens.Spacing.sm)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 4)
     .background(
-      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+      Capsule()
         .fill(statusColor.opacity(0.12))
     )
     .overlay(
-      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+      Capsule()
         .stroke(statusColor.opacity(0.25), lineWidth: 1)
     )
     .onAppear {
