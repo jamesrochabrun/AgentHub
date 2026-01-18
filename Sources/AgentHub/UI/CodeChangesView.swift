@@ -17,6 +17,9 @@ public struct CodeChangesView: View {
   let codeChangesState: CodeChangesState
   let onDismiss: () -> Void
 
+  /// Claude client for inline editor operations (optional - inline editor disabled if nil)
+  let claudeClient: (any ClaudeCode)?
+
   @State private var selectedFileId: UUID?
   @State private var diffInputs: [UUID: DiffInputData] = [:]
   @State private var loadingStates: [UUID: Bool] = [:]
@@ -24,16 +27,17 @@ public struct CodeChangesView: View {
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
   @State private var inlineEditorState = InlineEditorState()
-  @State private var claudeClient: ClaudeCode = createClaudeClient()
 
   public init(
     session: CLISession,
     codeChangesState: CodeChangesState,
-    onDismiss: @escaping () -> Void
+    onDismiss: @escaping () -> Void,
+    claudeClient: (any ClaudeCode)? = nil
   ) {
     self.session = session
     self.codeChangesState = codeChangesState
     self.onDismiss = onDismiss
+    self.claudeClient = claudeClient
   }
 
   public var body: some View {
@@ -382,7 +386,7 @@ private struct DiffViewWithHeader: View {
   @Binding var diffStyle: DiffStyle
   @Binding var overflowMode: OverflowMode
   @Bindable var inlineEditorState: InlineEditorState
-  let claudeClient: ClaudeCode
+  let claudeClient: (any ClaudeCode)?
   let session: CLISession
 
   /// Callback to dismiss the entire diff view.
@@ -407,7 +411,8 @@ private struct DiffViewWithHeader: View {
             fileName: fileName,
             diffStyle: $diffStyle,
             overflowMode: $overflowMode,
-            onLineClickWithPosition: { position, localPoint in
+            onLineClickWithPosition: claudeClient != nil ? { position, localPoint in
+              // Only enable inline editor when claudeClient is available
               // localPoint is already in SwiftUI-compatible coordinates (origin at top-left)
               print("[CodeChangesView] Received localPoint: \(localPoint)")
               print("[CodeChangesView] GeometryReader size: \(geometry.size)")
@@ -430,7 +435,7 @@ private struct DiffViewWithHeader: View {
                   fullFileContent: fileContent
                 )
               }
-            },
+            } : nil,
             onReady: {
               withAnimation(.easeInOut(duration: 0.3)) {
                 isWebViewReady = true
@@ -451,35 +456,37 @@ private struct DiffViewWithHeader: View {
             .transition(.opacity)
           }
 
-          // Inline editor overlay - in same coordinate space as WebView
-          InlineEditorOverlay(
-            state: inlineEditorState,
-            containerSize: geometry.size,
-            onSubmit: { message, lineNumber, side, file in
-              print("[InlineEditor] Line \(lineNumber) (\(side)) in \(file): \(message)")
+          // Inline editor overlay - only shown when claudeClient is available
+          if let client = claudeClient {
+            InlineEditorOverlay(
+              state: inlineEditorState,
+              containerSize: geometry.size,
+              onSubmit: { message, lineNumber, side, file in
+                print("[InlineEditor] Line \(lineNumber) (\(side)) in \(file): \(message)")
 
-              // Build contextual prompt with line context
-              let prompt = buildInlinePrompt(
-                question: message,
-                lineNumber: lineNumber,
-                lineContent: inlineEditorState.lineContent ?? "",
-                fileName: file
-              )
+                // Build contextual prompt with line context
+                let prompt = buildInlinePrompt(
+                  question: message,
+                  lineNumber: lineNumber,
+                  lineContent: inlineEditorState.lineContent ?? "",
+                  fileName: file
+                )
 
-              // Open Terminal with resumed session
-              if let error = TerminalLauncher.launchTerminalWithSession(
-                session.id,
-                claudeClient: claudeClient,
-                projectPath: session.projectPath,
-                initialPrompt: prompt
-              ) {
-                inlineEditorState.errorMessage = error.localizedDescription
-              } else {
-                // Dismiss entire diff view - session continues in Terminal
-                onDismissView()
+                // Open Terminal with resumed session
+                if let error = TerminalLauncher.launchTerminalWithSession(
+                  session.id,
+                  claudeClient: client,
+                  projectPath: session.projectPath,
+                  initialPrompt: prompt
+                ) {
+                  inlineEditorState.errorMessage = error.localizedDescription
+                } else {
+                  // Dismiss entire diff view - session continues in Terminal
+                  onDismissView()
+                }
               }
-            }
-          )
+            )
+          }
         }
       }
       .animation(.easeInOut(duration: 0.3), value: isWebViewReady)
@@ -580,37 +587,6 @@ private struct DiffViewWithHeader: View {
 
       \(question)
       """
-  }
-}
-
-// MARK: - Claude Client Factory
-
-/// Creates a ClaudeCode client with standard configuration
-private func createClaudeClient() -> ClaudeCode {
-  do {
-    var config = ClaudeCodeConfiguration.withNvmSupport()
-    let homeDir = NSHomeDirectory()
-
-    // Add local Claude installation path (highest priority)
-    let localClaudePath = "\(homeDir)/.claude/local"
-    if FileManager.default.fileExists(atPath: localClaudePath) {
-      config.additionalPaths.insert(localClaudePath, at: 0)
-    }
-
-    // Add common development tool paths
-    config.additionalPaths.append(contentsOf: [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "\(homeDir)/.bun/bin",
-      "\(homeDir)/.deno/bin",
-      "\(homeDir)/.cargo/bin",
-      "\(homeDir)/.local/bin"
-    ])
-
-    return try ClaudeCodeClient(configuration: config)
-  } catch {
-    fatalError("Failed to create ClaudeCodeClient: \(error)")
   }
 }
 
