@@ -68,9 +68,9 @@ public struct SearchResultRow: View {
 
         Spacer()
 
-        // Time ago
+        // Date
         VStack(alignment: .trailing, spacing: 4) {
-          Text(timeAgoString(from: result.lastActivityAt))
+          Text(preciseDateString(from: result.lastActivityAt))
             .font(.caption)
             .foregroundColor(.secondary)
 
@@ -146,12 +146,31 @@ public struct SearchResultRow: View {
       return formatter.string(from: date)
     }
   }
+
+  private func preciseDateString(from date: Date) -> String {
+    let formatter = DateFormatter()
+    let calendar = Calendar.current
+
+    if calendar.isDateInToday(date) {
+      // Show time for today: "3:42 PM"
+      formatter.dateFormat = "h:mm a"
+    } else if calendar.isDate(date, equalTo: Date(), toGranularity: .year) {
+      // Same year: "Jan 17"
+      formatter.dateFormat = "MMM d"
+    } else {
+      // Different year: "Jan 17, 2025"
+      formatter.dateFormat = "MMM d, yyyy"
+    }
+
+    return formatter.string(from: date)
+  }
 }
 
 // MARK: - Preview
 
 #Preview {
   VStack(spacing: 12) {
+    // Today - shows time (e.g., "3:42 PM")
     SearchResultRow(
       result: SessionSearchResult(
         id: "abc123",
@@ -167,17 +186,50 @@ public struct SearchResultRow: View {
       onSelect: {}
     )
 
+    // Same year - shows "Jan 17"
     SearchResultRow(
       result: SessionSearchResult(
         id: "def456",
+        slug: "async-coalescing-summit",
+        projectPath: "/Users/user/Projects/AgentHub",
+        gitBranch: "jroch-inline-request",
+        firstMessage: "Implement the following plan:",
+        summaries: ["Fixed authentication bug", "Updated login flow"],
+        lastActivityAt: Calendar.current.date(byAdding: .day, value: -2, to: Date())!,
+        matchedField: .summary,
+        matchedText: "Fixed authentication bug"
+      ),
+      onSelect: {}
+    )
+
+    // Same slug, different date - shows "Jan 15"
+    SearchResultRow(
+      result: SessionSearchResult(
+        id: "ghi789",
+        slug: "async-coalescing-summit",
+        projectPath: "/Users/user/Projects/AgentHub",
+        gitBranch: "jroch-inline-request",
+        firstMessage: "Implement the following plan:",
+        summaries: ["Added new feature"],
+        lastActivityAt: Calendar.current.date(byAdding: .day, value: -4, to: Date())!,
+        matchedField: .firstMessage,
+        matchedText: "Implement the following plan:"
+      ),
+      onSelect: {}
+    )
+
+    // Different year - shows "Jan 17, 2025"
+    SearchResultRow(
+      result: SessionSearchResult(
+        id: "jkl012",
         slug: "happy-dancing-penguin",
         projectPath: "/Users/user/Projects/OtherApp",
         gitBranch: "main",
         firstMessage: nil,
-        summaries: ["Fixed authentication bug", "Updated login flow"],
-        lastActivityAt: Date().addingTimeInterval(-86400),
+        summaries: ["Old session"],
+        lastActivityAt: Calendar.current.date(from: DateComponents(year: 2025, month: 1, day: 17))!,
         matchedField: .summary,
-        matchedText: "Fixed authentication bug"
+        matchedText: "Old session"
       ),
       onSelect: {}
     )
