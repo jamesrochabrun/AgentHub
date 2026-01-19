@@ -17,9 +17,10 @@ public struct SessionMonitorState: Equatable, Sendable {
   public var currentTool: String?
   public var lastActivityAt: Date
 
-  // Tokens
-  public var inputTokens: Int
-  public var outputTokens: Int
+  // Tokens - context window tracking
+  public var inputTokens: Int       // Last input tokens (represents current context window usage)
+  public var outputTokens: Int      // Last output tokens
+  public var totalOutputTokens: Int // Accumulated output tokens (for cost calculation)
   public var cacheReadTokens: Int
   public var cacheCreationTokens: Int
 
@@ -42,6 +43,7 @@ public struct SessionMonitorState: Equatable, Sendable {
     lastActivityAt: Date = Date(),
     inputTokens: Int = 0,
     outputTokens: Int = 0,
+    totalOutputTokens: Int = 0,
     cacheReadTokens: Int = 0,
     cacheCreationTokens: Int = 0,
     messageCount: Int = 0,
@@ -57,6 +59,7 @@ public struct SessionMonitorState: Equatable, Sendable {
     self.lastActivityAt = lastActivityAt
     self.inputTokens = inputTokens
     self.outputTokens = outputTokens
+    self.totalOutputTokens = totalOutputTokens
     self.cacheReadTokens = cacheReadTokens
     self.cacheCreationTokens = cacheCreationTokens
     self.messageCount = messageCount
@@ -81,6 +84,38 @@ public struct SessionMonitorState: Equatable, Sendable {
 
   public var isAwaitingApproval: Bool {
     pendingToolUse != nil
+  }
+
+  // MARK: - Context Window
+
+  /// Context window size (200K for Claude models)
+  public var contextWindowSize: Int { 200_000 }
+
+  /// Context window usage as a percentage (0.0 to 1.0+)
+  public var contextWindowUsagePercentage: Double {
+    Double(inputTokens) / Double(contextWindowSize)
+  }
+
+  /// Formatted context usage string with ~ prefix to indicate it's approximate
+  /// (based on API usage data, may differ slightly from Claude Code's internal calculation)
+  public var formattedContextUsage: String {
+    let used = Self.formatTokenCount(inputTokens)
+    let total = Self.formatTokenCount(contextWindowSize)
+    let percentage = Int(contextWindowUsagePercentage * 100)
+    return "~\(used) / \(total) (~\(percentage)%)"
+  }
+
+  /// Format token count with K/M suffix
+  public static func formatTokenCount(_ count: Int) -> String {
+    if count >= 1_000_000 {
+      let value = Double(count) / 1_000_000
+      return String(format: "%.1fM", value)
+    } else if count >= 1_000 {
+      let value = Double(count) / 1_000
+      return String(format: "%.0fK", value)
+    } else {
+      return "\(count)"
+    }
   }
 }
 

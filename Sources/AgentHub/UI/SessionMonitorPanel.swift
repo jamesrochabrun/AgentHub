@@ -30,6 +30,14 @@ public struct SessionMonitorPanel: View {
           }
         }
 
+        // Context window usage bar
+        if state.inputTokens > 0 {
+          ContextWindowBar(
+            percentage: state.contextWindowUsagePercentage,
+            formattedUsage: state.formattedContextUsage
+          )
+        }
+
         // Recent activity
         if !state.recentActivities.isEmpty {
           RecentActivityList(activities: state.recentActivities)
@@ -230,17 +238,35 @@ private struct ActivityRow: View {
 
 #Preview {
   VStack(spacing: 20) {
-    // Active session - executing tool
+    // Active session - executing tool with context usage
     SessionMonitorPanel(
       state: SessionMonitorState(
         status: .executingTool(name: "Bash"),
         currentTool: "Bash",
         lastActivityAt: Date(),
+        inputTokens: 45000,  // Context window usage
+        outputTokens: 1200,
+        totalOutputTokens: 5600,
         model: "claude-opus-4-20250514",
         recentActivities: [
           ActivityEntry(timestamp: Date().addingTimeInterval(-15), type: .userMessage, description: "Build the project"),
           ActivityEntry(timestamp: Date().addingTimeInterval(-10), type: .toolUse(name: "Bash"), description: "swift build"),
           ActivityEntry(timestamp: Date().addingTimeInterval(-5), type: .toolResult(name: "Bash", success: true), description: "Completed"),
+          ActivityEntry(timestamp: Date(), type: .thinking, description: "Thinking...")
+        ]
+      )
+    )
+
+    // High context usage (warning)
+    SessionMonitorPanel(
+      state: SessionMonitorState(
+        status: .thinking,
+        lastActivityAt: Date(),
+        inputTokens: 160000,  // 80% usage
+        outputTokens: 800,
+        totalOutputTokens: 12000,
+        model: "claude-opus-4-20250514",
+        recentActivities: [
           ActivityEntry(timestamp: Date(), type: .thinking, description: "Thinking...")
         ]
       )

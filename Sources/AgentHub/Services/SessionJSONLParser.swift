@@ -69,8 +69,11 @@ public struct SessionJSONLParser {
   /// Result of parsing a session file
   public struct ParseResult {
     public var model: String?
-    public var inputTokens: Int = 0
-    public var outputTokens: Int = 0
+    // Context window tracking: use LAST inputTokens (each API call sends full conversation)
+    public var lastInputTokens: Int = 0
+    public var lastOutputTokens: Int = 0
+    // Cost calculation: accumulate output tokens
+    public var totalOutputTokens: Int = 0
     public var cacheReadTokens: Int = 0
     public var cacheCreationTokens: Int = 0
     public var messageCount: Int = 0
@@ -121,7 +124,7 @@ public struct SessionJSONLParser {
     // Determine current status from pending tools
     updateCurrentStatus(&result, approvalTimeoutSeconds: approvalTimeoutSeconds)
 
-    print("[SessionJSONLParser] Result: \(result.messageCount) msgs, \(result.inputTokens) input, \(result.outputTokens) output, \(result.pendingToolUses.count) pending")
+    print("[SessionJSONLParser] Result: \(result.messageCount) msgs, \(result.lastInputTokens) input, \(result.totalOutputTokens) total output, \(result.pendingToolUses.count) pending")
     return result
   }
 
@@ -197,10 +200,17 @@ public struct SessionJSONLParser {
 
       // Extract usage
       if let usage = entry.message?.usage {
-        result.inputTokens += usage.inputTokens ?? 0
-        result.outputTokens += usage.outputTokens ?? 0
-        result.cacheReadTokens += usage.cacheReadInputTokens ?? 0
-        result.cacheCreationTokens += usage.cacheCreationInputTokens ?? 0
+        // For context window: total = input + cache_read + cache_creation
+        // (each API call sends full conversation, cache tokens are part of context)
+        let inputTokens = usage.inputTokens ?? 0
+        let cacheRead = usage.cacheReadInputTokens ?? 0
+        let cacheCreation = usage.cacheCreationInputTokens ?? 0
+        result.lastInputTokens = inputTokens + cacheRead + cacheCreation
+        result.lastOutputTokens = usage.outputTokens ?? 0
+        // For cost calculation: accumulate output tokens
+        result.totalOutputTokens += usage.outputTokens ?? 0
+        result.cacheReadTokens += cacheRead
+        result.cacheCreationTokens += cacheCreation
       }
 
       // Process content blocks

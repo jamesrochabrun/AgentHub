@@ -356,8 +356,9 @@ public actor SessionFileWatcher {
       status: result.currentStatus,
       currentTool: extractCurrentTool(from: result),
       lastActivityAt: result.lastActivityAt ?? Date(),
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
+      inputTokens: result.lastInputTokens,          // Last input (context window)
+      outputTokens: result.lastOutputTokens,         // Last output
+      totalOutputTokens: result.totalOutputTokens,   // Accumulated (for cost)
       cacheReadTokens: result.cacheReadTokens,
       cacheCreationTokens: result.cacheCreationTokens,
       messageCount: result.messageCount,
