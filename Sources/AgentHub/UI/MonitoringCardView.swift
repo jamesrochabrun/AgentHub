@@ -17,6 +17,15 @@ private struct CodeChangesSheetItem: Identifiable {
   let codeChangesState: CodeChangesState
 }
 
+// MARK: - GitDiffSheetItem
+
+/// Identifiable wrapper for git diff sheet - captures session and project path
+private struct GitDiffSheetItem: Identifiable {
+  let id = UUID()
+  let session: CLISession
+  let projectPath: String
+}
+
 // MARK: - MonitoringCardView
 
 /// Card view for displaying a monitored session in the monitoring panel
@@ -31,6 +40,7 @@ public struct MonitoringCardView: View {
   let onOpenSessionFile: () -> Void
 
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
+  @State private var gitDiffSheetItem: GitDiffSheetItem?
 
   public init(
     session: CLISession,
@@ -73,6 +83,13 @@ public struct MonitoringCardView: View {
         codeChangesState: item.codeChangesState,
         onDismiss: { codeChangesSheetItem = nil },
         claudeClient: claudeClient
+      )
+    }
+    .sheet(item: $gitDiffSheetItem) { item in
+      GitDiffView(
+        session: item.session,
+        projectPath: item.projectPath,
+        onDismiss: { gitDiffSheetItem = nil }
       )
     }
   }
@@ -153,6 +170,25 @@ public struct MonitoringCardView: View {
         .buttonStyle(.plain)
         .help("View code changes")
       }
+
+      // Git diff button (trailing)
+      Button(action: {
+        gitDiffSheetItem = GitDiffSheetItem(
+          session: session,
+          projectPath: session.projectPath
+        )
+      }) {
+        HStack(spacing: 4) {
+          Image(systemName: "arrow.left.arrow.right")
+            .font(.caption)
+          Text("Diff")
+            .font(.system(.caption2, design: .rounded))
+        }
+        .foregroundColor(.secondary)
+        .agentHubChip()
+      }
+      .buttonStyle(.plain)
+      .help("View git unstaged changes")
 
       // Connect button (trailing)
       Button(action: onConnect) {
