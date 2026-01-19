@@ -147,12 +147,20 @@ public struct CLIWorktreeBranchRow: View {
             }
           }
 
-          // Session count
+          // Session count with active indicator
           if !worktree.sessions.isEmpty {
-            Text("\(worktree.sessions.count)")
-              .font(.caption)
-              .foregroundColor(worktree.activeSessionCount > 0 ? .brandPrimary : .secondary)
-              .agentHubChip(isActive: worktree.activeSessionCount > 0)
+            HStack(spacing: 4) {
+              Text("\(worktree.sessions.count)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+              if worktree.activeSessionCount > 0 {
+                Circle()
+                  .fill(Color.green)
+                  .frame(width: 6, height: 6)
+              }
+            }
+            .agentHubChip(isActive: false)
           }
 
           // Open terminal button

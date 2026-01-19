@@ -95,7 +95,7 @@ public struct CLIRepositoryTreeView: View {
       }
     }
     .padding(6)
-    .agentHubCard(isHighlighted: repository.activeSessionCount > 0)
+    .agentHubCard(isHighlighted: false)
     .alert("Delete Worktree?", isPresented: $showDeleteConfirmation) {
       Button("Cancel", role: .cancel) {
         worktreeToDelete = nil
@@ -135,6 +135,13 @@ public struct CLIRepositoryTreeView: View {
             .font(.headline)
             .fontWeight(.semibold)
             .foregroundColor(.primary)
+
+          // Green dot for active sessions
+          if repository.activeSessionCount > 0 {
+            Circle()
+              .fill(Color.green)
+              .frame(width: 8, height: 8)
+          }
         }
         .contentShape(Rectangle())
       }
@@ -144,18 +151,10 @@ public struct CLIRepositoryTreeView: View {
 
       // Session count badge
       if repository.totalSessionCount > 0 {
-        HStack(spacing: 4) {
-          if repository.activeSessionCount > 0 {
-            Circle()
-              .fill(Color.brandPrimary)
-              .frame(width: 6, height: 6)
-          }
-
-          Text("\(repository.totalSessionCount)")
-            .font(.caption)
-            .foregroundColor(repository.activeSessionCount > 0 ? .brandPrimary : .secondary)
-        }
-        .agentHubChip(isActive: repository.activeSessionCount > 0)
+        Text("\(repository.totalSessionCount)")
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .agentHubChip(isActive: false)
       }
 
       // Create worktree button
@@ -180,7 +179,7 @@ public struct CLIRepositoryTreeView: View {
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 8)
-    .agentHubRow(isHighlighted: repository.activeSessionCount > 0)
+    .agentHubRow(isHighlighted: false)
   }
 }
 

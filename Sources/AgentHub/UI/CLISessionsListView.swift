@@ -418,25 +418,6 @@ public struct CLISessionsListView: View {
       }
 
       HStack {
-        // Session count
-        if viewModel.activeSessionCount > 0 {
-          HStack(spacing: 6) {
-            Circle()
-              .fill(Color.green)
-              .frame(width: DesignTokens.StatusSize.sm, height: DesignTokens.StatusSize.sm)
-              .shadow(color: .green.opacity(0.4), radius: 2)
-            Text("\(viewModel.activeSessionCount) active")
-              .font(.system(.caption, weight: .medium))
-              .foregroundColor(.green)
-          }
-          .padding(.horizontal, DesignTokens.Spacing.sm)
-          .padding(.vertical, DesignTokens.Spacing.xs)
-          .background(
-            Capsule()
-              .fill(Color.green.opacity(0.1))
-          )
-        }
-
         Text("\(viewModel.selectedRepositories.count) \(viewModel.selectedRepositories.count == 1 ? "module" : "modules") selected · \(viewModel.totalSessionCount) sessions")
           .font(.caption)
           .foregroundColor(.secondary)

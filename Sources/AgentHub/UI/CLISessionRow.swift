@@ -44,7 +44,7 @@ public struct CLISessionRow: View {
     sessionRowContent
       .padding(.vertical, 8)
       .padding(.horizontal, 10)
-      .agentHubRow(isHighlighted: session.isActive)
+      .agentHubRow(isHighlighted: isMonitoring)
   }
 
   // MARK: - Session Row Content
@@ -84,10 +84,10 @@ public struct CLISessionRow: View {
   }
 
   private var statusColor: Color {
-    if isMonitoring {
-      return .brandPrimary
+    if session.isActive {
+      return .green
     }
-    return session.isActive ? .green : .gray.opacity(0.5)
+    return isMonitoring ? .brandPrimary : .gray.opacity(0.5)
   }
 
   // MARK: - Session ID Row

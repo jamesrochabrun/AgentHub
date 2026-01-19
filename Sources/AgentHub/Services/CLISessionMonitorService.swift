@@ -148,11 +148,6 @@ public actor CLISessionMonitorService {
     let allPaths = getAllMonitoredPaths()
     print("[CLIMonitorService] Monitoring \(allPaths.count) paths")
 
-    // Get running processes
-    print("[CLIMonitorService] Getting running processes...")
-    let runningProcesses = await getRunningClaudeProcesses()
-    print("[CLIMonitorService] Found \(runningProcesses.count) running processes")
-
     // Parse history for selected paths only
     let startHistory = CFAbsoluteTimeGetCurrent()
     print("[CLIMonitorService] Parsing history...")
@@ -239,9 +234,18 @@ public actor CLISessionMonitorService {
 
           guard branchMatches else { continue }
 
-          // Check if session is active
-          let isActive = runningProcesses.contains { process in
-            process.command.contains(sessionId) || process.command.contains(firstEntry.project)
+          // Check if session is active by looking at session file modification time
+          // A session is active if its .jsonl file was modified in the last 60 seconds
+          let encodedPath = firstEntry.project.replacingOccurrences(of: "/", with: "-")
+          let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
+          var isActive = false
+          if let attrs = try? FileManager.default.attributesOfItem(atPath: sessionFilePath),
+             let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
+            let secondsAgo = Date().timeIntervalSince(modDate)
+            isActive = secondsAgo < 60
+            if isActive {
+              print("[CLIMonitorService] Session \(sessionId.prefix(8)) is ACTIVE (modified \(Int(secondsAgo))s ago)")
+            }
           }
 
           // Get the first and last message (sorted by timestamp)
@@ -344,15 +348,6 @@ public actor CLISessionMonitorService {
       }
     }
     return paths
-  }
-
-  // MARK: - Process Detection
-
-  private func getRunningClaudeProcesses() async -> [(pid: Int32, command: String)] {
-    // TODO: Process detection disabled - sandboxing may block /bin/ps
-    // For now, skip active process detection - sessions will show but not marked as "active"
-    print("[CLIMonitorService] getRunningClaudeProcesses - skipping (disabled)")
-    return []
   }
 
   // MARK: - Session File Parsing
