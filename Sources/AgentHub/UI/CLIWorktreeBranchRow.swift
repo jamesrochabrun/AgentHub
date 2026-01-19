@@ -26,12 +26,11 @@ public struct CLIWorktreeBranchRow: View {
   var isDebugMode: Bool = false
   var isDeleting: Bool = false
 
-  // Max visible sessions before scrolling
-  private let maxVisibleSessions = 4
-  private let sessionRowHeight: CGFloat = 88
-  private var maxSessionsHeight: CGFloat {
-    CGFloat(maxVisibleSessions) * sessionRowHeight
-  }
+  @State private var visibleSessionCount: Int = 7
+
+  // Initial visible sessions and load increment
+  private let initialVisibleSessions = 7
+  private let loadMoreIncrement = 10
 
   /// Sessions sorted with monitored ones at the top, then by last activity
   private var sortedSessions: [CLISession] {
@@ -46,6 +45,18 @@ public struct CLIWorktreeBranchRow: View {
       // Then by last activity
       return session1.lastActivityAt > session2.lastActivityAt
     }
+  }
+
+  private var visibleSessions: ArraySlice<CLISession> {
+    sortedSessions.prefix(visibleSessionCount)
+  }
+
+  private var remainingSessions: Int {
+    max(0, sortedSessions.count - visibleSessionCount)
+  }
+
+  private var hasMoreSessions: Bool {
+    remainingSessions > 0
   }
 
   public init(
@@ -169,39 +180,44 @@ public struct CLIWorktreeBranchRow: View {
             .padding(.leading, 32)
             .padding(.vertical, 4)
         } else {
-          VStack(spacing: 0) {
-            ScrollView {
-              VStack(spacing: 8) {
-                ForEach(sortedSessions) { session in
-                  CLISessionRow(
-                    session: session,
-                    isMonitoring: isSessionMonitored(session.id),
-                    onConnect: { onConnectSession(session) },
-                    onCopyId: { onCopySessionId(session) },
-                    onOpenFile: { onOpenSessionFile(session) },
-                    onToggleMonitoring: { onToggleMonitoring(session) },
-                    showLastMessage: showLastMessage
-                  )
-                }
-              }
-              .padding(.vertical, 4)
+          VStack(spacing: 8) {
+            ForEach(visibleSessions) { session in
+              CLISessionRow(
+                session: session,
+                isMonitoring: isSessionMonitored(session.id),
+                onConnect: { onConnectSession(session) },
+                onCopyId: { onCopySessionId(session) },
+                onOpenFile: { onOpenSessionFile(session) },
+                onToggleMonitoring: { onToggleMonitoring(session) },
+                showLastMessage: showLastMessage
+              )
             }
-            .frame(maxHeight: maxSessionsHeight)
 
-            // Show indicator if there are more sessions
-            if worktree.sessions.count > maxVisibleSessions {
-              HStack(spacing: 4) {
-                Image(systemName: "ellipsis")
-                  .font(.caption2)
-                Text("\(worktree.sessions.count) sessions")
-                  .font(.caption2)
+            // Show "...X more" button if there are more sessions
+            if hasMoreSessions {
+              Button {
+                visibleSessionCount += loadMoreIncrement
+              } label: {
+                HStack(spacing: 4) {
+                  Image(systemName: "ellipsis")
+                    .font(.caption2)
+                  Text("\(remainingSessions) more")
+                    .font(.caption2)
+                }
+                .foregroundColor(.secondary)
               }
-              .foregroundColor(.secondary)
+              .buttonStyle(.plain)
               .padding(.top, 4)
             }
           }
+          .padding(.vertical, 4)
           .padding(.leading, 20)
         }
+      }
+    }
+    .onChange(of: isExpanded) { _, newValue in
+      if newValue {
+        visibleSessionCount = initialVisibleSessions
       }
     }
   }
