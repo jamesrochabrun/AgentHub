@@ -68,9 +68,13 @@ private struct AgentHubRowModifier: ViewModifier {
   let isHighlighted: Bool
 
   func body(content: Content) -> some View {
-    let highlight = isHighlighted ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.18 : 0.1) : Color.clear
+    // Subtle warm gray for highlight (soft dark in dark mode, warm gray in light)
+    let highlightColor = Color(red: 0.55, green: 0.52, blue: 0.50)
+    let highlight = isHighlighted
+      ? (colorScheme == .dark ? Color.black.opacity(0.25) : highlightColor.opacity(0.08))
+      : Color.clear
     let strokeColor = isHighlighted
-      ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.5 : 0.3)
+      ? highlightColor.opacity(colorScheme == .dark ? 0.35 : 0.25)
       : Color.surfaceStroke.opacity(colorScheme == .dark ? 0.35 : 0.55)
 
     return content
