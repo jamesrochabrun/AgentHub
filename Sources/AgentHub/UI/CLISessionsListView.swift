@@ -34,6 +34,7 @@ public struct CLISessionsListView: View {
   @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @Environment(\.colorScheme) private var colorScheme
+  @FocusState private var isSearchFieldFocused: Bool
 
   public init(viewModel: CLISessionsViewModel) {
     self.viewModel = viewModel
@@ -166,14 +167,13 @@ public struct CLISessionsListView: View {
       CLIRepositoryPickerView(onAddRepository: viewModel.showAddRepositoryPicker)
         .padding(.bottom, 10)
 
-      // Search bar
-      searchBar
+      // Search bar with inline dropdown
+      searchBarWithDropdown
         .padding(.bottom, 10)
+        .zIndex(1)  // Ensure dropdown overlays content below
 
-      // Conditional content based on search state
-      if viewModel.isSearchActive {
-        searchResultsView
-      } else if viewModel.isLoading && !viewModel.hasRepositories {
+      // Always show normal content (dropdown overlays when active)
+      if viewModel.isLoading && !viewModel.hasRepositories {
         loadingView
       } else if !viewModel.hasRepositories {
         CLIEmptyStateView(onAddRepository: viewModel.showAddRepositoryPicker)
@@ -227,9 +227,8 @@ public struct CLISessionsListView: View {
       )
         .textFieldStyle(.plain)
         .font(.system(size: 13))
-        .onChange(of: viewModel.searchQuery) { _, _ in
-          viewModel.performSearch()
-        }
+        .focused($isSearchFieldFocused)
+        .onSubmit { viewModel.performSearch() }
 
       if !viewModel.searchQuery.isEmpty {
         Button(action: { viewModel.clearSearch() }) {
@@ -239,11 +238,23 @@ public struct CLISessionsListView: View {
         .buttonStyle(.plain)
       }
 
+      // Search button / Loading indicator (toggle between them)
       if viewModel.isSearching {
         ProgressView()
           .scaleEffect(0.7)
+          .frame(width: 20, height: 20)
+          .transition(.opacity.combined(with: .scale))
+      } else {
+        Button(action: { viewModel.performSearch() }) {
+          Image(systemName: "arrow.right.circle.fill")
+            .foregroundColor(.brandPrimary)
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.searchQuery.isEmpty)
+        .transition(.opacity.combined(with: .scale))
       }
     }
+    .animation(.easeInOut(duration: 0.15), value: viewModel.isSearching)
     .padding(.horizontal, DesignTokens.Spacing.md)
     .padding(.vertical, DesignTokens.Spacing.sm)
     .background(
@@ -254,6 +265,70 @@ public struct CLISessionsListView: View {
       RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
         .stroke(viewModel.isSearchActive || viewModel.hasSearchFilter ? Color.brandPrimary.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
     )
+  }
+
+  // MARK: - Search Bar with Dropdown
+
+  private var searchBarWithDropdown: some View {
+    VStack(spacing: 4) {
+      searchBar
+      inlineSearchResultsDropdown
+    }
+    .animation(.easeInOut(duration: 0.2), value: viewModel.hasPerformedSearch)
+  }
+
+  // MARK: - Inline Search Results Dropdown
+
+  @ViewBuilder
+  private var inlineSearchResultsDropdown: some View {
+    if viewModel.hasPerformedSearch && !viewModel.isSearching {
+      VStack(spacing: 0) {
+        if viewModel.searchResults.isEmpty {
+          // No results UI (compact version)
+          noResultsDropdownView
+        } else {
+          // Results list
+          ScrollView {
+            LazyVStack(spacing: 8) {
+              ForEach(viewModel.searchResults.prefix(10)) { result in
+                SearchResultRow(
+                  result: result,
+                  onSelect: { viewModel.selectSearchResult(result) }
+                )
+              }
+            }
+            .padding(.vertical, 8)
+            .padding(.horizontal, 4)
+          }
+          .frame(maxHeight: 280)
+        }
+      }
+      .background(Color.surfaceOverlay)
+      .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md))
+      .overlay(
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+          .stroke(Color.borderSubtle, lineWidth: 1)
+      )
+      .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+      .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+      .animation(.easeInOut(duration: 0.2), value: viewModel.searchResults.isEmpty)
+    }
+  }
+
+  // MARK: - No Results Dropdown View
+
+  private var noResultsDropdownView: some View {
+    VStack(spacing: 8) {
+      Image(systemName: "magnifyingglass")
+        .font(.system(size: 20))
+        .foregroundColor(.secondary.opacity(0.6))
+      Text("No sessions found")
+        .font(.system(.subheadline, weight: .medium))
+        .foregroundColor(.secondary)
+    }
+    .frame(maxWidth: .infinity)
+    .frame(minHeight: 80)
+    .padding(.vertical, 16)
   }
 
   // MARK: - Search Results View

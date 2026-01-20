@@ -49,6 +49,7 @@ public final class CLISessionsViewModel {
   public var searchQuery: String = ""
   public private(set) var searchResults: [SessionSearchResult] = []
   public private(set) var isSearching: Bool = false
+  public private(set) var hasPerformedSearch: Bool = false
   private var searchTask: Task<Void, Never>?
 
   /// Whether the search is active (has a query)
@@ -736,6 +737,7 @@ public final class CLISessionsViewModel {
         guard let self = self else { return }
         self.searchResults = results
         self.isSearching = false
+        self.hasPerformedSearch = true
       }
     }
   }
@@ -746,6 +748,7 @@ public final class CLISessionsViewModel {
     searchQuery = ""
     searchResults = []
     isSearching = false
+    hasPerformedSearch = false
   }
 
   /// Called when user selects a search result - adds the repo and clears search
