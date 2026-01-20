@@ -146,7 +146,7 @@ public actor CLISessionMonitorService {
 
     // Get all paths to filter by (including worktree paths)
     let allPaths = getAllMonitoredPaths()
-    print("[CLIMonitorService] Monitoring \(allPaths.count) paths")
+    print("[CLIMonitorService] Monitoring \(allPaths.count) paths: \(allPaths)")
 
     // Parse history for selected paths only
     let startHistory = CFAbsoluteTimeGetCurrent()
@@ -158,6 +158,10 @@ public actor CLISessionMonitorService {
     // Group entries by session ID
     let sessionEntries = Dictionary(grouping: historyEntries) { $0.sessionId }
     print("[CLIMonitorService] Grouped into \(sessionEntries.count) sessions")
+
+    // Debug: Print unique project paths from session entries
+    let uniqueProjects = Set(sessionEntries.compactMap { $0.value.first?.project })
+    print("[CLIMonitorService] Unique session projects: \(uniqueProjects)")
 
     // Build a map of session ID -> gitBranch (read from session files in parallel)
     let startBranches = CFAbsoluteTimeGetCurrent()
@@ -190,12 +194,10 @@ public actor CLISessionMonitorService {
     }
     print("[CLIMonitorService] Worktree branch names: \(worktreeBranchNames)")
 
+    // Track which sessions have been assigned to prevent duplicates
+    var assignedSessionIds: Set<String> = []
+
     for repoIndex in updatedRepositories.indices {
-      let repoPath = updatedRepositories[repoIndex].path
-
-      // Collect all paths for this repository (main + all worktrees)
-      let allRepoPaths = [repoPath] + updatedRepositories[repoIndex].worktrees.map { $0.path }
-
       for worktreeIndex in updatedRepositories[repoIndex].worktrees.indices {
         let worktreePath = updatedRepositories[repoIndex].worktrees[worktreeIndex].path
         let worktreeBranch = updatedRepositories[repoIndex].worktrees[worktreeIndex].name
@@ -207,17 +209,63 @@ public actor CLISessionMonitorService {
         for (sessionId, entries) in sessionEntries {
           guard let firstEntry = entries.first else { continue }
 
-          // Check if this session belongs to this repository:
-          // Session's project path must match the repo OR any of its worktree paths
-          let pathMatchesRepo = allRepoPaths.contains { path in
-            firstEntry.project.hasPrefix(path) || firstEntry.project == path
+          // Skip if already assigned to another worktree
+          guard !assignedSessionIds.contains(sessionId) else { continue }
+
+          // PRIMARY: Exact path match - session's project directory matches this worktree
+          // This is the most reliable criterion because firstEntry.project IS where the session runs
+          let pathMatchesWorktree = firstEntry.project == worktreePath
+
+          if pathMatchesWorktree {
+            // This is definitively the correct worktree - use this session
+            let sessionBranch = sessionBranches[sessionId]
+            print("[CLIMonitorService] Session \(sessionId.prefix(8)) exact path match to worktree '\(worktreeBranch)' at \(worktreePath)")
+
+            // Check if session is active
+            let encodedPath = firstEntry.project.replacingOccurrences(of: "/", with: "-")
+            let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
+            var isActive = false
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: sessionFilePath),
+               let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
+              let secondsAgo = Date().timeIntervalSince(modDate)
+              isActive = secondsAgo < 60
+              if isActive {
+                print("[CLIMonitorService] Session \(sessionId.prefix(8)) is ACTIVE (modified \(Int(secondsAgo))s ago)")
+              }
+            }
+
+            let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
+            let firstMessage = sortedEntries.first?.display
+            let lastMessage = sortedEntries.last?.display
+
+            let session = CLISession(
+              id: sessionId,
+              projectPath: firstEntry.project,
+              branchName: sessionBranch ?? worktreeBranch,
+              isWorktree: isWorktreeEntry,
+              lastActivityAt: entries.map { $0.date }.max() ?? Date(),
+              messageCount: entries.count,
+              isActive: isActive,
+              firstMessage: firstMessage,
+              lastMessage: lastMessage
+            )
+
+            sessions.append(session)
+            assignedSessionIds.insert(sessionId)
+            continue
           }
-          guard pathMatchesRepo else { continue }
+
+          // FALLBACK: For sessions in subdirectories of THIS worktree
+          // (e.g., session in /repo/subfolder should match worktree at /repo)
+          // This must check the CURRENT worktree path, not all repo paths,
+          // otherwise sessions from other worktrees would be incorrectly assigned
+          let pathIsSubdirectory = firstEntry.project.hasPrefix(worktreePath + "/")
+          guard pathIsSubdirectory else { continue }
 
           // Get session's branch from session file
           let sessionBranch = sessionBranches[sessionId]
 
-          // Match by branch name
+          // Match by branch name as fallback
           let branchMatches: Bool
           if let sessionBranch = sessionBranch {
             // Session has branch info - match by branch
@@ -266,6 +314,7 @@ public actor CLISessionMonitorService {
           )
 
           sessions.append(session)
+          assignedSessionIds.insert(sessionId)
         }
 
         // Sort by last activity
