@@ -115,7 +115,7 @@ public struct MonitoringCardView: View {
 
   private var header: some View {
     HStack {
-      // Session label + ID with adaptive layout
+      // Session ID (adaptive - hides label when narrow)
       ViewThatFits(in: .horizontal) {
         // Wide: show label and ID
         HStack(spacing: 4) {
@@ -124,16 +124,17 @@ public struct MonitoringCardView: View {
             .foregroundColor(.secondary)
           Text(session.shortId)
             .font(.system(.subheadline, design: .monospaced))
-            .foregroundColor(.brandPrimary)
-            .fontWeight(.semibold)
+            .foregroundColor(.secondary)
+            .fontWeight(.bold)
         }
 
         // Narrow: just ID
         Text(session.shortId)
           .font(.system(.subheadline, design: .monospaced))
-          .foregroundColor(.brandPrimary)
-          .fontWeight(.semibold)
+          .foregroundColor(.secondary)
+          .fontWeight(.bold)
       }
+      .lineLimit(1)
 
       // Copy session ID button (right after ID)
       Button(action: onCopySessionId) {
@@ -279,13 +280,8 @@ public struct MonitoringCardView: View {
     if let branch = session.branchName {
       Text(branch)
         .font(.caption2)
-        .foregroundColor(.brandPrimary)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(
-          Capsule()
-            .fill(Color.brandPrimary.opacity(0.12))
-        )
+        .fontWeight(.bold)
+        .foregroundColor(.secondary)
     }
   }
 }

@@ -61,14 +61,8 @@ public struct MonitoringPanelView: View {
 
   private var header: some View {
     HStack {
-      HStack(spacing: 8) {
-        Image(systemName: "eye.fill")
-          .font(.system(size: DesignTokens.IconSize.lg))
-          .foregroundColor(.brandPrimary)
-          .symbolRenderingMode(.hierarchical)
-        Text("Monitoring")
-          .font(.title3.weight(.semibold))
-      }
+      Text("Hub")
+        .font(.title3.weight(.semibold))
 
       Spacer()
 
