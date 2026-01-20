@@ -193,7 +193,7 @@ public struct CLISessionsListView: View {
 
       // Folder filter button
       Button(action: { viewModel.showSearchFilterPicker() }) {
-        Image(systemName: "folder")
+        Image(systemName: "folder.badge.plus")
           .font(.system(size: DesignTokens.IconSize.md))
           .foregroundColor(viewModel.hasSearchFilter ? .brandPrimary : .secondary)
       }

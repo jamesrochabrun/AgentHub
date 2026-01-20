@@ -19,34 +19,24 @@ public struct CLIRepositoryPickerView: View {
 
   public var body: some View {
     Button(action: onAddRepository) {
-      HStack(spacing: 12) {
-        ZStack {
-          Circle()
-            .fill(Color.brandPrimary.opacity(0.18))
-            .frame(width: 28, height: 28)
-          Image(systemName: "plus")
-            .font(.caption)
-            .foregroundColor(.brandPrimary)
-        }
+      HStack(spacing: 8) {
+        Image(systemName: "plus.circle")
+          .font(.system(size: DesignTokens.IconSize.md))
+          .foregroundColor(.primary)
 
-        VStack(alignment: .leading, spacing: 2) {
-          Text("Add Repository")
-            .font(.system(.subheadline, design: .rounded))
-            .fontWeight(.semibold)
-            .foregroundColor(.primary)
-          Text("Pick a local git project to monitor")
-            .font(.system(.caption2, design: .rounded))
-            .foregroundColor(.secondary)
-        }
+        Text("Add Repository")
+          .font(.system(size: 13))
+          .foregroundColor(.primary)
 
         Spacer()
-
-        Image(systemName: "folder.badge.plus")
-          .font(.caption)
-          .foregroundColor(.secondary)
       }
-      .padding(12)
-      .agentHubRow(isHighlighted: true)
+      .padding(.horizontal, DesignTokens.Spacing.md)
+      .padding(.vertical, DesignTokens.Spacing.sm)
+      .background(
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+          .fill(Color.secondary.opacity(0.2))
+      )
+      .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md))
     }
     .buttonStyle(.plain)
     .help("Select a git repository to monitor CLI sessions")

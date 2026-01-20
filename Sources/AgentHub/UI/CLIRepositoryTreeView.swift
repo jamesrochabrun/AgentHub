@@ -136,8 +136,8 @@ public struct CLIRepositoryTreeView: View {
             .fontWeight(.semibold)
             .foregroundColor(.primary)
 
-          // Green dot for active sessions
-          if repository.activeSessionCount > 0 {
+          // Green dot for active sessions (only when collapsed)
+          if repository.activeSessionCount > 0 && !repository.isExpanded {
             Circle()
               .fill(Color.green)
               .frame(width: 8, height: 8)

@@ -44,7 +44,12 @@ public struct CLISessionRow: View {
     sessionRowContent
       .padding(.vertical, 8)
       .padding(.horizontal, 10)
+      .contentShape(Rectangle())
+      .onTapGesture {
+        onToggleMonitoring()
+      }
       .agentHubRow(isHighlighted: isMonitoring)
+      .help(isMonitoring ? "Stop monitoring" : "Monitor session")
   }
 
   // MARK: - Session Row Content
@@ -74,12 +79,6 @@ public struct CLISessionRow: View {
       }
 
       Spacer()
-
-      // Monitor button
-      monitorButton
-
-      // Connect button
-      connectButton
     }
   }
 
@@ -117,6 +116,7 @@ public struct CLISessionRow: View {
           .fontWeight(showCopyConfirmation ? .bold : .regular)
           .foregroundColor(showCopyConfirmation ? .green : .secondary)
           .contentTransition(.symbolEffect(.replace))
+          .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .help("Copy full session ID")
@@ -126,9 +126,20 @@ public struct CLISessionRow: View {
         Image(systemName: "doc.text")
           .font(.caption2)
           .foregroundColor(.secondary)
+          .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .help("Open session file")
+
+      // Open in external terminal button
+      Button(action: onConnect) {
+        Image(systemName: "rectangle.portrait.and.arrow.right")
+          .font(.caption2)
+          .foregroundColor(.secondary)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("Open in external Terminal")
 
       Spacer()
     }
@@ -171,48 +182,6 @@ public struct CLISessionRow: View {
         .fixedSize()
     }
     .lineLimit(1)
-  }
-
-  // MARK: - Monitor Button
-
-  private var monitorButton: some View {
-    Button(action: onToggleMonitoring) {
-      Image(systemName: isMonitoring ? "eye.fill" : "eye")
-        .font(.system(size: DesignTokens.IconSize.md))
-        .foregroundColor(isMonitoring ? .brandPrimary : .secondary)
-        .frame(width: 28, height: 28)
-        .background(
-          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-            .fill(isMonitoring ? Color.brandPrimary.opacity(0.15) : Color.surfaceOverlay)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-            .stroke(isMonitoring ? Color.brandPrimary.opacity(0.4) : Color.borderSubtle, lineWidth: 1)
-        )
-    }
-    .buttonStyle(.plain)
-    .help(isMonitoring ? "Stop monitoring" : "Monitor session")
-  }
-
-  // MARK: - Connect Button
-
-  private var connectButton: some View {
-    Button(action: onConnect) {
-      Image(systemName: "terminal")
-        .font(.system(size: DesignTokens.IconSize.md))
-        .foregroundColor(.secondary)
-        .frame(width: 28, height: 28)
-        .background(
-          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-            .fill(Color.surfaceOverlay)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-            .stroke(Color.borderSubtle, lineWidth: 1)
-        )
-    }
-    .buttonStyle(.plain)
-    .help("Open in Terminal")
   }
 
 }
