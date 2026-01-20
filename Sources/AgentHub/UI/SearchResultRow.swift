@@ -21,20 +21,7 @@ public struct SearchResultRow: View {
 
   public var body: some View {
     Button(action: onSelect) {
-      HStack(spacing: 12) {
-        // Repository icon with add indicator
-        ZStack(alignment: .bottomTrailing) {
-          Image(systemName: "folder.fill")
-            .font(.system(size: 20))
-            .foregroundColor(.brandPrimary)
-
-          Image(systemName: "plus.circle.fill")
-            .font(.system(size: 10))
-            .foregroundColor(.green)
-            .background(Circle().fill(Color.surfaceOverlay).padding(-1))
-            .offset(x: 4, y: 4)
-        }
-
+      HStack(alignment: .top, spacing: 12) {
         VStack(alignment: .leading, spacing: 4) {
           // Slug (session name)
           Text(result.slug)
@@ -48,6 +35,7 @@ public struct SearchResultRow: View {
               .font(.system(size: 10))
             Text(result.repositoryName)
               .font(.caption)
+              .lineLimit(1)
           }
           .foregroundColor(.secondary)
 
@@ -61,12 +49,12 @@ public struct SearchResultRow: View {
                 .font(.system(size: 10))
               Text(branch)
                 .font(.caption)
+                .lineLimit(1)
             }
             .foregroundColor(.secondary.opacity(0.8))
           }
         }
-
-        Spacer()
+        .frame(maxWidth: .infinity, alignment: .leading)
 
         // Date
         VStack(alignment: .trailing, spacing: 4) {
@@ -108,19 +96,11 @@ public struct SearchResultRow: View {
         .font(.system(size: 10))
         .foregroundColor(.brandSecondary)
 
-      Text(truncatedMatchText)
+      Text(result.matchedText)
         .font(.caption)
         .foregroundColor(.primary.opacity(0.8))
         .lineLimit(1)
     }
-  }
-
-  private var truncatedMatchText: String {
-    let text = result.matchedText
-    if text.count > 60 {
-      return String(text.prefix(60)) + "..."
-    }
-    return text
   }
 
   // MARK: - Time Formatting

@@ -100,26 +100,44 @@ public actor GlobalSearchService {
     let sessionGroups = Dictionary(grouping: historyEntries) { $0.sessionId }
     print("[GlobalSearchService] Found \(sessionGroups.count) unique sessions")
 
-    // Step 2: For each session, extract metadata from session file
-    for (sessionId, entries) in sessionGroups {
-      guard let firstEntry = entries.first else { continue }
+    // Step 2: For each session, extract metadata from session files in parallel
+    // Capture claudeDataPath for use in TaskGroup tasks
+    let dataPath = claudeDataPath
 
-      let projectPath = firstEntry.project
-      let lastActivityAt = entries.map { $0.date }.max() ?? Date()
-      let firstMessage = entries.sorted { $0.timestamp < $1.timestamp }.first?.display
+    await withTaskGroup(of: SessionIndexEntry?.self) { group in
+      for (sessionId, entries) in sessionGroups {
+        group.addTask {
+          guard let firstEntry = entries.first else { return nil }
 
-      // Read session file for slug, branch, and summaries
-      if let metadata = parseSessionFile(sessionId: sessionId, projectPath: projectPath) {
-        let entry = SessionIndexEntry(
-          sessionId: sessionId,
-          projectPath: projectPath,
-          slug: metadata.slug,
-          gitBranch: metadata.gitBranch,
-          firstMessage: firstMessage,
-          summaries: metadata.summaries,
-          lastActivityAt: lastActivityAt
-        )
-        sessionIndex[sessionId] = entry
+          let projectPath = firstEntry.project
+          // Use O(n) min/max instead of O(n log n) sort
+          let lastActivityAt = entries.max(by: { $0.date < $1.date })?.date ?? Date()
+          let firstMessage = entries.min(by: { $0.timestamp < $1.timestamp })?.display
+
+          // Read session file for slug, branch, and summaries (parallel I/O)
+          let metadata = GlobalSearchService.parseSessionFileSync(
+            sessionId: sessionId,
+            projectPath: projectPath,
+            claudeDataPath: dataPath
+          )
+
+          return SessionIndexEntry(
+            sessionId: sessionId,
+            projectPath: projectPath,
+            slug: metadata.slug,
+            gitBranch: metadata.gitBranch,
+            firstMessage: firstMessage,
+            summaries: metadata.summaries,
+            lastActivityAt: lastActivityAt
+          )
+        }
+      }
+
+      // Collect results back into the index
+      for await entry in group {
+        if let entry = entry {
+          sessionIndex[entry.sessionId] = entry
+        }
       }
     }
 
@@ -157,15 +175,21 @@ public actor GlobalSearchService {
 
   // MARK: - Session File Parsing
 
-  private struct SessionMetadata {
+  private struct SessionMetadata: Sendable {
     let slug: String
     let gitBranch: String?
     let summaries: [String]
   }
 
-  private func parseSessionFile(sessionId: String, projectPath: String) -> SessionMetadata? {
+  /// Static, nonisolated version for parallel execution in TaskGroup
+  /// This method is safe to call concurrently as it only performs file I/O
+  private static func parseSessionFileSync(
+    sessionId: String,
+    projectPath: String,
+    claudeDataPath: String
+  ) -> SessionMetadata {
     // Encode the project path for the folder name
-    let encodedPath = encodeProjectPath(projectPath)
+    let encodedPath = projectPath.replacingOccurrences(of: "/", with: "-")
     let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
 
     guard let data = FileManager.default.contents(atPath: sessionFilePath),
