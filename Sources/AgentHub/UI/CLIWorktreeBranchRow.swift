@@ -204,7 +204,8 @@ public struct CLIWorktreeBranchRow: View {
               .padding(.vertical, 8)
               .contentShape(Rectangle())
             }
-            .frame(width: 160)
+            .padding(.vertical, 8)
+            .frame(width: 180)
           }
         }
         .padding(.vertical, 6)
