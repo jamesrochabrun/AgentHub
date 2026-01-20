@@ -124,6 +124,13 @@ public class TerminalContainerView: NSView {
 
     // Build environment with PATH
     var environment = ProcessInfo.processInfo.environment
+
+    // Enable full color support for Claude Code CLI
+    // These tell the CLI that the terminal supports 256 colors and true color (24-bit RGB)
+    environment["TERM"] = "xterm-256color"
+    environment["COLORTERM"] = "truecolor"
+    environment["LANG"] = "en_US.UTF-8"
+
     let paths = (additionalPaths ?? []) + [
       "/usr/local/bin",
       "/opt/homebrew/bin",
