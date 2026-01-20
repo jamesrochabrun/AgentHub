@@ -318,17 +318,16 @@ public struct CLISessionsListView: View {
   // MARK: - No Results Dropdown View
 
   private var noResultsDropdownView: some View {
-    VStack(spacing: 8) {
+    HStack(spacing: 6) {
       Image(systemName: "magnifyingglass")
-        .font(.system(size: 20))
-        .foregroundColor(.secondary.opacity(0.6))
+        .font(.system(size: 12))
+        .foregroundColor(.secondary.opacity(0.5))
       Text("No sessions found")
-        .font(.system(.subheadline, weight: .medium))
-        .foregroundColor(.secondary)
+        .font(.system(.caption, weight: .medium))
+        .foregroundColor(.secondary.opacity(0.7))
     }
     .frame(maxWidth: .infinity)
-    .frame(minHeight: 80)
-    .padding(.vertical, 16)
+    .padding(.vertical, 12)
   }
 
   // MARK: - Search Results View
