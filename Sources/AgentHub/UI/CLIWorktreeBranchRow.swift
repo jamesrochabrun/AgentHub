@@ -16,6 +16,7 @@ public struct CLIWorktreeBranchRow: View {
   let isExpanded: Bool
   let onToggleExpanded: () -> Void
   let onOpenTerminal: () -> Void
+  let onStartInHub: () -> Void
   let onDeleteWorktree: (() -> Void)?
   let onConnectSession: (CLISession) -> Void
   let onCopySessionId: (CLISession) -> Void
@@ -27,6 +28,7 @@ public struct CLIWorktreeBranchRow: View {
   var isDeleting: Bool = false
 
   @State private var visibleSessionCount: Int = 5
+  @State private var showNewSessionMenu: Bool = false
 
   // Initial visible sessions and load increment
   private let initialVisibleSessions = 5
@@ -64,6 +66,7 @@ public struct CLIWorktreeBranchRow: View {
     isExpanded: Bool,
     onToggleExpanded: @escaping () -> Void,
     onOpenTerminal: @escaping () -> Void,
+    onStartInHub: @escaping () -> Void,
     onDeleteWorktree: (() -> Void)? = nil,
     onConnectSession: @escaping (CLISession) -> Void,
     onCopySessionId: @escaping (CLISession) -> Void,
@@ -78,6 +81,7 @@ public struct CLIWorktreeBranchRow: View {
     self.isExpanded = isExpanded
     self.onToggleExpanded = onToggleExpanded
     self.onOpenTerminal = onOpenTerminal
+    self.onStartInHub = onStartInHub
     self.onDeleteWorktree = onDeleteWorktree
     self.onConnectSession = onConnectSession
     self.onCopySessionId = onCopySessionId
@@ -163,15 +167,45 @@ public struct CLIWorktreeBranchRow: View {
             .agentHubChip(isActive: false)
           }
 
-          // Open terminal button
-          Button(action: onOpenTerminal) {
-            Image(systemName: "terminal")
+          // New session button with menu
+          Button(action: { showNewSessionMenu.toggle() }) {
+            Image(systemName: "plus")
               .font(.caption)
               .foregroundColor(.brandSecondary)
               .agentHubChip()
           }
           .buttonStyle(.plain)
-          .help("Start Claude in Terminal")
+          .help("Start new Claude session")
+          .popover(isPresented: $showNewSessionMenu, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 0) {
+              Button(action: {
+                showNewSessionMenu = false
+                onOpenTerminal()
+              }) {
+                Label("Open in Terminal", systemImage: "terminal")
+                  .frame(maxWidth: .infinity, alignment: .leading)
+              }
+              .buttonStyle(.plain)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 8)
+              .contentShape(Rectangle())
+
+              Divider()
+
+              Button(action: {
+                showNewSessionMenu = false
+                onStartInHub()
+              }) {
+                Label("Start in Hub", systemImage: "square.grid.2x2")
+                  .frame(maxWidth: .infinity, alignment: .leading)
+              }
+              .buttonStyle(.plain)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 8)
+              .contentShape(Rectangle())
+            }
+            .frame(width: 160)
+          }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 4)
@@ -256,6 +290,7 @@ public struct CLIWorktreeBranchRow: View {
       isExpanded: true,
       onToggleExpanded: {},
       onOpenTerminal: {},
+      onStartInHub: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
       onOpenSessionFile: { _ in },
@@ -286,6 +321,7 @@ public struct CLIWorktreeBranchRow: View {
       isExpanded: false,
       onToggleExpanded: {},
       onOpenTerminal: {},
+      onStartInHub: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
       onOpenSessionFile: { _ in },
@@ -306,6 +342,7 @@ public struct CLIWorktreeBranchRow: View {
       isExpanded: true,
       onToggleExpanded: {},
       onOpenTerminal: {},
+      onStartInHub: {},
       onConnectSession: { _ in },
       onCopySessionId: { _ in },
       onOpenSessionFile: { _ in },

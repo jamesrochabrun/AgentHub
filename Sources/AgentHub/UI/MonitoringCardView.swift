@@ -41,13 +41,14 @@ public struct MonitoringCardView: View {
 
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
-  @State private var showTerminal: Bool = false
+  @State private var showTerminal: Bool
 
   public init(
     session: CLISession,
     state: SessionMonitorState?,
     codeChangesState: CodeChangesState? = nil,
     claudeClient: (any ClaudeCode)? = nil,
+    initialShowTerminal: Bool = false,
     onStopMonitoring: @escaping () -> Void,
     onConnect: @escaping () -> Void,
     onCopySessionId: @escaping () -> Void,
@@ -57,6 +58,7 @@ public struct MonitoringCardView: View {
     self.state = state
     self.codeChangesState = codeChangesState
     self.claudeClient = claudeClient
+    self._showTerminal = State(initialValue: initialShowTerminal)
     self.onStopMonitoring = onStopMonitoring
     self.onConnect = onConnect
     self.onCopySessionId = onCopySessionId

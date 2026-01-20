@@ -381,6 +381,11 @@ public struct CLISessionsListView: View {
                 }
               }
             },
+            onStartInHubForWorktree: { worktree in
+              // Start a new Claude session in the Hub's embedded terminal
+              // No external terminal is opened - runs directly in the embedded terminal
+              viewModel.startNewSessionInHub(worktree)
+            },
             onDeleteWorktree: { worktree in
               Task {
                 await viewModel.deleteWorktree(worktree)

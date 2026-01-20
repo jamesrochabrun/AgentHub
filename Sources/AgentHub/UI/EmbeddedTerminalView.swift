@@ -15,12 +15,12 @@ import SwiftUI
 /// SwiftUI wrapper for SwiftTerm's LocalProcessTerminalView
 /// Provides an embedded terminal for interacting with Claude sessions
 public struct EmbeddedTerminalView: NSViewRepresentable {
-  let sessionId: String
+  let sessionId: String?  // Optional: nil for new sessions, set for resume
   let projectPath: String
   let claudeClient: (any ClaudeCode)?
 
   public init(
-    sessionId: String,
+    sessionId: String? = nil,
     projectPath: String,
     claudeClient: (any ClaudeCode)?
   ) {
@@ -52,7 +52,7 @@ public class TerminalContainerView: NSView {
   private var isConfigured = false
 
   func configure(
-    sessionId: String,
+    sessionId: String?,
     projectPath: String,
     claudeClient: (any ClaudeCode)?
   ) {
@@ -104,7 +104,7 @@ public class TerminalContainerView: NSView {
 
   private func startClaudeProcess(
     terminal: LocalProcessTerminalView,
-    sessionId: String,
+    sessionId: String?,
     projectPath: String,
     claudeClient: (any ClaudeCode)?
   ) {
@@ -150,9 +150,17 @@ public class TerminalContainerView: NSView {
     let workingDirectory = projectPath.isEmpty ? NSHomeDirectory() : projectPath
     let escapedPath = workingDirectory.replacingOccurrences(of: "'", with: "'\\''")
     let escapedClaudePath = executablePath.replacingOccurrences(of: "'", with: "'\\''")
-    let escapedSessionId = sessionId.replacingOccurrences(of: "'", with: "'\\''")
 
-    let shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)' -r '\(escapedSessionId)'"
+    // Build command: resume existing session (-r) or start new session
+    let shellCommand: String
+    if let sessionId = sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
+      // Resume existing session
+      let escapedSessionId = sessionId.replacingOccurrences(of: "'", with: "'\\''")
+      shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)' -r '\(escapedSessionId)'"
+    } else {
+      // Start NEW session (no -r flag)
+      shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)'"
+    }
 
     // Start bash with the command
     terminal.startProcess(
@@ -165,9 +173,17 @@ public class TerminalContainerView: NSView {
 
 // MARK: - Preview
 
-#Preview {
+#Preview("Resume Session") {
   EmbeddedTerminalView(
     sessionId: "test-session-123",
+    projectPath: "/Users/test/project",
+    claudeClient: nil
+  )
+  .frame(width: 600, height: 400)
+}
+
+#Preview("New Session") {
+  EmbeddedTerminalView(
     projectPath: "/Users/test/project",
     claudeClient: nil
   )

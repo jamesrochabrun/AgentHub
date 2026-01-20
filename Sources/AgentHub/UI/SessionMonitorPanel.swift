@@ -35,8 +35,8 @@ public struct SessionMonitorPanel: View {
 
   public var body: some View {
     VStack(alignment: .leading, spacing: 12) {
+      // Status indicator and model (only when state exists)
       if let state = state {
-        // Status indicator and model
         HStack {
           StatusBadge(status: state.status)
           Spacer()
@@ -52,21 +52,24 @@ public struct SessionMonitorPanel: View {
             formattedUsage: state.formattedContextUsage
           )
         }
+      }
 
-        // Show terminal or activity list based on mode
-        if showTerminal, let sessionId = sessionId {
-          EmbeddedTerminalView(
-            sessionId: sessionId,
-            projectPath: projectPath ?? "",
-            claudeClient: claudeClient
-          )
-          .frame(minHeight: 300)
-          .cornerRadius(6)
-        } else if !state.recentActivities.isEmpty {
+      // Show terminal or activity list based on mode
+      if showTerminal {
+        // Terminal is shown regardless of state (for new/pending sessions)
+        EmbeddedTerminalView(
+          sessionId: sessionId,  // Can be nil for new sessions
+          projectPath: projectPath ?? "",
+          claudeClient: claudeClient
+        )
+        .frame(minHeight: 300)
+        .cornerRadius(6)
+      } else if let state = state {
+        if !state.recentActivities.isEmpty {
           RecentActivityList(activities: state.recentActivities)
         }
       } else {
-        // Loading state
+        // Loading state (only when not showing terminal)
         HStack {
           ProgressView()
             .scaleEffect(0.7)

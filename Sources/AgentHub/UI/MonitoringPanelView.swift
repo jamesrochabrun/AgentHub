@@ -41,7 +41,7 @@ public struct MonitoringPanelView: View {
       Divider()
 
       // Content
-      if viewModel.monitoredSessionIds.isEmpty {
+      if viewModel.monitoredSessionIds.isEmpty && viewModel.pendingHubSessions.isEmpty {
         emptyState
       } else {
         monitoredSessionsList
@@ -67,8 +67,9 @@ public struct MonitoringPanelView: View {
 
       Spacer()
 
-      // Layout toggle (only show when > 2 sessions)
-      if viewModel.monitoredSessionIds.count > 2 {
+      // Layout toggle (only show when > 2 sessions total)
+      let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
+      if totalSessions > 2 {
         HStack(spacing: 0) {
           Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useGridLayout = false } }) {
             Image(systemName: "list.bullet")
@@ -98,9 +99,9 @@ public struct MonitoringPanelView: View {
         .animation(.easeInOut(duration: 0.2), value: useGridLayout)
       }
 
-      // Count badge
-      if !viewModel.monitoredSessionIds.isEmpty {
-        Text("\(viewModel.monitoredSessionIds.count)")
+      // Count badge (includes both monitored and pending)
+      if totalSessions > 0 {
+        Text("\(totalSessions)")
           .font(.system(.caption, design: .rounded).weight(.semibold))
           .monospacedDigit()
           .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -159,6 +160,23 @@ public struct MonitoringPanelView: View {
 
   @ViewBuilder
   private var monitoredSessionsContent: some View {
+    // Pending sessions (new sessions starting in Hub)
+    ForEach(viewModel.pendingHubSessions) { pending in
+      MonitoringCardView(
+        session: pending.placeholderSession,
+        state: nil,
+        claudeClient: claudeClient,
+        initialShowTerminal: true,
+        onStopMonitoring: {
+          viewModel.cancelPendingSession(pending)
+        },
+        onConnect: { },
+        onCopySessionId: { },
+        onOpenSessionFile: { }
+      )
+    }
+
+    // Monitored sessions (existing sessions)
     ForEach(viewModel.monitoredSessions, id: \.session.id) { item in
       let codeChangesState = item.state.map {
         CodeChangesState.from(activities: $0.recentActivities)
@@ -169,6 +187,7 @@ public struct MonitoringPanelView: View {
         state: item.state,
         codeChangesState: codeChangesState,
         claudeClient: claudeClient,
+        initialShowTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
         onStopMonitoring: {
           viewModel.stopMonitoring(session: item.session)
         },
