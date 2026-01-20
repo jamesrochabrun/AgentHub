@@ -17,6 +17,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/jamesrochabrun/ClaudeCodeSDK", exact: "1.2.4"),
     .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.1.4"),
+    .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.2.0"),
   ],
   targets: [
     .target(
@@ -24,6 +25,7 @@ let package = Package(
       dependencies: [
         .product(name: "ClaudeCodeSDK", package: "ClaudeCodeSDK"),
         .product(name: "PierreDiffsSwift", package: "PierreDiffsSwift"),
+        .product(name: "SwiftTerm", package: "SwiftTerm"),
       ],
       swiftSettings: [
         .swiftLanguageMode(.v5)

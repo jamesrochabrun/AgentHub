@@ -41,6 +41,7 @@ public struct MonitoringCardView: View {
 
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
+  @State private var showTerminal: Bool = true
 
   public init(
     session: CLISession,
@@ -73,7 +74,13 @@ public struct MonitoringCardView: View {
       statusRow
 
       // Monitoring panel content (reuses existing component)
-      SessionMonitorPanel(state: state)
+      SessionMonitorPanel(
+        state: state,
+        showTerminal: showTerminal,
+        sessionId: session.id,
+        projectPath: session.projectPath,
+        claudeClient: claudeClient
+      )
     }
     .padding(12)
     .agentHubCard(isHighlighted: isHighlighted)
@@ -190,15 +197,25 @@ public struct MonitoringCardView: View {
       .buttonStyle(.plain)
       .help("View git unstaged changes")
 
-      // Connect button (trailing)
-      Button(action: onConnect) {
-        Image(systemName: "terminal")
+      // Terminal/List toggle button
+      Button(action: { showTerminal.toggle() }) {
+        Image(systemName: showTerminal ? "list.bullet" : "terminal")
           .font(.caption)
           .foregroundColor(.brandPrimary)
+          .agentHubChip(isActive: showTerminal)
+      }
+      .buttonStyle(.plain)
+      .help(showTerminal ? "Show activity list" : "Show terminal")
+
+      // Connect button (trailing)
+      Button(action: onConnect) {
+        Image(systemName: "rectangle.portrait.and.arrow.right")
+          .font(.caption)
+          .foregroundColor(.secondary)
           .agentHubChip()
       }
       .buttonStyle(.plain)
-      .help("Open in Terminal")
+      .help("Open in external Terminal")
 
       // Stop monitoring button (trailing)
       Button(action: onStopMonitoring) {

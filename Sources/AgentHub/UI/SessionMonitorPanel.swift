@@ -5,6 +5,7 @@
 //  Created by Assistant on 1/10/26.
 //
 
+import ClaudeCodeSDK
 import SwiftUI
 
 // MARK: - SessionMonitorPanel
@@ -13,9 +14,23 @@ import SwiftUI
 /// Note: Only shows real-time data, not cumulative stats (which are misleading for continued sessions)
 public struct SessionMonitorPanel: View {
   let state: SessionMonitorState?
+  let showTerminal: Bool
+  let sessionId: String?
+  let projectPath: String?
+  let claudeClient: (any ClaudeCode)?
 
-  public init(state: SessionMonitorState?) {
+  public init(
+    state: SessionMonitorState?,
+    showTerminal: Bool = false,
+    sessionId: String? = nil,
+    projectPath: String? = nil,
+    claudeClient: (any ClaudeCode)? = nil
+  ) {
     self.state = state
+    self.showTerminal = showTerminal
+    self.sessionId = sessionId
+    self.projectPath = projectPath
+    self.claudeClient = claudeClient
   }
 
   public var body: some View {
@@ -38,8 +53,16 @@ public struct SessionMonitorPanel: View {
           )
         }
 
-        // Recent activity
-        if !state.recentActivities.isEmpty {
+        // Show terminal or activity list based on mode
+        if showTerminal, let sessionId = sessionId {
+          EmbeddedTerminalView(
+            sessionId: sessionId,
+            projectPath: projectPath ?? "",
+            claudeClient: claudeClient
+          )
+          .frame(minHeight: 300)
+          .cornerRadius(6)
+        } else if !state.recentActivities.isEmpty {
           RecentActivityList(activities: state.recentActivities)
         }
       } else {
