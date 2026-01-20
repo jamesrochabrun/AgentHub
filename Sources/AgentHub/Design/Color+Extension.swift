@@ -33,10 +33,6 @@ public enum DesignTokens {
     public static let md: CGFloat = 14
     public static let lg: CGFloat = 16
   }
-
-  public enum Breakpoint {
-    public static let gridThreshold: CGFloat = 780
-  }
 }
 
 /// Available app themes

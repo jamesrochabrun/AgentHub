@@ -26,6 +26,7 @@ public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
+  @State private var useGridLayout: Bool = false
 
   public init(viewModel: CLISessionsViewModel, claudeClient: (any ClaudeCode)?) {
     self.viewModel = viewModel
@@ -65,6 +66,37 @@ public struct MonitoringPanelView: View {
         .font(.title3.weight(.semibold))
 
       Spacer()
+
+      // Layout toggle (only show when > 2 sessions)
+      if viewModel.monitoredSessionIds.count > 2 {
+        HStack(spacing: 0) {
+          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useGridLayout = false } }) {
+            Image(systemName: "list.bullet")
+              .font(.caption)
+              .frame(width: 28, height: 20)
+              .foregroundColor(!useGridLayout ? .white : .secondary)
+              .background(!useGridLayout ? Color.brandPrimary : Color.clear)
+              .clipShape(Capsule())
+              .contentShape(Capsule())
+          }
+          .buttonStyle(.plain)
+
+          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useGridLayout = true } }) {
+            Image(systemName: "square.grid.2x2")
+              .font(.caption)
+              .frame(width: 28, height: 20)
+              .foregroundColor(useGridLayout ? .white : .secondary)
+              .background(useGridLayout ? Color.brandPrimary : Color.clear)
+              .clipShape(Capsule())
+              .contentShape(Capsule())
+          }
+          .buttonStyle(.plain)
+        }
+        .padding(2)
+        .background(Color.secondary.opacity(0.15))
+        .clipShape(Capsule())
+        .animation(.easeInOut(duration: 0.2), value: useGridLayout)
+      }
 
       // Count badge
       if !viewModel.monitoredSessionIds.isEmpty {
@@ -109,23 +141,20 @@ public struct MonitoringPanelView: View {
   // MARK: - Monitored Sessions List
 
   private var monitoredSessionsList: some View {
-    GeometryReader { geometry in
-      ScrollView {
-        let useGrid = geometry.size.width >= DesignTokens.Breakpoint.gridThreshold
-
-        if useGrid {
-          LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-            monitoredSessionsContent
-          }
-          .padding(12)
-        } else {
-          LazyVStack(spacing: 12) {
-            monitoredSessionsContent
-          }
-          .padding(12)
+    ScrollView {
+      if useGridLayout {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+          monitoredSessionsContent
         }
+        .padding(12)
+      } else {
+        LazyVStack(spacing: 12) {
+          monitoredSessionsContent
+        }
+        .padding(12)
       }
     }
+    .animation(.easeInOut(duration: 0.2), value: useGridLayout)
   }
 
   @ViewBuilder
