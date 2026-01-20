@@ -54,31 +54,39 @@ public struct SessionMonitorPanel: View {
         }
       }
 
-      // Show terminal or activity list based on mode
-      if showTerminal {
-        // Terminal is shown regardless of state (for new/pending sessions)
+      // ZStack preserves both views to maintain terminal state when switching
+      ZStack {
+        // Activity list / loading state
+        Group {
+          if let state = state {
+            if !state.recentActivities.isEmpty {
+              RecentActivityList(activities: state.recentActivities)
+            }
+          } else {
+            HStack {
+              ProgressView()
+                .scaleEffect(0.7)
+              Text("Loading session data...")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 20)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(showTerminal ? 0 : 1)
+
+        // Terminal view (preserved in hierarchy to maintain SwiftTerm state)
         EmbeddedTerminalView(
-          sessionId: sessionId,  // Can be nil for new sessions
+          sessionId: sessionId,
           projectPath: projectPath ?? "",
           claudeClient: claudeClient
         )
-        .frame(minHeight: 300)
+        .frame(minHeight: showTerminal ? 300 : 0, maxHeight: showTerminal ? .infinity : 0)
+        .clipped()
         .cornerRadius(6)
-      } else if let state = state {
-        if !state.recentActivities.isEmpty {
-          RecentActivityList(activities: state.recentActivities)
-        }
-      } else {
-        // Loading state (only when not showing terminal)
-        HStack {
-          ProgressView()
-            .scaleEffect(0.7)
-          Text("Loading session data...")
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
+        .opacity(showTerminal ? 1 : 0)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
