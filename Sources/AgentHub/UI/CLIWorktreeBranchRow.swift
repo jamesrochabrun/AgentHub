@@ -26,10 +26,10 @@ public struct CLIWorktreeBranchRow: View {
   var isDebugMode: Bool = false
   var isDeleting: Bool = false
 
-  @State private var visibleSessionCount: Int = 7
+  @State private var visibleSessionCount: Int = 5
 
   // Initial visible sessions and load increment
-  private let initialVisibleSessions = 7
+  private let initialVisibleSessions = 5
   private let loadMoreIncrement = 10
 
   /// Sessions sorted with monitored ones at the top, then by last activity

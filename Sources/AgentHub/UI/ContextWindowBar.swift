@@ -18,7 +18,7 @@ struct ContextWindowBar: View {
   private var barColor: Color {
     if percentage > 0.9 { return .red }
     if percentage > 0.75 { return .orange }
-    return .blue
+    return .brandPrimary
   }
 
   var body: some View {
