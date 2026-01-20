@@ -26,6 +26,7 @@ public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
+  @State private var useGridLayout: Bool = false
 
   public init(viewModel: CLISessionsViewModel, claudeClient: (any ClaudeCode)?) {
     self.viewModel = viewModel
@@ -40,7 +41,7 @@ public struct MonitoringPanelView: View {
       Divider()
 
       // Content
-      if viewModel.monitoredSessionIds.isEmpty {
+      if viewModel.monitoredSessionIds.isEmpty && viewModel.pendingHubSessions.isEmpty {
         emptyState
       } else {
         monitoredSessionsList
@@ -66,9 +67,41 @@ public struct MonitoringPanelView: View {
 
       Spacer()
 
-      // Count badge
-      if !viewModel.monitoredSessionIds.isEmpty {
-        Text("\(viewModel.monitoredSessionIds.count)")
+      // Layout toggle (only show when > 2 sessions total)
+      let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
+      if totalSessions > 2 {
+        HStack(spacing: 0) {
+          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useGridLayout = false } }) {
+            Image(systemName: "list.bullet")
+              .font(.caption)
+              .frame(width: 28, height: 20)
+              .foregroundColor(!useGridLayout ? .white : .secondary)
+              .background(!useGridLayout ? Color.brandPrimary : Color.clear)
+              .clipShape(Capsule())
+              .contentShape(Capsule())
+          }
+          .buttonStyle(.plain)
+
+          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useGridLayout = true } }) {
+            Image(systemName: "square.grid.2x2")
+              .font(.caption)
+              .frame(width: 28, height: 20)
+              .foregroundColor(useGridLayout ? .white : .secondary)
+              .background(useGridLayout ? Color.brandPrimary : Color.clear)
+              .clipShape(Capsule())
+              .contentShape(Capsule())
+          }
+          .buttonStyle(.plain)
+        }
+        .padding(2)
+        .background(Color.secondary.opacity(0.15))
+        .clipShape(Capsule())
+        .animation(.easeInOut(duration: 0.2), value: useGridLayout)
+      }
+
+      // Count badge (includes both monitored and pending)
+      if totalSessions > 0 {
+        Text("\(totalSessions)")
           .font(.system(.caption, design: .rounded).weight(.semibold))
           .monospacedDigit()
           .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -110,35 +143,66 @@ public struct MonitoringPanelView: View {
 
   private var monitoredSessionsList: some View {
     ScrollView {
-      LazyVStack(spacing: 12) {
-        ForEach(viewModel.monitoredSessions, id: \.session.id) { item in
-          let codeChangesState = item.state.map {
-            CodeChangesState.from(activities: $0.recentActivities)
-          }
-
-          MonitoringCardView(
-            session: item.session,
-            state: item.state,
-            codeChangesState: codeChangesState,
-            claudeClient: claudeClient,
-            onStopMonitoring: {
-              viewModel.stopMonitoring(session: item.session)
-            },
-            onConnect: {
-              if let error = viewModel.connectToSession(item.session) {
-                print("Failed to connect: \(error.localizedDescription)")
-              }
-            },
-            onCopySessionId: {
-              viewModel.copySessionId(item.session)
-            },
-            onOpenSessionFile: {
-              openSessionFile(for: item.session)
-            }
-          )
+      if useGridLayout {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+          monitoredSessionsContent
         }
+        .padding(12)
+      } else {
+        LazyVStack(spacing: 12) {
+          monitoredSessionsContent
+        }
+        .padding(12)
       }
-      .padding(12)
+    }
+    .animation(.easeInOut(duration: 0.2), value: useGridLayout)
+  }
+
+  @ViewBuilder
+  private var monitoredSessionsContent: some View {
+    // Pending sessions (new sessions starting in Hub)
+    ForEach(viewModel.pendingHubSessions) { pending in
+      MonitoringCardView(
+        session: pending.placeholderSession,
+        state: nil,
+        claudeClient: claudeClient,
+        initialShowTerminal: true,
+        onStopMonitoring: {
+          viewModel.cancelPendingSession(pending)
+        },
+        onConnect: { },
+        onCopySessionId: { },
+        onOpenSessionFile: { }
+      )
+    }
+
+    // Monitored sessions (existing sessions)
+    ForEach(viewModel.monitoredSessions, id: \.session.id) { item in
+      let codeChangesState = item.state.map {
+        CodeChangesState.from(activities: $0.recentActivities)
+      }
+
+      MonitoringCardView(
+        session: item.session,
+        state: item.state,
+        codeChangesState: codeChangesState,
+        claudeClient: claudeClient,
+        initialShowTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
+        onStopMonitoring: {
+          viewModel.stopMonitoring(session: item.session)
+        },
+        onConnect: {
+          if let error = viewModel.connectToSession(item.session) {
+            print("Failed to connect: \(error.localizedDescription)")
+          }
+        },
+        onCopySessionId: {
+          viewModel.copySessionId(item.session)
+        },
+        onOpenSessionFile: {
+          openSessionFile(for: item.session)
+        }
+      )
     }
   }
 

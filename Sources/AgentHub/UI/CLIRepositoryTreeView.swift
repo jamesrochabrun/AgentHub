@@ -22,6 +22,7 @@ public struct CLIRepositoryTreeView: View {
   let onToggleMonitoring: (CLISession) -> Void
   let onCreateWorktree: () -> Void
   let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
+  let onStartInHubForWorktree: (WorktreeBranch) -> Void
   let onDeleteWorktree: ((WorktreeBranch) -> Void)?
   var showLastMessage: Bool = false
   var isDebugMode: Bool = false
@@ -42,6 +43,7 @@ public struct CLIRepositoryTreeView: View {
     onToggleMonitoring: @escaping (CLISession) -> Void,
     onCreateWorktree: @escaping () -> Void,
     onOpenTerminalForWorktree: @escaping (WorktreeBranch) -> Void,
+    onStartInHubForWorktree: @escaping (WorktreeBranch) -> Void,
     onDeleteWorktree: ((WorktreeBranch) -> Void)? = nil,
     showLastMessage: Bool = false,
     isDebugMode: Bool = false,
@@ -58,6 +60,7 @@ public struct CLIRepositoryTreeView: View {
     self.onToggleMonitoring = onToggleMonitoring
     self.onCreateWorktree = onCreateWorktree
     self.onOpenTerminalForWorktree = onOpenTerminalForWorktree
+    self.onStartInHubForWorktree = onStartInHubForWorktree
     self.onDeleteWorktree = onDeleteWorktree
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
@@ -77,6 +80,7 @@ public struct CLIRepositoryTreeView: View {
             isExpanded: worktree.isExpanded,
             onToggleExpanded: { onToggleWorktreeExpanded(worktree) },
             onOpenTerminal: { onOpenTerminalForWorktree(worktree) },
+            onStartInHub: { onStartInHubForWorktree(worktree) },
             onDeleteWorktree: {
               worktreeToDelete = worktree
               showDeleteConfirmation = true
@@ -237,7 +241,8 @@ public struct CLIRepositoryTreeView: View {
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in print("Toggle monitoring") },
       onCreateWorktree: { print("Create worktree") },
-      onOpenTerminalForWorktree: { _ in print("Open terminal") }
+      onOpenTerminalForWorktree: { _ in print("Open terminal") },
+      onStartInHubForWorktree: { _ in print("Start in Hub") }
     )
 
     // Collapsed repository
@@ -263,7 +268,8 @@ public struct CLIRepositoryTreeView: View {
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in print("Toggle monitoring") },
       onCreateWorktree: { print("Create worktree") },
-      onOpenTerminalForWorktree: { _ in print("Open terminal") }
+      onOpenTerminalForWorktree: { _ in print("Open terminal") },
+      onStartInHubForWorktree: { _ in print("Start in Hub") }
     )
   }
   .padding()

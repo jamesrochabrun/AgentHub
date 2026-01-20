@@ -81,6 +81,12 @@ public final class CLISessionsViewModel {
   private var pendingAutoObserveWorktreePath: String? = nil
   /// Session IDs that existed before we opened the terminal (to detect new ones)
   private var existingSessionIdsBeforeTerminal: Set<String> = []
+  /// Whether the next auto-observed session should show terminal view (from "Start in Hub")
+  public var pendingHubSessionWithTerminal: Bool = false
+  /// Session IDs that should show terminal view by default (from "Start in Hub")
+  public var sessionsWithTerminalView: Set<String> = []
+  /// Sessions being started in Hub's embedded terminal (no session ID yet)
+  public var pendingHubSessions: [PendingHubSession] = []
 
   // MARK: - Monitoring State
 
@@ -449,6 +455,138 @@ public final class CLISessionsViewModel {
     return error
   }
 
+  /// Opens terminal in worktree and monitors the new session in Hub with terminal view enabled
+  /// - Parameters:
+  ///   - worktree: The worktree to open
+  ///   - skipCheckout: If true, skips git checkout even for non-worktrees
+  /// - Returns: An error if launching failed, nil on success
+  /// Starts a new Claude session in the Hub's embedded terminal (not external terminal)
+  /// - Parameter worktree: The worktree to start the session in
+  public func startNewSessionInHub(_ worktree: WorktreeBranch) {
+    let pending = PendingHubSession(worktree: worktree)
+    pendingHubSessions.append(pending)
+
+    // Watch for the new session file
+    Task { @MainActor in
+      await watchForNewSession(pending: pending, worktree: worktree)
+    }
+  }
+
+  /// Removes a pending Hub session (e.g., if user cancels)
+  public func cancelPendingSession(_ pending: PendingHubSession) {
+    pendingHubSessions.removeAll { $0.id == pending.id }
+  }
+
+  /// Watches the project directory for a new session file
+  @MainActor
+  private func watchForNewSession(pending: PendingHubSession, worktree: WorktreeBranch) async {
+    let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
+    let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
+    let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
+
+    // Get existing session files BEFORE watching
+    let existingFiles = Set((try? FileManager.default.contentsOfDirectory(atPath: projectDir)) ?? [])
+
+    // Open directory for watching
+    let dirFd = open(projectDir, O_EVTONLY)
+    guard dirFd >= 0 else {
+      // Directory doesn't exist yet - poll until it does
+      await pollForNewSessionFallback(pending: pending, worktree: worktree)
+      return
+    }
+
+    let source = DispatchSource.makeFileSystemObjectSource(
+      fileDescriptor: dirFd,
+      eventMask: [.write, .link, .attrib],
+      queue: DispatchQueue.global(qos: .utility)
+    )
+
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      var didFind = false
+
+      source.setEventHandler { [weak self] in
+        guard !didFind else { return }
+
+        // Check for new .jsonl files
+        guard let currentFiles = try? FileManager.default.contentsOfDirectory(atPath: projectDir) else { return }
+        let newFiles = Set(currentFiles).subtracting(existingFiles)
+        let newJsonlFiles = newFiles.filter { $0.hasSuffix(".jsonl") }
+
+        if let newFile = newJsonlFiles.first {
+          didFind = true
+          let sessionId = String(newFile.dropLast(6)) // Remove ".jsonl"
+
+          Task { @MainActor in
+            self?.handleNewSessionFound(sessionId: sessionId, pending: pending, worktree: worktree)
+          }
+          source.cancel()
+          continuation.resume()
+        }
+      }
+
+      source.setCancelHandler {
+        close(dirFd)
+      }
+
+      source.resume()
+
+      // Timeout after 60 seconds
+      Task {
+        try? await Task.sleep(for: .seconds(60))
+        if !didFind {
+          didFind = true // Prevent double resume
+          source.cancel()
+          Task { @MainActor in
+            self.pendingHubSessions.removeAll { $0.id == pending.id }
+          }
+          continuation.resume()
+        }
+      }
+    }
+  }
+
+  /// Handles when a new session file is detected
+  private func handleNewSessionFound(sessionId: String, pending: PendingHubSession, worktree: WorktreeBranch) {
+    // Remove the pending session
+    pendingHubSessions.removeAll { $0.id == pending.id }
+
+    // Refresh to get the real session object
+    Task {
+      await monitorService.refreshSessions()
+
+      // Find and monitor the new session
+      for repo in selectedRepositories {
+        if let matchingWorktree = repo.worktrees.first(where: { $0.path == worktree.path }),
+           let session = matchingWorktree.sessions.first(where: { $0.id == sessionId }) {
+          startMonitoring(session: session)
+          break
+        }
+      }
+    }
+  }
+
+  /// Fallback: polls for the project directory to be created, then watches it
+  @MainActor
+  private func pollForNewSessionFallback(pending: PendingHubSession, worktree: WorktreeBranch) async {
+    let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
+    let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
+    let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
+
+    // Wait for directory to be created, then watch it
+    for _ in 0..<60 {
+      try? await Task.sleep(for: .seconds(1))
+
+      if FileManager.default.fileExists(atPath: projectDir) {
+        // Directory exists now - restart watching
+        await watchForNewSession(pending: pending, worktree: worktree)
+        return
+      }
+    }
+
+    // Timeout
+    pendingHubSessions.removeAll { $0.id == pending.id }
+  }
+
   /// Copies the full session ID to the clipboard
   /// - Parameter session: The session whose ID to copy
   public func copySessionId(_ session: CLISession) {
@@ -678,6 +816,13 @@ public final class CLISessionsViewModel {
                 selectedRepositories[repoIndex].worktrees[wtIndex].isExpanded = true
               }
             }
+
+            // If started via "Start in Hub", mark session to show terminal view
+            if pendingHubSessionWithTerminal {
+              sessionsWithTerminalView.insert(session.id)
+              pendingHubSessionWithTerminal = false
+            }
+
             startMonitoring(session: session)
           }
           return
