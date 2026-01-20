@@ -83,8 +83,17 @@ public final class CLISessionsViewModel {
   private var existingSessionIdsBeforeTerminal: Set<String> = []
   /// Whether the next auto-observed session should show terminal view (from "Start in Hub")
   public var pendingHubSessionWithTerminal: Bool = false
-  /// Session IDs that should show terminal view by default (from "Start in Hub")
+  /// Session IDs that should show terminal view (tracks current state for each row)
   public var sessionsWithTerminalView: Set<String> = []
+
+  /// Updates the terminal view state for a session
+  public func setTerminalView(for sessionId: String, show: Bool) {
+    if show {
+      sessionsWithTerminalView.insert(sessionId)
+    } else {
+      sessionsWithTerminalView.remove(sessionId)
+    }
+  }
   /// Sessions being started in Hub's embedded terminal (no session ID yet)
   public var pendingHubSessions: [PendingHubSession] = []
 

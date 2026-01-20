@@ -34,6 +34,8 @@ public struct MonitoringCardView: View {
   let state: SessionMonitorState?
   let codeChangesState: CodeChangesState?
   let claudeClient: (any ClaudeCode)?
+  let showTerminal: Bool
+  let onToggleTerminal: (Bool) -> Void
   let onStopMonitoring: () -> Void
   let onConnect: () -> Void
   let onCopySessionId: () -> Void
@@ -41,14 +43,14 @@ public struct MonitoringCardView: View {
 
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
-  @State private var showTerminal: Bool
 
   public init(
     session: CLISession,
     state: SessionMonitorState?,
     codeChangesState: CodeChangesState? = nil,
     claudeClient: (any ClaudeCode)? = nil,
-    initialShowTerminal: Bool = false,
+    showTerminal: Bool = false,
+    onToggleTerminal: @escaping (Bool) -> Void,
     onStopMonitoring: @escaping () -> Void,
     onConnect: @escaping () -> Void,
     onCopySessionId: @escaping () -> Void,
@@ -58,7 +60,8 @@ public struct MonitoringCardView: View {
     self.state = state
     self.codeChangesState = codeChangesState
     self.claudeClient = claudeClient
-    self._showTerminal = State(initialValue: initialShowTerminal)
+    self.showTerminal = showTerminal
+    self.onToggleTerminal = onToggleTerminal
     self.onStopMonitoring = onStopMonitoring
     self.onConnect = onConnect
     self.onCopySessionId = onCopySessionId
@@ -193,7 +196,7 @@ public struct MonitoringCardView: View {
 
       // Terminal/List segmented control (custom capsule style)
       HStack(spacing: 0) {
-        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { showTerminal = false } }) {
+        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(false) } }) {
           Image(systemName: "list.bullet")
             .font(.caption)
             .frame(width: 28, height: 20)
@@ -204,7 +207,7 @@ public struct MonitoringCardView: View {
         }
         .buttonStyle(.plain)
 
-        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { showTerminal = true } }) {
+        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(true) } }) {
           Image(systemName: "terminal")
             .font(.caption)
             .frame(width: 28, height: 20)
@@ -312,6 +315,7 @@ public struct MonitoringCardView: View {
           ActivityEntry(timestamp: Date(), type: .toolUse(name: "Bash"), description: "swift build")
         ]
       ),
+      onToggleTerminal: { _ in },
       onStopMonitoring: {},
       onConnect: {},
       onCopySessionId: {},
@@ -335,6 +339,7 @@ public struct MonitoringCardView: View {
         model: "claude-sonnet-4-20250514",
         recentActivities: []
       ),
+      onToggleTerminal: { _ in },
       onStopMonitoring: {},
       onConnect: {},
       onCopySessionId: {},
@@ -353,6 +358,7 @@ public struct MonitoringCardView: View {
         isActive: false
       ),
       state: nil,
+      onToggleTerminal: { _ in },
       onStopMonitoring: {},
       onConnect: {},
       onCopySessionId: {},

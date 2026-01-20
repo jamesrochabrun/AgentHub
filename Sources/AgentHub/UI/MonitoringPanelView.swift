@@ -166,7 +166,8 @@ public struct MonitoringPanelView: View {
         session: pending.placeholderSession,
         state: nil,
         claudeClient: claudeClient,
-        initialShowTerminal: true,
+        showTerminal: true,
+        onToggleTerminal: { _ in },
         onStopMonitoring: {
           viewModel.cancelPendingSession(pending)
         },
@@ -187,7 +188,10 @@ public struct MonitoringPanelView: View {
         state: item.state,
         codeChangesState: codeChangesState,
         claudeClient: claudeClient,
-        initialShowTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
+        showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
+        onToggleTerminal: { show in
+          viewModel.setTerminalView(for: item.session.id, show: show)
+        },
         onStopMonitoring: {
           viewModel.stopMonitoring(session: item.session)
         },
