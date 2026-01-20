@@ -37,6 +37,7 @@ private struct RemoveTitleToolbarModifier: ViewModifier {
 public struct AgentHubSessionsView: View {
   @Environment(\.agentHub) private var agentHub
   @State private var isShowingIntelligenceOverlay = false
+  @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
   public init() {}
 
@@ -64,7 +65,7 @@ public struct AgentHubSessionsView: View {
 
   @ViewBuilder
   private func sessionsListView(provider: AgentHubProvider) -> some View {
-    CLISessionsListView(viewModel: provider.sessionsViewModel)
+    CLISessionsListView(viewModel: provider.sessionsViewModel, columnVisibility: $columnVisibility)
       .frame(minWidth: 400, minHeight: 600)
       .modifier(RemoveTitleToolbarModifier())
       .toolbar {

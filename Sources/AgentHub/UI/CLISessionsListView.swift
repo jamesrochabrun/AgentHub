@@ -30,35 +30,36 @@ private struct SessionFileSheetItem: Identifiable {
 
 public struct CLISessionsListView: View {
   @Bindable var viewModel: CLISessionsViewModel
+  @Binding var columnVisibility: NavigationSplitViewVisibility
   @State private var createWorktreeRepository: SelectedRepository?
   @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @Environment(\.colorScheme) private var colorScheme
 
-  public init(viewModel: CLISessionsViewModel) {
+  public init(viewModel: CLISessionsViewModel, columnVisibility: Binding<NavigationSplitViewVisibility>) {
     self.viewModel = viewModel
+    self._columnVisibility = columnVisibility
   }
 
   public var body: some View {
-    HSplitView {
-      // Left panel: Session list
+    NavigationSplitView(columnVisibility: $columnVisibility) {
+      // Sidebar: Session list
       sessionListPanel
         .padding(12)
         .agentHubPanel()
-        .frame(minWidth: 300, idealWidth: 400)
+        .navigationSplitViewColumnWidth(min: 300, ideal: 400)
         .padding(.vertical, 8)
-        .padding(.leading, 8)
-        .padding(.trailing, 4)
-
-      // Right panel: Monitoring
+        .padding(.horizontal, 8)
+    } detail: {
+      // Detail: Monitoring panel
       MonitoringPanelView(viewModel: viewModel, claudeClient: viewModel.claudeClient)
         .padding(12)
         .agentHubPanel()
-        .frame(minWidth: 300, idealWidth: 350)
+        .frame(minWidth: 300)
         .padding(.vertical, 8)
-        .padding(.leading, 4)
-        .padding(.trailing, 8)
+        .padding(.horizontal, 8)
     }
+    .navigationSplitViewStyle(.balanced)
     .background(appBackground.ignoresSafeArea())
     .onAppear {
       // Auto-refresh sessions when view appears
@@ -750,6 +751,6 @@ private struct SessionFileSheetView: View {
   let service = CLISessionMonitorService()
   let viewModel = CLISessionsViewModel(monitorService: service)
 
-  return CLISessionsListView(viewModel: viewModel)
+  CLISessionsListView(viewModel: viewModel, columnVisibility: .constant(.all))
     .frame(width: 800, height: 600)
 }
