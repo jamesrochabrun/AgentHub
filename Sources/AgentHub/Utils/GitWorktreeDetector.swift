@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 /// Information about a git worktree or repository
 public struct GitWorktreeInfo: Sendable {
@@ -108,7 +109,7 @@ public class GitWorktreeDetector {
             try await Task.sleep(for: .seconds(Self.gitCommandTimeout))
             if process.isRunning {
               process.terminate()
-              print("Git branch command timed out after \(Self.gitCommandTimeout) seconds")
+              AppLogger.git.warning("Git branch command timed out")
             }
             return true
           } catch {
@@ -192,7 +193,7 @@ public class GitWorktreeDetector {
             try await Task.sleep(for: .seconds(Self.gitCommandTimeout))
             if process.isRunning {
               process.terminate()
-              print("Git worktree list command timed out after \(Self.gitCommandTimeout) seconds")
+              AppLogger.git.warning("Git worktree list command timed out")
             }
             return true
           } catch {
@@ -207,7 +208,6 @@ public class GitWorktreeDetector {
 
       // Check if process was terminated due to timeout
       if didTimeout || process.terminationStatus == SIGTERM {
-        print("Git worktree list timed out for path: \(repoPath)")
         return []
       }
 

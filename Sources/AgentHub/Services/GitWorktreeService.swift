@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 /// Errors that can occur during worktree operations
 public enum WorktreeCreationError: LocalizedError, Sendable {
@@ -46,9 +47,7 @@ public actor GitWorktreeService {
   /// Maximum time to wait for slow git commands like worktree creation (in seconds)
   private static let gitWorktreeTimeout: TimeInterval = 300.0  // 5 minutes
 
-  public init() {
-    print("[GitWorktreeService] Initialized")
-  }
+  public init() { }
 
   // MARK: - Fetch Remote Branches
 
@@ -58,91 +57,36 @@ public actor GitWorktreeService {
   /// - Parameter path: Any path within a git repository
   /// - Returns: The root path of the git repository
   public func findGitRoot(at path: String) async throws -> String {
-    print("[GitWorktreeService] findGitRoot called for: \(path)")
-
     let output = try await runGitCommand(["rev-parse", "--show-toplevel"], at: path)
-    let gitRoot = output.trimmingCharacters(in: .whitespacesAndNewlines)
-
-    print("[GitWorktreeService] Git root found: \(gitRoot)")
-    return gitRoot
+    return output.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   /// Gets all remote branches for a repository (without fetching from remote)
   /// - Parameter repoPath: Path to the git repository (or any subdirectory)
   /// - Returns: Array of remote branches
   public func getRemoteBranches(at repoPath: String) async throws -> [RemoteBranch] {
-    print("[GitWorktreeService] getRemoteBranches called for: \(repoPath)")
-
     // First, find the actual git root (handles subdirectories)
     let gitRoot: String
     do {
       gitRoot = try await findGitRoot(at: repoPath)
-      print("[GitWorktreeService] Using git root: \(gitRoot)")
     } catch {
-      print("[GitWorktreeService] ERROR: Could not find git root - \(error)")
+      AppLogger.git.error("Could not find git root for: \(repoPath)")
       throw WorktreeCreationError.notAGitRepository(repoPath)
     }
 
-    // Verify it's a git repository (check for .git file or directory)
-    let gitPath = (gitRoot as NSString).appendingPathComponent(".git")
-    var isDirectory: ObjCBool = false
-    let exists = FileManager.default.fileExists(atPath: gitPath, isDirectory: &isDirectory)
-
-    print("[GitWorktreeService] Checking .git at: \(gitPath)")
-    print("[GitWorktreeService] .git exists: \(exists), isDirectory: \(isDirectory.boolValue)")
-
-    // If .git is a file, this is a worktree - read the gitdir to find main repo
-    if exists && !isDirectory.boolValue {
-      print("[GitWorktreeService] This is a worktree (.git is a file)")
-      if let gitFileContents = try? String(contentsOfFile: gitPath, encoding: .utf8) {
-        print("[GitWorktreeService] .git file contents: \(gitFileContents)")
-      }
-    }
-
-    // Check if remote is configured
-    print("[GitWorktreeService] Checking remotes...")
-    let remoteOutput = try await runGitCommand(["remote", "-v"], at: gitRoot)
-    print("[GitWorktreeService] git remote -v output:\n\(remoteOutput)")
-
-    if remoteOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-      print("[GitWorktreeService] WARNING: No remotes configured!")
-    }
-
     // List remote branches (no network call, uses cached refs)
-    print("[GitWorktreeService] Running: git branch -r")
     let output = try await runGitCommand(["branch", "-r"], at: gitRoot)
-    print("[GitWorktreeService] git branch -r output: '\(output)'")
-
-    let branches = parseRemoteBranches(output)
-    print("[GitWorktreeService] Parsed \(branches.count) remote branches")
-
-    // If no remote branches, also try listing local branches for debugging
-    if branches.isEmpty {
-      print("[GitWorktreeService] No remote branches found, checking local branches...")
-      let localOutput = try await runGitCommand(["branch"], at: gitRoot)
-      print("[GitWorktreeService] git branch output: '\(localOutput)'")
-
-      // Also check git status for more context
-      let statusOutput = try await runGitCommand(["status", "--short"], at: gitRoot)
-      print("[GitWorktreeService] git status --short: '\(statusOutput)'")
-    }
-
-    return branches
+    return parseRemoteBranches(output)
   }
 
   /// Fetches from all remotes and then returns branches
   /// - Parameter repoPath: Path to the git repository
   /// - Returns: Array of remote branches
   public func fetchAndGetRemoteBranches(at repoPath: String) async throws -> [RemoteBranch] {
-    print("[GitWorktreeService] fetchAndGetRemoteBranches called for: \(repoPath)")
-
     // First fetch all remotes (this is slow but ensures up-to-date refs)
-    print("[GitWorktreeService] Running: git fetch --all")
     do {
       try await runGitCommand(["fetch", "--all"], at: repoPath)
-      print("[GitWorktreeService] git fetch --all completed")
     } catch {
-      print("[GitWorktreeService] git fetch --all failed: \(error)")
       // Continue anyway - we can still list cached branches
     }
 
@@ -152,52 +96,33 @@ public actor GitWorktreeService {
   /// Parses the output of `git branch -r`
   private func parseRemoteBranches(_ output: String) -> [RemoteBranch] {
     let lines = output.components(separatedBy: .newlines)
-    print("[GitWorktreeService] parseRemoteBranches: \(lines.count) lines")
 
-    let branches = lines
+    return lines
       .map { $0.trimmingCharacters(in: .whitespaces) }
       .filter { !$0.isEmpty && !$0.contains("->") }  // Filter out HEAD -> origin/main
       .compactMap { line -> RemoteBranch? in
         // Format: "origin/branch-name"
         let parts = line.split(separator: "/", maxSplits: 1)
-        guard parts.count == 2 else {
-          print("[GitWorktreeService] Skipping line (no slash): '\(line)'")
-          return nil
-        }
-        let branch = RemoteBranch(
-          name: line,
-          remote: String(parts[0])
-        )
-        print("[GitWorktreeService] Parsed branch: \(branch.displayName) from \(branch.remote)")
-        return branch
+        guard parts.count == 2 else { return nil }
+        return RemoteBranch(name: line, remote: String(parts[0]))
       }
       .sorted { $0.displayName < $1.displayName }
-
-    return branches
   }
 
   /// Gets all local branches for a repository
   /// - Parameter repoPath: Path to the git repository (or any subdirectory)
   /// - Returns: Array of local branches as RemoteBranch (with remote = "local")
   public func getLocalBranches(at repoPath: String) async throws -> [RemoteBranch] {
-    print("[GitWorktreeService] getLocalBranches called for: \(repoPath)")
-
-    // Find actual git root
     let gitRoot = try await findGitRoot(at: repoPath)
-    print("[GitWorktreeService] Using git root: \(gitRoot)")
-
     let output = try await runGitCommand(["branch"], at: gitRoot)
-    print("[GitWorktreeService] git branch output: '\(output)'")
-
     return parseLocalBranches(output)
   }
 
   /// Parses the output of `git branch`
   private func parseLocalBranches(_ output: String) -> [RemoteBranch] {
     let lines = output.components(separatedBy: .newlines)
-    print("[GitWorktreeService] parseLocalBranches: \(lines.count) lines")
 
-    let branches = lines
+    return lines
       .map { line -> String in
         // Remove leading * and whitespace (current branch indicator)
         var cleaned = line.trimmingCharacters(in: .whitespaces)
@@ -208,13 +133,9 @@ public actor GitWorktreeService {
       }
       .filter { !$0.isEmpty }
       .map { branchName -> RemoteBranch in
-        let branch = RemoteBranch(name: branchName, remote: "local")
-        print("[GitWorktreeService] Parsed local branch: \(branch.displayName)")
-        return branch
+        RemoteBranch(name: branchName, remote: "local")
       }
       .sorted { $0.displayName < $1.displayName }
-
-    return branches
   }
 
   // MARK: - Progress Regex Pattern
@@ -235,38 +156,28 @@ public actor GitWorktreeService {
     branch: String,
     directoryName: String
   ) async throws -> String {
-    print("[GitWorktreeService] createWorktree: repo=\(repoPath), branch=\(branch), dir=\(directoryName)")
-
-    // Find actual git root
     let gitRoot = try await findGitRoot(at: repoPath)
-    print("[GitWorktreeService] Using git root: \(gitRoot)")
 
     // Worktree will be created as sibling to git root
     let parentDir = (gitRoot as NSString).deletingLastPathComponent
     let worktreePath = (parentDir as NSString).appendingPathComponent(directoryName)
-    print("[GitWorktreeService] Worktree will be created at: \(worktreePath)")
 
     // Validate directory doesn't exist
     if FileManager.default.fileExists(atPath: worktreePath) {
-      print("[GitWorktreeService] ERROR: Directory already exists")
       throw WorktreeCreationError.directoryAlreadyExists(worktreePath)
     }
 
     // For remote branches (origin/xxx), extract the local branch name
     let localBranch: String
     if branch.contains("/") {
-      // Extract branch name after the remote prefix
       let parts = branch.split(separator: "/", maxSplits: 1)
       localBranch = parts.count == 2 ? String(parts[1]) : branch
-      print("[GitWorktreeService] Extracted local branch name: \(localBranch)")
     } else {
       localBranch = branch
     }
 
     // Create worktree: git worktree add <path> <branch>
-    print("[GitWorktreeService] Running: git worktree add \(worktreePath) \(localBranch)")
     try await runGitCommand(["worktree", "add", worktreePath, localBranch], at: gitRoot, timeout: Self.gitWorktreeTimeout)
-    print("[GitWorktreeService] Worktree created successfully")
 
     return worktreePath
   }
@@ -284,20 +195,14 @@ public actor GitWorktreeService {
     directoryName: String,
     startPoint: String? = nil
   ) async throws -> String {
-    print("[GitWorktreeService] createWorktreeWithNewBranch: repo=\(repoPath), branch=\(newBranchName), dir=\(directoryName)")
-
-    // Find actual git root
     let gitRoot = try await findGitRoot(at: repoPath)
-    print("[GitWorktreeService] Using git root: \(gitRoot)")
 
     // Worktree will be created as sibling to git root
     let parentDir = (gitRoot as NSString).deletingLastPathComponent
     let worktreePath = (parentDir as NSString).appendingPathComponent(directoryName)
-    print("[GitWorktreeService] Worktree will be created at: \(worktreePath)")
 
     // Validate directory doesn't exist
     if FileManager.default.fileExists(atPath: worktreePath) {
-      print("[GitWorktreeService] ERROR: Directory already exists")
       throw WorktreeCreationError.directoryAlreadyExists(worktreePath)
     }
 
@@ -307,9 +212,7 @@ public actor GitWorktreeService {
       args.append(startPoint)
     }
 
-    print("[GitWorktreeService] Running: git \(args.joined(separator: " "))")
     try await runGitCommand(args, at: gitRoot, timeout: Self.gitWorktreeTimeout)
-    print("[GitWorktreeService] Worktree with new branch created successfully")
 
     return worktreePath
   }
@@ -329,23 +232,17 @@ public actor GitWorktreeService {
     startPoint: String? = nil,
     onProgress: @escaping @Sendable (WorktreeCreationProgress) async -> Void
   ) async throws -> String {
-    print("[GitWorktreeService] createWorktreeWithNewBranch (with progress): repo=\(repoPath), branch=\(newBranchName), dir=\(directoryName)")
-
     // Send initial progress
     await onProgress(.preparing(message: "Preparing worktree..."))
 
-    // Find actual git root
     let gitRoot = try await findGitRoot(at: repoPath)
-    print("[GitWorktreeService] Using git root: \(gitRoot)")
 
     // Worktree will be created as sibling to git root
     let parentDir = (gitRoot as NSString).deletingLastPathComponent
     let worktreePath = (parentDir as NSString).appendingPathComponent(directoryName)
-    print("[GitWorktreeService] Worktree will be created at: \(worktreePath)")
 
     // Validate directory doesn't exist
     if FileManager.default.fileExists(atPath: worktreePath) {
-      print("[GitWorktreeService] ERROR: Directory already exists")
       await onProgress(.failed(error: "Directory already exists"))
       throw WorktreeCreationError.directoryAlreadyExists(worktreePath)
     }
@@ -356,9 +253,7 @@ public actor GitWorktreeService {
       args.append(startPoint)
     }
 
-    print("[GitWorktreeService] Running: git \(args.joined(separator: " "))")
     try await runGitCommandWithProgress(args, at: gitRoot, timeout: Self.gitWorktreeTimeout, onProgress: onProgress)
-    print("[GitWorktreeService] Worktree with new branch created successfully")
 
     // Send completion
     await onProgress(.completed(path: worktreePath))
@@ -400,7 +295,6 @@ public actor GitWorktreeService {
     at path: String,
     timeout: TimeInterval = gitCommandTimeout
   ) async throws -> String {
-    print("[GitWorktreeService] runGitCommand: git \(arguments.joined(separator: " ")) at \(path) (timeout: \(timeout)s)")
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -427,7 +321,7 @@ public actor GitWorktreeService {
       // Close stdin immediately
       try inputPipe.fileHandleForWriting.close()
     } catch {
-      print("[GitWorktreeService] Failed to start process: \(error)")
+      AppLogger.git.error("Failed to start git process: \(error.localizedDescription)")
       throw WorktreeCreationError.gitCommandFailed("Failed to start git: \(error.localizedDescription)")
     }
 
@@ -448,7 +342,7 @@ public actor GitWorktreeService {
         do {
           try await Task.sleep(for: .seconds(timeout))
           if process.isRunning {
-            print("[GitWorktreeService] Command timed out after \(timeout)s, terminating")
+            AppLogger.git.warning("Git command timed out after \(timeout)s, terminating")
             process.terminate()
           }
           return true
@@ -468,14 +362,6 @@ public actor GitWorktreeService {
 
     let output = String(data: outputData, encoding: .utf8) ?? ""
     let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
-
-    print("[GitWorktreeService] Exit status: \(process.terminationStatus), timed out: \(didTimeout)")
-    if !output.isEmpty {
-      print("[GitWorktreeService] stdout: \(output.prefix(500))")
-    }
-    if !errorOutput.isEmpty {
-      print("[GitWorktreeService] stderr: \(errorOutput.prefix(500))")
-    }
 
     // Check if process was terminated due to timeout
     if didTimeout {
@@ -502,7 +388,6 @@ public actor GitWorktreeService {
     timeout: TimeInterval,
     onProgress: @escaping @Sendable (WorktreeCreationProgress) async -> Void
   ) async throws -> String {
-    print("[GitWorktreeService] runGitCommandWithProgress: git \(arguments.joined(separator: " ")) at \(path)")
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -552,7 +437,6 @@ public actor GitWorktreeService {
       // Task 2: Read stderr and parse progress using AsyncStream
       group.addTask {
         for try await line in errorPipe.fileHandleForReading.bytes.lines {
-          print("[GitWorktreeService] stderr: \(line)")
           await stderrAccumulator.append(line)
 
           if let match = line.firstMatch(of: pattern),
@@ -571,7 +455,7 @@ public actor GitWorktreeService {
         do {
           try await Task.sleep(for: .seconds(timeout))
           if process.isRunning {
-            print("[GitWorktreeService] Command timed out after \(timeout)s, terminating")
+            AppLogger.git.warning("Git command timed out after \(timeout)s, terminating")
             process.terminate()
           }
           return (Int32(-1), true)
@@ -598,8 +482,6 @@ public actor GitWorktreeService {
 
     let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
     let output = String(data: outputData, encoding: .utf8) ?? ""
-
-    print("[GitWorktreeService] Exit status: \(exitCode), timed out: \(didTimeout)")
 
     if didTimeout {
       throw WorktreeCreationError.timeout
@@ -639,14 +521,7 @@ public actor GitWorktreeService {
   /// Removes a worktree and its associated branch
   /// - Parameter worktreePath: Path to the worktree to remove
   public func removeWorktree(at worktreePath: String) async throws {
-    print("[GitWorktreeService] removeWorktree: \(worktreePath)")
-
-    // Find git root from the worktree
     let gitRoot = try await findGitRoot(at: worktreePath)
-
-    // Run: git worktree remove <path> --force
     try await runGitCommand(["worktree", "remove", worktreePath, "--force"], at: gitRoot)
-
-    print("[GitWorktreeService] Worktree removed successfully")
   }
 }

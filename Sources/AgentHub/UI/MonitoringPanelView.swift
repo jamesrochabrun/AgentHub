@@ -214,9 +214,7 @@ public struct MonitoringPanelView: View {
           viewModel.stopMonitoring(session: item.session)
         },
         onConnect: {
-          if let error = viewModel.connectToSession(item.session) {
-            print("Failed to connect: \(error.localizedDescription)")
-          }
+          _ = viewModel.connectToSession(item.session)
         },
         onCopySessionId: {
           viewModel.copySessionId(item.session)

@@ -65,7 +65,6 @@ struct InlineEditorOverlay: View {
   private func calculatePosition() -> CGPoint {
     // anchorPoint is the mouse click position in SwiftUI coordinates (origin top-left)
     let anchorY = state.anchorPoint.y
-    print("[InlineEditorOverlay] anchorPoint: \(state.anchorPoint), containerSize: \(containerSize)")
 
     // Calculate X position (leading-aligned)
     let halfWidth = editorWidth / 2
@@ -121,9 +120,7 @@ struct InlineEditorOverlay: View {
         InlineEditorOverlay(
           state: state,
           containerSize: CGSize(width: 600, height: 600),
-          onSubmit: { message, line, side, file in
-            print("Line \(line) (\(side)) in \(file): \(message)")
-          }
+          onSubmit: { _, _, _, _ in }
         )
       }
       .frame(width: 600, height: 600)

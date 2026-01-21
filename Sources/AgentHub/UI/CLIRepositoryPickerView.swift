@@ -47,7 +47,7 @@ public struct CLIRepositoryPickerView: View {
 
 #Preview {
   VStack(spacing: 16) {
-    CLIRepositoryPickerView(onAddRepository: { print("Add repository") })
+    CLIRepositoryPickerView(onAddRepository: { })
   }
   .padding()
   .frame(width: 350)

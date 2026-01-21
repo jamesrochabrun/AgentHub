@@ -42,14 +42,10 @@ public final class WorktreeOrchestrationService {
   /// - Parameter plan: The orchestration plan from Claude
   /// - Returns: Array of created worktree paths
   public func executePlan(_ plan: OrchestrationPlan) async throws -> [String] {
-    print("[Orchestration] Starting execution for \(plan.sessions.count) sessions")
     onProgress?(.starting(sessionCount: plan.sessions.count))
 
     // Ensure the repository is added to the monitor service
-    let repository = await monitorService.addRepository(plan.modulePath)
-    if repository == nil {
-      print("[Orchestration] Warning: Could not add repository to monitor")
-    }
+    _ = await monitorService.addRepository(plan.modulePath)
 
     var createdPaths: [String] = []
     var errors: [String] = []
@@ -68,7 +64,6 @@ public final class WorktreeOrchestrationService {
           modulePath: plan.modulePath
         )
         createdPaths.append(worktreePath)
-        print("[Orchestration] Created worktree: \(worktreePath)")
 
         // Launch terminal with Claude immediately
         onProgress?(.launchingSession(
@@ -89,7 +84,6 @@ public final class WorktreeOrchestrationService {
         }
 
       } catch {
-        print("[Orchestration] Failed to create worktree for \(session.branchName): \(error)")
         errors.append("\(session.branchName): \(error.localizedDescription)")
       }
     }
@@ -104,10 +98,6 @@ public final class WorktreeOrchestrationService {
       successCount: createdPaths.count,
       errorCount: errors.count
     ))
-
-    if !errors.isEmpty {
-      print("[Orchestration] Completed with \(errors.count) errors: \(errors)")
-    }
 
     return createdPaths
   }
@@ -128,7 +118,6 @@ public final class WorktreeOrchestrationService {
       directoryName: session.branchName,
       startPoint: nil
     ) { progress in
-      print("[Orchestration] Worktree progress: \(progress.statusMessage)")
       // Forward detailed progress to callback on MainActor
       Task { @MainActor in
         progressCallback?(progress)
@@ -144,7 +133,7 @@ public final class WorktreeOrchestrationService {
     prompt: String
   ) {
     // Launch terminal with Claude and initial prompt
-    let error = TerminalLauncher.launchTerminalInPath(
+    _ = TerminalLauncher.launchTerminalInPath(
       path,
       branchName: branchName,
       isWorktree: true,
@@ -152,12 +141,6 @@ public final class WorktreeOrchestrationService {
       claudeClient: claudeClient,
       initialPrompt: prompt
     )
-
-    if let error = error {
-      print("[Orchestration] Failed to launch terminal: \(error.localizedDescription)")
-    } else {
-      print("[Orchestration] Launched Claude session for \(branchName)")
-    }
   }
 
   /// Polls for sessions to appear after worktree creation and expands worktrees when found
@@ -206,7 +189,6 @@ public final class WorktreeOrchestrationService {
       onProgress?(.waitingForSessions(found: foundBranches.count, total: branchNames.count))
 
       if foundBranches.count == branchNames.count {
-        print("[Orchestration] ✅ All \(branchNames.count) sessions detected and expanded")
         return
       }
 
@@ -215,7 +197,6 @@ public final class WorktreeOrchestrationService {
 
     // Final refresh on timeout
     await monitorService.refreshSessions()
-    print("[Orchestration] ⚠️ Timeout: Found \(foundBranches.count)/\(branchNames.count) sessions")
   }
 }
 

@@ -7,6 +7,7 @@
 
 import Foundation
 import ClaudeCodeSDK
+import os
 
 /// Central service provider that manages all AgentHub services
 ///
@@ -135,7 +136,7 @@ public final class AgentHubProvider {
 
       return try ClaudeCodeClient(configuration: config)
     } catch {
-      print("[AgentHubProvider] Failed to create ClaudeCodeClient: \(error)")
+      AppLogger.session.error("Failed to create ClaudeCodeClient: \(error.localizedDescription)")
       return nil
     }
   }

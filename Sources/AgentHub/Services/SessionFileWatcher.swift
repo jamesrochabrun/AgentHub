@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import os
 
 // MARK: - SessionFileWatcher
 
@@ -42,13 +43,11 @@ public actor SessionFileWatcher {
 
   public init(claudePath: String = "~/.claude") {
     self.claudePath = NSString(string: claudePath).expandingTildeInPath
-    print("[SessionFileWatcher] init with path: \(self.claudePath)")
   }
 
   /// Set the approval timeout in seconds
   public func setApprovalTimeout(_ seconds: Int) {
     self.approvalTimeoutSeconds = max(1, seconds)  // Minimum 1 second
-    print("[SessionFileWatcher] Approval timeout set to \(self.approvalTimeoutSeconds) seconds")
   }
 
   /// Get the current approval timeout in seconds
@@ -60,11 +59,8 @@ public actor SessionFileWatcher {
 
   /// Start monitoring a session
   public func startMonitoring(sessionId: String, projectPath: String) {
-    print("[SessionFileWatcher] startMonitoring: \(sessionId)")
-
     // If already monitoring, just re-emit current state
     if let existingInfo = watchedSessions[sessionId] {
-      print("[SessionFileWatcher] Already monitoring session, re-emitting state: \(sessionId)")
       let state = buildMonitorState(from: existingInfo.parseResult)
       stateSubject.send(StateUpdate(sessionId: sessionId, state: state))
       return
@@ -73,11 +69,9 @@ public actor SessionFileWatcher {
     // Find session file
     let sessionFilePath = findSessionFile(sessionId: sessionId, projectPath: projectPath)
     guard let filePath = sessionFilePath else {
-      print("[SessionFileWatcher] Could not find session file for: \(sessionId)")
+      AppLogger.watcher.error("Could not find session file for: \(sessionId)")
       return
     }
-
-    print("[SessionFileWatcher] Found session file: \(filePath)")
 
     // Initial parse
     var parseResult = SessionJSONLParser.parseSessionFile(at: filePath, approvalTimeoutSeconds: approvalTimeoutSeconds)
@@ -89,7 +83,7 @@ public actor SessionFileWatcher {
     // Set up file watching
     let fileDescriptor = open(filePath, O_EVTONLY)
     guard fileDescriptor >= 0 else {
-      print("[SessionFileWatcher] Could not open file for watching: \(filePath)")
+      AppLogger.watcher.error("Could not open file for watching: \(filePath)")
       return
     }
 
@@ -123,12 +117,7 @@ public actor SessionFileWatcher {
         // Update known file size
         lastKnownFileSize = filePosition
 
-        guard !newLines.isEmpty else {
-          print("[SessionFileWatcher] \(sessionId): file event but no new lines")
-          return
-        }
-
-        print("[SessionFileWatcher] \(sessionId): \(newLines.count) new lines")
+        guard !newLines.isEmpty else { return }
 
         // Parse new lines
         SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
@@ -166,14 +155,13 @@ public actor SessionFileWatcher {
 
         // If file has grown but no events in 5+ seconds, watcher may be stale
         if timeSinceLastEvent > 5 && currentFileSize > lastKnownFileSize {
-          print("[SessionFileWatcher] ⚠️ Stale watcher detected for \(sessionId): file grew from \(lastKnownFileSize) to \(currentFileSize) but no events in \(Int(timeSinceLastEvent))s")
+          AppLogger.watcher.warning("Stale watcher detected for \(sessionId), recovering...")
 
           // Recovery: re-read new content manually
           var tempPosition = lastKnownFileSize
           let newLines = self.readNewLines(from: filePath, startingAt: &tempPosition)
 
           if !newLines.isEmpty {
-            print("[SessionFileWatcher] 🔄 Recovery: found \(newLines.count) missed lines, re-parsing...")
             SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
 
             // Update tracking
@@ -230,13 +218,10 @@ public actor SessionFileWatcher {
       lastFileEventTime: lastFileEventTime,
       lastKnownFileSize: lastKnownFileSize
     )
-
-    print("[SessionFileWatcher] Started monitoring: \(sessionId)")
   }
 
   /// Stop monitoring a session
   public func stopMonitoring(sessionId: String) {
-    print("[SessionFileWatcher] stopMonitoring: \(sessionId)")
 
     guard let info = watchedSessions.removeValue(forKey: sessionId) else {
       return
@@ -244,7 +229,6 @@ public actor SessionFileWatcher {
 
     info.source.cancel()
     info.statusTimer.cancel()
-    print("[SessionFileWatcher] Stopped monitoring: \(sessionId)")
   }
 
   /// Get current state for a session
@@ -276,8 +260,6 @@ public actor SessionFileWatcher {
     let encodedPath = projectPath.replacingOccurrences(of: "/", with: "-")
     let projectsDir = "\(claudePath)/projects/\(encodedPath)"
     let sessionFile = "\(projectsDir)/\(sessionId).jsonl"
-
-    print("[SessionFileWatcher] Looking for: \(sessionFile)")
 
     if FileManager.default.fileExists(atPath: sessionFile) {
       return sessionFile
@@ -333,7 +315,6 @@ public actor SessionFileWatcher {
       guard let content = String(data: data, encoding: .utf8) else { return [] }
       return content.components(separatedBy: .newlines).filter { !$0.isEmpty }
     } catch {
-      print("[SessionFileWatcher] Error reading new lines: \(error)")
       return []
     }
   }
@@ -346,7 +327,8 @@ public actor SessionFileWatcher {
         toolName: pending.toolName,
         toolUseId: pending.toolUseId,
         timestamp: pending.timestamp,
-        input: pending.input
+        input: pending.input,
+        codeChangeInput: pending.codeChangeInput
       )
     } else {
       pendingToolUse = nil

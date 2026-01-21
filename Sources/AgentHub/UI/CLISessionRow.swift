@@ -213,10 +213,10 @@ extension Date {
         firstMessage: "I want to add a feature that monitors CLI sessions"
       ),
       isMonitoring: false,
-      onConnect: { print("Connect") },
-      onCopyId: { print("Copy ID") },
-      onOpenFile: { print("Open file") },
-      onToggleMonitoring: { print("Toggle monitoring") }
+      onConnect: { },
+      onCopyId: { },
+      onOpenFile: { },
+      onToggleMonitoring: { }
     )
 
     // Inactive worktree session with long message (being monitored)
@@ -232,10 +232,10 @@ extension Date {
         firstMessage: "Help me implement a new SwiftUI view that displays session data in a hierarchical tree structure with expand/collapse functionality"
       ),
       isMonitoring: true,
-      onConnect: { print("Connect") },
-      onCopyId: { print("Copy ID") },
-      onOpenFile: { print("Open file") },
-      onToggleMonitoring: { print("Toggle monitoring") }
+      onConnect: { },
+      onCopyId: { },
+      onOpenFile: { },
+      onToggleMonitoring: { }
     )
 
     // Session without first message
@@ -251,10 +251,10 @@ extension Date {
         firstMessage: nil
       ),
       isMonitoring: false,
-      onConnect: { print("Connect") },
-      onCopyId: { print("Copy ID") },
-      onOpenFile: { print("Open file") },
-      onToggleMonitoring: { print("Toggle monitoring") }
+      onConnect: { },
+      onCopyId: { },
+      onOpenFile: { },
+      onToggleMonitoring: { }
     )
   }
   .padding()

@@ -316,20 +316,17 @@ public struct CreateWorktreeSheet: View {
   // MARK: - Actions
 
   private func loadBranches() async {
-    print("[CreateWorktreeSheet] loadBranches called for: \(repositoryPath)")
     isLoading = true
 
     do {
       // Load local branches for the "Based On" picker
       availableBranches = try await worktreeService.getLocalBranches(at: repositoryPath)
-      print("[CreateWorktreeSheet] Loaded \(availableBranches.count) branches")
 
       // Auto-select the first branch (usually main) as default base
       if let firstBranch = availableBranches.first {
         baseBranch = firstBranch
       }
     } catch {
-      print("[CreateWorktreeSheet] ERROR loading branches: \(error)")
       errorMessage = error.localizedDescription
       showError = true
     }
@@ -368,9 +365,8 @@ public struct CreateWorktreeSheet: View {
   CreateWorktreeSheet(
     repositoryPath: "/Users/james/git/ClaudeCodeUI",
     repositoryName: "ClaudeCodeUI",
-    onDismiss: { print("Dismissed") },
+    onDismiss: { },
     onCreate: { branch, directory, baseBranch, onProgress in
-      print("Create worktree: branch=\(branch), directory=\(directory), baseBranch=\(baseBranch ?? "HEAD")")
       // Simulate progress
       await onProgress(.preparing(message: "Preparing worktree..."))
       try? await Task.sleep(for: .milliseconds(500))

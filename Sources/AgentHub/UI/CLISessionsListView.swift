@@ -105,9 +105,7 @@ public struct CLISessionsListView: View {
       }
       Button("Switch & Open") {
         Task {
-          if let error = await viewModel.openTerminalAndAutoObserve(confirmation.worktree, skipCheckout: false) {
-            print("Failed to open terminal: \(error.localizedDescription)")
-          }
+          _ = await viewModel.openTerminalAndAutoObserve(confirmation.worktree, skipCheckout: false)
         }
         terminalConfirmation = nil
       }
@@ -398,9 +396,7 @@ public struct CLISessionsListView: View {
               viewModel.toggleWorktreeExpanded(in: repository, worktree: worktree)
             },
             onConnectSession: { session in
-              if let error = viewModel.connectToSession(session) {
-                print("Failed to connect: \(error.localizedDescription)")
-              }
+              _ = viewModel.connectToSession(session)
             },
             onCopySessionId: { session in
               viewModel.copySessionId(session)
@@ -439,9 +435,7 @@ public struct CLISessionsListView: View {
 
                 if !check.needsCheckout {
                   // Already on correct branch or is a worktree - open directly
-                  if let error = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: true) {
-                    print("Failed to open terminal: \(error.localizedDescription)")
-                  }
+                  _ = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: true)
                 } else if check.hasUncommittedChanges {
                   // Need checkout but have uncommitted changes - show confirmation
                   terminalConfirmation = TerminalConfirmation(
@@ -450,9 +444,7 @@ public struct CLISessionsListView: View {
                   )
                 } else {
                   // Need checkout but no uncommitted changes - proceed with checkout
-                  if let error = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: false) {
-                    print("Failed to open terminal: \(error.localizedDescription)")
-                  }
+                  _ = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: false)
                 }
               }
             },
@@ -594,68 +586,17 @@ private func filterJSONLContent(_ content: String) -> String {
   var result: [String] = []
   let maxTextLength = 500
 
-  print("[JSONL Filter] Content length: \(content.count), lines count: \(lines.count)")
-  if let firstLine = lines.first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
-    print("[JSONL Filter] First non-empty line preview: \(String(firstLine.prefix(300)))")
-  }
-
-  // Debug counters
-  var totalLines = 0
-  var emptyLines = 0
-  var jsonParseFailures = 0
-  var noTypeField = 0
-  var skippedTypes = 0
-  var noMessageField = 0
-  var noContentBlocks = 0
-  var onlyToolResults = 0
-  var noMeaningfulContent = 0
-
   for line in lines {
-    totalLines += 1
     let trimmed = line.trimmingCharacters(in: .whitespaces)
 
-    if trimmed.isEmpty {
-      emptyLines += 1
-      continue
-    }
+    if trimmed.isEmpty { continue }
 
-    guard let data = trimmed.data(using: .utf8) else {
-      jsonParseFailures += 1
-      continue
-    }
-
-    guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-      jsonParseFailures += 1
-      // Log first failure to see what's happening
-      if jsonParseFailures == 1 {
-        print("[JSONL Filter] First parse failure, line preview: \(String(trimmed.prefix(200)))")
-      }
-      continue
-    }
-
-    // Skip non-message entries
-    guard let type = json["type"] as? String else {
-      noTypeField += 1
-      print("[JSONL Filter] No type field, keys: \(json.keys)")
-      continue
-    }
-
-    // Skip file-history-snapshot, summary, etc.
-    if type != "user" && type != "assistant" {
-      skippedTypes += 1
-      print("[JSONL Filter] Skipped type: '\(type)'")
-      continue
-    }
-
-    guard let message = json["message"] as? [String: Any] else {
-      noMessageField += 1
-      print("[JSONL Filter] No message field for type=\(type), keys: \(json.keys)")
-      continue
-    }
-
-    guard let contentBlocks = message["content"] as? [[String: Any]] else {
-      noContentBlocks += 1
-      print("[JSONL Filter] No content blocks for type=\(type), message keys: \(message.keys)")
+    guard let data = trimmed.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let type = json["type"] as? String,
+          type == "user" || type == "assistant",
+          let message = json["message"] as? [String: Any],
+          let contentBlocks = message["content"] as? [[String: Any]] else {
       continue
     }
 
@@ -683,7 +624,6 @@ private func filterJSONLContent(_ content: String) -> String {
       case "tool_use":
         hasOnlyToolResults = false
         if let name = block["name"] as? String {
-          // Add brief context for the tool
           var toolDesc = name
           if let input = block["input"] as? [String: Any] {
             if let filePath = input["file_path"] as? String {
@@ -701,7 +641,6 @@ private func filterJSONLContent(_ content: String) -> String {
         }
 
       case "tool_result", "thinking":
-        // Skip entirely
         continue
 
       default:
@@ -709,46 +648,20 @@ private func filterJSONLContent(_ content: String) -> String {
       }
     }
 
-    // Skip entries that only had tool_result blocks
-    if hasOnlyToolResults {
-      onlyToolResults += 1
-      continue
-    }
+    if hasOnlyToolResults { continue }
 
-    // Build clean output line
     var output = "[\(type.uppercased())]"
-
     if !textParts.isEmpty {
       output += " " + textParts.joined(separator: " ")
     }
-
     if !toolNames.isEmpty {
       output += " [Tools: " + toolNames.joined(separator: ", ") + "]"
     }
 
-    // Only add if we have meaningful content
-    if textParts.isEmpty && toolNames.isEmpty {
-      noMeaningfulContent += 1
-      continue
+    if !textParts.isEmpty || !toolNames.isEmpty {
+      result.append(output)
     }
-
-    result.append(output)
   }
-
-  print("""
-  [JSONL Filter] Stats:
-    Content length: \(content.count)
-    Total lines: \(totalLines)
-    Empty lines: \(emptyLines)
-    JSON parse failures: \(jsonParseFailures)
-    No type field: \(noTypeField)
-    Skipped types: \(skippedTypes)
-    No message field: \(noMessageField)
-    No content blocks: \(noContentBlocks)
-    Only tool results: \(onlyToolResults)
-    No meaningful content: \(noMeaningfulContent)
-    Final result count: \(result.count)
-  """)
 
   if result.isEmpty {
     return "[No conversation content found - this session may only contain file history snapshots or tool results]"

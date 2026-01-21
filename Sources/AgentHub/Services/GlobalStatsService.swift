@@ -7,6 +7,7 @@
 
 import Foundation
 import Observation
+import os
 
 // MARK: - GlobalStatsService
 
@@ -142,7 +143,7 @@ public final class GlobalStatsService: @unchecked Sendable {
       isAvailable = true
       lastUpdated = Date()
     } catch {
-      print("[GlobalStatsService] Failed to parse stats: \(error)")
+      AppLogger.stats.error("Failed to parse stats: \(error.localizedDescription)")
       isAvailable = false
     }
   }
@@ -158,7 +159,7 @@ public final class GlobalStatsService: @unchecked Sendable {
 
     fileDescriptor = open(statsFilePath, O_EVTONLY)
     guard fileDescriptor >= 0 else {
-      print("[GlobalStatsService] Could not open file for watching")
+      AppLogger.stats.error("Could not open file for watching")
       return
     }
 

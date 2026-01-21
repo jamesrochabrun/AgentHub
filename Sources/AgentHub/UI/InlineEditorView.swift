@@ -200,12 +200,8 @@ struct InlineEditorView: View {
     side: "right",
     fileName: "Example.swift",
     errorMessage: nil,
-    onSubmit: { message in
-      print("Submitted: \(message)")
-    },
-    onDismiss: {
-      print("Dismissed")
-    }
+    onSubmit: { _ in },
+    onDismiss: { }
   )
   .padding(40)
   .background(Color.gray.opacity(0.2))
