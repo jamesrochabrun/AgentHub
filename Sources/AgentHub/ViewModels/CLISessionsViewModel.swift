@@ -410,6 +410,38 @@ public final class CLISessionsViewModel {
         }
       }
     }
+
+    // Expand repositories and worktrees that contain monitored sessions
+    expandItemsContainingMonitoredSessions()
+  }
+
+  /// Expands repositories and worktrees that contain monitored sessions.
+  ///
+  /// Called during app launch after repositories and monitored sessions have been restored.
+  /// This ensures users can immediately see their monitored sessions in the sidebar without
+  /// having to manually expand each repository and worktree. The function iterates through
+  /// all repositories and their worktrees, expanding any that contain at least one monitored
+  /// session. Parent repositories are also expanded when any of their worktrees are expanded.
+  private func expandItemsContainingMonitoredSessions() {
+    guard !monitoredSessionIds.isEmpty else { return }
+
+    for repoIndex in selectedRepositories.indices {
+      var repoHasMonitoredSession = false
+
+      for worktreeIndex in selectedRepositories[repoIndex].worktrees.indices {
+        let worktree = selectedRepositories[repoIndex].worktrees[worktreeIndex]
+        let hasMonitoredSession = worktree.sessions.contains { monitoredSessionIds.contains($0.id) }
+
+        if hasMonitoredSession {
+          selectedRepositories[repoIndex].worktrees[worktreeIndex].isExpanded = true
+          repoHasMonitoredSession = true
+        }
+      }
+
+      if repoHasMonitoredSession {
+        selectedRepositories[repoIndex].isExpanded = true
+      }
+    }
   }
 
   /// Checks if the session file exists in ~/.claude
