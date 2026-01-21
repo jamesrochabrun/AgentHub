@@ -11,7 +11,7 @@ import ClaudeCodeSDK
 import SwiftAnthropic
 
 /// Simplified stream processor for the Intelligence feature.
-/// Processes Claude's streaming responses and prints tool calls/results to console.
+/// Processes Claude's streaming responses and triggers callbacks for tool calls/results.
 @MainActor
 final class IntelligenceStreamProcessor {
 
@@ -88,10 +88,8 @@ final class IntelligenceStreamProcessor {
 
             switch completion {
             case .finished:
-              print("[Intelligence] Stream completed")
               self.onComplete?()
             case .failure(let error):
-              print("[Intelligence] Stream error: \(error.localizedDescription)")
               self.onError?(error)
             }
 
@@ -118,8 +116,8 @@ final class IntelligenceStreamProcessor {
 
   private func processChunk(_ chunk: ResponseChunk) {
     switch chunk {
-    case .initSystem(let initMessage):
-      print("[Intelligence] Session initialized: \(initMessage.sessionId)")
+    case .initSystem:
+      break
 
     case .assistant(let message):
       processAssistantMessage(message)
@@ -127,8 +125,8 @@ final class IntelligenceStreamProcessor {
     case .user(let userMessage):
       processUserMessage(userMessage)
 
-    case .result(let resultMessage):
-      print("[Intelligence] Result received - Cost: $\(String(format: "%.4f", resultMessage.totalCostUsd))")
+    case .result:
+      break
     }
   }
 
@@ -137,7 +135,6 @@ final class IntelligenceStreamProcessor {
       switch content {
       case .text(let textContent, _):
         if !textContent.isEmpty {
-          print("[Intelligence] Assistant: \(textContent)")
           onTextReceived?(textContent)
 
           // Accumulate text for orchestration plan detection
@@ -147,8 +144,6 @@ final class IntelligenceStreamProcessor {
 
       case .toolUse(let toolUse):
         let inputDescription = toolUse.input.formattedDescription()
-        print("[Intelligence] Tool Use: \(toolUse.name)")
-        print("[Intelligence] Input: \(inputDescription)")
         onToolUse?(toolUse.name, inputDescription)
 
         // Check for orchestration tool call (legacy approach)
@@ -158,11 +153,10 @@ final class IntelligenceStreamProcessor {
 
       case .toolResult(let toolResult):
         let resultContent = formatToolResult(toolResult.content)
-        print("[Intelligence] Tool Result: \(resultContent)")
         onToolResult?(resultContent)
 
-      case .thinking(let thinking):
-        print("[Intelligence] Thinking: \(thinking.thinking.prefix(100))...")
+      case .thinking:
+        break
 
       default:
         break
@@ -180,19 +174,11 @@ final class IntelligenceStreamProcessor {
 
     // Try to parse the plan
     guard let plan = WorktreeOrchestrationTool.parseFromText(accumulatedText) else {
-      print("[Intelligence] Found plan markers but failed to parse")
       return
     }
 
     // Mark as processed to avoid re-triggering
     planAlreadyProcessed = true
-
-    print("[Intelligence] Parsed orchestration plan from text:")
-    print("[Intelligence]   Module: \(plan.modulePath)")
-    print("[Intelligence]   Sessions: \(plan.sessions.count)")
-    for session in plan.sessions {
-      print("[Intelligence]     - \(session.branchName): \(session.description) [\(session.sessionType.rawValue)]")
-    }
 
     // Trigger the callback
     onOrchestrationPlan?(plan)
@@ -202,7 +188,6 @@ final class IntelligenceStreamProcessor {
     for content in userMessage.message.content {
       if case .toolResult(let toolResult) = content {
         let resultContent = formatToolResult(toolResult.content)
-        print("[Intelligence] Tool Result (user): \(resultContent)")
         onToolResult?(resultContent)
       }
     }
@@ -222,22 +207,12 @@ final class IntelligenceStreamProcessor {
   // MARK: - Orchestration Tool Handling
 
   private func handleOrchestrationToolCall(_ input: [String: MessageResponse.Content.DynamicContent]) {
-    print("[Intelligence] 🎯 Orchestration tool called!")
-
     // Convert DynamicContent to standard types for parsing
     let convertedInput = convertDynamicContent(input)
 
     // Parse the orchestration plan
     guard let plan = WorktreeOrchestrationTool.parseInput(convertedInput) else {
-      print("[Intelligence] ❌ Failed to parse orchestration plan")
       return
-    }
-
-    print("[Intelligence] ✅ Parsed orchestration plan:")
-    print("[Intelligence]   Module: \(plan.modulePath)")
-    print("[Intelligence]   Sessions: \(plan.sessions.count)")
-    for session in plan.sessions {
-      print("[Intelligence]     - \(session.branchName): \(session.description) [\(session.sessionType.rawValue)]")
     }
 
     // Trigger the callback

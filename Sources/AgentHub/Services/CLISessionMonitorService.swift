@@ -43,21 +43,13 @@ public actor CLISessionMonitorService {
   /// - Returns: The created SelectedRepository with detected worktrees
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
-    let startTotal = CFAbsoluteTimeGetCurrent()
-    print("[CLIMonitorService] addRepository called for: \(path)")
-
     // Check if already added
     guard !selectedRepositories.contains(where: { $0.path == path }) else {
-      print("[CLIMonitorService] Repository already added, returning existing")
       return selectedRepositories.first { $0.path == path }
     }
 
     // Detect worktrees for this repository
-    print("[CLIMonitorService] Detecting worktrees...")
-    let startWorktrees = CFAbsoluteTimeGetCurrent()
     let worktrees = await detectWorktrees(at: path)
-    print("[CLIMonitorService] ⏱️ detectWorktrees: \(CFAbsoluteTimeGetCurrent() - startWorktrees)s")
-    print("[CLIMonitorService] Detected \(worktrees.count) worktrees")
 
     let repository = SelectedRepository(
       path: path,
@@ -66,12 +58,10 @@ public actor CLISessionMonitorService {
     )
 
     selectedRepositories.append(repository)
-    print("[CLIMonitorService] Repository added, now refreshing sessions...")
 
     // Scan for sessions in the new repository
     // Skip worktree re-detection since we just detected worktrees for this repo
     await refreshSessions(skipWorktreeRedetection: true)
-    print("[CLIMonitorService] ⏱️ addRepository total: \(CFAbsoluteTimeGetCurrent() - startTotal)s")
 
     return repository
   }
@@ -99,20 +89,13 @@ public actor CLISessionMonitorService {
   /// Refreshes sessions for all selected repositories
   /// - Parameter skipWorktreeRedetection: When true, skips worktree re-detection (used after adding a new repo)
   public func refreshSessions(skipWorktreeRedetection: Bool = false) async {
-    let startRefresh = CFAbsoluteTimeGetCurrent()
-    print("[CLIMonitorService] refreshSessions called")
-
     guard !selectedRepositories.isEmpty else {
-      print("[CLIMonitorService] No repositories, sending empty")
       repositoriesSubject.send([])
       return
     }
 
     // Re-detect worktrees for all repositories to pick up newly created ones
     if !skipWorktreeRedetection {
-      let startWorktreeRedetect = CFAbsoluteTimeGetCurrent()
-      print("[CLIMonitorService] Re-detecting worktrees in parallel...")
-
       // Detect worktrees for all repos in parallel
       let allWorktrees = await detectWorktreesBatch(
         repoPaths: selectedRepositories.map { $0.path }
@@ -133,54 +116,24 @@ public actor CLISessionMonitorService {
             mergedWorktrees.append(existing)
           } else {
             // Add new worktree
-            print("[CLIMonitorService] Found new worktree: \(detected.path)")
             mergedWorktrees.append(detected)
           }
         }
         selectedRepositories[index].worktrees = mergedWorktrees
       }
-      print("[CLIMonitorService] ⏱️ worktree re-detection: \(CFAbsoluteTimeGetCurrent() - startWorktreeRedetect)s")
-    } else {
-      print("[CLIMonitorService] Skipping worktree re-detection (just added repo)")
     }
 
     // Get all paths to filter by (including worktree paths)
     let allPaths = getAllMonitoredPaths()
-    print("[CLIMonitorService] Monitoring \(allPaths.count) paths: \(allPaths)")
 
     // Parse history for selected paths only
-    let startHistory = CFAbsoluteTimeGetCurrent()
-    print("[CLIMonitorService] Parsing history...")
     let historyEntries = await parseHistoryForPaths(allPaths)
-    print("[CLIMonitorService] ⏱️ parseHistory: \(CFAbsoluteTimeGetCurrent() - startHistory)s")
-    print("[CLIMonitorService] Found \(historyEntries.count) history entries")
 
     // Group entries by session ID
     let sessionEntries = Dictionary(grouping: historyEntries) { $0.sessionId }
-    print("[CLIMonitorService] Grouped into \(sessionEntries.count) sessions")
-
-    // Debug: Print unique project paths from session entries
-    let uniqueProjects = Set(sessionEntries.compactMap { $0.value.first?.project })
-    print("[CLIMonitorService] Unique session projects: \(uniqueProjects)")
 
     // Build a map of session ID -> gitBranch (read from session files in parallel)
-    let startBranches = CFAbsoluteTimeGetCurrent()
     let sessionBranches = await readBranchInfoBatch(sessionEntries: sessionEntries)
-    print("[CLIMonitorService] ⏱️ readBranchInfo: \(CFAbsoluteTimeGetCurrent() - startBranches)s")
-    print("[CLIMonitorService] Read branch info for \(sessionBranches.count) sessions")
-
-    // Debug: Print unique branches found
-    let uniqueBranches = Set(sessionBranches.values)
-    print("[CLIMonitorService] Unique session branches: \(uniqueBranches)")
-
-    // Debug: Check which sessions have worktree branches
-    for (sessionId, branch) in sessionBranches {
-      if branch.contains("refactor-math") {
-        if let entries = sessionEntries[sessionId], let first = entries.first {
-          print("[CLIMonitorService] DEBUG: Session \(sessionId.prefix(8)) branch='\(branch)' project='\(first.project)'")
-        }
-      }
-    }
 
     // Build sessions and assign to worktrees
     var updatedRepositories = selectedRepositories
@@ -192,7 +145,6 @@ public actor CLISessionMonitorService {
         worktreeBranchNames.insert(worktree.name)
       }
     }
-    print("[CLIMonitorService] Worktree branch names: \(worktreeBranchNames)")
 
     // Track which sessions have been assigned to prevent duplicates
     var assignedSessionIds: Set<String> = []
@@ -219,7 +171,6 @@ public actor CLISessionMonitorService {
           if pathMatchesWorktree {
             // This is definitively the correct worktree - use this session
             let sessionBranch = sessionBranches[sessionId]
-            print("[CLIMonitorService] Session \(sessionId.prefix(8)) exact path match to worktree '\(worktreeBranch)' at \(worktreePath)")
 
             // Check if session is active
             let encodedPath = firstEntry.project.replacingOccurrences(of: "/", with: "-")
@@ -229,9 +180,6 @@ public actor CLISessionMonitorService {
                let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
               let secondsAgo = Date().timeIntervalSince(modDate)
               isActive = secondsAgo < 60
-              if isActive {
-                print("[CLIMonitorService] Session \(sessionId.prefix(8)) is ACTIVE (modified \(Int(secondsAgo))s ago)")
-              }
             }
 
             let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
@@ -270,10 +218,6 @@ public actor CLISessionMonitorService {
           if let sessionBranch = sessionBranch {
             // Session has branch info - match by branch
             branchMatches = sessionBranch == worktreeBranch
-            // Debug: log when we find a session with a worktree branch
-            if worktreeBranchNames.contains(sessionBranch) && sessionBranch != "main" {
-              print("[CLIMonitorService] DEBUG: Session \(sessionId.prefix(8)) has branch '\(sessionBranch)', comparing to worktree '\(worktreeBranch)', matches: \(branchMatches)")
-            }
           } else {
             // No branch info - only assign to main worktree (non-worktree entry)
             // This handles old sessions that don't have gitBranch in their file
@@ -291,9 +235,6 @@ public actor CLISessionMonitorService {
              let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
             let secondsAgo = Date().timeIntervalSince(modDate)
             isActive = secondsAgo < 60
-            if isActive {
-              print("[CLIMonitorService] Session \(sessionId.prefix(8)) is ACTIVE (modified \(Int(secondsAgo))s ago)")
-            }
           }
 
           // Get the first and last message (sorted by timestamp)
@@ -320,31 +261,22 @@ public actor CLISessionMonitorService {
         // Sort by last activity
         sessions.sort { $0.lastActivityAt > $1.lastActivityAt }
         updatedRepositories[repoIndex].worktrees[worktreeIndex].sessions = sessions
-        print("[CLIMonitorService] Worktree '\(worktreeBranch)' matched \(sessions.count) sessions")
       }
     }
 
     selectedRepositories = updatedRepositories
-    print("[CLIMonitorService] Sending \(selectedRepositories.count) repositories to subject")
     repositoriesSubject.send(selectedRepositories)
-    print("[CLIMonitorService] ⏱️ refreshSessions total: \(CFAbsoluteTimeGetCurrent() - startRefresh)s")
   }
 
   // MARK: - Worktree Detection
 
   private func detectWorktrees(at repoPath: String) async -> [WorktreeBranch] {
-    print("[CLIMonitorService] detectWorktrees called for: \(repoPath)")
-
     // Use GitWorktreeDetector to list all worktrees
-    print("[CLIMonitorService] Calling GitWorktreeDetector.listWorktrees...")
     let worktrees = await GitWorktreeDetector.listWorktrees(at: repoPath)
-    print("[CLIMonitorService] listWorktrees returned \(worktrees.count) results")
 
     if worktrees.isEmpty {
       // If no worktrees detected, just use the main repo with current branch
-      print("[CLIMonitorService] No worktrees, calling detectWorktreeInfo...")
       let info = await GitWorktreeDetector.detectWorktreeInfo(for: repoPath)
-      print("[CLIMonitorService] detectWorktreeInfo returned: \(String(describing: info))")
 
       return [
         WorktreeBranch(

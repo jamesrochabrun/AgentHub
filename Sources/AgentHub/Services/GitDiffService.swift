@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 /// Errors that can occur during git diff operations
 public enum GitDiffError: LocalizedError, Sendable {
@@ -37,9 +38,7 @@ public actor GitDiffService {
   /// Maximum time to wait for git commands (in seconds)
   private static let gitCommandTimeout: TimeInterval = 30.0
 
-  public init() {
-    print("[GitDiffService] Initialized")
-  }
+  public init() { }
 
   // MARK: - Public API
 
@@ -47,11 +46,8 @@ public actor GitDiffService {
   /// - Parameter repoPath: Path to the git repository (or any subdirectory)
   /// - Returns: GitDiffState containing all files with unstaged changes
   public func getUnstagedChanges(at repoPath: String) async throws -> GitDiffState {
-    print("[GitDiffService] getUnstagedChanges called for: \(repoPath)")
-
     // Find git root
     let gitRoot = try await findGitRoot(at: repoPath)
-    print("[GitDiffService] Using git root: \(gitRoot)")
 
     // Get unstaged changes with --numstat
     let output = try await runGitCommand(["diff", "--numstat"], at: gitRoot)
@@ -109,7 +105,6 @@ public actor GitDiffService {
       }
     }
 
-    print("[GitDiffService] Found \(files.count) files with changes")
     return GitDiffState(files: files)
   }
 
@@ -119,8 +114,6 @@ public actor GitDiffService {
   ///   - repoPath: Path to the git repository
   /// - Returns: Tuple of (oldContent, newContent)
   public func getFileDiff(filePath: String, at repoPath: String) async throws -> (oldContent: String, newContent: String) {
-    print("[GitDiffService] getFileDiff called for: \(filePath)")
-
     let gitRoot = try await findGitRoot(at: repoPath)
 
     // Get relative path from git root
@@ -131,15 +124,12 @@ public actor GitDiffService {
       relativePath = filePath
     }
 
-    print("[GitDiffService] Relative path: \(relativePath)")
-
     // Get old content from HEAD
     var oldContent = ""
     do {
       oldContent = try await runGitCommand(["show", "HEAD:\(relativePath)"], at: gitRoot)
     } catch {
       // File might be new (untracked), so old content is empty
-      print("[GitDiffService] Could not get HEAD content (file may be new): \(error)")
     }
 
     // Get new content from disk
@@ -149,12 +139,9 @@ public actor GitDiffService {
       do {
         newContent = try String(contentsOf: fileURL, encoding: .utf8)
       } catch {
-        print("[GitDiffService] Could not read file from disk: \(error)")
+        AppLogger.git.error("Could not read file from disk: \(error.localizedDescription)")
         throw GitDiffError.fileNotFound(filePath)
       }
-    } else {
-      // File might have been deleted
-      print("[GitDiffService] File does not exist on disk (may be deleted)")
     }
 
     return (oldContent, newContent)
@@ -185,7 +172,6 @@ public actor GitDiffService {
     at path: String,
     timeout: TimeInterval = gitCommandTimeout
   ) async throws -> String {
-    print("[GitDiffService] runGitCommand: git \(arguments.joined(separator: " ")) at \(path)")
 
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
@@ -211,7 +197,7 @@ public actor GitDiffService {
       try process.run()
       try inputPipe.fileHandleForWriting.close()
     } catch {
-      print("[GitDiffService] Failed to start process: \(error)")
+      AppLogger.git.error("Failed to start git process: \(error.localizedDescription)")
       throw GitDiffError.gitCommandFailed("Failed to start git: \(error.localizedDescription)")
     }
 
@@ -230,7 +216,7 @@ public actor GitDiffService {
         do {
           try await Task.sleep(for: .seconds(timeout))
           if process.isRunning {
-            print("[GitDiffService] Command timed out after \(timeout)s, terminating")
+            AppLogger.git.warning("Git command timed out after \(timeout)s, terminating")
             process.terminate()
           }
           return true
@@ -249,8 +235,6 @@ public actor GitDiffService {
 
     let output = String(data: outputData, encoding: .utf8) ?? ""
     let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
-
-    print("[GitDiffService] Exit status: \(process.terminationStatus)")
 
     if didTimeout {
       throw GitDiffError.timeout

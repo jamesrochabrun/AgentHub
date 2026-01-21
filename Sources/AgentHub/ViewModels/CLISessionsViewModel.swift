@@ -114,33 +114,33 @@ public final class CLISessionsViewModel {
   /// Stores the prompt temporarily so that when the terminal view renders,
   /// it can pass the prompt to EmbeddedTerminalView for the resume command.
   public func showTerminalWithPrompt(for session: CLISession, prompt: String) {
-    print("[CLISessionsVM] showTerminalWithPrompt called for session: \(session.id)")
-    print("[CLISessionsVM] prompt: \(prompt.prefix(100))...")
+    // [CLISessionsVM] showTerminalWithPrompt called for session: \(session.id)")
+    // [CLISessionsVM] prompt: \(prompt.prefix(100))...")
     // Start monitoring if not already
     if !monitoredSessionIds.contains(session.id) {
-      print("[CLISessionsVM] Starting monitoring for session")
+      // [CLISessionsVM] Starting monitoring for session")
       startMonitoring(session: session)
     }
     // Store the pending prompt
     pendingTerminalPrompts[session.id] = prompt
-    print("[CLISessionsVM] Stored prompt, pendingTerminalPrompts count: \(pendingTerminalPrompts.count)")
+    // [CLISessionsVM] Stored prompt, pendingTerminalPrompts count: \(pendingTerminalPrompts.count)")
     // Show terminal view
     sessionsWithTerminalView.insert(session.id)
-    print("[CLISessionsVM] Terminal view enabled for session")
+    // [CLISessionsVM] Terminal view enabled for session")
   }
 
   /// Returns the pending prompt for a session (read-only, safe during view body)
   public func pendingPrompt(for sessionId: String) -> String? {
     let prompt = pendingTerminalPrompts[sessionId]
     if prompt != nil {
-      print("[CLISessionsVM] pendingPrompt read for \(sessionId.prefix(8)): found prompt")
+      // [CLISessionsVM] pendingPrompt read for \(sessionId.prefix(8)): found prompt")
     }
     return prompt
   }
 
   /// Clears the pending prompt after terminal has started (call from onAppear)
   public func clearPendingPrompt(for sessionId: String) {
-    print("[CLISessionsVM] clearPendingPrompt called for \(sessionId.prefix(8))")
+    // [CLISessionsVM] clearPendingPrompt called for \(sessionId.prefix(8))")
     pendingTerminalPrompts.removeValue(forKey: sessionId)
   }
 
@@ -235,7 +235,7 @@ public final class CLISessionsViewModel {
   // MARK: - Initialization
 
   public init(monitorService: CLISessionMonitorService, claudeClient: ClaudeCode? = nil) {
-    print("[CLISessionsVM] init called")
+    // [CLISessionsVM] init called")
     self.monitorService = monitorService
     self.searchService = GlobalSearchService()
     self.claudeClient = claudeClient
@@ -255,7 +255,7 @@ public final class CLISessionsViewModel {
       await fileWatcher.setApprovalTimeout(approvalTimeoutSeconds)
     }
 
-    print("[CLISessionsVM] init completed")
+    // [CLISessionsVM] init completed")
   }
 
   private func requestNotificationPermissions() {
@@ -328,22 +328,22 @@ public final class CLISessionsViewModel {
 
   private func restorePersistedRepositories() {
     Task {
-      print("[CLISessionsVM] restorePersistedRepositories called")
+      // [CLISessionsVM] restorePersistedRepositories called")
       guard let data = UserDefaults.standard.data(forKey: persistenceKey),
             let paths = try? JSONDecoder().decode([String].self, from: data) else {
-        print("[CLISessionsVM] No persisted repositories found")
+        // [CLISessionsVM] No persisted repositories found")
         return
       }
 
-      print("[CLISessionsVM] Found \(paths.count) persisted paths: \(paths)")
+      // [CLISessionsVM] Found \(paths.count) persisted paths: \(paths)")
       loadingState = .restoringRepositories
-      print("[CLISessionsVM] loadingState = .restoringRepositories")
+      // [CLISessionsVM] loadingState = .restoringRepositories")
       for path in paths {
-        print("[CLISessionsVM] Adding repository: \(path)")
+        // [CLISessionsVM] Adding repository: \(path)")
         await monitorService.addRepository(path)
       }
       loadingState = .idle
-      print("[CLISessionsVM] loadingState = .idle")
+      // [CLISessionsVM] loadingState = .idle")
 
       // Restore monitored sessions after all repositories have loaded
       restoreMonitoredSessions()
@@ -375,25 +375,25 @@ public final class CLISessionsViewModel {
 
   /// Restores monitored sessions from UserDefaults after repositories have loaded
   private func restoreMonitoredSessions() {
-    print("[CLISessionsVM] restoreMonitoredSessions called")
+    // [CLISessionsVM] restoreMonitoredSessions called")
 
     // Restore monitored session IDs
     if let data = UserDefaults.standard.data(forKey: AgentHubDefaults.monitoredSessionIds),
        let sessionIds = try? JSONDecoder().decode([String].self, from: data) {
-      print("[CLISessionsVM] Found \(sessionIds.count) persisted monitored session IDs")
+      // [CLISessionsVM] Found \(sessionIds.count) persisted monitored session IDs")
 
       for sessionId in sessionIds {
         // Find the session in loaded repositories
         if let session = findSession(byId: sessionId) {
           // Verify session file still exists
           if sessionFileExists(session: session) {
-            print("[CLISessionsVM] Restoring monitoring for session: \(sessionId.prefix(8))...")
+            // [CLISessionsVM] Restoring monitoring for session: \(sessionId.prefix(8))...")
             startMonitoring(session: session)
           } else {
-            print("[CLISessionsVM] Session file no longer exists: \(sessionId.prefix(8))...")
+            // [CLISessionsVM] Session file no longer exists: \(sessionId.prefix(8))...")
           }
         } else {
-          print("[CLISessionsVM] Session not found in loaded repos: \(sessionId.prefix(8))...")
+          // [CLISessionsVM] Session not found in loaded repos: \(sessionId.prefix(8))...")
         }
       }
     }
@@ -401,7 +401,7 @@ public final class CLISessionsViewModel {
     // Restore terminal view state
     if let data = UserDefaults.standard.data(forKey: AgentHubDefaults.sessionsWithTerminalView),
        let sessionIds = try? JSONDecoder().decode([String].self, from: data) {
-      print("[CLISessionsVM] Found \(sessionIds.count) persisted sessions with terminal view")
+      // [CLISessionsVM] Found \(sessionIds.count) persisted sessions with terminal view")
 
       for sessionId in sessionIds {
         // Only restore terminal view for sessions that are actually monitored
@@ -456,7 +456,7 @@ public final class CLISessionsViewModel {
 
   /// Opens a directory picker and adds the selected repository
   public func showAddRepositoryPicker() {
-    print("[CLISessionsVM] showAddRepositoryPicker called")
+    // [CLISessionsVM] showAddRepositoryPicker called")
     #if canImport(AppKit)
     let panel = NSOpenPanel()
     panel.title = "Select Repository"
@@ -467,10 +467,10 @@ public final class CLISessionsViewModel {
     panel.canCreateDirectories = false
 
     if panel.runModal() == .OK, let url = panel.url {
-      print("[CLISessionsVM] User selected path: \(url.path)")
+      // [CLISessionsVM] User selected path: \(url.path)")
       addRepository(at: url.path)
     } else {
-      print("[CLISessionsVM] User cancelled picker")
+      // [CLISessionsVM] User cancelled picker")
     }
     #endif
   }
@@ -478,15 +478,15 @@ public final class CLISessionsViewModel {
   /// Adds a repository at the given path
   public func addRepository(at path: String) {
     let repoName = URL(fileURLWithPath: path).lastPathComponent
-    print("[CLISessionsVM] addRepository called for: \(path) (name: \(repoName))")
+    // [CLISessionsVM] addRepository called for: \(path) (name: \(repoName))")
     Task {
-      print("[CLISessionsVM] loadingState = .addingRepository(\(repoName))")
+      // [CLISessionsVM] loadingState = .addingRepository(\(repoName))")
       loadingState = .addingRepository(name: repoName)
-      print("[CLISessionsVM] Calling monitorService.addRepository...")
+      // [CLISessionsVM] Calling monitorService.addRepository...")
       await monitorService.addRepository(path)
-      print("[CLISessionsVM] monitorService.addRepository completed")
+      // [CLISessionsVM] monitorService.addRepository completed")
       loadingState = .idle
-      print("[CLISessionsVM] loadingState = .idle")
+      // [CLISessionsVM] loadingState = .idle")
     }
   }
 
@@ -535,15 +535,15 @@ public final class CLISessionsViewModel {
   /// Deletes a worktree
   /// - Parameter worktree: The worktree to delete
   public func deleteWorktree(_ worktree: WorktreeBranch) async {
-    print("[CLISessionsVM] deleteWorktree: \(worktree.path)")
+    // [CLISessionsVM] deleteWorktree: \(worktree.path)")
     deletingWorktreePath = worktree.path
 
     do {
       try await worktreeService.removeWorktree(at: worktree.path)
-      print("[CLISessionsVM] Worktree deleted successfully")
+      // [CLISessionsVM] Worktree deleted successfully")
       refresh()
     } catch {
-      print("[CLISessionsVM] Failed to delete worktree: \(error.localizedDescription)")
+      // [CLISessionsVM] Failed to delete worktree: \(error.localizedDescription)")
       worktreeDeletionError = WorktreeDeletionError(
         worktree: worktree,
         message: error.localizedDescription
@@ -560,15 +560,15 @@ public final class CLISessionsViewModel {
 
   /// Refreshes sessions for all selected repositories
   public func refresh() {
-    print("[CLISessionsVM] refresh called")
+    // [CLISessionsVM] refresh called")
     Task {
-      print("[CLISessionsVM] loadingState = .refreshing")
+      // [CLISessionsVM] loadingState = .refreshing")
       loadingState = .refreshing
-      print("[CLISessionsVM] Calling monitorService.refreshSessions...")
+      // [CLISessionsVM] Calling monitorService.refreshSessions...")
       await monitorService.refreshSessions()
-      print("[CLISessionsVM] refreshSessions completed")
+      // [CLISessionsVM] refreshSessions completed")
       loadingState = .idle
-      print("[CLISessionsVM] loadingState = .idle")
+      // [CLISessionsVM] loadingState = .idle")
     }
   }
 
@@ -671,7 +671,7 @@ public final class CLISessionsViewModel {
       )
     } catch {
       // If we can't check, assume no checkout needed to avoid blocking
-      print("[CLISessionsVM] Error checking git status: \(error)")
+      // [CLISessionsVM] Error checking git status: \(error)")
       return TerminalOpenCheck(
         needsCheckout: false,
         hasUncommittedChanges: false,
@@ -848,13 +848,13 @@ public final class CLISessionsViewModel {
 
         // Log retry attempt (only if not the last attempt)
         if attempt < maxAttempts {
-          print("[CLISessionsVM] Session \(sessionId.prefix(8)) not found, retrying (\(attempt)/\(maxAttempts))")
+          // [CLISessionsVM] Session \(sessionId.prefix(8)) not found, retrying (\(attempt)/\(maxAttempts))")
         }
       }
 
       // If still not found after all attempts, log warning
       // Keep pending session visible (terminal continues working)
-      print("[CLISessionsVM] ⚠️ Failed to find session \(sessionId) after \(maxAttempts) attempts")
+      // [CLISessionsVM] ⚠️ Failed to find session \(sessionId) after \(maxAttempts) attempts")
     }
   }
 

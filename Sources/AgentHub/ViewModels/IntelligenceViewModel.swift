@@ -118,17 +118,12 @@ public final class IntelligenceViewModel {
       self?.lastResponse += text
     }
 
-    streamProcessor.onToolUse = { toolName, input in
-      print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-      print("🔧 TOOL: \(toolName)")
-      print("📥 INPUT: \(input.prefix(500))\(input.count > 500 ? "..." : "")")
-      print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    streamProcessor.onToolUse = { _, _ in
+      // Tool use received
     }
 
-    streamProcessor.onToolResult = { result in
-      print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-      print("📤 RESULT: \(result.prefix(500))\(result.count > 500 ? "..." : "")")
-      print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    streamProcessor.onToolResult = { _ in
+      // Tool result received
     }
 
     streamProcessor.onComplete = { [weak self] in
@@ -162,21 +157,12 @@ public final class IntelligenceViewModel {
 
   private func executeOrchestrationPlan(_ plan: OrchestrationPlan) async {
     guard let orchestrationService = orchestrationService else {
-      print("❌ Orchestration service not available")
       return
     }
 
-    print("════════════════════════════════════════")
-    print("🎯 EXECUTING ORCHESTRATION PLAN")
-    print("📁 Module: \(plan.modulePath)")
-    print("📋 Sessions: \(plan.sessions.count)")
-    print("════════════════════════════════════════")
-
     do {
-      let createdPaths = try await orchestrationService.executePlan(plan)
-      print("✅ Created \(createdPaths.count) worktrees")
+      _ = try await orchestrationService.executePlan(plan)
     } catch {
-      print("❌ Orchestration failed: \(error.localizedDescription)")
       self.errorMessage = "Orchestration failed: \(error.localizedDescription)"
     }
   }
@@ -199,15 +185,6 @@ public final class IntelligenceViewModel {
 
     // Determine if we're in orchestration mode (working directory selected)
     let isOrchestrationMode = workingDirectory != nil && orchestrationService != nil
-
-    print("════════════════════════════════════════")
-    print("🧠 INTELLIGENCE REQUEST")
-    print("📝 Prompt: \(text)")
-    if isOrchestrationMode {
-      print("🎯 Mode: Orchestration")
-      print("📁 Working Directory: \(workingDirectory ?? "")")
-    }
-    print("════════════════════════════════════════")
 
     Task {
       do {
@@ -245,7 +222,6 @@ public final class IntelligenceViewModel {
         // Process the result
         await processResult(result)
       } catch {
-        print("❌ ERROR: \(error.localizedDescription)")
         await MainActor.run {
           self.isLoading = false
           self.errorMessage = error.localizedDescription
@@ -256,7 +232,6 @@ public final class IntelligenceViewModel {
 
   /// Cancel the current request
   public func cancelRequest() {
-    print("⛔ Request cancelled by user")
     streamProcessor.cancelStream()
     claudeClient.cancel()
     isLoading = false
@@ -275,12 +250,10 @@ public final class IntelligenceViewModel {
       await streamProcessor.processStream(publisher)
 
     case .text(let text):
-      print("[Intelligence] Text result: \(text)")
       lastResponse = text
       isLoading = false
 
     case .json(let resultMessage):
-      print("[Intelligence] JSON result - Cost: $\(String(format: "%.4f", resultMessage.totalCostUsd))")
       lastResponse = resultMessage.result ?? ""
       isLoading = false
     }

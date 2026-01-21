@@ -87,18 +87,13 @@ public actor GlobalSearchService {
   // MARK: - Index Building
 
   private func buildIndex() async {
-    print("[GlobalSearchService] Building index...")
-    let startTime = Date()
-
     sessionIndex.removeAll()
 
     // Step 1: Parse history.jsonl to discover all sessions
     let historyEntries = parseGlobalHistory()
-    print("[GlobalSearchService] Found \(historyEntries.count) history entries")
 
     // Group by sessionId to get unique sessions
     let sessionGroups = Dictionary(grouping: historyEntries) { $0.sessionId }
-    print("[GlobalSearchService] Found \(sessionGroups.count) unique sessions")
 
     // Step 2: For each session, extract metadata from session files in parallel
     // Capture claudeDataPath for use in TaskGroup tasks
@@ -143,9 +138,6 @@ public actor GlobalSearchService {
 
     isIndexBuilt = true
     updateLastHistoryModTime()
-
-    let elapsed = Date().timeIntervalSince(startTime)
-    print("[GlobalSearchService] Index built: \(sessionIndex.count) sessions in \(String(format: "%.2f", elapsed))s")
   }
 
   // MARK: - History Parsing
@@ -155,7 +147,6 @@ public actor GlobalSearchService {
 
     guard let data = FileManager.default.contents(atPath: historyPath),
           let content = String(data: data, encoding: .utf8) else {
-      print("[GlobalSearchService] Could not read history.jsonl")
       return []
     }
 

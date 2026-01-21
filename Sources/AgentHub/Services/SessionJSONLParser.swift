@@ -94,6 +94,7 @@ public struct SessionJSONLParser {
     public let toolUseId: String
     public let timestamp: Date
     public let input: String?
+    public let codeChangeInput: CodeChangeInput?
   }
 
   // MARK: - Public API
@@ -103,17 +104,14 @@ public struct SessionJSONLParser {
   ///   - path: Path to the session JSONL file
   ///   - approvalTimeoutSeconds: Seconds to wait before considering a tool as awaiting approval (default: 5)
   public static func parseSessionFile(at path: String, approvalTimeoutSeconds: Int = 5) -> ParseResult {
-    print("[SessionJSONLParser] parseSessionFile: \(path)")
     var result = ParseResult()
 
     guard let data = FileManager.default.contents(atPath: path),
           let content = String(data: data, encoding: .utf8) else {
-      print("[SessionJSONLParser] Failed to read file")
       return result
     }
 
     let lines = content.components(separatedBy: .newlines)
-    print("[SessionJSONLParser] Found \(lines.count) lines")
 
     for line in lines where !line.isEmpty {
       if let entry = parseEntry(line) {
@@ -124,7 +122,6 @@ public struct SessionJSONLParser {
     // Determine current status from pending tools
     updateCurrentStatus(&result, approvalTimeoutSeconds: approvalTimeoutSeconds)
 
-    print("[SessionJSONLParser] Result: \(result.messageCount) msgs, \(result.lastInputTokens) input, \(result.totalOutputTokens) total output, \(result.pendingToolUses.count) pending")
     return result
   }
 
@@ -241,15 +238,17 @@ public struct SessionJSONLParser {
 
           // Add to pending (will be removed when we see tool_result)
           let inputPreview = extractInputPreview(block.input)
+
+          // Extract full input for code-changing tools
+          let codeChangeInput = extractCodeChangeInput(name: name, input: block.input)
+
           result.pendingToolUses[id] = PendingToolInfo(
             toolName: name,
             toolUseId: id,
             timestamp: timestamp ?? Date(),
-            input: inputPreview
+            input: inputPreview,
+            codeChangeInput: codeChangeInput
           )
-
-          // Extract full input for code-changing tools
-          let codeChangeInput = extractCodeChangeInput(name: name, input: block.input)
 
           addActivity(
             type: .toolUse(name: name),

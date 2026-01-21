@@ -47,7 +47,6 @@ public final class ApprovalNotificationService {
     model: String?,
     lastMessage: String? = nil
   ) {
-    print("[ApprovalNotification] Tool '\(toolName)' needs approval - playing sound")
     playAlertSound()
   }
 

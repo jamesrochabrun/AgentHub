@@ -232,17 +232,17 @@ public struct CLIRepositoryTreeView: View {
         ],
         isExpanded: true
       ),
-      onRemove: { print("Remove") },
-      onToggleExpanded: { print("Toggle repo") },
-      onToggleWorktreeExpanded: { _ in print("Toggle worktree") },
-      onConnectSession: { _ in print("Connect") },
-      onCopySessionId: { _ in print("Copy") },
-      onOpenSessionFile: { _ in print("Open file") },
+      onRemove: { },
+      onToggleExpanded: { },
+      onToggleWorktreeExpanded: { _ in },
+      onConnectSession: { _ in },
+      onCopySessionId: { _ in },
+      onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in print("Toggle monitoring") },
-      onCreateWorktree: { print("Create worktree") },
-      onOpenTerminalForWorktree: { _ in print("Open terminal") },
-      onStartInHubForWorktree: { _ in print("Start in Hub") }
+      onToggleMonitoring: { _ in },
+      onCreateWorktree: { },
+      onOpenTerminalForWorktree: { _ in },
+      onStartInHubForWorktree: { _ in }
     )
 
     // Collapsed repository
@@ -259,17 +259,17 @@ public struct CLIRepositoryTreeView: View {
         ],
         isExpanded: false
       ),
-      onRemove: { print("Remove") },
-      onToggleExpanded: { print("Toggle repo") },
-      onToggleWorktreeExpanded: { _ in print("Toggle worktree") },
-      onConnectSession: { _ in print("Connect") },
-      onCopySessionId: { _ in print("Copy") },
-      onOpenSessionFile: { _ in print("Open file") },
+      onRemove: { },
+      onToggleExpanded: { },
+      onToggleWorktreeExpanded: { _ in },
+      onConnectSession: { _ in },
+      onCopySessionId: { _ in },
+      onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in print("Toggle monitoring") },
-      onCreateWorktree: { print("Create worktree") },
-      onOpenTerminalForWorktree: { _ in print("Open terminal") },
-      onStartInHubForWorktree: { _ in print("Start in Hub") }
+      onToggleMonitoring: { _ in },
+      onCreateWorktree: { },
+      onOpenTerminalForWorktree: { _ in },
+      onStartInHubForWorktree: { _ in }
     )
   }
   .padding()

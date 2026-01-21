@@ -69,6 +69,6 @@ public struct CLIEmptyStateView: View {
 // MARK: - Preview
 
 #Preview {
-  CLIEmptyStateView(onAddRepository: { print("Add repository") })
+  CLIEmptyStateView(onAddRepository: { })
     .frame(width: 400, height: 400)
 }

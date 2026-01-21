@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 // MARK: - Session Type
 
@@ -209,7 +210,7 @@ public enum WorktreeOrchestrationTool {
 
     // Parse JSON
     guard let data = jsonString.data(using: .utf8) else {
-      print("[Orchestration] Failed to convert JSON string to data")
+      AppLogger.orchestration.error("Failed to convert JSON string to data")
       return nil
     }
 
@@ -217,7 +218,7 @@ public enum WorktreeOrchestrationTool {
       let plan = try JSONDecoder().decode(OrchestrationPlan.self, from: data)
       return plan
     } catch {
-      print("[Orchestration] Failed to decode JSON: \(error)")
+      AppLogger.orchestration.error("Failed to decode JSON: \(error.localizedDescription)")
       return nil
     }
   }

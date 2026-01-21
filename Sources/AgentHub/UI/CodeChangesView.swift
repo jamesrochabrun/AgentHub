@@ -414,12 +414,8 @@ private struct DiffViewWithHeader: View {
             onLineClickWithPosition: claudeClient != nil ? { position, localPoint in
               // Only enable inline editor when claudeClient is available
               // localPoint is already in SwiftUI-compatible coordinates (origin at top-left)
-              print("[CodeChangesView] Received localPoint: \(localPoint)")
-              print("[CodeChangesView] GeometryReader size: \(geometry.size)")
-
               // Use localPoint.y directly - already converted to top-left origin
               let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
-              print("[CodeChangesView] anchorPoint: \(anchorPoint)")
 
               // Determine which content to use based on the side
               let fileContent = position.side == "left" ? oldContent : newContent
@@ -462,7 +458,6 @@ private struct DiffViewWithHeader: View {
               state: inlineEditorState,
               containerSize: geometry.size,
               onSubmit: { message, lineNumber, side, file in
-                print("[InlineEditor] Line \(lineNumber) (\(side)) in \(file): \(message)")
 
                 // Build contextual prompt with line context
                 let prompt = buildInlinePrompt(
