@@ -44,6 +44,51 @@ private enum LayoutMode: Int, CaseIterable {
   }
 }
 
+// MARK: - ModuleSectionHeader
+
+/// Section header for grouping sessions by module
+private struct ModuleSectionHeader: View {
+  let name: String
+  let sessionCount: Int
+
+  var body: some View {
+    HStack {
+      Text(name)
+        .font(.subheadline.weight(.semibold))
+        .foregroundColor(.secondary)
+      Spacer()
+      Text("\(sessionCount)")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+    .padding(.horizontal, 4)
+    .padding(.top, 6)
+    .padding(.bottom, 10)
+  }
+}
+
+// MARK: - MonitoringItem
+
+/// Unified type for both pending and monitored sessions in the monitoring panel
+private enum MonitoringItem: Identifiable {
+  case pending(PendingHubSession)
+  case monitored(session: CLISession, state: SessionMonitorState?)
+
+  var id: String {
+    switch self {
+    case .pending(let p): return "pending-\(p.id.uuidString)"
+    case .monitored(let session, _): return session.id
+    }
+  }
+
+  var projectPath: String {
+    switch self {
+    case .pending(let p): return p.worktree.path
+    case .monitored(let session, _): return session.projectPath
+    }
+  }
+}
+
 // MARK: - MonitoringPanelView
 
 /// Right panel view showing all monitored sessions
@@ -56,6 +101,45 @@ public struct MonitoringPanelView: View {
   public init(viewModel: CLISessionsViewModel, claudeClient: (any ClaudeCode)?) {
     self.viewModel = viewModel
     self.claudeClient = claudeClient
+  }
+
+  /// Finds the main module path for an item (maps worktree paths to their parent repository)
+  private func findModulePath(for item: MonitoringItem) -> String {
+    let itemPath: String
+    switch item {
+    case .pending(let p): itemPath = p.worktree.path
+    case .monitored(let s, _): itemPath = s.projectPath
+    }
+
+    // Find which SelectedRepository contains this path
+    for repo in viewModel.selectedRepositories {
+      for worktree in repo.worktrees {
+        if worktree.path == itemPath {
+          return repo.path  // Return main module path
+        }
+      }
+    }
+    return itemPath  // Fallback to original path
+  }
+
+  /// All sessions (pending + monitored) grouped by module (main repository path)
+  private var groupedMonitoredSessions: [(modulePath: String, items: [MonitoringItem])] {
+    var allItems: [MonitoringItem] = []
+
+    // Add pending sessions first (they appear at top of their module)
+    for pending in viewModel.pendingHubSessions {
+      allItems.append(.pending(pending))
+    }
+
+    // Add monitored sessions
+    for item in viewModel.monitoredSessions {
+      allItems.append(.monitored(session: item.session, state: item.state))
+    }
+
+    // Group by MODULE path (not worktree path)
+    let grouped = Dictionary(grouping: allItems) { findModulePath(for: $0) }
+    return grouped.sorted { $0.key < $1.key }
+      .map { (modulePath: $0.key, items: $0.value) }
   }
 
   public var body: some View {
@@ -160,14 +244,14 @@ public struct MonitoringPanelView: View {
   private var monitoredSessionsList: some View {
     ScrollView {
       if layoutMode == .list {
-        LazyVStack(spacing: 12) {
-          monitoredSessionsContent
+        LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+          monitoredSessionsGroupedContent
         }
         .padding(12)
       } else {
         let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
-        LazyVGrid(columns: columns, spacing: 12) {
-          monitoredSessionsContent
+        LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
+          monitoredSessionsGroupedContent
         }
         .padding(12)
       }
@@ -246,6 +330,82 @@ public struct MonitoringPanelView: View {
           viewModel.clearPendingPrompt(for: item.session.id)
         }
       )
+    }
+  }
+
+  // MARK: - Grouped Content by Module
+
+  @ViewBuilder
+  private var monitoredSessionsGroupedContent: some View {
+    // All sessions grouped by module (pending + monitored combined)
+    ForEach(groupedMonitoredSessions, id: \.modulePath) { group in
+      Section(header: ModuleSectionHeader(
+        name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
+        sessionCount: group.items.count
+      )) {
+        ForEach(group.items) { item in
+          switch item {
+          case .pending(let pending):
+            MonitoringCardView(
+              session: pending.placeholderSession,
+              state: nil,
+              claudeClient: claudeClient,
+              showTerminal: true,
+              terminalKey: "pending-\(pending.id.uuidString)",
+              viewModel: viewModel,
+              onToggleTerminal: { _ in },
+              onStopMonitoring: {
+                viewModel.cancelPendingSession(pending)
+              },
+              onConnect: { },
+              onCopySessionId: { },
+              onOpenSessionFile: { }
+            )
+
+          case .monitored(let session, let state):
+            let codeChangesState = state.map {
+              CodeChangesState.from(activities: $0.recentActivities)
+            }
+            let planState = state.flatMap {
+              PlanState.from(activities: $0.recentActivities)
+            }
+            let initialPrompt = viewModel.pendingPrompt(for: session.id)
+
+            MonitoringCardView(
+              session: session,
+              state: state,
+              codeChangesState: codeChangesState,
+              planState: planState,
+              claudeClient: claudeClient,
+              showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
+              initialPrompt: initialPrompt,
+              terminalKey: session.id,
+              viewModel: viewModel,
+              onToggleTerminal: { show in
+                viewModel.setTerminalView(for: session.id, show: show)
+              },
+              onStopMonitoring: {
+                viewModel.stopMonitoring(session: session)
+              },
+              onConnect: {
+                _ = viewModel.connectToSession(session)
+              },
+              onCopySessionId: {
+                viewModel.copySessionId(session)
+              },
+              onOpenSessionFile: {
+                openSessionFile(for: session)
+              },
+              onInlineRequestSubmit: { prompt, sess in
+                viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+              },
+              onPromptConsumed: {
+                viewModel.clearPendingPrompt(for: session.id)
+              }
+            )
+          }
+        }
+      }
     }
   }
 

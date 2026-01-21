@@ -213,6 +213,7 @@ public struct CLIWorktreeBranchRow: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .agentHubRow(isHighlighted: false)
 
       // Sessions list (when expanded)
       if isExpanded {
@@ -256,7 +257,8 @@ public struct CLIWorktreeBranchRow: View {
             }
           }
           .frame(maxHeight: 300)
-          .padding(.vertical, 4)
+          .padding(.top, 8)
+          .padding(.bottom, 4)
           .padding(.leading, 20)
         }
       }

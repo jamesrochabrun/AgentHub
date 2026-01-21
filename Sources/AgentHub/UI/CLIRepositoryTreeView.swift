@@ -68,7 +68,7 @@ public struct CLIRepositoryTreeView: View {
   }
 
   public var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
+    VStack(alignment: .leading, spacing: 6) {
       // Repository header
       repositoryHeader
 
