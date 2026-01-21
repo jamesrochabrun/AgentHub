@@ -38,6 +38,14 @@ public enum AgentHubDefaults {
   /// Type: Data (JSON-encoded [String])
   public static let selectedRepositories = "\(keyPrefix)sessions.selectedRepositories"
 
+  /// Persisted monitored session IDs (JSON-encoded array of session IDs)
+  /// Type: Data (JSON-encoded [String])
+  public static let monitoredSessionIds = "\(keyPrefix)sessions.monitoredSessionIds"
+
+  /// Persisted session IDs that have terminal view enabled
+  /// Type: Data (JSON-encoded [String])
+  public static let sessionsWithTerminalView = "\(keyPrefix)sessions.sessionsWithTerminalView"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name
