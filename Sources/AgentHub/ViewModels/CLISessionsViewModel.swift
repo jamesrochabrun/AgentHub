@@ -106,6 +106,7 @@ public final class CLISessionsViewModel {
     } else {
       sessionsWithTerminalView.remove(sessionId)
     }
+    persistSessionsWithTerminalView()
   }
 
   /// Shows terminal view for a session with an initial prompt (for inline edit requests).
@@ -306,6 +307,9 @@ public final class CLISessionsViewModel {
       }
       loadingState = .idle
       print("[CLISessionsVM] loadingState = .idle")
+
+      // Restore monitored sessions after all repositories have loaded
+      restoreMonitoredSessions()
     }
   }
 
@@ -314,6 +318,69 @@ public final class CLISessionsViewModel {
     if let data = try? JSONEncoder().encode(paths) {
       UserDefaults.standard.set(data, forKey: persistenceKey)
     }
+  }
+
+  /// Persists the currently monitored session IDs to UserDefaults
+  private func persistMonitoredSessions() {
+    let sessionIds = Array(monitoredSessionIds)
+    if let data = try? JSONEncoder().encode(sessionIds) {
+      UserDefaults.standard.set(data, forKey: AgentHubDefaults.monitoredSessionIds)
+    }
+  }
+
+  /// Persists which sessions have terminal view enabled
+  private func persistSessionsWithTerminalView() {
+    let sessionIds = Array(sessionsWithTerminalView)
+    if let data = try? JSONEncoder().encode(sessionIds) {
+      UserDefaults.standard.set(data, forKey: AgentHubDefaults.sessionsWithTerminalView)
+    }
+  }
+
+  /// Restores monitored sessions from UserDefaults after repositories have loaded
+  private func restoreMonitoredSessions() {
+    print("[CLISessionsVM] restoreMonitoredSessions called")
+
+    // Restore monitored session IDs
+    if let data = UserDefaults.standard.data(forKey: AgentHubDefaults.monitoredSessionIds),
+       let sessionIds = try? JSONDecoder().decode([String].self, from: data) {
+      print("[CLISessionsVM] Found \(sessionIds.count) persisted monitored session IDs")
+
+      for sessionId in sessionIds {
+        // Find the session in loaded repositories
+        if let session = findSession(byId: sessionId) {
+          // Verify session file still exists
+          if sessionFileExists(session: session) {
+            print("[CLISessionsVM] Restoring monitoring for session: \(sessionId.prefix(8))...")
+            startMonitoring(session: session)
+          } else {
+            print("[CLISessionsVM] Session file no longer exists: \(sessionId.prefix(8))...")
+          }
+        } else {
+          print("[CLISessionsVM] Session not found in loaded repos: \(sessionId.prefix(8))...")
+        }
+      }
+    }
+
+    // Restore terminal view state
+    if let data = UserDefaults.standard.data(forKey: AgentHubDefaults.sessionsWithTerminalView),
+       let sessionIds = try? JSONDecoder().decode([String].self, from: data) {
+      print("[CLISessionsVM] Found \(sessionIds.count) persisted sessions with terminal view")
+
+      for sessionId in sessionIds {
+        // Only restore terminal view for sessions that are actually monitored
+        if monitoredSessionIds.contains(sessionId) {
+          sessionsWithTerminalView.insert(sessionId)
+        }
+      }
+    }
+  }
+
+  /// Checks if the session file exists in ~/.claude
+  private func sessionFileExists(session: CLISession) -> Bool {
+    let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
+    let encodedPath = session.projectPath.replacingOccurrences(of: "/", with: "-")
+    let sessionFile = "\(claudeDataPath)/projects/\(encodedPath)/\(session.id).jsonl"
+    return FileManager.default.fileExists(atPath: sessionFile)
   }
 
   // MARK: - Repository Management
@@ -356,6 +423,15 @@ public final class CLISessionsViewModel {
 
   /// Removes a repository from monitoring
   public func removeRepository(_ repository: SelectedRepository) {
+    // Stop monitoring all sessions from this repository
+    for worktree in repository.worktrees {
+      for session in worktree.sessions {
+        if monitoredSessionIds.contains(session.id) {
+          stopMonitoring(sessionId: session.id)
+        }
+      }
+    }
+
     Task {
       await monitorService.removeRepository(repository.path)
     }
@@ -794,6 +870,7 @@ public final class CLISessionsViewModel {
     guard !monitoredSessionIds.contains(session.id) else { return }
 
     monitoredSessionIds.insert(session.id)
+    persistMonitoredSessions()
 
     // Subscribe to state updates
     let cancellable = fileWatcher.statePublisher
@@ -822,8 +899,12 @@ public final class CLISessionsViewModel {
   /// Stop monitoring by session ID
   public func stopMonitoring(sessionId: String) {
     monitoredSessionIds.remove(sessionId)
+    sessionsWithTerminalView.remove(sessionId)
     monitorStates.removeValue(forKey: sessionId)
     monitoringCancellables.removeValue(forKey: sessionId)
+
+    persistMonitoredSessions()
+    persistSessionsWithTerminalView()
 
     Task {
       await fileWatcher.stopMonitoring(sessionId: sessionId)
