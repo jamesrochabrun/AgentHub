@@ -363,17 +363,20 @@ public struct PendingToolUse: Equatable, Sendable {
   public let toolUseId: String
   public let timestamp: Date
   public let input: String?
+  public let codeChangeInput: CodeChangeInput?
 
   public init(
     toolName: String,
     toolUseId: String,
     timestamp: Date,
-    input: String? = nil
+    input: String? = nil,
+    codeChangeInput: CodeChangeInput? = nil
   ) {
     self.toolName = toolName
     self.toolUseId = toolUseId
     self.timestamp = timestamp
     self.input = input
+    self.codeChangeInput = codeChangeInput
   }
 
   /// How long this tool has been pending
@@ -384,6 +387,11 @@ public struct PendingToolUse: Equatable, Sendable {
   /// Whether this is likely awaiting approval (pending > 2 seconds)
   public var isLikelyAwaitingApproval: Bool {
     pendingDuration > 2.0
+  }
+
+  /// Whether this is a code-changing tool (Edit, Write, MultiEdit)
+  public var isCodeChangeTool: Bool {
+    ["Edit", "Write", "MultiEdit"].contains(toolName)
   }
 }
 

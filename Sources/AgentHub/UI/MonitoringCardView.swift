@@ -35,6 +35,15 @@ private struct PlanSheetItem: Identifiable {
   let planState: PlanState
 }
 
+// MARK: - PendingChangesSheetItem
+
+/// Identifiable wrapper for pending changes preview sheet
+private struct PendingChangesSheetItem: Identifiable {
+  let id = UUID()
+  let session: CLISession
+  let pendingToolUse: PendingToolUse
+}
+
 // MARK: - MonitoringCardView
 
 /// Card view for displaying a monitored session in the monitoring panel
@@ -59,6 +68,7 @@ public struct MonitoringCardView: View {
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
+  @State private var pendingChangesSheetItem: PendingChangesSheetItem?
 
   public init(
     session: CLISession,
@@ -154,6 +164,14 @@ public struct MonitoringCardView: View {
         session: item.session,
         planState: item.planState,
         onDismiss: { planSheetItem = nil }
+      )
+    }
+    .sheet(item: $pendingChangesSheetItem) { item in
+      PendingChangesView(
+        session: item.session,
+        pendingToolUse: item.pendingToolUse,
+        claudeClient: claudeClient,
+        onDismiss: { pendingChangesSheetItem = nil }
       )
     }
   }
@@ -286,6 +304,29 @@ public struct MonitoringCardView: View {
       branchPill
 
       Spacer()
+
+      // Pending changes preview button (only when awaiting approval with code change tool)
+      if let pendingToolUse = state?.pendingToolUse,
+         pendingToolUse.isCodeChangeTool,
+         case .awaitingApproval = state?.status {
+        Button(action: {
+          pendingChangesSheetItem = PendingChangesSheetItem(
+            session: session,
+            pendingToolUse: pendingToolUse
+          )
+        }) {
+          HStack(spacing: 4) {
+            Image(systemName: "eye")
+              .font(.caption)
+            Text("Preview")
+              .font(.system(.caption2, design: .rounded))
+          }
+          .foregroundColor(.orange)
+          .agentHubChip()
+        }
+        .buttonStyle(.plain)
+        .help("Preview pending \(pendingToolUse.toolName) change")
+      }
 
       // Plan button (if plan detected)
       if let planState = planState {
