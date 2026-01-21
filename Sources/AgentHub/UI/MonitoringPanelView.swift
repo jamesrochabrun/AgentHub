@@ -182,6 +182,8 @@ public struct MonitoringPanelView: View {
       let codeChangesState = item.state.map {
         CodeChangesState.from(activities: $0.recentActivities)
       }
+      // Read pending prompt (read-only, safe during view body)
+      let initialPrompt = viewModel.pendingPrompt(for: item.session.id)
 
       MonitoringCardView(
         session: item.session,
@@ -189,6 +191,7 @@ public struct MonitoringPanelView: View {
         codeChangesState: codeChangesState,
         claudeClient: claudeClient,
         showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
+        initialPrompt: initialPrompt,
         onToggleTerminal: { show in
           viewModel.setTerminalView(for: item.session.id, show: show)
         },
@@ -205,6 +208,12 @@ public struct MonitoringPanelView: View {
         },
         onOpenSessionFile: {
           openSessionFile(for: item.session)
+        },
+        onInlineRequestSubmit: { prompt, session in
+          viewModel.showTerminalWithPrompt(for: session, prompt: prompt)
+        },
+        onPromptConsumed: {
+          viewModel.clearPendingPrompt(for: item.session.id)
         }
       )
     }

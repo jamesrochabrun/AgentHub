@@ -35,11 +35,14 @@ public struct MonitoringCardView: View {
   let codeChangesState: CodeChangesState?
   let claudeClient: (any ClaudeCode)?
   let showTerminal: Bool
+  let initialPrompt: String?
   let onToggleTerminal: (Bool) -> Void
   let onStopMonitoring: () -> Void
   let onConnect: () -> Void
   let onCopySessionId: () -> Void
   let onOpenSessionFile: () -> Void
+  let onInlineRequestSubmit: ((String, CLISession) -> Void)?
+  let onPromptConsumed: (() -> Void)?
 
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
@@ -50,22 +53,28 @@ public struct MonitoringCardView: View {
     codeChangesState: CodeChangesState? = nil,
     claudeClient: (any ClaudeCode)? = nil,
     showTerminal: Bool = false,
+    initialPrompt: String? = nil,
     onToggleTerminal: @escaping (Bool) -> Void,
     onStopMonitoring: @escaping () -> Void,
     onConnect: @escaping () -> Void,
     onCopySessionId: @escaping () -> Void,
-    onOpenSessionFile: @escaping () -> Void
+    onOpenSessionFile: @escaping () -> Void,
+    onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
+    onPromptConsumed: (() -> Void)? = nil
   ) {
     self.session = session
     self.state = state
     self.codeChangesState = codeChangesState
     self.claudeClient = claudeClient
     self.showTerminal = showTerminal
+    self.initialPrompt = initialPrompt
     self.onToggleTerminal = onToggleTerminal
     self.onStopMonitoring = onStopMonitoring
     self.onConnect = onConnect
     self.onCopySessionId = onCopySessionId
     self.onOpenSessionFile = onOpenSessionFile
+    self.onInlineRequestSubmit = onInlineRequestSubmit
+    self.onPromptConsumed = onPromptConsumed
   }
 
   public var body: some View {
@@ -84,7 +93,9 @@ public struct MonitoringCardView: View {
         showTerminal: showTerminal,
         sessionId: session.id,
         projectPath: session.projectPath,
-        claudeClient: claudeClient
+        claudeClient: claudeClient,
+        initialPrompt: initialPrompt,
+        onPromptConsumed: onPromptConsumed
       )
     }
     .padding(12)
@@ -102,7 +113,8 @@ public struct MonitoringCardView: View {
         session: item.session,
         projectPath: item.projectPath,
         onDismiss: { gitDiffSheetItem = nil },
-        claudeClient: claudeClient
+        claudeClient: claudeClient,
+        onInlineRequestSubmit: onInlineRequestSubmit
       )
     }
   }

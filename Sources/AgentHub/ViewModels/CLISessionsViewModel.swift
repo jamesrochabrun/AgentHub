@@ -87,6 +87,18 @@ public final class CLISessionsViewModel {
   /// Session IDs that should show terminal view (tracks current state for each row)
   public var sessionsWithTerminalView: Set<String> = []
 
+  /// Maps session IDs to prompts that should be sent to the terminal when it becomes ready.
+  ///
+  /// This acts as a bridge between GitDiffView (where users submit inline edit requests) and
+  /// EmbeddedTerminalView (which sends the prompt to Claude). The flow is:
+  /// 1. User submits inline edit request → `showTerminalWithPrompt` stores prompt here
+  /// 2. Terminal view renders → reads prompt via `pendingPrompt(for:)`
+  /// 3. Terminal sends prompt to Claude → `clearPendingPrompt` removes it
+  ///
+  /// - Note: Prompts are sent with a 100ms delay before pressing Enter to avoid race conditions
+  ///   with the terminal's input buffer (see `EmbeddedTerminalView.sendPromptIfNeeded`).
+  public var pendingTerminalPrompts: [String: String] = [:]
+
   /// Updates the terminal view state for a session
   public func setTerminalView(for sessionId: String, show: Bool) {
     if show {
@@ -94,6 +106,41 @@ public final class CLISessionsViewModel {
     } else {
       sessionsWithTerminalView.remove(sessionId)
     }
+  }
+
+  /// Shows terminal view for a session with an initial prompt (for inline edit requests).
+  /// Called when user submits an inline change request from GitDiffView.
+  /// Stores the prompt temporarily so that when the terminal view renders,
+  /// it can pass the prompt to EmbeddedTerminalView for the resume command.
+  public func showTerminalWithPrompt(for session: CLISession, prompt: String) {
+    print("[CLISessionsVM] showTerminalWithPrompt called for session: \(session.id)")
+    print("[CLISessionsVM] prompt: \(prompt.prefix(100))...")
+    // Start monitoring if not already
+    if !monitoredSessionIds.contains(session.id) {
+      print("[CLISessionsVM] Starting monitoring for session")
+      startMonitoring(session: session)
+    }
+    // Store the pending prompt
+    pendingTerminalPrompts[session.id] = prompt
+    print("[CLISessionsVM] Stored prompt, pendingTerminalPrompts count: \(pendingTerminalPrompts.count)")
+    // Show terminal view
+    sessionsWithTerminalView.insert(session.id)
+    print("[CLISessionsVM] Terminal view enabled for session")
+  }
+
+  /// Returns the pending prompt for a session (read-only, safe during view body)
+  public func pendingPrompt(for sessionId: String) -> String? {
+    let prompt = pendingTerminalPrompts[sessionId]
+    if prompt != nil {
+      print("[CLISessionsVM] pendingPrompt read for \(sessionId.prefix(8)): found prompt")
+    }
+    return prompt
+  }
+
+  /// Clears the pending prompt after terminal has started (call from onAppear)
+  public func clearPendingPrompt(for sessionId: String) {
+    print("[CLISessionsVM] clearPendingPrompt called for \(sessionId.prefix(8))")
+    pendingTerminalPrompts.removeValue(forKey: sessionId)
   }
   /// Sessions being started in Hub's embedded terminal (no session ID yet)
   public var pendingHubSessions: [PendingHubSession] = []

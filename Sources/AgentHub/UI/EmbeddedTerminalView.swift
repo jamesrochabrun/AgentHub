@@ -18,15 +18,18 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   let sessionId: String?  // Optional: nil for new sessions, set for resume
   let projectPath: String
   let claudeClient: (any ClaudeCode)?
+  let initialPrompt: String?  // Optional: prompt to include with resume command
 
   public init(
     sessionId: String? = nil,
     projectPath: String,
-    claudeClient: (any ClaudeCode)?
+    claudeClient: (any ClaudeCode)?,
+    initialPrompt: String? = nil
   ) {
     self.sessionId = sessionId
     self.projectPath = projectPath
     self.claudeClient = claudeClient
+    self.initialPrompt = initialPrompt
   }
 
   public func makeNSView(context: Context) -> TerminalContainerView {
@@ -34,13 +37,17 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     containerView.configure(
       sessionId: sessionId,
       projectPath: projectPath,
-      claudeClient: claudeClient
+      claudeClient: claudeClient,
+      initialPrompt: initialPrompt
     )
     return containerView
   }
 
   public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
-    // Configuration is static after initial setup
+    // If there's a pending prompt, send it to the existing terminal
+    if let prompt = initialPrompt {
+      nsView.sendPromptIfNeeded(prompt)
+    }
   }
 }
 
@@ -50,11 +57,13 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
 public class TerminalContainerView: NSView {
   private var terminalView: LocalProcessTerminalView?
   private var isConfigured = false
+  private var promptSent = false  // Track if we've already sent a prompt
 
   func configure(
     sessionId: String?,
     projectPath: String,
-    claudeClient: (any ClaudeCode)?
+    claudeClient: (any ClaudeCode)?,
+    initialPrompt: String? = nil
   ) {
     guard !isConfigured else { return }
     isConfigured = true
@@ -82,8 +91,25 @@ public class TerminalContainerView: NSView {
       terminal: terminal,
       sessionId: sessionId,
       projectPath: projectPath,
-      claudeClient: claudeClient
+      claudeClient: claudeClient,
+      initialPrompt: initialPrompt
     )
+  }
+
+  /// Sends a prompt to the terminal if not already sent
+  func sendPromptIfNeeded(_ prompt: String) {
+    guard !promptSent, let terminal = terminalView else { return }
+    promptSent = true
+
+    // Send the prompt text first
+    terminal.send(txt: prompt)
+
+    // Small delay before sending Enter to ensure the terminal's input buffer
+    // processes the text before receiving the carriage return
+    Task { @MainActor [weak terminal] in
+      try? await Task.sleep(for: .milliseconds(100))
+      terminal?.send([13])  // ASCII 13 = carriage return (Enter key)
+    }
   }
 
   private func configureTerminalAppearance(_ terminal: LocalProcessTerminalView) {
@@ -106,7 +132,8 @@ public class TerminalContainerView: NSView {
     terminal: LocalProcessTerminalView,
     sessionId: String?,
     projectPath: String,
-    claudeClient: (any ClaudeCode)?
+    claudeClient: (any ClaudeCode)?,
+    initialPrompt: String? = nil
   ) {
     // Find the Claude executable
     let command = claudeClient?.configuration.command ?? "claude"
@@ -156,7 +183,14 @@ public class TerminalContainerView: NSView {
     if let sessionId = sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
       // Resume existing session
       let escapedSessionId = sessionId.replacingOccurrences(of: "'", with: "'\\''")
-      shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)' -r '\(escapedSessionId)'"
+
+      // Include initial prompt if provided (for inline edit requests)
+      if let prompt = initialPrompt, !prompt.isEmpty {
+        let escapedPrompt = prompt.replacingOccurrences(of: "'", with: "'\\''")
+        shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)' -r '\(escapedSessionId)' '\(escapedPrompt)'"
+      } else {
+        shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)' -r '\(escapedSessionId)'"
+      }
     } else {
       // Start NEW session (no -r flag)
       shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)'"

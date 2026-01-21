@@ -25,6 +25,7 @@ public struct GitDiffView: View {
   let projectPath: String
   let onDismiss: () -> Void
   let claudeClient: (any ClaudeCode)?
+  let onInlineRequestSubmit: ((String, CLISession) -> Void)?
 
   @State private var diffState: GitDiffState = .empty
   @State private var isLoading = true
@@ -43,12 +44,14 @@ public struct GitDiffView: View {
     session: CLISession,
     projectPath: String,
     onDismiss: @escaping () -> Void,
-    claudeClient: (any ClaudeCode)? = nil
+    claudeClient: (any ClaudeCode)? = nil,
+    onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil
   ) {
     self.session = session
     self.projectPath = projectPath
     self.onDismiss = onDismiss
     self.claudeClient = claudeClient
+    self.onInlineRequestSubmit = onInlineRequestSubmit
   }
 
   public var body: some View {
@@ -267,7 +270,8 @@ public struct GitDiffView: View {
             inlineEditorState: inlineEditorState,
             claudeClient: claudeClient,
             session: session,
-            onDismissView: onDismiss
+            onDismissView: onDismiss,
+            onInlineRequestSubmit: onInlineRequestSubmit
           )
           .frame(minHeight: 400)
           .id(selectedId)
@@ -413,6 +417,7 @@ private struct GitDiffContentView: View {
   let claudeClient: (any ClaudeCode)?
   let session: CLISession
   let onDismissView: () -> Void
+  let onInlineRequestSubmit: ((String, CLISession) -> Void)?
 
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
@@ -484,17 +489,23 @@ private struct GitDiffContentView: View {
                   fileName: file
                 )
 
-                // Open Terminal with resumed session
-                if let error = TerminalLauncher.launchTerminalWithSession(
-                  session.id,
-                  claudeClient: client,
-                  projectPath: session.projectPath,
-                  initialPrompt: prompt
-                ) {
-                  inlineEditorState.errorMessage = error.localizedDescription
-                } else {
-                  // Dismiss entire diff view - session continues in Terminal
+                // Use callback if provided (redirects to built-in terminal)
+                if let callback = onInlineRequestSubmit {
+                  callback(prompt, session)
                   onDismissView()
+                } else {
+                  // Fallback to external Terminal
+                  if let error = TerminalLauncher.launchTerminalWithSession(
+                    session.id,
+                    claudeClient: client,
+                    projectPath: session.projectPath,
+                    initialPrompt: prompt
+                  ) {
+                    inlineEditorState.errorMessage = error.localizedDescription
+                  } else {
+                    // Dismiss entire diff view - session continues in Terminal
+                    onDismissView()
+                  }
                 }
               }
             )

@@ -18,19 +18,25 @@ public struct SessionMonitorPanel: View {
   let sessionId: String?
   let projectPath: String?
   let claudeClient: (any ClaudeCode)?
+  let initialPrompt: String?
+  let onPromptConsumed: (() -> Void)?
 
   public init(
     state: SessionMonitorState?,
     showTerminal: Bool = false,
     sessionId: String? = nil,
     projectPath: String? = nil,
-    claudeClient: (any ClaudeCode)? = nil
+    claudeClient: (any ClaudeCode)? = nil,
+    initialPrompt: String? = nil,
+    onPromptConsumed: (() -> Void)? = nil
   ) {
     self.state = state
     self.showTerminal = showTerminal
     self.sessionId = sessionId
     self.projectPath = projectPath
     self.claudeClient = claudeClient
+    self.initialPrompt = initialPrompt
+    self.onPromptConsumed = onPromptConsumed
   }
 
   public var body: some View {
@@ -81,12 +87,19 @@ public struct SessionMonitorPanel: View {
         EmbeddedTerminalView(
           sessionId: sessionId,
           projectPath: projectPath ?? "",
-          claudeClient: claudeClient
+          claudeClient: claudeClient,
+          initialPrompt: initialPrompt
         )
         .frame(minHeight: showTerminal ? 300 : 0, maxHeight: showTerminal ? .infinity : 0)
         .clipped()
         .cornerRadius(6)
         .opacity(showTerminal ? 1 : 0)
+        .onAppear {
+          // Clear the pending prompt after terminal starts
+          if initialPrompt != nil {
+            onPromptConsumed?()
+          }
+        }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
