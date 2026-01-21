@@ -34,17 +34,17 @@ public struct CLIWorktreeBranchRow: View {
   private let initialVisibleSessions = 5
   private let loadMoreIncrement = 10
 
-  /// Sessions sorted with monitored ones at the top, then by last activity
+  /// Sessions sorted by last activity
   private var sortedSessions: [CLISession] {
     worktree.sessions.sorted { session1, session2 in
-      let isMonitored1 = isSessionMonitored(session1.id)
-      let isMonitored2 = isSessionMonitored(session2.id)
+      // Disabled: Monitored sessions first
+      // let isMonitored1 = isSessionMonitored(session1.id)
+      // let isMonitored2 = isSessionMonitored(session2.id)
+      // if isMonitored1 != isMonitored2 {
+      //   return isMonitored1
+      // }
 
-      // Monitored sessions first
-      if isMonitored1 != isMonitored2 {
-        return isMonitored1
-      }
-      // Then by last activity
+      // Sort by last activity only
       return session1.lastActivityAt > session2.lastActivityAt
     }
   }
@@ -223,36 +223,39 @@ public struct CLIWorktreeBranchRow: View {
             .padding(.leading, 32)
             .padding(.vertical, 4)
         } else {
-          VStack(spacing: 8) {
-            ForEach(visibleSessions) { session in
-              CLISessionRow(
-                session: session,
-                isMonitoring: isSessionMonitored(session.id),
-                onConnect: { onConnectSession(session) },
-                onCopyId: { onCopySessionId(session) },
-                onOpenFile: { onOpenSessionFile(session) },
-                onToggleMonitoring: { onToggleMonitoring(session) },
-                showLastMessage: showLastMessage
-              )
-            }
-
-            // Show "...X more" button if there are more sessions
-            if hasMoreSessions {
-              Button {
-                visibleSessionCount += loadMoreIncrement
-              } label: {
-                HStack(spacing: 4) {
-                  Image(systemName: "ellipsis")
-                    .font(.caption2)
-                  Text("\(remainingSessions) more")
-                    .font(.caption2)
-                }
-                .foregroundColor(.secondary)
+          ScrollView {
+            VStack(spacing: 8) {
+              ForEach(visibleSessions) { session in
+                CLISessionRow(
+                  session: session,
+                  isMonitoring: isSessionMonitored(session.id),
+                  onConnect: { onConnectSession(session) },
+                  onCopyId: { onCopySessionId(session) },
+                  onOpenFile: { onOpenSessionFile(session) },
+                  onToggleMonitoring: { onToggleMonitoring(session) },
+                  showLastMessage: showLastMessage
+                )
               }
-              .buttonStyle(.plain)
-              .padding(.top, 4)
+
+              // Show "...X more" button if there are more sessions
+              if hasMoreSessions {
+                Button {
+                  visibleSessionCount += loadMoreIncrement
+                } label: {
+                  HStack(spacing: 4) {
+                    Image(systemName: "ellipsis")
+                      .font(.caption2)
+                    Text("\(remainingSessions) more")
+                      .font(.caption2)
+                  }
+                  .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+              }
             }
           }
+          .frame(maxHeight: 300)
           .padding(.vertical, 4)
           .padding(.leading, 20)
         }

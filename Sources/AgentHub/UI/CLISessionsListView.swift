@@ -34,6 +34,7 @@ public struct CLISessionsListView: View {
   @State private var createWorktreeRepository: SelectedRepository?
   @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
+  @State private var isSearchSheetVisible: Bool = false
   @Environment(\.colorScheme) private var colorScheme
   @FocusState private var isSearchFieldFocused: Bool
 
@@ -62,6 +63,14 @@ public struct CLISessionsListView: View {
     }
     .navigationSplitViewStyle(.balanced)
     .background(appBackground.ignoresSafeArea())
+    .onChange(of: viewModel.hasPerformedSearch) { oldValue, newValue in
+      // Auto-dismiss sheet when search is cleared after selecting a result
+      if oldValue && !newValue && isSearchSheetVisible {
+        withAnimation(.easeInOut(duration: 0.25)) {
+          isSearchSheetVisible = false
+        }
+      }
+    }
     .onAppear {
       // Auto-refresh sessions when view appears
       if viewModel.hasRepositories {
@@ -168,12 +177,16 @@ public struct CLISessionsListView: View {
       CLIRepositoryPickerView(onAddRepository: viewModel.showAddRepositoryPicker)
         .padding(.bottom, 10)
 
-      // Search bar with inline dropdown
-      searchBarWithDropdown
-        .padding(.bottom, 10)
-        .zIndex(1)  // Ensure dropdown overlays content below
+      // Toggle between button and expanded search inline
+      if isSearchSheetVisible {
+        inlineExpandedSearch
+          .padding(.bottom, 10)
+      } else {
+        searchButton
+          .padding(.bottom, 10)
+      }
 
-      // Always show normal content (dropdown overlays when active)
+      // Always show normal content
       if viewModel.isLoading && !viewModel.hasRepositories {
         loadingView
       } else if !viewModel.hasRepositories {
@@ -182,6 +195,7 @@ public struct CLISessionsListView: View {
         repositoriesList
       }
     }
+    .animation(.easeInOut(duration: 0.2), value: isSearchSheetVisible)
   }
 
   // MARK: - Search Bar
@@ -232,27 +246,27 @@ public struct CLISessionsListView: View {
         .onSubmit { viewModel.performSearch() }
 
       if !viewModel.searchQuery.isEmpty {
+        // Clear text button
         Button(action: { viewModel.clearSearch() }) {
-          Image(systemName: "xmark.circle.fill")
+          Image(systemName: "delete.left.fill")
             .foregroundColor(.secondary)
         }
         .buttonStyle(.plain)
-      }
 
-      // Search button / Loading indicator (toggle between them)
-      if viewModel.isSearching {
-        ProgressView()
-          .scaleEffect(0.7)
-          .frame(width: 20, height: 20)
+        // Search button / Loading indicator
+        if viewModel.isSearching {
+          ProgressView()
+            .scaleEffect(0.7)
+            .frame(width: 20, height: 20)
+            .transition(.opacity.combined(with: .scale))
+        } else {
+          Button(action: { viewModel.performSearch() }) {
+            Image(systemName: "arrow.right.circle.fill")
+              .foregroundColor(.brandPrimary)
+          }
+          .buttonStyle(.plain)
           .transition(.opacity.combined(with: .scale))
-      } else {
-        Button(action: { viewModel.performSearch() }) {
-          Image(systemName: "arrow.right.circle.fill")
-            .foregroundColor(.brandPrimary)
         }
-        .buttonStyle(.plain)
-        .disabled(viewModel.searchQuery.isEmpty)
-        .transition(.opacity.combined(with: .scale))
       }
     }
     .animation(.easeInOut(duration: 0.15), value: viewModel.isSearching)
@@ -268,14 +282,71 @@ public struct CLISessionsListView: View {
     )
   }
 
-  // MARK: - Search Bar with Dropdown
+  // MARK: - Search Button
 
-  private var searchBarWithDropdown: some View {
+  private var searchButton: some View {
+    Button(action: {
+      withAnimation(.easeInOut(duration: 0.25)) {
+        isSearchSheetVisible = true
+      }
+      // Focus the text field after a brief delay to let the view appear
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(100))
+        isSearchFieldFocused = true
+      }
+    }) {
+      HStack(spacing: 8) {
+        Image(systemName: "magnifyingglass")
+          .font(.system(size: DesignTokens.IconSize.md))
+          .foregroundColor(.primary)
+
+        Text("Search all sessions...")
+          .font(.system(size: 13))
+          .foregroundColor(.primary)
+
+        Spacer()
+      }
+      .padding(.horizontal, DesignTokens.Spacing.md)
+      .padding(.vertical, DesignTokens.Spacing.sm)
+      .background(
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+          .fill(Color.secondary.opacity(0.2))
+      )
+      .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md))
+    }
+    .buttonStyle(.plain)
+  }
+
+  // MARK: - Inline Expanded Search
+
+  private var inlineExpandedSearch: some View {
     VStack(spacing: 4) {
-      searchBar
+      HStack(spacing: 8) {
+        // Reuse searchBar
+        searchBar
+
+        // Close button to collapse back to button
+        Button(action: { dismissSearchSheet() }) {
+          Image(systemName: "xmark.circle.fill")
+            .font(.system(size: 18))
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+      }
+
+      // Results dropdown (existing)
       inlineSearchResultsDropdown
     }
     .animation(.easeInOut(duration: 0.2), value: viewModel.hasPerformedSearch)
+  }
+
+  // MARK: - Dismiss Search Sheet
+
+  private func dismissSearchSheet() {
+    withAnimation(.easeInOut(duration: 0.25)) {
+      isSearchSheetVisible = false
+    }
+    viewModel.clearSearch()
   }
 
   // MARK: - Inline Search Results Dropdown

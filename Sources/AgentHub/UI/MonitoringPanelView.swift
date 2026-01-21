@@ -19,6 +19,31 @@ private struct SessionFileSheetItem: Identifiable {
   let content: String
 }
 
+// MARK: - LayoutMode
+
+/// Layout modes for the monitoring panel
+private enum LayoutMode: Int, CaseIterable {
+  case list = 0
+  case twoColumn = 1
+  case threeColumn = 2
+
+  var columnCount: Int {
+    switch self {
+    case .list: return 1
+    case .twoColumn: return 2
+    case .threeColumn: return 3
+    }
+  }
+
+  var icon: String {
+    switch self {
+    case .list: return "list.bullet"
+    case .twoColumn: return "square.grid.2x2"
+    case .threeColumn: return "square.grid.3x3"
+    }
+  }
+}
+
 // MARK: - MonitoringPanelView
 
 /// Right panel view showing all monitored sessions
@@ -26,7 +51,7 @@ public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
-  @State private var useGridLayout: Bool = false
+  @State private var layoutMode: LayoutMode = .list
 
   public init(viewModel: CLISessionsViewModel, claudeClient: (any ClaudeCode)?) {
     self.viewModel = viewModel
@@ -71,32 +96,23 @@ public struct MonitoringPanelView: View {
       let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
       if totalSessions >= 2 {
         HStack(spacing: 0) {
-          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useGridLayout = false } }) {
-            Image(systemName: "list.bullet")
-              .font(.caption)
-              .frame(width: 28, height: 20)
-              .foregroundColor(!useGridLayout ? .white : .secondary)
-              .background(!useGridLayout ? Color.brandPrimary : Color.clear)
-              .clipShape(Capsule())
-              .contentShape(Capsule())
+          ForEach(LayoutMode.allCases, id: \.rawValue) { mode in
+            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { layoutMode = mode } }) {
+              Image(systemName: mode.icon)
+                .font(.caption)
+                .frame(width: 28, height: 20)
+                .foregroundColor(layoutMode == mode ? .white : .secondary)
+                .background(layoutMode == mode ? Color.brandPrimary : Color.clear)
+                .clipShape(Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
           }
-          .buttonStyle(.plain)
-
-          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useGridLayout = true } }) {
-            Image(systemName: "square.grid.2x2")
-              .font(.caption)
-              .frame(width: 28, height: 20)
-              .foregroundColor(useGridLayout ? .white : .secondary)
-              .background(useGridLayout ? Color.brandPrimary : Color.clear)
-              .clipShape(Capsule())
-              .contentShape(Capsule())
-          }
-          .buttonStyle(.plain)
         }
         .padding(2)
         .background(Color.secondary.opacity(0.15))
         .clipShape(Capsule())
-        .animation(.easeInOut(duration: 0.2), value: useGridLayout)
+        .animation(.easeInOut(duration: 0.2), value: layoutMode)
       }
 
       // Count badge (includes both monitored and pending)
@@ -125,11 +141,11 @@ public struct MonitoringPanelView: View {
         .font(.largeTitle)
         .foregroundColor(.secondary.opacity(0.5))
 
-      Text("Select a Session")
+      Text("No Session Selected")
         .font(.headline)
         .foregroundColor(.secondary)
 
-      Text("Choose a session from the sidebar to get started.")
+      (Text("Select a session from the sidebar or ") + Text("start a new one").bold() + Text(" to get started."))
         .font(.caption)
         .foregroundColor(.secondary)
         .multilineTextAlignment(.center)
@@ -143,23 +159,24 @@ public struct MonitoringPanelView: View {
 
   private var monitoredSessionsList: some View {
     ScrollView {
-      if useGridLayout {
-        LazyVGrid(columns: [GridItem(.flexible(), alignment: .top), GridItem(.flexible(), alignment: .top)], spacing: 12) {
+      if layoutMode == .list {
+        LazyVStack(spacing: 12) {
           monitoredSessionsContent
         }
         .padding(12)
       } else {
-        LazyVStack(spacing: 12) {
+        let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
+        LazyVGrid(columns: columns, spacing: 12) {
           monitoredSessionsContent
         }
         .padding(12)
       }
     }
-    .animation(.easeInOut(duration: 0.2), value: useGridLayout)
+    .animation(.easeInOut(duration: 0.2), value: layoutMode)
     .onChange(of: viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count) { _, newCount in
-      if newCount < 2 && useGridLayout {
+      if newCount < 2 && layoutMode != .list {
         withAnimation(.easeInOut(duration: 0.2)) {
-          useGridLayout = false
+          layoutMode = .list
         }
       }
     }

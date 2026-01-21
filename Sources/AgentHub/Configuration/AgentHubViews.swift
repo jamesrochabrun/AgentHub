@@ -72,8 +72,8 @@ public struct AgentHubSessionsView: View {
         ToolbarItem(placement: .principal) {
           HStack {
             Spacer()
-            // Intelligence button
-            IntelligencePopoverButton(isShowingOverlay: $isShowingIntelligenceOverlay)
+            // TODO: Re-enable IntelligencePopoverButton after investigation
+            // IntelligencePopoverButton(isShowingOverlay: $isShowingIntelligenceOverlay)
             // Stats button (popover mode only)
             if provider.displaySettings.isPopoverMode {
               GlobalStatsPopoverButton(service: provider.statsService)

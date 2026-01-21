@@ -275,7 +275,12 @@ public final class CLISessionsViewModel {
 
         await MainActor.run { [weak self] in
           guard let self = self else { return }
-          self.selectedRepositories = repositories
+
+          // Preserve expanded state from current repositories
+          self.selectedRepositories = self.mergePreservingExpandedState(
+            current: self.selectedRepositories,
+            updated: repositories
+          )
 
           // Persist after state is updated to ensure consistency
           self.persistSelectedRepositories()
@@ -285,6 +290,38 @@ public final class CLISessionsViewModel {
         }
       }
     }
+  }
+
+  /// Merges updated repositories while preserving expanded state from current repositories
+  private func mergePreservingExpandedState(
+    current: [SelectedRepository],
+    updated: [SelectedRepository]
+  ) -> [SelectedRepository] {
+    // Build lookup for current expanded states
+    var repoExpandedState: [String: Bool] = [:]
+    var worktreeExpandedState: [String: Bool] = [:]
+
+    for repo in current {
+      repoExpandedState[repo.id] = repo.isExpanded
+      for worktree in repo.worktrees {
+        worktreeExpandedState[worktree.path] = worktree.isExpanded
+      }
+    }
+
+    // Apply preserved states to updated repositories
+    var result = updated
+    for i in result.indices {
+      if let expanded = repoExpandedState[result[i].id] {
+        result[i].isExpanded = expanded
+      }
+      for j in result[i].worktrees.indices {
+        if let expanded = worktreeExpandedState[result[i].worktrees[j].path] {
+          result[i].worktrees[j].isExpanded = expanded
+        }
+      }
+    }
+
+    return result
   }
 
   // MARK: - Persistence
@@ -371,6 +408,38 @@ public final class CLISessionsViewModel {
         if monitoredSessionIds.contains(sessionId) {
           sessionsWithTerminalView.insert(sessionId)
         }
+      }
+    }
+
+    // Expand repositories and worktrees that contain monitored sessions
+    expandItemsContainingMonitoredSessions()
+  }
+
+  /// Expands repositories and worktrees that contain monitored sessions.
+  ///
+  /// Called during app launch after repositories and monitored sessions have been restored.
+  /// This ensures users can immediately see their monitored sessions in the sidebar without
+  /// having to manually expand each repository and worktree. The function iterates through
+  /// all repositories and their worktrees, expanding any that contain at least one monitored
+  /// session. Parent repositories are also expanded when any of their worktrees are expanded.
+  private func expandItemsContainingMonitoredSessions() {
+    guard !monitoredSessionIds.isEmpty else { return }
+
+    for repoIndex in selectedRepositories.indices {
+      var repoHasMonitoredSession = false
+
+      for worktreeIndex in selectedRepositories[repoIndex].worktrees.indices {
+        let worktree = selectedRepositories[repoIndex].worktrees[worktreeIndex]
+        let hasMonitoredSession = worktree.sessions.contains { monitoredSessionIds.contains($0.id) }
+
+        if hasMonitoredSession {
+          selectedRepositories[repoIndex].worktrees[worktreeIndex].isExpanded = true
+          repoHasMonitoredSession = true
+        }
+      }
+
+      if repoHasMonitoredSession {
+        selectedRepositories[repoIndex].isExpanded = true
       }
     }
   }
