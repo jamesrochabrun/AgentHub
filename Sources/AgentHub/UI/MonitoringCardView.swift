@@ -101,7 +101,8 @@ public struct MonitoringCardView: View {
       GitDiffView(
         session: item.session,
         projectPath: item.projectPath,
-        onDismiss: { gitDiffSheetItem = nil }
+        onDismiss: { gitDiffSheetItem = nil },
+        claudeClient: claudeClient
       )
     }
   }

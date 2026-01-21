@@ -7,14 +7,24 @@
 
 import SwiftUI
 import PierreDiffsSwift
+import ClaudeCodeSDK
 
 // MARK: - GitDiffView
 
-/// Full-screen sheet showing git unstaged diffs for a session
+/// Full-screen sheet displaying git diffs (staged and unstaged) for a CLI session's repository.
+///
+/// Provides a split-pane interface with a file list sidebar and diff viewer. Supports both
+/// unified and split diff styles with word wrap toggle. When `claudeClient` is provided,
+/// enables an inline editor overlay that allows users to click on any diff line and ask
+/// questions about the code, which opens Terminal with a resumed session containing the
+/// contextual prompt.
+///
+/// - Note: Uses `GitDiffService` to fetch diffs via git commands on the session's project path.
 public struct GitDiffView: View {
   let session: CLISession
   let projectPath: String
   let onDismiss: () -> Void
+  let claudeClient: (any ClaudeCode)?
 
   @State private var diffState: GitDiffState = .empty
   @State private var isLoading = true
@@ -25,17 +35,20 @@ public struct GitDiffView: View {
   @State private var fileErrorMessages: [UUID: String] = [:]
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
+  @State private var inlineEditorState = InlineEditorState()
 
   private let gitDiffService = GitDiffService()
 
   public init(
     session: CLISession,
     projectPath: String,
-    onDismiss: @escaping () -> Void
+    onDismiss: @escaping () -> Void,
+    claudeClient: (any ClaudeCode)? = nil
   ) {
     self.session = session
     self.projectPath = projectPath
     self.onDismiss = onDismiss
+    self.claudeClient = claudeClient
   }
 
   public var body: some View {
@@ -66,6 +79,12 @@ public struct GitDiffView: View {
     .frame(minWidth: 1200, idealWidth: .infinity, maxWidth: .infinity,
            minHeight: 800, idealHeight: .infinity, maxHeight: .infinity)
     .onKeyPress(.escape) {
+      if inlineEditorState.isShowing {
+        withAnimation(.easeOut(duration: 0.15)) {
+          inlineEditorState.dismiss()
+        }
+        return .handled
+      }
       onDismiss()
       return .handled
     }
@@ -244,7 +263,11 @@ public struct GitDiffView: View {
             fileName: file.fileName,
             filePath: file.filePath,
             diffStyle: $diffStyle,
-            overflowMode: $overflowMode
+            overflowMode: $overflowMode,
+            inlineEditorState: inlineEditorState,
+            claudeClient: claudeClient,
+            session: session,
+            onDismissView: onDismiss
           )
           .frame(minHeight: 400)
           .id(selectedId)
@@ -386,6 +409,10 @@ private struct GitDiffContentView: View {
 
   @Binding var diffStyle: DiffStyle
   @Binding var overflowMode: OverflowMode
+  @Bindable var inlineEditorState: InlineEditorState
+  let claudeClient: (any ClaudeCode)?
+  let session: CLISession
+  let onDismissView: () -> Void
 
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
@@ -395,8 +422,8 @@ private struct GitDiffContentView: View {
       // Header with file info and controls
       headerView
 
-      // Diff view
-      GeometryReader { _ in
+      // Diff view with inline editor overlay
+      GeometryReader { geometry in
         ZStack {
           PierreDiffView(
             oldContent: oldContent,
@@ -404,7 +431,25 @@ private struct GitDiffContentView: View {
             fileName: fileName,
             diffStyle: $diffStyle,
             overflowMode: $overflowMode,
-            onLineClickWithPosition: nil,
+            onLineClickWithPosition: claudeClient != nil ? { position, localPoint in
+              // Only enable inline editor when claudeClient is available
+              let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
+
+              // Determine which content to use based on the side (left=old, right=new)
+              let fileContent = position.side == "left" ? oldContent : newContent
+              let lineContent = extractLine(from: fileContent, lineNumber: position.lineNumber)
+
+              withAnimation(.easeOut(duration: 0.2)) {
+                inlineEditorState.show(
+                  at: anchorPoint,
+                  lineNumber: position.lineNumber,
+                  side: position.side,
+                  fileName: filePath,
+                  lineContent: lineContent,
+                  fullFileContent: fileContent
+                )
+              }
+            } : nil,
             onReady: {
               withAnimation(.easeInOut(duration: 0.3)) {
                 isWebViewReady = true
@@ -423,6 +468,36 @@ private struct GitDiffContentView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .transition(.opacity)
+          }
+
+          // Inline editor overlay - only shown when claudeClient is available
+          if let client = claudeClient {
+            InlineEditorOverlay(
+              state: inlineEditorState,
+              containerSize: geometry.size,
+              onSubmit: { message, lineNumber, side, file in
+                // Build contextual prompt with line context
+                let prompt = buildInlinePrompt(
+                  question: message,
+                  lineNumber: lineNumber,
+                  lineContent: inlineEditorState.lineContent ?? "",
+                  fileName: file
+                )
+
+                // Open Terminal with resumed session
+                if let error = TerminalLauncher.launchTerminalWithSession(
+                  session.id,
+                  claudeClient: client,
+                  projectPath: session.projectPath,
+                  initialPrompt: prompt
+                ) {
+                  inlineEditorState.errorMessage = error.localizedDescription
+                } else {
+                  // Dismiss entire diff view - session continues in Terminal
+                  onDismissView()
+                }
+              }
+            )
           }
         }
       }
@@ -497,6 +572,35 @@ private struct GitDiffContentView: View {
         webViewOpacity = 1
       }
     }
+  }
+
+  // MARK: - Helper Functions
+
+  /// Extracts a specific line from file content
+  private func extractLine(from content: String, lineNumber: Int) -> String {
+    let lines = content.components(separatedBy: .newlines)
+    let index = lineNumber - 1 // Convert 1-indexed to 0-indexed
+    guard index >= 0 && index < lines.count else {
+      return ""
+    }
+    return lines[index]
+  }
+
+  /// Builds a contextual prompt for the inline question
+  private func buildInlinePrompt(
+    question: String,
+    lineNumber: Int,
+    lineContent: String,
+    fileName: String
+  ) -> String {
+    return """
+      I'm looking at line \(lineNumber) in \(fileName):
+      ```
+      \(lineContent)
+      ```
+
+      \(question)
+      """
   }
 }
 
