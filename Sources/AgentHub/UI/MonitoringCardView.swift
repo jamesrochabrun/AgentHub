@@ -26,6 +26,15 @@ private struct GitDiffSheetItem: Identifiable {
   let projectPath: String
 }
 
+// MARK: - PlanSheetItem
+
+/// Identifiable wrapper for plan sheet - captures session and plan state
+private struct PlanSheetItem: Identifiable {
+  let id = UUID()
+  let session: CLISession
+  let planState: PlanState
+}
+
 // MARK: - MonitoringCardView
 
 /// Card view for displaying a monitored session in the monitoring panel
@@ -33,6 +42,7 @@ public struct MonitoringCardView: View {
   let session: CLISession
   let state: SessionMonitorState?
   let codeChangesState: CodeChangesState?
+  let planState: PlanState?
   let claudeClient: (any ClaudeCode)?
   let showTerminal: Bool
   let initialPrompt: String?
@@ -46,11 +56,13 @@ public struct MonitoringCardView: View {
 
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
+  @State private var planSheetItem: PlanSheetItem?
 
   public init(
     session: CLISession,
     state: SessionMonitorState?,
     codeChangesState: CodeChangesState? = nil,
+    planState: PlanState? = nil,
     claudeClient: (any ClaudeCode)? = nil,
     showTerminal: Bool = false,
     initialPrompt: String? = nil,
@@ -65,6 +77,7 @@ public struct MonitoringCardView: View {
     self.session = session
     self.state = state
     self.codeChangesState = codeChangesState
+    self.planState = planState
     self.claudeClient = claudeClient
     self.showTerminal = showTerminal
     self.initialPrompt = initialPrompt
@@ -115,6 +128,13 @@ public struct MonitoringCardView: View {
         onDismiss: { gitDiffSheetItem = nil },
         claudeClient: claudeClient,
         onInlineRequestSubmit: onInlineRequestSubmit
+      )
+    }
+    .sheet(item: $planSheetItem) { item in
+      PlanView(
+        session: item.session,
+        planState: item.planState,
+        onDismiss: { planSheetItem = nil }
       )
     }
   }
@@ -186,26 +206,27 @@ public struct MonitoringCardView: View {
 
       Spacer()
 
-      // Code changes button (trailing)
-      if let codeChangesState, codeChangesState.changeCount > 0 {
-        Button(action: {
-          codeChangesSheetItem = CodeChangesSheetItem(
-            session: session,
-            codeChangesState: codeChangesState
-          )
-        }) {
-          HStack(spacing: 4) {
-            Image(systemName: "chevron.left.forwardslash.chevron.right")
-              .font(.caption)
-            Text("\(codeChangesState.changeCount)")
-              .font(.system(.caption2, design: .rounded))
-          }
-          .foregroundColor(.brandPrimary)
-          .agentHubChip()
-        }
-        .buttonStyle(.plain)
-        .help("View code changes")
-      }
+      // TEMPORARY: Disabling code changes button feature
+      // TODO: Re-enable when code changes view is ready for production
+      // if let codeChangesState, codeChangesState.changeCount > 0 {
+      //   Button(action: {
+      //     codeChangesSheetItem = CodeChangesSheetItem(
+      //       session: session,
+      //       codeChangesState: codeChangesState
+      //     )
+      //   }) {
+      //     HStack(spacing: 4) {
+      //       Image(systemName: "chevron.left.forwardslash.chevron.right")
+      //         .font(.caption)
+      //       Text("\(codeChangesState.changeCount)")
+      //         .font(.system(.caption2, design: .rounded))
+      //     }
+      //     .foregroundColor(.brandPrimary)
+      //     .agentHubChip()
+      //   }
+      //   .buttonStyle(.plain)
+      //   .help("View code changes")
+      // }
 
       // Terminal/List segmented control (custom capsule style)
       HStack(spacing: 0) {
@@ -257,7 +278,28 @@ public struct MonitoringCardView: View {
 
       Spacer()
 
-      // Git diff button
+      // Plan button (if plan detected)
+      if let planState = planState {
+        Button(action: {
+          planSheetItem = PlanSheetItem(
+            session: session,
+            planState: planState
+          )
+        }) {
+          HStack(spacing: 4) {
+            Image(systemName: "list.bullet.clipboard")
+              .font(.caption)
+            Text("Plan")
+              .font(.system(.caption2, design: .rounded))
+          }
+          .foregroundColor(.secondary)
+          .agentHubChip()
+        }
+        .buttonStyle(.plain)
+        .help("View session plan")
+      }
+
+      // Git diff button (always visible)
       Button(action: {
         gitDiffSheetItem = GitDiffSheetItem(
           session: session,

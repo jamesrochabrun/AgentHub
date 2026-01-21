@@ -182,6 +182,9 @@ public struct MonitoringPanelView: View {
       let codeChangesState = item.state.map {
         CodeChangesState.from(activities: $0.recentActivities)
       }
+      let planState = item.state.flatMap {
+        PlanState.from(activities: $0.recentActivities)
+      }
       // Read pending prompt (read-only, safe during view body)
       let initialPrompt = viewModel.pendingPrompt(for: item.session.id)
 
@@ -189,6 +192,7 @@ public struct MonitoringPanelView: View {
         session: item.session,
         state: item.state,
         codeChangesState: codeChangesState,
+        planState: planState,
         claudeClient: claudeClient,
         showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
         initialPrompt: initialPrompt,
