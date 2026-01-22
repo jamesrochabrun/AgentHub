@@ -10,6 +10,34 @@ import ClaudeCodeSDK
 import SwiftTerm
 import SwiftUI
 
+// MARK: - SafeLocalProcessTerminalView
+
+/// A LocalProcessTerminalView subclass that safely handles cleanup by stopping
+/// data reception before process termination. This prevents crashes when the
+/// terminal buffer receives data during deallocation.
+class SafeLocalProcessTerminalView: LocalProcessTerminalView {
+  private var _isStopped = false
+  private let stopLock = NSLock()
+
+  var isStopped: Bool {
+    stopLock.lock()
+    defer { stopLock.unlock() }
+    return _isStopped
+  }
+
+  /// Call this BEFORE terminating the process to safely stop data reception.
+  func stopReceivingData() {
+    stopLock.lock()
+    _isStopped = true
+    stopLock.unlock()
+  }
+
+  override func dataReceived(slice: ArraySlice<UInt8>) {
+    guard !isStopped else { return }
+    super.dataReceived(slice: slice)
+  }
+}
+
 // MARK: - EmbeddedTerminalView
 
 /// SwiftUI wrapper for SwiftTerm's LocalProcessTerminalView
@@ -73,10 +101,11 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
 
 /// Container view that manages the terminal lifecycle
 public class TerminalContainerView: NSView {
-  private var terminalView: LocalProcessTerminalView?
+  private var terminalView: SafeLocalProcessTerminalView?
   private var isConfigured = false
   private var promptSent = false  // Track if we've already sent a prompt
   private var shellPid: pid_t = 0  // Track the shell PID for cleanup
+  private var currentProjectPath: String = ""  // Store for process cleanup
 
   // MARK: - Lifecycle
 
@@ -89,30 +118,79 @@ public class TerminalContainerView: NSView {
   /// Call this before removing the terminal from activeTerminals to ensure cleanup.
   /// Safe to call multiple times - subsequent calls are no-ops.
   public func terminateProcess() {
+    AppLogger.session.info("[terminateProcess] Called. shellPid=\(self.shellPid), projectPath=\(self.currentProjectPath)")
+
+    // Stop data reception FIRST to prevent DispatchIO race condition crash
+    terminalView?.stopReceivingData()
+
     // Capture PID locally to avoid race conditions during async work
     let pid = shellPid
     shellPid = 0  // Clear immediately to prevent double-termination
 
-    guard pid > 0 else { return }
+    // Always try to kill by project path as backup
+    killClaudeProcessesForProject()
+
+    guard pid > 0 else {
+      AppLogger.session.info("[terminateProcess] No PID captured, relying on pkill")
+      return
+    }
 
     // Check if process is still running (kill with signal 0 just checks existence)
-    guard kill(pid, 0) == 0 else { return }
+    guard kill(pid, 0) == 0 else {
+      AppLogger.session.info("[terminateProcess] PID \(pid) not running")
+      return
+    }
 
-    // Send SIGTERM for graceful shutdown
-    if kill(pid, SIGTERM) != 0 {
-      AppLogger.session.warning("Failed to send SIGTERM to PID=\(pid), errno=\(errno)")
+    // Kill the process group to get all children (bash + claude)
+    let pgid = getpgid(pid)
+    AppLogger.session.info("[terminateProcess] Killing process group. pid=\(pid), pgid=\(pgid)")
+    if pgid > 0 {
+      killpg(pgid, SIGTERM)
+    } else {
+      kill(pid, SIGTERM)
     }
 
     // Schedule a follow-up SIGKILL if process doesn't terminate gracefully
-    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) {
-      // Check if still running
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) { [weak self] in
       if kill(pid, 0) == 0 {
-        AppLogger.session.warning("Process PID=\(pid) didn't respond to SIGTERM, sending SIGKILL")
-        let killResult = kill(pid, SIGKILL)
-        if killResult != 0 {
-          AppLogger.session.error("Failed to send SIGKILL to PID=\(pid), errno=\(errno)")
+        AppLogger.session.warning("[terminateProcess] Process PID=\(pid) didn't respond to SIGTERM, sending SIGKILL")
+        let pgid = getpgid(pid)
+        if pgid > 0 {
+          killpg(pgid, SIGKILL)
+        } else {
+          kill(pid, SIGKILL)
         }
       }
+      self?.killClaudeProcessesForProject()
+    }
+  }
+
+  /// Kills claude processes associated with this terminal's project.
+  /// Only kills bash wrapper processes that were started by this app (identified by the
+  /// specific command pattern: bash -c cd '/project/path' && claude).
+  private func killClaudeProcessesForProject() {
+    AppLogger.session.info("[killClaudeProcessesForProject] projectPath=\(self.currentProjectPath)")
+
+    guard !currentProjectPath.isEmpty else {
+      AppLogger.session.warning("[killClaudeProcessesForProject] projectPath is empty, skipping")
+      return
+    }
+
+    // The bash process has the path in its command line:
+    // /bin/bash -c cd '/path/to/project' && '/path/to/claude' -r 'session-id'
+    // We match on the path pattern to find these bash processes, then kill them
+    // This pattern is specific to processes started by our app
+    let escapedPath = currentProjectPath.replacingOccurrences(of: "'", with: "'\\''")
+    let pattern = "bash -c cd '\(escapedPath)'.*claude"
+    AppLogger.session.info("[killClaudeProcessesForProject] Running pkill -f with pattern: \(pattern)")
+
+    DispatchQueue.global(qos: .utility).async {
+      let task = Process()
+      task.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+      task.arguments = ["-f", pattern]
+      try? task.run()
+      task.waitUntilExit()
+      AppLogger.session.info("[killClaudeProcessesForProject] pkill completed with status: \(task.terminationStatus)")
     }
   }
 
@@ -141,9 +219,10 @@ public class TerminalContainerView: NSView {
   ) {
     guard !isConfigured else { return }
     isConfigured = true
+    currentProjectPath = projectPath
 
     // Create and configure terminal view
-    let terminal = LocalProcessTerminalView(frame: bounds)
+    let terminal = SafeLocalProcessTerminalView(frame: bounds)
     terminal.translatesAutoresizingMaskIntoConstraints = false
 
     // Configure terminal appearance
@@ -296,7 +375,7 @@ public class TerminalContainerView: NSView {
       let initialPids = Self.getClaudePidsSync()
 
       // Wait for claude process to fully start
-      try? await Task.sleep(for: .milliseconds(800))
+      try? await Task.sleep(for: .milliseconds(500))
 
       // Find the new claude process
       let currentPids = Self.getClaudePidsSync()
