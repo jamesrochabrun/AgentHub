@@ -166,8 +166,9 @@ public class TerminalContainerView: NSView {
   }
 
   /// Kills claude processes associated with this terminal's project.
-  /// Only kills bash wrapper processes that were started by this app (identified by the
-  /// specific command pattern: bash -c cd '/project/path' && claude).
+  /// First tries to kill bash wrapper processes by pattern, then kills orphaned
+  /// claude processes (PPID=1, no TTY) which are safe to kill since user's own
+  /// terminal sessions always have a controlling TTY.
   private func killClaudeProcessesForProject() {
     AppLogger.session.info("[killClaudeProcessesForProject] projectPath=\(self.currentProjectPath)")
 
@@ -185,12 +186,26 @@ public class TerminalContainerView: NSView {
     AppLogger.session.info("[killClaudeProcessesForProject] Running pkill -f with pattern: \(pattern)")
 
     DispatchQueue.global(qos: .utility).async {
+      // Step 1: Kill bash wrapper processes that match our pattern
       let task = Process()
       task.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
       task.arguments = ["-f", pattern]
       try? task.run()
       task.waitUntilExit()
-      AppLogger.session.info("[killClaudeProcessesForProject] pkill completed with status: \(task.terminationStatus)")
+      AppLogger.session.info("[killClaudeProcessesForProject] pkill bash completed with status: \(task.terminationStatus)")
+
+      // Step 2: Kill orphaned claude processes (PPID=1, no TTY)
+      // These are safe to kill because user's terminal sessions always have a TTY
+      // Orphaned processes with no TTY are from our app's pseudo-terminal
+      let orphanTask = Process()
+      orphanTask.executableURL = URL(fileURLWithPath: "/bin/bash")
+      orphanTask.arguments = [
+        "-c",
+        "ps -eo pid,ppid,tty,comm | awk '$4 == \"claude\" && $2 == 1 && $3 == \"??\" {print $1}' | xargs kill -TERM 2>/dev/null || true"
+      ]
+      try? orphanTask.run()
+      orphanTask.waitUntilExit()
+      AppLogger.session.info("[killClaudeProcessesForProject] kill orphans completed with status: \(orphanTask.terminationStatus)")
     }
   }
 
