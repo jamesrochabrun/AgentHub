@@ -100,7 +100,7 @@ public struct GlobalStatsMenuView: View {
 
       StatRow(
         label: "Sessions",
-        value: "\(service.stats.totalSessions)",
+        value: "~\(service.stats.totalSessions)",
         icon: "terminal.fill"
       )
 

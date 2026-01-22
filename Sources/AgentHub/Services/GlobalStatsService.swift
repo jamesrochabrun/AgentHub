@@ -73,14 +73,9 @@ public final class GlobalStatsService: @unchecked Sendable {
     return stats.dailyActivity.first { $0.date == today }
   }
 
-  /// Days since first session
+  /// Number of days with at least one session
   public var daysActive: Int {
-    guard let firstDate = stats.firstSessionDate,
-          let date = parseISO8601Date(firstDate) else {
-      return 0
-    }
-    let days = Calendar.current.dateComponents([.day], from: date, to: Date()).day ?? 0
-    return max(0, days)
+    stats.dailyActivity.count
   }
 
   /// First session date formatted
