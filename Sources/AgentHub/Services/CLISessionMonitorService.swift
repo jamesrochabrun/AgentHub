@@ -132,8 +132,8 @@ public actor CLISessionMonitorService {
     // Group entries by session ID
     let sessionEntries = Dictionary(grouping: historyEntries) { $0.sessionId }
 
-    // Build a map of session ID -> gitBranch (read from session files in parallel)
-    let sessionBranches = await readBranchInfoBatch(sessionEntries: sessionEntries)
+    // Build a map of session ID -> (gitBranch, slug) (read from session files in parallel)
+    let sessionMetadata = await readSessionMetadataBatch(sessionEntries: sessionEntries)
 
     // Build sessions and assign to worktrees
     var updatedRepositories = selectedRepositories
@@ -170,7 +170,7 @@ public actor CLISessionMonitorService {
 
           if pathMatchesWorktree {
             // This is definitively the correct worktree - use this session
-            let sessionBranch = sessionBranches[sessionId]
+            let metadata = sessionMetadata[sessionId]
 
             // Check if session is active
             let encodedPath = firstEntry.project.replacingOccurrences(of: "/", with: "-")
@@ -189,13 +189,14 @@ public actor CLISessionMonitorService {
             let session = CLISession(
               id: sessionId,
               projectPath: firstEntry.project,
-              branchName: sessionBranch ?? worktreeBranch,
+              branchName: metadata?.branch ?? worktreeBranch,
               isWorktree: isWorktreeEntry,
               lastActivityAt: entries.map { $0.date }.max() ?? Date(),
               messageCount: entries.count,
               isActive: isActive,
               firstMessage: firstMessage,
-              lastMessage: lastMessage
+              lastMessage: lastMessage,
+              slug: metadata?.slug
             )
 
             sessions.append(session)
@@ -210,12 +211,12 @@ public actor CLISessionMonitorService {
           let pathIsSubdirectory = firstEntry.project.hasPrefix(worktreePath + "/")
           guard pathIsSubdirectory else { continue }
 
-          // Get session's branch from session file
-          let sessionBranch = sessionBranches[sessionId]
+          // Get session's metadata from session file
+          let metadata = sessionMetadata[sessionId]
 
           // Match by branch name as fallback
           let branchMatches: Bool
-          if let sessionBranch = sessionBranch {
+          if let sessionBranch = metadata?.branch {
             // Session has branch info - match by branch
             branchMatches = sessionBranch == worktreeBranch
           } else {
@@ -245,13 +246,14 @@ public actor CLISessionMonitorService {
           let session = CLISession(
             id: sessionId,
             projectPath: firstEntry.project,
-            branchName: sessionBranch ?? worktreeBranch,
+            branchName: metadata?.branch ?? worktreeBranch,
             isWorktree: isWorktreeEntry,
             lastActivityAt: entries.map { $0.date }.max() ?? Date(),
             messageCount: entries.count,
             isActive: isActive,
             firstMessage: firstMessage,
-            lastMessage: lastMessage
+            lastMessage: lastMessage,
+            slug: metadata?.slug
           )
 
           sessions.append(session)
@@ -333,10 +335,16 @@ public actor CLISessionMonitorService {
 
   // MARK: - Session File Parsing
 
-  /// Reads gitBranch from multiple session files in parallel using Task.detached
+  /// Metadata extracted from a session file
+  private struct SessionMetadata: Sendable {
+    let branch: String?
+    let slug: String?
+  }
+
+  /// Reads gitBranch and slug from multiple session files in parallel using Task.detached
   /// - Parameter sessionEntries: Dictionary of session IDs to their history entries
-  /// - Returns: Dictionary mapping session IDs to their git branch names
-  private func readBranchInfoBatch(sessionEntries: [String: [HistoryEntry]]) async -> [String: String] {
+  /// - Returns: Dictionary mapping session IDs to their metadata (branch and slug)
+  private func readSessionMetadataBatch(sessionEntries: [String: [HistoryEntry]]) async -> [String: SessionMetadata] {
     let claudePath = claudeDataPath  // Capture for sendable closure
 
     return await Task.detached(priority: .userInitiated) {
@@ -350,39 +358,56 @@ public actor CLISessionMonitorService {
       }
 
       // Read all files in parallel using withTaskGroup
-      return await withTaskGroup(of: (String, String?).self) { group in
+      return await withTaskGroup(of: (String, SessionMetadata?).self) { group in
         for (sessionId, filePath) in filesToRead {
           group.addTask {
-            // Read only first few KB to find gitBranch (it's in early lines)
+            // Read first 16KB to find gitBranch and slug (slug may appear after first few lines)
             guard let handle = FileHandle(forReadingAtPath: filePath) else {
               return (sessionId, nil)
             }
             defer { try? handle.close() }
 
-            // Read first 4KB - gitBranch is typically in first message
-            guard let data = try? handle.read(upToCount: 4096),
+            // Read first 16KB - slug may appear several lines into the file
+            guard let data = try? handle.read(upToCount: 16384),
                   let content = String(data: data, encoding: .utf8) else {
               return (sessionId, nil)
             }
 
-            // Parse lines looking for gitBranch
+            // Parse lines looking for gitBranch and slug
+            var foundBranch: String?
+            var foundSlug: String?
+
             for line in content.components(separatedBy: .newlines) {
               guard !line.isEmpty,
                     let jsonData = line.data(using: .utf8),
-                    let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                    let gitBranch = json["gitBranch"] as? String else {
+                    let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
                 continue
               }
-              return (sessionId, gitBranch)
+
+              if foundBranch == nil, let gitBranch = json["gitBranch"] as? String {
+                foundBranch = gitBranch
+              }
+              if foundSlug == nil, let slug = json["slug"] as? String {
+                foundSlug = slug
+              }
+
+              // Early exit if we found both
+              if foundBranch != nil && foundSlug != nil {
+                break
+              }
+            }
+
+            if foundBranch != nil || foundSlug != nil {
+              return (sessionId, SessionMetadata(branch: foundBranch, slug: foundSlug))
             }
             return (sessionId, nil)
           }
         }
 
-        var results: [String: String] = [:]
-        for await (sessionId, branch) in group {
-          if let branch = branch {
-            results[sessionId] = branch
+        var results: [String: SessionMetadata] = [:]
+        for await (sessionId, metadata) in group {
+          if let metadata = metadata {
+            results[sessionId] = metadata
           }
         }
         return results

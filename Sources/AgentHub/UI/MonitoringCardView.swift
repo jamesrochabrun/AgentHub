@@ -190,24 +190,44 @@ public struct MonitoringCardView: View {
 
   private var header: some View {
     HStack {
-      // Session ID (adaptive - hides label when narrow)
-      ViewThatFits(in: .horizontal) {
-        // Wide: show label and ID
-        HStack(spacing: 4) {
-          Text("Session:")
-            .font(.subheadline)
+      // Session name (slug) if available, followed by session ID
+      HStack(spacing: 6) {
+        if let slug = session.slug {
+          // Show slug and short ID (no "Session:" label)
+          Text(slug)
+            .font(.system(.subheadline, design: .monospaced, weight: .semibold))
+            .foregroundColor(.brandPrimary)
+            .lineLimit(1)
+
+          Text("•")
+            .font(.caption)
             .foregroundColor(.secondary)
+
           Text(session.shortId)
             .font(.system(.subheadline, design: .monospaced))
             .foregroundColor(.secondary)
             .fontWeight(.bold)
-        }
+        } else {
+          // No slug - show "Session:" label with ID
+          ViewThatFits(in: .horizontal) {
+            // Wide: show label and ID
+            HStack(spacing: 4) {
+              Text("Session:")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+              Text(session.shortId)
+                .font(.system(.subheadline, design: .monospaced))
+                .foregroundColor(.secondary)
+                .fontWeight(.bold)
+            }
 
-        // Narrow: just ID
-        Text(session.shortId)
-          .font(.system(.subheadline, design: .monospaced))
-          .foregroundColor(.secondary)
-          .fontWeight(.bold)
+            // Narrow: just ID
+            Text(session.shortId)
+              .font(.system(.subheadline, design: .monospaced))
+              .foregroundColor(.secondary)
+              .fontWeight(.bold)
+          }
+        }
       }
       .lineLimit(1)
 
@@ -400,7 +420,7 @@ public struct MonitoringCardView: View {
 
 #Preview {
   VStack(spacing: 16) {
-    // Active session
+    // Active session with slug
     MonitoringCardView(
       session: CLISession(
         id: "e1b8aae2-2a33-4402-a8f5-886c4d4da370",
@@ -409,7 +429,8 @@ public struct MonitoringCardView: View {
         isWorktree: false,
         lastActivityAt: Date(),
         messageCount: 42,
-        isActive: true
+        isActive: true,
+        slug: "cryptic-orbiting-flame"
       ),
       state: SessionMonitorState(
         status: .executingTool(name: "Bash"),
@@ -427,7 +448,7 @@ public struct MonitoringCardView: View {
       onOpenSessionFile: {}
     )
 
-    // Awaiting approval
+    // Awaiting approval with slug
     MonitoringCardView(
       session: CLISession(
         id: "f2c9bbf3-3b44-5513-b9f6-997d5e5eb481",
@@ -436,7 +457,8 @@ public struct MonitoringCardView: View {
         isWorktree: true,
         lastActivityAt: Date(),
         messageCount: 15,
-        isActive: true
+        isActive: true,
+        slug: "async-coalescing-summit"
       ),
       state: SessionMonitorState(
         status: .awaitingApproval(tool: "git"),
@@ -451,7 +473,7 @@ public struct MonitoringCardView: View {
       onOpenSessionFile: {}
     )
 
-    // Loading state
+    // Loading state (no slug - shows only session ID)
     MonitoringCardView(
       session: CLISession(
         id: "a3d0ccg4-4c55-6624-c0g7-aa8e6f6fc592",

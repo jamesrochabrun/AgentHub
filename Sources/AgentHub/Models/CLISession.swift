@@ -20,6 +20,7 @@ public struct CLISession: Identifiable, Sendable, Equatable, Hashable, Codable {
   public var isActive: Bool                // Whether a process is currently running
   public var firstMessage: String?         // First user message for context
   public var lastMessage: String?          // Last user message for context
+  public var slug: String?                 // Human-readable session name (e.g., "cryptic-orbiting-flame")
 
   public init(
     id: String,
@@ -30,7 +31,8 @@ public struct CLISession: Identifiable, Sendable, Equatable, Hashable, Codable {
     messageCount: Int = 0,
     isActive: Bool = false,
     firstMessage: String? = nil,
-    lastMessage: String? = nil
+    lastMessage: String? = nil,
+    slug: String? = nil
   ) {
     self.id = id
     self.projectPath = projectPath
@@ -41,11 +43,17 @@ public struct CLISession: Identifiable, Sendable, Equatable, Hashable, Codable {
     self.isActive = isActive
     self.firstMessage = firstMessage
     self.lastMessage = lastMessage
+    self.slug = slug
   }
 
   /// Returns the first 8 characters of the session ID for display
   public var shortId: String {
     String(id.prefix(8))
+  }
+
+  /// Returns the human-readable session name, falling back to shortId if not available
+  public var displayName: String {
+    slug ?? shortId
   }
 
   /// Returns the project name (last path component)

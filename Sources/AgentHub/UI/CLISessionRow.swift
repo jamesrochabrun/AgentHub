@@ -93,11 +93,28 @@ public struct CLISessionRow: View {
 
   private var sessionIdRow: some View {
     HStack(spacing: 6) {
-      // Short session ID with monospace font
-      Text("Session: \(session.shortId)")
-        .font(.system(.subheadline, design: .monospaced))
-        .foregroundColor(.brandPrimary)
-        .fontWeight(.semibold)
+      if let slug = session.slug {
+        // Show slug and short ID (no "Session:" label)
+        Text(slug)
+          .font(.system(.subheadline, design: .monospaced, weight: .semibold))
+          .foregroundColor(.brandPrimary)
+          .lineLimit(1)
+
+        Text("•")
+          .font(.caption)
+          .foregroundColor(.secondary)
+
+        Text(session.shortId)
+          .font(.system(.subheadline, design: .monospaced))
+          .foregroundColor(.brandPrimary)
+          .fontWeight(.semibold)
+      } else {
+        // No slug - show "Session:" label with ID
+        Text("Session: \(session.shortId)")
+          .font(.system(.subheadline, design: .monospaced))
+          .foregroundColor(.brandPrimary)
+          .fontWeight(.semibold)
+      }
 
       // Copy button with animated confirmation
       Button {
@@ -200,7 +217,7 @@ extension Date {
 
 #Preview {
   VStack(spacing: 16) {
-    // Active session with first message
+    // Active session with first message and slug
     CLISessionRow(
       session: CLISession(
         id: "e1b8aae2-2a33-4402-a8f5-886c4d4da370",
@@ -210,7 +227,8 @@ extension Date {
         lastActivityAt: Date(),
         messageCount: 42,
         isActive: true,
-        firstMessage: "I want to add a feature that monitors CLI sessions"
+        firstMessage: "I want to add a feature that monitors CLI sessions",
+        slug: "cryptic-orbiting-flame"
       ),
       isMonitoring: false,
       onConnect: { },
@@ -229,7 +247,8 @@ extension Date {
         lastActivityAt: Date().addingTimeInterval(-3600),
         messageCount: 15,
         isActive: false,
-        firstMessage: "Help me implement a new SwiftUI view that displays session data in a hierarchical tree structure with expand/collapse functionality"
+        firstMessage: "Help me implement a new SwiftUI view that displays session data in a hierarchical tree structure with expand/collapse functionality",
+        slug: "async-coalescing-summit"
       ),
       isMonitoring: true,
       onConnect: { },
@@ -238,7 +257,7 @@ extension Date {
       onToggleMonitoring: { }
     )
 
-    // Session without first message
+    // Session without slug (falls back to shortId)
     CLISessionRow(
       session: CLISession(
         id: "a3d0ccg4-4c55-6624-c0g7-aa8e6f6fc592",
