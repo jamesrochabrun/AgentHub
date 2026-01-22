@@ -718,6 +718,12 @@ public final class CLISessionsViewModel {
     // Terminals are now keyed by session ID, not worktree path
     let pending = PendingHubSession(worktree: worktree)
     pendingHubSessions.append(pending)
+#if DEBUG
+    let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
+    AppLogger.session.debug(
+      "[StartInHub] pendingId=\(pending.id.uuidString, privacy: .public) worktreePath=\(worktree.path, privacy: .public) encodedPath=\(encodedPath, privacy: .public)"
+    )
+#endif
 
     // Watch for the new session file
     Task { @MainActor in
@@ -736,13 +742,43 @@ public final class CLISessionsViewModel {
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
     let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
     let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
+#if DEBUG
+    AppLogger.watcher.debug(
+      "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) projectDir=\(projectDir, privacy: .public) exists=\(FileManager.default.fileExists(atPath: projectDir))"
+    )
+#endif
 
     // Get existing session files BEFORE watching
     let existingFiles = Set((try? FileManager.default.contentsOfDirectory(atPath: projectDir)) ?? [])
+#if DEBUG
+    let existingJsonlCount = existingFiles.filter { $0.hasSuffix(".jsonl") }.count
+    AppLogger.watcher.debug(
+      "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) existingFiles=\(existingFiles.count) existingJsonl=\(existingJsonlCount)"
+    )
+#endif
+    if let existingSessionFile = findRecentSessionFile(
+      in: existingFiles,
+      projectDir: projectDir,
+      pendingStartedAt: pending.startedAt
+    ) {
+#if DEBUG
+      AppLogger.watcher.debug(
+        "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) found existing session file \(existingSessionFile, privacy: .public)"
+      )
+#endif
+      let sessionId = String(existingSessionFile.dropLast(6)) // Remove ".jsonl"
+      handleNewSessionFound(sessionId: sessionId, pending: pending, worktree: worktree)
+      return
+    }
 
     // Open directory for watching
     let dirFd = open(projectDir, O_EVTONLY)
     guard dirFd >= 0 else {
+#if DEBUG
+      AppLogger.watcher.debug(
+        "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) open failed, falling back to poll"
+      )
+#endif
       // Directory doesn't exist yet - poll until it does
       await pollForNewSessionFallback(pending: pending, worktree: worktree)
       return
@@ -764,6 +800,13 @@ public final class CLISessionsViewModel {
         guard let currentFiles = try? FileManager.default.contentsOfDirectory(atPath: projectDir) else { return }
         let newFiles = Set(currentFiles).subtracting(existingFiles)
         let newJsonlFiles = newFiles.filter { $0.hasSuffix(".jsonl") }
+#if DEBUG
+        if !newFiles.isEmpty {
+          AppLogger.watcher.debug(
+            "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) event newFiles=\(newFiles.count) newJsonl=\(newJsonlFiles.count)"
+          )
+        }
+#endif
 
         if let newFile = newJsonlFiles.first {
           didFind = true
@@ -789,6 +832,11 @@ public final class CLISessionsViewModel {
         if !didFind {
           didFind = true // Prevent double resume
           source.cancel()
+#if DEBUG
+          AppLogger.watcher.debug(
+            "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) timed out waiting for session file"
+          )
+#endif
           Task { @MainActor in
             self.pendingHubSessions.removeAll { $0.id == pending.id }
           }
@@ -798,8 +846,43 @@ public final class CLISessionsViewModel {
     }
   }
 
+  /// Picks a session file that was created around the time the pending session started.
+  private func findRecentSessionFile(
+    in existingFiles: Set<String>,
+    projectDir: String,
+    pendingStartedAt: Date
+  ) -> String? {
+    let candidates = existingFiles.filter { $0.hasSuffix(".jsonl") }
+    guard !candidates.isEmpty else { return nil }
+
+    let cutoff = pendingStartedAt.addingTimeInterval(-2)  // small buffer for timing jitter
+    var newest: (file: String, createdAt: Date)?
+
+    for file in candidates {
+      let path = "\(projectDir)/\(file)"
+      guard let attrs = try? FileManager.default.attributesOfItem(atPath: path) else { continue }
+      let createdAt = (attrs[.creationDate] as? Date) ?? (attrs[.modificationDate] as? Date)
+      guard let createdAt = createdAt, createdAt >= cutoff else { continue }
+
+      if let current = newest {
+        if createdAt > current.createdAt {
+          newest = (file, createdAt)
+        }
+      } else {
+        newest = (file, createdAt)
+      }
+    }
+
+    return newest?.file
+  }
+
   /// Handles when a new session file is detected
   private func handleNewSessionFound(sessionId: String, pending: PendingHubSession, worktree: WorktreeBranch) {
+#if DEBUG
+    AppLogger.session.debug(
+      "[HandleNewSession] pendingId=\(pending.id.uuidString, privacy: .public) sessionId=\(sessionId, privacy: .public) worktreePath=\(worktree.path, privacy: .public) start"
+    )
+#endif
     // Refresh to get the real session object with retry loop
     Task {
       // Retry loop: wait up to 5 seconds for session to appear in selectedRepositories
@@ -846,15 +929,67 @@ public final class CLISessionsViewModel {
           }
         }
 
+        // Third fallback: check session file directly for new worktrees
+        // This handles the case where history.jsonl hasn't been updated yet
+        // TODO: Review - only triggers for worktrees with zero sessions
+        let currentSessions = selectedRepositories
+          .flatMap { $0.worktrees }
+          .first { $0.path == worktree.path }?
+          .sessions ?? []
+
+        let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
+        let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
+        let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
+        if currentSessions.isEmpty && FileManager.default.fileExists(atPath: sessionFilePath) {
+          // Session file exists but not in history.jsonl yet - create directly
+          let newSession = CLISession(
+            id: sessionId,
+            projectPath: worktree.path,
+            branchName: worktree.name,
+            isWorktree: worktree.isWorktree,
+            lastActivityAt: Date(),
+            messageCount: 0,
+            isActive: true,
+            firstMessage: nil,
+            lastMessage: nil
+          )
+
+          for repoIndex in selectedRepositories.indices {
+            if let wtIndex = selectedRepositories[repoIndex].worktrees.firstIndex(where: { $0.path == worktree.path }) {
+              selectedRepositories[repoIndex].worktrees[wtIndex].sessions.insert(newSession, at: 0)
+              break
+            }
+          }
+
+          pendingHubSessions.removeAll { $0.id == pending.id }
+          transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
+          sessionsWithTerminalView.insert(sessionId)
+          startMonitoring(session: newSession)
+#if DEBUG
+          AppLogger.session.info(
+            "[HandleNewSession-Fallback] sessionId=\(sessionId, privacy: .public) created session directly from file (new worktree)"
+          )
+#endif
+          return
+        }
+
         // Log retry attempt (only if not the last attempt)
         if attempt < maxAttempts {
-          // [CLISessionsVM] Session \(sessionId.prefix(8)) not found, retrying (\(attempt)/\(maxAttempts))")
+#if DEBUG
+          AppLogger.session.debug(
+            "[HandleNewSession] sessionId=\(sessionId, privacy: .public) not found, retrying (\(attempt)/\(maxAttempts))"
+          )
+#endif
         }
       }
 
       // If still not found after all attempts, log warning
       // Keep pending session visible (terminal continues working)
-      // [CLISessionsVM] ⚠️ Failed to find session \(sessionId) after \(maxAttempts) attempts")
+#if DEBUG
+      AppLogger.session.warning(
+        "[HandleNewSession] sessionId=\(sessionId, privacy: .public) not found after \(maxAttempts) attempts"
+      )
+#endif
     }
   }
 
@@ -864,12 +999,22 @@ public final class CLISessionsViewModel {
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
     let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
     let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
+#if DEBUG
+    AppLogger.watcher.debug(
+      "[PollNewSession] pendingId=\(pending.id.uuidString, privacy: .public) projectDir=\(projectDir, privacy: .public) start"
+    )
+#endif
 
     // Wait for directory to be created, then watch it
     for _ in 0..<60 {
       try? await Task.sleep(for: .seconds(1))
 
       if FileManager.default.fileExists(atPath: projectDir) {
+#if DEBUG
+        AppLogger.watcher.debug(
+          "[PollNewSession] pendingId=\(pending.id.uuidString, privacy: .public) projectDir exists, restarting watch"
+        )
+#endif
         // Directory exists now - restart watching
         await watchForNewSession(pending: pending, worktree: worktree)
         return
@@ -877,6 +1022,11 @@ public final class CLISessionsViewModel {
     }
 
     // Timeout
+#if DEBUG
+    AppLogger.watcher.debug(
+      "[PollNewSession] pendingId=\(pending.id.uuidString, privacy: .public) timed out waiting for project dir"
+    )
+#endif
     pendingHubSessions.removeAll { $0.id == pending.id }
   }
 

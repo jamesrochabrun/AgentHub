@@ -195,6 +195,12 @@ public class TerminalContainerView: NSView {
     let workingDirectory = projectPath.isEmpty ? NSHomeDirectory() : projectPath
     let escapedPath = workingDirectory.replacingOccurrences(of: "'", with: "'\\''")
     let escapedClaudePath = executablePath.replacingOccurrences(of: "'", with: "'\\''")
+#if DEBUG
+    let homeEnv = environment["HOME"] ?? "<nil>"
+    AppLogger.session.debug(
+      "[ClaudeProcess] workingDirectory=\(workingDirectory, privacy: .public) homeEnv=\(homeEnv, privacy: .public) command=\(command, privacy: .public)"
+    )
+#endif
 
     // Build command: resume existing session (-r) or start new session
     let shellCommand: String
