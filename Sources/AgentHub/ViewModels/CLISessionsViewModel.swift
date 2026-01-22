@@ -175,8 +175,11 @@ public final class CLISessionsViewModel {
     return terminal
   }
 
-  /// Removes the terminal for a given key
+  /// Removes the terminal for a given key and terminates its process
   public func removeTerminal(forKey key: String) {
+    if let terminal = activeTerminals[key] {
+      terminal.terminateProcess()
+    }
     activeTerminals.removeValue(forKey: key)
   }
 
@@ -1121,6 +1124,9 @@ public final class CLISessionsViewModel {
     sessionsWithTerminalView.remove(sessionId)
     monitorStates.removeValue(forKey: sessionId)
     monitoringCancellables.removeValue(forKey: sessionId)
+
+    // Remove and terminate the terminal process
+    removeTerminal(forKey: sessionId)
 
     persistMonitoredSessions()
     persistSessionsWithTerminalView()

@@ -76,6 +76,47 @@ public class TerminalContainerView: NSView {
   private var terminalView: LocalProcessTerminalView?
   private var isConfigured = false
   private var promptSent = false  // Track if we've already sent a prompt
+  private var shellPid: pid_t = 0  // Track the shell PID for cleanup
+
+  // MARK: - Lifecycle
+
+  /// Terminate process on deallocation (safety net)
+  deinit {
+    terminateProcess()
+  }
+
+  /// Explicitly terminates the terminal process and its children.
+  /// Call this before removing the terminal from activeTerminals to ensure cleanup.
+  /// Safe to call multiple times - subsequent calls are no-ops.
+  public func terminateProcess() {
+    // Capture PID locally to avoid race conditions during async work
+    let pid = shellPid
+    shellPid = 0  // Clear immediately to prevent double-termination
+
+    guard pid > 0 else { return }
+
+    // Check if process is still running (kill with signal 0 just checks existence)
+    guard kill(pid, 0) == 0 else { return }
+
+    // Send SIGTERM for graceful shutdown
+    if kill(pid, SIGTERM) != 0 {
+      AppLogger.session.warning("Failed to send SIGTERM to PID=\(pid), errno=\(errno)")
+    }
+
+    // Schedule a follow-up SIGKILL if process doesn't terminate gracefully
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1.0) {
+      // Check if still running
+      if kill(pid, 0) == 0 {
+        AppLogger.session.warning("Process PID=\(pid) didn't respond to SIGTERM, sending SIGKILL")
+        let killResult = kill(pid, SIGKILL)
+        if killResult != 0 {
+          AppLogger.session.error("Failed to send SIGKILL to PID=\(pid), errno=\(errno)")
+        }
+      }
+    }
+  }
+
+  // MARK: - Configuration
 
   func configure(
     sessionId: String?,
@@ -226,6 +267,79 @@ public class TerminalContainerView: NSView {
       args: ["-c", shellCommand],
       environment: environment.map { "\($0.key)=\($0.value)" }
     )
+
+    // Find and store the new claude PID asynchronously
+    // We capture PIDs before and after a delay to find the new one
+    Task.detached { [weak self] in
+      // Get PIDs right after starting (process may not be fully up yet)
+      let initialPids = Self.getClaudePidsSync()
+
+      // Wait for claude process to fully start
+      try? await Task.sleep(for: .milliseconds(800))
+
+      // Find the new claude process
+      let currentPids = Self.getClaudePidsSync()
+      let newPids = currentPids.subtracting(initialPids)
+
+      if let newPid = newPids.first {
+        await MainActor.run {
+          self?.shellPid = newPid
+        }
+      }
+    }
+  }
+
+  /// Gets currently running claude PIDs synchronously (safe to call from background thread)
+  /// Has a 5-second timeout to prevent hanging if ps is unresponsive
+  private nonisolated static func getClaudePidsSync() -> Set<pid_t> {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/bin/ps")
+    task.arguments = ["-eo", "pid,comm"]
+
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.standardError = Pipe()
+
+    do {
+      try task.run()
+
+      // Use a semaphore with timeout to prevent hanging
+      let semaphore = DispatchSemaphore(value: 0)
+      var processFinished = false
+
+      DispatchQueue.global(qos: .utility).async {
+        task.waitUntilExit()
+        processFinished = true
+        semaphore.signal()
+      }
+
+      // Wait up to 5 seconds
+      let result = semaphore.wait(timeout: .now() + 5.0)
+      if result == .timedOut {
+        task.terminate()
+        AppLogger.session.warning("getClaudePidsSync timed out - ps command took too long")
+        return []
+      }
+
+      guard processFinished else { return [] }
+
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      guard let output = String(data: data, encoding: .utf8) else { return [] }
+
+      var pids = Set<pid_t>()
+      for line in output.components(separatedBy: .newlines) {
+        let parts = line.trimmingCharacters(in: .whitespaces)
+          .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.count >= 2,
+              let pid = pid_t(parts[0]),
+              parts[1] == "claude" else { continue }
+        pids.insert(pid)
+      }
+      return pids
+    } catch {
+      AppLogger.session.error("getClaudePidsSync failed: \(error.localizedDescription)")
+      return []
+    }
   }
 }
 

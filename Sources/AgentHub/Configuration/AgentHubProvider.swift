@@ -150,4 +150,53 @@ public final class AgentHubProvider {
   public func makeClaudeClient() -> (any ClaudeCode)? {
     createClaudeClient()
   }
+
+  // MARK: - App Lifecycle
+
+  /// Cleans up orphaned Claude processes from previous runs.
+  /// Call this on app launch to terminate any Claude processes that were orphaned
+  /// when the app crashed or was force-quit.
+  public func cleanupOrphanedProcesses() {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/bin/ps")
+    task.arguments = ["-eo", "pid,ppid,command"]
+
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.standardError = Pipe()
+
+    do {
+      try task.run()
+      task.waitUntilExit()
+
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      guard let output = String(data: data, encoding: .utf8) else { return }
+
+      for line in output.components(separatedBy: .newlines) {
+        let parts = line.split(separator: " ", maxSplits: 2, omittingEmptySubsequences: true)
+        guard parts.count >= 3,
+              let pid = Int32(parts[0]),
+              let ppid = Int32(parts[1]),
+              ppid == 1 else { continue }
+
+        // Check if it's a Claude process (orphaned processes have PPID=1)
+        let command = String(parts[2])
+        if command.contains("claude") || command.contains("Claude") {
+          AppLogger.session.warning("Killing orphaned Claude process PID=\(pid)")
+          kill(pid, SIGTERM)
+        }
+      }
+    } catch {
+      AppLogger.session.error("Failed to find orphaned processes: \(error.localizedDescription)")
+    }
+  }
+
+  /// Terminates all active terminal processes.
+  /// Call this on app termination to clean up all running Claude sessions.
+  public func terminateAllTerminals() {
+    for (key, terminal) in sessionsViewModel.activeTerminals {
+      AppLogger.session.info("Terminating terminal for key: \(key)")
+      terminal.terminateProcess()
+    }
+  }
 }
