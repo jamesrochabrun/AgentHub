@@ -722,11 +722,13 @@ public final class CLISessionsViewModel {
   ///   - skipCheckout: If true, skips git checkout even for non-worktrees
   /// - Returns: An error if launching failed, nil on success
   /// Starts a new Claude session in the Hub's embedded terminal (not external terminal)
-  /// - Parameter worktree: The worktree to start the session in
-  public func startNewSessionInHub(_ worktree: WorktreeBranch) {
+  /// - Parameters:
+  ///   - worktree: The worktree to start the session in
+  ///   - initialPrompt: Optional prompt to send automatically when terminal starts (defaults to "Hello!")
+  public func startNewSessionInHub(_ worktree: WorktreeBranch, initialPrompt: String? = "Hello!") {
     // Each pending session gets a unique ID, so no need to clear existing terminals
     // Terminals are now keyed by session ID, not worktree path
-    let pending = PendingHubSession(worktree: worktree)
+    let pending = PendingHubSession(worktree: worktree, initialPrompt: initialPrompt)
     pendingHubSessions.append(pending)
 #if DEBUG
     let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
@@ -836,9 +838,9 @@ public final class CLISessionsViewModel {
 
       source.resume()
 
-      // Timeout after 60 seconds
+      // Timeout after 15 seconds (auto-prompt creates session in ~1-2s)
       Task {
-        try? await Task.sleep(for: .seconds(60))
+        try? await Task.sleep(for: .seconds(15))
         if !didFind {
           didFind = true // Prevent double resume
           source.cancel()
@@ -895,8 +897,8 @@ public final class CLISessionsViewModel {
 #endif
     // Refresh to get the real session object with retry loop
     Task {
-      // Retry loop: wait up to 5 seconds for session to appear in selectedRepositories
-      let maxAttempts = 25  // 25 × 200ms = 5 seconds
+      // Retry loop: wait up to 2 seconds for session to appear in selectedRepositories
+      let maxAttempts = 10  // 10 × 200ms = 2 seconds
 
       for attempt in 1...maxAttempts {
         await monitorService.refreshSessions()
@@ -1015,8 +1017,8 @@ public final class CLISessionsViewModel {
     )
 #endif
 
-    // Wait for directory to be created, then watch it
-    for _ in 0..<60 {
+    // Wait for directory to be created, then watch it (15 seconds max)
+    for _ in 0..<15 {
       try? await Task.sleep(for: .seconds(1))
 
       if FileManager.default.fileExists(atPath: projectDir) {

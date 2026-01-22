@@ -126,7 +126,7 @@ public struct MonitoringPanelView: View {
   private var groupedMonitoredSessions: [(modulePath: String, items: [MonitoringItem])] {
     var allItems: [MonitoringItem] = []
 
-    // Add pending sessions first (they appear at top of their module)
+    // Add pending sessions
     for pending in viewModel.pendingHubSessions {
       allItems.append(.pending(pending))
     }
@@ -139,7 +139,18 @@ public struct MonitoringPanelView: View {
     // Group by MODULE path (not worktree path)
     let grouped = Dictionary(grouping: allItems) { findModulePath(for: $0) }
     return grouped.sorted { $0.key < $1.key }
-      .map { (modulePath: $0.key, items: $0.value) }
+      .map { (modulePath: $0.key, items: $0.value.sorted { item1, item2 in
+        // Sort by timestamp descending (newest first)
+        timestamp(for: item1) > timestamp(for: item2)
+      })}
+  }
+
+  /// Helper to get timestamp for sorting MonitoringItems
+  private func timestamp(for item: MonitoringItem) -> Date {
+    switch item {
+    case .pending(let p): return p.startedAt
+    case .monitored(let session, _): return session.lastActivityAt
+    }
   }
 
   public var body: some View {
@@ -275,6 +286,7 @@ public struct MonitoringPanelView: View {
         state: nil,
         claudeClient: claudeClient,
         showTerminal: true,
+        initialPrompt: pending.initialPrompt,
         terminalKey: "pending-\(pending.id.uuidString)",
         viewModel: viewModel,
         onToggleTerminal: { _ in },
@@ -359,6 +371,7 @@ public struct MonitoringPanelView: View {
               state: nil,
               claudeClient: claudeClient,
               showTerminal: true,
+              initialPrompt: pending.initialPrompt,
               terminalKey: "pending-\(pending.id.uuidString)",
               viewModel: viewModel,
               onToggleTerminal: { _ in },

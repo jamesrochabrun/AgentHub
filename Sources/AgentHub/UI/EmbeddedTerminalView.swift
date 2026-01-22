@@ -273,7 +273,13 @@ public class TerminalContainerView: NSView {
       }
     } else {
       // Start NEW session (no -r flag)
-      shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)'"
+      // Include initial prompt if provided (triggers immediate session file creation)
+      if let prompt = initialPrompt, !prompt.isEmpty {
+        let escapedPrompt = prompt.replacingOccurrences(of: "'", with: "'\\''")
+        shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)' '\(escapedPrompt)'"
+      } else {
+        shellCommand = "cd '\(escapedPath)' && '\(escapedClaudePath)'"
+      }
     }
 
     // Start bash with the command

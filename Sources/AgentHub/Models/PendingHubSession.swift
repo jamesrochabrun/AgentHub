@@ -13,11 +13,13 @@ public struct PendingHubSession: Identifiable {
   public let id: UUID
   public let worktree: WorktreeBranch
   public let startedAt: Date
+  public let initialPrompt: String?
 
-  public init(worktree: WorktreeBranch) {
+  public init(worktree: WorktreeBranch, initialPrompt: String? = "Hello!") {
     self.id = UUID()
     self.worktree = worktree
     self.startedAt = Date()
+    self.initialPrompt = initialPrompt
   }
 
   /// Creates a placeholder CLISession for use with MonitoringCardView
