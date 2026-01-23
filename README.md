@@ -2,6 +2,8 @@
 
 A macOS SwiftUI library for real-time monitoring and management of Claude Code CLI sessions.
 
+<img width="1908" height="1066" alt="Image" src="https://github.com/user-attachments/assets/0215fc97-09d4-4332-9de8-7b59e897e7fc" />
+
 ## Prerequisites
 
 - **macOS 14.0+**
