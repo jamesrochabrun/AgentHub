@@ -1,17 +1,16 @@
 // swift-tools-version: 6.0
-// The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
 
 let package = Package(
-  name: "AgentHub",
+  name: "AgentHubCore",
   platforms: [
     .macOS(.v14)
   ],
   products: [
     .library(
-      name: "AgentHub",
-      targets: ["AgentHub"]
+      name: "AgentHubCore",
+      targets: ["AgentHubCore"]
     ),
   ],
   dependencies: [
@@ -22,20 +21,22 @@ let package = Package(
   ],
   targets: [
     .target(
-      name: "AgentHub",
+      name: "AgentHubCore",
       dependencies: [
         .product(name: "ClaudeCodeSDK", package: "ClaudeCodeSDK"),
         .product(name: "PierreDiffsSwift", package: "PierreDiffsSwift"),
         .product(name: "SwiftTerm", package: "SwiftTerm"),
         .product(name: "MarkdownUI", package: "swift-markdown-ui"),
       ],
+      path: "Sources/AgentHub",
       swiftSettings: [
         .swiftLanguageMode(.v5)
       ]
     ),
     .testTarget(
       name: "AgentHubTests",
-      dependencies: ["AgentHub"]
+      dependencies: ["AgentHubCore"],
+      path: "Tests/AgentHubTests"
     ),
   ]
 )

@@ -116,47 +116,48 @@ public struct CLISessionRow: View {
           .fontWeight(.semibold)
       }
 
-      // Copy button with animated confirmation
-      Button {
-        onCopyId()
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-          showCopyConfirmation = true
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-          withAnimation(.easeOut(duration: 0.2)) {
-            showCopyConfirmation = false
-          }
-        }
-      } label: {
-        Image(systemName: showCopyConfirmation ? "checkmark" : "doc.on.doc")
-          .font(.caption2)
-          .fontWeight(showCopyConfirmation ? .bold : .regular)
-          .foregroundColor(showCopyConfirmation ? .green : .secondary)
-          .contentTransition(.symbolEffect(.replace))
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .help("Copy full session ID")
-
-      // Open session file button
-      Button(action: onOpenFile) {
-        Image(systemName: "doc.text")
-          .font(.caption2)
-          .foregroundColor(.secondary)
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .help("Open session file")
-
-      // Open in external terminal button
-      Button(action: onConnect) {
-        Image(systemName: "rectangle.portrait.and.arrow.right")
-          .font(.caption2)
-          .foregroundColor(.secondary)
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .help("Open in external Terminal")
+      // TODO: A/B testing - uncomment to enable action buttons
+      // // Copy button with animated confirmation
+      // Button {
+      //   onCopyId()
+      //   withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+      //     showCopyConfirmation = true
+      //   }
+      //   DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+      //     withAnimation(.easeOut(duration: 0.2)) {
+      //       showCopyConfirmation = false
+      //     }
+      //   }
+      // } label: {
+      //   Image(systemName: showCopyConfirmation ? "checkmark" : "doc.on.doc")
+      //     .font(.caption2)
+      //     .fontWeight(showCopyConfirmation ? .bold : .regular)
+      //     .foregroundColor(showCopyConfirmation ? .green : .secondary)
+      //     .contentTransition(.symbolEffect(.replace))
+      //     .contentShape(Rectangle())
+      // }
+      // .buttonStyle(.plain)
+      // .help("Copy full session ID")
+      //
+      // // Open session file button
+      // Button(action: onOpenFile) {
+      //   Image(systemName: "doc.text")
+      //     .font(.caption2)
+      //     .foregroundColor(.secondary)
+      //     .contentShape(Rectangle())
+      // }
+      // .buttonStyle(.plain)
+      // .help("Open session file")
+      //
+      // // Open in external terminal button
+      // Button(action: onConnect) {
+      //   Image(systemName: "rectangle.portrait.and.arrow.right")
+      //     .font(.caption2)
+      //     .foregroundColor(.secondary)
+      //     .contentShape(Rectangle())
+      // }
+      // .buttonStyle(.plain)
+      // .help("Open in external Terminal")
 
       Spacer()
     }

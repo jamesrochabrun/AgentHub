@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Import signing certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate
+          echo "$CERTIFICATE_BASE64" | base64 --decode > $RUNNER_TEMP/certificate.p12
+          security import $RUNNER_TEMP/certificate.p12 -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Build app
+        run: |
+          xcodebuild -project app/AgentHub.xcodeproj \
+            -scheme AgentHub \
+            -configuration Release \
+            -archivePath build/AgentHub.xcarchive \
+            archive
+
+      - name: Export app
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/AgentHub.xcarchive \
+            -exportPath build \
+            -exportOptionsPlist app/ExportOptions.plist
+
+      - name: Notarize app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+        run: |
+          # Create zip for notarization
+          ditto -c -k --keepParent build/AgentHub.app build/AgentHub.zip
+
+          # Submit for notarization
+          xcrun notarytool submit build/AgentHub.zip \
+            --apple-id "$APPLE_ID" \
+            --team-id "$TEAM_ID" \
+            --password "$APP_PASSWORD" \
+            --wait
+
+          # Staple the ticket
+          xcrun stapler staple build/AgentHub.app
+
+      - name: Create DMG
+        run: |
+          create-dmg \
+            --volname "AgentHub" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "AgentHub.app" 150 185 \
+            --app-drop-link 450 185 \
+            --hide-extension "AgentHub.app" \
+            build/AgentHub.dmg \
+            build/AgentHub.app
+
+      - name: Generate checksum
+        run: |
+          cd build
+          shasum -a 256 AgentHub.dmg > AgentHub.dmg.sha256
+          cat AgentHub.dmg.sha256
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            build/AgentHub.dmg
+            build/AgentHub.dmg.sha256
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
