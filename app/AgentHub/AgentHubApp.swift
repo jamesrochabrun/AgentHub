@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-import AgentHub
+import AgentHubCore
 
 // MARK: - App Delegate
 

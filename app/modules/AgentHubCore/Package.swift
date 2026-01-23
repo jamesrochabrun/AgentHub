@@ -10,7 +10,7 @@ let package = Package(
   products: [
     .library(
       name: "AgentHubCore",
-      targets: ["AgentHub"]
+      targets: ["AgentHubCore"]
     ),
   ],
   dependencies: [
@@ -21,7 +21,7 @@ let package = Package(
   ],
   targets: [
     .target(
-      name: "AgentHub",
+      name: "AgentHubCore",
       dependencies: [
         .product(name: "ClaudeCodeSDK", package: "ClaudeCodeSDK"),
         .product(name: "PierreDiffsSwift", package: "PierreDiffsSwift"),
@@ -35,7 +35,7 @@ let package = Package(
     ),
     .testTarget(
       name: "AgentHubTests",
-      dependencies: ["AgentHub"],
+      dependencies: ["AgentHubCore"],
       path: "Tests/AgentHubTests"
     ),
   ]

@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-import AgentHub
+import AgentHubCore
 
 /// A simple wrapper view for previewing AgentHubSessionsView.
 ///

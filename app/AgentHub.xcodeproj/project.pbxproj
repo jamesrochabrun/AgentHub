@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		7B03D9422F14D66700C36AA3 /* AgentHub in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03D9412F14D66700C36AA3 /* AgentHub */; };
+		7B03D9422F14D66700C36AA3 /* AgentHubCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03D9412F14D66700C36AA3 /* AgentHubCore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,7 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7B03D9422F14D66700C36AA3 /* AgentHub in Frameworks */,
+				7B03D9422F14D66700C36AA3 /* AgentHubCore in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -117,7 +117,7 @@
 			);
 			name = AgentHub;
 			packageProductDependencies = (
-				7B03D9412F14D66700C36AA3 /* AgentHub */,
+				7B03D9412F14D66700C36AA3 /* AgentHubCore */,
 			);
 			productName = AgentHub;
 			productReference = 7B03D90A2F14D4E200C36AA3 /* AgentHub.app */;
@@ -589,9 +589,9 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		7B03D9412F14D66700C36AA3 /* AgentHub */ = {
+		7B03D9412F14D66700C36AA3 /* AgentHubCore */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = AgentHub;
+			productName = AgentHubCore;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
