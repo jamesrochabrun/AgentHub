@@ -16,37 +16,37 @@
 			containerPortal = 7B03D9022F14D4E200C36AA3 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 7B03D9092F14D4E200C36AA3;
-			remoteInfo = AgentHubDemo;
+			remoteInfo = AgentHub;
 		};
 		7B03D9222F14D4E400C36AA3 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 7B03D9022F14D4E200C36AA3 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 7B03D9092F14D4E200C36AA3;
-			remoteInfo = AgentHubDemo;
+			remoteInfo = AgentHub;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		7B03D90A2F14D4E200C36AA3 /* AgentHubDemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentHubDemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		7B03D9172F14D4E400C36AA3 /* AgentHubDemoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentHubDemoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		7B03D9212F14D4E400C36AA3 /* AgentHubDemoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentHubDemoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7B03D90A2F14D4E200C36AA3 /* AgentHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7B03D9172F14D4E400C36AA3 /* AgentHubTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentHubTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		7B03D9212F14D4E400C36AA3 /* AgentHubUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentHubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		7B03D90C2F14D4E200C36AA3 /* AgentHubDemo */ = {
+		7B03D90C2F14D4E200C36AA3 /* AgentHub */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = AgentHubDemo;
+			path = AgentHub;
 			sourceTree = "<group>";
 		};
-		7B03D91A2F14D4E400C36AA3 /* AgentHubDemoTests */ = {
+		7B03D91A2F14D4E400C36AA3 /* AgentHubTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = AgentHubDemoTests;
+			path = AgentHubTests;
 			sourceTree = "<group>";
 		};
-		7B03D9242F14D4E400C36AA3 /* AgentHubDemoUITests */ = {
+		7B03D9242F14D4E400C36AA3 /* AgentHubUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = AgentHubDemoUITests;
+			path = AgentHubUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -80,9 +80,9 @@
 		7B03D9012F14D4E200C36AA3 = {
 			isa = PBXGroup;
 			children = (
-				7B03D90C2F14D4E200C36AA3 /* AgentHubDemo */,
-				7B03D91A2F14D4E400C36AA3 /* AgentHubDemoTests */,
-				7B03D9242F14D4E400C36AA3 /* AgentHubDemoUITests */,
+				7B03D90C2F14D4E200C36AA3 /* AgentHub */,
+				7B03D91A2F14D4E400C36AA3 /* AgentHubTests */,
+				7B03D9242F14D4E400C36AA3 /* AgentHubUITests */,
 				7B03D90B2F14D4E200C36AA3 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,9 +90,9 @@
 		7B03D90B2F14D4E200C36AA3 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				7B03D90A2F14D4E200C36AA3 /* AgentHubDemo.app */,
-				7B03D9172F14D4E400C36AA3 /* AgentHubDemoTests.xctest */,
-				7B03D9212F14D4E400C36AA3 /* AgentHubDemoUITests.xctest */,
+				7B03D90A2F14D4E200C36AA3 /* AgentHub.app */,
+				7B03D9172F14D4E400C36AA3 /* AgentHubTests.xctest */,
+				7B03D9212F14D4E400C36AA3 /* AgentHubUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -100,9 +100,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		7B03D9092F14D4E200C36AA3 /* AgentHubDemo */ = {
+		7B03D9092F14D4E200C36AA3 /* AgentHub */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 7B03D92B2F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubDemo" */;
+			buildConfigurationList = 7B03D92B2F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHub" */;
 			buildPhases = (
 				7B03D9062F14D4E200C36AA3 /* Sources */,
 				7B03D9072F14D4E200C36AA3 /* Frameworks */,
@@ -113,19 +113,19 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				7B03D90C2F14D4E200C36AA3 /* AgentHubDemo */,
+				7B03D90C2F14D4E200C36AA3 /* AgentHub */,
 			);
-			name = AgentHubDemo;
+			name = AgentHub;
 			packageProductDependencies = (
 				7B03D9412F14D66700C36AA3 /* AgentHub */,
 			);
-			productName = AgentHubDemo;
-			productReference = 7B03D90A2F14D4E200C36AA3 /* AgentHubDemo.app */;
+			productName = AgentHub;
+			productReference = 7B03D90A2F14D4E200C36AA3 /* AgentHub.app */;
 			productType = "com.apple.product-type.application";
 		};
-		7B03D9162F14D4E400C36AA3 /* AgentHubDemoTests */ = {
+		7B03D9162F14D4E400C36AA3 /* AgentHubTests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 7B03D92E2F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubDemoTests" */;
+			buildConfigurationList = 7B03D92E2F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubTests" */;
 			buildPhases = (
 				7B03D9132F14D4E400C36AA3 /* Sources */,
 				7B03D9142F14D4E400C36AA3 /* Frameworks */,
@@ -137,18 +137,18 @@
 				7B03D9192F14D4E400C36AA3 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				7B03D91A2F14D4E400C36AA3 /* AgentHubDemoTests */,
+				7B03D91A2F14D4E400C36AA3 /* AgentHubTests */,
 			);
-			name = AgentHubDemoTests;
+			name = AgentHubTests;
 			packageProductDependencies = (
 			);
-			productName = AgentHubDemoTests;
-			productReference = 7B03D9172F14D4E400C36AA3 /* AgentHubDemoTests.xctest */;
+			productName = AgentHubTests;
+			productReference = 7B03D9172F14D4E400C36AA3 /* AgentHubTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
-		7B03D9202F14D4E400C36AA3 /* AgentHubDemoUITests */ = {
+		7B03D9202F14D4E400C36AA3 /* AgentHubUITests */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 7B03D9312F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubDemoUITests" */;
+			buildConfigurationList = 7B03D9312F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubUITests" */;
 			buildPhases = (
 				7B03D91D2F14D4E400C36AA3 /* Sources */,
 				7B03D91E2F14D4E400C36AA3 /* Frameworks */,
@@ -160,13 +160,13 @@
 				7B03D9232F14D4E400C36AA3 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
-				7B03D9242F14D4E400C36AA3 /* AgentHubDemoUITests */,
+				7B03D9242F14D4E400C36AA3 /* AgentHubUITests */,
 			);
-			name = AgentHubDemoUITests;
+			name = AgentHubUITests;
 			packageProductDependencies = (
 			);
-			productName = AgentHubDemoUITests;
-			productReference = 7B03D9212F14D4E400C36AA3 /* AgentHubDemoUITests.xctest */;
+			productName = AgentHubUITests;
+			productReference = 7B03D9212F14D4E400C36AA3 /* AgentHubUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
 /* End PBXNativeTarget section */
@@ -192,7 +192,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 7B03D9052F14D4E200C36AA3 /* Build configuration list for PBXProject "AgentHubDemo" */;
+			buildConfigurationList = 7B03D9052F14D4E200C36AA3 /* Build configuration list for PBXProject "AgentHub" */;
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -202,16 +202,16 @@
 			mainGroup = 7B03D9012F14D4E200C36AA3;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference "../../AgentHub" */,
+				7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference "modules/AgentHubCore" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7B03D90B2F14D4E200C36AA3 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				7B03D9092F14D4E200C36AA3 /* AgentHubDemo */,
-				7B03D9162F14D4E400C36AA3 /* AgentHubDemoTests */,
-				7B03D9202F14D4E400C36AA3 /* AgentHubDemoUITests */,
+				7B03D9092F14D4E200C36AA3 /* AgentHub */,
+				7B03D9162F14D4E400C36AA3 /* AgentHubTests */,
+				7B03D9202F14D4E400C36AA3 /* AgentHubUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -267,12 +267,12 @@
 /* Begin PBXTargetDependency section */
 		7B03D9192F14D4E400C36AA3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 7B03D9092F14D4E200C36AA3 /* AgentHubDemo */;
+			target = 7B03D9092F14D4E200C36AA3 /* AgentHub */;
 			targetProxy = 7B03D9182F14D4E400C36AA3 /* PBXContainerItemProxy */;
 		};
 		7B03D9232F14D4E400C36AA3 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 7B03D9092F14D4E200C36AA3 /* AgentHubDemo */;
+			target = 7B03D9092F14D4E200C36AA3 /* AgentHub */;
 			targetProxy = 7B03D9222F14D4E400C36AA3 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
@@ -417,7 +417,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubDemo;
+				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHub;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -448,7 +448,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubDemo;
+				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHub;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -470,14 +470,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubDemoTests;
+				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AgentHubDemo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/AgentHubDemo";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AgentHub.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/AgentHub";
 			};
 			name = Debug;
 		};
@@ -491,14 +491,14 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubDemoTests;
+				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AgentHubDemo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/AgentHubDemo";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/AgentHub.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/AgentHub";
 			};
 			name = Release;
 		};
@@ -510,14 +510,14 @@
 				DEVELOPMENT_TEAM = CQ45U4X9K3;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubDemoUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = AgentHubDemo;
+				TEST_TARGET_NAME = AgentHub;
 			};
 			name = Debug;
 		};
@@ -529,21 +529,21 @@
 				DEVELOPMENT_TEAM = CQ45U4X9K3;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubDemoUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = jamesRochabrun.AgentHubUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TEST_TARGET_NAME = AgentHubDemo;
+				TEST_TARGET_NAME = AgentHub;
 			};
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		7B03D9052F14D4E200C36AA3 /* Build configuration list for PBXProject "AgentHubDemo" */ = {
+		7B03D9052F14D4E200C36AA3 /* Build configuration list for PBXProject "AgentHub" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				7B03D9292F14D4E400C36AA3 /* Debug */,
@@ -552,7 +552,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		7B03D92B2F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubDemo" */ = {
+		7B03D92B2F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHub" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				7B03D92C2F14D4E400C36AA3 /* Debug */,
@@ -561,7 +561,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		7B03D92E2F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubDemoTests" */ = {
+		7B03D92E2F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				7B03D92F2F14D4E400C36AA3 /* Debug */,
@@ -570,7 +570,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		7B03D9312F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubDemoUITests" */ = {
+		7B03D9312F14D4E400C36AA3 /* Build configuration list for PBXNativeTarget "AgentHubUITests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				7B03D9322F14D4E400C36AA3 /* Debug */,
@@ -582,9 +582,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference ".." */ = {
+		7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference "modules/AgentHubCore" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ..;
+			relativePath = modules/AgentHubCore;
 		};
 /* End XCLocalSwiftPackageReference section */
 

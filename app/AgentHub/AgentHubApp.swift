@@ -1,6 +1,6 @@
 //
-//  AgentHubDemoApp.swift
-//  AgentHubDemo
+//  AgentHubApp.swift
+//  AgentHub
 //
 //  Created by James Rochabrun on 1/11/26.
 //
@@ -31,7 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - App
 
 @main
-struct AgentHubDemoApp: App {
+struct AgentHubApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
   var body: some Scene {
