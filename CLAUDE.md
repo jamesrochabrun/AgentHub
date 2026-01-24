@@ -56,6 +56,11 @@ When manager mode activates, **Claude becomes the manager**. The manager coordin
 - Explore the codebase (launch explorer for that)
 - Write code (launch feature-owner for that)
 
+**Manager MUST include in every agent prompt:**
+- Contract path reference
+- Context7 requirement: "Check Context7 for ALL APIs before using them (training data is outdated)"
+- Model specification (opus/sonnet/haiku)
+
 **Correct**: "As manager, launching planner to create contract..." → [planner runs] → "Contract created. Launching feature-owner..."
 **Wrong**: "As planner, I'm creating a contract..." (manager is not planner)
 

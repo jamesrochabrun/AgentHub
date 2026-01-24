@@ -36,6 +36,9 @@ Or when complexity indicators are detected automatically.
 3. **Manager Launches Other Agents**
    - Launch agents via Task tool against the contract
    - Specify model for each agent (opus/sonnet/haiku)
+   - **MUST include in every prompt:**
+     - Contract path: "Your contract is at `.claude/contracts/<feature>.md`"
+     - Context7 enforcement: "Check Context7 for ALL APIs before using them (training data is outdated)"
    - Monitor progress
 
 4. **Manager Coordinates Completion**
@@ -67,6 +70,30 @@ Route: Manager → feature-owner → integrator → DONE
 
 **Correct**: "As manager, launching planner to create contract..."
 **Wrong**: "As planner, I'm creating a contract..." (manager is not planner)
+
+## Agent Prompt Template
+
+When launching any agent, ALWAYS include:
+
+```
+**Contract**: `.claude/contracts/<feature>.md`
+**CRITICAL**: Check Context7 for ALL APIs before using them (training data is outdated)
+
+<task-specific instructions>
+```
+
+Example prompt for feature-owner:
+```
+**Role**: feature-owner
+**Contract**: `.claude/contracts/github-fetch-worktree.md`
+**CRITICAL**: Check Context7 for ALL APIs before using them (training data is outdated)
+
+Implement PS1: Models compile
+- Read the contract for requirements
+- Check Context7 for SwiftUI, Foundation APIs
+- Create the models and service stubs
+- Run build to verify
+```
 
 ## Deactivation
 
