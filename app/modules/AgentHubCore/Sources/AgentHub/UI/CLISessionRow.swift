@@ -170,8 +170,8 @@ public struct CLISessionRow: View {
       // Branch info
       if let branch = session.branchName {
         HStack(spacing: 2) {
-          Image(systemName: session.isWorktree ? "arrow.triangle.branch" : "arrow.branch")
-            .font(.caption2)
+          Image(systemName: "arrow.triangle.branch")
+            .font(.caption)
           Text(branch)
             .font(.caption)
             .lineLimit(1)

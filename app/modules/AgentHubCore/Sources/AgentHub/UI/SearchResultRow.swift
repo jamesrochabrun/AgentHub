@@ -46,7 +46,7 @@ public struct SearchResultRow: View {
           if let branch = result.gitBranch {
             HStack(spacing: 4) {
               Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 10))
+                .font(.caption)
               Text(branch)
                 .font(.caption)
                 .lineLimit(1)

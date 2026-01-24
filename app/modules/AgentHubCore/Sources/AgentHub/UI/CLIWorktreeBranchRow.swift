@@ -106,7 +106,7 @@ public struct CLIWorktreeBranchRow: View {
 
           // Branch icon
           Image(systemName: "arrow.triangle.branch")
-            .font(.caption)
+            .font(.subheadline)
             .foregroundColor(worktree.isWorktree ? .brandSecondary : .brandPrimary)
 
           // Path + [branch] - like git worktree list
