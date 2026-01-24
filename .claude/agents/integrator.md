@@ -1,6 +1,7 @@
 # integrator
 
 **Role**: Final Verification Gate
+**Model**: sonnet
 **Access**: Read-only
 
 ## Primary Function

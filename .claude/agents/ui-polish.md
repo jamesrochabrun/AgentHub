@@ -1,6 +1,7 @@
 # ui-polish
 
 **Role**: Design Bar Enforcement + Refinement
+**Model**: sonnet
 **Access**: Full edit
 
 ## Primary Function

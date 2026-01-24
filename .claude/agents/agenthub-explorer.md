@@ -1,6 +1,7 @@
 # agenthub-explorer
 
 **Role**: Context Finder
+**Model**: sonnet
 **Access**: Read-only
 
 ## Primary Function

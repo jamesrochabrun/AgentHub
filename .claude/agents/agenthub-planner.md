@@ -1,6 +1,7 @@
 # agenthub-planner
 
 **Role**: Contract Creator & Orchestrator
+**Model**: opus
 **Access**: Read-only (never writes code directly)
 **Position**: External to contracts - creates and manages them
 

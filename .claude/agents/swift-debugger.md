@@ -1,6 +1,7 @@
 # swift-debugger
 
 **Role**: Bug Investigation
+**Model**: opus
 **Access**: Read + Execute
 
 ## Primary Function

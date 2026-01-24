@@ -1,6 +1,7 @@
 # feature-owner
 
 **Role**: Implementation
+**Model**: opus
 **Access**: Full edit
 
 ## Primary Function

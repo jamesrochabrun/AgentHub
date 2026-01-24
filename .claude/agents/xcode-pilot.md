@@ -1,6 +1,7 @@
 # xcode-pilot
 
 **Role**: Simulator/Device Validation
+**Model**: haiku
 **Access**: Simulator tools
 
 ## Primary Function
