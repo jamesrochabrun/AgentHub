@@ -21,6 +21,7 @@ public struct CreateWorktreeSheet: View {
   @State private var directoryName: String = ""
   @State private var availableBranches: [RemoteBranch] = []
   @State private var isLoading: Bool = true
+  @State private var isFetching: Bool = false
   @State private var creationProgress: WorktreeCreationProgress = .idle
   @State private var errorMessage: String?
   @State private var showError: Bool = false
@@ -112,12 +113,20 @@ public struct CreateWorktreeSheet: View {
   // MARK: - Loading View
 
   private var loadingView: some View {
-    HStack(spacing: 12) {
-      ProgressView()
-        .scaleEffect(0.8)
-      Text("Loading branches...")
-        .font(.subheadline)
-        .foregroundColor(.secondary)
+    VStack(spacing: 12) {
+      HStack(spacing: 12) {
+        ProgressView()
+          .scaleEffect(0.8)
+        Text(isFetching ? "Fetching remote branches..." : "Loading branches...")
+          .font(.subheadline)
+          .foregroundColor(.secondary)
+      }
+
+      if isFetching {
+        Text("This may take a moment")
+          .font(.caption)
+          .foregroundColor(.secondary.opacity(0.8))
+      }
     }
     .frame(maxWidth: .infinity)
     .padding(.vertical, 40)
@@ -317,10 +326,12 @@ public struct CreateWorktreeSheet: View {
 
   private func loadBranches() async {
     isLoading = true
+    isFetching = true
 
     do {
-      // Load local branches for the "Based On" picker
-      availableBranches = try await worktreeService.getLocalBranches(at: repositoryPath)
+      // Fetch from remote and get all branches (including remote branches)
+      // This ensures we see the latest branches from origin
+      availableBranches = try await worktreeService.fetchAndGetRemoteBranches(at: repositoryPath)
 
       // Auto-select the first branch (usually main) as default base
       if let firstBranch = availableBranches.first {
@@ -331,6 +342,7 @@ public struct CreateWorktreeSheet: View {
       showError = true
     }
 
+    isFetching = false
     isLoading = false
   }
 

@@ -35,7 +35,11 @@ public struct CLISessionsListView: View {
   @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var isSearchSheetVisible: Bool = false
+  @State private var showGitHubPicker: Bool = false
+  @State private var cloneProgress: CloneProgress = .idle
+  @State private var cloneError: String?
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.agentHub) private var agentHub
   @FocusState private var isSearchFieldFocused: Bool
 
   public init(viewModel: CLISessionsViewModel, columnVisibility: Binding<NavigationSplitViewVisibility>) {
@@ -151,6 +155,56 @@ public struct CLISessionsListView: View {
         Text("Could not delete worktree at:\n\(error.worktree.path)\n\nError: \(error.message)")
       }
     }
+    .sheet(isPresented: $showGitHubPicker) {
+      GitHubRepositoryPickerView(
+        onSelect: { repository in
+          showGitHubPicker = false
+          Task {
+            await cloneRepository(repository)
+          }
+        },
+        onDismiss: { showGitHubPicker = false }
+      )
+    }
+    .alert(
+      "Clone Failed",
+      isPresented: Binding(
+        get: { cloneError != nil },
+        set: { if !$0 { cloneError = nil } }
+      )
+    ) {
+      Button("OK") { cloneError = nil }
+    } message: {
+      if let error = cloneError {
+        Text(error)
+      }
+    }
+  }
+
+  // MARK: - Clone Repository
+
+  private func cloneRepository(_ repository: GitHubRepository) async {
+    guard let provider = agentHub else {
+      cloneError = "AgentHub provider not available"
+      return
+    }
+
+    cloneProgress = .cloning(repository: repository.name)
+
+    do {
+      _ = try await viewModel.cloneAndAddRepository(
+        repository,
+        cloneService: provider.gitHubCloneService
+      ) { progress in
+        await MainActor.run {
+          cloneProgress = progress
+        }
+      }
+      cloneProgress = .idle
+    } catch {
+      cloneProgress = .idle
+      cloneError = error.localizedDescription
+    }
   }
 
   // MARK: - App Background
@@ -172,7 +226,10 @@ public struct CLISessionsListView: View {
   private var sessionListPanel: some View {
     VStack(spacing: 0) {
       // Add repository button (always visible)
-      CLIRepositoryPickerView(onAddRepository: viewModel.showAddRepositoryPicker)
+      CLIRepositoryPickerView(
+        onAddRepository: viewModel.showAddRepositoryPicker,
+        onCloneFromGitHub: { showGitHubPicker = true }
+      )
         .padding(.bottom, 10)
 
       // Toggle between button and expanded search inline

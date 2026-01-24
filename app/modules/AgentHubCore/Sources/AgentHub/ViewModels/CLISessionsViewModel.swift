@@ -1307,6 +1307,44 @@ public final class CLISessionsViewModel {
     }
   }
 
+  // MARK: - GitHub Clone Flow
+
+  /// Clones a GitHub repository and adds it to monitored repositories
+  /// - Parameters:
+  ///   - repository: The GitHub repository to clone
+  ///   - onProgress: Progress callback for clone status updates
+  /// - Returns: The path to the cloned repository
+  /// - Throws: GitHubCloneServiceError if clone fails
+  public func cloneAndAddRepository(
+    _ repository: GitHubRepository,
+    cloneService: GitHubCloneService,
+    onProgress: @escaping @Sendable (CloneProgress) async -> Void
+  ) async throws -> String {
+    // Get the AgentHub folder path from settings
+    let folderPath = UserDefaults.standard.string(forKey: AgentHubDefaults.agentHubFolderPath)
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("AgentHub").path
+    let destinationFolder = URL(fileURLWithPath: folderPath)
+
+    // Update progress
+    await onProgress(.cloning(repository: repository.name))
+
+    // Clone the repository
+    let clonedPath = try await cloneService.cloneRepository(
+      cloneUrl: repository.cloneUrl,
+      to: destinationFolder,
+      repoName: repository.name
+    )
+
+    // Add the cloned repository to monitored repos
+    let pathString = clonedPath.path
+    addRepository(at: pathString)
+
+    // Update progress
+    await onProgress(.complete(localPath: pathString))
+
+    return pathString
+  }
+
   // MARK: - Search Filter
 
   /// Opens a folder picker to select a repository for filtering search results

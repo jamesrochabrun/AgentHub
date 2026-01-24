@@ -46,6 +46,12 @@ public enum AgentHubDefaults {
   /// Type: Data (JSON-encoded [String])
   public static let sessionsWithTerminalView = "\(keyPrefix)sessions.sessionsWithTerminalView"
 
+  // MARK: - Folder Settings
+
+  /// Path to the AgentHub folder where cloned repositories are stored
+  /// Type: String (default: ~/AgentHub)
+  public static let agentHubFolderPath = "\(keyPrefix)folders.agentHubFolderPath"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

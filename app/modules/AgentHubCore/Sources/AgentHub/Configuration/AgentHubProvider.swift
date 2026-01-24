@@ -56,6 +56,11 @@ public final class AgentHubProvider {
     StatsDisplaySettings(configuration.statsDisplayMode)
   }()
 
+  /// GitHub clone service for cloning repositories
+  public private(set) lazy var gitHubCloneService: GitHubCloneService = {
+    GitHubCloneService()
+  }()
+
   /// Claude Code client for SDK communication
   public private(set) lazy var claudeClient: (any ClaudeCode)? = {
     createClaudeClient()
