@@ -8,6 +8,33 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Session Color Option
+
+/// Available colors for session tagging
+public enum SessionColorOption: String, CaseIterable, Identifiable {
+  case warmCoral = "#FB7185"
+  case softGreen = "#86EFAC"
+  case goldenAmber = "#FBBF24"
+  case skyBlue = "#7DD3FC"
+  case primaryPurple = "#9333EA"
+
+  public var id: String { rawValue }
+
+  public var displayName: String {
+    switch self {
+    case .warmCoral: return "Coral"
+    case .softGreen: return "Green"
+    case .goldenAmber: return "Amber"
+    case .skyBlue: return "Blue"
+    case .primaryPurple: return "Purple"
+    }
+  }
+
+  public var color: Color {
+    Color(hex: rawValue)
+  }
+}
+
 // MARK: - CLISessionRow
 
 /// Individual row for displaying a CLI session with connect action
@@ -20,6 +47,15 @@ public struct CLISessionRow: View {
   let onToggleMonitoring: () -> Void
   var showLastMessage: Bool = false
 
+  /// The hex color assigned to this session, if any
+  var sessionColor: String?
+
+  /// Callback when user selects a color (nil to remove)
+  var onSetColor: ((String?) -> Void)?
+
+  /// Callback when user wants to open session in a new window
+  var onOpenInWindow: (() -> Void)?
+
   @State private var showCopyConfirmation = false
 
   public init(
@@ -29,7 +65,10 @@ public struct CLISessionRow: View {
     onCopyId: @escaping () -> Void,
     onOpenFile: @escaping () -> Void,
     onToggleMonitoring: @escaping () -> Void,
-    showLastMessage: Bool = false
+    showLastMessage: Bool = false,
+    sessionColor: String? = nil,
+    onSetColor: ((String?) -> Void)? = nil,
+    onOpenInWindow: (() -> Void)? = nil
   ) {
     self.session = session
     self.isMonitoring = isMonitoring
@@ -38,6 +77,9 @@ public struct CLISessionRow: View {
     self.onOpenFile = onOpenFile
     self.onToggleMonitoring = onToggleMonitoring
     self.showLastMessage = showLastMessage
+    self.sessionColor = sessionColor
+    self.onSetColor = onSetColor
+    self.onOpenInWindow = onOpenInWindow
   }
 
   public var body: some View {
@@ -48,8 +90,52 @@ public struct CLISessionRow: View {
       .onTapGesture {
         onToggleMonitoring()
       }
+      .contextMenu {
+        sessionContextMenu
+      }
       .agentHubRow(isHighlighted: isMonitoring)
       .help(isMonitoring ? "Stop monitoring" : "Monitor session")
+  }
+
+  // MARK: - Context Menu
+
+  @ViewBuilder
+  private var sessionContextMenu: some View {
+    // Color picker submenu
+    Menu("Set Color") {
+      ForEach(SessionColorOption.allCases) { option in
+        Button {
+          onSetColor?(option.rawValue)
+        } label: {
+          HStack {
+            Circle()
+              .fill(option.color)
+              .frame(width: 12, height: 12)
+            Text(option.displayName)
+            if sessionColor == option.rawValue {
+              Spacer()
+              Image(systemName: "checkmark")
+            }
+          }
+        }
+      }
+
+      Divider()
+
+      Button("No Color") {
+        onSetColor?(nil)
+      }
+      .disabled(sessionColor == nil)
+    }
+
+    Divider()
+
+    // Open in Window action
+    Button {
+      onOpenInWindow?()
+    } label: {
+      Label("Open in Window", systemImage: "macwindow")
+    }
   }
 
   // MARK: - Session Row Content
@@ -60,6 +146,13 @@ public struct CLISessionRow: View {
       Circle()
         .fill(statusColor)
         .frame(width: 8, height: 8)
+
+      // Session color indicator (if assigned)
+      if let colorHex = sessionColor {
+        Circle()
+          .fill(Color(hex: colorHex))
+          .frame(width: 8, height: 8)
+      }
 
       VStack(alignment: .leading, spacing: 4) {
         // Session ID (prominently displayed)

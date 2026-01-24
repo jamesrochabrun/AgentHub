@@ -40,6 +40,7 @@ public struct CLISessionsListView: View {
   @State private var cloneError: String?
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.agentHub) private var agentHub
+  @Environment(\.openWindow) private var openWindow
   @FocusState private var isSearchFieldFocused: Bool
 
   public init(viewModel: CLISessionsViewModel, columnVisibility: Binding<NavigationSplitViewVisibility>) {
@@ -588,7 +589,16 @@ public struct CLISessionsListView: View {
             },
             showLastMessage: viewModel.showLastMessage,
             isDebugMode: true,  // Enable debug mode for now
-            deletingWorktreePath: viewModel.deletingWorktreePath
+            deletingWorktreePath: viewModel.deletingWorktreePath,
+            getSessionColor: { sessionId in
+              viewModel.getSessionColor(for: sessionId)
+            },
+            onSetSessionColor: { sessionId, colorHex in
+              viewModel.setSessionColor(colorHex, for: sessionId)
+            },
+            onOpenSessionInWindow: { session in
+              openWindow(value: session.id)
+            }
           )
         }
       }

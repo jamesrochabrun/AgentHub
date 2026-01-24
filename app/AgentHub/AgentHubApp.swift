@@ -49,6 +49,15 @@ struct AgentHubApp: App {
       }
     }
 
+    // Session detail windows - opened via openWindow(value: sessionId)
+    WindowGroup("Session", for: String.self) { $sessionId in
+      if let sessionId = sessionId {
+        SessionDetailWindow(sessionId: sessionId)
+          .agentHub(appDelegate.provider)
+      }
+    }
+    .windowStyle(.titleBar)
+
     MenuBarExtra(
       isInserted: Binding(
         get: { appDelegate.provider.displaySettings.isMenuBarMode },
