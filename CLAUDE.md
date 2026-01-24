@@ -40,9 +40,20 @@ Project Structure:
 - "orchestrate this"
 - "use agents"
 
-When activated, Claude takes on the **manager role** - routing work through the fastest safe path, creating contracts for complex changes, and coordinating agents.
+### Planner Role (CRITICAL)
 
-See `.claude/rules/manager-mode.md` for full details.
+When manager mode activates, **Claude becomes the planner**. The planner is NOT a separate agent - it's Claude in orchestration mode.
+
+**As planner, Claude must:**
+1. Speak as planner: "As planner, I'm creating a contract..."
+2. Create contracts from `.claude/contracts/CONTRACT_TEMPLATE.md`
+3. Launch other agents via Task tool (with model specified)
+4. Stay external to the contract - planner doesn't appear in Agent Assignments
+
+**Correct**: "As planner, I'm assessing complexity and creating a contract."
+**Wrong**: "I'm activating manager mode..." or "Let me create a contract..."
+
+See `.claude/rules/manager-mode.md` and `.claude/agents/agenthub-planner.md` for full details.
 
 ### THE CONTRACT SYSTEM (Core Concept)
 For complex work (>3 files, new services, UI changes), a CONTRACT is created BEFORE implementation.
@@ -51,33 +62,34 @@ For complex work (>3 files, new services, UI changes), a CONTRACT is created BEF
 - feature-owner CANNOT start without active contract
 - integrator verifies contract completion before DONE
 
-### Seven Agents
+### Planner + Six Agents
 
-| Agent | Role | Access |
-|-------|------|--------|
-| **agenthub-planner** | Orchestrator, creates contracts | Read-only |
-| **agenthub-explorer** | Context finder | Read-only |
-| **feature-owner** | Implementation | Full edit |
-| **ui-polish** | Design bar + refinement | Full edit |
-| **xcode-pilot** | Simulator validation | Simulator |
-| **integrator** | Final verification | Read-only |
-| **swift-debugger** | Bug investigation | Read + Execute |
+**Planner** = Claude in orchestration mode (creates contracts, launches agents)
+
+| Agent | Model | Role | Access |
+|-------|-------|------|--------|
+| **agenthub-explorer** | sonnet | Context finder | Read-only |
+| **feature-owner** | opus | Implementation | Full edit |
+| **ui-polish** | sonnet | Design bar + refinement | Full edit |
+| **xcode-pilot** | haiku | Simulator validation | Simulator |
+| **integrator** | sonnet | Final verification | Read-only |
+| **swift-debugger** | opus | Bug investigation | Read + Execute |
 
 ### Request Routing
 
 **Small Change** (≤3 files, no new services, familiar area):
 ```
-→ feature-owner → integrator → DONE
+Planner → feature-owner → integrator → DONE
 ```
 
 **Complex Change**:
 ```
-→ agenthub-planner (CREATES CONTRACT - mandatory)
-→ agenthub-explorer (if unfamiliar)
-→ feature-owner (follows contract, patchsets 1-4)
-→ ui-polish (if UI changes) → SHIP YES/NO
-→ xcode-pilot (if high-risk)
-→ integrator → DONE
+Planner: Create contract from template
+Planner: Launch agenthub-explorer (if unfamiliar area)
+Planner: Launch feature-owner (PS1-PS4)
+Planner: Launch ui-polish (if UI changes) → SHIP YES/NO
+Planner: Launch xcode-pilot (if high-risk)
+Planner: Launch integrator → DONE
 ```
 
 ### Patchset Protocol
