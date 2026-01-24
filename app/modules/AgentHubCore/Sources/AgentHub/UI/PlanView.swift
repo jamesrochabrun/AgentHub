@@ -5,6 +5,9 @@
 //  Created by Assistant on 1/20/26.
 //
 
+#if canImport(AppKit)
+import AppKit
+#endif
 import ClaudeCodeSDK
 import SwiftUI
 
@@ -48,6 +51,11 @@ public struct PlanView: View {
       } else if let content = content {
         markdownContent(content)
       }
+
+      Divider()
+
+      // Footer with action buttons
+      footer
     }
     .frame(
       minWidth: 700, idealWidth: 900, maxWidth: .infinity,
@@ -60,6 +68,38 @@ public struct PlanView: View {
     .task {
       await loadPlanContent()
     }
+  }
+
+  // MARK: - Footer
+
+  private var footer: some View {
+    HStack {
+      Spacer()
+
+      // Copy button
+      Button(action: copyPlanContent) {
+        HStack(spacing: 4) {
+          Image(systemName: "doc.on.doc")
+          Text("Copy")
+        }
+      }
+      .buttonStyle(.bordered)
+      .disabled(content == nil)
+      .help("Copy plan to clipboard")
+
+      // Run in Codex button
+      Button(action: runInCodex) {
+        HStack(spacing: 4) {
+          Image(systemName: "play.fill")
+          Text("Run in Codex")
+        }
+      }
+      .buttonStyle(.borderedProminent)
+      .disabled(content == nil)
+      .help("Start Codex session with this plan")
+    }
+    .padding()
+    .background(Color.surfaceElevated)
   }
 
   // MARK: - Header
@@ -169,6 +209,67 @@ public struct PlanView: View {
         self.errorMessage = error.localizedDescription
         self.isLoading = false
       }
+    }
+  }
+
+  // MARK: - Copy Plan Content
+
+  private func copyPlanContent() {
+    guard let content = content else { return }
+    #if canImport(AppKit)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(content, forType: .string)
+    #endif
+  }
+
+  // MARK: - Session Transcript Path
+
+  private var sessionTranscriptPath: String {
+    let sanitizedPath = session.projectPath.replacingOccurrences(of: "/", with: "-")
+    return "~/.claude/projects/\(sanitizedPath)/\(session.id).jsonl"
+  }
+
+  // MARK: - Run in Codex
+
+  private func runInCodex() {
+    guard let planContent = content else { return }
+
+    // Append transcript context (like Claude Code does internally)
+    let transcriptContext = """
+
+
+    If you need specific details from before exiting plan mode (like exact code snippets, error messages, or content you generated), read the full transcript at: \(sessionTranscriptPath)
+    """
+    let fullContent = planContent + transcriptContext
+
+    // Write full content to a temp file
+    let tempDir = FileManager.default.temporaryDirectory
+    let tempFile = tempDir.appendingPathComponent("plan-\(UUID().uuidString).md")
+
+    do {
+      try fullContent.write(to: tempFile, atomically: true, encoding: .utf8)
+    } catch {
+      return
+    }
+
+    // Build the command to run interactive codex in Terminal
+    let escapedPath = session.projectPath.replacingOccurrences(of: "'", with: "'\\''")
+    let escapedTempFile = tempFile.path.replacingOccurrences(of: "'", with: "'\\''")
+    let command = "cd '\(escapedPath)' && codex \"$(cat '\(escapedTempFile)')\""
+
+    // Use AppleScript to open Terminal and run the command
+    let script = """
+      tell application "Terminal"
+        activate
+        do script "\(command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))"
+      end tell
+      """
+
+    Task.detached {
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+      process.arguments = ["-e", script]
+      try? process.run()
     }
   }
 }
