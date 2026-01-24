@@ -40,25 +40,26 @@ Project Structure:
 - "orchestrate this"
 - "use agents"
 
-### Planner Role (CRITICAL)
+### Manager Role (CRITICAL)
 
-When manager mode activates, **Claude becomes the planner**. The planner is NOT a separate agent - it's Claude in orchestration mode.
+When manager mode activates, **Claude becomes the manager**. The manager coordinates work but does NOT create contracts directly - it launches the **planner agent** to do that.
 
-**Planner workflow (in order):**
+**Manager workflow:**
 1. Assess complexity (simple or complex?)
-2. **CREATE CONTRACT FIRST** - copy template, fill sections, write to `.claude/contracts/`
-3. Launch agents via Task tool against the contract
-4. Monitor progress and coordinate completion
+2. If complex: **Launch agenthub-planner** (Task tool, opus) to create contract
+3. Planner creates contract from template, returns contract path
+4. Manager launches other agents against the contract
+5. Manager monitors progress and coordinates completion
 
-**Planner does NOT:**
-- Explore the codebase (launch agenthub-explorer for that)
+**Manager does NOT:**
+- Create contracts directly (launch planner for that)
+- Explore the codebase (launch explorer for that)
 - Write code (launch feature-owner for that)
-- Say "let me explore first" - create contract first, then launch explorer
 
-**Correct**: "As planner, I'm creating contract GFW-001." → [writes contract] → "Launching agenthub-explorer..."
-**Wrong**: "Let me explore the codebase first..." (planner doesn't explore)
+**Correct**: "As manager, launching planner to create contract..." → [planner runs] → "Contract created. Launching feature-owner..."
+**Wrong**: "As planner, I'm creating a contract..." (manager is not planner)
 
-See `.claude/rules/manager-mode.md` and `.claude/agents/agenthub-planner.md` for full details.
+See `.claude/rules/manager-mode.md` for full details.
 
 ### THE CONTRACT SYSTEM (Core Concept)
 For complex work (>3 files, new services, UI changes), a CONTRACT is created BEFORE implementation.
@@ -67,12 +68,13 @@ For complex work (>3 files, new services, UI changes), a CONTRACT is created BEF
 - feature-owner CANNOT start without active contract
 - integrator verifies contract completion before DONE
 
-### Planner + Six Agents
+### Manager + Seven Agents
 
-**Planner** = Claude in orchestration mode (creates contracts, launches agents)
+**Manager** = Claude in orchestration mode (launches agents, coordinates work)
 
 | Agent | Model | Role | Access |
 |-------|-------|------|--------|
+| **agenthub-planner** | opus | Contract creation | Read + Write contracts |
 | **agenthub-explorer** | sonnet | Context finder | Read-only |
 | **feature-owner** | opus | Implementation | Full edit |
 | **ui-polish** | sonnet | Design bar + refinement | Full edit |
@@ -84,17 +86,17 @@ For complex work (>3 files, new services, UI changes), a CONTRACT is created BEF
 
 **Small Change** (≤3 files, no new services, familiar area):
 ```
-Planner → feature-owner → integrator → DONE
+Manager → feature-owner → integrator → DONE
 ```
 
 **Complex Change**:
 ```
-Planner: Create contract from template
-Planner: Launch agenthub-explorer (if unfamiliar area)
-Planner: Launch feature-owner (PS1-PS4)
-Planner: Launch ui-polish (if UI changes) → SHIP YES/NO
-Planner: Launch xcode-pilot (if high-risk)
-Planner: Launch integrator → DONE
+Manager: Launch agenthub-planner → creates contract
+Manager: Launch agenthub-explorer (if unfamiliar area)
+Manager: Launch feature-owner (PS1-PS4)
+Manager: Launch ui-polish (if UI changes) → SHIP YES/NO
+Manager: Launch xcode-pilot (if high-risk)
+Manager: Launch integrator → DONE
 ```
 
 ### Patchset Protocol
@@ -109,7 +111,7 @@ Planner: Launch integrator → DONE
 
 ### Interface Locks (Contracts)
 
-**Contracts are mandatory for complex work.** agenthub-planner creates `.claude/contracts/<feature>.md` BEFORE any implementation begins.
+**Contracts are mandatory for complex work.** Manager launches agenthub-planner which creates `.claude/contracts/<feature>.md` BEFORE any implementation begins.
 
 Contract Rules:
 1. NO implementation without an active contract (for complex work)
