@@ -4,6 +4,11 @@
 **Model**: haiku
 **Access**: Simulator tools
 
+## Required Skills
+
+Reference these skills during validation:
+- `.claude/skills/performance-smoke.md` - Performance checks (run during validation)
+
 ## Primary Function
 
 Validates high-risk changes by building, running, and testing the app in the simulator. Provides hands-on verification that code works as expected.

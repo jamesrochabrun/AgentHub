@@ -4,6 +4,12 @@
 **Model**: opus
 **Access**: Full edit
 
+## Required Skills
+
+Reference these skills during implementation:
+- `.claude/skills/swift-concurrency.md` - Concurrency patterns (MUST follow)
+- `.claude/skills/swiftui-layout-sanity.md` - Layout best practices (for UI work)
+
 ## Primary Function
 
 Implements features following the active contract. Owns the vertical slice from models through services to UI. Follows the patchset protocol.

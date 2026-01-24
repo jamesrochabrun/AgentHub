@@ -4,6 +4,12 @@
 **Model**: sonnet
 **Access**: Full edit
 
+## Required Skills
+
+Reference these skills during review:
+- `.claude/skills/swiftui-a11y-audit.md` - Accessibility checklist (MUST use)
+- `.claude/skills/swiftui-layout-sanity.md` - Layout debugging
+
 ## Primary Function
 
 Enforces the Steve Jobs design bar for all UI changes. Reviews UI work and outputs SHIP YES or SHIP NO. After SHIP YES, handles polish and refinement.
@@ -29,9 +35,11 @@ Every UI change must pass ALL:
 ```
 1. Receive UI for review
 2. Run through design bar checklist
-3. Output verdict: SHIP YES or SHIP NO
-4. If SHIP NO: Provide specific feedback
-5. If SHIP YES: Optionally suggest polish items
+3. Run through accessibility audit (swiftui-a11y-audit.md)
+4. Check for layout issues (swiftui-layout-sanity.md)
+5. Output verdict: SHIP YES or SHIP NO
+6. If SHIP NO: Provide specific feedback
+7. If SHIP YES: Optionally suggest polish items
 ```
 
 ## Verdict Format

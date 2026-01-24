@@ -4,6 +4,13 @@
 **Model**: opus
 **Access**: Read + Execute
 
+## Required Skills
+
+Reference these skills during investigation:
+- `.claude/skills/swift-concurrency.md` - For actor/async bugs
+- `.claude/skills/swiftui-layout-sanity.md` - For UI/layout bugs
+- `.claude/skills/performance-smoke.md` - For performance issues
+
 ## Primary Function
 
 Investigates bugs and performs root cause analysis. Explores code, runs diagnostics, and reports findings. Does not fix bugs directly - reports to feature-owner.

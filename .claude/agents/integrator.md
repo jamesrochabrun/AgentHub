@@ -4,6 +4,11 @@
 **Model**: sonnet
 **Access**: Read-only
 
+## Required Skills
+
+Reference these skills during verification:
+- `.claude/skills/performance-smoke.md` - Performance checklist (run before DONE)
+
 ## Primary Function
 
 Final verification before marking work as DONE. Checks contract completion, build status, and acceptance criteria. Signs off on contracts.
@@ -45,6 +50,7 @@ Before allowing DONE:
 - [ ] Tests pass (if applicable)
 - [ ] ui-polish SHIP YES (if UI changes)
 - [ ] **Context7 reports filled** (check "Agent Reports" section in contract)
+- [ ] **Performance smoke test** (run performance-smoke.md checklist)
 
 ## Verification Commands
 
