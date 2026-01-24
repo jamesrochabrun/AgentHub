@@ -140,8 +140,147 @@ public struct SessionDetailWindow: View {
 
 // MARK: - Preview
 
-#Preview {
-  SessionDetailWindow(sessionId: "e1b8aae2-2a33-4402-a8f5-886c4d4da370")
+/// Mock preview showing the window layout with sample data
+private struct SessionDetailWindowMockPreview: View {
+  let colorHex: String?
+
+  static let mockSession = CLISession(
+    id: "e1b8aae2-2a33-4402-a8f5-886c4d4da370",
+    projectPath: "/Users/demo/Projects/MyApp",
+    branchName: "feature/new-ui",
+    isWorktree: true,
+    lastActivityAt: Date(),
+    messageCount: 42,
+    isActive: true,
+    firstMessage: "Help me build a new feature",
+    lastMessage: "Implementing the UI components now",
+    slug: "cosmic-purple-nebula"
+  )
+
+  static let mockMonitorState = SessionMonitorState(
+    status: .thinking,
+    currentTool: nil,
+    lastActivityAt: Date(),
+    inputTokens: 45000,
+    outputTokens: 1200,
+    totalOutputTokens: 5600,
+    model: "claude-sonnet-4-20250514",
+    recentActivities: [
+      ActivityEntry(
+        timestamp: Date().addingTimeInterval(-30),
+        type: .userMessage,
+        description: "Add a color picker to the sidebar"
+      ),
+      ActivityEntry(
+        timestamp: Date().addingTimeInterval(-20),
+        type: .toolUse(name: "Read"),
+        description: "CLISessionRow.swift"
+      ),
+      ActivityEntry(
+        timestamp: Date().addingTimeInterval(-10),
+        type: .toolResult(name: "Read", success: true),
+        description: "Completed"
+      ),
+      ActivityEntry(
+        timestamp: Date(),
+        type: .thinking,
+        description: "Analyzing the code structure..."
+      )
+    ]
+  )
+
+  var backgroundColor: Color {
+    if let hex = colorHex {
+      return Color(hex: hex).opacity(0.15)
+    }
+    return Color.surfaceCanvas
+  }
+
+  var body: some View {
+    ZStack {
+      backgroundColor
+        .ignoresSafeArea()
+
+      VStack(spacing: 0) {
+        // Header
+        HStack(spacing: 8) {
+          if let hex = colorHex {
+            Circle()
+              .fill(Color(hex: hex))
+              .frame(width: 10, height: 10)
+          }
+
+          Text(Self.mockSession.slug ?? "")
+            .font(.system(.headline, design: .monospaced, weight: .semibold))
+            .foregroundColor(.primary)
+
+          Text(Self.mockSession.shortId)
+            .font(.system(.subheadline, design: .monospaced))
+            .foregroundColor(.secondary)
+
+          Spacer()
+
+          if let branch = Self.mockSession.branchName {
+            HStack(spacing: 4) {
+              Image(systemName: "arrow.triangle.branch")
+                .font(.caption)
+              Text(branch)
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(1)
+            }
+            .foregroundColor(Self.mockSession.isWorktree ? .brandSecondary : .secondary)
+          }
+
+          Circle()
+            .fill(Self.mockSession.isActive ? Color.green : Color.gray.opacity(0.5))
+            .frame(width: 8, height: 8)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+
+        // Monitor panel (mock - without terminal)
+        SessionMonitorPanel(
+          state: Self.mockMonitorState,
+          showTerminal: false,
+          terminalKey: Self.mockSession.id,
+          sessionId: Self.mockSession.id,
+          projectPath: Self.mockSession.projectPath,
+          claudeClient: nil,
+          initialPrompt: nil,
+          viewModel: nil,
+          onPromptConsumed: nil
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+      }
+    }
+    .frame(minWidth: 600, minHeight: 450)
+  }
+}
+
+#Preview("With Coral Color") {
+  SessionDetailWindowMockPreview(colorHex: "#FF6B6B")
+    .frame(width: 700, height: 500)
+}
+
+#Preview("With Blue Color") {
+  SessionDetailWindowMockPreview(colorHex: "#4ECDC4")
+    .frame(width: 700, height: 500)
+}
+
+#Preview("With Purple Color") {
+  SessionDetailWindowMockPreview(colorHex: "#9B59B6")
+    .frame(width: 700, height: 500)
+}
+
+#Preview("No Color") {
+  SessionDetailWindowMockPreview(colorHex: nil)
+    .frame(width: 700, height: 500)
+}
+
+#Preview("Session Not Found") {
+  SessionDetailWindow(sessionId: "nonexistent-session-id")
     .agentHub()
     .frame(width: 700, height: 500)
 }
