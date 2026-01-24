@@ -49,6 +49,9 @@ jobs:
             -scheme AgentHub \
             -configuration Release \
             -archivePath build/AgentHub.xcarchive \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM=${{ secrets.TEAM_ID }} \
             archive
 
       - name: Export app
