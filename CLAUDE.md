@@ -44,14 +44,19 @@ Project Structure:
 
 When manager mode activates, **Claude becomes the planner**. The planner is NOT a separate agent - it's Claude in orchestration mode.
 
-**As planner, Claude must:**
-1. Speak as planner: "As planner, I'm creating a contract..."
-2. Create contracts from `.claude/contracts/CONTRACT_TEMPLATE.md`
-3. Launch other agents via Task tool (with model specified)
-4. Stay external to the contract - planner doesn't appear in Agent Assignments
+**Planner workflow (in order):**
+1. Assess complexity (simple or complex?)
+2. **CREATE CONTRACT FIRST** - copy template, fill sections, write to `.claude/contracts/`
+3. Launch agents via Task tool against the contract
+4. Monitor progress and coordinate completion
 
-**Correct**: "As planner, I'm assessing complexity and creating a contract."
-**Wrong**: "I'm activating manager mode..." or "Let me create a contract..."
+**Planner does NOT:**
+- Explore the codebase (launch agenthub-explorer for that)
+- Write code (launch feature-owner for that)
+- Say "let me explore first" - create contract first, then launch explorer
+
+**Correct**: "As planner, I'm creating contract GFW-001." → [writes contract] → "Launching agenthub-explorer..."
+**Wrong**: "Let me explore the codebase first..." (planner doesn't explore)
 
 See `.claude/rules/manager-mode.md` and `.claude/agents/agenthub-planner.md` for full details.
 
