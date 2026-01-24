@@ -1,13 +1,15 @@
 # Context7 Attestation Required
 
-Before writing code that uses frameworks or libraries, check the documentation first.
+**MANDATORY: Check Context7 for ALL APIs before using them.** Training data is outdated - always verify current documentation.
 
 ## When Required
 
-- Using unfamiliar APIs
-- Framework-specific patterns
-- Third-party library integration
-- Apple framework usage (SwiftUI, Combine alternatives, etc.)
+**ALWAYS** - for any framework or library usage:
+- SwiftUI views, modifiers, patterns
+- Foundation APIs
+- Apple frameworks
+- Third-party libraries
+- Concurrency patterns
 
 ## How to Use Context7
 
@@ -46,14 +48,12 @@ In the contract, attest:
 
 ## Rules
 
-1. Check Context7 BEFORE implementing framework code
+1. **ALWAYS** check Context7 before using ANY API
 2. Document which libraries were checked in contract
 3. If Context7 doesn't have docs, note that too
 4. Don't guess at APIs - verify first
+5. Training data is outdated - Context7 has current docs
 
-## Exceptions
+## NO Exceptions
 
-No Context7 needed for:
-- Pure business logic
-- Simple Swift standard library
-- Code following existing patterns in codebase
+Context7 is required for ALL API usage. Do not skip this step.

@@ -108,7 +108,7 @@ _Optional: Describe how data flows through the system for this feature_
 
 ## Context7 Attestation
 
-_MANDATORY: Agents must check docs before using unfamiliar APIs_
+_MANDATORY: Agents must check Context7 docs before using ALL APIs (training data is outdated)_
 
 | Library | Checked | Query |
 |---------|---------|-------|
