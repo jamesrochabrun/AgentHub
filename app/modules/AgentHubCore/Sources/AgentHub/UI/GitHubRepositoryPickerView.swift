@@ -25,6 +25,10 @@ public struct GitHubRepositoryPickerView: View {
   @State private var selectedRepository: GitHubRepository?
   @State private var errorMessage: String?
 
+  // URL clone state
+  @State private var urlInput: String = ""
+  @State private var parsedUrlRepository: GitHubRepository?
+
   public init(
     onSelect: @escaping (GitHubRepository) -> Void,
     onDismiss: @escaping () -> Void
@@ -40,10 +44,13 @@ public struct GitHubRepositoryPickerView: View {
 
       Divider()
 
-      // Search bar
-      searchBar
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+      // Search bar and URL input
+      VStack(spacing: 8) {
+        searchBar
+        urlInputField
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 12)
 
       Divider()
 
@@ -130,6 +137,49 @@ public struct GitHubRepositoryPickerView: View {
     )
   }
 
+  // MARK: - URL Input Field
+
+  private var urlInputField: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "link.circle")
+        .font(.system(size: DesignTokens.IconSize.md))
+        .foregroundColor(.secondary)
+
+      TextField("Paste GitHub URL to clone...", text: $urlInput)
+        .textFieldStyle(.plain)
+        .font(.system(size: 13))
+        .onChange(of: urlInput) { _, newValue in
+          // Parse URL and update state
+          parsedUrlRepository = parseGitHubUrl(newValue)
+          // Clear list selection when URL is entered
+          if parsedUrlRepository != nil {
+            selectedRepository = nil
+          }
+        }
+
+      if !urlInput.isEmpty {
+        Button(action: {
+          urlInput = ""
+          parsedUrlRepository = nil
+        }) {
+          Image(systemName: "xmark.circle.fill")
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
+    .background(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+        .fill(Color.surfaceOverlay)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+        .stroke(parsedUrlRepository != nil ? Color.brandPrimary.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+    )
+  }
+
   // MARK: - Repository List
 
   private var repositoryList: some View {
@@ -147,7 +197,12 @@ public struct GitHubRepositoryPickerView: View {
   private func repositoryRow(_ repo: GitHubRepository) -> some View {
     let isSelected = selectedRepository?.id == repo.id
 
-    return Button(action: { selectedRepository = repo }) {
+    return Button(action: {
+      selectedRepository = repo
+      // Clear URL input when selecting from list
+      urlInput = ""
+      parsedUrlRepository = nil
+    }) {
       HStack(spacing: 12) {
         // Repository icon
         Image(systemName: repo.isPrivate ? "lock.fill" : "book.closed")
@@ -281,7 +336,7 @@ public struct GitHubRepositoryPickerView: View {
       Spacer()
 
       Button(action: {
-        if let repo = selectedRepository {
+        if let repo = repositoryToClone {
           onSelect(repo)
         }
       }) {
@@ -291,7 +346,7 @@ public struct GitHubRepositoryPickerView: View {
         }
       }
       .keyboardShortcut(.return)
-      .disabled(selectedRepository == nil)
+      .disabled(!canClone)
       .buttonStyle(.borderedProminent)
       .tint(.brandPrimary)
     }
@@ -368,6 +423,64 @@ public struct GitHubRepositoryPickerView: View {
 
     // Filter existing repos as placeholder for actual search
     isLoading = false
+  }
+
+  // MARK: - URL Parsing
+
+  /// Parses a GitHub URL and returns a GitHubRepository if valid
+  /// Supports formats:
+  /// - https://github.com/owner/repo
+  /// - https://github.com/owner/repo.git
+  /// - https://github.com/owner/repo/ (trailing slash)
+  private func parseGitHubUrl(_ urlString: String) -> GitHubRepository? {
+    let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    // Must start with https://github.com/
+    guard trimmed.lowercased().hasPrefix("https://github.com/") else { return nil }
+
+    // Extract path after github.com/
+    guard let url = URL(string: trimmed) else { return nil }
+    let pathComponents = url.pathComponents.filter { $0 != "/" }
+
+    // Need at least owner and repo
+    guard pathComponents.count >= 2 else { return nil }
+
+    let owner = pathComponents[0]
+    var repoName = pathComponents[1]
+
+    // Remove .git suffix if present
+    if repoName.hasSuffix(".git") {
+      repoName = String(repoName.dropLast(4))
+    }
+
+    // Validate owner and repo are not empty
+    guard !owner.isEmpty, !repoName.isEmpty else { return nil }
+
+    let fullName = "\(owner)/\(repoName)"
+    let htmlUrl = "https://github.com/\(fullName)"
+    let cloneUrl = "https://github.com/\(fullName).git"
+
+    // Use negative ID to distinguish from API-fetched repos
+    return GitHubRepository(
+      id: -abs(fullName.hashValue),
+      name: repoName,
+      fullName: fullName,
+      htmlUrl: htmlUrl,
+      cloneUrl: cloneUrl,
+      description: nil,
+      isPrivate: false  // Assume public since we can't verify
+    )
+  }
+
+  /// Returns the repository to clone (URL-parsed takes priority, then selected)
+  private var repositoryToClone: GitHubRepository? {
+    parsedUrlRepository ?? selectedRepository
+  }
+
+  /// Whether the clone button should be enabled
+  private var canClone: Bool {
+    repositoryToClone != nil
   }
 }
 
