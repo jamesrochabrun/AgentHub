@@ -44,7 +44,7 @@ Before allowing DONE:
 - [ ] Build passes
 - [ ] Tests pass (if applicable)
 - [ ] ui-polish SHIP YES (if UI changes)
-- [ ] Context7 attestation present (if framework code)
+- [ ] **Context7 reports filled** (check "Agent Reports" section in contract)
 
 ## Verification Commands
 
@@ -114,4 +114,5 @@ Required actions:
 3. Always check contract completion
 4. Sign off on contract when complete
 5. Block if ui-polish hasn't reviewed UI changes
-6. Ensure Context7 attestation for framework code
+6. **Verify Context7 Agent Reports are filled** - each agent must report their usage
+7. Block DONE if Context7 reports are empty for agents that wrote code

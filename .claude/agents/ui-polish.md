@@ -79,6 +79,19 @@ After SHIP YES, ui-polish may:
 - Enhance accessibility
 - Add subtle interactions
 
+## Context7 Reporting (if editing code)
+
+**Claude is weak on Swift/SwiftUI.** If you make code changes during polish:
+
+1. Check Context7 for any SwiftUI APIs used
+2. Report in contract's "Agent Reports > ui-polish" section
+
+| Library | Query | Result |
+|---------|-------|--------|
+| SwiftUI | "animation spring" | Use .spring(response:dampingFraction:) |
+
+If only reviewing (no code edits), write "Review only - no API usage" in the section.
+
 ## Rules
 
 1. No middle ground - SHIP YES or SHIP NO only
@@ -87,3 +100,4 @@ After SHIP YES, ui-polish may:
 4. Follow Apple HIG
 5. Consider accessibility (VoiceOver, Dynamic Type)
 6. Update contract after review
+7. Report any Context7 usage in contract

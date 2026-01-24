@@ -61,6 +61,12 @@ Validates high-risk changes by building, running, and testing the app in the sim
 PASS / FAIL / NEEDS CHANGES
 ```
 
+## Context7 Note
+
+xcode-pilot does not typically write code, but if investigating an API-related issue:
+- Check Context7 to understand expected behavior
+- Note in validation report what was checked
+
 ## Rules
 
 1. Always build before testing
@@ -69,3 +75,4 @@ PASS / FAIL / NEEDS CHANGES
 4. Report issues back to feature-owner
 5. Don't fix issues directly - report them
 6. Verify against contract acceptance criteria
+7. Note any Context7 lookups in validation report

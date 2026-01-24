@@ -201,12 +201,31 @@ public actor RepositoryStorageService {
 
 ## Context7 Attestation
 
-_MANDATORY: Agents must check Context7 docs before using ALL APIs (training data is outdated)_
+_MANDATORY: Agents must check Context7 docs before using ALL APIs (training data is outdated). Claude is especially weak on Swift - ALWAYS verify._
 
-| Library | Checked | Query |
-|---------|---------|-------|
-| SwiftUI | [ ] | Sheet presentation, TextField for URL input |
-| Foundation | [ ] | FileManager for directory creation, Process for git clone |
+### Required Libraries (planner identified)
+
+| Library | Context7 ID | Why Needed |
+|---------|-------------|------------|
+| SwiftUI | /apple/swiftui | Sheet presentation, TextField for URL input |
+| Foundation | /apple/swift | FileManager for directory creation, Process for git clone |
+
+### Agent Reports (each agent fills their section)
+
+**feature-owner**:
+| Library | Query | Result |
+|---------|-------|--------|
+| _fill when implementing_ | | |
+
+**ui-polish**:
+| Library | Query | Result |
+|---------|-------|--------|
+| _fill if API used_ | | |
+
+**swift-debugger** (if invoked):
+| Library | Query | Result |
+|---------|-------|--------|
+| _fill if investigating API_ | | |
 
 ---
 

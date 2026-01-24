@@ -58,10 +58,24 @@ Explores the codebase to gather context before implementation begins. Maps depen
 - `Read` - File reading
 - Task with Explore agent for deep dives
 
+## Context7 Recommendations
+
+**Claude is weak on Swift.** In your exploration report, ALWAYS include:
+
+```markdown
+### Context7 Required
+_List frameworks feature-owner MUST check before implementing:_
+- SwiftUI - for <specific reason>
+- Foundation - for <specific reason>
+```
+
+This ensures implementing agents know what to verify.
+
 ## Rules
 
 1. NEVER modify files
 2. Report findings clearly and concisely
 3. Identify patterns to follow
 4. Flag potential risks or complexities
-5. Suggest Context7 lookups for unfamiliar APIs
+5. **ALWAYS** list Context7 lookups needed in report
+6. Be specific about which APIs need verification

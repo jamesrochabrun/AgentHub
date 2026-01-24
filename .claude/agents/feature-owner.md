@@ -84,12 +84,30 @@ public enum MyError: LocalizedError, Sendable {
 }
 ```
 
-## Context7 Attestation
+## Context7 Reporting (MANDATORY)
 
-Before writing framework code:
-1. Use `mcp__context7__resolve-library-id`
-2. Use `mcp__context7__query-docs`
-3. Update contract with attestation
+**Claude is weak on Swift.** Training data is outdated. Check Context7 for ALL APIs.
+
+### Before Using ANY API
+1. Use `mcp__context7__resolve-library-id` to get library ID
+2. Use `mcp__context7__query-docs` with specific query
+3. **REPORT** in contract's Context7 section
+
+### Reporting Format
+Fill in the contract's "Agent Reports > feature-owner" section:
+
+| Library | Query | Result |
+|---------|-------|--------|
+| SwiftUI | "sheet presentation modifiers" | Confirmed .sheet(isPresented:) pattern |
+| Foundation | "FileManager createDirectory" | Use withIntermediateDirectories: true |
+
+### What to Report
+- Library name and Context7 ID used
+- Query you ran
+- Key finding or confirmation
+
+### No Exceptions
+If you write code using ANY framework API, you MUST report it. Failure to report = incomplete work.
 
 ## Rules
 

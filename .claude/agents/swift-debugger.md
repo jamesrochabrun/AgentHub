@@ -89,6 +89,20 @@ Investigates bugs and performs root cause analysis. Explores code, runs diagnost
 <How to prevent similar issues>
 ```
 
+## Context7 Reporting
+
+**Claude is weak on Swift.** When investigating framework-related bugs:
+
+1. Check Context7 to understand correct API behavior
+2. Report in contract's "Agent Reports > swift-debugger" section (if contract exists)
+3. Include in investigation report
+
+| Library | Query | Result |
+|---------|-------|--------|
+| SwiftUI | "observable object publishing" | Confirmed @Published must be on main thread |
+
+If no framework APIs involved, note "No framework APIs investigated" in report.
+
 ## Rules
 
 1. Do NOT fix bugs directly
@@ -97,3 +111,4 @@ Investigates bugs and performs root cause analysis. Explores code, runs diagnost
 4. Include line numbers and file paths
 5. Suggest prevention measures
 6. Consider if this reveals a pattern issue
+7. Report Context7 usage if checking framework APIs
