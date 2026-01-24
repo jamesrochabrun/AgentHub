@@ -14,7 +14,6 @@ struct ContextWindowBar: View {
   let percentage: Double
   let formattedUsage: String
   var model: String? = nil
-  @State private var showingHelp = false
 
   private var barColor: Color {
     if percentage > 0.9 { return .red }
@@ -35,29 +34,6 @@ struct ContextWindowBar: View {
         Text(formattedUsage)
           .font(.caption2)
           .monospacedDigit()
-
-        // Help button
-        Button {
-          showingHelp.toggle()
-        } label: {
-          Image(systemName: "questionmark.circle")
-            .font(.caption2)
-            .foregroundColor(.secondary)
-        }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showingHelp) {
-          VStack(alignment: .leading, spacing: 8) {
-            Text("Why is this an estimate?")
-              .font(.caption)
-              .fontWeight(.semibold)
-            Text("Context usage is calculated from API response data (input + cache tokens). Claude Code's internal /context command includes additional overhead like autocompact buffer reservations that aren't exposed in session files.")
-              .font(.caption2)
-              .foregroundColor(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
-          }
-          .padding(12)
-          .frame(width: 250)
-        }
       }
 
       GeometryReader { geometry in

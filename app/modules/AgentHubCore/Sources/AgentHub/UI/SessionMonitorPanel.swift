@@ -345,3 +345,89 @@ private struct ActivityRow: View {
   .padding()
   .frame(width: 350)
 }
+#Preview("Terminal Visible") {
+  // Preview showing the embedded terminal area inside the panel styling,
+  // similar to how it appears in the app
+  VStack(alignment: .leading) {
+    SessionMonitorPanel(
+      state: SessionMonitorState(
+        status: .thinking,
+        lastActivityAt: Date(),
+        inputTokens: 32000, // Show context window bar
+        outputTokens: 500,
+        totalOutputTokens: 2000,
+        model: "claude-sonnet-4-20250514",
+        recentActivities: [
+          ActivityEntry(timestamp: Date().addingTimeInterval(-10), type: .userMessage, description: "Run diagnostics"),
+          ActivityEntry(timestamp: Date().addingTimeInterval(-8), type: .toolUse(name: "Bash"), description: "echo 'Hello'"),
+          ActivityEntry(timestamp: Date().addingTimeInterval(-5), type: .toolResult(name: "Bash", success: true), description: "Completed")
+        ]
+      ),
+      showTerminal: true,
+      terminalKey: "preview-terminal",
+      sessionId: nil,
+      projectPath: NSHomeDirectory(),
+      claudeClient: nil,
+      initialPrompt: "echo 'Hello from preview'",
+      viewModel: nil,
+      onPromptConsumed: nil
+    )
+    .frame(minHeight: 320)
+  }
+  .padding(16)
+  .frame(width: 700, height: 420, alignment: .topLeading)
+  .background(Color(NSColor.windowBackgroundColor))
+}
+
+#Preview("Terminal With All Components") {
+  // Composite preview to showcase all available components around the terminal
+  // Top panel shows status + context bar and recent activity
+  // Bottom panel shows the terminal while preserving recent activity state
+  VStack(spacing: 16) {
+    SessionMonitorPanel(
+      state: SessionMonitorState(
+        status: .executingTool(name: "Bash"),
+        currentTool: "Bash",
+        lastActivityAt: Date(),
+        inputTokens: 54000,
+        outputTokens: 1800,
+        totalOutputTokens: 7200,
+        model: "claude-opus-4-20250514",
+        recentActivities: [
+          ActivityEntry(timestamp: Date().addingTimeInterval(-20), type: .userMessage, description: "Install dependencies"),
+          ActivityEntry(timestamp: Date().addingTimeInterval(-15), type: .toolUse(name: "Bash"), description: "brew install swiftlint"),
+          ActivityEntry(timestamp: Date().addingTimeInterval(-5), type: .toolResult(name: "Bash", success: true), description: "Completed")
+        ]
+      ),
+      showTerminal: false
+    )
+    SessionMonitorPanel(
+      state: SessionMonitorState(
+        status: .thinking,
+        lastActivityAt: Date(),
+        inputTokens: 54000, // Keep context usage visible
+        outputTokens: 2000,
+        totalOutputTokens: 7800,
+        model: "claude-opus-4-20250514",
+        recentActivities: [
+          ActivityEntry(timestamp: Date().addingTimeInterval(-20), type: .userMessage, description: "Install dependencies"),
+          ActivityEntry(timestamp: Date().addingTimeInterval(-15), type: .toolUse(name: "Bash"), description: "brew install swiftlint"),
+          ActivityEntry(timestamp: Date().addingTimeInterval(-5), type: .toolResult(name: "Bash", success: true), description: "Completed")
+        ]
+      ),
+      showTerminal: true,
+      terminalKey: "preview-terminal-all",
+      sessionId: nil,
+      projectPath: NSHomeDirectory(),
+      claudeClient: nil,
+      initialPrompt: "echo 'All components preview'",
+      viewModel: nil,
+      onPromptConsumed: nil
+    )
+    .frame(minHeight: 320)
+  }
+  .padding(16)
+  .frame(width: 760, height: 720, alignment: .top)
+  .background(Color(NSColor.windowBackgroundColor))
+}
+

@@ -87,6 +87,12 @@ public final class CLISessionsViewModel {
   /// Session IDs that should show terminal view (tracks current state for each row)
   public var sessionsWithTerminalView: Set<String> = []
 
+  // MARK: - Detached Window State
+
+  /// Sessions with currently open detached windows.
+  /// Terminal should NOT display in main view when session ID is in this set.
+  public private(set) var detachedWindowSessionIds: Set<String> = []
+
   /// Session colors keyed by session ID (hex color strings)
   public private(set) var sessionColors: [String: String] = [:]
 
@@ -110,6 +116,26 @@ public final class CLISessionsViewModel {
       sessionsWithTerminalView.remove(sessionId)
     }
     persistSessionsWithTerminalView()
+  }
+
+  // MARK: - Detached Window Management
+
+  /// Registers that a detached window has been opened for a session.
+  /// Call when a detached window opens for a session.
+  public func registerDetachedWindow(for sessionId: String) {
+    detachedWindowSessionIds.insert(sessionId)
+  }
+
+  /// Unregisters a detached window when it closes.
+  /// Call when a detached window closes.
+  public func unregisterDetachedWindow(for sessionId: String) {
+    detachedWindowSessionIds.remove(sessionId)
+  }
+
+  /// Checks if a session has an open detached window.
+  /// Terminal should not display in main view when this returns true.
+  public func hasDetachedWindow(for sessionId: String) -> Bool {
+    detachedWindowSessionIds.contains(sessionId)
   }
 
   /// Shows terminal view for a session with an initial prompt (for inline edit requests).

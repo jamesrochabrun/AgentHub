@@ -39,6 +39,7 @@ public struct SessionDetailWindow: View {
             .padding(.bottom, 8)
 
           // SessionMonitorPanel with terminal view
+          // Note: ContextWindowBar is displayed inside SessionMonitorPanel
           SessionMonitorPanel(
             state: viewModel.monitorStates[sessionId],
             showTerminal: true,
@@ -59,6 +60,14 @@ public struct SessionDetailWindow: View {
       }
     }
     .frame(minWidth: 600, minHeight: 450)
+    .onAppear {
+      // Register detached window to hide terminal in main view
+      viewModel?.registerDetachedWindow(for: sessionId)
+    }
+    .onDisappear {
+      // Unregister detached window to restore terminal in main view
+      viewModel?.unregisterDetachedWindow(for: sessionId)
+    }
   }
 
   // MARK: - Background Color
@@ -76,37 +85,18 @@ public struct SessionDetailWindow: View {
   @ViewBuilder
   private func sessionHeader(session: CLISession) -> some View {
     HStack(spacing: 8) {
-      // Color indicator if assigned
-      if let colorHex = viewModel?.getSessionColor(for: sessionId) {
-        Circle()
-          .fill(Color(hex: colorHex))
-          .frame(width: 10, height: 10)
-      }
-
-      // Session slug or short ID
+      // Session slug or short ID (prefer slug, fallback to shortId)
       if let slug = session.slug {
         Text(slug)
           .font(.system(.headline, design: .monospaced, weight: .semibold))
           .foregroundColor(.primary)
+      } else {
+        Text(session.shortId)
+          .font(.system(.headline, design: .monospaced, weight: .semibold))
+          .foregroundColor(.primary)
       }
-
-      Text(session.shortId)
-        .font(.system(.subheadline, design: .monospaced))
-        .foregroundColor(.secondary)
 
       Spacer()
-
-      // Branch info (compact)
-      if let branch = session.branchName {
-        HStack(spacing: 4) {
-          Image(systemName: "arrow.triangle.branch")
-            .font(.caption)
-          Text(branch)
-            .font(.system(.caption, design: .monospaced))
-            .lineLimit(1)
-        }
-        .foregroundColor(session.isWorktree ? .brandSecondary : .secondary)
-      }
 
       // Status indicator
       Circle()
@@ -204,33 +194,20 @@ private struct SessionDetailWindowMockPreview: View {
       VStack(spacing: 0) {
         // Header
         HStack(spacing: 8) {
-          if let hex = colorHex {
-            Circle()
-              .fill(Color(hex: hex))
-              .frame(width: 10, height: 10)
+          // Session slug or short ID (prefer slug)
+          if let slug = Self.mockSession.slug {
+            Text(slug)
+              .font(.system(.headline, design: .monospaced, weight: .semibold))
+              .foregroundColor(.primary)
+          } else {
+            Text(Self.mockSession.shortId)
+              .font(.system(.headline, design: .monospaced, weight: .semibold))
+              .foregroundColor(.primary)
           }
-
-          Text(Self.mockSession.slug ?? "")
-            .font(.system(.headline, design: .monospaced, weight: .semibold))
-            .foregroundColor(.primary)
-
-          Text(Self.mockSession.shortId)
-            .font(.system(.subheadline, design: .monospaced))
-            .foregroundColor(.secondary)
 
           Spacer()
 
-          if let branch = Self.mockSession.branchName {
-            HStack(spacing: 4) {
-              Image(systemName: "arrow.triangle.branch")
-                .font(.caption)
-              Text(branch)
-                .font(.system(.caption, design: .monospaced))
-                .lineLimit(1)
-            }
-            .foregroundColor(Self.mockSession.isWorktree ? .brandSecondary : .secondary)
-          }
-
+          // Status indicator
           Circle()
             .fill(Self.mockSession.isActive ? Color.green : Color.gray.opacity(0.5))
             .frame(width: 8, height: 8)
