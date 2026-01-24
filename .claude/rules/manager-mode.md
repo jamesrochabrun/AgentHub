@@ -13,22 +13,25 @@ Or when complexity indicators are detected automatically.
 ## What Happens in Manager Mode
 
 1. **Request Analysis**
-   - agenthub-planner assesses complexity
+   - Planner assesses complexity
    - Determines if contract is needed
 
 2. **Contract Creation** (if complex)
-   - Contract created in `.claude/contracts/`
-   - Acceptance criteria defined
-   - Agents assigned
+   - Planner creates contract from `.claude/contracts/CONTRACT_TEMPLATE.md`
+   - Contract placed in `.claude/contracts/<feature-slug>.md`
+   - Acceptance criteria defined (max 3)
+   - Agents assigned to contract (planner stays external)
 
 3. **Orchestrated Execution**
-   - Work follows patchset protocol
+   - Planner launches agents against the contract
+   - Work follows patchset protocol (PS1-PS4)
    - Agents hand off at defined gates
-   - Progress tracked in contract
+   - Progress tracked in contract checkboxes
 
 4. **Verification**
    - integrator verifies at each patchset
-   - Final gate before DONE
+   - Sign-offs collected in contract
+   - Contract marked COMPLETE
 
 ## Complexity Indicators
 
