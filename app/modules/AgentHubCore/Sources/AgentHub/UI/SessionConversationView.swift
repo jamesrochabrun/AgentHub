@@ -15,6 +15,13 @@ import SwiftUI
 public struct SessionConversationView: View {
   let messages: [ConversationMessage]
   let scrollToBottom: Bool
+  let onSendMessage: ((String) -> Void)?
+
+  /// Input text state for the message field
+  @State private var inputText: String = ""
+
+  /// Focus state for the input field
+  @FocusState private var isInputFocused: Bool
 
   /// Anchor ID for scroll-to-bottom behavior
   private let bottomAnchorID = "conversation-bottom"
@@ -28,50 +35,106 @@ public struct SessionConversationView: View {
   /// - Parameters:
   ///   - messages: The conversation messages to display
   ///   - scrollToBottom: Whether to automatically scroll to the bottom when new messages arrive (default: true)
-  public init(messages: [ConversationMessage], scrollToBottom: Bool = true) {
+  ///   - onSendMessage: Optional callback invoked when the user sends a message
+  public init(
+    messages: [ConversationMessage],
+    scrollToBottom: Bool = true,
+    onSendMessage: ((String) -> Void)? = nil
+  ) {
     self.messages = messages
     self.scrollToBottom = scrollToBottom
+    self.onSendMessage = onSendMessage
   }
 
   public var body: some View {
-    ScrollViewReader { proxy in
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 12) {
-          if messages.isEmpty {
-            emptyState
-          } else {
-            ForEach(messages) { message in
-              ConversationMessageView(
-                message: message,
-                toolResultMap: buildToolResultMap()
-              )
-              .id(message.id)
+    VStack(spacing: 0) {
+      // Messages scroll view
+      ScrollViewReader { proxy in
+        ScrollView {
+          LazyVStack(alignment: .leading, spacing: 12) {
+            if messages.isEmpty {
+              emptyState
+            } else {
+              ForEach(messages) { message in
+                ConversationMessageView(
+                  message: message,
+                  toolResultMap: buildToolResultMap()
+                )
+                .id(message.id)
+              }
+            }
+
+            // Invisible anchor for scroll-to-bottom
+            Color.clear
+              .frame(height: 1)
+              .id(bottomAnchorID)
+          }
+          .padding(12)
+        }
+        .onChange(of: messages.count) { _, _ in
+          scrollToBottomIfNeeded(proxy: proxy)
+        }
+        .onChange(of: lastMessageId) { _, _ in
+          // Also scroll when the last message changes (even if count is the same)
+          scrollToBottomIfNeeded(proxy: proxy)
+        }
+        .onAppear {
+          if scrollToBottom && !messages.isEmpty {
+            // Use DispatchQueue to ensure view is fully laid out
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+              proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
           }
+        }
+      }
 
-          // Invisible anchor for scroll-to-bottom
-          Color.clear
-            .frame(height: 1)
-            .id(bottomAnchorID)
-        }
-        .padding(12)
-      }
-      .onChange(of: messages.count) { _, _ in
-        scrollToBottomIfNeeded(proxy: proxy)
-      }
-      .onChange(of: lastMessageId) { _, _ in
-        // Also scroll when the last message changes (even if count is the same)
-        scrollToBottomIfNeeded(proxy: proxy)
-      }
-      .onAppear {
-        if scrollToBottom && !messages.isEmpty {
-          // Use DispatchQueue to ensure view is fully laid out
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-          }
-        }
+      // Input field (only show if onSendMessage callback is provided)
+      if onSendMessage != nil {
+        Divider()
+        messageInputField
       }
     }
+  }
+
+  // MARK: - Message Input Field
+
+  private var messageInputField: some View {
+    HStack(spacing: 8) {
+      TextField("Message Claude...", text: $inputText)
+        .textFieldStyle(.plain)
+        .font(.body)
+        .focused($isInputFocused)
+        .onSubmit {
+          sendMessageIfNotEmpty()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .textBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+          RoundedRectangle(cornerRadius: 8)
+            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+        )
+
+      Button(action: sendMessageIfNotEmpty) {
+        Image(systemName: "arrow.up.circle.fill")
+          .font(.system(size: 24))
+          .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .brandPrimary)
+      }
+      .buttonStyle(.plain)
+      .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+      .help("Send message")
+    }
+    .padding(12)
+  }
+
+  /// Sends the current input text if not empty and clears the field
+  private func sendMessageIfNotEmpty() {
+    let trimmedText = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedText.isEmpty else { return }
+
+    onSendMessage?(trimmedText)
+    inputText = ""
   }
 
   /// Scrolls to bottom with animation if scrollToBottom is enabled
@@ -215,4 +278,36 @@ public struct SessionConversationView: View {
     scrollToBottom: true
   )
   .frame(width: 450, height: 300)
+}
+
+#Preview("With Input Field") {
+  SessionConversationView(
+    messages: [
+      ConversationMessage(
+        timestamp: Date().addingTimeInterval(-120),
+        content: .user(text: "Help me refactor the authentication module")
+      ),
+      ConversationMessage(
+        timestamp: Date().addingTimeInterval(-100),
+        content: .assistant(text: "I'll analyze the current authentication implementation and suggest improvements.")
+      ),
+      ConversationMessage(
+        timestamp: Date().addingTimeInterval(-80),
+        content: .toolUse(name: "Read", input: "/path/to/AuthService.swift", id: "tool-read")
+      ),
+      ConversationMessage(
+        timestamp: Date().addingTimeInterval(-60),
+        content: .toolResult(name: "Read", success: true, toolUseId: "tool-read")
+      ),
+      ConversationMessage(
+        timestamp: Date().addingTimeInterval(-40),
+        content: .assistant(text: "I've reviewed the code. Here are my suggestions for improvement...")
+      )
+    ],
+    scrollToBottom: true,
+    onSendMessage: { message in
+      print("Message sent: \(message)")
+    }
+  )
+  .frame(width: 450, height: 400)
 }

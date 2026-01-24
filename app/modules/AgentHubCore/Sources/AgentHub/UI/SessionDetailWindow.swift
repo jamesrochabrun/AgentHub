@@ -20,6 +20,12 @@ public struct SessionDetailWindow: View {
   /// This ensures color changes trigger re-renders in real-time
   @Environment(CLISessionsViewModel.self) private var viewModel: CLISessionsViewModel?
 
+  /// Local view mode state (synced with viewModel when available)
+  @State private var viewMode: SessionViewMode = .conversation
+
+  /// Whether to show the terminal (true) or conversation/activity view (false)
+  @State private var showTerminal: Bool = false
+
   public init(sessionId: String) {
     self.sessionId = sessionId
   }
@@ -32,25 +38,28 @@ public struct SessionDetailWindow: View {
 
       VStack(spacing: 0) {
         if let session = findSession(), let viewModel = viewModel {
-          // Header with session identifier
+          // Header with session identifier and view mode toggle
           sessionHeader(session: session)
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .padding(.bottom, 8)
 
-          // SessionMonitorPanel with terminal view
+          // SessionMonitorPanel with dynamic view mode
           // Note: ContextWindowBar is displayed inside SessionMonitorPanel
           SessionMonitorPanel(
             state: viewModel.monitorStates[sessionId],
-            showTerminal: true,
-            viewMode: .terminal,
+            showTerminal: showTerminal,
+            viewMode: viewMode,
             terminalKey: sessionId,
             sessionId: sessionId,
             projectPath: session.projectPath,
             claudeClient: viewModel.claudeClient,
             initialPrompt: nil,
             viewModel: viewModel,
-            onPromptConsumed: nil
+            onPromptConsumed: nil,
+            onSendMessage: { message in
+              sendMessageToTerminal(message)
+            }
           )
           .padding(.horizontal, 12)
           .padding(.bottom, 12)
@@ -64,10 +73,25 @@ public struct SessionDetailWindow: View {
     .onAppear {
       // Register detached window to hide terminal in main view
       viewModel?.registerDetachedWindow(for: sessionId)
+      // Sync view mode from viewModel if available
+      if let vm = viewModel {
+        viewMode = vm.viewMode(for: sessionId)
+      }
     }
     .onDisappear {
       // Unregister detached window to restore terminal in main view
       viewModel?.unregisterDetachedWindow(for: sessionId)
+    }
+  }
+
+  // MARK: - Send Message
+
+  /// Sends a message to the terminal for this session
+  private func sendMessageToTerminal(_ message: String) {
+    guard let viewModel = viewModel else { return }
+    let key = sessionId
+    if let terminal = viewModel.activeTerminals[key] {
+      terminal.sendMessage(message)
     }
   }
 
@@ -99,11 +123,63 @@ public struct SessionDetailWindow: View {
 
       Spacer()
 
+      // View mode toggle (conversation/terminal)
+      viewModeToggle
+
       // Status indicator
       Circle()
         .fill(session.isActive ? Color.green : Color.gray.opacity(0.5))
         .frame(width: 8, height: 8)
     }
+  }
+
+  // MARK: - View Mode Toggle
+
+  /// Segmented control for switching between conversation and terminal views
+  private var viewModeToggle: some View {
+    HStack(spacing: 0) {
+      // Conversation button
+      Button(action: {
+        withAnimation(.easeInOut(duration: 0.2)) {
+          showTerminal = false
+          viewMode = .conversation
+          viewModel?.setViewMode(.conversation, for: sessionId)
+        }
+      }) {
+        Image(systemName: "bubble.left.and.bubble.right")
+          .font(.caption)
+          .frame(width: 28, height: 20)
+          .foregroundColor(!showTerminal ? .white : .secondary)
+          .background(!showTerminal ? Color.brandPrimary : Color.clear)
+          .clipShape(Capsule())
+          .contentShape(Capsule())
+      }
+      .buttonStyle(.plain)
+      .help("Conversation view")
+
+      // Terminal button
+      Button(action: {
+        withAnimation(.easeInOut(duration: 0.2)) {
+          showTerminal = true
+          viewMode = .terminal
+          viewModel?.setViewMode(.terminal, for: sessionId)
+        }
+      }) {
+        Image(systemName: "terminal")
+          .font(.caption)
+          .frame(width: 28, height: 20)
+          .foregroundColor(showTerminal ? .white : .secondary)
+          .background(showTerminal ? Color.brandPrimary : Color.clear)
+          .clipShape(Capsule())
+          .contentShape(Capsule())
+      }
+      .buttonStyle(.plain)
+      .help("Terminal view")
+    }
+    .padding(2)
+    .background(Color.secondary.opacity(0.15))
+    .clipShape(Capsule())
+    .animation(.easeInOut(duration: 0.2), value: showTerminal)
   }
 
   // MARK: - No Session View
@@ -134,6 +210,8 @@ public struct SessionDetailWindow: View {
 /// Mock preview showing the window layout with sample data
 private struct SessionDetailWindowMockPreview: View {
   let colorHex: String?
+
+  @State private var showTerminal: Bool = false
 
   static let mockSession = CLISession(
     id: "e1b8aae2-2a33-4402-a8f5-886c4d4da370",
@@ -193,7 +271,7 @@ private struct SessionDetailWindowMockPreview: View {
         .ignoresSafeArea()
 
       VStack(spacing: 0) {
-        // Header
+        // Header with toggle
         HStack(spacing: 8) {
           // Session slug or short ID (prefer slug)
           if let slug = Self.mockSession.slug {
@@ -208,6 +286,42 @@ private struct SessionDetailWindowMockPreview: View {
 
           Spacer()
 
+          // View mode toggle
+          HStack(spacing: 0) {
+            Button(action: {
+              withAnimation(.easeInOut(duration: 0.2)) {
+                showTerminal = false
+              }
+            }) {
+              Image(systemName: "bubble.left.and.bubble.right")
+                .font(.caption)
+                .frame(width: 28, height: 20)
+                .foregroundColor(!showTerminal ? .white : .secondary)
+                .background(!showTerminal ? Color.brandPrimary : Color.clear)
+                .clipShape(Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+
+            Button(action: {
+              withAnimation(.easeInOut(duration: 0.2)) {
+                showTerminal = true
+              }
+            }) {
+              Image(systemName: "terminal")
+                .font(.caption)
+                .frame(width: 28, height: 20)
+                .foregroundColor(showTerminal ? .white : .secondary)
+                .background(showTerminal ? Color.brandPrimary : Color.clear)
+                .clipShape(Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+          }
+          .padding(2)
+          .background(Color.secondary.opacity(0.15))
+          .clipShape(Capsule())
+
           // Status indicator
           Circle()
             .fill(Self.mockSession.isActive ? Color.green : Color.gray.opacity(0.5))
@@ -217,18 +331,21 @@ private struct SessionDetailWindowMockPreview: View {
         .padding(.top, 12)
         .padding(.bottom, 8)
 
-        // Monitor panel (mock - with conversation view)
+        // Monitor panel (mock - with conversation view and input)
         SessionMonitorPanel(
           state: Self.mockMonitorState,
-          showTerminal: false,
-          viewMode: .conversation,
+          showTerminal: showTerminal,
+          viewMode: showTerminal ? .terminal : .conversation,
           terminalKey: Self.mockSession.id,
           sessionId: Self.mockSession.id,
           projectPath: Self.mockSession.projectPath,
           claudeClient: nil,
           initialPrompt: nil,
           viewModel: nil,
-          onPromptConsumed: nil
+          onPromptConsumed: nil,
+          onSendMessage: { message in
+            print("Preview: Message sent - \(message)")
+          }
         )
         .padding(.horizontal, 12)
         .padding(.bottom, 12)

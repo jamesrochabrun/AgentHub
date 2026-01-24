@@ -130,7 +130,10 @@ public struct MonitoringCardView: View {
         claudeClient: claudeClient,
         initialPrompt: initialPrompt,
         viewModel: viewModel,
-        onPromptConsumed: onPromptConsumed
+        onPromptConsumed: onPromptConsumed,
+        onSendMessage: { message in
+          sendMessageToTerminal(message)
+        }
       )
     }
     .padding(12)
@@ -446,6 +449,17 @@ public struct MonitoringCardView: View {
         .font(.caption2)
         .fontWeight(.bold)
         .foregroundColor(.secondary)
+    }
+  }
+
+  // MARK: - Send Message
+
+  /// Sends a message to the terminal for this session
+  private func sendMessageToTerminal(_ message: String) {
+    guard let viewModel = viewModel else { return }
+    let key = terminalKey ?? session.id
+    if let terminal = viewModel.activeTerminals[key] {
+      terminal.sendMessage(message)
     }
   }
 }

@@ -194,6 +194,23 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
   }
 
+  /// Sends a message to the terminal (for subsequent user inputs after initial prompt).
+  /// Unlike `sendPromptIfNeeded`, this can be called multiple times.
+  /// - Parameter message: The message text to send to the terminal
+  public func sendMessage(_ message: String) {
+    guard let terminal = terminalView else { return }
+
+    // Send the message text
+    terminal.send(txt: message)
+
+    // Small delay before sending Enter to ensure the terminal's input buffer
+    // processes the text before receiving the carriage return
+    Task { @MainActor [weak terminal] in
+      try? await Task.sleep(for: .milliseconds(100))
+      terminal?.send([13])  // ASCII 13 = carriage return (Enter key)
+    }
+  }
+
   private func configureTerminalAppearance(_ terminal: TerminalView) {
     // Use a monospace font that looks good in terminals
     let fontSize: CGFloat = 12

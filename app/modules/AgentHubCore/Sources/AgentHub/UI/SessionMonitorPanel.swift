@@ -26,6 +26,7 @@ public struct SessionMonitorPanel: View {
   let initialPrompt: String?
   let viewModel: CLISessionsViewModel?
   let onPromptConsumed: (() -> Void)?
+  let onSendMessage: ((String) -> Void)?
 
   public init(
     state: SessionMonitorState?,
@@ -37,7 +38,8 @@ public struct SessionMonitorPanel: View {
     claudeClient: (any ClaudeCode)? = nil,
     initialPrompt: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
-    onPromptConsumed: (() -> Void)? = nil
+    onPromptConsumed: (() -> Void)? = nil,
+    onSendMessage: ((String) -> Void)? = nil
   ) {
     self.state = state
     self.showTerminal = showTerminal
@@ -49,6 +51,7 @@ public struct SessionMonitorPanel: View {
     self.initialPrompt = initialPrompt
     self.viewModel = viewModel
     self.onPromptConsumed = onPromptConsumed
+    self.onSendMessage = onSendMessage
   }
 
   /// Computed conversation messages from activity entries
@@ -85,7 +88,8 @@ public struct SessionMonitorPanel: View {
           if state != nil {
             SessionConversationView(
               messages: conversationMessages,
-              scrollToBottom: true
+              scrollToBottom: true,
+              onSendMessage: onSendMessage
             )
           } else {
             loadingView
