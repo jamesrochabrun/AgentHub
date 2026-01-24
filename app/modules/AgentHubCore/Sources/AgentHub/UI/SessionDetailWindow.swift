@@ -11,6 +11,7 @@ import SwiftUI
 
 /// A detached window view for displaying a single session with its assigned color as background.
 /// Used with WindowGroup(for: String.self) where the String is the session ID.
+/// Shows SessionMonitorPanel with terminal view for the session.
 public struct SessionDetailWindow: View {
   /// The session ID to display
   let sessionId: String
@@ -29,16 +30,35 @@ public struct SessionDetailWindow: View {
       backgroundColor
         .ignoresSafeArea()
 
-      VStack(spacing: 16) {
-        if let session = findSession() {
-          sessionInfoView(session: session)
+      VStack(spacing: 0) {
+        if let session = findSession(), let viewModel = viewModel {
+          // Header with session identifier
+          sessionHeader(session: session)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+          // SessionMonitorPanel with terminal view
+          SessionMonitorPanel(
+            state: viewModel.monitorStates[sessionId],
+            showTerminal: true,
+            terminalKey: sessionId,
+            sessionId: sessionId,
+            projectPath: session.projectPath,
+            claudeClient: viewModel.claudeClient,
+            initialPrompt: nil,
+            viewModel: viewModel,
+            onPromptConsumed: nil
+          )
+          .padding(.horizontal, 12)
+          .padding(.bottom, 12)
         } else {
           noSessionView
+            .padding(24)
         }
       }
-      .padding(24)
     }
-    .frame(minWidth: 400, minHeight: 300)
+    .frame(minWidth: 600, minHeight: 450)
   }
 
   // MARK: - Background Color
@@ -51,81 +71,48 @@ public struct SessionDetailWindow: View {
     return Color(hex: colorHex).opacity(0.15)
   }
 
-  // MARK: - Session Info View
+  // MARK: - Session Header
 
   @ViewBuilder
-  private func sessionInfoView(session: CLISession) -> some View {
-    VStack(alignment: .leading, spacing: 16) {
-      // Header with session identifier
-      HStack {
-        if let slug = session.slug {
-          Text(slug)
-            .font(.system(.title2, design: .monospaced, weight: .semibold))
-            .foregroundColor(.primary)
-        }
-
-        Text(session.shortId)
-          .font(.system(.title3, design: .monospaced))
-          .foregroundColor(.secondary)
-
-        Spacer()
-
-        // Color indicator if assigned
-        if let colorHex = viewModel?.getSessionColor(for: sessionId) {
-          Circle()
-            .fill(Color(hex: colorHex))
-            .frame(width: 12, height: 12)
-        }
-      }
-
-      Divider()
-
-      // Project path
-      VStack(alignment: .leading, spacing: 4) {
-        Text("Project")
-          .font(.caption)
-          .foregroundColor(.secondary)
-        Text(session.projectPath)
-          .font(.system(.body, design: .monospaced))
-          .foregroundColor(.primary)
-          .lineLimit(2)
-      }
-
-      // Branch info
-      if let branch = session.branchName {
-        VStack(alignment: .leading, spacing: 4) {
-          Text("Branch")
-            .font(.caption)
-            .foregroundColor(.secondary)
-          HStack(spacing: 4) {
-            Image(systemName: "arrow.triangle.branch")
-              .font(.body)
-            Text(branch)
-              .font(.system(.body, design: .monospaced))
-          }
-          .foregroundColor(session.isWorktree ? .brandSecondary : .primary)
-        }
-      }
-
-      // Status
-      HStack(spacing: 8) {
+  private func sessionHeader(session: CLISession) -> some View {
+    HStack(spacing: 8) {
+      // Color indicator if assigned
+      if let colorHex = viewModel?.getSessionColor(for: sessionId) {
         Circle()
-          .fill(session.isActive ? Color.green : Color.gray.opacity(0.5))
-          .frame(width: 8, height: 8)
-        Text(session.isActive ? "Active" : "Inactive")
-          .font(.body)
-          .foregroundColor(.secondary)
-
-        Spacer()
-
-        Text("\(session.messageCount) messages")
-          .font(.caption)
-          .foregroundColor(.secondary)
+          .fill(Color(hex: colorHex))
+          .frame(width: 10, height: 10)
       }
+
+      // Session slug or short ID
+      if let slug = session.slug {
+        Text(slug)
+          .font(.system(.headline, design: .monospaced, weight: .semibold))
+          .foregroundColor(.primary)
+      }
+
+      Text(session.shortId)
+        .font(.system(.subheadline, design: .monospaced))
+        .foregroundColor(.secondary)
 
       Spacer()
+
+      // Branch info (compact)
+      if let branch = session.branchName {
+        HStack(spacing: 4) {
+          Image(systemName: "arrow.triangle.branch")
+            .font(.caption)
+          Text(branch)
+            .font(.system(.caption, design: .monospaced))
+            .lineLimit(1)
+        }
+        .foregroundColor(session.isWorktree ? .brandSecondary : .secondary)
+      }
+
+      // Status indicator
+      Circle()
+        .fill(session.isActive ? Color.green : Color.gray.opacity(0.5))
+        .frame(width: 8, height: 8)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   // MARK: - No Session View
@@ -156,4 +143,5 @@ public struct SessionDetailWindow: View {
 #Preview {
   SessionDetailWindow(sessionId: "e1b8aae2-2a33-4402-a8f5-886c4d4da370")
     .agentHub()
+    .frame(width: 700, height: 500)
 }
