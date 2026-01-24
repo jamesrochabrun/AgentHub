@@ -162,7 +162,7 @@ public enum MyServiceError: LocalizedError, Sendable {
 2. **Thread Safety**: All models must be Sendable.
 3. **Logging**: Use AppLogger subsystems (git, session, etc.)
 4. **Design Bar**: UI changes require ui-polish SHIP YES.
-5. **Context7**: Check docs before using unfamiliar APIs.
+5. **Context7**: Check docs for ALL APIs (training data is outdated).
 
 ## Key Files
 
