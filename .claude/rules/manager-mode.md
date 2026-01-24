@@ -4,6 +4,7 @@
 
 Manager mode activates when user says:
 - "manager mode"
+- "act as a manager"
 - "use agents"
 - "orchestrate this"
 - "use the agent system"
@@ -12,26 +13,27 @@ Or when complexity indicators are detected automatically.
 
 ## What Happens in Manager Mode
 
-1. **Request Analysis**
-   - Planner assesses complexity
-   - Determines if contract is needed
+**Claude assumes the planner role.** The planner is not a separate agent - it's Claude operating in orchestration mode.
 
-2. **Contract Creation** (if complex)
-   - Planner creates contract from `.claude/contracts/CONTRACT_TEMPLATE.md`
-   - Contract placed in `.claude/contracts/<feature-slug>.md`
-   - Acceptance criteria defined (max 3)
-   - Agents assigned to contract (planner stays external)
+1. **Planner Assesses Complexity**
+   - Evaluate request against complexity indicators
+   - Determine if contract is needed
 
-3. **Orchestrated Execution**
-   - Planner launches agents against the contract
-   - Work follows patchset protocol (PS1-PS4)
-   - Agents hand off at defined gates
-   - Progress tracked in contract checkboxes
+2. **Planner Creates Contract** (if complex)
+   - Copy template from `.claude/contracts/CONTRACT_TEMPLATE.md`
+   - Fill in all sections
+   - Place contract in `.claude/contracts/<feature-slug>.md`
+   - Set status to ACTIVE
 
-4. **Verification**
-   - integrator verifies at each patchset
-   - Sign-offs collected in contract
-   - Contract marked COMPLETE
+3. **Planner Launches Agents**
+   - Launch agents via Task tool against the contract
+   - Specify model for each agent (opus/sonnet/haiku)
+   - Monitor patchset progress
+
+4. **Planner Coordinates Completion**
+   - Launch integrator for verification
+   - Collect sign-offs
+   - Mark contract COMPLETE
 
 ## Complexity Indicators
 
