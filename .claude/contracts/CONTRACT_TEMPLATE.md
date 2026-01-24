@@ -1,54 +1,178 @@
 # Contract: <Feature Name>
 
-Created: <timestamp>
-Status: ACTIVE | COMPLETE | ABANDONED
+**ID**: <PREFIX>-<NUMBER>
+**Created**: <YYYY-MM-DD>
+**Status**: DRAFT | ACTIVE | BLOCKED | COMPLETE | ABANDONED
+**Owner**: <assigned feature-owner>
 
-## Complexity Assessment
+---
 
-- Files touched: X (≤3 = simple, >3 = complex)
-- New services: YES/NO
-- UI changes: YES/NO
-- Risk level: LOW | MEDIUM | HIGH
+## Problem Statement
 
-## Acceptance Criteria (max 3)
+_What problem are we solving? Why does this matter to users?_
 
-1. [ ] Criteria one
-2. [ ] Criteria two
-3. [ ] Criteria three
+<Clear, concise description of the problem and user impact>
 
-## Files to Modify
+---
 
-- `path/to/file1.swift` - description of changes
-- `path/to/file2.swift` - description of changes
+## Acceptance Criteria
 
-## Files to Create
+| # | Criterion | Verified |
+|---|-----------|----------|
+| AC1 | <Specific, testable outcome> | [ ] |
+| AC2 | <Specific, testable outcome> | [ ] |
+| AC3 | <Specific, testable outcome> | [ ] |
 
-- `path/to/new.swift` - purpose of new file
+_Max 3 criteria. Each must be binary (done/not done)._
 
-## Agent Assignments
+---
 
-- agenthub-explorer: Context gathering (if needed)
-- feature-owner: Implementation
-- ui-polish: Design review (if UI changes)
-- integrator: Final gate
+## Scope
+
+### In Scope
+- <What this contract WILL deliver>
+- <Be specific>
+
+### Out of Scope
+- <What this contract will NOT touch>
+- <Prevents scope creep>
+
+---
+
+## Technical Design
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `<path>` | <description> |
+
+### Files to Create
+
+| File | Purpose |
+|------|---------|
+| `<path>` | <description> |
+
+### Key Interfaces
+
+```swift
+// Define key types, protocols, or function signatures here
+// This locks the interface before implementation begins
+```
+
+### Data Flow
+
+_Optional: Describe how data flows through the system for this feature_
+
+---
+
+## Patchset Protocol
+
+| PS | Gate | Deliverables | Status |
+|----|------|--------------|--------|
+| 1 | Models compile | Types, service stubs, error enums | [ ] |
+| 2 | UI wired | Views created, navigation working | [ ] |
+| 2.5 | Design bar | ui-polish SHIP YES | [ ] |
+| 3 | Logic complete | Full implementation, tests pass | [ ] |
+| 4 | Polish | Clean build, no warnings | [ ] |
+
+### PS1 Checklist
+- [ ] All new types are Sendable
+- [ ] Services are actors
+- [ ] Error types defined
+- [ ] Build succeeds
+
+### PS2 Checklist
+- [ ] Views created and navigable
+- [ ] State wired to views
+- [ ] Build succeeds
+
+### PS2.5 Checklist (UI only)
+- [ ] Ruthless simplicity
+- [ ] One clear primary action
+- [ ] Strong visual hierarchy
+- [ ] No clutter
+- [ ] Native macOS feel
+
+### PS3 Checklist
+- [ ] Business logic implemented
+- [ ] Error handling complete
+- [ ] Edge cases covered
+
+### PS4 Checklist
+- [ ] No compiler warnings
+- [ ] No debug statements
+- [ ] Code is clean
+
+---
 
 ## Context7 Attestation
 
-- [ ] Checked docs for: <list frameworks/libraries checked>
-- Libraries verified: <list>
+_MANDATORY: Agents must check docs before using unfamiliar APIs_
 
-## Patchset Checkpoints
+| Library | Checked | Query |
+|---------|---------|-------|
+| SwiftUI | [ ] | <what was queried> |
+| <other> | [ ] | <what was queried> |
 
-- [ ] PS1: Models compile
-- [ ] PS2: UI wired
-- [ ] PS3: Logic complete
-- [ ] PS4: Polish done
+---
 
-## Notes
+## Agent Workflow
 
-<Any additional context, decisions made, or blockers encountered>
+_Note: The **planner** creates this contract and orchestrates execution. It is not listed below because it operates outside the contract - agents below execute against the contract._
+
+```
+┌───────────────────┐
+│ agenthub-explorer │ ─── Gathers context (if unfamiliar area)
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│   feature-owner   │ ─── PS1 → PS2 → PS3 → PS4
+└────────┬──────────┘
+         │
+         ▼ (after PS2, if UI changes)
+┌───────────────────┐
+│     ui-polish     │ ─── PS2.5: SHIP YES / SHIP NO
+└────────┬──────────┘
+         │
+         ▼
+┌───────────────────┐
+│    integrator     │ ─── Final verification
+└───────────────────┘
+```
+
+### Agent Assignments
+
+| Agent | Responsibility | Status |
+|-------|---------------|--------|
+| agenthub-explorer | Context gathering | [ ] Done / [ ] Skipped |
+| feature-owner | Implementation PS1-4 | [ ] Done |
+| ui-polish | Design review PS2.5 | [ ] Done / [ ] N/A |
+| integrator | Final gate | [ ] Done |
+
+---
+
+## Blockers & Decisions
+
+| Date | Issue | Decision | Decided By |
+|------|-------|----------|------------|
+| | | | |
+
+---
 
 ## Sign-off
 
-- [ ] integrator: VERIFIED
-- Completion date: <timestamp>
+| Role | Signature | Date |
+|------|-----------|------|
+| feature-owner | [ ] PS1-4 complete | |
+| ui-polish | [ ] SHIP YES | |
+| integrator | [ ] VERIFIED | |
+
+**Contract Completion**: _pending_
+
+---
+
+## Post-Completion Notes
+
+_After COMPLETE: What did we learn? What would we do differently?_
