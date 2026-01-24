@@ -2,6 +2,16 @@
 
 **MANDATORY: Check Context7 for ALL APIs before using them.** Training data is outdated - always verify current documentation.
 
+## ESPECIALLY for Swift
+
+**Claude is NOT well-trained on Swift.** Swift evolves rapidly and Claude's training data lags behind. Context7 is CRITICAL for:
+- SwiftUI (constantly changing APIs)
+- Swift Concurrency (actors, async/await patterns)
+- Observation framework (@Observable vs @ObservableObject)
+- Modern Swift syntax and patterns
+
+**NEVER assume Swift knowledge is correct. ALWAYS verify with Context7.**
+
 ## When Required
 
 **ALWAYS** - for any framework or library usage:
