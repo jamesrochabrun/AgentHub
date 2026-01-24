@@ -10,11 +10,15 @@ import SwiftUI
 
 // MARK: - SessionMonitorPanel
 
-/// Real-time monitoring panel showing current session status and recent activity
+/// Real-time monitoring panel showing current session status and recent activity.
+/// Supports two view modes:
+/// - `.conversation`: Shows structured conversation view with messages and tool calls
+/// - `.terminal`: Shows raw terminal output (SwiftTerm)
 /// Note: Only shows real-time data, not cumulative stats (which are misleading for continued sessions)
 public struct SessionMonitorPanel: View {
   let state: SessionMonitorState?
   let showTerminal: Bool
+  let viewMode: SessionViewMode
   let terminalKey: String?  // Key for terminal storage (session ID or "pending-{pendingId}")
   let sessionId: String?
   let projectPath: String?
@@ -26,6 +30,7 @@ public struct SessionMonitorPanel: View {
   public init(
     state: SessionMonitorState?,
     showTerminal: Bool = false,
+    viewMode: SessionViewMode = .terminal,
     terminalKey: String? = nil,
     sessionId: String? = nil,
     projectPath: String? = nil,
@@ -36,6 +41,7 @@ public struct SessionMonitorPanel: View {
   ) {
     self.state = state
     self.showTerminal = showTerminal
+    self.viewMode = viewMode
     self.terminalKey = terminalKey
     self.sessionId = sessionId
     self.projectPath = projectPath
@@ -43,6 +49,12 @@ public struct SessionMonitorPanel: View {
     self.initialPrompt = initialPrompt
     self.viewModel = viewModel
     self.onPromptConsumed = onPromptConsumed
+  }
+
+  /// Computed conversation messages from activity entries
+  private var conversationMessages: [ConversationMessage] {
+    guard let activities = state?.recentActivities else { return [] }
+    return ConversationParser.parse(activities: activities)
   }
 
   public var body: some View {
@@ -66,28 +78,34 @@ public struct SessionMonitorPanel: View {
         }
       }
 
-      // ZStack preserves both views to maintain terminal state when switching
+      // ZStack preserves all views to maintain state when switching modes
       ZStack {
-        // Activity list / loading state
+        // Conversation view (new structured message display)
+        Group {
+          if state != nil {
+            SessionConversationView(
+              messages: conversationMessages,
+              scrollToBottom: true
+            )
+          } else {
+            loadingView
+          }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .opacity(viewMode == .conversation && !showTerminal ? 1 : 0)
+
+        // Activity list (legacy compact view, shown when not in conversation mode)
         Group {
           if let state = state {
             if !state.recentActivities.isEmpty {
               RecentActivityList(activities: state.recentActivities)
             }
           } else {
-            HStack {
-              ProgressView()
-                .scaleEffect(0.7)
-              Text("Loading session data...")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
+            loadingView
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .opacity(showTerminal ? 0 : 1)
+        .opacity(viewMode == .terminal && !showTerminal ? 1 : 0)
 
         // Terminal view (preserved in hierarchy to maintain SwiftTerm state)
         EmbeddedTerminalView(
@@ -114,6 +132,20 @@ public struct SessionMonitorPanel: View {
     .padding(12)
     .background(Color.gray.opacity(0.05))
     .cornerRadius(8)
+  }
+
+  // MARK: - Loading View
+
+  private var loadingView: some View {
+    HStack {
+      ProgressView()
+        .scaleEffect(0.7)
+      Text("Loading session data...")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 20)
   }
 }
 
@@ -291,15 +323,15 @@ private struct ActivityRow: View {
 
 // MARK: - Preview
 
-#Preview {
+#Preview("Activity List Mode") {
   VStack(spacing: 20) {
-    // Active session - executing tool with context usage
+    // Active session - executing tool with context usage (activity list mode)
     SessionMonitorPanel(
       state: SessionMonitorState(
         status: .executingTool(name: "Bash"),
         currentTool: "Bash",
         lastActivityAt: Date(),
-        inputTokens: 45000,  // Context window usage
+        inputTokens: 45000,
         outputTokens: 1200,
         totalOutputTokens: 5600,
         model: "claude-opus-4-20250514",
@@ -309,51 +341,52 @@ private struct ActivityRow: View {
           ActivityEntry(timestamp: Date().addingTimeInterval(-5), type: .toolResult(name: "Bash", success: true), description: "Completed"),
           ActivityEntry(timestamp: Date(), type: .thinking, description: "Thinking...")
         ]
-      )
-    )
-
-    // High context usage (warning)
-    SessionMonitorPanel(
-      state: SessionMonitorState(
-        status: .thinking,
-        lastActivityAt: Date(),
-        inputTokens: 160000,  // 80% usage
-        outputTokens: 800,
-        totalOutputTokens: 12000,
-        model: "claude-opus-4-20250514",
-        recentActivities: [
-          ActivityEntry(timestamp: Date(), type: .thinking, description: "Thinking...")
-        ]
-      )
-    )
-
-    // Idle session
-    SessionMonitorPanel(
-      state: SessionMonitorState(
-        status: .idle,
-        lastActivityAt: Date().addingTimeInterval(-60),
-        model: "claude-sonnet-4-20250514",
-        recentActivities: [
-          ActivityEntry(timestamp: Date().addingTimeInterval(-60), type: .assistantMessage, description: "Done! Let me know if you need anything else.")
-        ]
-      )
+      ),
+      viewMode: .terminal  // Activity list shows when terminal mode but not showing terminal
     )
 
     // Loading
-    SessionMonitorPanel(state: nil)
+    SessionMonitorPanel(state: nil, viewMode: .terminal)
   }
   .padding()
   .frame(width: 350)
 }
+
+#Preview("Conversation Mode") {
+  // Conversation view with structured messages
+  SessionMonitorPanel(
+    state: SessionMonitorState(
+      status: .executingTool(name: "Read"),
+      currentTool: "Read",
+      lastActivityAt: Date(),
+      inputTokens: 45000,
+      outputTokens: 1200,
+      totalOutputTokens: 5600,
+      model: "claude-opus-4-20250514",
+      recentActivities: [
+        ActivityEntry(timestamp: Date().addingTimeInterval(-60), type: .userMessage, description: "Can you help me build a conversation view?"),
+        ActivityEntry(timestamp: Date().addingTimeInterval(-55), type: .assistantMessage, description: "I'd be happy to help! Let me explore your codebase first."),
+        ActivityEntry(timestamp: Date().addingTimeInterval(-50), type: .thinking, description: "Thinking..."),
+        ActivityEntry(timestamp: Date().addingTimeInterval(-45), type: .toolUse(name: "Glob"), description: "**/*.swift"),
+        ActivityEntry(timestamp: Date().addingTimeInterval(-40), type: .toolResult(name: "Glob", success: true), description: "Found 42 files"),
+        ActivityEntry(timestamp: Date().addingTimeInterval(-35), type: .toolUse(name: "Read"), description: "/path/to/SessionMonitorPanel.swift"),
+        ActivityEntry(timestamp: Date().addingTimeInterval(-30), type: .toolResult(name: "Read", success: true), description: "Read 400 lines"),
+        ActivityEntry(timestamp: Date().addingTimeInterval(-25), type: .assistantMessage, description: "I've found the relevant files. Now I'll create the new components.")
+      ]
+    ),
+    viewMode: .conversation
+  )
+  .padding()
+  .frame(width: 450, height: 500)
+}
+
 #Preview("Terminal Visible") {
-  // Preview showing the embedded terminal area inside the panel styling,
-  // similar to how it appears in the app
   VStack(alignment: .leading) {
     SessionMonitorPanel(
       state: SessionMonitorState(
         status: .thinking,
         lastActivityAt: Date(),
-        inputTokens: 32000, // Show context window bar
+        inputTokens: 32000,
         outputTokens: 500,
         totalOutputTokens: 2000,
         model: "claude-sonnet-4-20250514",
@@ -364,6 +397,7 @@ private struct ActivityRow: View {
         ]
       ),
       showTerminal: true,
+      viewMode: .terminal,
       terminalKey: "preview-terminal",
       sessionId: nil,
       projectPath: NSHomeDirectory(),
@@ -379,11 +413,9 @@ private struct ActivityRow: View {
   .background(Color(NSColor.windowBackgroundColor))
 }
 
-#Preview("Terminal With All Components") {
-  // Composite preview to showcase all available components around the terminal
-  // Top panel shows status + context bar and recent activity
-  // Bottom panel shows the terminal while preserving recent activity state
+#Preview("All Components") {
   VStack(spacing: 16) {
+    // Conversation mode panel
     SessionMonitorPanel(
       state: SessionMonitorState(
         status: .executingTool(name: "Bash"),
@@ -399,13 +431,16 @@ private struct ActivityRow: View {
           ActivityEntry(timestamp: Date().addingTimeInterval(-5), type: .toolResult(name: "Bash", success: true), description: "Completed")
         ]
       ),
-      showTerminal: false
+      showTerminal: false,
+      viewMode: .conversation
     )
+
+    // Terminal mode panel
     SessionMonitorPanel(
       state: SessionMonitorState(
         status: .thinking,
         lastActivityAt: Date(),
-        inputTokens: 54000, // Keep context usage visible
+        inputTokens: 54000,
         outputTokens: 2000,
         totalOutputTokens: 7800,
         model: "claude-opus-4-20250514",
@@ -416,6 +451,7 @@ private struct ActivityRow: View {
         ]
       ),
       showTerminal: true,
+      viewMode: .terminal,
       terminalKey: "preview-terminal-all",
       sessionId: nil,
       projectPath: NSHomeDirectory(),

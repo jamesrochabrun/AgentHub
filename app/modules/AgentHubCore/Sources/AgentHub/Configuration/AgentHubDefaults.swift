@@ -46,6 +46,10 @@ public enum AgentHubDefaults {
   /// Type: Data (JSON-encoded [String])
   public static let sessionsWithTerminalView = "\(keyPrefix)sessions.sessionsWithTerminalView"
 
+  /// Persisted session view modes (sessionId -> "terminal" or "conversation")
+  /// Type: Data (JSON-encoded [String: String])
+  public static let sessionViewModes = "\(keyPrefix)sessions.sessionViewModes"
+
   /// Persisted session colors (sessionId -> hex color string)
   /// Type: Data (JSON-encoded [String: String])
   public static let sessionColors = "\(keyPrefix)sessions.sessionColors"
@@ -149,5 +153,41 @@ public enum AgentHubDefaults {
   /// - Returns: The hex color string, or nil if not set
   public static func getSessionColor(for sessionId: String) -> String? {
     return getSessionColors()[sessionId]
+  }
+
+  // MARK: - Session View Modes
+
+  /// Gets all session view modes from UserDefaults
+  /// - Returns: Dictionary mapping session IDs to view mode raw values
+  public static func getSessionViewModes() -> [String: String] {
+    guard let data = UserDefaults.standard.data(forKey: sessionViewModes),
+          let modes = try? JSONDecoder().decode([String: String].self, from: data) else {
+      return [:]
+    }
+    return modes
+  }
+
+  /// Sets or removes a view mode for a specific session
+  /// - Parameters:
+  ///   - mode: The view mode raw value to set, or nil to remove
+  ///   - sessionId: The session ID to set the view mode for
+  public static func setSessionViewMode(_ mode: String?, for sessionId: String) {
+    var modes = getSessionViewModes()
+    if let mode = mode {
+      modes[sessionId] = mode
+    } else {
+      modes.removeValue(forKey: sessionId)
+    }
+
+    if let data = try? JSONEncoder().encode(modes) {
+      UserDefaults.standard.set(data, forKey: sessionViewModes)
+    }
+  }
+
+  /// Gets the view mode for a specific session
+  /// - Parameter sessionId: The session ID to get the view mode for
+  /// - Returns: The view mode raw value, or nil if not set
+  public static func getSessionViewMode(for sessionId: String) -> String? {
+    return getSessionViewModes()[sessionId]
   }
 }

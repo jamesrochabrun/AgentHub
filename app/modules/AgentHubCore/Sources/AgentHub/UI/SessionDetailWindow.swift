@@ -43,6 +43,7 @@ public struct SessionDetailWindow: View {
           SessionMonitorPanel(
             state: viewModel.monitorStates[sessionId],
             showTerminal: true,
+            viewMode: .terminal,
             terminalKey: sessionId,
             sessionId: sessionId,
             projectPath: session.projectPath,
@@ -216,10 +217,11 @@ private struct SessionDetailWindowMockPreview: View {
         .padding(.top, 12)
         .padding(.bottom, 8)
 
-        // Monitor panel (mock - without terminal)
+        // Monitor panel (mock - with conversation view)
         SessionMonitorPanel(
           state: Self.mockMonitorState,
           showTerminal: false,
+          viewMode: .conversation,
           terminalKey: Self.mockSession.id,
           sessionId: Self.mockSession.id,
           projectPath: Self.mockSession.projectPath,

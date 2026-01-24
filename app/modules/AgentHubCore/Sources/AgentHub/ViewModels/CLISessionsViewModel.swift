@@ -87,6 +87,57 @@ public final class CLISessionsViewModel {
   /// Session IDs that should show terminal view (tracks current state for each row)
   public var sessionsWithTerminalView: Set<String> = []
 
+  // MARK: - Session View Mode State
+
+  /// Per-session view mode preferences (terminal vs conversation view)
+  public var sessionViewModes: [String: SessionViewMode] = [:]
+
+  /// Toggles the view mode for a specific session between terminal and conversation
+  /// - Parameter sessionId: The session ID to toggle
+  public func toggleViewMode(for sessionId: String) {
+    let current = sessionViewModes[sessionId] ?? .terminal
+    let newMode: SessionViewMode = (current == .terminal) ? .conversation : .terminal
+    sessionViewModes[sessionId] = newMode
+    persistSessionViewModes()
+  }
+
+  /// Gets the current view mode for a session
+  /// - Parameter sessionId: The session ID to check
+  /// - Returns: The view mode (defaults to `.conversation` if not set - conversation is the default)
+  public func viewMode(for sessionId: String) -> SessionViewMode {
+    sessionViewModes[sessionId] ?? .conversation
+  }
+
+  /// Sets the view mode for a specific session
+  /// - Parameters:
+  ///   - mode: The view mode to set
+  ///   - sessionId: The session ID to set the mode for
+  public func setViewMode(_ mode: SessionViewMode, for sessionId: String) {
+    sessionViewModes[sessionId] = mode
+    persistSessionViewModes()
+  }
+
+  /// Persists session view modes to UserDefaults
+  private func persistSessionViewModes() {
+    var rawModes: [String: String] = [:]
+    for (sessionId, mode) in sessionViewModes {
+      rawModes[sessionId] = mode.rawValue
+    }
+    if let data = try? JSONEncoder().encode(rawModes) {
+      UserDefaults.standard.set(data, forKey: AgentHubDefaults.sessionViewModes)
+    }
+  }
+
+  /// Restores session view modes from UserDefaults
+  private func restoreSessionViewModes() {
+    let rawModes = AgentHubDefaults.getSessionViewModes()
+    for (sessionId, rawValue) in rawModes {
+      if let mode = SessionViewMode(rawValue: rawValue) {
+        sessionViewModes[sessionId] = mode
+      }
+    }
+  }
+
   // MARK: - Detached Window State
 
   /// Sessions with currently open detached windows.
@@ -298,6 +349,9 @@ public final class CLISessionsViewModel {
 
     // Load session colors from defaults
     self.sessionColors = AgentHubDefaults.getSessionColors()
+
+    // Restore session view modes from UserDefaults
+    restoreSessionViewModes()
 
     setupSubscriptions()
     restorePersistedRepositories()

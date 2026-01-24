@@ -123,6 +123,7 @@ public struct MonitoringCardView: View {
       SessionMonitorPanel(
         state: state,
         showTerminal: showTerminal,
+        viewMode: viewModel?.viewMode(for: session.id) ?? .conversation,
         terminalKey: terminalKey,
         sessionId: session.id,
         projectPath: session.projectPath,
@@ -288,10 +289,18 @@ public struct MonitoringCardView: View {
       //   .help("View code changes")
       // }
 
-      // Terminal/List segmented control (custom capsule style)
+      // Conversation/Terminal segmented control (custom capsule style)
       HStack(spacing: 0) {
-        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(false) } }) {
-          Image(systemName: "list.bullet")
+        Button(action: {
+          withAnimation(.easeInOut(duration: 0.2)) {
+            onToggleTerminal(false)
+            // Ensure conversation mode is set when not showing terminal
+            if viewModel?.viewMode(for: session.id) != .conversation {
+              viewModel?.toggleViewMode(for: session.id)
+            }
+          }
+        }) {
+          Image(systemName: "bubble.left.and.bubble.right")
             .font(.caption)
             .frame(width: 28, height: 20)
             .foregroundColor(!showTerminal ? .white : .secondary)
@@ -300,8 +309,13 @@ public struct MonitoringCardView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help("Conversation view")
 
-        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(true) } }) {
+        Button(action: {
+          withAnimation(.easeInOut(duration: 0.2)) {
+            onToggleTerminal(true)
+          }
+        }) {
           Image(systemName: "terminal")
             .font(.caption)
             .frame(width: 28, height: 20)
@@ -311,6 +325,7 @@ public struct MonitoringCardView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help("Terminal view")
       }
       .padding(2)
       .background(Color.secondary.opacity(0.15))
