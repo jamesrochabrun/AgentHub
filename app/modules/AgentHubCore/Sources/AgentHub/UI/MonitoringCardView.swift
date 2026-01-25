@@ -65,6 +65,8 @@ public struct MonitoringCardView: View {
   let onRefreshTerminal: () -> Void
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
   let onPromptConsumed: (() -> Void)?
+  let isMaximized: Bool
+  let onToggleMaximize: () -> Void
 
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
@@ -89,7 +91,9 @@ public struct MonitoringCardView: View {
     onOpenSessionFile: @escaping () -> Void,
     onRefreshTerminal: @escaping () -> Void,
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
-    onPromptConsumed: (() -> Void)? = nil
+    onPromptConsumed: (() -> Void)? = nil,
+    isMaximized: Bool = false,
+    onToggleMaximize: @escaping () -> Void = {}
   ) {
     self.session = session
     self.state = state
@@ -108,6 +112,8 @@ public struct MonitoringCardView: View {
     self.onRefreshTerminal = onRefreshTerminal
     self.onInlineRequestSubmit = onInlineRequestSubmit
     self.onPromptConsumed = onPromptConsumed
+    self.isMaximized = isMaximized
+    self.onToggleMaximize = onToggleMaximize
   }
 
   public var body: some View {
@@ -262,6 +268,18 @@ public struct MonitoringCardView: View {
       .background(Color.secondary.opacity(0.12))
       .clipShape(RoundedRectangle(cornerRadius: 6))
       .animation(.easeInOut(duration: 0.2), value: showTerminal)
+
+      // Maximize/Minimize button
+      Button(action: onToggleMaximize) {
+        Image(systemName: isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .frame(width: 24, height: 24)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
+      }
+      .buttonStyle(.plain)
+      .help(isMaximized ? "Minimize" : "Maximize")
 
       // Close button (inline)
       Button(action: onStopMonitoring) {

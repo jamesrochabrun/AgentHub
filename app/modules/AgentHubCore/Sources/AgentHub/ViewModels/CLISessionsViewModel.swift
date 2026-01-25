@@ -157,6 +157,9 @@ public final class CLISessionsViewModel {
     initialPrompt: String?
   ) -> TerminalContainerView {
     if let existing = activeTerminals[key] {
+      #if DEBUG
+      AppLogger.session.debug("[Terminal] REUSING existing terminal for key: \(key, privacy: .public)")
+      #endif
       // Send prompt to existing terminal if provided
       if let prompt = initialPrompt {
         existing.sendPromptIfNeeded(prompt)
@@ -164,6 +167,9 @@ public final class CLISessionsViewModel {
       return existing
     }
 
+    #if DEBUG
+    AppLogger.session.debug("[Terminal] CREATING new terminal for key: \(key, privacy: .public)")
+    #endif
     let terminal = TerminalContainerView()
     terminal.configure(
       sessionId: sessionId,

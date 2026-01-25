@@ -97,6 +97,8 @@ public struct MonitoringPanelView: View {
   let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var layoutMode: LayoutMode = .list
+  @State private var maximizedSessionId: String?
+  @Environment(\.colorScheme) private var colorScheme
 
   public init(viewModel: CLISessionsViewModel, claudeClient: (any ClaudeCode)?) {
     self.viewModel = viewModel
@@ -155,16 +157,23 @@ public struct MonitoringPanelView: View {
 
   public var body: some View {
     VStack(spacing: 0) {
-      // Header
-      header
-
-      Divider()
-
-      // Content
-      if viewModel.monitoredSessionIds.isEmpty && viewModel.pendingHubSessions.isEmpty {
-        emptyState
+      // Show maximized view OR normal list
+      if let maximizedId = maximizedSessionId {
+        // Maximized single card view
+        maximizedCardContent(for: maximizedId)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .background(Color(white: colorScheme == .dark ? 0.07 : 0.92))
       } else {
-        monitoredSessionsList
+        // Normal list view
+        header
+
+        Divider()
+
+        if viewModel.monitoredSessionIds.isEmpty && viewModel.pendingHubSessions.isEmpty {
+          emptyState
+        } else {
+          monitoredSessionsList
+        }
       }
     }
     .frame(minWidth: 300)
@@ -175,6 +184,15 @@ public struct MonitoringPanelView: View {
         content: item.content,
         onDismiss: { sessionFileSheetItem = nil }
       )
+    }
+    .onKeyPress(.escape) {
+      if maximizedSessionId != nil {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+          maximizedSessionId = nil
+        }
+        return .handled
+      }
+      return .ignored
     }
   }
 
@@ -248,6 +266,98 @@ public struct MonitoringPanelView: View {
     .padding()
   }
 
+  // MARK: - Maximized Card Content
+
+  @ViewBuilder
+  private func maximizedCardContent(for sessionId: String) -> some View {
+    // Find the session to maximize (check both pending and monitored)
+    if let pending = viewModel.pendingHubSessions.first(where: { "pending-\($0.id.uuidString)" == sessionId }) {
+      MonitoringCardView(
+        session: pending.placeholderSession,
+        state: nil,
+        claudeClient: claudeClient,
+        showTerminal: true,
+        initialPrompt: pending.initialPrompt,
+        terminalKey: "pending-\(pending.id.uuidString)",
+        viewModel: viewModel,
+        onToggleTerminal: { _ in },
+        onStopMonitoring: {
+          viewModel.cancelPendingSession(pending)
+          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            maximizedSessionId = nil
+          }
+        },
+        onConnect: { },
+        onCopySessionId: { },
+        onOpenSessionFile: { },
+        onRefreshTerminal: { },
+        isMaximized: true,
+        onToggleMaximize: {
+          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            maximizedSessionId = nil
+          }
+        }
+      )
+    } else if let item = viewModel.monitoredSessions.first(where: { $0.session.id == sessionId }) {
+      let codeChangesState = item.state.map {
+        CodeChangesState.from(activities: $0.recentActivities)
+      }
+      let planState = item.state.flatMap {
+        PlanState.from(activities: $0.recentActivities)
+      }
+      let initialPrompt = viewModel.pendingPrompt(for: item.session.id)
+
+      MonitoringCardView(
+        session: item.session,
+        state: item.state,
+        codeChangesState: codeChangesState,
+        planState: planState,
+        claudeClient: claudeClient,
+        showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
+        initialPrompt: initialPrompt,
+        terminalKey: item.session.id,
+        viewModel: viewModel,
+        onToggleTerminal: { show in
+          viewModel.setTerminalView(for: item.session.id, show: show)
+        },
+        onStopMonitoring: {
+          viewModel.stopMonitoring(session: item.session)
+          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            maximizedSessionId = nil
+          }
+        },
+        onConnect: {
+          _ = viewModel.connectToSession(item.session)
+        },
+        onCopySessionId: {
+          viewModel.copySessionId(item.session)
+        },
+        onOpenSessionFile: {
+          openSessionFile(for: item.session)
+        },
+        onRefreshTerminal: {
+          viewModel.refreshTerminal(
+            forKey: item.session.id,
+            sessionId: item.session.id,
+            projectPath: item.session.projectPath
+          )
+        },
+        onInlineRequestSubmit: { prompt, session in
+          viewModel.showTerminalWithPrompt(for: session, prompt: prompt)
+        },
+        onPromptConsumed: {
+          viewModel.clearPendingPrompt(for: item.session.id)
+        },
+        isMaximized: true,
+        onToggleMaximize: {
+          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            maximizedSessionId = nil
+          }
+        }
+      )
+    }
+  }
+
   // MARK: - Monitored Sessions List
 
   private var monitoredSessionsList: some View {
@@ -279,13 +389,14 @@ public struct MonitoringPanelView: View {
   private var monitoredSessionsContent: some View {
     // Pending sessions (new sessions starting in Hub)
     ForEach(viewModel.pendingHubSessions) { pending in
+      let pendingId = "pending-\(pending.id.uuidString)"
       MonitoringCardView(
         session: pending.placeholderSession,
         state: nil,
         claudeClient: claudeClient,
         showTerminal: true,
         initialPrompt: pending.initialPrompt,
-        terminalKey: "pending-\(pending.id.uuidString)",
+        terminalKey: pendingId,
         viewModel: viewModel,
         onToggleTerminal: { _ in },
         onStopMonitoring: {
@@ -294,7 +405,13 @@ public struct MonitoringPanelView: View {
         onConnect: { },
         onCopySessionId: { },
         onOpenSessionFile: { },
-        onRefreshTerminal: { }
+        onRefreshTerminal: { },
+        isMaximized: maximizedSessionId == pendingId,
+        onToggleMaximize: {
+          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            maximizedSessionId = maximizedSessionId == pendingId ? nil : pendingId
+          }
+        }
       )
     }
 
@@ -346,6 +463,12 @@ public struct MonitoringPanelView: View {
         },
         onPromptConsumed: {
           viewModel.clearPendingPrompt(for: item.session.id)
+        },
+        isMaximized: maximizedSessionId == item.session.id,
+        onToggleMaximize: {
+          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            maximizedSessionId = maximizedSessionId == item.session.id ? nil : item.session.id
+          }
         }
       )
     }
@@ -364,13 +487,14 @@ public struct MonitoringPanelView: View {
         ForEach(group.items) { item in
           switch item {
           case .pending(let pending):
+            let pendingId = "pending-\(pending.id.uuidString)"
             MonitoringCardView(
               session: pending.placeholderSession,
               state: nil,
               claudeClient: claudeClient,
               showTerminal: true,
               initialPrompt: pending.initialPrompt,
-              terminalKey: "pending-\(pending.id.uuidString)",
+              terminalKey: pendingId,
               viewModel: viewModel,
               onToggleTerminal: { _ in },
               onStopMonitoring: {
@@ -379,7 +503,13 @@ public struct MonitoringPanelView: View {
               onConnect: { },
               onCopySessionId: { },
               onOpenSessionFile: { },
-              onRefreshTerminal: { }
+              onRefreshTerminal: { },
+              isMaximized: maximizedSessionId == pendingId,
+              onToggleMaximize: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                  maximizedSessionId = maximizedSessionId == pendingId ? nil : pendingId
+                }
+              }
             )
 
           case .monitored(let session, let state):
@@ -428,6 +558,12 @@ public struct MonitoringPanelView: View {
               },
               onPromptConsumed: {
                 viewModel.clearPendingPrompt(for: session.id)
+              },
+              isMaximized: maximizedSessionId == session.id,
+              onToggleMaximize: {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                  maximizedSessionId = maximizedSessionId == session.id ? nil : session.id
+                }
               }
             )
           }
