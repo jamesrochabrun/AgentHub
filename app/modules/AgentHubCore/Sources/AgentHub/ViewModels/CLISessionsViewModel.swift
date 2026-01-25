@@ -87,6 +87,66 @@ public final class CLISessionsViewModel {
   /// Session IDs that should show terminal view (tracks current state for each row)
   public var sessionsWithTerminalView: Set<String> = []
 
+  // MARK: - Session View Mode State
+
+  /// Per-session view mode preferences (terminal vs conversation view)
+  public var sessionViewModes: [String: SessionViewMode] = [:]
+
+  /// Toggles the view mode for a specific session between terminal and conversation
+  /// - Parameter sessionId: The session ID to toggle
+  public func toggleViewMode(for sessionId: String) {
+    let current = sessionViewModes[sessionId] ?? .terminal
+    let newMode: SessionViewMode = (current == .terminal) ? .conversation : .terminal
+    sessionViewModes[sessionId] = newMode
+    persistSessionViewModes()
+  }
+
+  /// Gets the current view mode for a session
+  /// - Parameter sessionId: The session ID to check
+  /// - Returns: The view mode (defaults to `.conversation` if not set - conversation is the default)
+  public func viewMode(for sessionId: String) -> SessionViewMode {
+    sessionViewModes[sessionId] ?? .conversation
+  }
+
+  /// Sets the view mode for a specific session
+  /// - Parameters:
+  ///   - mode: The view mode to set
+  ///   - sessionId: The session ID to set the mode for
+  public func setViewMode(_ mode: SessionViewMode, for sessionId: String) {
+    sessionViewModes[sessionId] = mode
+    persistSessionViewModes()
+  }
+
+  /// Persists session view modes to UserDefaults
+  private func persistSessionViewModes() {
+    var rawModes: [String: String] = [:]
+    for (sessionId, mode) in sessionViewModes {
+      rawModes[sessionId] = mode.rawValue
+    }
+    if let data = try? JSONEncoder().encode(rawModes) {
+      UserDefaults.standard.set(data, forKey: AgentHubDefaults.sessionViewModes)
+    }
+  }
+
+  /// Restores session view modes from UserDefaults
+  private func restoreSessionViewModes() {
+    let rawModes = AgentHubDefaults.getSessionViewModes()
+    for (sessionId, rawValue) in rawModes {
+      if let mode = SessionViewMode(rawValue: rawValue) {
+        sessionViewModes[sessionId] = mode
+      }
+    }
+  }
+
+  // MARK: - Detached Window State
+
+  /// Sessions with currently open detached windows.
+  /// Terminal should NOT display in main view when session ID is in this set.
+  public private(set) var detachedWindowSessionIds: Set<String> = []
+
+  /// Session colors keyed by session ID (hex color strings)
+  public private(set) var sessionColors: [String: String] = [:]
+
   /// Maps session IDs to prompts that should be sent to the terminal when it becomes ready.
   ///
   /// This acts as a bridge between GitDiffView (where users submit inline edit requests) and
@@ -109,46 +169,79 @@ public final class CLISessionsViewModel {
     persistSessionsWithTerminalView()
   }
 
+  // MARK: - Detached Window Management
+
+  /// Registers that a detached window has been opened for a session.
+  /// Call when a detached window opens for a session.
+  public func registerDetachedWindow(for sessionId: String) {
+    detachedWindowSessionIds.insert(sessionId)
+  }
+
+  /// Unregisters a detached window when it closes.
+  /// Call when a detached window closes.
+  public func unregisterDetachedWindow(for sessionId: String) {
+    detachedWindowSessionIds.remove(sessionId)
+  }
+
+  /// Checks if a session has an open detached window.
+  /// Terminal should not display in main view when this returns true.
+  public func hasDetachedWindow(for sessionId: String) -> Bool {
+    detachedWindowSessionIds.contains(sessionId)
+  }
+
   /// Shows terminal view for a session with an initial prompt (for inline edit requests).
   /// Called when user submits an inline change request from GitDiffView.
   /// Stores the prompt temporarily so that when the terminal view renders,
   /// it can pass the prompt to EmbeddedTerminalView for the resume command.
   public func showTerminalWithPrompt(for session: CLISession, prompt: String) {
-    // [CLISessionsVM] showTerminalWithPrompt called for session: \(session.id)")
-    // [CLISessionsVM] prompt: \(prompt.prefix(100))...")
     // Start monitoring if not already
     if !monitoredSessionIds.contains(session.id) {
-      // [CLISessionsVM] Starting monitoring for session")
       startMonitoring(session: session)
     }
     // Store the pending prompt
     pendingTerminalPrompts[session.id] = prompt
-    // [CLISessionsVM] Stored prompt, pendingTerminalPrompts count: \(pendingTerminalPrompts.count)")
     // Show terminal view
     sessionsWithTerminalView.insert(session.id)
-    // [CLISessionsVM] Terminal view enabled for session")
   }
 
   /// Returns the pending prompt for a session (read-only, safe during view body)
   public func pendingPrompt(for sessionId: String) -> String? {
-    let prompt = pendingTerminalPrompts[sessionId]
-    if prompt != nil {
-      // [CLISessionsVM] pendingPrompt read for \(sessionId.prefix(8)): found prompt")
-    }
-    return prompt
+    return pendingTerminalPrompts[sessionId]
   }
 
   /// Clears the pending prompt after terminal has started (call from onAppear)
   public func clearPendingPrompt(for sessionId: String) {
-    // [CLISessionsVM] clearPendingPrompt called for \(sessionId.prefix(8))")
     pendingTerminalPrompts.removeValue(forKey: sessionId)
+  }
+
+  // MARK: - Session Colors
+
+  /// Sets or removes a color for a specific session
+  /// - Parameters:
+  ///   - hex: The hex color string to set, or nil to remove
+  ///   - sessionId: The session ID to set the color for
+  public func setSessionColor(_ hex: String?, for sessionId: String) {
+    if let hex = hex {
+      sessionColors[sessionId] = hex
+    } else {
+      sessionColors.removeValue(forKey: sessionId)
+    }
+    AgentHubDefaults.setSessionColor(hex, for: sessionId)
+  }
+
+  /// Gets the color for a specific session
+  /// - Parameter sessionId: The session ID to get the color for
+  /// - Returns: The hex color string, or nil if not set
+  public func getSessionColor(for sessionId: String) -> String? {
+    return sessionColors[sessionId]
   }
 
   // MARK: - Terminal Management
 
   /// Gets an existing terminal or creates a new one for the given key.
   /// Key should be session ID for real sessions, or "pending-{pendingId}" for pending sessions.
-  /// This preserves the terminal PTY across pending → real session transitions.
+  /// This preserves the terminal PTY across pending → real session transition.
+  /// Also wires up streaming callbacks for real-time ConversationView updates.
   public func getOrCreateTerminal(
     forKey key: String,
     sessionId: String?,
@@ -171,8 +264,111 @@ public final class CLISessionsViewModel {
       claudeClient: claudeClient,
       initialPrompt: initialPrompt
     )
+
+    // Wire streaming callback for real-time ConversationView updates
+    // Use key (which may be sessionId or pending key) to find the right monitor state
+    terminal.onStreamingMessage = { [weak self] message in
+      Task { @MainActor in
+        self?.handleStreamingMessage(message, forKey: key)
+      }
+    }
+
     activeTerminals[key] = terminal
     return terminal
+  }
+
+  /// Handles a streaming message from the terminal PTY output.
+  /// Converts `StreamingMessage` to `ConversationMessage` and updates `monitorStates`.
+  private func handleStreamingMessage(_ message: StreamingMessage, forKey key: String) {
+    // Determine the actual session ID (key may be "pending-xxx" initially)
+    let sessionId: String
+    if key.hasPrefix("pending-") {
+      // For pending sessions, we may not have a real session ID yet
+      // The message will be associated once the session is transferred
+      return
+    } else {
+      sessionId = key
+    }
+
+    // Get or create the monitor state for this session
+    var state = monitorStates[sessionId] ?? SessionMonitorState()
+
+    // Convert StreamingMessage to ActivityEntry and update state
+    let activityType: ActivityType
+    let description: String
+
+    switch message.type {
+    case .user:
+      activityType = .userMessage
+      description = message.textContent ?? ""
+      state.messageCount += 1
+
+    case .assistant:
+      if let toolUse = message.toolUse {
+        activityType = .toolUse(name: toolUse.name)
+        description = toolUse.input ?? toolUse.name
+        state.toolCalls[toolUse.name, default: 0] += 1
+        state.currentTool = toolUse.name
+      } else if let text = message.textContent {
+        activityType = .assistantMessage
+        description = String(text.prefix(50))
+        state.messageCount += 1
+      } else {
+        // Thinking indicator
+        activityType = .thinking
+        description = "Thinking..."
+      }
+
+    case .result:
+      if let result = message.toolResult {
+        activityType = .toolResult(name: "Tool", success: result.success)
+        description = result.success ? "Completed" : "Error"
+        state.currentTool = nil
+      } else {
+        return
+      }
+
+    case .system:
+      // Ignore system messages for now
+      return
+    }
+
+    // Create and add the activity entry
+    let activity = ActivityEntry(
+      timestamp: message.timestamp,
+      type: activityType,
+      description: description
+    )
+    state.recentActivities.append(activity)
+
+    // Keep recent activities bounded
+    if state.recentActivities.count > 100 {
+      state.recentActivities.removeFirst(state.recentActivities.count - 100)
+    }
+
+    // Update last activity timestamp
+    state.lastActivityAt = message.timestamp
+
+    // Update status based on the message type
+    switch message.type {
+    case .user:
+      state.status = .thinking
+    case .assistant:
+      if message.toolUse != nil {
+        state.status = .executingTool(name: message.toolUse!.name)
+      } else if message.textContent != nil {
+        state.status = .waitingForUser
+      } else {
+        state.status = .thinking
+      }
+    case .result:
+      state.status = .thinking
+    case .system:
+      break
+    }
+
+    // Update the monitor state
+    monitorStates[sessionId] = state
   }
 
   /// Removes the terminal for a given key and terminates its process
@@ -245,7 +441,6 @@ public final class CLISessionsViewModel {
   // MARK: - Initialization
 
   public init(monitorService: CLISessionMonitorService, claudeClient: ClaudeCode? = nil) {
-    // [CLISessionsVM] init called")
     self.monitorService = monitorService
     self.searchService = GlobalSearchService()
     self.claudeClient = claudeClient
@@ -256,6 +451,12 @@ public final class CLISessionsViewModel {
     let savedTimeout = UserDefaults.standard.integer(forKey: "CLISessionsApprovalTimeout")
     self.approvalTimeoutSeconds = savedTimeout > 0 ? savedTimeout : 5
 
+    // Load session colors from defaults
+    self.sessionColors = AgentHubDefaults.getSessionColors()
+
+    // Restore session view modes from UserDefaults
+    restoreSessionViewModes()
+
     setupSubscriptions()
     restorePersistedRepositories()
     requestNotificationPermissions()
@@ -264,8 +465,6 @@ public final class CLISessionsViewModel {
     Task {
       await fileWatcher.setApprovalTimeout(approvalTimeoutSeconds)
     }
-
-    // [CLISessionsVM] init completed")
   }
 
   private func requestNotificationPermissions() {
@@ -338,22 +537,16 @@ public final class CLISessionsViewModel {
 
   private func restorePersistedRepositories() {
     Task {
-      // [CLISessionsVM] restorePersistedRepositories called")
       guard let data = UserDefaults.standard.data(forKey: persistenceKey),
             let paths = try? JSONDecoder().decode([String].self, from: data) else {
-        // [CLISessionsVM] No persisted repositories found")
         return
       }
 
-      // [CLISessionsVM] Found \(paths.count) persisted paths: \(paths)")
       loadingState = .restoringRepositories
-      // [CLISessionsVM] loadingState = .restoringRepositories")
       for path in paths {
-        // [CLISessionsVM] Adding repository: \(path)")
         await monitorService.addRepository(path)
       }
       loadingState = .idle
-      // [CLISessionsVM] loadingState = .idle")
 
       // Restore monitored sessions after all repositories have loaded
       restoreMonitoredSessions()
@@ -385,25 +578,16 @@ public final class CLISessionsViewModel {
 
   /// Restores monitored sessions from UserDefaults after repositories have loaded
   private func restoreMonitoredSessions() {
-    // [CLISessionsVM] restoreMonitoredSessions called")
-
     // Restore monitored session IDs
     if let data = UserDefaults.standard.data(forKey: AgentHubDefaults.monitoredSessionIds),
        let sessionIds = try? JSONDecoder().decode([String].self, from: data) {
-      // [CLISessionsVM] Found \(sessionIds.count) persisted monitored session IDs")
-
       for sessionId in sessionIds {
         // Find the session in loaded repositories
         if let session = findSession(byId: sessionId) {
           // Verify session file still exists
           if sessionFileExists(session: session) {
-            // [CLISessionsVM] Restoring monitoring for session: \(sessionId.prefix(8))...")
             startMonitoring(session: session)
-          } else {
-            // [CLISessionsVM] Session file no longer exists: \(sessionId.prefix(8))...")
           }
-        } else {
-          // [CLISessionsVM] Session not found in loaded repos: \(sessionId.prefix(8))...")
         }
       }
     }
@@ -411,8 +595,6 @@ public final class CLISessionsViewModel {
     // Restore terminal view state
     if let data = UserDefaults.standard.data(forKey: AgentHubDefaults.sessionsWithTerminalView),
        let sessionIds = try? JSONDecoder().decode([String].self, from: data) {
-      // [CLISessionsVM] Found \(sessionIds.count) persisted sessions with terminal view")
-
       for sessionId in sessionIds {
         // Only restore terminal view for sessions that are actually monitored
         if monitoredSessionIds.contains(sessionId) {
@@ -466,7 +648,6 @@ public final class CLISessionsViewModel {
 
   /// Opens a directory picker and adds the selected repository
   public func showAddRepositoryPicker() {
-    // [CLISessionsVM] showAddRepositoryPicker called")
     #if canImport(AppKit)
     let panel = NSOpenPanel()
     panel.title = "Select Repository"
@@ -477,10 +658,7 @@ public final class CLISessionsViewModel {
     panel.canCreateDirectories = false
 
     if panel.runModal() == .OK, let url = panel.url {
-      // [CLISessionsVM] User selected path: \(url.path)")
       addRepository(at: url.path)
-    } else {
-      // [CLISessionsVM] User cancelled picker")
     }
     #endif
   }
@@ -488,15 +666,10 @@ public final class CLISessionsViewModel {
   /// Adds a repository at the given path
   public func addRepository(at path: String) {
     let repoName = URL(fileURLWithPath: path).lastPathComponent
-    // [CLISessionsVM] addRepository called for: \(path) (name: \(repoName))")
     Task {
-      // [CLISessionsVM] loadingState = .addingRepository(\(repoName))")
       loadingState = .addingRepository(name: repoName)
-      // [CLISessionsVM] Calling monitorService.addRepository...")
       await monitorService.addRepository(path)
-      // [CLISessionsVM] monitorService.addRepository completed")
       loadingState = .idle
-      // [CLISessionsVM] loadingState = .idle")
     }
   }
 
@@ -551,15 +724,12 @@ public final class CLISessionsViewModel {
   /// Deletes a worktree
   /// - Parameter worktree: The worktree to delete
   public func deleteWorktree(_ worktree: WorktreeBranch) async {
-    // [CLISessionsVM] deleteWorktree: \(worktree.path)")
     deletingWorktreePath = worktree.path
 
     do {
       try await worktreeService.removeWorktree(at: worktree.path)
-      // [CLISessionsVM] Worktree deleted successfully")
       refresh()
     } catch {
-      // [CLISessionsVM] Failed to delete worktree: \(error.localizedDescription)")
       worktreeDeletionError = WorktreeDeletionError(
         worktree: worktree,
         message: error.localizedDescription
@@ -576,15 +746,10 @@ public final class CLISessionsViewModel {
 
   /// Refreshes sessions for all selected repositories
   public func refresh() {
-    // [CLISessionsVM] refresh called")
     Task {
-      // [CLISessionsVM] loadingState = .refreshing")
       loadingState = .refreshing
-      // [CLISessionsVM] Calling monitorService.refreshSessions...")
       await monitorService.refreshSessions()
-      // [CLISessionsVM] refreshSessions completed")
       loadingState = .idle
-      // [CLISessionsVM] loadingState = .idle")
     }
   }
 
@@ -687,7 +852,6 @@ public final class CLISessionsViewModel {
       )
     } catch {
       // If we can't check, assume no checkout needed to avoid blocking
-      // [CLISessionsVM] Error checking git status: \(error)")
       return TerminalOpenCheck(
         needsCheckout: false,
         hasUncommittedChanges: false,
@@ -1305,6 +1469,44 @@ public final class CLISessionsViewModel {
       }
       existingSessionIdsBeforeTerminal = []
     }
+  }
+
+  // MARK: - GitHub Clone Flow
+
+  /// Clones a GitHub repository and adds it to monitored repositories
+  /// - Parameters:
+  ///   - repository: The GitHub repository to clone
+  ///   - onProgress: Progress callback for clone status updates
+  /// - Returns: The path to the cloned repository
+  /// - Throws: GitHubCloneServiceError if clone fails
+  public func cloneAndAddRepository(
+    _ repository: GitHubRepository,
+    cloneService: GitHubCloneService,
+    onProgress: @escaping @Sendable (CloneProgress) async -> Void
+  ) async throws -> String {
+    // Get the AgentHub folder path from settings
+    let folderPath = UserDefaults.standard.string(forKey: AgentHubDefaults.agentHubFolderPath)
+      ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("AgentHub").path
+    let destinationFolder = URL(fileURLWithPath: folderPath)
+
+    // Update progress
+    await onProgress(.cloning(repository: repository.name))
+
+    // Clone the repository
+    let clonedPath = try await cloneService.cloneRepository(
+      cloneUrl: repository.cloneUrl,
+      to: destinationFolder,
+      repoName: repository.name
+    )
+
+    // Add the cloned repository to monitored repos
+    let pathString = clonedPath.path
+    addRepository(at: pathString)
+
+    // Update progress
+    await onProgress(.complete(localPath: pathString))
+
+    return pathString
   }
 
   // MARK: - Search Filter

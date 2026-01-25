@@ -11,6 +11,7 @@ import Foundation
 /// Tracks real-time progress based on git's stderr output
 public enum WorktreeCreationProgress: Equatable, Sendable {
   case idle
+  case fetching(message: String)
   case preparing(message: String)
   case updatingFiles(current: Int, total: Int)
   case completed(path: String)
@@ -21,6 +22,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
     switch self {
     case .idle:
       return 0
+    case .fetching:
+      return 0.02  // Very early progress
     case .preparing:
       return 0.05  // Small initial progress
     case .updatingFiles(let current, let total):
@@ -37,6 +40,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
     switch self {
     case .idle:
       return ""
+    case .fetching(let message):
+      return message
     case .preparing(let msg):
       return msg
     case .updatingFiles(let current, let total):
@@ -54,7 +59,7 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
     switch self {
     case .idle, .completed, .failed:
       return false
-    case .preparing, .updatingFiles:
+    case .fetching, .preparing, .updatingFiles:
       return true
     }
   }
@@ -64,6 +69,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
     switch self {
     case .idle:
       return "circle"
+    case .fetching:
+      return "arrow.down.circle"
     case .preparing:
       return "arrow.triangle.branch"
     case .updatingFiles:

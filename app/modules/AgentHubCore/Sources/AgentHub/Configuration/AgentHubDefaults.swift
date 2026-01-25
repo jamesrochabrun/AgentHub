@@ -46,6 +46,20 @@ public enum AgentHubDefaults {
   /// Type: Data (JSON-encoded [String])
   public static let sessionsWithTerminalView = "\(keyPrefix)sessions.sessionsWithTerminalView"
 
+  /// Persisted session view modes (sessionId -> "terminal" or "conversation")
+  /// Type: Data (JSON-encoded [String: String])
+  public static let sessionViewModes = "\(keyPrefix)sessions.sessionViewModes"
+
+  /// Persisted session colors (sessionId -> hex color string)
+  /// Type: Data (JSON-encoded [String: String])
+  public static let sessionColors = "\(keyPrefix)sessions.sessionColors"
+
+  // MARK: - Folder Settings
+
+  /// Path to the AgentHub folder where cloned repositories are stored
+  /// Type: String (default: ~/AgentHub)
+  public static let agentHubFolderPath = "\(keyPrefix)folders.agentHubFolderPath"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name
@@ -103,5 +117,77 @@ public enum AgentHubDefaults {
     }
 
     defaults.set(true, forKey: migrationKey)
+  }
+
+  // MARK: - Session Colors
+
+  /// Gets all session colors from UserDefaults
+  /// - Returns: Dictionary mapping session IDs to hex color strings
+  public static func getSessionColors() -> [String: String] {
+    guard let data = UserDefaults.standard.data(forKey: sessionColors),
+          let colors = try? JSONDecoder().decode([String: String].self, from: data) else {
+      return [:]
+    }
+    return colors
+  }
+
+  /// Sets or removes a color for a specific session
+  /// - Parameters:
+  ///   - hex: The hex color string to set, or nil to remove
+  ///   - sessionId: The session ID to set the color for
+  public static func setSessionColor(_ hex: String?, for sessionId: String) {
+    var colors = getSessionColors()
+    if let hex = hex {
+      colors[sessionId] = hex
+    } else {
+      colors.removeValue(forKey: sessionId)
+    }
+
+    if let data = try? JSONEncoder().encode(colors) {
+      UserDefaults.standard.set(data, forKey: sessionColors)
+    }
+  }
+
+  /// Gets the color for a specific session
+  /// - Parameter sessionId: The session ID to get the color for
+  /// - Returns: The hex color string, or nil if not set
+  public static func getSessionColor(for sessionId: String) -> String? {
+    return getSessionColors()[sessionId]
+  }
+
+  // MARK: - Session View Modes
+
+  /// Gets all session view modes from UserDefaults
+  /// - Returns: Dictionary mapping session IDs to view mode raw values
+  public static func getSessionViewModes() -> [String: String] {
+    guard let data = UserDefaults.standard.data(forKey: sessionViewModes),
+          let modes = try? JSONDecoder().decode([String: String].self, from: data) else {
+      return [:]
+    }
+    return modes
+  }
+
+  /// Sets or removes a view mode for a specific session
+  /// - Parameters:
+  ///   - mode: The view mode raw value to set, or nil to remove
+  ///   - sessionId: The session ID to set the view mode for
+  public static func setSessionViewMode(_ mode: String?, for sessionId: String) {
+    var modes = getSessionViewModes()
+    if let mode = mode {
+      modes[sessionId] = mode
+    } else {
+      modes.removeValue(forKey: sessionId)
+    }
+
+    if let data = try? JSONEncoder().encode(modes) {
+      UserDefaults.standard.set(data, forKey: sessionViewModes)
+    }
+  }
+
+  /// Gets the view mode for a specific session
+  /// - Parameter sessionId: The session ID to get the view mode for
+  /// - Returns: The view mode raw value, or nil if not set
+  public static func getSessionViewMode(for sessionId: String) -> String? {
+    return getSessionViewModes()[sessionId]
   }
 }

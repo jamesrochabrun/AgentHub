@@ -28,6 +28,11 @@ public struct CLIRepositoryTreeView: View {
   var isDebugMode: Bool = false
   var deletingWorktreePath: String? = nil
 
+  // Session color support
+  let getSessionColor: (String) -> String?
+  let onSetSessionColor: (String, String?) -> Void
+  let onOpenSessionInWindow: (CLISession) -> Void
+
   @State private var worktreeToDelete: WorktreeBranch?
   @State private var showDeleteConfirmation = false
 
@@ -47,7 +52,10 @@ public struct CLIRepositoryTreeView: View {
     onDeleteWorktree: ((WorktreeBranch) -> Void)? = nil,
     showLastMessage: Bool = false,
     isDebugMode: Bool = false,
-    deletingWorktreePath: String? = nil
+    deletingWorktreePath: String? = nil,
+    getSessionColor: @escaping (String) -> String? = { _ in nil },
+    onSetSessionColor: @escaping (String, String?) -> Void = { _, _ in },
+    onOpenSessionInWindow: @escaping (CLISession) -> Void = { _ in }
   ) {
     self.repository = repository
     self.onRemove = onRemove
@@ -65,6 +73,9 @@ public struct CLIRepositoryTreeView: View {
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
     self.deletingWorktreePath = deletingWorktreePath
+    self.getSessionColor = getSessionColor
+    self.onSetSessionColor = onSetSessionColor
+    self.onOpenSessionInWindow = onOpenSessionInWindow
   }
 
   public var body: some View {
@@ -92,7 +103,10 @@ public struct CLIRepositoryTreeView: View {
             onToggleMonitoring: onToggleMonitoring,
             showLastMessage: showLastMessage,
             isDebugMode: isDebugMode,
-            isDeleting: worktree.path == deletingWorktreePath
+            isDeleting: worktree.path == deletingWorktreePath,
+            getSessionColor: getSessionColor,
+            onSetSessionColor: onSetSessionColor,
+            onOpenSessionInWindow: onOpenSessionInWindow
           )
           .padding(.leading, 12)
         }

@@ -66,6 +66,12 @@ public struct MonitoringCardView: View {
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
   let onPromptConsumed: (() -> Void)?
 
+  /// Access to AgentHub environment for services
+  @Environment(\.agentHub) private var agentHubProvider
+
+  /// View model for headless mode conversations
+  @State private var headlessViewModel = HeadlessSessionViewModel()
+
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
@@ -123,13 +129,18 @@ public struct MonitoringCardView: View {
       SessionMonitorPanel(
         state: state,
         showTerminal: showTerminal,
+        viewMode: viewModel?.viewMode(for: session.id) ?? .headless,
         terminalKey: terminalKey,
         sessionId: session.id,
         projectPath: session.projectPath,
         claudeClient: claudeClient,
         initialPrompt: initialPrompt,
         viewModel: viewModel,
-        onPromptConsumed: onPromptConsumed
+        headlessViewModel: headlessViewModel,
+        onPromptConsumed: onPromptConsumed,
+        onSendMessage: { message in
+          sendMessageToTerminal(message)
+        }
       )
     }
     .padding(12)
@@ -176,6 +187,12 @@ public struct MonitoringCardView: View {
         claudeClient: claudeClient,
         onDismiss: { pendingChangesSheetItem = nil }
       )
+    }
+    .onAppear {
+      // Configure headless view model with service from environment
+      if let provider = agentHubProvider {
+        headlessViewModel.configure(with: provider.headlessService)
+      }
     }
   }
 
@@ -288,20 +305,56 @@ public struct MonitoringCardView: View {
       //   .help("View code changes")
       // }
 
-      // Terminal/List segmented control (custom capsule style)
+      // Headless/Terminal segmented control (custom capsule style)
+      // COMMENTED OUT: Conversation mode - keeping only headless and terminal
       HStack(spacing: 0) {
-        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(false) } }) {
-          Image(systemName: "list.bullet")
+        // COMMENTED OUT: Conversation button
+        // Button(action: {
+        //   withAnimation(.easeInOut(duration: 0.2)) {
+        //     onToggleTerminal(false)
+        //     // Ensure conversation mode is set when not showing terminal
+        //     if viewModel?.viewMode(for: session.id) != .conversation {
+        //       viewModel?.toggleViewMode(for: session.id)
+        //     }
+        //   }
+        // }) {
+        //   Image(systemName: "bubble.left.and.bubble.right")
+        //     .font(.caption)
+        //     .frame(width: 28, height: 20)
+        //     .foregroundColor(!showTerminal ? .white : .secondary)
+        //     .background(!showTerminal ? Color.brandPrimary : Color.clear)
+        //     .clipShape(Capsule())
+        //     .contentShape(Capsule())
+        // }
+        // .buttonStyle(.plain)
+        // .help("Conversation view")
+
+        // Headless button (streaming JSONL)
+        Button(action: {
+          withAnimation(.easeInOut(duration: 0.2)) {
+            onToggleTerminal(false)
+            // Set headless mode
+            viewModel?.setViewMode(.headless, for: session.id)
+          }
+        }) {
+          Image(systemName: "sparkles")
             .font(.caption)
             .frame(width: 28, height: 20)
-            .foregroundColor(!showTerminal ? .white : .secondary)
-            .background(!showTerminal ? Color.brandPrimary : Color.clear)
+            .foregroundColor(viewModel?.viewMode(for: session.id) == .headless && !showTerminal ? .white : .secondary)
+            .background(viewModel?.viewMode(for: session.id) == .headless && !showTerminal ? Color.brandPrimary : Color.clear)
             .clipShape(Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help("Headless mode (streaming JSON)")
 
-        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(true) } }) {
+        // Terminal button
+        Button(action: {
+          withAnimation(.easeInOut(duration: 0.2)) {
+            onToggleTerminal(true)
+            viewModel?.setViewMode(.terminal, for: session.id)
+          }
+        }) {
           Image(systemName: "terminal")
             .font(.caption)
             .frame(width: 28, height: 20)
@@ -311,11 +364,13 @@ public struct MonitoringCardView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help("Terminal view")
       }
       .padding(2)
       .background(Color.secondary.opacity(0.15))
       .clipShape(Capsule())
       .animation(.easeInOut(duration: 0.2), value: showTerminal)
+      .animation(.easeInOut(duration: 0.2), value: viewModel?.viewMode(for: session.id))
     }
   }
 
@@ -431,6 +486,17 @@ public struct MonitoringCardView: View {
         .font(.caption2)
         .fontWeight(.bold)
         .foregroundColor(.secondary)
+    }
+  }
+
+  // MARK: - Send Message
+
+  /// Sends a message to the terminal for this session
+  private func sendMessageToTerminal(_ message: String) {
+    guard let viewModel = viewModel else { return }
+    let key = terminalKey ?? session.id
+    if let terminal = viewModel.activeTerminals[key] {
+      terminal.sendMessage(message)
     }
   }
 }

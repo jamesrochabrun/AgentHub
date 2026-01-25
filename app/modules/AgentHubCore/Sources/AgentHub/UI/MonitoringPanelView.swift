@@ -310,6 +310,9 @@ public struct MonitoringPanelView: View {
       }
       // Read pending prompt (read-only, safe during view body)
       let initialPrompt = viewModel.pendingPrompt(for: item.session.id)
+      // Don't show terminal in main view if detached window is open for this session
+      let shouldShowTerminal = viewModel.sessionsWithTerminalView.contains(item.session.id)
+        && !viewModel.hasDetachedWindow(for: item.session.id)
 
       MonitoringCardView(
         session: item.session,
@@ -317,7 +320,7 @@ public struct MonitoringPanelView: View {
         codeChangesState: codeChangesState,
         planState: planState,
         claudeClient: claudeClient,
-        showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
+        showTerminal: shouldShowTerminal,
         initialPrompt: initialPrompt,
         terminalKey: item.session.id,
         viewModel: viewModel,
@@ -392,6 +395,9 @@ public struct MonitoringPanelView: View {
               PlanState.from(activities: $0.recentActivities)
             }
             let initialPrompt = viewModel.pendingPrompt(for: session.id)
+            // Don't show terminal in main view if detached window is open for this session
+            let shouldShowTerminal = viewModel.sessionsWithTerminalView.contains(session.id)
+              && !viewModel.hasDetachedWindow(for: session.id)
 
             MonitoringCardView(
               session: session,
@@ -399,7 +405,7 @@ public struct MonitoringPanelView: View {
               codeChangesState: codeChangesState,
               planState: planState,
               claudeClient: claudeClient,
-              showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
+              showTerminal: shouldShowTerminal,
               initialPrompt: initialPrompt,
               terminalKey: session.id,
               viewModel: viewModel,

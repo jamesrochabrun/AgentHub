@@ -27,6 +27,11 @@ public struct CLIWorktreeBranchRow: View {
   var isDebugMode: Bool = false
   var isDeleting: Bool = false
 
+  // Session color support
+  let getSessionColor: (String) -> String?
+  let onSetSessionColor: (String, String?) -> Void
+  let onOpenSessionInWindow: (CLISession) -> Void
+
   @State private var visibleSessionCount: Int = 5
   @State private var showNewSessionMenu: Bool = false
 
@@ -75,7 +80,10 @@ public struct CLIWorktreeBranchRow: View {
     onToggleMonitoring: @escaping (CLISession) -> Void,
     showLastMessage: Bool = false,
     isDebugMode: Bool = false,
-    isDeleting: Bool = false
+    isDeleting: Bool = false,
+    getSessionColor: @escaping (String) -> String? = { _ in nil },
+    onSetSessionColor: @escaping (String, String?) -> Void = { _, _ in },
+    onOpenSessionInWindow: @escaping (CLISession) -> Void = { _ in }
   ) {
     self.worktree = worktree
     self.isExpanded = isExpanded
@@ -91,6 +99,9 @@ public struct CLIWorktreeBranchRow: View {
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
     self.isDeleting = isDeleting
+    self.getSessionColor = getSessionColor
+    self.onSetSessionColor = onSetSessionColor
+    self.onOpenSessionInWindow = onOpenSessionInWindow
   }
 
   public var body: some View {
@@ -235,7 +246,14 @@ public struct CLIWorktreeBranchRow: View {
                   onCopyId: { onCopySessionId(session) },
                   onOpenFile: { onOpenSessionFile(session) },
                   onToggleMonitoring: { onToggleMonitoring(session) },
-                  showLastMessage: showLastMessage
+                  showLastMessage: showLastMessage,
+                  sessionColor: getSessionColor(session.id),
+                  onSetColor: { colorHex in
+                    onSetSessionColor(session.id, colorHex)
+                  },
+                  onOpenInWindow: {
+                    onOpenSessionInWindow(session)
+                  }
                 )
               }
 

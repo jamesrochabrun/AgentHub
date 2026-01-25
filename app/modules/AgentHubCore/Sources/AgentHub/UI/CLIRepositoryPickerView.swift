@@ -9,37 +9,54 @@ import SwiftUI
 
 // MARK: - CLIRepositoryPickerView
 
-/// Button to add a new repository with directory picker
+/// Button to add a new repository with directory picker or GitHub clone
 public struct CLIRepositoryPickerView: View {
   let onAddRepository: () -> Void
+  var onCloneFromGitHub: (() -> Void)?
 
-  public init(onAddRepository: @escaping () -> Void) {
+  @State private var showingGitHubPicker: Bool = false
+
+  public init(
+    onAddRepository: @escaping () -> Void,
+    onCloneFromGitHub: (() -> Void)? = nil
+  ) {
     self.onAddRepository = onAddRepository
+    self.onCloneFromGitHub = onCloneFromGitHub
   }
 
   public var body: some View {
-    Button(action: onAddRepository) {
-      HStack(spacing: 8) {
-        Image(systemName: "plus.circle")
-          .font(.system(size: DesignTokens.IconSize.md))
-          .foregroundColor(.primary)
-
-        Text("Add Repository")
-          .font(.system(size: 13))
-          .foregroundColor(.primary)
-
-        Spacer()
+    HStack(spacing: 8) {
+      // Add from local directory button (primary action)
+      Button(action: onAddRepository) {
+        Label("Add Repository", systemImage: "plus.circle")
       }
-      .padding(.horizontal, DesignTokens.Spacing.md)
-      .padding(.vertical, DesignTokens.Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-          .fill(Color.secondary.opacity(0.2))
-      )
-      .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md))
+      .buttonStyle(.borderedProminent)
+      .help("Select a local git repository to monitor CLI sessions")
+
+      // Clone from GitHub button (secondary action)
+      Button(action: {
+        if let handler = onCloneFromGitHub {
+          handler()
+        } else {
+          showingGitHubPicker = true
+        }
+      }) {
+        Label("Clone from GitHub", systemImage: "network")
+      }
+      .buttonStyle(.bordered)
+      .help("Clone a repository from GitHub")
     }
-    .buttonStyle(.plain)
-    .help("Select a git repository to monitor CLI sessions")
+    .sheet(isPresented: $showingGitHubPicker) {
+      GitHubRepositoryPickerView(
+        onSelect: { repo in
+          // Placeholder - will be wired to clone logic in PS3
+          showingGitHubPicker = false
+        },
+        onDismiss: {
+          showingGitHubPicker = false
+        }
+      )
+    }
   }
 }
 
@@ -48,6 +65,11 @@ public struct CLIRepositoryPickerView: View {
 #Preview {
   VStack(spacing: 16) {
     CLIRepositoryPickerView(onAddRepository: { })
+
+    CLIRepositoryPickerView(
+      onAddRepository: { },
+      onCloneFromGitHub: { print("Clone from GitHub") }
+    )
   }
   .padding()
   .frame(width: 350)
