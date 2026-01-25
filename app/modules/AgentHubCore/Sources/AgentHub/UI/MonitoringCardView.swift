@@ -66,6 +66,12 @@ public struct MonitoringCardView: View {
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
   let onPromptConsumed: (() -> Void)?
 
+  /// Access to AgentHub environment for services
+  @Environment(\.agentHub) private var agentHubProvider
+
+  /// View model for headless mode conversations
+  @State private var headlessViewModel = HeadlessSessionViewModel()
+
   @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
@@ -123,13 +129,14 @@ public struct MonitoringCardView: View {
       SessionMonitorPanel(
         state: state,
         showTerminal: showTerminal,
-        viewMode: viewModel?.viewMode(for: session.id) ?? .conversation,
+        viewMode: viewModel?.viewMode(for: session.id) ?? .headless,
         terminalKey: terminalKey,
         sessionId: session.id,
         projectPath: session.projectPath,
         claudeClient: claudeClient,
         initialPrompt: initialPrompt,
         viewModel: viewModel,
+        headlessViewModel: headlessViewModel,
         onPromptConsumed: onPromptConsumed,
         onSendMessage: { message in
           sendMessageToTerminal(message)
@@ -180,6 +187,12 @@ public struct MonitoringCardView: View {
         claudeClient: claudeClient,
         onDismiss: { pendingChangesSheetItem = nil }
       )
+    }
+    .onAppear {
+      // Configure headless view model with service from environment
+      if let provider = agentHubProvider {
+        headlessViewModel.configure(with: provider.headlessService)
+      }
     }
   }
 

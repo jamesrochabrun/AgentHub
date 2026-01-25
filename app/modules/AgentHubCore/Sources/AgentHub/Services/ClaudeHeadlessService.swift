@@ -116,6 +116,11 @@ private struct ControlResponse: Encodable {
 /// ```
 public actor ClaudeHeadlessService {
 
+  // MARK: - Configuration
+
+  /// Additional paths to search for Claude binary and include in PATH
+  private let additionalPaths: [String]
+
   // MARK: - State
 
   /// The currently running process, if any
@@ -141,16 +146,29 @@ public actor ClaudeHeadlessService {
 
   // MARK: - Constants
 
-  /// Common locations where Claude CLI might be installed
-  private static let claudeBinaryPaths = [
-    "\(NSHomeDirectory())/.claude/local/claude",
-    "/usr/local/bin/claude",
-    "/opt/homebrew/bin/claude"
-  ]
+  /// Default locations where Claude CLI might be installed (in addition to additionalPaths)
+  private static var defaultBinaryPaths: [String] {
+    let homeDir = NSHomeDirectory()
+    return [
+      "\(homeDir)/.claude/local",
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+      "/usr/bin",
+      // NVM paths (common Node.js versions)
+      "\(homeDir)/.nvm/current/bin",
+      "\(homeDir)/.nvm/versions/node/v22.16.0/bin",
+      "\(homeDir)/.nvm/versions/node/v20.11.1/bin",
+      "\(homeDir)/.nvm/versions/node/v18.19.0/bin"
+    ]
+  }
 
   // MARK: - Initialization
 
-  public init() { }
+  /// Creates a headless service with additional PATH entries.
+  /// - Parameter additionalPaths: Additional paths for binary search and PATH enhancement
+  public init(additionalPaths: [String] = []) {
+    self.additionalPaths = additionalPaths
+  }
 
   // MARK: - Public Methods
 
@@ -205,9 +223,19 @@ public actor ClaudeHeadlessService {
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
 
-    // Set environment to prevent interactive prompts
+    // Set environment with enhanced PATH
     var environment = ProcessInfo.processInfo.environment
     environment["TERM"] = "dumb"
+
+    // Enhance PATH with additional paths (matching EmbeddedTerminalView pattern)
+    let paths = additionalPaths + Self.defaultBinaryPaths
+    let pathString = paths.joined(separator: ":")
+    if let existingPath = environment["PATH"] {
+      environment["PATH"] = "\(pathString):\(existingPath)"
+    } else {
+      environment["PATH"] = pathString
+    }
+
     process.environment = environment
 
     // Store references
@@ -316,11 +344,23 @@ public actor ClaudeHeadlessService {
   // MARK: - Private Methods
 
   /// Finds the Claude CLI binary in common installation locations.
+  ///
+  /// Search order:
+  /// 1. Additional paths from configuration (highest priority)
+  /// 2. Default binary paths (includes NVM paths)
+  /// 3. Fall back to `which claude`
   private func findClaudeBinary() throws -> String {
-    // First check common paths
-    for path in Self.claudeBinaryPaths {
-      if FileManager.default.isExecutableFile(atPath: path) {
-        return path
+    let fileManager = FileManager.default
+
+    // Combine additional paths (priority) with default paths
+    let allPaths = additionalPaths + Self.defaultBinaryPaths
+
+    // Search for claude binary in all paths
+    for basePath in allPaths {
+      let fullPath = "\(basePath)/claude"
+      if fileManager.isExecutableFile(atPath: fullPath) {
+        AppLogger.session.debug("Found Claude binary at: \(fullPath)")
+        return fullPath
       }
     }
 

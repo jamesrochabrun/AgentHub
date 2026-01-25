@@ -63,7 +63,41 @@ public final class AgentHubProvider {
 
   /// Claude headless service for streaming JSONL events
   public private(set) lazy var headlessService: ClaudeHeadlessService = {
-    ClaudeHeadlessService()
+    // Build additionalPaths matching createClaudeClient logic
+    var paths: [String] = []
+    let homeDir = NSHomeDirectory()
+
+    // Local Claude installation (highest priority)
+    let localClaudePath = "\(homeDir)/.claude/local"
+    if FileManager.default.fileExists(atPath: localClaudePath) {
+      paths.append(localClaudePath)
+    }
+
+    // Add configured additional CLI paths
+    for path in configuration.additionalCLIPaths {
+      if !paths.contains(path) {
+        paths.append(path)
+      }
+    }
+
+    // Common development tool paths
+    let defaultPaths = [
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+      "/usr/bin",
+      "\(homeDir)/.bun/bin",
+      "\(homeDir)/.deno/bin",
+      "\(homeDir)/.cargo/bin",
+      "\(homeDir)/.local/bin"
+    ]
+
+    for path in defaultPaths {
+      if !paths.contains(path) {
+        paths.append(path)
+      }
+    }
+
+    return ClaudeHeadlessService(additionalPaths: paths)
   }()
 
   /// Claude Code client for SDK communication
