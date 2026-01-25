@@ -15,9 +15,18 @@ import SwiftUI
 /// A ManagedLocalProcessTerminalView subclass that safely handles cleanup by stopping
 /// data reception before process termination. This prevents crashes when the
 /// terminal buffer receives data during deallocation.
+///
+/// Also handles DEC Private Mode 2026 (Synchronized Output) to batch terminal
+/// rendering during Claude Code operations, preventing visual flickering.
+///
+/// Parses JSON lines from stream-json output format and invokes callbacks for
+/// real-time ConversationView updates.
 class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
   private var _isStopped = false
   private let stopLock = NSLock()
+
+  /// Handler for DEC Private Mode 2026 (Synchronized Output) sequences and JSON parsing.
+  let syncOutputHandler = SynchronizedOutputHandler()
 
   var isStopped: Bool {
     stopLock.lock()
@@ -34,7 +43,17 @@ class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
 
   override func dataReceived(slice: ArraySlice<UInt8>) {
     guard !isStopped else { return }
-    super.dataReceived(slice: slice)
+
+    // Process through sync output handler to intercept mode 2026 sequences
+    let processedData = syncOutputHandler.process(slice)
+
+    // Forward processed data to terminal (mode 2026 sequences stripped out)
+    if !processedData.isEmpty {
+      feed(byteArray: ArraySlice(processedData))
+
+      // Parse JSON lines for real-time streaming updates to ConversationView
+      syncOutputHandler.parseJsonLines(processedData)
+    }
   }
 }
 
@@ -106,6 +125,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var promptSent = false  // Track if we've already sent a prompt
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
 
+  /// Callback for streaming messages parsed from PTY output.
+  /// Set this to receive real-time updates for ConversationView.
+  public var onStreamingMessage: ((@Sendable (StreamingMessage) -> Void))? {
+    didSet {
+      // Wire callback to terminal's sync output handler
+      terminalView?.syncOutputHandler.onStreamingMessage = onStreamingMessage
+    }
+  }
+
   // MARK: - Lifecycle
 
   /// Terminate process on deallocation (safety net)
@@ -152,6 +180,11 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let terminal = SafeLocalProcessTerminalView(frame: bounds)
     terminal.translatesAutoresizingMaskIntoConstraints = false
     terminal.processDelegate = self
+
+    // Wire streaming callback if already set
+    if let callback = onStreamingMessage {
+      terminal.syncOutputHandler.onStreamingMessage = callback
+    }
 
     // Configure terminal appearance
     configureTerminalAppearance(terminal)
@@ -284,6 +317,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 #endif
 
     // Build command: resume existing session (-r) or start new session
+    // Note: --output-format stream-json does NOT work in interactive mode, only with -p flag
+    // ConversationView updates are handled via JSONL file watching instead
     let shellCommand: String
     if let sessionId = sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
       // Resume existing session

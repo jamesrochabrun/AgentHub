@@ -59,11 +59,14 @@ public struct ConversationMessage: Identifiable, Equatable, Sendable {
 // MARK: - SessionViewMode
 
 /// The view mode for displaying a session's content.
-/// Used in `SessionMonitorPanel` to toggle between terminal and conversation views.
+/// Used in `SessionMonitorPanel` to toggle between terminal, conversation, and headless views.
 public enum SessionViewMode: String, Sendable, CaseIterable {
   /// Show the raw terminal output (existing behavior, default)
   case terminal
 
-  /// Show the structured conversation view (new)
+  /// Show the structured conversation view (parses terminal output)
   case conversation
+
+  /// Show the headless conversation view (spawns Claude with --output-format stream-json)
+  case headless
 }

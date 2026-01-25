@@ -240,7 +240,8 @@ public final class CLISessionsViewModel {
 
   /// Gets an existing terminal or creates a new one for the given key.
   /// Key should be session ID for real sessions, or "pending-{pendingId}" for pending sessions.
-  /// This preserves the terminal PTY across pending → real session transitions.
+  /// This preserves the terminal PTY across pending → real session transition.
+  /// Also wires up streaming callbacks for real-time ConversationView updates.
   public func getOrCreateTerminal(
     forKey key: String,
     sessionId: String?,
@@ -263,8 +264,111 @@ public final class CLISessionsViewModel {
       claudeClient: claudeClient,
       initialPrompt: initialPrompt
     )
+
+    // Wire streaming callback for real-time ConversationView updates
+    // Use key (which may be sessionId or pending key) to find the right monitor state
+    terminal.onStreamingMessage = { [weak self] message in
+      Task { @MainActor in
+        self?.handleStreamingMessage(message, forKey: key)
+      }
+    }
+
     activeTerminals[key] = terminal
     return terminal
+  }
+
+  /// Handles a streaming message from the terminal PTY output.
+  /// Converts `StreamingMessage` to `ConversationMessage` and updates `monitorStates`.
+  private func handleStreamingMessage(_ message: StreamingMessage, forKey key: String) {
+    // Determine the actual session ID (key may be "pending-xxx" initially)
+    let sessionId: String
+    if key.hasPrefix("pending-") {
+      // For pending sessions, we may not have a real session ID yet
+      // The message will be associated once the session is transferred
+      return
+    } else {
+      sessionId = key
+    }
+
+    // Get or create the monitor state for this session
+    var state = monitorStates[sessionId] ?? SessionMonitorState()
+
+    // Convert StreamingMessage to ActivityEntry and update state
+    let activityType: ActivityType
+    let description: String
+
+    switch message.type {
+    case .user:
+      activityType = .userMessage
+      description = message.textContent ?? ""
+      state.messageCount += 1
+
+    case .assistant:
+      if let toolUse = message.toolUse {
+        activityType = .toolUse(name: toolUse.name)
+        description = toolUse.input ?? toolUse.name
+        state.toolCalls[toolUse.name, default: 0] += 1
+        state.currentTool = toolUse.name
+      } else if let text = message.textContent {
+        activityType = .assistantMessage
+        description = String(text.prefix(50))
+        state.messageCount += 1
+      } else {
+        // Thinking indicator
+        activityType = .thinking
+        description = "Thinking..."
+      }
+
+    case .result:
+      if let result = message.toolResult {
+        activityType = .toolResult(name: "Tool", success: result.success)
+        description = result.success ? "Completed" : "Error"
+        state.currentTool = nil
+      } else {
+        return
+      }
+
+    case .system:
+      // Ignore system messages for now
+      return
+    }
+
+    // Create and add the activity entry
+    let activity = ActivityEntry(
+      timestamp: message.timestamp,
+      type: activityType,
+      description: description
+    )
+    state.recentActivities.append(activity)
+
+    // Keep recent activities bounded
+    if state.recentActivities.count > 100 {
+      state.recentActivities.removeFirst(state.recentActivities.count - 100)
+    }
+
+    // Update last activity timestamp
+    state.lastActivityAt = message.timestamp
+
+    // Update status based on the message type
+    switch message.type {
+    case .user:
+      state.status = .thinking
+    case .assistant:
+      if message.toolUse != nil {
+        state.status = .executingTool(name: message.toolUse!.name)
+      } else if message.textContent != nil {
+        state.status = .waitingForUser
+      } else {
+        state.status = .thinking
+      }
+    case .result:
+      state.status = .thinking
+    case .system:
+      break
+    }
+
+    // Update the monitor state
+    monitorStates[sessionId] = state
   }
 
   /// Removes the terminal for a given key and terminates its process

@@ -61,6 +61,11 @@ public final class AgentHubProvider {
     GitHubCloneService()
   }()
 
+  /// Claude headless service for streaming JSONL events
+  public private(set) lazy var headlessService: ClaudeHeadlessService = {
+    ClaudeHeadlessService()
+  }()
+
   /// Claude Code client for SDK communication
   public private(set) lazy var claudeClient: (any ClaudeCode)? = {
     createClaudeClient()

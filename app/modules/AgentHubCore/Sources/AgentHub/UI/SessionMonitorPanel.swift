@@ -11,8 +11,9 @@ import SwiftUI
 // MARK: - SessionMonitorPanel
 
 /// Real-time monitoring panel showing current session status and recent activity.
-/// Supports two view modes:
-/// - `.conversation`: Shows structured conversation view with messages and tool calls
+/// Supports three view modes:
+/// - `.conversation`: Shows structured conversation view with messages and tool calls (parses terminal output)
+/// - `.headless`: Shows headless conversation view (spawns Claude with streaming JSON)
 /// - `.terminal`: Shows raw terminal output (SwiftTerm)
 /// Note: Only shows real-time data, not cumulative stats (which are misleading for continued sessions)
 public struct SessionMonitorPanel: View {
@@ -25,6 +26,7 @@ public struct SessionMonitorPanel: View {
   let claudeClient: (any ClaudeCode)?
   let initialPrompt: String?
   let viewModel: CLISessionsViewModel?
+  let headlessViewModel: HeadlessSessionViewModel?
   let onPromptConsumed: (() -> Void)?
   let onSendMessage: ((String) -> Void)?
 
@@ -38,6 +40,7 @@ public struct SessionMonitorPanel: View {
     claudeClient: (any ClaudeCode)? = nil,
     initialPrompt: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
+    headlessViewModel: HeadlessSessionViewModel? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onSendMessage: ((String) -> Void)? = nil
   ) {
@@ -50,6 +53,7 @@ public struct SessionMonitorPanel: View {
     self.claudeClient = claudeClient
     self.initialPrompt = initialPrompt
     self.viewModel = viewModel
+    self.headlessViewModel = headlessViewModel
     self.onPromptConsumed = onPromptConsumed
     self.onSendMessage = onSendMessage
   }
@@ -83,7 +87,7 @@ public struct SessionMonitorPanel: View {
 
       // ZStack preserves all views to maintain state when switching modes
       ZStack {
-        // Conversation view (new structured message display)
+        // Conversation view (parses terminal output)
         Group {
           if state != nil {
             SessionConversationView(
@@ -97,6 +101,31 @@ public struct SessionMonitorPanel: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .opacity(viewMode == .conversation && !showTerminal ? 1 : 0)
+
+        // Headless conversation view (spawns Claude with streaming JSON)
+        Group {
+          if let headlessVM = headlessViewModel {
+            HeadlessConversationView(
+              viewModel: headlessVM,
+              workingDirectory: URL(fileURLWithPath: projectPath ?? NSHomeDirectory())
+            )
+          } else {
+            // Fallback: show placeholder if headless view model not provided
+            VStack(spacing: 12) {
+              Image(systemName: "sparkles")
+                .font(.system(size: 24))
+                .foregroundColor(.secondary)
+              Text("Headless Mode")
+                .font(.headline)
+              Text("Not configured")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+          }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .opacity(viewMode == .headless && !showTerminal ? 1 : 0)
 
         // Activity list (legacy compact view, shown when not in conversation mode)
         Group {
@@ -415,6 +444,140 @@ private struct ActivityRow: View {
   .padding(16)
   .frame(width: 700, height: 420, alignment: .topLeading)
   .background(Color(NSColor.windowBackgroundColor))
+}
+
+#Preview("Headless Mode") {
+  HeadlessModeActivePreview()
+}
+
+#Preview("Headless Mode - Empty") {
+  HeadlessModeEmptyPreview()
+}
+
+#Preview("Headless Mode - With Tool Approval") {
+  HeadlessModeApprovalPreview()
+}
+
+// MARK: - Headless Mode Preview Helpers
+
+private struct HeadlessModeEmptyPreview: View {
+  @State private var headlessVM = HeadlessSessionViewModel()
+
+  var body: some View {
+    SessionMonitorPanel(
+      state: nil,
+      showTerminal: false,
+      viewMode: .headless,
+      headlessViewModel: headlessVM
+    )
+    .padding()
+    .frame(width: 450, height: 400)
+  }
+}
+
+private struct HeadlessModeActivePreview: View {
+  @State private var headlessVM = HeadlessSessionViewModel()
+
+  var body: some View {
+    SessionMonitorPanel(
+      state: SessionMonitorState(
+        status: .executingTool(name: "Bash"),
+        currentTool: "Bash",
+        lastActivityAt: Date(),
+        inputTokens: 32000,
+        outputTokens: 1200,
+        totalOutputTokens: 4800,
+        model: "claude-sonnet-4-20250514",
+        recentActivities: []
+      ),
+      showTerminal: false,
+      viewMode: .headless,
+      projectPath: NSHomeDirectory(),
+      headlessViewModel: headlessVM
+    )
+    .onAppear {
+      headlessVM.messages = [
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-60),
+          content: .user(text: "Help me set up a new Swift package")
+        ),
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-55),
+          content: .assistant(text: "I'll help you create a new Swift package. Let me start by setting up the basic structure.")
+        ),
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-50),
+          content: .toolUse(name: "Bash", input: "swift package init --type library", id: "tool-1")
+        ),
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-45),
+          content: .toolResult(name: "Bash", success: true, toolUseId: "tool-1")
+        ),
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-40),
+          content: .assistant(text: "The package has been initialized. Now let me add some basic dependencies.")
+        )
+      ]
+    }
+    .padding()
+    .frame(width: 500, height: 500)
+  }
+}
+
+private struct HeadlessModeApprovalPreview: View {
+  @State private var headlessVM = HeadlessSessionViewModel()
+
+  var body: some View {
+    SessionMonitorPanel(
+      state: SessionMonitorState(
+        status: .idle,
+        lastActivityAt: Date(),
+        inputTokens: 25000,
+        outputTokens: 800,
+        totalOutputTokens: 2400,
+        model: "claude-sonnet-4-20250514",
+        recentActivities: []
+      ),
+      showTerminal: false,
+      viewMode: .headless,
+      projectPath: NSHomeDirectory(),
+      headlessViewModel: headlessVM
+    )
+    .onAppear {
+      headlessVM.messages = [
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-30),
+          content: .user(text: "Delete all .tmp files in this directory")
+        ),
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-25),
+          content: .assistant(text: "I'll help you clean up the temporary files. Let me first find and then delete them.")
+        ),
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-20),
+          content: .toolUse(name: "Bash", input: "find . -name '*.tmp' -type f", id: "tool-1")
+        ),
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-15),
+          content: .toolResult(name: "Bash", success: true, toolUseId: "tool-1")
+        ),
+        ConversationMessage(
+          timestamp: Date().addingTimeInterval(-10),
+          content: .assistant(text: "Found 5 temporary files. I'll delete them now.")
+        )
+      ]
+      headlessVM.pendingToolApproval = ClaudeControlRequestEvent(
+        requestId: "approval-123",
+        request: .canUseTool(
+          toolName: "Bash",
+          input: JSONValue(["command": "rm -f *.tmp"]),
+          toolUseId: "tool-2"
+        )
+      )
+    }
+    .padding()
+    .frame(width: 500, height: 500)
+  }
 }
 
 #Preview("All Components") {
