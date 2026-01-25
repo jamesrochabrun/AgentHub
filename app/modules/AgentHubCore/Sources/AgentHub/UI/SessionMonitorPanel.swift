@@ -210,9 +210,9 @@ struct ModelBadge: View {
   var body: some View {
     HStack(spacing: 4) {
       Image(systemName: "cpu")
-        .font(.caption2)
+        .font(.subheadline)
       Text(displayName)
-        .font(.caption)
+        .font(.system(.subheadline, design: .monospaced))
     }
     .foregroundColor(.secondary)
   }

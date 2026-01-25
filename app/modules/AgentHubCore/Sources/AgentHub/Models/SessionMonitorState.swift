@@ -102,7 +102,7 @@ public struct SessionMonitorState: Equatable, Sendable {
     let used = Self.formatTokenCount(inputTokens)
     let total = Self.formatTokenCount(contextWindowSize)
     let percentage = Int(contextWindowUsagePercentage * 100)
-    return "~\(used) / \(total) (~\(percentage)%)"
+    return "~\(used)/\(total) (~\(percentage)%)"
   }
 
   /// Format token count with K/M suffix

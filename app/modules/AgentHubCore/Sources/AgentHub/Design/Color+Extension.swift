@@ -206,6 +206,10 @@ extension Color {
     Color.gray.opacity(0.12)
   }
 
+  public static var flatCardBackground: Color {
+    Color(nsColor: .windowBackgroundColor)
+  }
+
   // MARK: - Theme-Aware Background Gradient
 
   public static var backgroundGradient: LinearGradient {

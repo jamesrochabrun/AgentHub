@@ -190,23 +190,21 @@ public struct MonitoringPanelView: View {
       // Layout toggle (only show when > 2 sessions total)
       let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
       if totalSessions >= 2 {
-        HStack(spacing: 0) {
+        HStack(spacing: 4) {
           ForEach(LayoutMode.allCases, id: \.rawValue) { mode in
             Button(action: { withAnimation(.easeInOut(duration: 0.2)) { layoutMode = mode } }) {
               Image(systemName: mode.icon)
                 .font(.caption)
-                .frame(width: 28, height: 20)
-                .foregroundColor(layoutMode == mode ? .white : .secondary)
-                .background(layoutMode == mode ? Color.brandPrimary : Color.clear)
-                .clipShape(Capsule())
-                .contentShape(Capsule())
+                .frame(width: 28, height: 22)
+                .foregroundColor(layoutMode == mode ? .brandPrimary : .secondary)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
           }
         }
-        .padding(2)
-        .background(Color.secondary.opacity(0.15))
-        .clipShape(Capsule())
+        .padding(4)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
         .animation(.easeInOut(duration: 0.2), value: layoutMode)
       }
 

@@ -70,6 +70,7 @@ public struct MonitoringCardView: View {
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
   @State private var pendingChangesSheetItem: PendingChangesSheetItem?
+  @Environment(\.colorScheme) private var colorScheme
 
   public init(
     session: CLISession,
@@ -110,41 +111,40 @@ public struct MonitoringCardView: View {
   }
 
   public var body: some View {
-    VStack(alignment: .leading, spacing: 8) {
+    VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions
       header
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
 
       Divider()
 
-      // Status row with model and path
-      statusRow
+      // Path row with folder, branch, and diff button
+      pathRow
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
 
-      // Monitoring panel content (reuses existing component)
-      SessionMonitorPanel(
-        state: state,
-        showTerminal: showTerminal,
-        terminalKey: terminalKey,
-        sessionId: session.id,
-        projectPath: session.projectPath,
-        claudeClient: claudeClient,
-        initialPrompt: initialPrompt,
-        viewModel: viewModel,
-        onPromptConsumed: onPromptConsumed
-      )
-    }
-    .padding(12)
-    .agentHubCard(isHighlighted: isHighlighted)
-    .overlay(alignment: .topTrailing) {
-      Button(action: onStopMonitoring) {
-        Image(systemName: "xmark.circle.fill")
-          .font(.system(size: 16))
-          .foregroundColor(.secondary)
-          .shadow(color: .black.opacity(0.2), radius: 2, x: 0, y: 1)
+      // Context bar (if available)
+      if let state = state, state.inputTokens > 0 {
+        Divider()
+
+        ContextWindowBar(
+          percentage: state.contextWindowUsagePercentage,
+          formattedUsage: state.formattedContextUsage,
+          model: state.model
+        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
       }
-      .buttonStyle(.plain)
-      .help("Stop monitoring")
-      .offset(x: 8, y: -8)
+
+      // Recent activity (with status) or terminal
+      Divider()
+
+      monitorContent
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
+    .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
     .sheet(item: $codeChangesSheetItem) { item in
       CodeChangesView(
         session: item.session,
@@ -192,143 +192,117 @@ public struct MonitoringCardView: View {
   // MARK: - Header
 
   private var header: some View {
-    HStack {
-      // Session name (slug) if available, followed by session ID
-      HStack(spacing: 6) {
-        if let slug = session.slug {
-          // Show slug and short ID (no "Session:" label)
-          Text(slug)
-            .font(.system(.subheadline, design: .monospaced, weight: .semibold))
-            .foregroundColor(.brandPrimary)
-            .lineLimit(1)
+    HStack(spacing: 8) {
+      // Activity indicator circle - shows when session is working
+      Circle()
+        .fill(isHighlighted ? Color.brandPrimary : .gray.opacity(0.3))
+        .frame(width: 10, height: 10)
+        .shadow(color: isHighlighted ? Color.brandPrimary.opacity(0.6) : .clear, radius: 4)
 
-          Text("•")
+      // Session label and ID
+      HStack(spacing: 4) {
+        Text("Session:")
+          .font(.subheadline)
+          .foregroundColor(.secondary)
+        Text(session.shortId)
+          .font(.system(.subheadline, design: .monospaced))
+          .fontWeight(.bold)
+      }
+
+      // Icon buttons for actions
+      HStack(spacing: 4) {
+        AnimatedCopyButton(action: onCopySessionId)
+
+        Button(action: onOpenSessionFile) {
+          Image(systemName: "doc.text")
             .font(.caption)
             .foregroundColor(.secondary)
-
-          Text(session.shortId)
-            .font(.system(.subheadline, design: .monospaced))
-            .foregroundColor(.secondary)
-            .fontWeight(.bold)
-        } else {
-          // No slug - show "Session:" label with ID
-          ViewThatFits(in: .horizontal) {
-            // Wide: show label and ID
-            HStack(spacing: 4) {
-              Text("Session:")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-              Text(session.shortId)
-                .font(.system(.subheadline, design: .monospaced))
-                .foregroundColor(.secondary)
-                .fontWeight(.bold)
-            }
-
-            // Narrow: just ID
-            Text(session.shortId)
-              .font(.system(.subheadline, design: .monospaced))
-              .foregroundColor(.secondary)
-              .fontWeight(.bold)
-          }
+            .frame(width: 24, height: 24)
+            .background(Color.secondary.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
         }
-      }
-      .lineLimit(1)
+        .buttonStyle(.plain)
+        .help("View session transcript")
 
-      // Copy session ID button (right after ID)
-      Button(action: onCopySessionId) {
-        Image(systemName: "doc.on.doc")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .agentHubChip()
+        Button(action: onConnect) {
+          Image(systemName: "rectangle.portrait.and.arrow.right")
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .frame(width: 24, height: 24)
+            .background(Color.secondary.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help("Open in external Terminal")
       }
-      .buttonStyle(.plain)
-      .help("Copy session ID")
-
-      // View transcript button (right after copy)
-      Button(action: onOpenSessionFile) {
-        Image(systemName: "doc.text")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .agentHubChip()
-      }
-      .buttonStyle(.plain)
-      .help("View session transcript")
-
-      // Open in external terminal button (right after transcript)
-      Button(action: onConnect) {
-        Image(systemName: "rectangle.portrait.and.arrow.right")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .agentHubChip()
-      }
-      .buttonStyle(.plain)
-      .help("Open in external Terminal")
 
       Spacer()
 
-      // TEMPORARY: Disabling code changes button feature
-      // TODO: Re-enable when code changes view is ready for production
-      // if let codeChangesState, codeChangesState.changeCount > 0 {
-      //   Button(action: {
-      //     codeChangesSheetItem = CodeChangesSheetItem(
-      //       session: session,
-      //       codeChangesState: codeChangesState
-      //     )
-      //   }) {
-      //     HStack(spacing: 4) {
-      //       Image(systemName: "chevron.left.forwardslash.chevron.right")
-      //         .font(.caption)
-      //       Text("\(codeChangesState.changeCount)")
-      //         .font(.system(.caption2, design: .rounded))
-      //     }
-      //     .foregroundColor(.brandPrimary)
-      //     .agentHubChip()
-      //   }
-      //   .buttonStyle(.plain)
-      //   .help("View code changes")
-      // }
-
-      // Terminal/List segmented control (custom capsule style)
-      HStack(spacing: 0) {
+      // Terminal/List segmented control
+      HStack(spacing: 4) {
         Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(false) } }) {
           Image(systemName: "list.bullet")
             .font(.caption)
-            .frame(width: 28, height: 20)
-            .foregroundColor(!showTerminal ? .white : .secondary)
-            .background(!showTerminal ? Color.brandPrimary : Color.clear)
-            .clipShape(Capsule())
-            .contentShape(Capsule())
+            .frame(width: 28, height: 22)
+            .foregroundColor(!showTerminal ? .brandPrimary : .secondary)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
 
         Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(true) } }) {
           Image(systemName: "terminal")
             .font(.caption)
-            .frame(width: 28, height: 20)
-            .foregroundColor(showTerminal ? .white : .secondary)
-            .background(showTerminal ? Color.brandPrimary : Color.clear)
-            .clipShape(Capsule())
-            .contentShape(Capsule())
+            .frame(width: 28, height: 22)
+            .foregroundColor(showTerminal ? .brandPrimary : .secondary)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
       }
-      .padding(2)
-      .background(Color.secondary.opacity(0.15))
-      .clipShape(Capsule())
+      .padding(4)
+      .background(Color.secondary.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: 6))
       .animation(.easeInOut(duration: 0.2), value: showTerminal)
+
+      // Close button (inline)
+      Button(action: onStopMonitoring) {
+        Image(systemName: "xmark")
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .frame(width: 24, height: 24)
+      }
+      .buttonStyle(.plain)
+      .help("Stop monitoring")
     }
   }
 
-  // MARK: - Status Row
+  // MARK: - Path Row
 
-  private var statusRow: some View {
-    HStack(spacing: 6) {
-      pathView
-      branchPill
+  private var pathRow: some View {
+    HStack(spacing: 8) {
+      // Folder icon and path
+      HStack(spacing: 4) {
+        Image(systemName: "folder")
+          .font(.caption)
+          .foregroundColor(.secondary)
+
+        Text(session.projectPath)
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+
+      // Branch name in brand color
+      if let branch = session.branchName {
+        Text(branch)
+          .font(.caption)
+          .fontWeight(.medium)
+          .foregroundColor(.brandPrimary)
+      }
 
       Spacer()
 
-      // Pending changes preview button (only when awaiting approval with code change tool)
+      // Pending changes preview button
       if let pendingToolUse = state?.pendingToolUse,
          pendingToolUse.isCodeChangeTool,
          case .awaitingApproval = state?.status {
@@ -340,18 +314,21 @@ public struct MonitoringCardView: View {
         }) {
           HStack(spacing: 4) {
             Image(systemName: "eye")
-              .font(.caption)
+              .font(.caption2)
             Text("Preview")
-              .font(.system(.caption2, design: .rounded))
+              .font(.caption2)
           }
           .foregroundColor(.orange)
-          .agentHubChip()
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(Color.orange.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
         .help("Preview pending \(pendingToolUse.toolName) change")
       }
 
-      // Plan button (if plan detected)
+      // Plan button
       if let planState = planState {
         Button(action: {
           planSheetItem = PlanSheetItem(
@@ -361,18 +338,21 @@ public struct MonitoringCardView: View {
         }) {
           HStack(spacing: 4) {
             Image(systemName: "list.bullet.clipboard")
-              .font(.caption)
+              .font(.caption2)
             Text("Plan")
-              .font(.system(.caption2, design: .rounded))
+              .font(.caption2)
           }
           .foregroundColor(.secondary)
-          .agentHubChip()
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
         .help("View session plan")
       }
 
-      // Git diff button (always visible)
+      // Diff button
       Button(action: {
         gitDiffSheetItem = GitDiffSheetItem(
           session: session,
@@ -381,12 +361,15 @@ public struct MonitoringCardView: View {
       }) {
         HStack(spacing: 4) {
           Image(systemName: "arrow.left.arrow.right")
-            .font(.caption)
+            .font(.caption2)
           Text("Diff")
-            .font(.system(.caption2, design: .rounded))
+            .font(.caption2)
         }
         .foregroundColor(.secondary)
-        .agentHubChip()
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
       }
       .buttonStyle(.plain)
       .help("View git unstaged changes")
@@ -396,42 +379,198 @@ public struct MonitoringCardView: View {
         Button(action: onRefreshTerminal) {
           HStack(spacing: 4) {
             Image(systemName: "arrow.clockwise")
-              .font(.caption)
-            Text("Terminal")
-              .font(.system(.caption2, design: .rounded))
+              .font(.caption2)
+            Text("Refresh")
+              .font(.caption2)
           }
           .foregroundColor(.secondary)
-          .agentHubChip()
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
         .help("Refresh terminal (reload session history)")
       }
     }
-    .help(session.projectPath)
   }
 
-  private var pathView: some View {
-    HStack(spacing: 3) {
-      Image(systemName: "folder")
-        .font(.caption2)
-        .foregroundColor(.secondary.opacity(0.6))
-
-      Text(session.projectPath)
-        .font(.caption2)
-        .foregroundColor(.secondary)
-        .lineLimit(1)
-        .truncationMode(.middle)
-    }
-  }
+  // MARK: - Monitor Content
 
   @ViewBuilder
-  private var branchPill: some View {
-    if let branch = session.branchName {
-      Text(branch)
-        .font(.caption2)
-        .fontWeight(.bold)
-        .foregroundColor(.secondary)
+  private var monitorContent: some View {
+    if showTerminal {
+      EmbeddedTerminalView(
+        terminalKey: terminalKey ?? session.id,
+        sessionId: session.id,
+        projectPath: session.projectPath,
+        claudeClient: claudeClient,
+        initialPrompt: initialPrompt,
+        viewModel: viewModel
+      )
+      .frame(minHeight: 300)
+    } else {
+      VStack(alignment: .leading, spacing: 12) {
+        Text("Recent Activity")
+          .font(.system(.subheadline, design: .monospaced))
+          .foregroundColor(.secondary)
+
+        VStack(alignment: .leading, spacing: 16) {
+          // Show recent activities (older first)
+          if let state = state {
+            ForEach(state.recentActivities.suffix(2).reversed()) { activity in
+              FlatActivityRow(activity: activity)
+            }
+          }
+
+          // Current status as the most recent item
+          StatusActivityRow(
+            status: state?.status ?? .idle,
+            timestamp: state?.lastActivityAt ?? Date()
+          )
+        }
+      }
     }
+  }
+}
+
+// MARK: - Flat Activity Row
+
+private struct FlatActivityRow: View {
+  let activity: ActivityEntry
+
+  private var iconColor: Color {
+    switch activity.type {
+    case .toolUse:
+      return .orange
+    case .toolResult(_, let success):
+      return success ? .green : .red
+    case .userMessage:
+      return .blue
+    case .assistantMessage:
+      return .purple
+    case .thinking:
+      return .gray
+    }
+  }
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Text(formatTime(activity.timestamp))
+        .font(.system(.subheadline, design: .monospaced))
+        .foregroundColor(.secondary)
+        .monospacedDigit()
+
+      Image(systemName: activity.type.icon)
+        .font(.subheadline)
+        .foregroundColor(iconColor)
+        .frame(width: 18)
+
+      Text(activity.description)
+        .font(.subheadline)
+        .lineLimit(1)
+        .foregroundColor(.primary)
+    }
+  }
+
+  private func formatTime(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm:ss"
+    return formatter.string(from: date)
+  }
+}
+
+// MARK: - Status Activity Row
+
+/// Shows the current session status as an activity row
+private struct StatusActivityRow: View {
+  let status: SessionStatus
+  let timestamp: Date
+
+  private var statusColor: Color {
+    switch status.color {
+    case "blue": return .blue
+    case "orange": return .orange
+    case "yellow": return .yellow
+    case "red": return .red
+    default: return .gray
+    }
+  }
+
+  private var statusIcon: String {
+    switch status {
+    case .idle:
+      return "circle.fill"
+    case .thinking:
+      return "sparkles"
+    case .executingTool:
+      return "gearshape.fill"
+    case .awaitingApproval:
+      return "exclamationmark.circle.fill"
+    case .waitingForUser:
+      return "circle.fill"
+    }
+  }
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Text(formatTime(timestamp))
+        .font(.system(.subheadline, design: .monospaced))
+        .foregroundColor(.secondary)
+        .monospacedDigit()
+
+      Image(systemName: statusIcon)
+        .font(.subheadline)
+        .foregroundColor(statusColor)
+        .frame(width: 18)
+
+      Text(status.displayName)
+        .font(.subheadline)
+        .foregroundColor(.primary)
+    }
+  }
+
+  private func formatTime(_ date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm:ss"
+    return formatter.string(from: date)
+  }
+}
+
+// MARK: - Animated Copy Button
+
+/// Reusable copy button with animated checkmark confirmation
+struct AnimatedCopyButton: View {
+  let action: () -> Void
+  var size: CGFloat = 24
+  var iconFont: Font = .caption
+  var showBackground: Bool = true
+
+  @State private var showConfirmation = false
+
+  var body: some View {
+    Button {
+      action()
+      withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+        showConfirmation = true
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+        withAnimation(.easeOut(duration: 0.2)) {
+          showConfirmation = false
+        }
+      }
+    } label: {
+      Image(systemName: showConfirmation ? "checkmark" : "doc.on.doc")
+        .font(iconFont)
+        .fontWeight(showConfirmation ? .bold : .regular)
+        .foregroundColor(showConfirmation ? .green : .secondary)
+        .frame(width: size, height: size)
+        .background(showBackground ? Color.secondary.opacity(0.1) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .contentTransition(.symbolEffect(.replace))
+    }
+    .buttonStyle(.plain)
+    .help("Copy session ID")
   }
 }
 
