@@ -292,31 +292,54 @@ public struct MonitoringCardView: View {
       //   .help("View code changes")
       // }
 
-      // Conversation/Terminal segmented control (custom capsule style)
+      // Headless/Terminal segmented control (custom capsule style)
+      // COMMENTED OUT: Conversation mode - keeping only headless and terminal
       HStack(spacing: 0) {
+        // COMMENTED OUT: Conversation button
+        // Button(action: {
+        //   withAnimation(.easeInOut(duration: 0.2)) {
+        //     onToggleTerminal(false)
+        //     // Ensure conversation mode is set when not showing terminal
+        //     if viewModel?.viewMode(for: session.id) != .conversation {
+        //       viewModel?.toggleViewMode(for: session.id)
+        //     }
+        //   }
+        // }) {
+        //   Image(systemName: "bubble.left.and.bubble.right")
+        //     .font(.caption)
+        //     .frame(width: 28, height: 20)
+        //     .foregroundColor(!showTerminal ? .white : .secondary)
+        //     .background(!showTerminal ? Color.brandPrimary : Color.clear)
+        //     .clipShape(Capsule())
+        //     .contentShape(Capsule())
+        // }
+        // .buttonStyle(.plain)
+        // .help("Conversation view")
+
+        // Headless button (streaming JSONL)
         Button(action: {
           withAnimation(.easeInOut(duration: 0.2)) {
             onToggleTerminal(false)
-            // Ensure conversation mode is set when not showing terminal
-            if viewModel?.viewMode(for: session.id) != .conversation {
-              viewModel?.toggleViewMode(for: session.id)
-            }
+            // Set headless mode
+            viewModel?.setViewMode(.headless, for: session.id)
           }
         }) {
-          Image(systemName: "bubble.left.and.bubble.right")
+          Image(systemName: "sparkles")
             .font(.caption)
             .frame(width: 28, height: 20)
-            .foregroundColor(!showTerminal ? .white : .secondary)
-            .background(!showTerminal ? Color.brandPrimary : Color.clear)
+            .foregroundColor(viewModel?.viewMode(for: session.id) == .headless && !showTerminal ? .white : .secondary)
+            .background(viewModel?.viewMode(for: session.id) == .headless && !showTerminal ? Color.brandPrimary : Color.clear)
             .clipShape(Capsule())
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("Conversation view")
+        .help("Headless mode (streaming JSON)")
 
+        // Terminal button
         Button(action: {
           withAnimation(.easeInOut(duration: 0.2)) {
             onToggleTerminal(true)
+            viewModel?.setViewMode(.terminal, for: session.id)
           }
         }) {
           Image(systemName: "terminal")
@@ -334,6 +357,7 @@ public struct MonitoringCardView: View {
       .background(Color.secondary.opacity(0.15))
       .clipShape(Capsule())
       .animation(.easeInOut(duration: 0.2), value: showTerminal)
+      .animation(.easeInOut(duration: 0.2), value: viewModel?.viewMode(for: session.id))
     }
   }
 

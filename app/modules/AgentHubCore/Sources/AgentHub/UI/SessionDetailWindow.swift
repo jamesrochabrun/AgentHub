@@ -24,7 +24,8 @@ public struct SessionDetailWindow: View {
   @Environment(\.agentHub) private var agentHubProvider
 
   /// Local view mode state (synced with viewModel when available)
-  @State private var viewMode: SessionViewMode = .conversation
+  /// Default to headless mode (conversation mode is disabled)
+  @State private var viewMode: SessionViewMode = .headless
 
   /// Whether to show the terminal (true) or conversation/activity view (false)
   @State private var showTerminal: Bool = false
@@ -146,27 +147,28 @@ public struct SessionDetailWindow: View {
 
   // MARK: - View Mode Toggle
 
-  /// Segmented control for switching between conversation, headless, and terminal views
+  /// Segmented control for switching between headless and terminal views
+  /// COMMENTED OUT: Conversation mode - keeping only headless and terminal
   private var viewModeToggle: some View {
     HStack(spacing: 0) {
-      // Conversation button (file-based parsing)
-      Button(action: {
-        withAnimation(.easeInOut(duration: 0.2)) {
-          showTerminal = false
-          viewMode = .conversation
-          viewModel?.setViewMode(.conversation, for: sessionId)
-        }
-      }) {
-        Image(systemName: "bubble.left.and.bubble.right")
-          .font(.caption)
-          .frame(width: 28, height: 20)
-          .foregroundColor(viewMode == .conversation && !showTerminal ? .white : .secondary)
-          .background(viewMode == .conversation && !showTerminal ? Color.brandPrimary : Color.clear)
-          .clipShape(Capsule())
-          .contentShape(Capsule())
-      }
-      .buttonStyle(.plain)
-      .help("Conversation view (parses terminal output)")
+      // COMMENTED OUT: Conversation button (file-based parsing)
+      // Button(action: {
+      //   withAnimation(.easeInOut(duration: 0.2)) {
+      //     showTerminal = false
+      //     viewMode = .conversation
+      //     viewModel?.setViewMode(.conversation, for: sessionId)
+      //   }
+      // }) {
+      //   Image(systemName: "bubble.left.and.bubble.right")
+      //     .font(.caption)
+      //     .frame(width: 28, height: 20)
+      //     .foregroundColor(viewMode == .conversation && !showTerminal ? .white : .secondary)
+      //     .background(viewMode == .conversation && !showTerminal ? Color.brandPrimary : Color.clear)
+      //     .clipShape(Capsule())
+      //     .contentShape(Capsule())
+      // }
+      // .buttonStyle(.plain)
+      // .help("Conversation view (parses terminal output)")
 
       // Headless button (streaming JSONL)
       Button(action: {
@@ -243,7 +245,7 @@ private struct SessionDetailWindowMockPreview: View {
   let colorHex: String?
 
   @State private var showTerminal: Bool = false
-  @State private var viewMode: SessionViewMode = .conversation
+  @State private var viewMode: SessionViewMode = .headless  // Default to headless (conversation disabled)
   @State private var headlessViewModel = HeadlessSessionViewModel()
 
   static let mockSession = CLISession(
@@ -319,23 +321,24 @@ private struct SessionDetailWindowMockPreview: View {
 
           Spacer()
 
-          // View mode toggle
+          // View mode toggle (conversation mode commented out)
           HStack(spacing: 0) {
-            Button(action: {
-              withAnimation(.easeInOut(duration: 0.2)) {
-                showTerminal = false
-                viewMode = .conversation
-              }
-            }) {
-              Image(systemName: "bubble.left.and.bubble.right")
-                .font(.caption)
-                .frame(width: 28, height: 20)
-                .foregroundColor(viewMode == .conversation && !showTerminal ? .white : .secondary)
-                .background(viewMode == .conversation && !showTerminal ? Color.brandPrimary : Color.clear)
-                .clipShape(Capsule())
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
+            // COMMENTED OUT: Conversation button
+            // Button(action: {
+            //   withAnimation(.easeInOut(duration: 0.2)) {
+            //     showTerminal = false
+            //     viewMode = .conversation
+            //   }
+            // }) {
+            //   Image(systemName: "bubble.left.and.bubble.right")
+            //     .font(.caption)
+            //     .frame(width: 28, height: 20)
+            //     .foregroundColor(viewMode == .conversation && !showTerminal ? .white : .secondary)
+            //     .background(viewMode == .conversation && !showTerminal ? Color.brandPrimary : Color.clear)
+            //     .clipShape(Capsule())
+            //     .contentShape(Capsule())
+            // }
+            // .buttonStyle(.plain)
 
             Button(action: {
               withAnimation(.easeInOut(duration: 0.2)) {
@@ -491,23 +494,24 @@ private struct SessionDetailWindowHeadlessMockPreview: View {
 
           Spacer()
 
-          // View mode toggle
+          // View mode toggle (conversation mode commented out)
           HStack(spacing: 0) {
-            Button(action: {
-              withAnimation(.easeInOut(duration: 0.2)) {
-                showTerminal = false
-                viewMode = .conversation
-              }
-            }) {
-              Image(systemName: "bubble.left.and.bubble.right")
-                .font(.caption)
-                .frame(width: 28, height: 20)
-                .foregroundColor(viewMode == .conversation && !showTerminal ? .white : .secondary)
-                .background(viewMode == .conversation && !showTerminal ? Color.brandPrimary : Color.clear)
-                .clipShape(Capsule())
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
+            // COMMENTED OUT: Conversation button
+            // Button(action: {
+            //   withAnimation(.easeInOut(duration: 0.2)) {
+            //     showTerminal = false
+            //     viewMode = .conversation
+            //   }
+            // }) {
+            //   Image(systemName: "bubble.left.and.bubble.right")
+            //     .font(.caption)
+            //     .frame(width: 28, height: 20)
+            //     .foregroundColor(viewMode == .conversation && !showTerminal ? .white : .secondary)
+            //     .background(viewMode == .conversation && !showTerminal ? Color.brandPrimary : Color.clear)
+            //     .clipShape(Capsule())
+            //     .contentShape(Capsule())
+            // }
+            // .buttonStyle(.plain)
 
             Button(action: {
               withAnimation(.easeInOut(duration: 0.2)) {
