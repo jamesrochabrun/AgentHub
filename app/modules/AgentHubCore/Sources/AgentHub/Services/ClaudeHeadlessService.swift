@@ -39,6 +39,9 @@ public enum ClaudeHeadlessError: LocalizedError, Sendable {
   /// Timeout waiting for response
   case timeout
 
+  /// Tool approval is not supported in headless mode (stdin is null device)
+  case toolApprovalNotSupported
+
   public var errorDescription: String? {
     switch self {
     case .claudeNotFound:
@@ -59,31 +62,9 @@ public enum ClaudeHeadlessError: LocalizedError, Sendable {
       return "Failed to write to stdin: \(message)"
     case .timeout:
       return "Operation timed out"
+    case .toolApprovalNotSupported:
+      return "Tool approval is not supported in headless mode. Use --permission-mode acceptEdits."
     }
-  }
-}
-
-// MARK: - ControlResponse
-
-/// Internal type for encoding control responses to stdin.
-private struct ControlResponse: Encodable {
-  let type: String = "control_response"
-  let response: ResponsePayload
-
-  struct ResponsePayload: Encodable {
-    let subtype: String = "success"
-    let requestId: String
-    let response: BehaviorResponse
-
-    private enum CodingKeys: String, CodingKey {
-      case subtype
-      case requestId = "request_id"
-      case response
-    }
-  }
-
-  struct BehaviorResponse: Encodable {
-    let behavior: String
   }
 }
 
@@ -125,9 +106,6 @@ public actor ClaudeHeadlessService {
 
   /// The currently running process, if any
   private var currentProcess: Process?
-
-  /// Stdin pipe for sending control responses
-  private var stdinPipe: Pipe?
 
   /// Stdout pipe for reading JSONL events
   private var stdoutPipe: Pipe?
@@ -195,12 +173,14 @@ public actor ClaudeHeadlessService {
     AppLogger.session.info("Found Claude binary at: \(claudePath)")
 
     // Build command arguments
+    // Note: --input-format stream-json is intentionally NOT included because it causes
+    // Claude to expect JSON on stdin for the initial input, which blocks the process.
+    // We use --permission-mode acceptEdits to auto-accept file edits since stdin is null device.
     var arguments = [
       "-p", prompt,
       "--output-format", "stream-json",
       "--verbose",
-      "--permission-prompt-tool", "stdio",
-      "--input-format", "stream-json"
+      "--permission-mode", "acceptEdits"
     ]
 
     // Add resume flag if we have a session ID
@@ -209,17 +189,18 @@ public actor ClaudeHeadlessService {
       AppLogger.session.info("Resuming session: \(sessionId)")
     }
 
-    // Create pipes
-    let stdinPipe = Pipe()
+    // Create pipes for stdout/stderr
     let stdoutPipe = Pipe()
     let stderrPipe = Pipe()
 
     // Configure process
+    // Note: stdin is set to nullDevice to prevent the CLI from blocking waiting for input.
+    // See GitHub issues #7497 and #3187 - using a Pipe() for stdin causes hangs.
     let process = Process()
     process.executableURL = URL(fileURLWithPath: claudePath)
     process.arguments = arguments
     process.currentDirectoryURL = workingDirectory
-    process.standardInput = stdinPipe
+    process.standardInput = FileHandle.nullDevice
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
 
@@ -240,7 +221,6 @@ public actor ClaudeHeadlessService {
 
     // Store references
     self.currentProcess = process
-    self.stdinPipe = stdinPipe
     self.stdoutPipe = stdoutPipe
     self.stderrPipe = stderrPipe
     self.isSessionActive = true
@@ -267,49 +247,24 @@ public actor ClaudeHeadlessService {
 
   /// Sends a control response for tool approval.
   ///
+  /// - Note: Tool approval via stdin is not supported in headless mode because
+  ///   stdin is set to nullDevice to prevent blocking. Use `--permission-mode acceptEdits`
+  ///   for auto-accepting edits, or implement PTY-based interaction for full control.
+  ///
   /// - Parameters:
   ///   - requestId: The request ID from the control_request event
   ///   - allow: Whether to allow the tool use
   ///   - updatedInput: Optional modified input for the tool
-  /// - Throws: `ClaudeHeadlessError` if the response fails to send
+  /// - Throws: `ClaudeHeadlessError.toolApprovalNotSupported` always
   public func sendControlResponse(
     requestId: String,
     allow: Bool,
     updatedInput: [String: Any]? = nil
   ) async throws {
-    guard isSessionActive else {
-      throw ClaudeHeadlessError.noActiveSession
-    }
-
-    guard let stdinPipe = stdinPipe else {
-      throw ClaudeHeadlessError.noActiveSession
-    }
-
-    AppLogger.session.info("Sending control response for request: \(requestId), allow: \(allow)")
-
-    // Build the control response JSON
-    let behavior = allow ? "allow" : "deny"
-    let response = ControlResponse(
-      response: ControlResponse.ResponsePayload(
-        requestId: requestId,
-        response: ControlResponse.BehaviorResponse(behavior: behavior)
-      )
-    )
-
-    do {
-      let encoder = JSONEncoder()
-      let jsonData = try encoder.encode(response)
-
-      // Write JSON followed by newline
-      let fileHandle = stdinPipe.fileHandleForWriting
-      fileHandle.write(jsonData)
-      fileHandle.write("\n".data(using: .utf8)!)
-
-      AppLogger.session.debug("Control response sent successfully")
-    } catch {
-      AppLogger.session.error("Failed to encode control response: \(error.localizedDescription)")
-      throw ClaudeHeadlessError.stdinWriteFailed(error.localizedDescription)
-    }
+    // Tool approval via stdin is not supported in headless mode.
+    // The process uses FileHandle.nullDevice for stdin to prevent blocking.
+    // Use --permission-mode acceptEdits for auto-accepting file edits.
+    throw ClaudeHeadlessError.toolApprovalNotSupported
   }
 
   /// Stops the current session.
@@ -392,6 +347,7 @@ public actor ClaudeHeadlessService {
   }
 
   /// Creates an AsyncThrowingStream that parses JSONL from stdout.
+  /// Uses readabilityHandler (callback-based) for reliable pipe reading.
   private nonisolated func createEventStream(
     process: Process,
     stdoutPipe: Pipe,
@@ -399,114 +355,137 @@ public actor ClaudeHeadlessService {
   ) -> AsyncThrowingStream<ClaudeEvent, Error> {
 
     return AsyncThrowingStream { continuation in
-      // Start a task to read and parse stdout
+      let decoder = JSONDecoder()
+      var stdoutBuffer = ""
+      var stderrOutput = ""
+
+      // Use readabilityHandler for stdout - this is more reliable than bytes.lines for subprocess pipes
+      stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        let data = handle.availableData
+
+        if data.isEmpty {
+          // EOF - process has closed stdout
+          AppLogger.session.info("Claude stdout EOF reached")
+          return
+        }
+
+        guard let text = String(data: data, encoding: .utf8) else {
+          AppLogger.session.warning("Failed to decode stdout data as UTF-8")
+          return
+        }
+
+        AppLogger.session.debug("Received stdout chunk: \(text.prefix(100))...")
+
+        // Append to buffer and process complete lines
+        stdoutBuffer += text
+        let lines = stdoutBuffer.components(separatedBy: "\n")
+
+        // Process all complete lines (everything except the last element which may be incomplete)
+        for i in 0..<(lines.count - 1) {
+          let line = lines[i].trimmingCharacters(in: .whitespaces)
+          guard !line.isEmpty else { continue }
+
+          AppLogger.session.debug("Received JSONL: \(line.prefix(200))...")
+
+          guard let jsonData = line.data(using: .utf8) else {
+            AppLogger.session.warning("Failed to convert line to data: \(line.prefix(100))")
+            continue
+          }
+
+          do {
+            let event = try decoder.decode(ClaudeEvent.self, from: jsonData)
+
+            // Extract session ID from system init event
+            if case .system(let systemEvent) = event,
+               systemEvent.subtype == "init",
+               let sessionId = systemEvent.sessionId {
+              Task {
+                await self?.updateSessionId(sessionId)
+              }
+              AppLogger.session.info("Session ID extracted: \(sessionId)")
+            }
+
+            // Check for authentication failure in assistant events
+            if case .assistant(let assistantEvent) = event,
+               let error = assistantEvent.error {
+              if error == "authentication_failed" {
+                continuation.finish(throwing: ClaudeHeadlessError.authenticationFailed(
+                  "Please run `claude /login` in your terminal to authenticate."
+                ))
+                Task {
+                  await self?.cleanupProcess()
+                }
+                return
+              } else {
+                AppLogger.session.error("Claude assistant error: \(error)")
+              }
+            }
+
+            // Yield the event
+            continuation.yield(event)
+
+            // Check if this is a result event (session complete)
+            if case .result(let resultEvent) = event {
+              if resultEvent.isError == true {
+                let errorMessage = resultEvent.error ?? resultEvent.result ?? "Unknown error"
+                AppLogger.session.error("Claude session ended with error: \(errorMessage)")
+              } else {
+                AppLogger.session.info("Claude session completed successfully")
+              }
+            }
+
+          } catch {
+            AppLogger.session.warning("Failed to parse JSONL line: \(error.localizedDescription). Line: \(line.prefix(200))")
+          }
+        }
+
+        // Keep the last incomplete line in the buffer
+        stdoutBuffer = lines.last ?? ""
+      }
+
+      // Handle stderr
+      stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+        let data = handle.availableData
+        if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
+          stderrOutput += text
+          AppLogger.session.debug("Claude stderr: \(text)")
+        }
+      }
+
+      // Handle process termination
+      process.terminationHandler = { [weak self] proc in
+        // Clean up handlers
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+        let exitCode = proc.terminationStatus
+        AppLogger.session.info("Claude process exited with code: \(exitCode)")
+
+        if exitCode != 0 && exitCode != 15 { // 15 = SIGTERM (normal termination)
+          if !stderrOutput.isEmpty {
+            AppLogger.session.error("Claude stderr output: \(stderrOutput)")
+          }
+          continuation.finish(throwing: ClaudeHeadlessError.processTerminated(exitCode))
+        } else {
+          continuation.finish()
+        }
+
+        Task {
+          await self?.cleanupProcess()
+        }
+      }
+
+      // Store continuation for cancellation support
       Task { [weak self] in
         await self?.setContinuation(continuation)
-
-        let decoder = JSONDecoder()
-        var stderrOutput = ""
-
-        // Start stderr reading task
-        let stderrTask = Task {
-          for try await line in stderrPipe.fileHandleForReading.bytes.lines {
-            stderrOutput += line + "\n"
-            AppLogger.session.debug("Claude stderr: \(line)")
-          }
-        }
-
-        do {
-          // Read stdout line by line
-          for try await line in stdoutPipe.fileHandleForReading.bytes.lines {
-            // Skip empty lines
-            guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
-              continue
-            }
-
-            AppLogger.session.debug("Received JSONL: \(line.prefix(200))...")
-
-            // Parse the JSON line
-            guard let data = line.data(using: .utf8) else {
-              AppLogger.session.warning("Failed to convert line to data: \(line.prefix(100))")
-              continue
-            }
-
-            do {
-              let event = try decoder.decode(ClaudeEvent.self, from: data)
-
-              // Extract session ID from system init event
-              if case .system(let systemEvent) = event,
-                 systemEvent.subtype == "init",
-                 let sessionId = systemEvent.sessionId {
-                await self?.updateSessionId(sessionId)
-                AppLogger.session.info("Session ID extracted: \(sessionId)")
-              }
-
-              // Check for authentication failure in assistant events
-              if case .assistant(let assistantEvent) = event,
-                 let error = assistantEvent.error {
-                if error == "authentication_failed" {
-                  continuation.finish(throwing: ClaudeHeadlessError.authenticationFailed(
-                    "Please run `claude /login` in your terminal to authenticate."
-                  ))
-                  await self?.cleanupProcess()
-                  return
-                } else {
-                  // Other errors - yield them but also log
-                  AppLogger.session.error("Claude assistant error: \(error)")
-                }
-              }
-
-              // Yield the event
-              continuation.yield(event)
-
-              // Check if this is a result event (session complete)
-              if case .result(let resultEvent) = event {
-                if resultEvent.isError == true {
-                  let errorMessage = resultEvent.error ?? resultEvent.result ?? "Unknown error"
-                  AppLogger.session.error("Claude session ended with error: \(errorMessage)")
-                } else {
-                  AppLogger.session.info("Claude session completed successfully")
-                }
-              }
-
-            } catch {
-              // Log parse errors but continue processing
-              AppLogger.session.warning("Failed to parse JSONL line: \(error.localizedDescription). Line: \(line.prefix(200))")
-              // Don't throw - continue processing other lines
-            }
-          }
-
-          // Wait for process to fully exit
-          process.waitUntilExit()
-
-          // Cancel stderr task
-          stderrTask.cancel()
-
-          let exitCode = process.terminationStatus
-          AppLogger.session.info("Claude process exited with code: \(exitCode)")
-
-          if exitCode != 0 && exitCode != 15 { // 15 = SIGTERM (normal termination)
-            // Check stderr for more info
-            if !stderrOutput.isEmpty {
-              AppLogger.session.error("Claude stderr output: \(stderrOutput)")
-            }
-            continuation.finish(throwing: ClaudeHeadlessError.processTerminated(exitCode))
-          } else {
-            continuation.finish()
-          }
-
-        } catch {
-          AppLogger.session.error("Stream reading error: \(error.localizedDescription)")
-          continuation.finish(throwing: error)
-        }
-
-        await self?.cleanupProcess()
       }
 
       // Handle stream cancellation
       continuation.onTermination = { @Sendable termination in
         if case .cancelled = termination {
           AppLogger.session.info("Event stream was cancelled")
+          stdoutPipe.fileHandleForReading.readabilityHandler = nil
+          stderrPipe.fileHandleForReading.readabilityHandler = nil
           if process.isRunning {
             process.terminate()
           }
@@ -528,7 +507,6 @@ public actor ClaudeHeadlessService {
   /// Cleans up process resources.
   private func cleanupProcess() {
     currentProcess = nil
-    stdinPipe = nil
     stdoutPipe = nil
     stderrPipe = nil
     isSessionActive = false
