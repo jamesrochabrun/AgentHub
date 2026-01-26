@@ -192,6 +192,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
   }
 
+  /// Types text into the terminal WITHOUT pressing Enter.
+  /// Used for drag-and-drop file paths where user adds context before submitting.
+  public func typeText(_ text: String) {
+    guard let terminal = terminalView else { return }
+    terminal.send(txt: text)
+  }
+
   private func configureTerminalAppearance(_ terminal: TerminalView) {
     // Use a monospace font that looks good in terminals
     let fontSize: CGFloat = 12

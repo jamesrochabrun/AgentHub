@@ -7,6 +7,7 @@
 
 import ClaudeCodeSDK
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - CodeChangesSheetItem
 
@@ -72,6 +73,7 @@ public struct MonitoringCardView: View {
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
   @State private var pendingChangesSheetItem: PendingChangesSheetItem?
+  @State private var isDragging = false
   @Environment(\.colorScheme) private var colorScheme
 
   public init(
@@ -151,6 +153,20 @@ public struct MonitoringCardView: View {
         .padding(.vertical, 8)
     }
     .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
+    .clipShape(RoundedRectangle(cornerRadius: 8))
+    .shadow(
+      color: Color.blue.opacity(isDragging ? 0.875 : 0),
+      radius: isDragging ? 12 : 0
+    )
+    .animation(.easeInOut(duration: 0.2), value: isDragging)
+    .onDrop(
+      of: [.fileURL, .png, .tiff, .image, .pdf],
+      isTargeted: showTerminal ? $isDragging : .constant(false)
+    ) { providers in
+      guard showTerminal else { return false }
+      handleDroppedFiles(providers)
+      return true
+    }
     .sheet(item: $codeChangesSheetItem) { item in
       CodeChangesView(
         session: item.session,
@@ -192,6 +208,100 @@ public struct MonitoringCardView: View {
       return true
     default:
       return false
+    }
+  }
+
+  // MARK: - Drag and Drop
+
+  /// Handles dropped file providers by extracting paths and typing them into terminal
+  private func handleDroppedFiles(_ providers: [NSItemProvider]) {
+    guard showTerminal, let key = terminalKey, let viewModel = viewModel else { return }
+
+    for provider in providers {
+      // Handle file URLs (files dragged from Finder)
+      if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+        _ = provider.loadObject(ofClass: URL.self) { url, error in
+          guard let url = url, error == nil else { return }
+
+          Task { @MainActor in
+            let path = url.path
+            let quotedPath = path.contains(" ") ? "\"\(path)\"" : path
+            viewModel.typeToTerminal(forKey: key, text: quotedPath + " ")
+          }
+        }
+      }
+      // Handle PNG data (screenshots)
+      else if provider.hasItemConformingToTypeIdentifier(UTType.png.identifier) {
+        _ = provider.loadDataRepresentation(for: .png) { data, error in
+          guard let data = data, error == nil else { return }
+
+          Task { @MainActor in
+            let tempURL = FileManager.default.temporaryDirectory
+              .appendingPathComponent("screenshot_\(UUID().uuidString).png")
+            do {
+              try data.write(to: tempURL)
+              let quotedPath = tempURL.path.contains(" ") ? "\"\(tempURL.path)\"" : tempURL.path
+              viewModel.typeToTerminal(forKey: key, text: quotedPath + " ")
+            } catch {
+              print("Failed to save dropped screenshot: \(error)")
+            }
+          }
+        }
+      }
+      // Handle TIFF data (another screenshot format)
+      else if provider.hasItemConformingToTypeIdentifier(UTType.tiff.identifier) {
+        _ = provider.loadDataRepresentation(for: .tiff) { data, error in
+          guard let data = data, error == nil else { return }
+
+          Task { @MainActor in
+            let tempURL = FileManager.default.temporaryDirectory
+              .appendingPathComponent("screenshot_\(UUID().uuidString).tiff")
+            do {
+              try data.write(to: tempURL)
+              let quotedPath = tempURL.path.contains(" ") ? "\"\(tempURL.path)\"" : tempURL.path
+              viewModel.typeToTerminal(forKey: key, text: quotedPath + " ")
+            } catch {
+              print("Failed to save dropped screenshot: \(error)")
+            }
+          }
+        }
+      }
+      // Handle generic image data
+      else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+        _ = provider.loadDataRepresentation(for: .image) { data, error in
+          guard let data = data, error == nil else { return }
+
+          Task { @MainActor in
+            let tempURL = FileManager.default.temporaryDirectory
+              .appendingPathComponent("dropped_image_\(UUID().uuidString).png")
+            do {
+              try data.write(to: tempURL)
+              let quotedPath = tempURL.path.contains(" ") ? "\"\(tempURL.path)\"" : tempURL.path
+              viewModel.typeToTerminal(forKey: key, text: quotedPath + " ")
+            } catch {
+              print("Failed to save dropped image: \(error)")
+            }
+          }
+        }
+      }
+      // Handle PDF data (documents dragged from Preview or other apps)
+      else if provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier) {
+        _ = provider.loadDataRepresentation(for: .pdf) { data, error in
+          guard let data = data, error == nil else { return }
+
+          Task { @MainActor in
+            let tempURL = FileManager.default.temporaryDirectory
+              .appendingPathComponent("dropped_document_\(UUID().uuidString).pdf")
+            do {
+              try data.write(to: tempURL)
+              let quotedPath = tempURL.path.contains(" ") ? "\"\(tempURL.path)\"" : tempURL.path
+              viewModel.typeToTerminal(forKey: key, text: quotedPath + " ")
+            } catch {
+              print("Failed to save dropped PDF: \(error)")
+            }
+          }
+        }
+      }
     }
   }
 
@@ -285,15 +395,17 @@ public struct MonitoringCardView: View {
         .help(isMaximized ? "Minimize" : "Maximize")
       }
 
-      // Close button (inline)
-      Button(action: onStopMonitoring) {
-        Image(systemName: "xmark")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .frame(width: 24, height: 24)
+      // Close button (inline, hidden when maximized)
+      if !isMaximized {
+        Button(action: onStopMonitoring) {
+          Image(systemName: "xmark")
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.plain)
+        .help("Stop monitoring")
       }
-      .buttonStyle(.plain)
-      .help("Stop monitoring")
     }
   }
 
