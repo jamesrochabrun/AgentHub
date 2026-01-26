@@ -25,10 +25,6 @@ struct ContextWindowBar: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Text("Context")
-          .font(.system(.subheadline, design: .monospaced))
-          .foregroundColor(.secondary)
-        Spacer()
         if let model = model {
           ModelBadge(model: model)
         }
@@ -58,6 +54,7 @@ struct ContextWindowBar: View {
           .padding(12)
           .frame(width: 280)
         }
+        Spacer()
       }
 
       GeometryReader { geometry in

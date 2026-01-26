@@ -74,6 +74,8 @@ public struct MonitoringCardView: View {
   @State private var planSheetItem: PlanSheetItem?
   @State private var pendingChangesSheetItem: PendingChangesSheetItem?
   @State private var isDragging = false
+  @State private var showingActionsPopover = false
+  @State private var showingFilePicker = false
   @Environment(\.colorScheme) private var colorScheme
 
   public init(
@@ -199,6 +201,13 @@ public struct MonitoringCardView: View {
         onDismiss: { pendingChangesSheetItem = nil }
       )
     }
+    .fileImporter(
+      isPresented: $showingFilePicker,
+      allowedContentTypes: [.image, .pdf, .plainText, .data],
+      allowsMultipleSelection: true
+    ) { result in
+      handlePickedFiles(result)
+    }
   }
 
   private var isHighlighted: Bool {
@@ -305,6 +314,24 @@ public struct MonitoringCardView: View {
     }
   }
 
+  // MARK: - File Picker
+
+  /// Handles files selected from the file picker by typing their paths into terminal
+  private func handlePickedFiles(_ result: Result<[URL], Error>) {
+    guard showTerminal, let key = terminalKey, let viewModel = viewModel else { return }
+
+    switch result {
+    case .success(let urls):
+      for url in urls {
+        let path = url.path
+        let quotedPath = path.contains(" ") ? "\"\(path)\"" : path
+        viewModel.typeToTerminal(forKey: key, text: quotedPath + " ")
+      }
+    case .failure(let error):
+      print("File picker error: \(error.localizedDescription)")
+    }
+  }
+
   // MARK: - Header
 
   private var header: some View {
@@ -323,33 +350,6 @@ public struct MonitoringCardView: View {
         Text(session.shortId)
           .font(.system(.subheadline, design: .monospaced))
           .fontWeight(.bold)
-      }
-
-      // Icon buttons for actions
-      HStack(spacing: 4) {
-        AnimatedCopyButton(action: onCopySessionId)
-
-        Button(action: onOpenSessionFile) {
-          Image(systemName: "doc.text")
-            .font(.caption)
-            .foregroundColor(.secondary)
-            .frame(width: 24, height: 24)
-            .background(Color.secondary.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
-        .help("View session transcript")
-
-        Button(action: onConnect) {
-          Image(systemName: "rectangle.portrait.and.arrow.right")
-            .font(.caption)
-            .foregroundColor(.secondary)
-            .frame(width: 24, height: 24)
-            .background(Color.secondary.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
-        .help("Open in external Terminal")
       }
 
       Spacer()
@@ -407,6 +407,40 @@ public struct MonitoringCardView: View {
         .help("Stop monitoring")
       }
     }
+  }
+
+  // MARK: - Actions Popover Content
+
+  private var actionsPopoverContent: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      // Session actions (always visible)
+      PopoverButton(icon: "doc.on.doc", title: "Copy Session ID") {
+        onCopySessionId()
+        showingActionsPopover = false
+      }
+      PopoverButton(icon: "doc.text", title: "View Transcript") {
+        onOpenSessionFile()
+        showingActionsPopover = false
+      }
+      PopoverButton(icon: "rectangle.portrait.and.arrow.right", title: "Open in Terminal") {
+        onConnect()
+        showingActionsPopover = false
+      }
+
+      // Media actions (only in terminal mode)
+      if showTerminal {
+        Divider()
+          .padding(.vertical, 4)
+
+        PopoverButton(icon: "plus.rectangle.on.folder", title: "Add Files") {
+          showingActionsPopover = false
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            showingFilePicker = true
+          }
+        }
+      }
+    }
+    .padding(8)
   }
 
   // MARK: - Path Row
@@ -533,37 +567,56 @@ public struct MonitoringCardView: View {
 
   @ViewBuilder
   private var monitorContent: some View {
-    if showTerminal {
-      EmbeddedTerminalView(
-        terminalKey: terminalKey ?? session.id,
-        sessionId: session.id,
-        projectPath: session.projectPath,
-        claudeClient: claudeClient,
-        initialPrompt: initialPrompt,
-        viewModel: viewModel
-      )
-      .frame(minHeight: 300)
-    } else {
-      VStack(alignment: .leading, spacing: 12) {
-        Text("Recent Activity")
-          .font(.system(.subheadline, design: .monospaced))
-          .foregroundColor(.secondary)
+    ZStack(alignment: .bottomTrailing) {
+      if showTerminal {
+        EmbeddedTerminalView(
+          terminalKey: terminalKey ?? session.id,
+          sessionId: session.id,
+          projectPath: session.projectPath,
+          claudeClient: claudeClient,
+          initialPrompt: initialPrompt,
+          viewModel: viewModel
+        )
+        .frame(minHeight: 300)
+      } else {
+        VStack(alignment: .leading, spacing: 12) {
+          Text("Recent Activity")
+            .font(.system(.subheadline, design: .monospaced))
+            .foregroundColor(.secondary)
 
-        VStack(alignment: .leading, spacing: 16) {
-          // Show recent activities (older first)
-          if let state = state {
-            ForEach(state.recentActivities.suffix(2).reversed()) { activity in
-              FlatActivityRow(activity: activity)
+          VStack(alignment: .leading, spacing: 16) {
+            // Show recent activities (older first)
+            if let state = state {
+              ForEach(state.recentActivities.suffix(2).reversed()) { activity in
+                FlatActivityRow(activity: activity)
+              }
             }
-          }
 
-          // Current status as the most recent item
-          StatusActivityRow(
-            status: state?.status ?? .idle,
-            timestamp: state?.lastActivityAt ?? Date()
-          )
+            // Current status as the most recent item
+            StatusActivityRow(
+              status: state?.status ?? .idle,
+              timestamp: state?.lastActivityAt ?? Date()
+            )
+          }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
       }
+
+      // Plus button for actions popover - visible in both modes
+      Button {
+        showingActionsPopover = true
+      } label: {
+        Image(systemName: "plus.circle.fill")
+          .font(.system(size: 28))
+          .foregroundColor(.primary)
+          .shadow(color: .primary.opacity(0.4), radius: 4)
+      }
+      .buttonStyle(.plain)
+      .padding(12)
+      .popover(isPresented: $showingActionsPopover) {
+        actionsPopoverContent
+      }
+      .help("Session actions")
     }
   }
 }
@@ -668,6 +721,30 @@ private struct StatusActivityRow: View {
     let formatter = DateFormatter()
     formatter.dateFormat = "HH:mm:ss"
     return formatter.string(from: date)
+  }
+}
+
+// MARK: - PopoverButton
+
+/// A styled button for use in action popovers
+private struct PopoverButton: View {
+  let icon: String
+  let title: String
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      HStack(spacing: 8) {
+        Image(systemName: icon)
+          .frame(width: 20)
+        Text(title)
+        Spacer()
+      }
+      .padding(.horizontal, 8)
+      .padding(.vertical, 6)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
   }
 }
 

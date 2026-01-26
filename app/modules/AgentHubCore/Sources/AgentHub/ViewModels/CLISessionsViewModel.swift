@@ -154,7 +154,8 @@ public final class CLISessionsViewModel {
     sessionId: String?,
     projectPath: String,
     claudeClient: (any ClaudeCode)?,
-    initialPrompt: String?
+    initialPrompt: String?,
+    isDark: Bool = true
   ) -> TerminalContainerView {
     if let existing = activeTerminals[key] {
       #if DEBUG
@@ -176,7 +177,8 @@ public final class CLISessionsViewModel {
       sessionId: sessionId,
       projectPath: projectPath,
       claudeClient: claudeClient,
-      initialPrompt: initialPrompt
+      initialPrompt: initialPrompt,
+      isDark: isDark
     )
     activeTerminals[key] = terminal
     return terminal

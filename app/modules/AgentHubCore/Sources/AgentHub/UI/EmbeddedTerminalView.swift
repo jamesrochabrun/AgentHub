@@ -43,6 +43,8 @@ class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
 /// SwiftUI wrapper for SwiftTerm's LocalProcessTerminalView
 /// Provides an embedded terminal for interacting with Claude sessions
 public struct EmbeddedTerminalView: NSViewRepresentable {
+  @Environment(\.colorScheme) private var colorScheme
+
   let terminalKey: String  // Key for terminal storage (session ID or "pending-{pendingId}")
   let sessionId: String?  // Optional: nil for new sessions, set for resume
   let projectPath: String
@@ -67,6 +69,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   }
 
   public func makeNSView(context: Context) -> TerminalContainerView {
+    let isDark = colorScheme == .dark
+
     // Use shared terminal storage if viewModel is provided
     if let viewModel = viewModel {
       return viewModel.getOrCreateTerminal(
@@ -74,7 +78,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         sessionId: sessionId,
         projectPath: projectPath,
         claudeClient: claudeClient,
-        initialPrompt: initialPrompt
+        initialPrompt: initialPrompt,
+        isDark: isDark
       )
     }
 
@@ -84,12 +89,16 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       sessionId: sessionId,
       projectPath: projectPath,
       claudeClient: claudeClient,
-      initialPrompt: initialPrompt
+      initialPrompt: initialPrompt,
+      isDark: isDark
     )
     return containerView
   }
 
   public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
+    // Update colors when color scheme changes
+    nsView.updateColors(isDark: colorScheme == .dark)
+
     // If there's a pending prompt, send it to the existing terminal and clear it
     if let prompt = initialPrompt, let sessionId = sessionId {
       nsView.sendPromptIfNeeded(prompt)
@@ -142,7 +151,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     sessionId: String?,
     projectPath: String,
     claudeClient: (any ClaudeCode)?,
-    initialPrompt: String? = nil
+    initialPrompt: String? = nil,
+    isDark: Bool = true
   ) {
     guard !isConfigured else { return }
     isConfigured = true
@@ -153,7 +163,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminal.processDelegate = self
 
     // Configure terminal appearance
-    configureTerminalAppearance(terminal)
+    configureTerminalAppearance(terminal, isDark: isDark)
 
     // Add to view hierarchy
     addSubview(terminal)
@@ -199,7 +209,24 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminal.send(txt: text)
   }
 
-  private func configureTerminalAppearance(_ terminal: TerminalView) {
+  /// Updates terminal colors based on color scheme.
+  /// Called when the app's color scheme changes.
+  public func updateColors(isDark: Bool) {
+    guard let terminal = terminalView else { return }
+
+    if isDark {
+      terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
+    } else {
+      terminal.nativeBackgroundColor = NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
+      terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+    }
+
+    // Force redraw
+    terminal.needsDisplay = true
+  }
+
+  private func configureTerminalAppearance(_ terminal: TerminalView, isDark: Bool) {
     // Use a monospace font that looks good in terminals
     let fontSize: CGFloat = 12
     let font = NSFont(name: "SF Mono", size: fontSize)
@@ -207,9 +234,14 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     terminal.font = font
 
-    // Configure colors for dark theme (terminal typically uses dark background)
-    terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
-    terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
+    // Configure colors based on color scheme
+    if isDark {
+      terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
+    } else {
+      terminal.nativeBackgroundColor = NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
+      terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+    }
 
     // Set cursor color to match brand (bookCloth color)
     terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
