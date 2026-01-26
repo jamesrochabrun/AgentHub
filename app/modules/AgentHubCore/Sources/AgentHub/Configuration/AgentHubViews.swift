@@ -119,7 +119,10 @@ public struct AgentHubMenuBarContent: View {
 
   public var body: some View {
     if let provider = agentHub {
-      GlobalStatsMenuView(service: provider.statsService)
+      GlobalStatsMenuView(
+        service: provider.statsService,
+        sessionsViewModel: provider.sessionsViewModel
+      )
     } else {
       Text("AgentHub provider not found")
         .foregroundStyle(.secondary)
