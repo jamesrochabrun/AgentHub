@@ -1451,4 +1451,46 @@ public final class CLISessionsViewModel {
       performSearch()
     }
   }
+
+  // MARK: - Orphaned Sessions Detection
+
+  /// Cached count of orphaned Claude processes (updated async, read sync)
+  public private(set) var orphanedProcessCount: Int = 0
+
+  /// Refreshes the orphaned process count asynchronously.
+  /// Call this when the menu bar opens to update the cached value.
+  public func refreshOrphanedProcessCount() {
+    Task.detached { [weak self] in
+      let registeredPIDs = TerminalProcessRegistry.shared.getAliveRegisteredPIDs()
+
+      await MainActor.run { [weak self] in
+        guard let self else { return }
+        let activePIDs = self.activeTerminalPIDs
+        self.orphanedProcessCount = registeredPIDs.subtracting(activePIDs).count
+      }
+    }
+  }
+
+  /// PIDs of active terminals managed by this view model
+  private var activeTerminalPIDs: Set<Int32> {
+    var pids: Set<Int32> = []
+    for (_, terminal) in activeTerminals {
+      if let pid = terminal.currentProcessPID {
+        pids.insert(pid)
+      }
+    }
+    return pids
+  }
+
+  /// Kills all orphaned Claude processes and refreshes the count
+  public func killOrphanedProcesses() {
+    Task.detached { [weak self] in
+      TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+
+      // Refresh count after killing
+      await MainActor.run { [weak self] in
+        self?.refreshOrphanedProcessCount()
+      }
+    }
+  }
 }

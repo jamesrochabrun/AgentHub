@@ -116,6 +116,11 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var hasDeliveredInitialPrompt = false
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
 
+  /// The PID of the current terminal process, if running
+  public var currentProcessPID: Int32? {
+    terminalView?.currentProcessId
+  }
+
   // MARK: - Lifecycle
 
   /// Terminate process on deallocation (safety net)

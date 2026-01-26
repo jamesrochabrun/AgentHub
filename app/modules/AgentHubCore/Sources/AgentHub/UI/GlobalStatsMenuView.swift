@@ -12,10 +12,16 @@ import SwiftUI
 /// View for displaying global Claude Code stats in a menu bar dropdown
 public struct GlobalStatsMenuView: View {
   let service: GlobalStatsService
+  let sessionsViewModel: CLISessionsViewModel?
   let showQuitButton: Bool
 
-  public init(service: GlobalStatsService, showQuitButton: Bool = true) {
+  public init(
+    service: GlobalStatsService,
+    sessionsViewModel: CLISessionsViewModel? = nil,
+    showQuitButton: Bool = true
+  ) {
     self.service = service
+    self.sessionsViewModel = sessionsViewModel
     self.showQuitButton = showQuitButton
   }
 
@@ -43,6 +49,14 @@ public struct GlobalStatsMenuView: View {
         // Model breakdown
         modelBreakdownSection
 
+        // Orphaned processes (only if any exist)
+        if let vm = sessionsViewModel, vm.orphanedProcessCount > 0 {
+          Divider()
+            .padding(.vertical, 8)
+
+          orphanedProcessesSection(viewModel: vm)
+        }
+
         Divider()
           .padding(.vertical, 8)
 
@@ -68,6 +82,9 @@ public struct GlobalStatsMenuView: View {
     }
     .padding(12)
     .frame(width: 280)
+    .onAppear {
+      sessionsViewModel?.refreshOrphanedProcessCount()
+    }
   }
 
   // MARK: - Header Section
@@ -165,6 +182,38 @@ public struct GlobalStatsMenuView: View {
             .fontWeight(.medium)
         }
       }
+    }
+  }
+
+  // MARK: - Orphaned Processes Section
+
+  @ViewBuilder
+  private func orphanedProcessesSection(viewModel: CLISessionsViewModel) -> some View {
+    let count = viewModel.orphanedProcessCount
+
+    VStack(alignment: .leading, spacing: 6) {
+      HStack {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .foregroundColor(.orange)
+          .frame(width: 16)
+        Text("Orphaned Processes")
+          .font(.caption)
+        Spacer()
+        Text("\(count)")
+          .font(.caption)
+          .fontWeight(.medium)
+          .foregroundColor(.orange)
+      }
+
+      Button(action: { viewModel.killOrphanedProcesses() }) {
+        HStack {
+          Image(systemName: "xmark.circle.fill")
+            .foregroundColor(.red)
+          Text("Kill All")
+            .font(.caption)
+        }
+      }
+      .buttonStyle(.plain)
     }
   }
 
