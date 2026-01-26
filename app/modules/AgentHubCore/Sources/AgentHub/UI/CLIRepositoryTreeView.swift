@@ -24,6 +24,7 @@ public struct CLIRepositoryTreeView: View {
   let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
   let onStartInHubForWorktree: (WorktreeBranch) -> Void
   let onDeleteWorktree: ((WorktreeBranch) -> Void)?
+  let getCustomName: ((String) -> String?)?
   var showLastMessage: Bool = false
   var isDebugMode: Bool = false
   var deletingWorktreePath: String? = nil
@@ -45,6 +46,7 @@ public struct CLIRepositoryTreeView: View {
     onOpenTerminalForWorktree: @escaping (WorktreeBranch) -> Void,
     onStartInHubForWorktree: @escaping (WorktreeBranch) -> Void,
     onDeleteWorktree: ((WorktreeBranch) -> Void)? = nil,
+    getCustomName: ((String) -> String?)? = nil,
     showLastMessage: Bool = false,
     isDebugMode: Bool = false,
     deletingWorktreePath: String? = nil
@@ -62,6 +64,7 @@ public struct CLIRepositoryTreeView: View {
     self.onOpenTerminalForWorktree = onOpenTerminalForWorktree
     self.onStartInHubForWorktree = onStartInHubForWorktree
     self.onDeleteWorktree = onDeleteWorktree
+    self.getCustomName = getCustomName
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
     self.deletingWorktreePath = deletingWorktreePath
@@ -95,6 +98,7 @@ public struct CLIRepositoryTreeView: View {
             onOpenSessionFile: onOpenSessionFile,
             isSessionMonitored: isSessionMonitored,
             onToggleMonitoring: onToggleMonitoring,
+            getCustomName: getCustomName,
             showLastMessage: showLastMessage,
             isDebugMode: isDebugMode,
             isDeleting: worktree.path == deletingWorktreePath

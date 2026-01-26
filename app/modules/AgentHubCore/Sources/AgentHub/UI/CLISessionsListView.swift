@@ -529,6 +529,9 @@ public struct CLISessionsListView: View {
                 await viewModel.deleteWorktree(worktree)
               }
             },
+            getCustomName: { sessionId in
+              viewModel.sessionCustomNames[sessionId]
+            },
             showLastMessage: viewModel.showLastMessage,
             isDebugMode: true,  // Enable debug mode for now
             deletingWorktreePath: viewModel.deletingWorktreePath

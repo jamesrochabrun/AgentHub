@@ -23,6 +23,7 @@ public struct CLIWorktreeBranchRow: View {
   let onOpenSessionFile: (CLISession) -> Void
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
+  let getCustomName: ((String) -> String?)?
   var showLastMessage: Bool = false
   var isDebugMode: Bool = false
   var isDeleting: Bool = false
@@ -73,6 +74,7 @@ public struct CLIWorktreeBranchRow: View {
     onOpenSessionFile: @escaping (CLISession) -> Void,
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
+    getCustomName: ((String) -> String?)? = nil,
     showLastMessage: Bool = false,
     isDebugMode: Bool = false,
     isDeleting: Bool = false
@@ -88,6 +90,7 @@ public struct CLIWorktreeBranchRow: View {
     self.onOpenSessionFile = onOpenSessionFile
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
+    self.getCustomName = getCustomName
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
     self.isDeleting = isDeleting
@@ -224,6 +227,7 @@ public struct CLIWorktreeBranchRow: View {
               ForEach(visibleSessions) { session in
                 CLISessionRow(
                   session: session,
+                  customName: getCustomName?(session.id),
                   isMonitoring: isSessionMonitored(session.id),
                   onConnect: { onConnectSession(session) },
                   onCopyId: { onCopySessionId(session) },

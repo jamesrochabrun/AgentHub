@@ -76,6 +76,7 @@ public struct MonitoringCardView: View {
   @State private var isDragging = false
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
+  @State private var showingNameSheet = false
   @Environment(\.colorScheme) private var colorScheme
 
   public init(
@@ -199,6 +200,16 @@ public struct MonitoringCardView: View {
         pendingToolUse: item.pendingToolUse,
         claudeClient: claudeClient,
         onDismiss: { pendingChangesSheetItem = nil }
+      )
+    }
+    .sheet(isPresented: $showingNameSheet) {
+      NameSessionSheet(
+        session: session,
+        currentName: viewModel?.sessionCustomNames[session.id],
+        onSave: { name in
+          viewModel?.setCustomName(name, for: session)
+        },
+        onDismiss: { showingNameSheet = false }
       )
     }
     .fileImporter(
@@ -342,14 +353,20 @@ public struct MonitoringCardView: View {
         .frame(width: 10, height: 10)
         .shadow(color: isHighlighted ? Color.brandPrimary.opacity(0.6) : .clear, radius: 4)
 
-      // Session label and ID
-      HStack(spacing: 4) {
-        Text("Session:")
+      // Session label - show custom name or default ID
+      if let customName = viewModel?.sessionCustomNames[session.id] {
+        Text(customName)
           .font(.subheadline)
-          .foregroundColor(.secondary)
-        Text(session.shortId)
-          .font(.system(.subheadline, design: .monospaced))
-          .fontWeight(.bold)
+          .fontWeight(.medium)
+      } else {
+        HStack(spacing: 4) {
+          Text("Session:")
+            .font(.subheadline)
+            .foregroundColor(.secondary)
+          Text(session.shortId)
+            .font(.system(.subheadline, design: .monospaced))
+            .fontWeight(.bold)
+        }
       }
 
       Spacer()
@@ -381,19 +398,17 @@ public struct MonitoringCardView: View {
         .animation(.easeInOut(duration: 0.2), value: showTerminal)
       }
 
-      // Maximize/Minimize button (only in terminal mode)
-      if showTerminal {
-        Button(action: onToggleMaximize) {
-          Image(systemName: isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-            .font(.caption)
-            .foregroundColor(.secondary)
-            .frame(width: 24, height: 24)
-            .background(Color.secondary.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
-        .help(isMaximized ? "Minimize" : "Maximize")
+      // Maximize/Minimize button
+      Button(action: onToggleMaximize) {
+        Image(systemName: isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+          .font(.caption)
+          .foregroundColor(.secondary)
+          .frame(width: 24, height: 24)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
       }
+      .buttonStyle(.plain)
+      .help(isMaximized ? "Minimize" : "Maximize")
 
       // Close button (inline, hidden when maximized)
       if !isMaximized {
@@ -425,6 +440,10 @@ public struct MonitoringCardView: View {
       PopoverButton(icon: "rectangle.portrait.and.arrow.right", title: "Open in Terminal") {
         onConnect()
         showingActionsPopover = false
+      }
+      PopoverButton(icon: "pencil", title: "Name Session") {
+        showingActionsPopover = false
+        showingNameSheet = true
       }
 
       // Media actions (only in terminal mode)

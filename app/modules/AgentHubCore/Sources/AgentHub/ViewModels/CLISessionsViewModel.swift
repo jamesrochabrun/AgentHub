@@ -26,12 +26,18 @@ public final class CLISessionsViewModel {
   private let searchService: GlobalSearchService
   public let claudeClient: (any ClaudeCode)?
   private let worktreeService = GitWorktreeService()
+  private let metadataStore: SessionMetadataStore?
 
   // MARK: - State
 
   public private(set) var selectedRepositories: [SelectedRepository] = []
   public private(set) var loadingState: CLILoadingState = .idle
   public private(set) var error: Error?
+
+  // MARK: - Session Naming State
+
+  /// Cache of custom names keyed by session ID
+  public private(set) var sessionCustomNames: [String: String] = [:]
 
   // MARK: - Worktree Deletion State
 
@@ -260,11 +266,12 @@ public final class CLISessionsViewModel {
 
   // MARK: - Initialization
 
-  public init(monitorService: CLISessionMonitorService, claudeClient: ClaudeCode? = nil) {
+  public init(monitorService: CLISessionMonitorService, claudeClient: ClaudeCode? = nil, metadataStore: SessionMetadataStore? = nil) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
     self.searchService = GlobalSearchService()
     self.claudeClient = claudeClient
+    self.metadataStore = metadataStore
     self.fileWatcher = SessionFileWatcher()
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
 
@@ -287,6 +294,59 @@ public final class CLISessionsViewModel {
   private func requestNotificationPermissions() {
     Task {
       await ApprovalNotificationService.shared.requestPermission()
+    }
+  }
+
+  // MARK: - Session Naming
+
+  /// Returns the display name for a session (custom name if set, otherwise default)
+  public func displayName(for session: CLISession) -> String {
+    sessionCustomNames[session.id] ?? session.displayName
+  }
+
+  /// Sets a custom name for a session
+  public func setCustomName(_ name: String?, for session: CLISession) {
+    guard let store = metadataStore else { return }
+
+    Task {
+      do {
+        try await store.setCustomName(name, for: session.id)
+
+        // Update cache on main actor
+        await MainActor.run {
+          if let name = name, !name.isEmpty {
+            sessionCustomNames[session.id] = name
+          } else {
+            sessionCustomNames.removeValue(forKey: session.id)
+          }
+        }
+      } catch {
+        AppLogger.session.error("Failed to save custom name: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  /// Loads custom names for all monitored sessions
+  public func loadCustomNames() {
+    guard let store = metadataStore else { return }
+
+    Task {
+      let sessionIds = Array(monitoredSessionIds)
+      guard !sessionIds.isEmpty else { return }
+
+      do {
+        let metadata = try await store.getMetadata(for: sessionIds)
+
+        await MainActor.run {
+          for (sessionId, meta) in metadata {
+            if let name = meta.customName {
+              sessionCustomNames[sessionId] = name
+            }
+          }
+        }
+      } catch {
+        AppLogger.session.error("Failed to load custom names: \(error.localizedDescription)")
+      }
     }
   }
 
@@ -439,6 +499,9 @@ public final class CLISessionsViewModel {
 
     // Expand repositories and worktrees that contain monitored sessions
     expandItemsContainingMonitoredSessions()
+
+    // Load custom session names from database
+    loadCustomNames()
   }
 
   /// Expands repositories and worktrees that contain monitored sessions.
