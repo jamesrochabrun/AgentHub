@@ -36,6 +36,21 @@ final class TerminalProcessRegistry {
     lock.unlock()
   }
 
+  /// Returns a snapshot of currently registered PIDs that are still alive and are Claude processes.
+  func getAliveRegisteredPIDs() -> Set<Int32> {
+    let snapshot = snapshotEntries()
+    var alivePIDs: Set<Int32> = []
+
+    for (pid, _) in snapshot {
+      guard pid > 0, isProcessAlive(pid) else { continue }
+      if let command = processCommandLine(pid),
+         command.localizedCaseInsensitiveContains("claude") {
+        alivePIDs.insert(pid)
+      }
+    }
+    return alivePIDs
+  }
+
   /// Kills only processes previously spawned by the app.
   func cleanupRegisteredProcesses() {
     let snapshot = snapshotEntries()
@@ -61,11 +76,9 @@ final class TerminalProcessRegistry {
 
       terminateProcessGroup(pid)
 
-      if !isProcessAlive(pid) {
-        unregister(pid: pid)
-      } else {
-        AppLogger.session.warning("Failed to terminate registered Claude process PID=\(pid)")
-      }
+      // Always unregister after kill attempt - if still running,
+      // it will be re-detected on next getAliveRegisteredPIDs() call
+      unregister(pid: pid)
     }
   }
 
@@ -130,12 +143,20 @@ final class TerminalProcessRegistry {
   }
 
   private func terminateProcessGroup(_ pid: pid_t) {
+    // Try SIGTERM on process group first, then individual process
     if killpg(pid, SIGTERM) != 0 {
       _ = kill(pid, SIGTERM)
     }
-    usleep(150_000) // 150ms
+
+    // Wait 300ms for graceful shutdown
+    usleep(300_000)
+
+    // If still alive, force kill
     if isProcessAlive(pid) {
-      _ = killpg(pid, SIGKILL)
+      if killpg(pid, SIGKILL) != 0 {
+        _ = kill(pid, SIGKILL)
+      }
+      usleep(100_000) // Wait for SIGKILL to take effect
     }
   }
 }
