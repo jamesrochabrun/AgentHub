@@ -205,6 +205,13 @@ public final class CLISessionsViewModel {
     terminal.restart(sessionId: sessionId, projectPath: projectPath, claudeClient: claudeClient)
   }
 
+  /// Types text into the terminal for a given key without pressing Enter.
+  /// Used for drag-and-drop file paths where user adds context before submitting.
+  public func typeToTerminal(forKey key: String, text: String) {
+    guard let terminal = activeTerminals[key] else { return }
+    terminal.typeText(text)
+  }
+
   /// Sessions being started in Hub's embedded terminal (no session ID yet)
   public var pendingHubSessions: [PendingHubSession] = []
 
