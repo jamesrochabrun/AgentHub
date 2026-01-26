@@ -61,13 +61,24 @@ public final class AgentHubProvider {
     createClaudeClient()
   }()
 
+  /// Session metadata store for user-provided session names
+  public private(set) lazy var metadataStore: SessionMetadataStore? = {
+    do {
+      return try SessionMetadataStore()
+    } catch {
+      AppLogger.session.error("Failed to create SessionMetadataStore: \(error.localizedDescription)")
+      return nil
+    }
+  }()
+
   // MARK: - View Models
 
   /// Sessions view model - created lazily and cached
   public private(set) lazy var sessionsViewModel: CLISessionsViewModel = {
     CLISessionsViewModel(
       monitorService: monitorService,
-      claudeClient: claudeClient
+      claudeClient: claudeClient,
+      metadataStore: metadataStore
     )
   }()
 

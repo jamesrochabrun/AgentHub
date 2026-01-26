@@ -13,6 +13,7 @@ import SwiftUI
 /// Individual row for displaying a CLI session with connect action
 public struct CLISessionRow: View {
   let session: CLISession
+  let customName: String?
   let isMonitoring: Bool
   let onConnect: () -> Void
   let onCopyId: () -> Void
@@ -24,6 +25,7 @@ public struct CLISessionRow: View {
 
   public init(
     session: CLISession,
+    customName: String? = nil,
     isMonitoring: Bool,
     onConnect: @escaping () -> Void,
     onCopyId: @escaping () -> Void,
@@ -32,6 +34,7 @@ public struct CLISessionRow: View {
     showLastMessage: Bool = false
   ) {
     self.session = session
+    self.customName = customName
     self.isMonitoring = isMonitoring
     self.onConnect = onConnect
     self.onCopyId = onCopyId
@@ -92,7 +95,13 @@ public struct CLISessionRow: View {
         .fill(statusColor)
         .frame(width: 8, height: 8)
 
-      if let slug = session.slug {
+      if let customName = customName {
+        // Show user-provided custom name
+        Text(customName)
+          .font(.system(.subheadline, weight: .semibold))
+          .foregroundColor(.primary)
+          .lineLimit(1)
+      } else if let slug = session.slug {
         // Show slug and short ID (no "Session:" label)
         Text(slug)
           .font(.system(.subheadline, design: .monospaced, weight: .semibold))
