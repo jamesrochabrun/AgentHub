@@ -99,10 +99,12 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     // Update colors when color scheme changes
     nsView.updateColors(isDark: colorScheme == .dark)
 
-    // If there's a pending prompt, send it to the existing terminal and clear it
-    if let prompt = initialPrompt, let sessionId = sessionId {
+    // If there's a pending prompt in the viewModel, send it (and clear it)
+    // Use terminalKey (not sessionId) since it works for both pending and real sessions
+    if let prompt = viewModel?.pendingPrompt(for: terminalKey) {
+      nsView.resetPromptDeliveryFlag()
       nsView.sendPromptIfNeeded(prompt)
-      viewModel?.clearPendingPrompt(for: sessionId)
+      viewModel?.clearPendingPrompt(for: terminalKey)
     }
   }
 }
@@ -194,7 +196,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     registerProcessIfNeeded(for: terminal)
   }
 
-  /// Sends a prompt to the terminal (only once per terminal instance)
+  /// Resets the prompt delivery flag so a new prompt can be sent.
+  /// Call this before sendPromptIfNeeded when sending a follow-up prompt (e.g., from inline editor).
+  func resetPromptDeliveryFlag() {
+    hasDeliveredInitialPrompt = false
+  }
+
+  /// Sends a prompt to the terminal (only once per terminal instance unless reset)
   func sendPromptIfNeeded(_ prompt: String) {
     guard let terminal = terminalView else { return }
     guard !hasDeliveredInitialPrompt else { return }
