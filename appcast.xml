@@ -6,33 +6,28 @@
     <description>Most recent updates to AgentHub</description>
     <language>en</language>
 
-    <!-- Example entry - update this when releasing new versions -->
-    <!--
     <item>
-      <title>Version 1.0.0</title>
-      <link>https://github.com/jamesrochabrun/AgentHub/releases/tag/v1.0.0</link>
-      <sparkle:version>1.0.0</sparkle:version>
-      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <title>Version 2.0.0</title>
+      <link>https://github.com/jamesrochabrun/AgentHub/releases/tag/v2.0.0</link>
+      <sparkle:version>2.0.0</sparkle:version>
+      <sparkle:shortVersionString>2.0.0</sparkle:shortVersionString>
       <description><![CDATA[
-        <h2>Initial Release</h2>
+        <h2>Version 2.0.0</h2>
         <ul>
-          <li>Monitor all Claude Code sessions in real-time</li>
-          <li>Search across all sessions</li>
-          <li>Create and manage git worktrees</li>
-          <li>Preview and edit diffs inline</li>
+          <li>Major version release</li>
+          <li>Performance improvements</li>
+          <li>UI enhancements</li>
         </ul>
       ]]></description>
-      <pubDate>Thu, 23 Jan 2026 12:00:00 -0800</pubDate>
+      <pubDate>Mon, 27 Jan 2026 19:53:01 +0000</pubDate>
       <enclosure
-        url="https://github.com/jamesrochabrun/AgentHub/releases/download/v1.0.0/AgentHub.app.zip"
-        sparkle:version="1.0.0"
-        sparkle:shortVersionString="1.0.0"
-        sparkle:edSignature="SPARKLE_SIGNATURE_HERE"
-        length="FILE_SIZE_HERE"
+        url="https://github.com/jamesrochabrun/AgentHub/releases/download/v2.0.0/AgentHub.app.zip"
+        sparkle:version="2.0.0"
+        sparkle:shortVersionString="2.0.0"
+        length="7489521"
         type="application/octet-stream" />
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
     </item>
-    -->
 
   </channel>
 </rss>
