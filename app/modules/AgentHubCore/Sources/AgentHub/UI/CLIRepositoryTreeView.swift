@@ -193,7 +193,7 @@ public struct CLIRepositoryTreeView: View {
       .buttonStyle(.plain)
       .help("Remove repository")
     }
-    .padding(.horizontal, 10)
+    .padding(.horizontal, 4)
     .padding(.vertical, 8)
   }
 }

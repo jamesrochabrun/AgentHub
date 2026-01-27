@@ -353,11 +353,24 @@ public struct MonitoringCardView: View {
         .frame(width: 10, height: 10)
         .shadow(color: isHighlighted ? Color.brandPrimary.opacity(0.6) : .clear, radius: 4)
 
-      // Session label - show custom name or default ID
+      // Session label - show custom name, slug, or default ID
       if let customName = viewModel?.sessionCustomNames[session.id] {
         Text(customName)
           .font(.subheadline)
           .fontWeight(.medium)
+      } else if let slug = session.slug {
+        // Show slug and short ID (matching CLISessionRow format)
+        HStack(spacing: 4) {
+          Text(slug)
+            .font(.system(.subheadline, design: .monospaced))
+            .fontWeight(.semibold)
+          Text("•")
+            .font(.caption)
+            .foregroundColor(.secondary)
+          Text(session.shortId)
+            .font(.system(.subheadline, design: .monospaced))
+            .fontWeight(.semibold)
+        }
       } else {
         HStack(spacing: 4) {
           Text("Session:")
