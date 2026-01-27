@@ -129,33 +129,23 @@ public final class CLISessionsViewModel {
   /// Stores the prompt temporarily so that when the terminal view renders,
   /// it can pass the prompt to EmbeddedTerminalView for the resume command.
   public func showTerminalWithPrompt(for session: CLISession, prompt: String) {
-    // [CLISessionsVM] showTerminalWithPrompt called for session: \(session.id)")
-    // [CLISessionsVM] prompt: \(prompt.prefix(100))...")
     // Start monitoring if not already
     if !monitoredSessionIds.contains(session.id) {
-      // [CLISessionsVM] Starting monitoring for session")
       startMonitoring(session: session)
     }
     // Store the pending prompt
     pendingTerminalPrompts[session.id] = prompt
-    // [CLISessionsVM] Stored prompt, pendingTerminalPrompts count: \(pendingTerminalPrompts.count)")
     // Show terminal view
     sessionsWithTerminalView.insert(session.id)
-    // [CLISessionsVM] Terminal view enabled for session")
   }
 
   /// Returns the pending prompt for a session (read-only, safe during view body)
   public func pendingPrompt(for sessionId: String) -> String? {
-    let prompt = pendingTerminalPrompts[sessionId]
-    if prompt != nil {
-      // [CLISessionsVM] pendingPrompt read for \(sessionId.prefix(8)): found prompt")
-    }
-    return prompt
+    pendingTerminalPrompts[sessionId]
   }
 
   /// Clears the pending prompt after terminal has started (call from onAppear)
   public func clearPendingPrompt(for sessionId: String) {
-    // [CLISessionsVM] clearPendingPrompt called for \(sessionId.prefix(8))")
     pendingTerminalPrompts.removeValue(forKey: sessionId)
   }
 
@@ -178,6 +168,8 @@ public final class CLISessionsViewModel {
       #endif
       // Send prompt to existing terminal if provided
       if let prompt = initialPrompt {
+        // Reset the delivery flag so this new prompt can be sent
+        existing.resetPromptDeliveryFlag()
         existing.sendPromptIfNeeded(prompt)
         clearPendingPrompt(for: key)  // Clear after sending
       }
@@ -880,6 +872,14 @@ public final class CLISessionsViewModel {
     // Terminals are now keyed by session ID, not worktree path
     let pending = PendingHubSession(worktree: worktree, initialPrompt: initialPrompt)
     pendingHubSessions.append(pending)
+
+    // Store prompt in pendingTerminalPrompts so updateNSView can find and clear it
+    // This prevents duplicate sends: first call reads/clears, subsequent calls find nil
+    let pendingKey = "pending-\(pending.id.uuidString)"
+    if let prompt = initialPrompt {
+      pendingTerminalPrompts[pendingKey] = prompt
+    }
+
 #if DEBUG
     let encodedPath = worktree.path.claudeProjectPathEncoded
     AppLogger.session.debug(
