@@ -2,7 +2,7 @@
 
 Manage all sessions in Claude Code. Easily create new worktrees, run multiple terminals in parallel, preview edits before accepting them, make inline changes directly from diffs, and more.
 
-https://github.com/user-attachments/assets/865123c9-ff8a-4675-a789-f807294efc6f
+https://github.com/user-attachments/assets/98a3b15d-dd74-4c77-b0d6-7d3edbc18812
 
 ## Features
 
@@ -12,6 +12,8 @@ https://github.com/user-attachments/assets/865123c9-ff8a-4675-a789-f807294efc6f
 - **Run sessions in parallel** - Create and manage multiple Claude Code sessions in the hub
 - **Create worktrees** - Easily spin up new git worktrees from the UI
 - **Preview and edit diffs** - Make inline changes directly from the diff view
+- **Image & file support** — Attach and work with images and files in sessions
+- **Full-screen terminal mode** — Maximize sessions for distraction-free focus
 - **Codex support** - Coming soon
 
 ## Requirements
