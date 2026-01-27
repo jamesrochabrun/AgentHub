@@ -37,6 +37,8 @@ public struct GitDiffView: View {
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
   @State private var inlineEditorState = InlineEditorState()
+  @State private var diffMode: DiffMode = .unstaged
+  @State private var detectedBaseBranch: String?
 
   private let gitDiffService = GitDiffService()
 
@@ -92,7 +94,7 @@ public struct GitDiffView: View {
       return .handled
     }
     .task {
-      await loadUnstagedChanges()
+      await loadChanges(for: diffMode)
     }
   }
 
@@ -111,6 +113,21 @@ public struct GitDiffView: View {
         Text("(\(diffState.fileCount) files)")
           .font(.title3)
           .foregroundColor(.secondary)
+      }
+
+      Spacer()
+
+      // Mode segmented control
+      Picker("Diff Mode", selection: $diffMode) {
+        ForEach(DiffMode.allCases) { mode in
+          Label(mode.rawValue, systemImage: mode.icon)
+            .tag(mode)
+        }
+      }
+      .pickerStyle(.segmented)
+      .frame(width: 280)
+      .onChange(of: diffMode) { _, newMode in
+        Task { await loadChanges(for: newMode) }
       }
 
       Spacer()
@@ -143,7 +160,7 @@ public struct GitDiffView: View {
   private var loadingState: some View {
     VStack(spacing: 12) {
       ProgressView()
-      Text("Loading unstaged changes...")
+      Text(diffMode.loadingMessage)
         .font(.caption)
         .foregroundColor(.secondary)
     }
@@ -168,7 +185,7 @@ public struct GitDiffView: View {
         .multilineTextAlignment(.center)
 
       Button("Retry") {
-        Task { await loadUnstagedChanges() }
+        Task { await loadChanges(for: diffMode) }
       }
       .buttonStyle(.borderedProminent)
     }
@@ -184,11 +201,11 @@ public struct GitDiffView: View {
         .font(.system(size: 48))
         .foregroundColor(.green.opacity(0.5))
 
-      Text("No Unstaged Changes")
+      Text(diffMode.emptyStateTitle)
         .font(.headline)
         .foregroundColor(.secondary)
 
-      Text("Your working directory is clean.")
+      Text(diffMode.emptyStateDescription)
         .font(.caption)
         .foregroundColor(.secondary)
         .multilineTextAlignment(.center)
@@ -220,7 +237,7 @@ public struct GitDiffView: View {
               isSelected: selectedFileId == file.id,
               onSelect: {
                 selectedFileId = file.id
-                loadFileDiff(for: file)
+                loadFileDiff(for: file, mode: diffMode)
               }
             )
           }
@@ -291,22 +308,44 @@ public struct GitDiffView: View {
 
   // MARK: - Data Loading
 
-  private func loadUnstagedChanges() async {
-    isLoading = true
-    errorMessage = nil
+  private func loadChanges(for mode: DiffMode) async {
+    // Clear existing state when switching modes
+    await MainActor.run {
+      isLoading = true
+      errorMessage = nil
+      diffState = .empty
+      diffContents = [:]
+      selectedFileId = nil
+      loadingStates = [:]
+      fileErrorMessages = [:]
+    }
 
     do {
-      let state = try await gitDiffService.getUnstagedChanges(at: projectPath)
+      // Detect base branch for branch mode (cache it for later use)
+      if mode == .branch && detectedBaseBranch == nil {
+        detectedBaseBranch = try await gitDiffService.detectBaseBranch(at: projectPath)
+      }
+
+      let state = try await gitDiffService.getChanges(
+        at: projectPath,
+        mode: mode,
+        baseBranch: detectedBaseBranch
+      )
+
       await MainActor.run {
         diffState = state
         isLoading = false
 
         // Auto-select first file
-        if selectedFileId == nil, let first = state.files.first {
+        if let first = state.files.first {
           selectedFileId = first.id
-          loadFileDiff(for: first)
+          loadFileDiff(for: first, mode: mode)
         }
       }
+
+      // Preload first few file diffs in background
+      await preloadInitialDiffs(for: state, mode: mode)
+
     } catch {
       await MainActor.run {
         errorMessage = error.localizedDescription
@@ -315,17 +354,54 @@ public struct GitDiffView: View {
     }
   }
 
-  private func loadFileDiff(for file: GitDiffFileEntry) {
+  /// Preloads diffs for the first N files to enable instant display when selected
+  private func preloadInitialDiffs(for state: GitDiffState, mode: DiffMode, count: Int = 3) async {
+    let filesToPreload = Array(state.files.prefix(count))
+
+    await withTaskGroup(of: Void.self) { group in
+      for file in filesToPreload {
+        // Skip if already loaded (first file was loaded during selection)
+        if await MainActor.run(body: { diffContents[file.id] != nil }) {
+          continue
+        }
+
+        group.addTask {
+          do {
+            let (oldContent, newContent) = try await gitDiffService.getFileDiff(
+              filePath: file.filePath,
+              at: projectPath,
+              mode: mode,
+              baseBranch: detectedBaseBranch
+            )
+            await MainActor.run {
+              // Only set if not already loaded (avoid race conditions)
+              if diffContents[file.id] == nil {
+                diffContents[file.id] = (old: oldContent, new: newContent)
+              }
+            }
+          } catch {
+            // Silently ignore preload errors - they'll be shown when file is selected
+          }
+        }
+      }
+    }
+  }
+
+  private func loadFileDiff(for file: GitDiffFileEntry, mode: DiffMode? = nil) {
     // Skip if already loaded
     if diffContents[file.id] != nil { return }
 
     loadingStates[file.id] = true
 
+    let currentMode = mode ?? diffMode
+
     Task {
       do {
         let (oldContent, newContent) = try await gitDiffService.getFileDiff(
           filePath: file.filePath,
-          at: projectPath
+          at: projectPath,
+          mode: currentMode,
+          baseBranch: detectedBaseBranch
         )
         await MainActor.run {
           diffContents[file.id] = (old: oldContent, new: newContent)

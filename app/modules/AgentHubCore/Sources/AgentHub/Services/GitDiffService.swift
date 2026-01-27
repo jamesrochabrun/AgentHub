@@ -42,6 +42,35 @@ public actor GitDiffService {
 
   // MARK: - Public API
 
+  // MARK: - Mode-Aware API
+
+  /// Gets changes based on the specified diff mode
+  /// - Parameters:
+  ///   - repoPath: Path to the git repository (or any subdirectory)
+  ///   - mode: The type of diff to retrieve
+  ///   - baseBranch: Base branch for branch mode (auto-detected if nil)
+  /// - Returns: GitDiffState containing all files with changes
+  public func getChanges(
+    at repoPath: String,
+    mode: DiffMode,
+    baseBranch: String? = nil
+  ) async throws -> GitDiffState {
+    switch mode {
+    case .unstaged:
+      return try await getUnstagedChanges(at: repoPath)
+    case .staged:
+      return try await getStagedChanges(at: repoPath)
+    case .branch:
+      let branch: String
+      if let providedBranch = baseBranch {
+        branch = providedBranch
+      } else {
+        branch = try await detectBaseBranch(at: repoPath)
+      }
+      return try await getBranchChanges(at: repoPath, baseBranch: branch)
+    }
+  }
+
   /// Gets all unstaged changes for a repository
   /// - Parameter repoPath: Path to the git repository (or any subdirectory)
   /// - Returns: GitDiffState containing all files with unstaged changes
@@ -49,11 +78,10 @@ public actor GitDiffService {
     // Find git root
     let gitRoot = try await findGitRoot(at: repoPath)
 
-    // Get unstaged changes with --numstat
-    let output = try await runGitCommand(["diff", "--numstat"], at: gitRoot)
-
-    // Also get untracked files
-    let untrackedOutput = try await runGitCommand(["status", "--porcelain", "-uall"], at: gitRoot)
+    // Run diff and status commands in parallel
+    async let numstatTask = runGitCommand(["diff", "--numstat"], at: gitRoot)
+    async let porcelainTask = runGitCommand(["status", "--porcelain", "-uall"], at: gitRoot)
+    let (output, untrackedOutput) = try await (numstatTask, porcelainTask)
 
     var files: [GitDiffFileEntry] = []
 
@@ -77,6 +105,9 @@ public actor GitDiffService {
       ))
     }
 
+    // Collect untracked file paths for parallel line counting
+    var untrackedFilePaths: [(relativePath: String, fullPath: String)] = []
+
     // Parse untracked files from porcelain output
     let untrackedLines = untrackedOutput.components(separatedBy: "\n").filter { !$0.isEmpty }
     for line in untrackedLines {
@@ -86,34 +117,164 @@ public actor GitDiffService {
       let statusCode = String(line.prefix(2))
       let filePath = String(line.dropFirst(3))
 
-      // "??" means untracked file, "A " means staged new file
+      // "??" means untracked file
       if statusCode == "??" {
         let fullPath = (gitRoot as NSString).appendingPathComponent(filePath)
 
         // Check if we already have this file from diff output
         if !files.contains(where: { $0.relativePath == filePath }) {
-          // Count lines in untracked file
-          let lineCount = await countLinesInFile(at: fullPath)
-
-          files.append(GitDiffFileEntry(
-            filePath: fullPath,
-            relativePath: filePath,
-            additions: lineCount,
-            deletions: 0
-          ))
+          untrackedFilePaths.append((relativePath: filePath, fullPath: fullPath))
         }
       }
+    }
+
+    // Count lines in parallel for untracked files
+    if !untrackedFilePaths.isEmpty {
+      let untrackedEntries = await withTaskGroup(of: GitDiffFileEntry?.self) { group in
+        for (relativePath, fullPath) in untrackedFilePaths {
+          group.addTask {
+            let lineCount = await self.countLinesInFile(at: fullPath)
+            return GitDiffFileEntry(
+              filePath: fullPath,
+              relativePath: relativePath,
+              additions: lineCount,
+              deletions: 0
+            )
+          }
+        }
+
+        var results: [GitDiffFileEntry] = []
+        for await entry in group {
+          if let entry = entry {
+            results.append(entry)
+          }
+        }
+        return results
+      }
+      files.append(contentsOf: untrackedEntries)
     }
 
     return GitDiffState(files: files)
   }
 
-  /// Gets the diff content for a specific file (old content from HEAD, new content from disk)
+  /// Gets all staged changes for a repository
+  /// - Parameter repoPath: Path to the git repository (or any subdirectory)
+  /// - Returns: GitDiffState containing all files with staged changes
+  public func getStagedChanges(at repoPath: String) async throws -> GitDiffState {
+    let gitRoot = try await findGitRoot(at: repoPath)
+
+    // Get staged changes with --numstat --staged
+    let output = try await runGitCommand(["diff", "--staged", "--numstat"], at: gitRoot)
+
+    var files: [GitDiffFileEntry] = []
+
+    let lines = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+    for line in lines {
+      let parts = line.components(separatedBy: "\t")
+      guard parts.count >= 3 else { continue }
+
+      let additions = Int(parts[0]) ?? 0
+      let deletions = Int(parts[1]) ?? 0
+      let relativePath = parts[2]
+
+      let fullPath = (gitRoot as NSString).appendingPathComponent(relativePath)
+      files.append(GitDiffFileEntry(
+        filePath: fullPath,
+        relativePath: relativePath,
+        additions: additions,
+        deletions: deletions
+      ))
+    }
+
+    return GitDiffState(files: files)
+  }
+
+  /// Gets all changes between current branch and base branch
+  /// - Parameters:
+  ///   - repoPath: Path to the git repository (or any subdirectory)
+  ///   - baseBranch: The base branch to compare against (e.g., "main", "master")
+  /// - Returns: GitDiffState containing all files changed since branching from base
+  public func getBranchChanges(at repoPath: String, baseBranch: String) async throws -> GitDiffState {
+    let gitRoot = try await findGitRoot(at: repoPath)
+
+    // Use three-dot diff to compare from merge-base to HEAD
+    let output = try await runGitCommand(["diff", "\(baseBranch)...HEAD", "--numstat"], at: gitRoot)
+
+    var files: [GitDiffFileEntry] = []
+
+    let lines = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+    for line in lines {
+      let parts = line.components(separatedBy: "\t")
+      guard parts.count >= 3 else { continue }
+
+      let additions = Int(parts[0]) ?? 0
+      let deletions = Int(parts[1]) ?? 0
+      let relativePath = parts[2]
+
+      let fullPath = (gitRoot as NSString).appendingPathComponent(relativePath)
+      files.append(GitDiffFileEntry(
+        filePath: fullPath,
+        relativePath: relativePath,
+        additions: additions,
+        deletions: deletions
+      ))
+    }
+
+    return GitDiffState(files: files)
+  }
+
+  /// Detects the base branch (main or master)
+  /// - Parameter repoPath: Path to the git repository
+  /// - Returns: The detected base branch name
+  public func detectBaseBranch(at repoPath: String) async throws -> String {
+    let gitRoot = try await findGitRoot(at: repoPath)
+
+    // Try "main" first
+    do {
+      _ = try await runGitCommand(["rev-parse", "--verify", "main"], at: gitRoot)
+      return "main"
+    } catch {
+      // Try "master" as fallback
+      do {
+        _ = try await runGitCommand(["rev-parse", "--verify", "master"], at: gitRoot)
+        return "master"
+      } catch {
+        throw GitDiffError.gitCommandFailed("Could not detect base branch (tried main, master)")
+      }
+    }
+  }
+
+  /// Gets the diff content for a specific file based on mode
   /// - Parameters:
   ///   - filePath: Absolute path to the file
   ///   - repoPath: Path to the git repository
+  ///   - mode: The diff mode (unstaged, staged, or branch)
+  ///   - baseBranch: Base branch for branch mode (auto-detected if nil)
   /// - Returns: Tuple of (oldContent, newContent)
-  public func getFileDiff(filePath: String, at repoPath: String) async throws -> (oldContent: String, newContent: String) {
+  public func getFileDiff(
+    filePath: String,
+    at repoPath: String,
+    mode: DiffMode = .unstaged,
+    baseBranch: String? = nil
+  ) async throws -> (oldContent: String, newContent: String) {
+    switch mode {
+    case .unstaged:
+      return try await getUnstagedFileDiff(filePath: filePath, at: repoPath)
+    case .staged:
+      return try await getStagedFileDiff(filePath: filePath, at: repoPath)
+    case .branch:
+      let branch: String
+      if let providedBranch = baseBranch {
+        branch = providedBranch
+      } else {
+        branch = try await detectBaseBranch(at: repoPath)
+      }
+      return try await getBranchFileDiff(filePath: filePath, at: repoPath, baseBranch: branch)
+    }
+  }
+
+  /// Gets the diff content for an unstaged file (old content from HEAD, new content from disk)
+  private func getUnstagedFileDiff(filePath: String, at repoPath: String) async throws -> (oldContent: String, newContent: String) {
     let gitRoot = try await findGitRoot(at: repoPath)
 
     // Get relative path from git root
@@ -145,6 +306,65 @@ public actor GitDiffService {
     }
 
     return (oldContent, newContent)
+  }
+
+  /// Gets the diff content for a staged file (old content from HEAD, new content from index)
+  private func getStagedFileDiff(filePath: String, at repoPath: String) async throws -> (oldContent: String, newContent: String) {
+    let gitRoot = try await findGitRoot(at: repoPath)
+
+    // Get relative path from git root
+    let relativePath: String
+    if filePath.hasPrefix(gitRoot) {
+      relativePath = String(filePath.dropFirst(gitRoot.count + 1))
+    } else {
+      relativePath = filePath
+    }
+
+    // Get old content from HEAD and new content from index in parallel
+    async let oldTask = fetchGitFileContent(ref: "HEAD", relativePath: relativePath, gitRoot: gitRoot)
+    async let newTask = fetchGitFileContent(ref: "", relativePath: relativePath, gitRoot: gitRoot) // empty ref = index
+
+    let (oldContent, newContent) = await (oldTask, newTask)
+    return (oldContent, newContent)
+  }
+
+  /// Gets the diff content for a branch file (old content from merge-base, new content from HEAD)
+  private func getBranchFileDiff(filePath: String, at repoPath: String, baseBranch: String) async throws -> (oldContent: String, newContent: String) {
+    let gitRoot = try await findGitRoot(at: repoPath)
+
+    // Get relative path from git root
+    let relativePath: String
+    if filePath.hasPrefix(gitRoot) {
+      relativePath = String(filePath.dropFirst(gitRoot.count + 1))
+    } else {
+      relativePath = filePath
+    }
+
+    // Find the merge-base between current branch and base branch
+    let mergeBaseOutput = try await runGitCommand(["merge-base", baseBranch, "HEAD"], at: gitRoot)
+    let mergeBase = mergeBaseOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Get old content from merge-base and new content from HEAD in parallel
+    async let oldTask = fetchGitFileContent(ref: mergeBase, relativePath: relativePath, gitRoot: gitRoot)
+    async let newTask = fetchGitFileContent(ref: "HEAD", relativePath: relativePath, gitRoot: gitRoot)
+
+    let (oldContent, newContent) = await (oldTask, newTask)
+    return (oldContent, newContent)
+  }
+
+  /// Helper to fetch file content from a git ref (or index if ref is empty)
+  private func fetchGitFileContent(ref: String, relativePath: String, gitRoot: String) async -> String {
+    do {
+      if ref.isEmpty {
+        // Empty ref means staging area (index): "git show :file"
+        return try await runGitCommand(["show", ":\(relativePath)"], at: gitRoot)
+      } else {
+        return try await runGitCommand(["show", "\(ref):\(relativePath)"], at: gitRoot)
+      }
+    } catch {
+      // File might be new or deleted
+      return ""
+    }
   }
 
   // MARK: - Git Root Detection
