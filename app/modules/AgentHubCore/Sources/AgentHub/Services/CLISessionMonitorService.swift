@@ -203,7 +203,17 @@ public actor CLISessionMonitorService {
             // Skip if branch doesn't match - session belongs to a different repo
             guard branchMatches else { continue }
 
-            // Check if session is active (needed for mapping decision)
+            // If no mapping exists, create one for this session
+            if existingMappings?[sessionId] == nil {
+              let mapping = SessionRepoMapping(
+                sessionId: sessionId,
+                parentRepoPath: currentRepoPath,
+                worktreePath: worktreePath
+              )
+              try? await metadataStore?.setRepoMapping(mapping)
+            }
+
+            // Check if session is active
             let encodedPath = firstEntry.project.claudeProjectPathEncoded
             let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
             var isActive = false
@@ -211,22 +221,6 @@ public actor CLISessionMonitorService {
                let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
               let secondsAgo = Date().timeIntervalSince(modDate)
               isActive = secondsAgo < 60
-            }
-
-            // CRITICAL: Only auto-map ACTIVE sessions to prevent collision with old sessions
-            // Old/inactive sessions without a mapping should NOT be assigned
-            // (they might belong to a different repo that previously used this path)
-            if existingMappings?[sessionId] == nil {
-              guard isActive else {
-                // Session has no mapping and is inactive - skip it
-                continue
-              }
-              let mapping = SessionRepoMapping(
-                sessionId: sessionId,
-                parentRepoPath: currentRepoPath,
-                worktreePath: worktreePath
-              )
-              try? await metadataStore?.setRepoMapping(mapping)
             }
 
             let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
@@ -283,7 +277,17 @@ public actor CLISessionMonitorService {
 
           guard branchMatches else { continue }
 
-          // Check if session is active (needed for mapping decision)
+          // If no mapping exists, create one for this session
+          if existingMappings?[sessionId] == nil {
+            let mapping = SessionRepoMapping(
+              sessionId: sessionId,
+              parentRepoPath: currentRepoPath,
+              worktreePath: worktreePath
+            )
+            try? await metadataStore?.setRepoMapping(mapping)
+          }
+
+          // Check if session is active by looking at session file modification time
           // A session is active if its .jsonl file was modified in the last 60 seconds
           let encodedPath = firstEntry.project.claudeProjectPathEncoded
           let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
@@ -292,22 +296,6 @@ public actor CLISessionMonitorService {
              let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
             let secondsAgo = Date().timeIntervalSince(modDate)
             isActive = secondsAgo < 60
-          }
-
-          // CRITICAL: Only auto-map ACTIVE sessions to prevent collision with old sessions
-          // Old/inactive sessions without a mapping should NOT be assigned
-          // (they might belong to a different repo that previously used this path)
-          if existingMappings?[sessionId] == nil {
-            guard isActive else {
-              // Session has no mapping and is inactive - skip it
-              continue
-            }
-            let mapping = SessionRepoMapping(
-              sessionId: sessionId,
-              parentRepoPath: currentRepoPath,
-              worktreePath: worktreePath
-            )
-            try? await metadataStore?.setRepoMapping(mapping)
           }
 
           // Get the first and last message (sorted by timestamp)
