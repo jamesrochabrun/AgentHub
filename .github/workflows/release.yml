@@ -156,6 +156,7 @@ jobs:
             build/AgentHub.dmg.sha256
             build/AgentHub.app.zip
             build/AgentHub.app.zip.sha256
+            build/sparkle-signature.txt
           draft: false
           prerelease: false
           generate_release_notes: true

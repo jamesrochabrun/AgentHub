@@ -24,6 +24,7 @@
         url="https://github.com/jamesrochabrun/AgentHub/releases/download/v2.0.0/AgentHub.app.zip"
         sparkle:version="2.0.0"
         sparkle:shortVersionString="2.0.0"
+        sparkle:edSignature="0eNKsij+9Qc5kNJMowyWfP8Mrdj9NIqeRa5QxDhNMyxYii9EydwizTUtOCihyYLyyeHDWNNW//9LESIOO0ruAA=="
         length="7489521"
         type="application/octet-stream" />
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
