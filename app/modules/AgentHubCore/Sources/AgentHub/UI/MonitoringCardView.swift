@@ -502,10 +502,9 @@ public struct MonitoringCardView: View {
 
       Spacer()
 
-      // Pending changes preview button
+      // Pending changes preview button - show immediately when code change tool is detected
       if let pendingToolUse = state?.pendingToolUse,
-         pendingToolUse.isCodeChangeTool,
-         case .awaitingApproval = state?.status {
+         pendingToolUse.isCodeChangeTool {
         Button(action: {
           pendingChangesSheetItem = PendingChangesSheetItem(
             session: session,
