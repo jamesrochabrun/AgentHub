@@ -180,7 +180,7 @@ public actor GlobalSearchService {
     claudeDataPath: String
   ) -> SessionMetadata {
     // Encode the project path for the folder name
-    let encodedPath = projectPath.replacingOccurrences(of: "/", with: "-")
+    let encodedPath = projectPath.claudeProjectPathEncoded
     let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
 
     guard let data = FileManager.default.contents(atPath: sessionFilePath),
@@ -240,7 +240,7 @@ public actor GlobalSearchService {
   /// Encodes a file path to the projects folder format
   /// `/Users/jamesrochabrun/Desktop/git/AgentHub` -> `-Users-jamesrochabrun-Desktop-git-AgentHub`
   private func encodeProjectPath(_ path: String) -> String {
-    path.replacingOccurrences(of: "/", with: "-")
+    path.claudeProjectPathEncoded
   }
 
   /// Decodes a projects folder name back to a file path

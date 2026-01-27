@@ -560,7 +560,7 @@ public final class CLISessionsViewModel {
   /// Checks if the session file exists in ~/.claude
   private func sessionFileExists(session: CLISession) -> Bool {
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
-    let encodedPath = session.projectPath.replacingOccurrences(of: "/", with: "-")
+    let encodedPath = session.projectPath.claudeProjectPathEncoded
     let sessionFile = "\(claudeDataPath)/projects/\(encodedPath)/\(session.id).jsonl"
     return FileManager.default.fileExists(atPath: sessionFile)
   }
@@ -840,7 +840,7 @@ public final class CLISessionsViewModel {
     let pending = PendingHubSession(worktree: worktree, initialPrompt: initialPrompt)
     pendingHubSessions.append(pending)
 #if DEBUG
-    let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
+    let encodedPath = worktree.path.claudeProjectPathEncoded
     AppLogger.session.debug(
       "[StartInHub] pendingId=\(pending.id.uuidString, privacy: .public) worktreePath=\(worktree.path, privacy: .public) encodedPath=\(encodedPath, privacy: .public)"
     )
@@ -863,7 +863,7 @@ public final class CLISessionsViewModel {
   @MainActor
   private func watchForNewSession(pending: PendingHubSession, worktree: WorktreeBranch) async {
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
-    let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
+    let encodedPath = worktree.path.claudeProjectPathEncoded
     let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
 #if DEBUG
     AppLogger.watcher.debug(
@@ -1062,7 +1062,7 @@ public final class CLISessionsViewModel {
           .sessions ?? []
 
         let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
-        let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
+        let encodedPath = worktree.path.claudeProjectPathEncoded
         let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
         if currentSessions.isEmpty && FileManager.default.fileExists(atPath: sessionFilePath) {
           // Session file exists but not in history.jsonl yet - create directly
@@ -1121,7 +1121,7 @@ public final class CLISessionsViewModel {
   @MainActor
   private func pollForNewSessionFallback(pending: PendingHubSession, worktree: WorktreeBranch) async {
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
-    let encodedPath = worktree.path.replacingOccurrences(of: "/", with: "-")
+    let encodedPath = worktree.path.claudeProjectPathEncoded
     let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
 #if DEBUG
     AppLogger.watcher.debug(

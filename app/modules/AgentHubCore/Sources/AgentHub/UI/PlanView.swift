@@ -225,7 +225,7 @@ public struct PlanView: View {
   // MARK: - Session Transcript Path
 
   private var sessionTranscriptPath: String {
-    let sanitizedPath = session.projectPath.replacingOccurrences(of: "/", with: "-")
+    let sanitizedPath = session.projectPath.claudeProjectPathEncoded
     return "~/.claude/projects/\(sanitizedPath)/\(session.id).jsonl"
   }
 

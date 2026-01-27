@@ -38,7 +38,7 @@ public final class AgentHubProvider {
 
   /// Monitor service for tracking CLI sessions
   public private(set) lazy var monitorService: CLISessionMonitorService = {
-    CLISessionMonitorService(claudeDataPath: configuration.claudeDataPath)
+    CLISessionMonitorService(claudeDataPath: configuration.claudeDataPath, metadataStore: metadataStore)
   }()
 
   /// Git worktree service for branch/worktree operations

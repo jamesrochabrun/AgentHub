@@ -58,6 +58,15 @@ public actor SessionMetadataStore {
       }
     }
 
+    migrator.registerMigration("v2_create_session_repo_mapping") { db in
+      try db.create(table: "session_repo_mapping") { t in
+        t.column("sessionId", .text).primaryKey()
+        t.column("parentRepoPath", .text).notNull().indexed()
+        t.column("worktreePath", .text).notNull()
+        t.column("assignedAt", .datetime).notNull()
+      }
+    }
+
     return migrator
   }
 
@@ -113,6 +122,43 @@ public actor SessionMetadataStore {
   public func clearAll() throws {
     try dbQueue.write { db in
       _ = try SessionMetadata.deleteAll(db)
+    }
+  }
+
+  // MARK: - Session Repo Mapping
+
+  /// Gets the repo mapping for a session, if one exists
+  public func getRepoMapping(for sessionId: String) throws -> SessionRepoMapping? {
+    try dbQueue.read { db in
+      try SessionRepoMapping
+        .filter(Column("sessionId") == sessionId)
+        .fetchOne(db)
+    }
+  }
+
+  /// Sets the repo mapping for a session
+  /// Creates new record if none exists, updates if it does
+  public func setRepoMapping(_ mapping: SessionRepoMapping) throws {
+    try dbQueue.write { db in
+      try mapping.save(db)
+    }
+  }
+
+  /// Gets repo mappings for multiple sessions at once (batch fetch)
+  public func getRepoMappings(for sessionIds: [String]) throws -> [String: SessionRepoMapping] {
+    try dbQueue.read { db in
+      let records = try SessionRepoMapping
+        .filter(sessionIds.contains(Column("sessionId")))
+        .fetchAll(db)
+
+      return Dictionary(uniqueKeysWithValues: records.map { ($0.sessionId, $0) })
+    }
+  }
+
+  /// Deletes repo mapping for a session
+  public func deleteRepoMapping(for sessionId: String) throws {
+    try dbQueue.write { db in
+      _ = try SessionRepoMapping.deleteOne(db, key: sessionId)
     }
   }
 }

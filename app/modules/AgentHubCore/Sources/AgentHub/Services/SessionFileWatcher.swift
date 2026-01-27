@@ -257,7 +257,7 @@ public actor SessionFileWatcher {
 
   private func findSessionFile(sessionId: String, projectPath: String) -> String? {
     // Session files are in: ~/.claude/projects/{encoded-path}/{sessionId}.jsonl
-    let encodedPath = projectPath.replacingOccurrences(of: "/", with: "-")
+    let encodedPath = projectPath.claudeProjectPathEncoded
     let projectsDir = "\(claudePath)/projects/\(encodedPath)"
     let sessionFile = "\(projectsDir)/\(sessionId).jsonl"
 
@@ -268,7 +268,7 @@ public actor SessionFileWatcher {
     // Try alternative encodings
     let alternativeEncodings = [
       projectPath.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "",
-      projectPath.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: "~", with: "-")
+      projectPath.claudeProjectPathEncoded.replacingOccurrences(of: "~", with: "-")
     ]
 
     for encoded in alternativeEncodings {

@@ -474,7 +474,7 @@ public struct CLISessionsListView: View {
             },
             onOpenSessionFile: { session in
               // Build path: ~/.claude/projects/{encoded-project-path}/{sessionId}.jsonl
-              let encodedPath = session.projectPath.replacingOccurrences(of: "/", with: "-")
+              let encodedPath = session.projectPath.claudeProjectPathEncoded
               let homeDir = FileManager.default.homeDirectoryForCurrentUser
               let filePath = homeDir
                 .appendingPathComponent(".claude/projects")

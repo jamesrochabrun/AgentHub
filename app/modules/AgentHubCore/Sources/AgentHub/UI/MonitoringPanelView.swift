@@ -576,7 +576,7 @@ public struct MonitoringPanelView: View {
 
   private func openSessionFile(for session: CLISession) {
     // Build path: ~/.claude/projects/{encoded-project-path}/{sessionId}.jsonl
-    let encodedPath = session.projectPath.replacingOccurrences(of: "/", with: "-")
+    let encodedPath = session.projectPath.claudeProjectPathEncoded
     let homeDir = FileManager.default.homeDirectoryForCurrentUser
     let filePath = homeDir
       .appendingPathComponent(".claude/projects")
