@@ -21,6 +21,16 @@ https://github.com/user-attachments/assets/98a3b15d-dd74-4c77-b0d6-7d3edbc18812
 - macOS 14.0+
 - [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated
 
+## Installation & Updates
+
+Download the latest release from [GitHub Releases](https://github.com/jamesrochabrun/AgentHub/releases). The app is code-signed and notarized by Apple.
+
+Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) with EdDSA signature verification. You'll be prompted when a new version is available.
+
+## Privacy
+
+AgentHub runs entirely on your machine. It does not collect, transmit, or store any data externally. The app simply reads your local Claude Code session files to display their status.
+
 ## Configuration
 
 ### Display Mode
