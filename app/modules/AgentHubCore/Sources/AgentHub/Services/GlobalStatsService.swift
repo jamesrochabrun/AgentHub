@@ -215,6 +215,7 @@ public final class GlobalStatsService: @unchecked Sendable {
   private func formatDateForComparison(_ date: Date) -> String {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd"
+    formatter.timeZone = TimeZone(identifier: "UTC")  // Match CLI format
     return formatter.string(from: date)
   }
 

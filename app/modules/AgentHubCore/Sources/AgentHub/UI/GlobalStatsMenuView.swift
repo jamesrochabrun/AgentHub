@@ -40,11 +40,13 @@ public struct GlobalStatsMenuView: View {
         Divider()
           .padding(.vertical, 8)
 
-        // Today's activity
-        todaySection
+        // Today's activity (only shown when data exists)
+        if service.todayActivity != nil {
+          todaySection
 
-        Divider()
-          .padding(.vertical, 8)
+          Divider()
+            .padding(.vertical, 8)
+        }
 
         // Model breakdown
         modelBreakdownSection
@@ -152,10 +154,6 @@ public struct GlobalStatsMenuView: View {
           MiniStat(value: "\(today.sessionCount)", label: "sessions")
           MiniStat(value: "\(today.toolCallCount)", label: "tools")
         }
-      } else {
-        Text("No activity yet")
-          .font(.caption)
-          .foregroundColor(.secondary)
       }
     }
   }
