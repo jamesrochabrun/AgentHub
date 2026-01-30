@@ -9,19 +9,76 @@ import SwiftUI
 
 /// An overlay that positions the inline editor below clicked diff lines.
 /// Handles tap-outside dismissal and edge positioning.
+///
+/// Supports both immediate submission and adding comments to a review collection.
 struct InlineEditorOverlay: View {
 
   // MARK: - Properties
 
   @Bindable var state: InlineEditorState
   let containerSize: CGSize
+
+  /// Called when user presses Enter - sends immediately to Claude
   let onSubmit: (String, Int, String, String) -> Void
+
+  /// Called when user presses Cmd+Enter - adds to comment collection (optional)
+  let onAddComment: ((String, Int, String, String, String) -> Void)?
+
+  /// Comments state for checking existing comments (optional)
+  let commentsState: DiffCommentsState?
 
   // Editor dimensions for positioning calculations
   private let editorWidth: CGFloat = 700
   private let editorHeight: CGFloat = 64
   private let verticalOffset: CGFloat = 12
   private let leadingPadding: CGFloat = 20
+
+  // MARK: - Initializer
+
+  /// Creates an inline editor overlay for diff line interactions.
+  ///
+  /// - Parameters:
+  ///   - state: The shared state controlling editor visibility and position.
+  ///   - containerSize: The size of the container view for position calculations.
+  ///   - onSubmit: Called when user presses Enter to send immediately to Claude.
+  ///     Parameters: (message, lineNumber, side, fileName)
+  ///   - onAddComment: Called when user presses Cmd+Enter to add to review collection.
+  ///     Parameters: (message, lineNumber, side, fileName, lineContent). Optional.
+  ///   - commentsState: State manager for existing comments, used for edit mode detection. Optional.
+  init(
+    state: InlineEditorState,
+    containerSize: CGSize,
+    onSubmit: @escaping (String, Int, String, String) -> Void,
+    onAddComment: ((String, Int, String, String, String) -> Void)? = nil,
+    commentsState: DiffCommentsState? = nil
+  ) {
+    self.state = state
+    self.containerSize = containerSize
+    self.onSubmit = onSubmit
+    self.onAddComment = onAddComment
+    self.commentsState = commentsState
+  }
+
+  // MARK: - Computed Properties
+
+  /// Check if there's an existing comment at the current location
+  private var existingComment: DiffComment? {
+    commentsState?.getComment(
+      filePath: state.fileName,
+      lineNumber: state.lineNumber,
+      side: state.side
+    )
+  }
+
+  /// Whether we're in edit mode (editing an existing comment)
+  private var isEditMode: Bool {
+    existingComment != nil
+  }
+
+  /// The initial text to show (from existing comment or empty)
+  private var initialText: String {
+    existingComment?.text ?? ""
+  }
 
   // MARK: - Body
 
@@ -46,11 +103,35 @@ struct InlineEditorOverlay: View {
             // Submit will open Terminal with resumed session
             onSubmit(message, state.lineNumber, state.side, state.fileName)
           },
+          onAddComment: onAddComment != nil ? { message in
+            // Add to comment collection
+            onAddComment?(
+              message,
+              state.lineNumber,
+              state.side,
+              state.fileName,
+              state.lineContent ?? ""
+            )
+            withAnimation(.easeOut(duration: 0.15)) {
+              state.dismiss()
+            }
+          } : nil,
+          onDeleteComment: isEditMode ? {
+            // Delete existing comment
+            if let comment = existingComment {
+              commentsState?.removeComment(id: comment.id)
+            }
+            withAnimation(.easeOut(duration: 0.15)) {
+              state.dismiss()
+            }
+          } : nil,
           onDismiss: {
             withAnimation(.easeOut(duration: 0.15)) {
               state.dismiss()
             }
-          }
+          },
+          initialText: initialText,
+          isEditMode: isEditMode
         )
         .position(position)
         .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))

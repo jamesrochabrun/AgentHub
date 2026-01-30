@@ -39,6 +39,8 @@ public struct GitDiffView: View {
   @State private var inlineEditorState = InlineEditorState()
   @State private var diffMode: DiffMode = .unstaged
   @State private var detectedBaseBranch: String?
+  @State private var commentsState = DiffCommentsState()
+  @State private var showDiscardCommentsAlert = false
 
   private let gitDiffService = GitDiffService()
 
@@ -71,13 +73,23 @@ public struct GitDiffView: View {
       } else if diffState.files.isEmpty {
         emptyState
       } else {
-        HSplitView {
-          // File list sidebar
-          fileListSidebar
-            .frame(minWidth: 200, idealWidth: 250, maxWidth: 300)
+        VStack(spacing: 0) {
+          HSplitView {
+            // File list sidebar
+            fileListSidebar
+              .frame(minWidth: 200, idealWidth: 250, maxWidth: 300)
 
-          // Diff viewer
-          diffViewer
+            // Diff viewer
+            diffViewer
+          }
+
+          // Comments panel (shown when there are comments)
+          if commentsState.hasComments {
+            DiffCommentsPanelView(
+              commentsState: commentsState,
+              onSendToCloud: sendAllCommentsToCloud
+            )
+          }
         }
       }
     }
@@ -90,11 +102,29 @@ public struct GitDiffView: View {
         }
         return .handled
       }
+      // Check for unsent comments before dismissing
+      if commentsState.hasComments {
+        showDiscardCommentsAlert = true
+        return .handled
+      }
       onDismiss()
       return .handled
     }
     .task {
       await loadChanges(for: diffMode)
+    }
+    .confirmationDialog(
+      "Discard Unsent Comments?",
+      isPresented: $showDiscardCommentsAlert,
+      titleVisibility: .visible
+    ) {
+      Button("Discard \(commentsState.commentCount) Comment\(commentsState.commentCount == 1 ? "" : "s")", role: .destructive) {
+        commentsState.clearAll()
+        onDismiss()
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("You have \(commentsState.commentCount) unsent comment\(commentsState.commentCount == 1 ? "" : "s"). Closing will discard them.")
     }
   }
 
@@ -113,6 +143,23 @@ public struct GitDiffView: View {
         Text("(\(diffState.fileCount) files)")
           .font(.title3)
           .foregroundColor(.secondary)
+
+        // Comment count badge
+        if commentsState.hasComments {
+          HStack(spacing: 4) {
+            Image(systemName: "text.bubble.fill")
+              .font(.caption)
+            Text("\(commentsState.commentCount)")
+              .font(.caption.bold())
+          }
+          .foregroundColor(.white)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(
+            Capsule()
+              .fill(Color.brandPrimary)
+          )
+        }
       }
 
       Spacer()
@@ -148,7 +195,11 @@ public struct GitDiffView: View {
       Spacer()
 
       Button("Close") {
-        onDismiss()
+        if commentsState.hasComments {
+          showDiscardCommentsAlert = true
+        } else {
+          onDismiss()
+        }
       }
     }
     .padding()
@@ -285,6 +336,7 @@ public struct GitDiffView: View {
             diffStyle: $diffStyle,
             overflowMode: $overflowMode,
             inlineEditorState: inlineEditorState,
+            commentsState: commentsState,
             claudeClient: claudeClient,
             session: session,
             onDismissView: onDismiss,
@@ -415,6 +467,37 @@ public struct GitDiffView: View {
       }
     }
   }
+
+  // MARK: - Comments Actions
+
+  /// Sends all pending comments to Claude as a batch review
+  private func sendAllCommentsToCloud() {
+    guard commentsState.hasComments else { return }
+
+    let prompt = commentsState.generatePrompt()
+
+    // Use callback if provided (redirects to built-in terminal)
+    if let callback = onInlineRequestSubmit {
+      callback(prompt, session)
+      commentsState.clearAll()
+      onDismiss()
+    } else if let client = claudeClient {
+      // Fallback to external Terminal
+      if let error = TerminalLauncher.launchTerminalWithSession(
+        session.id,
+        claudeClient: client,
+        projectPath: session.projectPath,
+        initialPrompt: prompt
+      ) {
+        inlineEditorState.errorMessage = error.localizedDescription
+      } else {
+        // Clear comments and dismiss
+        commentsState.clearAll()
+        onDismiss()
+      }
+    }
+  }
+
 }
 
 // MARK: - GitDiffFileRow
@@ -490,6 +573,7 @@ private struct GitDiffContentView: View {
   @Binding var diffStyle: DiffStyle
   @Binding var overflowMode: OverflowMode
   @Bindable var inlineEditorState: InlineEditorState
+  @Bindable var commentsState: DiffCommentsState
   let claudeClient: (any ClaudeCode)?
   let session: CLISession
   let onDismissView: () -> Void
@@ -561,6 +645,7 @@ private struct GitDiffContentView: View {
                 let prompt = buildInlinePrompt(
                   question: message,
                   lineNumber: lineNumber,
+                  side: side,
                   lineContent: inlineEditorState.lineContent ?? "",
                   fileName: file
                 )
@@ -584,7 +669,22 @@ private struct GitDiffContentView: View {
                     onDismissView()
                   }
                 }
-              }
+              },
+              onAddComment: { message, lineNumber, side, file, lineContent in
+                // Add comment to the collection
+                commentsState.addComment(
+                  filePath: file,
+                  lineNumber: lineNumber,
+                  side: side,
+                  lineContent: lineContent,
+                  text: message
+                )
+                // Auto-expand panel when first comment is added
+                if commentsState.commentCount == 1 {
+                  commentsState.isPanelExpanded = true
+                }
+              },
+              commentsState: commentsState
             )
           }
         }
@@ -678,16 +778,23 @@ private struct GitDiffContentView: View {
   private func buildInlinePrompt(
     question: String,
     lineNumber: Int,
+    side: String,
     lineContent: String,
     fileName: String
   ) -> String {
+    let sideLabel = side == "left" ? "old" : "new"
     return """
-      I'm looking at line \(lineNumber) in \(fileName):
+      I have the following review comment on the code changes:
+
+      ## \(fileName)
+
+      **Line \(lineNumber)** (\(sideLabel)):
       ```
       \(lineContent)
       ```
+      Comment: \(question)
 
-      \(question)
+      Please address this review comment.
       """
   }
 }

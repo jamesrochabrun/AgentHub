@@ -27,6 +27,10 @@ public struct CodeChangesView: View {
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
   @State private var inlineEditorState = InlineEditorState()
+  @State private var commentsState = DiffCommentsState()
+
+  /// Controls visibility of the confirmation dialog shown when closing with unsent comments.
+  @State private var showDiscardCommentsAlert = false
 
   public init(
     session: CLISession,
@@ -51,13 +55,23 @@ public struct CodeChangesView: View {
       if codeChangesState.consolidatedChanges.isEmpty {
         emptyState
       } else {
-        HSplitView {
-          // File list sidebar
-          fileListSidebar
-            .frame(minWidth: 200, idealWidth: 250, maxWidth: 300)
+        VStack(spacing: 0) {
+          HSplitView {
+            // File list sidebar
+            fileListSidebar
+              .frame(minWidth: 200, idealWidth: 250, maxWidth: 300)
 
-          // Diff viewer
-          diffViewer
+            // Diff viewer
+            diffViewer
+          }
+
+          // Comments panel (shown when there are comments)
+          if commentsState.hasComments {
+            DiffCommentsPanelView(
+              commentsState: commentsState,
+              onSendToCloud: sendAllCommentsToCloud
+            )
+          }
         }
       }
     }
@@ -69,10 +83,14 @@ public struct CodeChangesView: View {
           inlineEditorState.dismiss()
         }
         return .handled
-      } else {
-        onDismiss()
+      }
+      // Check for unsent comments before dismissing
+      if commentsState.hasComments {
+        showDiscardCommentsAlert = true
         return .handled
       }
+      onDismiss()
+      return .handled
     }
     .onAppear {
       // Auto-select first file
@@ -80,6 +98,19 @@ public struct CodeChangesView: View {
         selectedFileId = first.id
         loadConsolidatedDiff(for: first)
       }
+    }
+    .confirmationDialog(
+      "Discard Unsent Comments?",
+      isPresented: $showDiscardCommentsAlert,
+      titleVisibility: .visible
+    ) {
+      Button("Discard \(commentsState.commentCount) Comment\(commentsState.commentCount == 1 ? "" : "s")", role: .destructive) {
+        commentsState.clearAll()
+        onDismiss()
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("You have \(commentsState.commentCount) unsent comment\(commentsState.commentCount == 1 ? "" : "s"). Closing will discard them.")
     }
   }
 
@@ -98,6 +129,23 @@ public struct CodeChangesView: View {
         Text("(\(codeChangesState.consolidatedChanges.count) files)")
           .font(.title3)
           .foregroundColor(.secondary)
+
+        // Comment count badge
+        if commentsState.hasComments {
+          HStack(spacing: 4) {
+            Image(systemName: "text.bubble.fill")
+              .font(.caption)
+            Text("\(commentsState.commentCount)")
+              .font(.caption.bold())
+          }
+          .foregroundColor(.white)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(
+            Capsule()
+              .fill(Color.brandPrimary)
+          )
+        }
       }
 
       Spacer()
@@ -118,7 +166,11 @@ public struct CodeChangesView: View {
       Spacer()
 
       Button("Close") {
-        onDismiss()
+        if commentsState.hasComments {
+          showDiscardCommentsAlert = true
+        } else {
+          onDismiss()
+        }
       }
     }
     .padding()
@@ -215,6 +267,7 @@ public struct CodeChangesView: View {
           diffStyle: $diffStyle,
           overflowMode: $overflowMode,
           inlineEditorState: inlineEditorState,
+          commentsState: commentsState,
           claudeClient: claudeClient,
           session: session,
           onDismissView: onDismiss
@@ -346,6 +399,30 @@ public struct CodeChangesView: View {
       fileName: consolidated.filePath
     )
   }
+
+  // MARK: - Comments Actions
+
+  /// Sends all pending comments to Claude as a batch review
+  private func sendAllCommentsToCloud() {
+    guard commentsState.hasComments, let client = claudeClient else { return }
+
+    let prompt = commentsState.generatePrompt()
+
+    // Open Terminal with resumed session
+    if let error = TerminalLauncher.launchTerminalWithSession(
+      session.id,
+      claudeClient: client,
+      projectPath: session.projectPath,
+      initialPrompt: prompt
+    ) {
+      inlineEditorState.errorMessage = error.localizedDescription
+    } else {
+      // Clear comments and dismiss
+      commentsState.clearAll()
+      onDismiss()
+    }
+  }
+
 }
 
 // MARK: - DiffInputData
@@ -386,6 +463,7 @@ private struct DiffViewWithHeader: View {
   @Binding var diffStyle: DiffStyle
   @Binding var overflowMode: OverflowMode
   @Bindable var inlineEditorState: InlineEditorState
+  @Bindable var commentsState: DiffCommentsState
   let claudeClient: (any ClaudeCode)?
   let session: CLISession
 
@@ -463,6 +541,7 @@ private struct DiffViewWithHeader: View {
                 let prompt = buildInlinePrompt(
                   question: message,
                   lineNumber: lineNumber,
+                  side: side,
                   lineContent: inlineEditorState.lineContent ?? "",
                   fileName: file
                 )
@@ -479,7 +558,22 @@ private struct DiffViewWithHeader: View {
                   // Dismiss entire diff view - session continues in Terminal
                   onDismissView()
                 }
-              }
+              },
+              onAddComment: { message, lineNumber, side, file, lineContent in
+                // Add comment to the collection
+                commentsState.addComment(
+                  filePath: file,
+                  lineNumber: lineNumber,
+                  side: side,
+                  lineContent: lineContent,
+                  text: message
+                )
+                // Auto-expand panel when first comment is added
+                if commentsState.commentCount == 1 {
+                  commentsState.isPanelExpanded = true
+                }
+              },
+              commentsState: commentsState
             )
           }
         }
@@ -571,16 +665,23 @@ private struct DiffViewWithHeader: View {
   private func buildInlinePrompt(
     question: String,
     lineNumber: Int,
+    side: String,
     lineContent: String,
     fileName: String
   ) -> String {
+    let sideLabel = side == "left" ? "old" : "new"
     return """
-      I'm looking at line \(lineNumber) in \(fileName):
+      I have the following review comment on the code changes:
+
+      ## \(fileName)
+
+      **Line \(lineNumber)** (\(sideLabel)):
       ```
       \(lineContent)
       ```
+      Comment: \(question)
 
-      \(question)
+      Please address this review comment.
       """
   }
 }
