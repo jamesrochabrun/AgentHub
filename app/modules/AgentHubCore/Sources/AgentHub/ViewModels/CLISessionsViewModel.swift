@@ -115,18 +115,20 @@ public final class CLISessionsViewModel {
   public var pendingTerminalPrompts: [String: String] = [:]
 
   /// Updates the terminal view state for a session.
-  /// When switching to terminal mode, stops polling to improve performance.
-  /// When switching to monitor/list mode, starts polling at 1.5s interval.
+  /// Polling continues in both modes to enable Preview/Plan buttons in terminal mode.
   public func setTerminalView(for sessionId: String, show: Bool) {
     let mode = show ? "TERMINAL" : "MONITOR"
     AppLogger.session.info("[Polling] setTerminalView -> \(mode, privacy: .public) for session: \(sessionId.prefix(8), privacy: .public)")
 
     if show {
-      // Switching TO terminal mode - stop polling
+      // Switching TO terminal mode - keep polling for Preview/Plan buttons
       sessionsWithTerminalView.insert(sessionId)
-      stopPolling(sessionId: sessionId)
+      // Ensure polling is running (may not be if session just started)
+      if let session = monitoredSessionBackup[sessionId] {
+        startPolling(session: session)
+      }
     } else {
-      // Switching TO monitor/list mode - start polling
+      // Switching TO monitor/list mode - polling already running
       sessionsWithTerminalView.remove(sessionId)
       if let session = monitoredSessionBackup[sessionId] {
         startPolling(session: session)
@@ -922,21 +924,13 @@ public final class CLISessionsViewModel {
   ///   - skipCheckout: If true, skips git checkout even for non-worktrees
   /// - Returns: An error if launching failed, nil on success
   /// Starts a new Claude session in the Hub's embedded terminal (not external terminal)
-  /// - Parameters:
-  ///   - worktree: The worktree to start the session in
-  ///   - initialPrompt: Optional prompt to send automatically when terminal starts (defaults to "Hello!")
-  public func startNewSessionInHub(_ worktree: WorktreeBranch, initialPrompt: String? = "Hello!") {
+  /// - Parameter worktree: The worktree to start the session in
+  public func startNewSessionInHub(_ worktree: WorktreeBranch) {
     // Each pending session gets a unique ID, so no need to clear existing terminals
     // Terminals are now keyed by session ID, not worktree path
-    let pending = PendingHubSession(worktree: worktree, initialPrompt: initialPrompt)
+    // No auto-prompt: let user type naturally in the terminal
+    let pending = PendingHubSession(worktree: worktree, initialPrompt: nil)
     pendingHubSessions.append(pending)
-
-    // Store prompt in pendingTerminalPrompts so updateNSView can find and clear it
-    // This prevents duplicate sends: first call reads/clears, subsequent calls find nil
-    let pendingKey = "pending-\(pending.id.uuidString)"
-    if let prompt = initialPrompt {
-      pendingTerminalPrompts[pendingKey] = prompt
-    }
 
 #if DEBUG
     let encodedPath = worktree.path.claudeProjectPathEncoded
@@ -1048,24 +1042,8 @@ public final class CLISessionsViewModel {
 
       source.resume()
 
-      // Timeout after 15 seconds (auto-prompt creates session in ~1-2s)
-      Task {
-        try? await Task.sleep(for: .seconds(15))
-        if !didFind {
-          didFind = true // Prevent double resume
-          source.cancel()
-#if DEBUG
-          AppLogger.watcher.debug(
-            "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) timed out waiting for session file"
-          )
-#endif
-          Task { @MainActor in
-            self.removeTerminal(forKey: "pending-\(pending.id.uuidString)")
-            self.pendingHubSessions.removeAll { $0.id == pending.id }
-          }
-          continuation.resume()
-        }
-      }
+      // No timeout: watcher waits indefinitely until user sends a message
+      // or closes the pending session card manually
     }
   }
 
@@ -1228,9 +1206,20 @@ public final class CLISessionsViewModel {
     )
 #endif
 
-    // Wait for directory to be created, then watch it (15 seconds max)
-    for _ in 0..<15 {
+    // Wait indefinitely for directory to be created, then watch it
+    // User can close the pending session card to cancel
+    while true {
       try? await Task.sleep(for: .seconds(1))
+
+      // Check if pending session was cancelled by user
+      if !pendingHubSessions.contains(where: { $0.id == pending.id }) {
+#if DEBUG
+        AppLogger.watcher.debug(
+          "[PollNewSession] pendingId=\(pending.id.uuidString, privacy: .public) cancelled by user"
+        )
+#endif
+        return
+      }
 
       if FileManager.default.fileExists(atPath: projectDir) {
 #if DEBUG
@@ -1243,15 +1232,6 @@ public final class CLISessionsViewModel {
         return
       }
     }
-
-    // Timeout
-#if DEBUG
-    AppLogger.watcher.debug(
-      "[PollNewSession] pendingId=\(pending.id.uuidString, privacy: .public) timed out waiting for project dir"
-    )
-#endif
-    removeTerminal(forKey: "pending-\(pending.id.uuidString)")
-    pendingHubSessions.removeAll { $0.id == pending.id }
   }
 
   /// Copies the full session ID to the clipboard
@@ -1309,8 +1289,7 @@ public final class CLISessionsViewModel {
   }
 
   /// Start monitoring a session.
-  /// Defaults to terminal view mode (no polling).
-  /// Polling will start when user switches to monitor/list mode.
+  /// Defaults to terminal view mode with polling enabled for Preview/Plan buttons.
   public func startMonitoring(session: CLISession) {
     guard !monitoredSessionIds.contains(session.id) else { return }
 
@@ -1321,8 +1300,8 @@ public final class CLISessionsViewModel {
     persistMonitoredSessions()
     persistSessionsWithTerminalView()
 
-    // Don't start polling - terminal mode is the default.
-    // Polling will start when user switches to monitor/list mode via setTerminalView.
+    // Start polling for Preview/Plan buttons (works in both terminal and monitor modes)
+    startPolling(session: session)
   }
 
   /// Stop monitoring a session
