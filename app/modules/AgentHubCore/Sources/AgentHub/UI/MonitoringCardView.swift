@@ -543,10 +543,10 @@ public struct MonitoringCardView: View {
             Text("Plan")
               .font(.caption2)
           }
-          .foregroundColor(.secondary)
+          .foregroundColor(.orange)
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
-          .background(Color.secondary.opacity(0.1))
+          .background(Color.orange.opacity(0.1))
           .clipShape(RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
