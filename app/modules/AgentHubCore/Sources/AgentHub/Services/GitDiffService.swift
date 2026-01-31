@@ -244,6 +244,82 @@ public actor GitDiffService {
     }
   }
 
+  // MARK: - Unified Diff Output (Fast Path)
+
+  /// Gets unified diff output directly from git (fast - single command, no file content fetching)
+  /// - Parameters:
+  ///   - repoPath: Path to the git repository (or any subdirectory)
+  ///   - mode: The type of diff to retrieve
+  ///   - baseBranch: Base branch for branch mode (auto-detected if nil)
+  /// - Returns: Raw unified diff output from git
+  public func getUnifiedDiffOutput(
+    at repoPath: String,
+    mode: DiffMode,
+    baseBranch: String? = nil
+  ) async throws -> String {
+    let gitRoot = try await findGitRoot(at: repoPath)
+
+    let command: [String]
+    switch mode {
+    case .unstaged:
+      command = ["diff"]
+    case .staged:
+      command = ["diff", "--staged"]
+    case .branch:
+      let branch: String
+      if let providedBranch = baseBranch {
+        branch = providedBranch
+      } else {
+        branch = try await detectBaseBranch(at: repoPath)
+      }
+      command = ["diff", "\(branch)...HEAD"]
+    }
+
+    return try await runGitCommand(command, at: gitRoot)
+  }
+
+  /// Gets unified diff output for a specific file (fast - single command)
+  /// - Parameters:
+  ///   - filePath: Absolute path to the file
+  ///   - repoPath: Path to the git repository
+  ///   - mode: The diff mode (unstaged, staged, or branch)
+  ///   - baseBranch: Base branch for branch mode (auto-detected if nil)
+  /// - Returns: Raw unified diff output for the file
+  public func getUnifiedFileDiff(
+    filePath: String,
+    at repoPath: String,
+    mode: DiffMode = .unstaged,
+    baseBranch: String? = nil
+  ) async throws -> String {
+    let gitRoot = try await findGitRoot(at: repoPath)
+
+    // Get relative path from git root
+    let relativePath: String
+    if filePath.hasPrefix(gitRoot) {
+      relativePath = String(filePath.dropFirst(gitRoot.count + 1))
+    } else {
+      relativePath = filePath
+    }
+
+    let command: [String]
+    switch mode {
+    case .unstaged:
+      command = ["diff", "--", relativePath]
+    case .staged:
+      command = ["diff", "--staged", "--", relativePath]
+    case .branch:
+      let branch: String
+      if let providedBranch = baseBranch {
+        branch = providedBranch
+      } else {
+        branch = try await detectBaseBranch(at: repoPath)
+      }
+      command = ["diff", "\(branch)...HEAD", "--", relativePath]
+    }
+
+    return try await runGitCommand(command, at: gitRoot)
+  }
+
   /// Gets the diff content for a specific file based on mode
   /// - Parameters:
   ///   - filePath: Absolute path to the file
@@ -370,7 +446,7 @@ public actor GitDiffService {
   // MARK: - Git Root Detection
 
   /// Finds the git root directory from any path within a repository
-  private func findGitRoot(at path: String) async throws -> String {
+  public func findGitRoot(at path: String) async throws -> String {
     let output = try await runGitCommand(["rev-parse", "--show-toplevel"], at: path)
     return output.trimmingCharacters(in: .whitespacesAndNewlines)
   }
@@ -421,11 +497,33 @@ public actor GitDiffService {
       throw GitDiffError.gitCommandFailed("Failed to start git: \(error.localizedDescription)")
     }
 
-    // Wait for process with timeout
+    // CRITICAL: Read stdout/stderr concurrently BEFORE waiting for process exit
+    // This prevents deadlock when output is large enough to fill the pipe buffer.
+    // If we wait first, the process blocks trying to write, but we're waiting for it to exit.
+    var outputData: Data?
+    var errorData: Data?
+    let readGroup = DispatchGroup()
+
+    readGroup.enter()
+    DispatchQueue.global(qos: .userInitiated).async {
+      outputData = try? outputPipe.fileHandleForReading.readToEnd()
+      readGroup.leave()
+    }
+
+    readGroup.enter()
+    DispatchQueue.global(qos: .userInitiated).async {
+      errorData = try? errorPipe.fileHandleForReading.readToEnd()
+      readGroup.leave()
+    }
+
+    // Wait for reads to complete with timeout
     let didTimeout = await withTaskGroup(of: Bool.self) { group in
       group.addTask {
         await withCheckedContinuation { continuation in
           DispatchQueue.global().async {
+            // Wait for reads first
+            readGroup.wait()
+            // Then wait for process to exit
             process.waitUntilExit()
             continuation.resume(returning: false)
           }
@@ -450,11 +548,8 @@ public actor GitDiffService {
       return result
     }
 
-    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-    let output = String(data: outputData, encoding: .utf8) ?? ""
-    let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+    let output = String(data: outputData ?? Data(), encoding: .utf8) ?? ""
+    let errorOutput = String(data: errorData ?? Data(), encoding: .utf8) ?? ""
 
     if didTimeout {
       throw GitDiffError.timeout
