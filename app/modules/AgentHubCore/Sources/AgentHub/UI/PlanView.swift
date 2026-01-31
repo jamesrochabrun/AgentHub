@@ -59,7 +59,7 @@ public struct PlanView: View {
     }
     .frame(
       minWidth: 700, idealWidth: 900, maxWidth: .infinity,
-      minHeight: 500, idealHeight: 700, maxHeight: .infinity
+      minHeight: 550, idealHeight: 750, maxHeight: .infinity
     )
     .onKeyPress(.escape) {
       onDismiss()
@@ -180,8 +180,35 @@ public struct PlanView: View {
 
   // MARK: - Markdown Content
 
+  @Environment(\.colorScheme) private var colorScheme
+
   private func markdownContent(_ text: String) -> some View {
-    MarkdownView(content: text)
+    ScrollView {
+      MarkdownView(content: text, includeScrollView: false)
+        .padding(DesignTokens.Spacing.lg)
+        .background(cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+        .overlay(
+          RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+            .stroke(Color.borderSubtle, lineWidth: 1)
+        )
+        .shadow(
+          color: cardShadowColor,
+          radius: 8,
+          x: 0,
+          y: 2
+        )
+        .padding(DesignTokens.Spacing.xl)
+    }
+    .background(Color.surfaceCanvas)
+  }
+
+  private var cardBackground: Color {
+    colorScheme == .dark ? Color(white: 0.08) : Color.white
+  }
+
+  private var cardShadowColor: Color {
+    colorScheme == .dark ? Color.black.opacity(0.3) : Color.black.opacity(0.08)
   }
 
   // MARK: - Load Content

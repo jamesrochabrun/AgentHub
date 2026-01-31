@@ -16,21 +16,33 @@ import SwiftUI
 /// to match the AgentHub design system.
 public struct MarkdownView: View {
   let content: String
+  let includeScrollView: Bool
 
-  public init(content: String) {
+  @Environment(\.colorScheme) private var colorScheme
+
+  public init(content: String, includeScrollView: Bool = true) {
     self.content = content
+    self.includeScrollView = includeScrollView
   }
 
   public var body: some View {
-    ScrollView {
-      Markdown(content)
-        .markdownTheme(.agentHub)
-        .markdownCodeSyntaxHighlighter(.plainText)
-        .textSelection(.enabled)
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
+    if includeScrollView {
+      ScrollView {
+        markdownContent
+      }
+      .background(Color.surfaceCanvas)
+    } else {
+      markdownContent
     }
-    .background(Color.surfaceCanvas)
+  }
+
+  private var markdownContent: some View {
+    Markdown(content)
+      .markdownTheme(.agentHub)
+      .markdownCodeSyntaxHighlighter(.highlightSwift(colorScheme: colorScheme))
+      .textSelection(.enabled)
+      .padding()
+      .frame(maxWidth: .infinity, alignment: .leading)
   }
 }
 
@@ -39,10 +51,72 @@ public struct MarkdownView: View {
 extension MarkdownUI.Theme {
   /// Custom theme for plan markdown display
   static let agentHub = Theme()
+    // MARK: - Headings
+    .heading1 { configuration in
+      configuration.label
+        .markdownTextStyle {
+          FontWeight(.bold)
+          FontSize(.em(2.0))
+        }
+        .markdownMargin(top: .em(1.5), bottom: .em(0.5))
+    }
+    .heading2 { configuration in
+      configuration.label
+        .markdownTextStyle {
+          FontWeight(.semibold)
+          FontSize(.em(1.6))
+        }
+        .markdownMargin(top: .em(1.25), bottom: .em(0.375))
+    }
+    .heading3 { configuration in
+      configuration.label
+        .markdownTextStyle {
+          FontWeight(.semibold)
+          FontSize(.em(1.35))
+        }
+        .markdownMargin(top: .em(1.0), bottom: .em(0.25))
+    }
+    .heading4 { configuration in
+      configuration.label
+        .markdownTextStyle {
+          FontWeight(.semibold)
+          FontSize(.em(1.2))
+        }
+        .markdownMargin(top: .em(0.75), bottom: .em(0.25))
+    }
+    .heading5 { configuration in
+      configuration.label
+        .markdownTextStyle {
+          FontWeight(.medium)
+          FontSize(.em(1.1))
+        }
+        .markdownMargin(top: .em(0.5), bottom: .em(0.25))
+    }
+    .heading6 { configuration in
+      configuration.label
+        .markdownTextStyle {
+          FontWeight(.medium)
+          FontSize(.em(1.0))
+          ForegroundColor(.secondary)
+        }
+        .markdownMargin(top: .em(0.5), bottom: .em(0.25))
+    }
+    // MARK: - Paragraph
+    .paragraph { configuration in
+      configuration.label
+        .markdownTextStyle {
+          FontSize(.em(1.1))
+        }
+        .lineSpacing(6)
+        .markdownMargin(top: .zero, bottom: .em(0.75))
+    }
+    // MARK: - Inline Code
     .code {
       FontFamilyVariant(.monospaced)
-      FontSize(.em(0.9))
+      FontSize(.em(0.95))
+      BackgroundColor(Color.surfaceCard.opacity(0.6))
     }
+    // MARK: - Code Block
     .codeBlock { configuration in
       ScrollView(.horizontal, showsIndicators: true) {
         configuration.label
@@ -54,16 +128,57 @@ extension MarkdownUI.Theme {
       }
       .background(Color.surfaceCard)
       .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
+      .overlay(
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+          .stroke(Color.borderSubtle, lineWidth: 1)
+      )
+      .markdownMargin(top: .em(0.5), bottom: .em(0.75))
     }
+    // MARK: - Blockquote
     .blockquote { configuration in
       HStack(spacing: 0) {
-        Rectangle()
-          .fill(Color.secondary.opacity(0.3))
-          .frame(width: 3)
+        RoundedRectangle(cornerRadius: 2)
+          .fill(Color.brandPrimary)
+          .frame(width: 4)
         configuration.label
+          .markdownTextStyle {
+            FontStyle(.italic)
+            ForegroundColor(.secondary)
+          }
           .padding(.leading, DesignTokens.Spacing.md)
       }
       .padding(.vertical, DesignTokens.Spacing.xs)
+      .markdownMargin(top: .em(0.5), bottom: .em(0.5))
+    }
+    // MARK: - Links
+    .link {
+      ForegroundColor(Color.brandPrimary)
+    }
+    // MARK: - Lists
+    .listItem { configuration in
+      configuration.label
+        .markdownMargin(top: .em(0.125), bottom: .em(0.125))
+    }
+    // MARK: - Thematic Break (Horizontal Rule)
+    .thematicBreak {
+      Divider()
+        .markdownMargin(top: .em(1.0), bottom: .em(1.0))
+    }
+    // MARK: - Table
+    .table { configuration in
+      configuration.label
+        .markdownTableBorderStyle(
+          .init(color: .borderSubtle, width: 1)
+        )
+        .markdownMargin(top: .em(0.5), bottom: .em(0.75))
+    }
+    .tableCell { configuration in
+      configuration.label
+        .markdownTextStyle {
+          FontSize(.em(1.0))
+        }
+        .padding(.vertical, DesignTokens.Spacing.xs)
+        .padding(.horizontal, DesignTokens.Spacing.sm)
     }
 }
 
