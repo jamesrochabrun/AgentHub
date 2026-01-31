@@ -18,6 +18,7 @@ public struct PendingChangesView: View {
   let pendingToolUse: PendingToolUse
   let claudeClient: (any ClaudeCode)?
   let onDismiss: () -> Void
+  let onApprovalResponse: ((String, CLISession) -> Void)?
 
   @State private var previewResult: PendingChangesPreviewService.PreviewResult?
   @State private var errorMessage: String?
@@ -27,16 +28,36 @@ public struct PendingChangesView: View {
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
 
+  // Reject button color - coral/red that adapts to light/dark mode
+  private var rejectColor: Color {
+    Color(nsColor: NSColor(name: nil) { appearance in
+      appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+        ? NSColor(red: 251/255, green: 113/255, blue: 133/255, alpha: 1) // warmCoral
+        : NSColor(red: 220/255, green: 38/255, blue: 38/255, alpha: 1)   // deep red
+    })
+  }
+
+  // Accept button color - green that adapts to light/dark mode
+  private var acceptColor: Color {
+    Color(nsColor: NSColor(name: nil) { appearance in
+      appearance.bestMatch(from: [.darkAqua, .vibrantDark]) != nil
+        ? NSColor(red: 134/255, green: 239/255, blue: 172/255, alpha: 1) // softGreen
+        : NSColor(red: 22/255, green: 163/255, blue: 74/255, alpha: 1)   // deep green
+    })
+  }
+
   public init(
     session: CLISession,
     pendingToolUse: PendingToolUse,
     claudeClient: (any ClaudeCode)? = nil,
-    onDismiss: @escaping () -> Void
+    onDismiss: @escaping () -> Void,
+    onApprovalResponse: ((String, CLISession) -> Void)? = nil
   ) {
     self.session = session
     self.pendingToolUse = pendingToolUse
     self.claudeClient = claudeClient
     self.onDismiss = onDismiss
+    self.onApprovalResponse = onApprovalResponse
   }
 
   public var body: some View {
@@ -44,13 +65,11 @@ public struct PendingChangesView: View {
       header
       Divider()
       content
+      Divider()
+      actionBar
     }
     .frame(minWidth: 1000, idealWidth: 1200, maxWidth: .infinity,
            minHeight: 600, idealHeight: 800, maxHeight: .infinity)
-    .onKeyPress(.escape) {
-      onDismiss()
-      return .handled
-    }
     .task {
       await loadPreview()
     }
@@ -96,6 +115,60 @@ public struct PendingChangesView: View {
       Spacer()
 
       Button("Close") { onDismiss() }
+    }
+    .padding()
+    .background(Color.surfaceElevated)
+  }
+
+  // MARK: - Action Bar
+
+  private var actionBar: some View {
+    HStack(spacing: 16) {
+      Spacer()
+
+      // Reject - bordered outline
+      Button {
+        rejectChanges()
+      } label: {
+        HStack(spacing: 6) {
+          Image(systemName: "xmark")
+          Text("Reject")
+          Text("esc ⎋")
+            .fontWeight(.semibold)
+        }
+        .foregroundColor(rejectColor)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(
+          RoundedRectangle(cornerRadius: 8)
+            .stroke(rejectColor, lineWidth: 1.5)
+        )
+      }
+      .buttonStyle(.plain)
+      .keyboardShortcut(.escape, modifiers: [])
+
+      // Accept - bordered outline
+      Button {
+        acceptChanges()
+      } label: {
+        HStack(spacing: 6) {
+          Image(systemName: "checkmark")
+          Text("Accept")
+          Text("⏎")
+            .fontWeight(.semibold)
+        }
+        .foregroundColor(acceptColor)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+        .background(
+          RoundedRectangle(cornerRadius: 8)
+            .stroke(acceptColor, lineWidth: 1.5)
+        )
+      }
+      .buttonStyle(.plain)
+      .keyboardShortcut(.return, modifiers: [])
+
+      Spacer()
     }
     .padding()
     .background(Color.surfaceElevated)
@@ -233,6 +306,16 @@ public struct PendingChangesView: View {
   }
 
   // MARK: - Actions
+
+  private func acceptChanges() {
+    onApprovalResponse?("1", session)  // Menu option 1 = Yes
+    onDismiss()
+  }
+
+  private func rejectChanges() {
+    onApprovalResponse?("3", session)  // Menu option 3 = No
+    onDismiss()
+  }
 
   private func loadPreview() async {
     isLoading = true

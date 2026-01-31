@@ -199,7 +199,10 @@ public struct MonitoringCardView: View {
         session: item.session,
         pendingToolUse: item.pendingToolUse,
         claudeClient: claudeClient,
-        onDismiss: { pendingChangesSheetItem = nil }
+        onDismiss: { pendingChangesSheetItem = nil },
+        onApprovalResponse: { response, session in
+          viewModel?.showTerminalWithPrompt(for: session, prompt: response)
+        }
       )
     }
     .sheet(isPresented: $showingNameSheet) {
