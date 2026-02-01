@@ -111,6 +111,7 @@ public final class AgentHubProvider {
   private func createClaudeClient() -> (any ClaudeCode)? {
     do {
       var config = ClaudeCodeConfiguration.withNvmSupport()
+      config.command = configuration.cliCommand
       config.enableDebugLogging = configuration.enableDebugLogging
 
       let homeDir = NSHomeDirectory()
