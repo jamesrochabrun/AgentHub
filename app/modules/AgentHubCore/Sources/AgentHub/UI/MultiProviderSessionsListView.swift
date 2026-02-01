@@ -53,6 +53,17 @@ public struct MultiProviderSessionsListView: View {
   @AppStorage(AgentHubDefaults.enabledProviders + ".codex")
   private var codexEnabled = true
 
+  @AppStorage(AgentHubDefaults.selectedSidePanelProvider)
+  private var selectedProviderRaw: String = "Claude"
+
+  private var selectedProvider: SessionProviderKind {
+    get { SessionProviderKind(rawValue: selectedProviderRaw) ?? .claude }
+  }
+
+  private func setSelectedProvider(_ provider: SessionProviderKind) {
+    selectedProviderRaw = provider.rawValue
+  }
+
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
@@ -198,60 +209,69 @@ public struct MultiProviderSessionsListView: View {
       CLIRepositoryPickerView(onAddRepository: showAddRepositoryPicker)
         .padding(.bottom, 10)
 
+      ProviderSegmentedControl(
+        selectedProvider: Binding(
+          get: { selectedProvider },
+          set: { setSelectedProvider($0) }
+        ),
+        claudeSessionCount: claudeViewModel.totalSessionCount,
+        codexSessionCount: codexViewModel.totalSessionCount,
+        claudeEnabled: claudeEnabled,
+        codexEnabled: codexEnabled
+      )
+      .padding(.bottom, 12)
+      .onChange(of: claudeEnabled) { _, newValue in
+        if !newValue && selectedProvider == .claude && codexEnabled {
+          setSelectedProvider(.codex)
+        }
+      }
+      .onChange(of: codexEnabled) { _, newValue in
+        if !newValue && selectedProvider == .codex && claudeEnabled {
+          setSelectedProvider(.claude)
+        }
+      }
+
       if !hasRepositories {
         CLIEmptyStateView(onAddRepository: showAddRepositoryPicker)
       } else {
         ScrollView(showsIndicators: false) {
           LazyVStack(spacing: 16) {
             statusHeader
-
-            if claudeEnabled && claudeHasSessions {
-              ProviderSectionView(
-                title: "Claude",
-                viewModel: claudeViewModel,
-                onRemoveRepository: removeRepository,
-                onCreateWorktree: { repository in
-                  createWorktreeContext = WorktreeCreateContext(providerKind: .claude, repository: repository)
-                },
-                onOpenTerminalForWorktree: { worktree in
-                  handleOpenTerminal(worktree: worktree, viewModel: claudeViewModel)
-                },
-                onOpenSessionFile: { session in
-                  openSessionFile(for: session, viewModel: claudeViewModel)
-                },
-                onSelectSearchResult: { result in
-                  handleSearchSelection(result, for: claudeViewModel)
-                }
-              )
-            }
-
-            if codexEnabled && codexHasSessions {
-              ProviderSectionView(
-                title: "Codex",
-                viewModel: codexViewModel,
-                onRemoveRepository: removeRepository,
-                onCreateWorktree: { repository in
-                  createWorktreeContext = WorktreeCreateContext(providerKind: .codex, repository: repository)
-                },
-                onOpenTerminalForWorktree: { worktree in
-                  handleOpenTerminal(worktree: worktree, viewModel: codexViewModel)
-                },
-                onOpenSessionFile: { session in
-                  openSessionFile(for: session, viewModel: codexViewModel)
-                },
-                onSelectSearchResult: { result in
-                  handleSearchSelection(result, for: codexViewModel)
-                }
-              )
-            }
-
-            if !hasVisibleSessions {
-              noSessionsView
-            }
+            selectedProviderContent
           }
           .padding(.vertical, 8)
         }
       }
+    }
+  }
+
+  @ViewBuilder
+  private var selectedProviderContent: some View {
+    let isClaudeSelected = selectedProvider == .claude
+    let viewModel = isClaudeSelected ? claudeViewModel : codexViewModel
+    let providerKind: SessionProviderKind = isClaudeSelected ? .claude : .codex
+    let isEnabled = isClaudeSelected ? claudeEnabled : codexEnabled
+    let hasSessions = isClaudeSelected ? claudeHasSessions : codexHasSessions
+
+    if isEnabled && hasSessions {
+      ProviderSectionView(
+        viewModel: viewModel,
+        onRemoveRepository: removeRepository,
+        onCreateWorktree: { repository in
+          createWorktreeContext = WorktreeCreateContext(providerKind: providerKind, repository: repository)
+        },
+        onOpenTerminalForWorktree: { worktree in
+          handleOpenTerminal(worktree: worktree, viewModel: viewModel)
+        },
+        onOpenSessionFile: { session in
+          openSessionFile(for: session, viewModel: viewModel)
+        },
+        onSelectSearchResult: { result in
+          handleSearchSelection(result, for: viewModel)
+        }
+      )
+    } else {
+      noSessionsView
     }
   }
 
@@ -446,10 +466,6 @@ public struct MultiProviderSessionsListView: View {
     codexViewModel.totalSessionCount + codexViewModel.pendingHubSessions.count > 0
   }
 
-  private var hasVisibleSessions: Bool {
-    (claudeEnabled && claudeHasSessions) || (codexEnabled && codexHasSessions)
-  }
-
   private var hasRepositories: Bool {
     !allRepositories.isEmpty
   }
@@ -485,7 +501,6 @@ public struct MultiProviderSessionsListView: View {
 // MARK: - ProviderSectionView
 
 private struct ProviderSectionView: View {
-  let title: String
   @Bindable var viewModel: CLISessionsViewModel
   let onRemoveRepository: (SelectedRepository) -> Void
   let onCreateWorktree: (SelectedRepository) -> Void
@@ -495,24 +510,6 @@ private struct ProviderSectionView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      HStack {
-        Text(title)
-          .font(.system(.subheadline, weight: .semibold))
-          .foregroundColor(Color.brandPrimary(for: viewModel.providerKind))
-        Spacer()
-        Text("\(viewModel.totalSessionCount)")
-          .font(.caption)
-          .foregroundColor(.secondary)
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(.vertical, 8)
-      .padding(.horizontal, 4)
-      .overlay(alignment: .bottom) {
-        Rectangle()
-          .fill(Color.brandPrimary(for: viewModel.providerKind))
-          .frame(height: 1)
-      }
-
       ProviderSearchPanel(viewModel: viewModel, onSelectResult: onSelectSearchResult)
 
       VStack(spacing: 12) {

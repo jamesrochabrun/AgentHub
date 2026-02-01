@@ -53,6 +53,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true)
   public static let enabledProviders = "\(keyPrefix)settings.enabledProviders"
 
+  /// Selected provider in side panel segmented control
+  /// Type: String (default: "Claude")
+  public static let selectedSidePanelProvider = "\(keyPrefix)sidepanel.selectedProvider"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name
