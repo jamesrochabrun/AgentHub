@@ -355,9 +355,9 @@ public struct MonitoringCardView: View {
     HStack(spacing: 8) {
       // Activity indicator circle - shows when session is working
       Circle()
-        .fill(isHighlighted ? Color.brandPrimary : .gray.opacity(0.3))
+        .fill(isHighlighted ? Color.brandPrimary(for: providerKind) : .gray.opacity(0.3))
         .frame(width: 10, height: 10)
-        .shadow(color: isHighlighted ? Color.brandPrimary.opacity(0.6) : .clear, radius: 4)
+        .shadow(color: isHighlighted ? Color.brandPrimary(for: providerKind).opacity(0.6) : .clear, radius: 4)
 
       // Session label - show custom name, slug, or default ID
       if let customName = viewModel?.sessionCustomNames[session.id] {
@@ -398,7 +398,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "terminal")
               .font(.caption)
               .frame(width: 28, height: 22)
-              .foregroundColor(showTerminal ? .brandPrimary : .secondary)
+              .foregroundColor(showTerminal ? .brandPrimary(for: providerKind) : .secondary)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
@@ -408,7 +408,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "list.bullet")
               .font(.caption)
               .frame(width: 28, height: 22)
-              .foregroundColor(!showTerminal ? .brandPrimary : .secondary)
+              .foregroundColor(!showTerminal ? .brandPrimary(for: providerKind) : .secondary)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
@@ -507,7 +507,7 @@ public struct MonitoringCardView: View {
         Text(branch)
           .font(.caption)
           .fontWeight(.medium)
-          .foregroundColor(.brandPrimary)
+          .foregroundColor(.brandPrimary(for: providerKind))
       }
 
       Spacer()

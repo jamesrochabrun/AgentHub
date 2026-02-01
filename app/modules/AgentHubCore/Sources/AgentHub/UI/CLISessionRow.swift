@@ -14,6 +14,7 @@ import SwiftUI
 public struct CLISessionRow: View {
   let session: CLISession
   let customName: String?
+  let providerKind: SessionProviderKind
   let isMonitoring: Bool
   let onConnect: () -> Void
   let onCopyId: () -> Void
@@ -26,6 +27,7 @@ public struct CLISessionRow: View {
   public init(
     session: CLISession,
     customName: String? = nil,
+    providerKind: SessionProviderKind = .claude,
     isMonitoring: Bool,
     onConnect: @escaping () -> Void,
     onCopyId: @escaping () -> Void,
@@ -35,6 +37,7 @@ public struct CLISessionRow: View {
   ) {
     self.session = session
     self.customName = customName
+    self.providerKind = providerKind
     self.isMonitoring = isMonitoring
     self.onConnect = onConnect
     self.onCopyId = onCopyId
@@ -51,7 +54,7 @@ public struct CLISessionRow: View {
       .onTapGesture {
         onToggleMonitoring()
       }
-      .agentHubFlatRow(isHighlighted: isMonitoring)
+      .agentHubFlatRow(isHighlighted: isMonitoring, providerKind: providerKind)
       .help(isMonitoring ? "Stop monitoring" : "Monitor session")
   }
 
@@ -81,7 +84,7 @@ public struct CLISessionRow: View {
       return .green
     }
     if isMonitoring {
-      return .brandPrimary
+      return .brandPrimary(for: providerKind)
     }
     return .gray.opacity(0.5)
   }

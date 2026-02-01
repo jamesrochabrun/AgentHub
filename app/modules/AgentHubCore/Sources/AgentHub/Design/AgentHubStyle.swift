@@ -129,10 +129,16 @@ private struct AgentHubChipModifier: ViewModifier {
 private struct AgentHubFlatRowModifier: ViewModifier {
   @Environment(\.colorScheme) private var colorScheme
   let isHighlighted: Bool
+  let providerKind: SessionProviderKind?
 
   func body(content: Content) -> some View {
     // Always show subtle background, selection indicated only by left border
     let backgroundColor = colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92)
+    let accentColor: Color = if let provider = providerKind {
+      Color.brandPrimary(for: provider)
+    } else {
+      Color.brandPrimary
+    }
 
     return content
       .background(backgroundColor)
@@ -140,7 +146,7 @@ private struct AgentHubFlatRowModifier: ViewModifier {
         // Left accent bar for highlighted state only
         if isHighlighted {
           Rectangle()
-            .fill(Color.brandPrimary)
+            .fill(accentColor)
             .frame(width: 2)
         }
       }
@@ -168,7 +174,7 @@ public extension View {
     modifier(AgentHubChipModifier(isActive: isActive))
   }
 
-  func agentHubFlatRow(isHighlighted: Bool = false) -> some View {
-    modifier(AgentHubFlatRowModifier(isHighlighted: isHighlighted))
+  func agentHubFlatRow(isHighlighted: Bool = false, providerKind: SessionProviderKind? = nil) -> some View {
+    modifier(AgentHubFlatRowModifier(isHighlighted: isHighlighted, providerKind: providerKind))
   }
 }

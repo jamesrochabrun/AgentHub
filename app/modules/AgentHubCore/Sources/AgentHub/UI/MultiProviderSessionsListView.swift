@@ -47,6 +47,12 @@ public struct MultiProviderSessionsListView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @Environment(\.colorScheme) private var colorScheme
 
+  @AppStorage(AgentHubDefaults.enabledProviders + ".claude")
+  private var claudeEnabled = true
+
+  @AppStorage(AgentHubDefaults.enabledProviders + ".codex")
+  private var codexEnabled = true
+
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
@@ -199,7 +205,7 @@ public struct MultiProviderSessionsListView: View {
           LazyVStack(spacing: 16) {
             statusHeader
 
-            if claudeHasSessions {
+            if claudeEnabled && claudeHasSessions {
               ProviderSectionView(
                 title: "Claude",
                 viewModel: claudeViewModel,
@@ -219,7 +225,7 @@ public struct MultiProviderSessionsListView: View {
               )
             }
 
-            if codexHasSessions {
+            if codexEnabled && codexHasSessions {
               ProviderSectionView(
                 title: "Codex",
                 viewModel: codexViewModel,
@@ -239,7 +245,7 @@ public struct MultiProviderSessionsListView: View {
               )
             }
 
-            if !claudeHasSessions && !codexHasSessions {
+            if !hasVisibleSessions {
               noSessionsView
             }
           }
@@ -438,6 +444,10 @@ public struct MultiProviderSessionsListView: View {
 
   private var codexHasSessions: Bool {
     codexViewModel.totalSessionCount + codexViewModel.pendingHubSessions.count > 0
+  }
+
+  private var hasVisibleSessions: Bool {
+    (claudeEnabled && claudeHasSessions) || (codexEnabled && codexHasSessions)
   }
 
   private var hasRepositories: Bool {

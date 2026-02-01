@@ -121,7 +121,7 @@ public struct CLIWorktreeBranchRow: View {
           // Branch icon
           Image(systemName: "arrow.triangle.branch")
             .font(.subheadline)
-            .foregroundColor(worktree.isWorktree ? .brandSecondary : .brandPrimary)
+            .foregroundColor(worktree.isWorktree ? .brandSecondary(for: providerKind) : .brandPrimary(for: providerKind))
 
           // Path
           Text(worktree.path)
@@ -168,7 +168,7 @@ public struct CLIWorktreeBranchRow: View {
               Button(action: { onDeleteWorktree?() }) {
                 Image(systemName: "trash")
                   .font(.caption)
-                  .foregroundColor(.brandSecondary.opacity(0.8))
+                  .foregroundColor(.brandSecondary(for: providerKind).opacity(0.8))
                   .frame(width: 24, height: 24)
                   .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -185,7 +185,7 @@ public struct CLIWorktreeBranchRow: View {
           Button(action: { showNewSessionMenu.toggle() }) {
             Image(systemName: "plus")
               .font(.caption)
-              .foregroundColor(.brandSecondary)
+              .foregroundColor(.brandSecondary(for: providerKind))
               .frame(width: 24, height: 24)
               .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -203,7 +203,7 @@ public struct CLIWorktreeBranchRow: View {
               }) {
                 Label("Start in Hub", systemImage: "square.grid.2x2")
                   .frame(maxWidth: .infinity, alignment: .leading)
-                  .foregroundColor(.brandPrimary)
+                  .foregroundColor(.brandPrimary(for: providerKind))
               }
               .buttonStyle(.plain)
               .padding(.horizontal, 12)
@@ -251,6 +251,7 @@ public struct CLIWorktreeBranchRow: View {
                 CLISessionRow(
                   session: session,
                   customName: getCustomName?(session.id),
+                  providerKind: providerKind,
                   isMonitoring: isSessionMonitored(session.id),
                   onConnect: { onConnectSession(session) },
                   onCopyId: { onCopySessionId(session) },

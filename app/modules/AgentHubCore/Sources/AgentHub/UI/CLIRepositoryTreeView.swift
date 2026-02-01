@@ -173,7 +173,7 @@ public struct CLIRepositoryTreeView: View {
       Button(action: onCreateWorktree) {
         Image(systemName: "arrow.triangle.branch")
           .font(.caption)
-          .foregroundColor(.brandSecondary)
+          .foregroundColor(.brandSecondary(for: providerKind))
           .padding(6)
           .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)

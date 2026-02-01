@@ -38,6 +38,7 @@ public enum DesignTokens {
 /// Available app themes
 public enum AppTheme: String, CaseIterable, Identifiable {
   case claude = "claude"
+  case codex = "codex"
   case bat = "bat"
   case xcode = "Blue"
   case custom = "custom"
@@ -47,6 +48,7 @@ public enum AppTheme: String, CaseIterable, Identifiable {
   public var displayName: String {
     switch self {
     case .claude: return "Claude"
+    case .codex: return "Codex"
     case .bat: return "Bat"
     case .xcode: return "Blue"
     case .custom: return "Custom"
@@ -56,6 +58,7 @@ public enum AppTheme: String, CaseIterable, Identifiable {
   public var description: String {
     switch self {
     case .claude: return "Warm earth tones"
+    case .codex: return "Teal and purple"
     case .bat: return "Purple with mustard accents"
     case .xcode: return "Cool blues"
     case .custom: return "User-defined colors"
@@ -127,6 +130,35 @@ extension Color {
     getCurrentThemeColors().brandTertiary
   }
 
+  // MARK: - Provider-Aware Colors
+
+  public static func brandPrimary(for provider: SessionProviderKind) -> Color {
+    switch provider {
+    case .claude:
+      return Color(hex: "#CC785C")  // bookCloth
+    case .codex:
+      return Color(hex: "#00A5B2")  // teal
+    }
+  }
+
+  public static func brandSecondary(for provider: SessionProviderKind) -> Color {
+    switch provider {
+    case .claude:
+      return Color(hex: "#D4A27F")  // kraft
+    case .codex:
+      return Color(hex: "#9333EA")  // purple
+    }
+  }
+
+  public static func brandTertiary(for provider: SessionProviderKind) -> Color {
+    switch provider {
+    case .claude:
+      return Color(hex: "#EBDBBC")  // manilla
+    case .codex:
+      return Color(hex: "#64748B")  // slate
+    }
+  }
+
   // MARK: - Theme Colors Helper
 
   private static func getCurrentThemeColors() -> ThemeColors {
@@ -139,6 +171,12 @@ extension Color {
         brandPrimary: Color(hex: "#CC785C"),   // bookCloth
         brandSecondary: Color(hex: "#D4A27F"), // kraft
         brandTertiary: Color(hex: "#EBDBBC")   // manilla
+      )
+    case .codex:
+      return ThemeColors(
+        brandPrimary: Color(hex: "#00A5B2"),   // teal
+        brandSecondary: Color(hex: "#9333EA"), // purple
+        brandTertiary: Color(hex: "#64748B")   // slate
       )
     case .bat:
       // Bat: purple primary, real mustard secondary, slate tertiary

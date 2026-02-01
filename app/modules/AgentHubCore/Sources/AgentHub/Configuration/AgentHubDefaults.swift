@@ -46,6 +46,13 @@ public enum AgentHubDefaults {
   /// Type: Data (JSON-encoded [String])
   public static let sessionsWithTerminalView = "\(keyPrefix)sessions.sessionsWithTerminalView"
 
+  // MARK: - Provider Settings
+
+  /// Base key for enabled providers
+  /// Usage: Use with provider suffix, e.g. `enabledProviders + ".claude"`
+  /// Type: Bool (default: true)
+  public static let enabledProviders = "\(keyPrefix)settings.enabledProviders"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name
