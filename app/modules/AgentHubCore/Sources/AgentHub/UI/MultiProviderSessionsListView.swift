@@ -487,14 +487,21 @@ private struct ProviderSectionView: View {
     VStack(alignment: .leading, spacing: 12) {
       HStack {
         Text(title)
-          .font(.headline)
-          .foregroundColor(.primary)
+          .font(.system(.subheadline, weight: .semibold))
+          .foregroundColor(Color.brandPrimary(for: viewModel.providerKind))
         Spacer()
         Text("\(viewModel.totalSessionCount)")
           .font(.caption)
           .foregroundColor(.secondary)
       }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.vertical, 8)
       .padding(.horizontal, 4)
+      .overlay(alignment: .bottom) {
+        Rectangle()
+          .fill(Color.brandPrimary(for: viewModel.providerKind))
+          .frame(height: 1)
+      }
 
       ProviderSearchPanel(viewModel: viewModel, onSelectResult: onSelectSearchResult)
 
@@ -574,7 +581,7 @@ private struct ProviderSearchPanel: View {
       Button(action: { viewModel.showSearchFilterPicker() }) {
         Image(systemName: "folder.badge.plus")
           .font(.system(size: DesignTokens.IconSize.md))
-          .foregroundColor(viewModel.hasSearchFilter ? .brandPrimary : .secondary)
+          .foregroundColor(viewModel.hasSearchFilter ? .brandPrimary(for: viewModel.providerKind) : .secondary)
       }
       .buttonStyle(.plain)
       .help("Filter by repository")
@@ -583,11 +590,11 @@ private struct ProviderSearchPanel: View {
         HStack(spacing: 4) {
           Text(filterName)
             .font(.system(.caption, weight: .medium))
-            .foregroundColor(.brandPrimary)
+            .foregroundColor(.brandPrimary(for: viewModel.providerKind))
           Button(action: { viewModel.clearSearchFilter() }) {
             Image(systemName: "xmark")
               .font(.system(size: 8, weight: .bold))
-              .foregroundColor(.brandPrimary.opacity(0.8))
+              .foregroundColor(.brandPrimary(for: viewModel.providerKind).opacity(0.8))
           }
           .buttonStyle(.plain)
         }
@@ -595,7 +602,7 @@ private struct ProviderSearchPanel: View {
         .padding(.vertical, 4)
         .background(
           Capsule()
-            .fill(Color.brandPrimary.opacity(0.15))
+            .fill(Color.brandPrimary(for: viewModel.providerKind).opacity(0.15))
         )
       }
 
@@ -622,7 +629,7 @@ private struct ProviderSearchPanel: View {
         } else {
           Button(action: { viewModel.performSearch() }) {
             Image(systemName: "arrow.right.circle.fill")
-              .foregroundColor(.brandPrimary)
+              .foregroundColor(.brandPrimary(for: viewModel.providerKind))
           }
           .buttonStyle(.plain)
         }
@@ -636,7 +643,7 @@ private struct ProviderSearchPanel: View {
     )
     .overlay(
       RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-        .stroke(viewModel.isSearchActive || viewModel.hasSearchFilter ? Color.brandPrimary.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+        .stroke(viewModel.isSearchActive || viewModel.hasSearchFilter ? Color.brandPrimary(for: viewModel.providerKind).opacity(0.5) : Color.borderSubtle, lineWidth: 1)
     )
   }
 
