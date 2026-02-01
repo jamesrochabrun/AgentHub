@@ -32,18 +32,24 @@ public struct AgentHubConfiguration: Sendable {
   /// Display mode for stats (menu bar or popover)
   public var statsDisplayMode: StatsDisplayMode
 
+  /// The CLI command name to use (default: "claude")
+  /// Companies can configure this for white-labeling (e.g., "acme" instead of "claude")
+  public var cliCommand: String
+
   /// Creates a configuration with custom values
   public init(
     claudeDataPath: String = "~/.claude",
     enableDebugLogging: Bool = false,
     additionalCLIPaths: [String] = [],
-    statsDisplayMode: StatsDisplayMode = .menuBar
+    statsDisplayMode: StatsDisplayMode = .menuBar,
+    cliCommand: String = "claude"
   ) {
     let expanded = NSString(string: claudeDataPath).expandingTildeInPath
     self.claudeDataPath = expanded
     self.enableDebugLogging = enableDebugLogging
     self.additionalCLIPaths = additionalCLIPaths
     self.statsDisplayMode = statsDisplayMode
+    self.cliCommand = cliCommand
   }
 
   /// Default configuration with sensible defaults
