@@ -41,6 +41,11 @@ public final class AgentHubProvider {
     CLISessionMonitorService(claudeDataPath: configuration.claudeDataPath, metadataStore: metadataStore)
   }()
 
+  /// Monitor service for tracking Codex sessions
+  public private(set) lazy var codexMonitorService: CodexSessionMonitorService = {
+    CodexSessionMonitorService(codexDataPath: configuration.codexDataPath, metadataStore: metadataStore)
+  }()
+
   /// Git worktree service for branch/worktree operations
   public private(set) lazy var gitService: GitWorktreeService = {
     GitWorktreeService()
@@ -49,6 +54,26 @@ public final class AgentHubProvider {
   /// Global stats service for usage metrics
   public private(set) lazy var statsService: GlobalStatsService = {
     GlobalStatsService(claudePath: configuration.claudeDataPath)
+  }()
+
+  /// Codex file watcher for real-time monitoring
+  private lazy var codexFileWatcher: CodexSessionFileWatcher = {
+    CodexSessionFileWatcher(codexPath: configuration.codexDataPath)
+  }()
+
+  /// Claude file watcher for real-time monitoring
+  private lazy var claudeFileWatcher: SessionFileWatcher = {
+    SessionFileWatcher(claudePath: configuration.claudeDataPath)
+  }()
+
+  /// Claude search service
+  private lazy var claudeSearchService: GlobalSearchService = {
+    GlobalSearchService(claudeDataPath: configuration.claudeDataPath)
+  }()
+
+  /// Codex search service
+  private lazy var codexSearchService: CodexSearchService = {
+    CodexSearchService(codexDataPath: configuration.codexDataPath)
   }()
 
   /// Display settings for stats visualization
@@ -73,13 +98,19 @@ public final class AgentHubProvider {
 
   // MARK: - View Models
 
-  /// Sessions view model - created lazily and cached
+  /// Claude sessions view model - created lazily and cached
+  public private(set) lazy var claudeSessionsViewModel: CLISessionsViewModel = {
+    makeSessionsViewModel(providerKind: .claude)
+  }()
+
+  /// Codex sessions view model - created lazily and cached
+  public private(set) lazy var codexSessionsViewModel: CLISessionsViewModel = {
+    makeSessionsViewModel(providerKind: .codex)
+  }()
+
+  /// Backwards-compatible default sessions view model (Claude)
   public private(set) lazy var sessionsViewModel: CLISessionsViewModel = {
-    CLISessionsViewModel(
-      monitorService: monitorService,
-      claudeClient: claudeClient,
-      metadataStore: metadataStore
-    )
+    claudeSessionsViewModel
   }()
 
   /// Intelligence view model - created lazily and cached
@@ -153,6 +184,52 @@ public final class AgentHubProvider {
     }
   }
 
+  // MARK: - Sessions ViewModel Factory
+
+  private func makeSessionsViewModel(providerKind: SessionProviderKind) -> CLISessionsViewModel {
+    let cliConfiguration: CLICommandConfiguration
+    switch providerKind {
+    case .claude:
+      let command = claudeClient?.configuration.command ?? "claude"
+      let paths = claudeClient?.configuration.additionalPaths ?? configuration.additionalCLIPaths
+      cliConfiguration = CLICommandConfiguration(command: command, additionalPaths: paths, mode: .claude)
+    case .codex:
+      let codexCommand = TerminalLauncher.findCodexExecutable(additionalPaths: configuration.additionalCLIPaths) ?? "codex"
+      cliConfiguration = CLICommandConfiguration(command: codexCommand, additionalPaths: configuration.additionalCLIPaths, mode: .codex)
+    }
+
+    let selectedMonitor: any SessionMonitorServiceProtocol = {
+      switch providerKind {
+      case .claude: return monitorService
+      case .codex: return codexMonitorService
+      }
+    }()
+
+    let selectedWatcher: any SessionFileWatcherProtocol = {
+      switch providerKind {
+      case .claude: return claudeFileWatcher
+      case .codex: return codexFileWatcher
+      }
+    }()
+
+    let selectedSearch: (any SessionSearchServiceProtocol)? = {
+      switch providerKind {
+      case .claude: return claudeSearchService
+      case .codex: return codexSearchService
+      }
+    }()
+
+    return CLISessionsViewModel(
+      monitorService: selectedMonitor,
+      fileWatcher: selectedWatcher,
+      searchService: selectedSearch,
+      cliConfiguration: cliConfiguration,
+      providerKind: providerKind,
+      claudeClient: providerKind == .claude ? claudeClient : nil,
+      metadataStore: metadataStore
+    )
+  }
+
   // MARK: - Public Factory Methods
 
   /// Creates a new Claude client with the provider's configuration
@@ -175,7 +252,12 @@ public final class AgentHubProvider {
   /// Terminates all active terminal processes.
   /// Call this on app termination to clean up all running Claude sessions.
   public func terminateAllTerminals() {
-    for (key, terminal) in sessionsViewModel.activeTerminals {
+    let allTerminals = claudeSessionsViewModel.activeTerminals.merging(
+      codexSessionsViewModel.activeTerminals,
+      uniquingKeysWith: { first, _ in first }
+    )
+
+    for (key, terminal) in allTerminals {
       AppLogger.session.info("Terminating terminal for key: \(key)")
       terminal.terminateProcess()
     }

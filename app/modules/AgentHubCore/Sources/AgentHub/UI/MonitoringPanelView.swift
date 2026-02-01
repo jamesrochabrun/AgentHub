@@ -276,6 +276,7 @@ public struct MonitoringPanelView: View {
         session: pending.placeholderSession,
         state: nil,
         claudeClient: claudeClient,
+        providerKind: viewModel.providerKind,
         showTerminal: true,
         initialPrompt: pending.initialPrompt,
         terminalKey: "pending-\(pending.id.uuidString)",
@@ -313,6 +314,7 @@ public struct MonitoringPanelView: View {
         codeChangesState: codeChangesState,
         planState: planState,
         claudeClient: claudeClient,
+        providerKind: viewModel.providerKind,
         showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
         initialPrompt: initialPrompt,
         terminalKey: item.session.id,
@@ -394,6 +396,7 @@ public struct MonitoringPanelView: View {
         session: pending.placeholderSession,
         state: nil,
         claudeClient: claudeClient,
+        providerKind: viewModel.providerKind,
         showTerminal: true,
         initialPrompt: pending.initialPrompt,
         terminalKey: pendingId,
@@ -432,6 +435,7 @@ public struct MonitoringPanelView: View {
         codeChangesState: codeChangesState,
         planState: planState,
         claudeClient: claudeClient,
+        providerKind: viewModel.providerKind,
         showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
         initialPrompt: initialPrompt,
         terminalKey: item.session.id,
@@ -492,6 +496,7 @@ public struct MonitoringPanelView: View {
               session: pending.placeholderSession,
               state: nil,
               claudeClient: claudeClient,
+              providerKind: viewModel.providerKind,
               showTerminal: true,
               initialPrompt: pending.initialPrompt,
               terminalKey: pendingId,
@@ -527,6 +532,7 @@ public struct MonitoringPanelView: View {
               codeChangesState: codeChangesState,
               planState: planState,
               claudeClient: claudeClient,
+              providerKind: viewModel.providerKind,
               showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
               initialPrompt: initialPrompt,
               terminalKey: session.id,
@@ -575,20 +581,17 @@ public struct MonitoringPanelView: View {
   // MARK: - Session File Opening
 
   private func openSessionFile(for session: CLISession) {
-    // Build path: ~/.claude/projects/{encoded-project-path}/{sessionId}.jsonl
-    let encodedPath = session.projectPath.claudeProjectPathEncoded
-    let homeDir = FileManager.default.homeDirectoryForCurrentUser
-    let filePath = homeDir
-      .appendingPathComponent(".claude/projects")
-      .appendingPathComponent(encodedPath)
-      .appendingPathComponent("\(session.id).jsonl")
+    guard let fileURL = viewModel.sessionFileURL(for: session),
+          let data = FileManager.default.contents(atPath: fileURL.path),
+          let content = String(data: data, encoding: .utf8) else {
+      return
+    }
 
     // Read file content
-    if let data = FileManager.default.contents(atPath: filePath.path),
-       let content = String(data: data, encoding: .utf8) {
+    if !content.isEmpty {
       sessionFileSheetItem = SessionFileSheetItem(
         session: session,
-        fileName: "\(session.id).jsonl",
+        fileName: fileURL.lastPathComponent,
         content: content
       )
     }
@@ -613,6 +616,20 @@ private func filterJSONLContent(_ content: String) -> String {
     guard let data = trimmed.data(using: .utf8) else { continue }
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
     guard let type = json["type"] as? String else { continue }
+
+    // Codex format: event_msg with payload.type user_message/agent_message
+    if type == "event_msg" {
+      guard let payload = json["payload"] as? [String: Any],
+            let eventType = payload["type"] as? String else { continue }
+
+      if eventType == "user_message" || eventType == "agent_message" {
+        let role = eventType == "user_message" ? "user" : "assistant"
+        let message = (payload["message"] as? String) ?? ""
+        let preview = String(message.prefix(maxTextLength))
+        result.append("[\(role)] \(preview)")
+      }
+      continue
+    }
 
     // Skip file-history-snapshot, summary, etc.
     if type != "user" && type != "assistant" { continue }
@@ -761,7 +778,13 @@ private struct MonitoringSessionFileSheetView: View {
 
 #Preview {
   let service = CLISessionMonitorService()
-  let viewModel = CLISessionsViewModel(monitorService: service)
+  let viewModel = CLISessionsViewModel(
+    monitorService: service,
+    fileWatcher: SessionFileWatcher(),
+    searchService: GlobalSearchService(),
+    cliConfiguration: .claudeDefault,
+    providerKind: .claude
+  )
 
   MonitoringPanelView(viewModel: viewModel, claudeClient: nil)
     .frame(width: 350, height: 500)

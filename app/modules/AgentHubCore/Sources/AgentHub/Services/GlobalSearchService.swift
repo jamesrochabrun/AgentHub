@@ -80,7 +80,7 @@ public actor GlobalSearchService {
   }
 
   /// Returns the total number of indexed sessions
-  public func indexedSessionCount() -> Int {
+  public func indexedSessionCount() async -> Int {
     sessionIndex.count
   }
 
@@ -292,3 +292,7 @@ public actor GlobalSearchService {
     )
   }
 }
+
+// MARK: - Protocol Conformance
+
+extension GlobalSearchService: SessionSearchServiceProtocol {}

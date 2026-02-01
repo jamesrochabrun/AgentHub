@@ -22,6 +22,9 @@ public struct AgentHubConfiguration: Sendable {
   /// Path to Claude data directory (default: ~/.claude)
   public var claudeDataPath: String
 
+  /// Path to Codex data directory (default: ~/.codex)
+  public var codexDataPath: String
+
   /// Enable debug logging for troubleshooting
   public var enableDebugLogging: Bool
 
@@ -36,20 +39,27 @@ public struct AgentHubConfiguration: Sendable {
   /// Companies can configure this for white-labeling (e.g., "acme" instead of "claude")
   public var cliCommand: String
 
+  /// Session provider to use (Claude or Codex)
+  public var sessionProvider: SessionProviderKind
+
   /// Creates a configuration with custom values
   public init(
     claudeDataPath: String = "~/.claude",
+    codexDataPath: String = "~/.codex",
     enableDebugLogging: Bool = false,
     additionalCLIPaths: [String] = [],
     statsDisplayMode: StatsDisplayMode = .menuBar,
-    cliCommand: String = "claude"
+    cliCommand: String = "claude",
+    sessionProvider: SessionProviderKind = .claude
   ) {
     let expanded = NSString(string: claudeDataPath).expandingTildeInPath
     self.claudeDataPath = expanded
+    self.codexDataPath = NSString(string: codexDataPath).expandingTildeInPath
     self.enableDebugLogging = enableDebugLogging
     self.additionalCLIPaths = additionalCLIPaths
     self.statsDisplayMode = statsDisplayMode
     self.cliCommand = cliCommand
+    self.sessionProvider = sessionProvider
   }
 
   /// Default configuration with sensible defaults

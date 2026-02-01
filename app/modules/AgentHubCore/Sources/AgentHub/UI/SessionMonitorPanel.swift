@@ -5,7 +5,6 @@
 //  Created by Assistant on 1/10/26.
 //
 
-import ClaudeCodeSDK
 import SwiftUI
 
 // MARK: - SessionMonitorPanel
@@ -18,7 +17,7 @@ public struct SessionMonitorPanel: View {
   let terminalKey: String?  // Key for terminal storage (session ID or "pending-{pendingId}")
   let sessionId: String?
   let projectPath: String?
-  let claudeClient: (any ClaudeCode)?
+  let cliConfiguration: CLICommandConfiguration
   let initialPrompt: String?
   let viewModel: CLISessionsViewModel?
   let onPromptConsumed: (() -> Void)?
@@ -29,7 +28,7 @@ public struct SessionMonitorPanel: View {
     terminalKey: String? = nil,
     sessionId: String? = nil,
     projectPath: String? = nil,
-    claudeClient: (any ClaudeCode)? = nil,
+    cliConfiguration: CLICommandConfiguration = .claudeDefault,
     initialPrompt: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
     onPromptConsumed: (() -> Void)? = nil
@@ -39,7 +38,7 @@ public struct SessionMonitorPanel: View {
     self.terminalKey = terminalKey
     self.sessionId = sessionId
     self.projectPath = projectPath
-    self.claudeClient = claudeClient
+    self.cliConfiguration = cliConfiguration
     self.initialPrompt = initialPrompt
     self.viewModel = viewModel
     self.onPromptConsumed = onPromptConsumed
@@ -94,7 +93,7 @@ public struct SessionMonitorPanel: View {
           terminalKey: terminalKey ?? sessionId ?? "",
           sessionId: sessionId,
           projectPath: projectPath ?? "",
-          claudeClient: claudeClient,
+          cliConfiguration: cliConfiguration,
           initialPrompt: initialPrompt,
           viewModel: viewModel
         )

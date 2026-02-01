@@ -14,6 +14,7 @@ import SwiftUI
 public struct CLIWorktreeBranchRow: View {
   let worktree: WorktreeBranch
   let isExpanded: Bool
+  let providerKind: SessionProviderKind
   let onToggleExpanded: () -> Void
   let onOpenTerminal: () -> Void
   let onStartInHub: () -> Void
@@ -62,9 +63,18 @@ public struct CLIWorktreeBranchRow: View {
     remainingSessions > 0
   }
 
+  private var providerLabel: String {
+    providerKind.rawValue
+  }
+
+  private var supportsExternalTerminal: Bool {
+    providerKind == .claude
+  }
+
   public init(
     worktree: WorktreeBranch,
     isExpanded: Bool,
+    providerKind: SessionProviderKind = .claude,
     onToggleExpanded: @escaping () -> Void,
     onOpenTerminal: @escaping () -> Void,
     onStartInHub: @escaping () -> Void,
@@ -81,6 +91,7 @@ public struct CLIWorktreeBranchRow: View {
   ) {
     self.worktree = worktree
     self.isExpanded = isExpanded
+    self.providerKind = providerKind
     self.onToggleExpanded = onToggleExpanded
     self.onOpenTerminal = onOpenTerminal
     self.onStartInHub = onStartInHub
@@ -183,7 +194,7 @@ public struct CLIWorktreeBranchRow: View {
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .help("Start new Claude session")
+          .help("Start new \(providerLabel) session")
           .popover(isPresented: $showNewSessionMenu, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
               Button(action: {
@@ -199,19 +210,21 @@ public struct CLIWorktreeBranchRow: View {
               .padding(.vertical, 8)
               .contentShape(Rectangle())
 
-              Divider()
+              if supportsExternalTerminal {
+                Divider()
 
-              Button(action: {
-                showNewSessionMenu = false
-                onOpenTerminal()
-              }) {
-                Label("Open in Terminal", systemImage: "terminal")
-                  .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: {
+                  showNewSessionMenu = false
+                  onOpenTerminal()
+                }) {
+                  Label("Open in Terminal", systemImage: "terminal")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
               }
-              .buttonStyle(.plain)
-              .padding(.horizontal, 12)
-              .padding(.vertical, 8)
-              .contentShape(Rectangle())
             }
             .padding(.vertical, 8)
             .frame(width: 180)

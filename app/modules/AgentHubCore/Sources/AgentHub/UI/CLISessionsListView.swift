@@ -481,6 +481,7 @@ public struct CLISessionsListView: View {
         ForEach(viewModel.selectedRepositories) { repository in
           CLIRepositoryTreeView(
             repository: repository,
+            providerKind: viewModel.providerKind,
             onRemove: { viewModel.removeRepository(repository) },
             onToggleExpanded: { viewModel.toggleRepositoryExpanded(repository) },
             onToggleWorktreeExpanded: { worktree in
@@ -493,20 +494,17 @@ public struct CLISessionsListView: View {
               viewModel.copySessionId(session)
             },
             onOpenSessionFile: { session in
-              // Build path: ~/.claude/projects/{encoded-project-path}/{sessionId}.jsonl
-              let encodedPath = session.projectPath.claudeProjectPathEncoded
-              let homeDir = FileManager.default.homeDirectoryForCurrentUser
-              let filePath = homeDir
-                .appendingPathComponent(".claude/projects")
-                .appendingPathComponent(encodedPath)
-                .appendingPathComponent("\(session.id).jsonl")
+              guard let fileURL = viewModel.sessionFileURL(for: session),
+                    let data = FileManager.default.contents(atPath: fileURL.path),
+                    let content = String(data: data, encoding: .utf8) else {
+                return
+              }
 
               // Read file content
-              if let data = FileManager.default.contents(atPath: filePath.path),
-                 let content = String(data: data, encoding: .utf8) {
+              if !content.isEmpty {
                 sessionFileSheetItem = SessionFileSheetItem(
                   session: session,
-                  fileName: "\(session.id).jsonl",
+                  fileName: fileURL.lastPathComponent,
                   content: content
                 )
               }
@@ -540,7 +538,7 @@ public struct CLISessionsListView: View {
               }
             },
             onStartInHubForWorktree: { worktree in
-              // Start a new Claude session in the Hub's embedded terminal
+              // Start a new session in the Hub's embedded terminal
               // No external terminal is opened - runs directly in the embedded terminal
               viewModel.startNewSessionInHub(worktree)
             },
@@ -687,8 +685,25 @@ private func filterJSONLContent(_ content: String) -> String {
 
     guard let data = trimmed.data(using: .utf8),
           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let type = json["type"] as? String,
-          type == "user" || type == "assistant",
+          let type = json["type"] as? String else {
+      continue
+    }
+
+    // Codex format: event_msg with payload.type user_message/agent_message
+    if type == "event_msg" {
+      guard let payload = json["payload"] as? [String: Any],
+            let eventType = payload["type"] as? String else { continue }
+
+      if eventType == "user_message" || eventType == "agent_message" {
+        let role = eventType == "user_message" ? "user" : "assistant"
+        let message = (payload["message"] as? String) ?? ""
+        let preview = String(message.prefix(maxTextLength))
+        result.append("[\(role)] \(preview)")
+      }
+      continue
+    }
+
+    guard type == "user" || type == "assistant",
           let message = json["message"] as? [String: Any],
           let contentBlocks = message["content"] as? [[String: Any]] else {
       continue
@@ -830,7 +845,13 @@ private struct SessionFileSheetView: View {
 
 #Preview {
   let service = CLISessionMonitorService()
-  let viewModel = CLISessionsViewModel(monitorService: service)
+  let viewModel = CLISessionsViewModel(
+    monitorService: service,
+    fileWatcher: SessionFileWatcher(),
+    searchService: GlobalSearchService(),
+    cliConfiguration: .claudeDefault,
+    providerKind: .claude
+  )
 
   CLISessionsListView(viewModel: viewModel, columnVisibility: .constant(.all))
     .frame(width: 800, height: 600)

@@ -308,6 +308,53 @@ public struct TerminalLauncher {
     command: String,
     additionalPaths: [String]?
   ) -> String? {
+    findExecutable(command: command, additionalPaths: additionalPaths)
+  }
+
+  /// Finds the full path to the Codex executable, preferring local installs.
+  /// - Parameters:
+  ///   - additionalPaths: Additional paths to search from configuration
+  /// - Returns: The full path to the executable if found, nil otherwise
+  public static func findCodexExecutable(
+    additionalPaths: [String]?
+  ) -> String? {
+    let fileManager = FileManager.default
+    let homeDir = NSHomeDirectory()
+
+    // Priority 1: Local codex installation
+    let localCodexPath = "\(homeDir)/.codex/local/codex"
+    if fileManager.fileExists(atPath: localCodexPath) {
+      return localCodexPath
+    }
+
+    // Priority 2: NVM paths (common node versions)
+    let nvmPaths = [
+      "\(homeDir)/.nvm/current/bin",
+      "\(homeDir)/.nvm/versions/node/v22.16.0/bin",
+      "\(homeDir)/.nvm/versions/node/v20.11.1/bin",
+      "\(homeDir)/.nvm/versions/node/v18.19.0/bin"
+    ]
+
+    for nvmPath in nvmPaths {
+      let codexPath = "\(nvmPath)/codex"
+      if fileManager.fileExists(atPath: codexPath) {
+        return codexPath
+      }
+    }
+
+    // Fallback: search using generic resolver
+    return findExecutable(command: "codex", additionalPaths: additionalPaths)
+  }
+
+  /// Finds the full path to a CLI executable
+  /// - Parameters:
+  ///   - command: The command name to search for (e.g., "claude", "codex")
+  ///   - additionalPaths: Additional paths to search from configuration
+  /// - Returns: The full path to the executable if found, nil otherwise
+  public static func findExecutable(
+    command: String,
+    additionalPaths: [String]?
+  ) -> String? {
     let fileManager = FileManager.default
     let homeDir = NSHomeDirectory()
 
@@ -317,6 +364,9 @@ public struct TerminalLauncher {
       "/opt/homebrew/bin",
       "/usr/bin",
       "\(homeDir)/.claude/local",
+      "\(homeDir)/.codex/local",
+      "\(homeDir)/.codex/bin",
+      "\(homeDir)/.local/bin",
       "\(homeDir)/.nvm/current/bin",
       "\(homeDir)/.nvm/versions/node/v22.16.0/bin",
       "\(homeDir)/.nvm/versions/node/v20.11.1/bin",

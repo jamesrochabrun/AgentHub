@@ -54,6 +54,7 @@ public struct MonitoringCardView: View {
   let codeChangesState: CodeChangesState?
   let planState: PlanState?
   let claudeClient: (any ClaudeCode)?
+  let providerKind: SessionProviderKind
   let showTerminal: Bool
   let initialPrompt: String?
   let terminalKey: String?  // Key for terminal storage (session ID or "pending-{pendingId}")
@@ -85,6 +86,7 @@ public struct MonitoringCardView: View {
     codeChangesState: CodeChangesState? = nil,
     planState: PlanState? = nil,
     claudeClient: (any ClaudeCode)? = nil,
+    providerKind: SessionProviderKind = .claude,
     showTerminal: Bool = false,
     initialPrompt: String? = nil,
     terminalKey: String? = nil,
@@ -105,6 +107,7 @@ public struct MonitoringCardView: View {
     self.codeChangesState = codeChangesState
     self.planState = planState
     self.claudeClient = claudeClient
+    self.providerKind = providerKind
     self.showTerminal = showTerminal
     self.initialPrompt = initialPrompt
     self.terminalKey = terminalKey
@@ -455,9 +458,11 @@ public struct MonitoringCardView: View {
         onOpenSessionFile()
         showingActionsPopover = false
       }
-      PopoverButton(icon: "rectangle.portrait.and.arrow.right", title: "Open in Terminal") {
-        onConnect()
-        showingActionsPopover = false
+      if providerKind == .claude {
+        PopoverButton(icon: "rectangle.portrait.and.arrow.right", title: "Open in Terminal") {
+          onConnect()
+          showingActionsPopover = false
+        }
       }
       PopoverButton(icon: "pencil", title: "Name Session") {
         showingActionsPopover = false
@@ -609,7 +614,7 @@ public struct MonitoringCardView: View {
           terminalKey: terminalKey ?? session.id,
           sessionId: session.id,
           projectPath: session.projectPath,
-          claudeClient: claudeClient,
+          cliConfiguration: viewModel?.cliConfiguration ?? .claudeDefault,
           initialPrompt: initialPrompt,
           viewModel: viewModel
         )

@@ -65,7 +65,11 @@ public struct AgentHubSessionsView: View {
 
   @ViewBuilder
   private func sessionsListView(provider: AgentHubProvider) -> some View {
-    CLISessionsListView(viewModel: provider.sessionsViewModel, columnVisibility: $columnVisibility)
+    MultiProviderSessionsListView(
+      claudeViewModel: provider.claudeSessionsViewModel,
+      codexViewModel: provider.codexSessionsViewModel,
+      columnVisibility: $columnVisibility
+    )
       .frame(minWidth: 400, minHeight: 600)
       .modifier(RemoveTitleToolbarModifier())
       .toolbar {
