@@ -138,8 +138,8 @@ public struct MonitoringCardView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
 
-      // Context bar (only in monitor/list mode, not terminal mode)
-      if !showTerminal, let state = state, state.inputTokens > 0 {
+      // Context bar (only in monitor/list mode, not terminal mode, Claude only)
+      if !showTerminal, providerKind == .claude, let state = state, state.inputTokens > 0 {
         Divider()
 
         ContextWindowBar(
@@ -388,6 +388,11 @@ public struct MonitoringCardView: View {
         }
       }
 
+      // Provider name with brand color
+      Text(providerKind.rawValue)
+        .font(.caption)
+        .foregroundColor(.brandPrimary(for: providerKind))
+
       Spacer()
 
       // Terminal/List segmented control (hidden when maximized)
@@ -398,7 +403,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "terminal")
               .font(.caption)
               .frame(width: 28, height: 22)
-              .foregroundColor(showTerminal ? .brandPrimary(for: providerKind) : .secondary)
+              .foregroundColor(showTerminal ? .primary : .secondary)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
@@ -408,7 +413,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "list.bullet")
               .font(.caption)
               .frame(width: 28, height: 22)
-              .foregroundColor(!showTerminal ? .brandPrimary(for: providerKind) : .secondary)
+              .foregroundColor(!showTerminal ? .primary : .secondary)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)

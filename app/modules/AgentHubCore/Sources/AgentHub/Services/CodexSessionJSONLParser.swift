@@ -37,7 +37,7 @@ public struct CodexSessionJSONLParser {
 
   // MARK: - Public API
 
-  public static func parseSessionFile(at path: String, approvalTimeoutSeconds: Int = 5) -> ParseResult {
+  public static func parseSessionFile(at path: String, approvalTimeoutSeconds: Int = 0) -> ParseResult {
     var result = ParseResult()
 
     guard let data = FileManager.default.contents(atPath: path),
@@ -55,7 +55,7 @@ public struct CodexSessionJSONLParser {
     return result
   }
 
-  public static func parseNewLines(_ lines: [String], into result: inout ParseResult, approvalTimeoutSeconds: Int = 5) {
+  public static func parseNewLines(_ lines: [String], into result: inout ParseResult, approvalTimeoutSeconds: Int = 0) {
     for line in lines where !line.isEmpty {
       if let entry = parseEntry(line) {
         processEntry(entry, into: &result)
@@ -196,7 +196,7 @@ public struct CodexSessionJSONLParser {
 
   // MARK: - Status
 
-  public static func updateCurrentStatus(_ result: inout ParseResult, approvalTimeoutSeconds: Int = 5) {
+  public static func updateCurrentStatus(_ result: inout ParseResult, approvalTimeoutSeconds: Int = 0) {
     guard let lastActivity = result.recentActivities.last else {
       result.currentStatus = .idle
       return

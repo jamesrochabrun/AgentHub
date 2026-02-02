@@ -32,7 +32,7 @@ public actor SessionFileWatcher {
   private nonisolated let processingQueue = DispatchQueue(label: "com.agenthub.sessionwatcher.processing")
 
   /// Seconds to wait before considering a tool as awaiting approval
-  private var approvalTimeoutSeconds: Int = 5
+  private var approvalTimeoutSeconds: Int = 0
 
   /// Publisher for state updates
   public nonisolated var statePublisher: AnyPublisher<StateUpdate, Never> {

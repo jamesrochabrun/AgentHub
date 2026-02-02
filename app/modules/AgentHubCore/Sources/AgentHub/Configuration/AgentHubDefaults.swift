@@ -31,8 +31,14 @@ public enum AgentHubDefaults {
   public static let showLastMessage = "\(keyPrefix)sessions.showLastMessage"
 
   /// Seconds to wait before triggering approval alert sound
-  /// Type: Int (default: 5)
+  /// Type: Int (default: 0)
   public static let approvalTimeout = "\(keyPrefix)sessions.approvalTimeout"
+
+  // MARK: - Notification Settings
+
+  /// Whether notification sounds are enabled
+  /// Type: Bool (default: true)
+  public static let notificationSoundsEnabled = "\(keyPrefix)notifications.soundsEnabled"
 
   /// Persisted selected repositories (JSON-encoded array of paths)
   /// Type: Data (JSON-encoded [String])

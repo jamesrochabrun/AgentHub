@@ -8,6 +8,9 @@
 import SwiftUI
 
 public struct SettingsView: View {
+  @AppStorage(AgentHubDefaults.notificationSoundsEnabled)
+  private var notificationSoundsEnabled: Bool = true
+
   public init() {}
 
   public var body: some View {
@@ -42,8 +45,21 @@ public struct SettingsView: View {
           }
         }
       }
+
+      Section {
+        Toggle(isOn: $notificationSoundsEnabled) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Notification sounds")
+            Text("Play a sound when tools require approval")
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+        }
+      } header: {
+        Text("Notifications")
+      }
     }
     .formStyle(.grouped)
-    .frame(width: 300, height: 150)
+    .frame(width: 300, height: 220)
   }
 }

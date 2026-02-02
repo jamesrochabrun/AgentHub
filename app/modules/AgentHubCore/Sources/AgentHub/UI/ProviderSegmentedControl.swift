@@ -50,6 +50,15 @@ public struct ProviderSegmentedControl: View {
           Text("(\(count))")
             .font(.system(.subheadline, weight: .regular))
         }
+        if provider == .codex {
+          Text("Beta")
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.brandPrimary(for: .codex).opacity(0.8))
+            .clipShape(Capsule())
+        }
       }
       .foregroundColor(selectedProvider == provider ? Color.brandPrimary(for: provider) : .secondary)
       .padding(.vertical, 8)

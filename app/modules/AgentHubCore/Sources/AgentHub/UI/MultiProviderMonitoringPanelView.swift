@@ -193,7 +193,7 @@ public struct MultiProviderMonitoringPanelView: View {
             Button(action: { layoutMode = mode }) {
               Image(systemName: mode.icon)
                 .font(.caption)
-                .foregroundColor(layoutMode == mode ? .brandPrimary : .secondary)
+                .foregroundColor(layoutMode == mode ? .primary : .secondary)
                 .frame(width: 26, height: 20)
             }
             .buttonStyle(.plain)

@@ -17,7 +17,7 @@ public actor CodexSessionFileWatcher {
   private nonisolated let stateSubject = PassthroughSubject<SessionFileWatcher.StateUpdate, Never>()
   private let codexPath: String
   private nonisolated let processingQueue = DispatchQueue(label: "com.agenthub.codexwatcher.processing")
-  private var approvalTimeoutSeconds: Int = 5
+  private var approvalTimeoutSeconds: Int = 0
 
   public nonisolated var statePublisher: AnyPublisher<SessionFileWatcher.StateUpdate, Never> {
     stateSubject.eraseToAnyPublisher()
