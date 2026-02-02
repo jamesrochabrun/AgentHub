@@ -2,30 +2,44 @@
 //  SettingsView.swift
 //  AgentHub
 //
-//  Settings panel for configuring provider visibility.
+//  Settings panel for app configuration.
 //
 
 import SwiftUI
 
 public struct SettingsView: View {
-  @AppStorage(AgentHubDefaults.enabledProviders + ".claude")
-  private var claudeEnabled = true
-
-  @AppStorage(AgentHubDefaults.enabledProviders + ".codex")
-  private var codexEnabled = true
-
   public init() {}
 
   public var body: some View {
     Form {
-      Section("Providers") {
-        Toggle(isOn: $claudeEnabled) {
+      Section("CLI Status") {
+        HStack {
           Text("Claude")
             .foregroundColor(Color.brandPrimary(for: .claude))
+          Spacer()
+          if CLIDetectionService.isClaudeInstalled() {
+            Label("Installed", systemImage: "checkmark.circle.fill")
+              .foregroundColor(.green)
+              .font(.caption)
+          } else {
+            Label("Not Installed", systemImage: "xmark.circle.fill")
+              .foregroundColor(.secondary)
+              .font(.caption)
+          }
         }
-        Toggle(isOn: $codexEnabled) {
+        HStack {
           Text("Codex")
             .foregroundColor(Color.brandPrimary(for: .codex))
+          Spacer()
+          if CLIDetectionService.isCodexInstalled() {
+            Label("Installed", systemImage: "checkmark.circle.fill")
+              .foregroundColor(.green)
+              .font(.caption)
+          } else {
+            Label("Not Installed", systemImage: "xmark.circle.fill")
+              .foregroundColor(.secondary)
+              .font(.caption)
+          }
         }
       }
     }

@@ -47,12 +47,6 @@ public struct MultiProviderSessionsListView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @Environment(\.colorScheme) private var colorScheme
 
-  @AppStorage(AgentHubDefaults.enabledProviders + ".claude")
-  private var claudeEnabled = true
-
-  @AppStorage(AgentHubDefaults.enabledProviders + ".codex")
-  private var codexEnabled = true
-
   @AppStorage(AgentHubDefaults.selectedSidePanelProvider)
   private var selectedProviderRaw: String = "Claude"
 
@@ -215,21 +209,9 @@ public struct MultiProviderSessionsListView: View {
           set: { setSelectedProvider($0) }
         ),
         claudeSessionCount: claudeViewModel.totalSessionCount,
-        codexSessionCount: codexViewModel.totalSessionCount,
-        claudeEnabled: claudeEnabled,
-        codexEnabled: codexEnabled
+        codexSessionCount: codexViewModel.totalSessionCount
       )
       .padding(.bottom, 12)
-      .onChange(of: claudeEnabled) { _, newValue in
-        if !newValue && selectedProvider == .claude && codexEnabled {
-          setSelectedProvider(.codex)
-        }
-      }
-      .onChange(of: codexEnabled) { _, newValue in
-        if !newValue && selectedProvider == .codex && claudeEnabled {
-          setSelectedProvider(.claude)
-        }
-      }
 
       if !hasRepositories {
         CLIEmptyStateView(onAddRepository: showAddRepositoryPicker)
@@ -250,10 +232,12 @@ public struct MultiProviderSessionsListView: View {
     let isClaudeSelected = selectedProvider == .claude
     let viewModel = isClaudeSelected ? claudeViewModel : codexViewModel
     let providerKind: SessionProviderKind = isClaudeSelected ? .claude : .codex
-    let isEnabled = isClaudeSelected ? claudeEnabled : codexEnabled
+    let isInstalled = isClaudeSelected ? claudeInstalled : codexInstalled
     let hasSessions = isClaudeSelected ? claudeHasSessions : codexHasSessions
 
-    if isEnabled && hasSessions {
+    if !isInstalled {
+      CLINotInstalledView(provider: selectedProvider)
+    } else if hasSessions {
       ProviderSectionView(
         viewModel: viewModel,
         onRemoveRepository: removeRepository,
@@ -457,6 +441,14 @@ public struct MultiProviderSessionsListView: View {
   }
 
   // MARK: - Computed
+
+  private var claudeInstalled: Bool {
+    CLIDetectionService.isClaudeInstalled()
+  }
+
+  private var codexInstalled: Bool {
+    CLIDetectionService.isCodexInstalled()
+  }
 
   private var claudeHasSessions: Bool {
     claudeViewModel.totalSessionCount + claudeViewModel.pendingHubSessions.count > 0
