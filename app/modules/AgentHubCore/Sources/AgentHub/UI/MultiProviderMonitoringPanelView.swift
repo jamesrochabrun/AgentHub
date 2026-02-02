@@ -271,6 +271,7 @@ public struct MultiProviderMonitoringPanelView: View {
               session: pending.placeholderSession,
               state: nil,
               claudeClient: viewModel.claudeClient,
+              cliConfiguration: viewModel.cliConfiguration,
               providerKind: item.providerKind,
               showTerminal: true,
               initialPrompt: pending.initialPrompt,
@@ -291,16 +292,15 @@ public struct MultiProviderMonitoringPanelView: View {
             )
 
           case .monitored(_, let viewModel, let session, let state):
-            let codeChangesState = state.map { CodeChangesState.from(activities: $0.recentActivities) }
             let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
             let initialPrompt = viewModel.pendingPrompt(for: session.id)
 
             MonitoringCardView(
               session: session,
               state: state,
-              codeChangesState: codeChangesState,
               planState: planState,
               claudeClient: viewModel.claudeClient,
+              cliConfiguration: viewModel.cliConfiguration,
               providerKind: item.providerKind,
               showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
               initialPrompt: initialPrompt,
@@ -358,6 +358,7 @@ public struct MultiProviderMonitoringPanelView: View {
           session: pending.placeholderSession,
           state: nil,
           claudeClient: viewModel.claudeClient,
+          cliConfiguration: viewModel.cliConfiguration,
           providerKind: item.providerKind,
           showTerminal: true,
           initialPrompt: pending.initialPrompt,
@@ -382,16 +383,15 @@ public struct MultiProviderMonitoringPanelView: View {
           }
         )
       case .monitored(_, let viewModel, let session, let state):
-        let codeChangesState = state.map { CodeChangesState.from(activities: $0.recentActivities) }
         let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
         let initialPrompt = viewModel.pendingPrompt(for: session.id)
 
         MonitoringCardView(
           session: session,
           state: state,
-          codeChangesState: codeChangesState,
           planState: planState,
           claudeClient: viewModel.claudeClient,
+          cliConfiguration: viewModel.cliConfiguration,
           providerKind: item.providerKind,
           showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
           initialPrompt: initialPrompt,

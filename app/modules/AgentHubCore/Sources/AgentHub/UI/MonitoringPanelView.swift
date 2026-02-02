@@ -276,6 +276,7 @@ public struct MonitoringPanelView: View {
         session: pending.placeholderSession,
         state: nil,
         claudeClient: claudeClient,
+        cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
         showTerminal: true,
         initialPrompt: pending.initialPrompt,
@@ -300,9 +301,6 @@ public struct MonitoringPanelView: View {
         }
       )
     } else if let item = viewModel.monitoredSessions.first(where: { $0.session.id == sessionId }) {
-      let codeChangesState = item.state.map {
-        CodeChangesState.from(activities: $0.recentActivities)
-      }
       let planState = item.state.flatMap {
         PlanState.from(activities: $0.recentActivities)
       }
@@ -311,9 +309,9 @@ public struct MonitoringPanelView: View {
       MonitoringCardView(
         session: item.session,
         state: item.state,
-        codeChangesState: codeChangesState,
         planState: planState,
         claudeClient: claudeClient,
+        cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
         showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
         initialPrompt: initialPrompt,
@@ -396,6 +394,7 @@ public struct MonitoringPanelView: View {
         session: pending.placeholderSession,
         state: nil,
         claudeClient: claudeClient,
+        cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
         showTerminal: true,
         initialPrompt: pending.initialPrompt,
@@ -420,9 +419,6 @@ public struct MonitoringPanelView: View {
 
     // Monitored sessions (existing sessions)
     ForEach(viewModel.monitoredSessions, id: \.session.id) { item in
-      let codeChangesState = item.state.map {
-        CodeChangesState.from(activities: $0.recentActivities)
-      }
       let planState = item.state.flatMap {
         PlanState.from(activities: $0.recentActivities)
       }
@@ -432,9 +428,9 @@ public struct MonitoringPanelView: View {
       MonitoringCardView(
         session: item.session,
         state: item.state,
-        codeChangesState: codeChangesState,
         planState: planState,
         claudeClient: claudeClient,
+        cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
         showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
         initialPrompt: initialPrompt,
@@ -496,6 +492,7 @@ public struct MonitoringPanelView: View {
               session: pending.placeholderSession,
               state: nil,
               claudeClient: claudeClient,
+              cliConfiguration: viewModel.cliConfiguration,
               providerKind: viewModel.providerKind,
               showTerminal: true,
               initialPrompt: pending.initialPrompt,
@@ -518,9 +515,6 @@ public struct MonitoringPanelView: View {
             )
 
           case .monitored(let session, let state):
-            let codeChangesState = state.map {
-              CodeChangesState.from(activities: $0.recentActivities)
-            }
             let planState = state.flatMap {
               PlanState.from(activities: $0.recentActivities)
             }
@@ -529,9 +523,9 @@ public struct MonitoringPanelView: View {
             MonitoringCardView(
               session: session,
               state: state,
-              codeChangesState: codeChangesState,
               planState: planState,
               claudeClient: claudeClient,
+              cliConfiguration: viewModel.cliConfiguration,
               providerKind: viewModel.providerKind,
               showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
               initialPrompt: initialPrompt,

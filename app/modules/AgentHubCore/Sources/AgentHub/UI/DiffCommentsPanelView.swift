@@ -18,7 +18,10 @@ struct DiffCommentsPanelView: View {
   /// The shared state manager containing all pending review comments.
   @Bindable var commentsState: DiffCommentsState
 
-  /// Called when the user taps "Send to Claude" to submit all comments as a batch.
+  /// The provider kind to display in button text
+  let providerKind: SessionProviderKind
+
+  /// Called when the user taps "Send to [Provider]" to submit all comments as a batch.
   let onSendToCloud: () -> Void
 
   @State private var showClearConfirmation = false
@@ -114,12 +117,12 @@ struct DiffCommentsPanelView: View {
       .buttonStyle(.plain)
       .help("Clear all comments")
 
-      // Send to Claude button
+      // Send to provider button
       Button(action: onSendToCloud) {
         HStack(spacing: 4) {
           Image(systemName: "paperplane")
             .font(.caption)
-          Text("Send \(commentsState.commentCount) to Claude")
+          Text("Send \(commentsState.commentCount) to \(providerKind.rawValue)")
             .font(.caption.bold())
         }
         .foregroundColor(.primary)
@@ -131,7 +134,7 @@ struct DiffCommentsPanelView: View {
         )
       }
       .buttonStyle(.plain)
-      .help("Send all comments to Claude (⌘⇧↵)")
+      .help("Send all comments to \(providerKind.rawValue) (⌘⇧↵)")
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
@@ -191,6 +194,7 @@ struct DiffCommentsPanelView: View {
 
         DiffCommentsPanelView(
           commentsState: commentsState,
+          providerKind: .claude,
           onSendToCloud: {}
         )
       }

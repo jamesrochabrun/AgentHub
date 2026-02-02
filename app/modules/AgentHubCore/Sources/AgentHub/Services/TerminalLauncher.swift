@@ -299,6 +299,115 @@ public struct TerminalLauncher {
     }
   }
 
+  /// Launches Terminal with a session resume command using CLICommandConfiguration
+  /// - Parameters:
+  ///   - sessionId: The session ID to resume
+  ///   - cliConfiguration: CLI configuration (command, paths, mode)
+  ///   - projectPath: The project path to change to before resuming
+  ///   - initialPrompt: Optional initial prompt to send
+  /// - Returns: An error if launching fails, nil on success
+  public static func launchTerminalWithSession(
+    _ sessionId: String,
+    cliConfiguration: CLICommandConfiguration,
+    projectPath: String,
+    initialPrompt: String? = nil
+  ) -> Error? {
+    // Find the executable
+    guard let executablePath = findExecutable(
+      command: cliConfiguration.command,
+      additionalPaths: cliConfiguration.additionalPaths
+    ) else {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(cliConfiguration.command)' command."]
+      )
+    }
+
+    // Escape paths for shell
+    let escapedPath = projectPath.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+    let escapedExecPath = executablePath.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+    let escapedSessionId = sessionId.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+
+    // Escape the initial prompt if provided
+    let escapedPrompt = initialPrompt?
+      .replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+      .replacingOccurrences(of: "'", with: "'\\''")
+
+    // Build command based on mode
+    let command: String
+    switch cliConfiguration.mode {
+    case .claude:
+      // claude -r "sessionId" 'prompt'
+      if !projectPath.isEmpty {
+        if let prompt = escapedPrompt {
+          command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" -r \"\(escapedSessionId)\" '\(prompt)'"
+        } else {
+          command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" -r \"\(escapedSessionId)\""
+        }
+      } else {
+        if let prompt = escapedPrompt {
+          command = "\"\(escapedExecPath)\" -r \"\(escapedSessionId)\" '\(prompt)'"
+        } else {
+          command = "\"\(escapedExecPath)\" -r \"\(escapedSessionId)\""
+        }
+      }
+    case .codex:
+      // codex resume "sessionId" 'prompt'
+      if !projectPath.isEmpty {
+        if let prompt = escapedPrompt {
+          command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" resume \"\(escapedSessionId)\" '\(prompt)'"
+        } else {
+          command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" resume \"\(escapedSessionId)\""
+        }
+      } else {
+        if let prompt = escapedPrompt {
+          command = "\"\(escapedExecPath)\" resume \"\(escapedSessionId)\" '\(prompt)'"
+        } else {
+          command = "\"\(escapedExecPath)\" resume \"\(escapedSessionId)\""
+        }
+      }
+    }
+
+    return launchTerminalScript(command: command, scriptPrefix: "cli_resume")
+  }
+
+  /// Creates and executes a terminal script
+  private static func launchTerminalScript(command: String, scriptPrefix: String) -> Error? {
+    let tempDir = NSTemporaryDirectory()
+    let scriptPath = (tempDir as NSString).appendingPathComponent("\(scriptPrefix)_\(UUID().uuidString).command")
+
+    let scriptContent = """
+    #!/bin/bash
+    \(command)
+    """
+
+    do {
+      try scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+      let attributes = [FileAttributeKey.posixPermissions: 0o755]
+      try FileManager.default.setAttributes(attributes, ofItemAtPath: scriptPath)
+
+      let url = URL(fileURLWithPath: scriptPath)
+      NSWorkspace.shared.open(url)
+
+      DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+        try? FileManager.default.removeItem(atPath: scriptPath)
+      }
+
+      return nil
+    } catch {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to launch Terminal: \(error.localizedDescription)"]
+      )
+    }
+  }
+
   /// Finds the full path to the Claude executable
   /// - Parameters:
   ///   - command: The command name to search for (e.g., "claude")

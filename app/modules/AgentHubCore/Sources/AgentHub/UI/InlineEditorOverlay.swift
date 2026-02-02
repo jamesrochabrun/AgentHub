@@ -17,8 +17,9 @@ struct InlineEditorOverlay: View {
 
   @Bindable var state: InlineEditorState
   let containerSize: CGSize
+  let providerKind: SessionProviderKind
 
-  /// Called when user presses Enter - sends immediately to Claude
+  /// Called when user presses Enter - sends immediately to the provider
   let onSubmit: (String, Int, String, String) -> Void
 
   /// Called when user presses Cmd+Enter - adds to comment collection (optional)
@@ -40,7 +41,8 @@ struct InlineEditorOverlay: View {
   /// - Parameters:
   ///   - state: The shared state controlling editor visibility and position.
   ///   - containerSize: The size of the container view for position calculations.
-  ///   - onSubmit: Called when user presses Enter to send immediately to Claude.
+  ///   - providerKind: The provider (Claude or Codex) to style and label the editor for.
+  ///   - onSubmit: Called when user presses Enter to send immediately to the provider.
   ///     Parameters: (message, lineNumber, side, fileName)
   ///   - onAddComment: Called when user presses Cmd+Enter to add to review collection.
   ///     Parameters: (message, lineNumber, side, fileName, lineContent). Optional.
@@ -48,12 +50,14 @@ struct InlineEditorOverlay: View {
   init(
     state: InlineEditorState,
     containerSize: CGSize,
+    providerKind: SessionProviderKind = .claude,
     onSubmit: @escaping (String, Int, String, String) -> Void,
     onAddComment: ((String, Int, String, String, String) -> Void)? = nil,
     commentsState: DiffCommentsState? = nil
   ) {
     self.state = state
     self.containerSize = containerSize
+    self.providerKind = providerKind
     self.onSubmit = onSubmit
     self.onAddComment = onAddComment
     self.commentsState = commentsState
@@ -99,6 +103,7 @@ struct InlineEditorOverlay: View {
           side: state.side,
           fileName: state.fileName,
           errorMessage: state.errorMessage,
+          providerKind: providerKind,
           onSubmit: { message in
             // Submit will open Terminal with resumed session
             onSubmit(message, state.lineNumber, state.side, state.fileName)
