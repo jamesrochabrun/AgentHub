@@ -45,6 +45,8 @@ public struct MultiProviderSessionsListView: View {
   @State private var createWorktreeContext: WorktreeCreateContext?
   @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
+  @State private var isSearchExpanded: Bool = false
+  @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
 
   @AppStorage(AgentHubDefaults.selectedSidePanelProvider)
@@ -200,9 +202,6 @@ public struct MultiProviderSessionsListView: View {
 
   private var sessionListPanel: some View {
     VStack(spacing: 0) {
-      CLIRepositoryPickerView(onAddRepository: showAddRepositoryPicker)
-        .padding(.bottom, 10)
-
       ProviderSegmentedControl(
         selectedProvider: Binding(
           get: { selectedProvider },
@@ -213,18 +212,220 @@ public struct MultiProviderSessionsListView: View {
       )
       .padding(.bottom, 12)
 
-      if !hasRepositories {
+      CLIRepositoryPickerView(onAddRepository: showAddRepositoryPicker)
+        .padding(.bottom, 6)
+
+      // Collapsible search bar
+      if isSearchExpanded {
+        expandedSearchBar
+          .padding(.bottom, 6)
+      } else {
+        collapsedSearchButton
+          .padding(.bottom, 6)
+      }
+
+      // Status header (modules/sessions count + First/Last toggle)
+      if hasCurrentProviderRepositories {
+        statusHeader
+          .padding(.bottom, 6)
+      }
+
+      if !hasCurrentProviderRepositories {
         CLIEmptyStateView(onAddRepository: showAddRepositoryPicker)
       } else {
         ScrollView(showsIndicators: false) {
           LazyVStack(spacing: 16) {
-            statusHeader
             selectedProviderContent
           }
-          .padding(.vertical, 8)
+          .padding(.vertical, 4)
         }
       }
     }
+    .animation(.easeInOut(duration: 0.2), value: isSearchExpanded)
+    .onChange(of: currentViewModel.hasPerformedSearch) { oldValue, newValue in
+      // Auto-collapse search when cleared after selecting a result
+      if oldValue && !newValue && isSearchExpanded {
+        withAnimation(.easeInOut(duration: 0.25)) {
+          isSearchExpanded = false
+        }
+      }
+    }
+  }
+
+  // MARK: - Collapsible Search Button
+
+  private var collapsedSearchButton: some View {
+    Button(action: {
+      withAnimation(.easeInOut(duration: 0.25)) {
+        isSearchExpanded = true
+      }
+      // Focus the text field after a brief delay to let the view appear
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(100))
+        isSearchFieldFocused = true
+      }
+    }) {
+      HStack(spacing: 8) {
+        Image(systemName: "magnifyingglass")
+          .font(.system(size: DesignTokens.IconSize.md))
+          .foregroundColor(.secondary)
+        Text("Search all sessions...")
+          .font(.system(size: 13))
+          .foregroundColor(.secondary)
+        Spacer()
+      }
+      .padding(.horizontal, DesignTokens.Spacing.md)
+      .padding(.vertical, DesignTokens.Spacing.sm)
+      .background(
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+          .fill(Color.surfaceOverlay)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+          .stroke(Color.borderSubtle, lineWidth: 1)
+      )
+    }
+    .buttonStyle(.plain)
+  }
+
+  // MARK: - Expanded Search Bar
+
+  private var expandedSearchBar: some View {
+    VStack(spacing: 4) {
+      HStack(spacing: 8) {
+        searchBarContent
+
+        // Close button to collapse back to button
+        Button(action: { dismissSearch() }) {
+          Image(systemName: "xmark.circle.fill")
+            .font(.system(size: 18))
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+      }
+
+      // Search results dropdown
+      if currentViewModel.hasPerformedSearch && !currentViewModel.isSearching {
+        searchResultsDropdown
+      }
+    }
+    .animation(.easeInOut(duration: 0.2), value: currentViewModel.hasPerformedSearch)
+  }
+
+  private var searchBarContent: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "magnifyingglass")
+        .font(.system(size: DesignTokens.IconSize.md))
+        .foregroundColor(.secondary)
+
+      Button(action: { currentViewModel.showSearchFilterPicker() }) {
+        Image(systemName: "folder.badge.plus")
+          .font(.system(size: DesignTokens.IconSize.md))
+          .foregroundColor(currentViewModel.hasSearchFilter ? .brandPrimary(for: currentViewModel.providerKind) : .secondary)
+      }
+      .buttonStyle(.plain)
+      .help("Filter by repository")
+
+      if let filterName = currentViewModel.searchFilterName {
+        HStack(spacing: 4) {
+          Text(filterName)
+            .font(.system(.caption, weight: .medium))
+            .foregroundColor(.brandPrimary(for: currentViewModel.providerKind))
+          Button(action: { currentViewModel.clearSearchFilter() }) {
+            Image(systemName: "xmark")
+              .font(.system(size: 8, weight: .bold))
+              .foregroundColor(.brandPrimary(for: currentViewModel.providerKind).opacity(0.8))
+          }
+          .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+          Capsule()
+            .fill(Color.brandPrimary(for: currentViewModel.providerKind).opacity(0.15))
+        )
+      }
+
+      TextField(
+        currentViewModel.hasSearchFilter ? "Search in \(currentViewModel.searchFilterName ?? "")..." : "Search all sessions...",
+        text: Binding(
+          get: { currentViewModel.searchQuery },
+          set: { currentViewModel.searchQuery = $0 }
+        )
+      )
+      .textFieldStyle(.plain)
+      .font(.system(size: 13))
+      .focused($isSearchFieldFocused)
+      .onSubmit { currentViewModel.performSearch() }
+
+      if !currentViewModel.searchQuery.isEmpty {
+        Button(action: { currentViewModel.clearSearch() }) {
+          Image(systemName: "delete.left.fill")
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+
+        if currentViewModel.isSearching {
+          ProgressView()
+            .scaleEffect(0.7)
+            .frame(width: 20, height: 20)
+        } else {
+          Button(action: { currentViewModel.performSearch() }) {
+            Image(systemName: "arrow.right.circle.fill")
+              .foregroundColor(.brandPrimary(for: currentViewModel.providerKind))
+          }
+          .buttonStyle(.plain)
+        }
+      }
+    }
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
+    .background(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+        .fill(Color.surfaceOverlay)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
+        .stroke(currentViewModel.isSearchActive || currentViewModel.hasSearchFilter ? Color.brandPrimary(for: currentViewModel.providerKind).opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+    )
+  }
+
+  private var searchResultsDropdown: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      Divider()
+        .padding(.bottom, 4)
+
+      if currentViewModel.searchResults.isEmpty {
+        VStack(spacing: 10) {
+          Image(systemName: "magnifyingglass")
+            .font(.system(size: 28))
+            .foregroundColor(.secondary.opacity(0.6))
+          Text("No sessions found")
+            .font(.system(.headline, weight: .medium))
+            .foregroundColor(.secondary)
+          Text("Try a different search term")
+            .font(.caption)
+            .foregroundColor(.secondary.opacity(0.8))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+      } else {
+        ForEach(currentViewModel.searchResults) { result in
+          SearchResultRow(
+            result: result,
+            onSelect: { handleSearchSelection(result, for: currentViewModel) }
+          )
+        }
+      }
+    }
+    .padding(.vertical, 8)
+  }
+
+  private func dismissSearch() {
+    withAnimation(.easeInOut(duration: 0.25)) {
+      isSearchExpanded = false
+    }
+    currentViewModel.clearSearch()
   }
 
   @ViewBuilder
@@ -249,9 +450,6 @@ public struct MultiProviderSessionsListView: View {
         },
         onOpenSessionFile: { session in
           openSessionFile(for: session, viewModel: viewModel)
-        },
-        onSelectSearchResult: { result in
-          handleSearchSelection(result, for: viewModel)
         }
       )
     } else {
@@ -293,50 +491,18 @@ public struct MultiProviderSessionsListView: View {
       }
 
       HStack {
-        Text("\(allRepositories.count) \(allRepositories.count == 1 ? "module" : "modules") selected · \(totalSessionCount) sessions")
+        Text("\(currentViewModel.selectedRepositories.count) \(currentViewModel.selectedRepositories.count == 1 ? "module" : "modules") · \(currentViewModel.totalSessionCount) sessions")
           .font(.caption)
           .foregroundColor(.secondary)
 
         Spacer()
 
-        // Approval timeout picker (keeps both providers in sync)
-        Menu {
-          ForEach([3, 5, 10, 15, 30], id: \.self) { seconds in
-            Button(action: { setApprovalTimeout(seconds) }) {
-              HStack {
-                Text("\(seconds)s")
-                if approvalTimeoutSeconds == seconds {
-                  Image(systemName: "checkmark")
-                }
-              }
-            }
-          }
-        } label: {
-          HStack(spacing: 6) {
-            Image(systemName: "bell")
-              .font(.system(size: DesignTokens.IconSize.sm))
-            Text("\(approvalTimeoutSeconds)s")
-              .font(.system(.caption, weight: .medium))
-          }
-          .foregroundColor(.secondary)
-          .padding(.horizontal, DesignTokens.Spacing.sm)
-          .padding(.vertical, DesignTokens.Spacing.xs + 2)
-          .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-              .fill(Color.surfaceOverlay)
-          )
-          .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-              .stroke(Color.borderSubtle, lineWidth: 1)
-          )
-        }
-
-        // Toggle first/last message (keeps both providers in sync)
+        // Toggle first/last message (per provider)
         Button(action: { toggleShowLastMessage() }) {
           HStack(spacing: 6) {
-            Image(systemName: showLastMessage ? "arrow.down.to.line" : "arrow.up.to.line")
+            Image(systemName: currentViewModel.showLastMessage ? "arrow.down.to.line" : "arrow.up.to.line")
               .font(.system(size: DesignTokens.IconSize.sm))
-            Text(showLastMessage ? "Last message" : "First message")
+            Text(currentViewModel.showLastMessage ? "Last" : "First")
               .font(.system(.caption, weight: .medium))
           }
           .foregroundColor(.secondary)
@@ -352,7 +518,7 @@ public struct MultiProviderSessionsListView: View {
           )
         }
         .buttonStyle(.plain)
-        .help(showLastMessage ? "Showing last message" : "Showing first message")
+        .help(currentViewModel.showLastMessage ? "Showing last message" : "Showing first message")
       }
       .padding(.horizontal, 4)
     }
@@ -375,13 +541,11 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func addRepository(at path: String) {
-    claudeViewModel.addRepository(at: path)
-    codexViewModel.addRepository(at: path)
+    currentViewModel.addRepository(at: path)
   }
 
   private func removeRepository(_ repository: SelectedRepository) {
-    claudeViewModel.removeRepository(repository)
-    codexViewModel.removeRepository(repository)
+    currentViewModel.removeRepository(repository)
   }
 
   private func handleOpenTerminal(worktree: WorktreeBranch, viewModel: CLISessionsViewModel) {
@@ -429,15 +593,12 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
-  private func toggleShowLastMessage() {
-    let newValue = !showLastMessage
-    claudeViewModel.showLastMessage = newValue
-    codexViewModel.showLastMessage = newValue
+  private var currentViewModel: CLISessionsViewModel {
+    viewModel(for: selectedProvider)
   }
 
-  private func setApprovalTimeout(_ seconds: Int) {
-    claudeViewModel.approvalTimeoutSeconds = seconds
-    codexViewModel.approvalTimeoutSeconds = seconds
+  private func toggleShowLastMessage() {
+    currentViewModel.showLastMessage.toggle()
   }
 
   // MARK: - Computed
@@ -462,6 +623,10 @@ public struct MultiProviderSessionsListView: View {
     !allRepositories.isEmpty
   }
 
+  private var hasCurrentProviderRepositories: Bool {
+    !currentViewModel.selectedRepositories.isEmpty
+  }
+
   private var allRepositories: [SelectedRepository] {
     var map: [String: SelectedRepository] = [:]
     for repo in claudeViewModel.selectedRepositories {
@@ -480,14 +645,6 @@ public struct MultiProviderSessionsListView: View {
   private var isLoading: Bool {
     claudeViewModel.isLoading || codexViewModel.isLoading
   }
-
-  private var showLastMessage: Bool {
-    claudeViewModel.showLastMessage
-  }
-
-  private var approvalTimeoutSeconds: Int {
-    claudeViewModel.approvalTimeoutSeconds
-  }
 }
 
 // MARK: - ProviderSectionView
@@ -498,183 +655,54 @@ private struct ProviderSectionView: View {
   let onCreateWorktree: (SelectedRepository) -> Void
   let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
   let onOpenSessionFile: (CLISession) -> Void
-  let onSelectSearchResult: (SessionSearchResult) -> Void
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      ProviderSearchPanel(viewModel: viewModel, onSelectResult: onSelectSearchResult)
-
-      VStack(spacing: 12) {
-        ForEach(viewModel.selectedRepositories) { repository in
-          CLIRepositoryTreeView(
-            repository: repository,
-            providerKind: viewModel.providerKind,
-            onRemove: { onRemoveRepository(repository) },
-            onToggleExpanded: { viewModel.toggleRepositoryExpanded(repository) },
-            onToggleWorktreeExpanded: { worktree in
-              viewModel.toggleWorktreeExpanded(in: repository, worktree: worktree)
-            },
-            onConnectSession: { session in
-              _ = viewModel.connectToSession(session)
-            },
-            onCopySessionId: { session in
-              viewModel.copySessionId(session)
-            },
-            onOpenSessionFile: { session in
-              onOpenSessionFile(session)
-            },
-            isSessionMonitored: { sessionId in
-              viewModel.isMonitoring(sessionId: sessionId)
-            },
-            onToggleMonitoring: { session in
-              viewModel.toggleMonitoring(for: session)
-            },
-            onCreateWorktree: {
-              onCreateWorktree(repository)
-            },
-            onOpenTerminalForWorktree: { worktree in
-              onOpenTerminalForWorktree(worktree)
-            },
-            onStartInHubForWorktree: { worktree in
-              viewModel.startNewSessionInHub(worktree)
-            },
-            onDeleteWorktree: { worktree in
-              Task { await viewModel.deleteWorktree(worktree) }
-            },
-            getCustomName: { sessionId in
-              viewModel.sessionCustomNames[sessionId]
-            },
-            showLastMessage: viewModel.showLastMessage,
-            isDebugMode: true,
-            deletingWorktreePath: viewModel.deletingWorktreePath
-          )
-        }
-      }
-    }
-    .padding(.vertical, 8)
-  }
-}
-
-// MARK: - ProviderSearchPanel
-
-private struct ProviderSearchPanel: View {
-  @Bindable var viewModel: CLISessionsViewModel
-  let onSelectResult: (SessionSearchResult) -> Void
-  @FocusState private var isSearchFieldFocused: Bool
-
-  var body: some View {
-    VStack(spacing: 4) {
-      searchBar
-      if viewModel.hasPerformedSearch && !viewModel.isSearching {
-        searchResultsDropdown
-      }
-    }
-  }
-
-  private var searchBar: some View {
-    HStack(spacing: 8) {
-      Image(systemName: "magnifyingglass")
-        .font(.system(size: DesignTokens.IconSize.md))
-        .foregroundColor(.secondary)
-
-      Button(action: { viewModel.showSearchFilterPicker() }) {
-        Image(systemName: "folder.badge.plus")
-          .font(.system(size: DesignTokens.IconSize.md))
-          .foregroundColor(viewModel.hasSearchFilter ? .brandPrimary(for: viewModel.providerKind) : .secondary)
-      }
-      .buttonStyle(.plain)
-      .help("Filter by repository")
-
-      if let filterName = viewModel.searchFilterName {
-        HStack(spacing: 4) {
-          Text(filterName)
-            .font(.system(.caption, weight: .medium))
-            .foregroundColor(.brandPrimary(for: viewModel.providerKind))
-          Button(action: { viewModel.clearSearchFilter() }) {
-            Image(systemName: "xmark")
-              .font(.system(size: 8, weight: .bold))
-              .foregroundColor(.brandPrimary(for: viewModel.providerKind).opacity(0.8))
-          }
-          .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-          Capsule()
-            .fill(Color.brandPrimary(for: viewModel.providerKind).opacity(0.15))
+    VStack(spacing: 12) {
+      ForEach(viewModel.selectedRepositories) { repository in
+        CLIRepositoryTreeView(
+          repository: repository,
+          providerKind: viewModel.providerKind,
+          onRemove: { onRemoveRepository(repository) },
+          onToggleExpanded: { viewModel.toggleRepositoryExpanded(repository) },
+          onToggleWorktreeExpanded: { worktree in
+            viewModel.toggleWorktreeExpanded(in: repository, worktree: worktree)
+          },
+          onConnectSession: { session in
+            _ = viewModel.connectToSession(session)
+          },
+          onCopySessionId: { session in
+            viewModel.copySessionId(session)
+          },
+          onOpenSessionFile: { session in
+            onOpenSessionFile(session)
+          },
+          isSessionMonitored: { sessionId in
+            viewModel.isMonitoring(sessionId: sessionId)
+          },
+          onToggleMonitoring: { session in
+            viewModel.toggleMonitoring(for: session)
+          },
+          onCreateWorktree: {
+            onCreateWorktree(repository)
+          },
+          onOpenTerminalForWorktree: { worktree in
+            onOpenTerminalForWorktree(worktree)
+          },
+          onStartInHubForWorktree: { worktree in
+            viewModel.startNewSessionInHub(worktree)
+          },
+          onDeleteWorktree: { worktree in
+            Task { await viewModel.deleteWorktree(worktree) }
+          },
+          getCustomName: { sessionId in
+            viewModel.sessionCustomNames[sessionId]
+          },
+          showLastMessage: viewModel.showLastMessage,
+          isDebugMode: true,
+          deletingWorktreePath: viewModel.deletingWorktreePath
         )
       }
-
-      TextField(
-        viewModel.hasSearchFilter ? "Search in \(viewModel.searchFilterName ?? "")..." : "Search all sessions...",
-        text: $viewModel.searchQuery
-      )
-      .textFieldStyle(.plain)
-      .font(.system(size: 13))
-      .focused($isSearchFieldFocused)
-      .onSubmit { viewModel.performSearch() }
-
-      if !viewModel.searchQuery.isEmpty {
-        Button(action: { viewModel.clearSearch() }) {
-          Image(systemName: "delete.left.fill")
-            .foregroundColor(.secondary)
-        }
-        .buttonStyle(.plain)
-
-        if viewModel.isSearching {
-          ProgressView()
-            .scaleEffect(0.7)
-            .frame(width: 20, height: 20)
-        } else {
-          Button(action: { viewModel.performSearch() }) {
-            Image(systemName: "arrow.right.circle.fill")
-              .foregroundColor(.brandPrimary(for: viewModel.providerKind))
-          }
-          .buttonStyle(.plain)
-        }
-      }
     }
-    .padding(.horizontal, DesignTokens.Spacing.md)
-    .padding(.vertical, DesignTokens.Spacing.sm)
-    .background(
-      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-        .fill(Color.surfaceOverlay)
-    )
-    .overlay(
-      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-        .stroke(viewModel.isSearchActive || viewModel.hasSearchFilter ? Color.brandPrimary(for: viewModel.providerKind).opacity(0.5) : Color.borderSubtle, lineWidth: 1)
-    )
-  }
-
-  private var searchResultsDropdown: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      Divider()
-        .padding(.bottom, 4)
-
-      if viewModel.searchResults.isEmpty {
-        VStack(spacing: 10) {
-          Image(systemName: "magnifyingglass")
-            .font(.system(size: 28))
-            .foregroundColor(.secondary.opacity(0.6))
-          Text("No sessions found")
-            .font(.system(.headline, weight: .medium))
-            .foregroundColor(.secondary)
-          Text("Try a different search term")
-            .font(.caption)
-            .foregroundColor(.secondary.opacity(0.8))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-      } else {
-        ForEach(viewModel.searchResults) { result in
-          SearchResultRow(
-            result: result,
-            onSelect: { onSelectResult(result) }
-          )
-        }
-      }
-    }
-    .padding(.vertical, 8)
   }
 }
 
