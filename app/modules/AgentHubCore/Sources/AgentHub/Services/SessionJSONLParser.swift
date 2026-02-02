@@ -103,7 +103,7 @@ public struct SessionJSONLParser {
   /// - Parameters:
   ///   - path: Path to the session JSONL file
   ///   - approvalTimeoutSeconds: Seconds to wait before considering a tool as awaiting approval (default: 5)
-  public static func parseSessionFile(at path: String, approvalTimeoutSeconds: Int = 5) -> ParseResult {
+  public static func parseSessionFile(at path: String, approvalTimeoutSeconds: Int = 0) -> ParseResult {
     var result = ParseResult()
 
     guard let data = FileManager.default.contents(atPath: path),
@@ -130,7 +130,7 @@ public struct SessionJSONLParser {
   ///   - lines: New lines to parse
   ///   - result: Parse result to update
   ///   - approvalTimeoutSeconds: Seconds to wait before considering a tool as awaiting approval (default: 5)
-  public static func parseNewLines(_ lines: [String], into result: inout ParseResult, approvalTimeoutSeconds: Int = 5) {
+  public static func parseNewLines(_ lines: [String], into result: inout ParseResult, approvalTimeoutSeconds: Int = 0) {
     for line in lines where !line.isEmpty {
       if let entry = parseEntry(line) {
         processEntry(entry, into: &result)
@@ -302,7 +302,7 @@ public struct SessionJSONLParser {
   /// - Parameters:
   ///   - result: The parse result to update
   ///   - approvalTimeoutSeconds: Seconds to wait before considering a tool as awaiting approval (default: 5)
-  public static func updateCurrentStatus(_ result: inout ParseResult, approvalTimeoutSeconds: Int = 5) {
+  public static func updateCurrentStatus(_ result: inout ParseResult, approvalTimeoutSeconds: Int = 0) {
     // State machine with timeout-based detection
     // Based on Kyle Mathews' claude-code-ui approach
     guard let lastActivity = result.recentActivities.last else {

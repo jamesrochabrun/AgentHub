@@ -25,8 +25,8 @@ public struct CLIEmptyStateView: View {
             .fill(
               LinearGradient(
                 colors: [
-                  Color.brandPrimary.opacity(0.2),
-                  Color.brandSecondary.opacity(0.08)
+                  Color.primary.opacity(0.15),
+                  Color.primary.opacity(0.05)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -36,7 +36,7 @@ public struct CLIEmptyStateView: View {
 
           Image(systemName: "terminal")
             .font(.system(size: 34, weight: .semibold, design: .rounded))
-            .foregroundColor(.brandPrimary)
+            .foregroundColor(.primary)
         }
 
         VStack(spacing: 8) {
@@ -55,10 +55,10 @@ public struct CLIEmptyStateView: View {
             .font(.subheadline)
         }
         .buttonStyle(.borderedProminent)
-        .tint(.brandPrimary)
+        .tint(.primary)
       }
       .padding(24)
-      .agentHubCard(isHighlighted: true)
+      .agentHubCard(isHighlighted: false)
       .frame(maxWidth: 360)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)

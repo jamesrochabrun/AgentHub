@@ -12,6 +12,7 @@ import SwiftUI
 /// Hierarchical tree view for a repository with its worktrees and sessions
 public struct CLIRepositoryTreeView: View {
   let repository: SelectedRepository
+  let providerKind: SessionProviderKind
   let onRemove: () -> Void
   let onToggleExpanded: () -> Void
   let onToggleWorktreeExpanded: (WorktreeBranch) -> Void
@@ -34,6 +35,7 @@ public struct CLIRepositoryTreeView: View {
 
   public init(
     repository: SelectedRepository,
+    providerKind: SessionProviderKind = .claude,
     onRemove: @escaping () -> Void,
     onToggleExpanded: @escaping () -> Void,
     onToggleWorktreeExpanded: @escaping (WorktreeBranch) -> Void,
@@ -52,6 +54,7 @@ public struct CLIRepositoryTreeView: View {
     deletingWorktreePath: String? = nil
   ) {
     self.repository = repository
+    self.providerKind = providerKind
     self.onRemove = onRemove
     self.onToggleExpanded = onToggleExpanded
     self.onToggleWorktreeExpanded = onToggleWorktreeExpanded
@@ -86,6 +89,7 @@ public struct CLIRepositoryTreeView: View {
           CLIWorktreeBranchRow(
             worktree: worktree,
             isExpanded: worktree.isExpanded,
+            providerKind: providerKind,
             onToggleExpanded: { onToggleWorktreeExpanded(worktree) },
             onOpenTerminal: { onOpenTerminalForWorktree(worktree) },
             onStartInHub: { onStartInHubForWorktree(worktree) },
@@ -169,7 +173,7 @@ public struct CLIRepositoryTreeView: View {
       Button(action: onCreateWorktree) {
         Image(systemName: "arrow.triangle.branch")
           .font(.caption)
-          .foregroundColor(.brandSecondary)
+          .foregroundColor(.brandSecondary(for: providerKind))
           .padding(6)
           .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)

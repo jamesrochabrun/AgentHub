@@ -76,7 +76,7 @@ public actor CLISessionMonitorService {
   }
 
   /// Returns currently selected repositories
-  public func getSelectedRepositories() -> [SelectedRepository] {
+  public func getSelectedRepositories() async -> [SelectedRepository] {
     selectedRepositories
   }
 
@@ -534,3 +534,7 @@ public actor CLISessionMonitorService {
   }
 
 }
+
+// MARK: - Protocol Conformance
+
+extension CLISessionMonitorService: SessionMonitorServiceProtocol {}

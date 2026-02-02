@@ -52,7 +52,13 @@ public final class ApprovalNotificationService {
 
   // MARK: - Private
 
+  private var soundsEnabled: Bool {
+    UserDefaults.standard.object(forKey: AgentHubDefaults.notificationSoundsEnabled) as? Bool ?? true
+  }
+
   private func playAlertSound() {
+    guard soundsEnabled else { return }
+
     #if canImport(AppKit)
     // Play system alert sound
     NSSound.beep()

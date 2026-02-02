@@ -14,6 +14,7 @@ import SwiftUI
 public struct CLIWorktreeBranchRow: View {
   let worktree: WorktreeBranch
   let isExpanded: Bool
+  let providerKind: SessionProviderKind
   let onToggleExpanded: () -> Void
   let onOpenTerminal: () -> Void
   let onStartInHub: () -> Void
@@ -62,9 +63,18 @@ public struct CLIWorktreeBranchRow: View {
     remainingSessions > 0
   }
 
+  private var providerLabel: String {
+    providerKind.rawValue
+  }
+
+  private var supportsExternalTerminal: Bool {
+    providerKind == .claude
+  }
+
   public init(
     worktree: WorktreeBranch,
     isExpanded: Bool,
+    providerKind: SessionProviderKind = .claude,
     onToggleExpanded: @escaping () -> Void,
     onOpenTerminal: @escaping () -> Void,
     onStartInHub: @escaping () -> Void,
@@ -81,6 +91,7 @@ public struct CLIWorktreeBranchRow: View {
   ) {
     self.worktree = worktree
     self.isExpanded = isExpanded
+    self.providerKind = providerKind
     self.onToggleExpanded = onToggleExpanded
     self.onOpenTerminal = onOpenTerminal
     self.onStartInHub = onStartInHub
@@ -110,7 +121,7 @@ public struct CLIWorktreeBranchRow: View {
           // Branch icon
           Image(systemName: "arrow.triangle.branch")
             .font(.subheadline)
-            .foregroundColor(worktree.isWorktree ? .brandSecondary : .brandPrimary)
+            .foregroundColor(worktree.isWorktree ? .brandSecondary(for: providerKind) : .brandPrimary(for: providerKind))
 
           // Path
           Text(worktree.path)
@@ -157,7 +168,7 @@ public struct CLIWorktreeBranchRow: View {
               Button(action: { onDeleteWorktree?() }) {
                 Image(systemName: "trash")
                   .font(.caption)
-                  .foregroundColor(.brandSecondary.opacity(0.8))
+                  .foregroundColor(.brandSecondary(for: providerKind).opacity(0.8))
                   .frame(width: 24, height: 24)
                   .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -174,7 +185,7 @@ public struct CLIWorktreeBranchRow: View {
           Button(action: { showNewSessionMenu.toggle() }) {
             Image(systemName: "plus")
               .font(.caption)
-              .foregroundColor(.brandSecondary)
+              .foregroundColor(.brandSecondary(for: providerKind))
               .frame(width: 24, height: 24)
               .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -183,7 +194,7 @@ public struct CLIWorktreeBranchRow: View {
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-          .help("Start new Claude session")
+          .help("Start new \(providerLabel) session")
           .popover(isPresented: $showNewSessionMenu, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
               Button(action: {
@@ -192,26 +203,28 @@ public struct CLIWorktreeBranchRow: View {
               }) {
                 Label("Start in Hub", systemImage: "square.grid.2x2")
                   .frame(maxWidth: .infinity, alignment: .leading)
-                  .foregroundColor(.brandPrimary)
+                  .foregroundColor(.brandPrimary(for: providerKind))
               }
               .buttonStyle(.plain)
               .padding(.horizontal, 12)
               .padding(.vertical, 8)
               .contentShape(Rectangle())
 
-              Divider()
+              if supportsExternalTerminal {
+                Divider()
 
-              Button(action: {
-                showNewSessionMenu = false
-                onOpenTerminal()
-              }) {
-                Label("Open in Terminal", systemImage: "terminal")
-                  .frame(maxWidth: .infinity, alignment: .leading)
+                Button(action: {
+                  showNewSessionMenu = false
+                  onOpenTerminal()
+                }) {
+                  Label("Open in Terminal", systemImage: "terminal")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
               }
-              .buttonStyle(.plain)
-              .padding(.horizontal, 12)
-              .padding(.vertical, 8)
-              .contentShape(Rectangle())
             }
             .padding(.vertical, 8)
             .frame(width: 180)
@@ -238,6 +251,7 @@ public struct CLIWorktreeBranchRow: View {
                 CLISessionRow(
                   session: session,
                   customName: getCustomName?(session.id),
+                  providerKind: providerKind,
                   isMonitoring: isSessionMonitored(session.id),
                   onConnect: { onConnectSession(session) },
                   onCopyId: { onCopySessionId(session) },

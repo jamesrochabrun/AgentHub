@@ -21,6 +21,7 @@ public struct CLISession: Identifiable, Sendable, Equatable, Hashable, Codable {
   public var firstMessage: String?         // First user message for context
   public var lastMessage: String?          // Last user message for context
   public var slug: String?                 // Human-readable session name (e.g., "cryptic-orbiting-flame")
+  public var sessionFilePath: String?      // Absolute path to the session JSONL file (if known)
 
   public init(
     id: String,
@@ -32,7 +33,8 @@ public struct CLISession: Identifiable, Sendable, Equatable, Hashable, Codable {
     isActive: Bool = false,
     firstMessage: String? = nil,
     lastMessage: String? = nil,
-    slug: String? = nil
+    slug: String? = nil,
+    sessionFilePath: String? = nil
   ) {
     self.id = id
     self.projectPath = projectPath
@@ -44,6 +46,7 @@ public struct CLISession: Identifiable, Sendable, Equatable, Hashable, Codable {
     self.firstMessage = firstMessage
     self.lastMessage = lastMessage
     self.slug = slug
+    self.sessionFilePath = sessionFilePath
   }
 
   /// Returns the first 8 characters of the session ID for display

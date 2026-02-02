@@ -54,6 +54,7 @@ public struct MonitoringCardView: View {
   let codeChangesState: CodeChangesState?
   let planState: PlanState?
   let claudeClient: (any ClaudeCode)?
+  let providerKind: SessionProviderKind
   let showTerminal: Bool
   let initialPrompt: String?
   let terminalKey: String?  // Key for terminal storage (session ID or "pending-{pendingId}")
@@ -85,6 +86,7 @@ public struct MonitoringCardView: View {
     codeChangesState: CodeChangesState? = nil,
     planState: PlanState? = nil,
     claudeClient: (any ClaudeCode)? = nil,
+    providerKind: SessionProviderKind = .claude,
     showTerminal: Bool = false,
     initialPrompt: String? = nil,
     terminalKey: String? = nil,
@@ -105,6 +107,7 @@ public struct MonitoringCardView: View {
     self.codeChangesState = codeChangesState
     self.planState = planState
     self.claudeClient = claudeClient
+    self.providerKind = providerKind
     self.showTerminal = showTerminal
     self.initialPrompt = initialPrompt
     self.terminalKey = terminalKey
@@ -135,8 +138,8 @@ public struct MonitoringCardView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
 
-      // Context bar (only in monitor/list mode, not terminal mode)
-      if !showTerminal, let state = state, state.inputTokens > 0 {
+      // Context bar (only in monitor/list mode, not terminal mode, Claude only)
+      if !showTerminal, providerKind == .claude, let state = state, state.inputTokens > 0 {
         Divider()
 
         ContextWindowBar(
@@ -352,9 +355,9 @@ public struct MonitoringCardView: View {
     HStack(spacing: 8) {
       // Activity indicator circle - shows when session is working
       Circle()
-        .fill(isHighlighted ? Color.brandPrimary : .gray.opacity(0.3))
+        .fill(isHighlighted ? Color.brandPrimary(for: providerKind) : .gray.opacity(0.3))
         .frame(width: 10, height: 10)
-        .shadow(color: isHighlighted ? Color.brandPrimary.opacity(0.6) : .clear, radius: 4)
+        .shadow(color: isHighlighted ? Color.brandPrimary(for: providerKind).opacity(0.6) : .clear, radius: 4)
 
       // Session label - show custom name, slug, or default ID
       if let customName = viewModel?.sessionCustomNames[session.id] {
@@ -385,6 +388,11 @@ public struct MonitoringCardView: View {
         }
       }
 
+      // Provider name with brand color
+      Text(providerKind.rawValue)
+        .font(.caption)
+        .foregroundColor(.brandPrimary(for: providerKind))
+
       Spacer()
 
       // Terminal/List segmented control (hidden when maximized)
@@ -395,7 +403,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "terminal")
               .font(.caption)
               .frame(width: 28, height: 22)
-              .foregroundColor(showTerminal ? .brandPrimary : .secondary)
+              .foregroundColor(showTerminal ? .primary : .secondary)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
@@ -405,7 +413,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "list.bullet")
               .font(.caption)
               .frame(width: 28, height: 22)
-              .foregroundColor(!showTerminal ? .brandPrimary : .secondary)
+              .foregroundColor(!showTerminal ? .primary : .secondary)
               .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
@@ -455,9 +463,11 @@ public struct MonitoringCardView: View {
         onOpenSessionFile()
         showingActionsPopover = false
       }
-      PopoverButton(icon: "rectangle.portrait.and.arrow.right", title: "Open in Terminal") {
-        onConnect()
-        showingActionsPopover = false
+      if providerKind == .claude {
+        PopoverButton(icon: "rectangle.portrait.and.arrow.right", title: "Open in Terminal") {
+          onConnect()
+          showingActionsPopover = false
+        }
       }
       PopoverButton(icon: "pencil", title: "Name Session") {
         showingActionsPopover = false
@@ -502,7 +512,7 @@ public struct MonitoringCardView: View {
         Text(branch)
           .font(.caption)
           .fontWeight(.medium)
-          .foregroundColor(.brandPrimary)
+          .foregroundColor(.brandPrimary(for: providerKind))
       }
 
       Spacer()
@@ -609,7 +619,7 @@ public struct MonitoringCardView: View {
           terminalKey: terminalKey ?? session.id,
           sessionId: session.id,
           projectPath: session.projectPath,
-          claudeClient: claudeClient,
+          cliConfiguration: viewModel?.cliConfiguration ?? .claudeDefault,
           initialPrompt: initialPrompt,
           viewModel: viewModel
         )

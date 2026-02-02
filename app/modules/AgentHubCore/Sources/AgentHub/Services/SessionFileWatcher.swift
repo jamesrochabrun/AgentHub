@@ -32,7 +32,7 @@ public actor SessionFileWatcher {
   private nonisolated let processingQueue = DispatchQueue(label: "com.agenthub.sessionwatcher.processing")
 
   /// Seconds to wait before considering a tool as awaiting approval
-  private var approvalTimeoutSeconds: Int = 5
+  private var approvalTimeoutSeconds: Int = 0
 
   /// Publisher for state updates
   public nonisolated var statePublisher: AnyPublisher<StateUpdate, Never> {
@@ -46,7 +46,7 @@ public actor SessionFileWatcher {
   }
 
   /// Set the approval timeout in seconds
-  public func setApprovalTimeout(_ seconds: Int) {
+  public func setApprovalTimeout(_ seconds: Int) async {
     self.approvalTimeoutSeconds = max(1, seconds)  // Minimum 1 second
   }
 
@@ -58,7 +58,7 @@ public actor SessionFileWatcher {
   // MARK: - Public API
 
   /// Start monitoring a session
-  public func startMonitoring(sessionId: String, projectPath: String) {
+  public func startMonitoring(sessionId: String, projectPath: String, sessionFilePath: String? = nil) async {
     AppLogger.watcher.info("[Polling] START monitoring session: \(sessionId.prefix(8), privacy: .public)")
 
     // If already monitoring, just re-emit current state
@@ -70,8 +70,8 @@ public actor SessionFileWatcher {
     }
 
     // Find session file
-    let sessionFilePath = findSessionFile(sessionId: sessionId, projectPath: projectPath)
-    guard let filePath = sessionFilePath else {
+    let resolvedFilePath = sessionFilePath ?? findSessionFile(sessionId: sessionId, projectPath: projectPath)
+    guard let filePath = resolvedFilePath else {
       AppLogger.watcher.error("[Polling] Could not find session file for: \(sessionId)")
       return
     }
@@ -226,7 +226,7 @@ public actor SessionFileWatcher {
   }
 
   /// Stop monitoring a session
-  public func stopMonitoring(sessionId: String) {
+  public func stopMonitoring(sessionId: String) async {
     AppLogger.watcher.info("[Polling] STOP monitoring session: \(sessionId.prefix(8), privacy: .public)")
 
     guard let info = watchedSessions.removeValue(forKey: sessionId) else {
@@ -240,7 +240,7 @@ public actor SessionFileWatcher {
   }
 
   /// Get current state for a session
-  public func getState(sessionId: String) -> SessionMonitorState? {
+  public func getState(sessionId: String) async -> SessionMonitorState? {
     guard let info = watchedSessions[sessionId] else { return nil }
     return buildMonitorState(from: info.parseResult)
   }
@@ -251,7 +251,7 @@ public actor SessionFileWatcher {
   }
 
   /// Force refresh a session's state
-  public func refreshState(sessionId: String) {
+  public func refreshState(sessionId: String) async {
     guard let info = watchedSessions[sessionId] else { return }
 
     let parseResult = SessionJSONLParser.parseSessionFile(at: info.filePath, approvalTimeoutSeconds: approvalTimeoutSeconds)
@@ -387,3 +387,7 @@ private struct FileWatcherInfo {
   var lastFileEventTime: Date
   var lastKnownFileSize: UInt64
 }
+
+// MARK: - Protocol Conformance
+
+extension SessionFileWatcher: SessionFileWatcherProtocol {}

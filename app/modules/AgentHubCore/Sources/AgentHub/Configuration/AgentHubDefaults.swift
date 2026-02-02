@@ -31,8 +31,14 @@ public enum AgentHubDefaults {
   public static let showLastMessage = "\(keyPrefix)sessions.showLastMessage"
 
   /// Seconds to wait before triggering approval alert sound
-  /// Type: Int (default: 5)
+  /// Type: Int (default: 0)
   public static let approvalTimeout = "\(keyPrefix)sessions.approvalTimeout"
+
+  // MARK: - Notification Settings
+
+  /// Whether notification sounds are enabled
+  /// Type: Bool (default: true)
+  public static let notificationSoundsEnabled = "\(keyPrefix)notifications.soundsEnabled"
 
   /// Persisted selected repositories (JSON-encoded array of paths)
   /// Type: Data (JSON-encoded [String])
@@ -45,6 +51,17 @@ public enum AgentHubDefaults {
   /// Persisted session IDs that have terminal view enabled
   /// Type: Data (JSON-encoded [String])
   public static let sessionsWithTerminalView = "\(keyPrefix)sessions.sessionsWithTerminalView"
+
+  // MARK: - Provider Settings
+
+  /// Base key for enabled providers
+  /// Usage: Use with provider suffix, e.g. `enabledProviders + ".claude"`
+  /// Type: Bool (default: true)
+  public static let enabledProviders = "\(keyPrefix)settings.enabledProviders"
+
+  /// Selected provider in side panel segmented control
+  /// Type: String (default: "Claude")
+  public static let selectedSidePanelProvider = "\(keyPrefix)sidepanel.selectedProvider"
 
   // MARK: - Theme Settings
 

@@ -6,7 +6,6 @@
 //
 
 import AppKit
-import ClaudeCodeSDK
 import SwiftTerm
 import SwiftUI
 
@@ -48,7 +47,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   let terminalKey: String  // Key for terminal storage (session ID or "pending-{pendingId}")
   let sessionId: String?  // Optional: nil for new sessions, set for resume
   let projectPath: String
-  let claudeClient: (any ClaudeCode)?
+  let cliConfiguration: CLICommandConfiguration
   let initialPrompt: String?  // Optional: prompt to include with resume command
   let viewModel: CLISessionsViewModel?  // For shared terminal storage
 
@@ -56,14 +55,14 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     terminalKey: String,
     sessionId: String? = nil,
     projectPath: String,
-    claudeClient: (any ClaudeCode)?,
+    cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
     viewModel: CLISessionsViewModel? = nil
   ) {
     self.terminalKey = terminalKey
     self.sessionId = sessionId
     self.projectPath = projectPath
-    self.claudeClient = claudeClient
+    self.cliConfiguration = cliConfiguration
     self.initialPrompt = initialPrompt
     self.viewModel = viewModel
   }
@@ -77,7 +76,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         forKey: terminalKey,
         sessionId: sessionId,
         projectPath: projectPath,
-        claudeClient: claudeClient,
+        cliConfiguration: cliConfiguration,
         initialPrompt: initialPrompt,
         isDark: isDark
       )
@@ -88,7 +87,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     containerView.configure(
       sessionId: sessionId,
       projectPath: projectPath,
-      claudeClient: claudeClient,
+      cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
       isDark: isDark
     )
@@ -146,20 +145,20 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   func restart(
     sessionId: String?,
     projectPath: String,
-    claudeClient: (any ClaudeCode)?
+    cliConfiguration: CLICommandConfiguration
   ) {
     terminateProcess()
     terminalView?.removeFromSuperview()
     terminalView = nil
     isConfigured = false
     hasDeliveredInitialPrompt = false  // Reset for fresh start
-    configure(sessionId: sessionId, projectPath: projectPath, claudeClient: claudeClient)
+    configure(sessionId: sessionId, projectPath: projectPath, cliConfiguration: cliConfiguration)
   }
 
   func configure(
     sessionId: String?,
     projectPath: String,
-    claudeClient: (any ClaudeCode)?,
+    cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
     isDark: Bool = true
   ) {
@@ -185,12 +184,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
     self.terminalView = terminal
 
-    // Start the Claude process
-    startClaudeProcess(
+    // Start the CLI process
+    startCLIProcess(
       terminal: terminal,
       sessionId: sessionId,
       projectPath: projectPath,
-      claudeClient: claudeClient,
+      cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt
     )
     registerProcessIfNeeded(for: terminal)
@@ -264,24 +263,32 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
   }
 
-  private func startClaudeProcess(
+  private func startCLIProcess(
     terminal: ManagedLocalProcessTerminalView,
     sessionId: String?,
     projectPath: String,
-    claudeClient: (any ClaudeCode)?,
+    cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil
   ) {
-    // Find the Claude executable
-    let command = claudeClient?.configuration.command ?? "claude"
-    let additionalPaths = claudeClient?.configuration.additionalPaths
+    // Find the CLI executable
+    let command = cliConfiguration.command
+    let additionalPaths = cliConfiguration.additionalPaths
 
-    guard let executablePath = TerminalLauncher.findClaudeExecutable(
-      command: command,
-      additionalPaths: additionalPaths
-    ) else {
+    let executablePath: String?
+    switch cliConfiguration.mode {
+    case .codex:
+      executablePath = TerminalLauncher.findCodexExecutable(additionalPaths: additionalPaths)
+    case .claude:
+      executablePath = TerminalLauncher.findExecutable(
+        command: command,
+        additionalPaths: additionalPaths
+      )
+    }
+
+    guard let executablePath else {
       // Show error in terminal
       terminal.feed(text: "\r\n\u{001B}[31mError: Could not find '\(command)' command.\u{001B}[0m\r\n")
-      terminal.feed(text: "Please ensure Claude Code CLI is installed.\r\n")
+      terminal.feed(text: "Please ensure the CLI is installed.\r\n")
       return
     }
 
@@ -294,11 +301,18 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     environment["COLORTERM"] = "truecolor"
     environment["LANG"] = "en_US.UTF-8"
 
-    let paths = (additionalPaths ?? []) + [
+    let paths = additionalPaths + [
       "/usr/local/bin",
       "/opt/homebrew/bin",
       "/usr/bin",
-      "\(NSHomeDirectory())/.claude/local"
+      "\(NSHomeDirectory())/.claude/local",
+      "\(NSHomeDirectory())/.codex/local",
+      "\(NSHomeDirectory())/.codex/bin",
+      "\(NSHomeDirectory())/.local/bin",
+      "\(NSHomeDirectory())/.nvm/current/bin",
+      "\(NSHomeDirectory())/.nvm/versions/node/v22.16.0/bin",
+      "\(NSHomeDirectory())/.nvm/versions/node/v20.11.1/bin",
+      "\(NSHomeDirectory())/.nvm/versions/node/v18.19.0/bin"
     ]
     let pathString = paths.joined(separator: ":")
     if let existingPath = environment["PATH"] {
@@ -312,7 +326,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     // we use bash -c to cd first then run claude
     let workingDirectory = projectPath.isEmpty ? NSHomeDirectory() : projectPath
     let escapedPath = workingDirectory.replacingOccurrences(of: "'", with: "'\\''")
-    let escapedClaudePath = executablePath.replacingOccurrences(of: "'", with: "'\\''")
+    let escapedCLIPath = executablePath.replacingOccurrences(of: "'", with: "'\\''")
 #if DEBUG
     let homeEnv = environment["HOME"] ?? "<nil>"
     AppLogger.session.debug(
@@ -320,29 +334,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
 #endif
 
-    // Build command: resume existing session (-r) or start new session
-    let shellCommand: String
-    if let sessionId = sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
-      // Resume existing session
-      let escapedSessionId = sessionId.replacingOccurrences(of: "'", with: "'\\''")
-
-      // Include initial prompt if provided (for inline edit requests)
-      if let prompt = initialPrompt, !prompt.isEmpty {
-        let escapedPrompt = prompt.replacingOccurrences(of: "'", with: "'\\''")
-        shellCommand = "cd '\(escapedPath)' && exec '\(escapedClaudePath)' -r '\(escapedSessionId)' '\(escapedPrompt)'"
-      } else {
-        shellCommand = "cd '\(escapedPath)' && exec '\(escapedClaudePath)' -r '\(escapedSessionId)'"
-      }
-    } else {
-      // Start NEW session (no -r flag)
-      // Include initial prompt if provided (triggers immediate session file creation)
-      if let prompt = initialPrompt, !prompt.isEmpty {
-        let escapedPrompt = prompt.replacingOccurrences(of: "'", with: "'\\''")
-        shellCommand = "cd '\(escapedPath)' && exec '\(escapedClaudePath)' '\(escapedPrompt)'"
-      } else {
-        shellCommand = "cd '\(escapedPath)' && exec '\(escapedClaudePath)'"
-      }
-    }
+    // Build command: resume existing session or start new session
+    let args = cliConfiguration.argumentsForSession(sessionId: sessionId, prompt: initialPrompt)
+    let escapedArgs = args.map { $0.replacingOccurrences(of: "'", with: "'\\''") }
+    let joinedArgs = escapedArgs.map { "'\($0)'" }.joined(separator: " ")
+    let shellCommand = joinedArgs.isEmpty
+      ? "cd '\(escapedPath)' && exec '\(escapedCLIPath)'"
+      : "cd '\(escapedPath)' && exec '\(escapedCLIPath)' \(joinedArgs)"
 
     // Start bash with the command
     terminal.startProcess(
@@ -383,7 +381,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminalKey: "test-session-123",
     sessionId: "test-session-123",
     projectPath: "/Users/test/project",
-    claudeClient: nil
+    cliConfiguration: .claudeDefault
   )
   .frame(width: 600, height: 400)
 }
@@ -392,7 +390,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   EmbeddedTerminalView(
     terminalKey: "pending-preview",
     projectPath: "/Users/test/project",
-    claudeClient: nil
+    cliConfiguration: .claudeDefault
   )
   .frame(width: 600, height: 400)
 }

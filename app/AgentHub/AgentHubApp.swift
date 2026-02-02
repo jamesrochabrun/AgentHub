@@ -61,5 +61,9 @@ struct AgentHubApp: App {
       AgentHubMenuBarLabel(provider: appDelegate.provider)
     }
     .menuBarExtraStyle(.window)
+
+    Settings {
+      SettingsView()
+    }
   }
 }

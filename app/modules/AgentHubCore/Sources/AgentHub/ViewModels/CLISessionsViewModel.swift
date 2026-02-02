@@ -22,11 +22,14 @@ public final class CLISessionsViewModel {
 
   // MARK: - Dependencies
 
-  private let monitorService: CLISessionMonitorService
-  private let searchService: GlobalSearchService
+  private let monitorService: any SessionMonitorServiceProtocol
+  private let searchService: (any SessionSearchServiceProtocol)?
   public let claudeClient: (any ClaudeCode)?
+  public let cliConfiguration: CLICommandConfiguration
+  public let providerKind: SessionProviderKind
   private let worktreeService = GitWorktreeService()
   private let metadataStore: SessionMetadataStore?
+  private let fileWatcher: any SessionFileWatcherProtocol
 
   // MARK: - State
 
@@ -159,7 +162,8 @@ public final class CLISessionsViewModel {
     Task {
       await fileWatcher.startMonitoring(
         sessionId: session.id,
-        projectPath: session.projectPath
+        projectPath: session.projectPath,
+        sessionFilePath: session.sessionFilePath
       )
     }
     AppLogger.session.info("[Polling] Started polling for session: \(session.id.prefix(8), privacy: .public)")
@@ -212,7 +216,7 @@ public final class CLISessionsViewModel {
     forKey key: String,
     sessionId: String?,
     projectPath: String,
-    claudeClient: (any ClaudeCode)?,
+    cliConfiguration: CLICommandConfiguration? = nil,
     initialPrompt: String?,
     isDark: Bool = true
   ) -> TerminalContainerView {
@@ -234,10 +238,11 @@ public final class CLISessionsViewModel {
     AppLogger.session.debug("[Terminal] CREATING new terminal for key: \(key, privacy: .public)")
     #endif
     let terminal = TerminalContainerView()
+    let config = cliConfiguration ?? self.cliConfiguration
     terminal.configure(
       sessionId: sessionId,
       projectPath: projectPath,
-      claudeClient: claudeClient,
+      cliConfiguration: config,
       initialPrompt: initialPrompt,
       isDark: isDark
     )
@@ -265,7 +270,7 @@ public final class CLISessionsViewModel {
   /// This reloads the session history from the JSONL file (useful when session was updated externally).
   public func refreshTerminal(forKey key: String, sessionId: String?, projectPath: String) {
     guard let terminal = activeTerminals[key] else { return }
-    terminal.restart(sessionId: sessionId, projectPath: projectPath, claudeClient: claudeClient)
+    terminal.restart(sessionId: sessionId, projectPath: projectPath, cliConfiguration: cliConfiguration)
   }
 
   /// Types text into the terminal for a given key without pressing Enter.
@@ -315,23 +320,39 @@ public final class CLISessionsViewModel {
     }
   }
 
-  /// File watcher for real-time session monitoring
-  public let fileWatcher: SessionFileWatcher
-
   // MARK: - Private
 
   private var subscriptionTask: Task<Void, Never>?
   private let persistenceKey = "CLISessionsSelectedRepositories"
+  private var providerDefaultsSuffix: String {
+    providerKind == .claude ? "claude" : "codex"
+  }
+  private var monitoredSessionsKey: String {
+    AgentHubDefaults.monitoredSessionIds + "." + providerDefaultsSuffix
+  }
+  private var terminalViewKey: String {
+    AgentHubDefaults.sessionsWithTerminalView + "." + providerDefaultsSuffix
+  }
 
   // MARK: - Initialization
 
-  public init(monitorService: CLISessionMonitorService, claudeClient: ClaudeCode? = nil, metadataStore: SessionMetadataStore? = nil) {
+  public init(
+    monitorService: any SessionMonitorServiceProtocol,
+    fileWatcher: any SessionFileWatcherProtocol,
+    searchService: (any SessionSearchServiceProtocol)?,
+    cliConfiguration: CLICommandConfiguration,
+    providerKind: SessionProviderKind,
+    claudeClient: ClaudeCode? = nil,
+    metadataStore: SessionMetadataStore? = nil
+  ) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
-    self.searchService = GlobalSearchService()
+    self.searchService = searchService
     self.claudeClient = claudeClient
     self.metadataStore = metadataStore
-    self.fileWatcher = SessionFileWatcher()
+    self.fileWatcher = fileWatcher
+    self.cliConfiguration = cliConfiguration
+    self.providerKind = providerKind
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
 
     // Load approval timeout with default of 5 seconds
@@ -509,7 +530,7 @@ public final class CLISessionsViewModel {
   private func persistMonitoredSessions() {
     let sessionIds = Array(monitoredSessionIds)
     if let data = try? JSONEncoder().encode(sessionIds) {
-      UserDefaults.standard.set(data, forKey: AgentHubDefaults.monitoredSessionIds)
+      UserDefaults.standard.set(data, forKey: monitoredSessionsKey)
     }
   }
 
@@ -517,7 +538,7 @@ public final class CLISessionsViewModel {
   private func persistSessionsWithTerminalView() {
     let sessionIds = Array(sessionsWithTerminalView)
     if let data = try? JSONEncoder().encode(sessionIds) {
-      UserDefaults.standard.set(data, forKey: AgentHubDefaults.sessionsWithTerminalView)
+      UserDefaults.standard.set(data, forKey: terminalViewKey)
     }
   }
 
@@ -543,7 +564,11 @@ public final class CLISessionsViewModel {
     // [CLISessionsVM] restoreMonitoredSessions called")
 
     // Restore monitored session IDs
-    if let data = UserDefaults.standard.data(forKey: AgentHubDefaults.monitoredSessionIds),
+    let legacyMonitoredKey = providerKind == .claude ? AgentHubDefaults.monitoredSessionIds : nil
+    let monitoredData = UserDefaults.standard.data(forKey: monitoredSessionsKey)
+      ?? (legacyMonitoredKey.flatMap { UserDefaults.standard.data(forKey: $0) })
+
+    if let data = monitoredData,
        let sessionIds = try? JSONDecoder().decode([String].self, from: data) {
       // [CLISessionsVM] Found \(sessionIds.count) persisted monitored session IDs")
 
@@ -566,7 +591,11 @@ public final class CLISessionsViewModel {
     // Restore terminal view state and start polling for sessions in monitor/list mode.
     // After startMonitoring, all sessions default to terminal view (no polling).
     // We need to switch sessions that were in monitor/list mode back to that mode with polling.
-    if let data = UserDefaults.standard.data(forKey: AgentHubDefaults.sessionsWithTerminalView),
+    let legacyTerminalKey = providerKind == .claude ? AgentHubDefaults.sessionsWithTerminalView : nil
+    let terminalData = UserDefaults.standard.data(forKey: terminalViewKey)
+      ?? (legacyTerminalKey.flatMap { UserDefaults.standard.data(forKey: $0) })
+
+    if let data = terminalData,
        let persistedTerminalSessionIds = try? JSONDecoder().decode([String].self, from: data) {
       let persistedSet = Set(persistedTerminalSessionIds)
 
@@ -618,12 +647,27 @@ public final class CLISessionsViewModel {
     }
   }
 
-  /// Checks if the session file exists in ~/.claude
+  /// Checks if the session file exists for the current provider
   private func sessionFileExists(session: CLISession) -> Bool {
-    let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
-    let encodedPath = session.projectPath.claudeProjectPathEncoded
-    let sessionFile = "\(claudeDataPath)/projects/\(encodedPath)/\(session.id).jsonl"
-    return FileManager.default.fileExists(atPath: sessionFile)
+    guard let url = sessionFileURL(for: session) else { return false }
+    return FileManager.default.fileExists(atPath: url.path)
+  }
+
+  /// Returns the session file URL for the current provider, if known.
+  public func sessionFileURL(for session: CLISession) -> URL? {
+    if let path = session.sessionFilePath {
+      return URL(fileURLWithPath: path)
+    }
+
+    switch providerKind {
+    case .claude:
+      let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
+      let encodedPath = session.projectPath.claudeProjectPathEncoded
+      let sessionFile = "\(claudeDataPath)/projects/\(encodedPath)/\(session.id).jsonl"
+      return URL(fileURLWithPath: sessionFile)
+    case .codex:
+      return nil
+    }
   }
 
   // MARK: - Repository Management
@@ -805,6 +849,13 @@ public final class CLISessionsViewModel {
   /// - Parameter session: The session to connect to
   /// - Returns: An error if the connection failed, nil on success
   public func connectToSession(_ session: CLISession) -> Error? {
+    guard providerKind == .claude else {
+      return NSError(
+        domain: "CLISessionsViewModel",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "External terminal resume is only available for Claude sessions."]
+      )
+    }
     guard let claudeClient = claudeClient else {
       return NSError(
         domain: "CLISessionsViewModel",
@@ -826,6 +877,13 @@ public final class CLISessionsViewModel {
   ///   - skipCheckout: If true, skips git checkout even for non-worktrees (already on correct branch)
   /// - Returns: An error if launching failed, nil on success
   public func openTerminalInWorktree(_ worktree: WorktreeBranch, skipCheckout: Bool = false) -> Error? {
+    guard providerKind == .claude else {
+      return NSError(
+        domain: "CLISessionsViewModel",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "External terminal launch is only available for Claude sessions."]
+      )
+    }
     guard let claudeClient = claudeClient else {
       return NSError(
         domain: "CLISessionsViewModel",
@@ -952,9 +1010,20 @@ public final class CLISessionsViewModel {
     pendingHubSessions.removeAll { $0.id == pending.id }
   }
 
-  /// Watches the project directory for a new session file
+  /// Watches for a new session file for the active provider.
   @MainActor
   private func watchForNewSession(pending: PendingHubSession, worktree: WorktreeBranch) async {
+    switch providerKind {
+    case .claude:
+      await watchForNewClaudeSession(pending: pending, worktree: worktree)
+    case .codex:
+      await watchForNewCodexSession(pending: pending, worktree: worktree)
+    }
+  }
+
+  /// Watches the Claude project directory for a new session file
+  @MainActor
+  private func watchForNewClaudeSession(pending: PendingHubSession, worktree: WorktreeBranch) async {
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
     let encodedPath = worktree.path.claudeProjectPathEncoded
     let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
@@ -972,7 +1041,7 @@ public final class CLISessionsViewModel {
       "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) existingFiles=\(existingFiles.count) existingJsonl=\(existingJsonlCount)"
     )
 #endif
-    if let existingSessionFile = findRecentSessionFile(
+    if let existingSessionFile = findRecentClaudeSessionFile(
       in: existingFiles,
       projectDir: projectDir,
       pendingStartedAt: pending.startedAt
@@ -996,7 +1065,7 @@ public final class CLISessionsViewModel {
       )
 #endif
       // Directory doesn't exist yet - poll until it does
-      await pollForNewSessionFallback(pending: pending, worktree: worktree)
+      await pollForNewClaudeSessionFallback(pending: pending, worktree: worktree)
       return
     }
 
@@ -1048,7 +1117,7 @@ public final class CLISessionsViewModel {
   }
 
   /// Picks a session file that was created around the time the pending session started.
-  private func findRecentSessionFile(
+  private func findRecentClaudeSessionFile(
     in existingFiles: Set<String>,
     projectDir: String,
     pendingStartedAt: Date
@@ -1078,7 +1147,12 @@ public final class CLISessionsViewModel {
   }
 
   /// Handles when a new session file is detected
-  private func handleNewSessionFound(sessionId: String, pending: PendingHubSession, worktree: WorktreeBranch) {
+  private func handleNewSessionFound(
+    sessionId: String,
+    pending: PendingHubSession,
+    worktree: WorktreeBranch,
+    sessionFilePath: String? = nil
+  ) {
 #if DEBUG
     AppLogger.session.debug(
       "[HandleNewSession] pendingId=\(pending.id.uuidString, privacy: .public) sessionId=\(sessionId, privacy: .public) worktreePath=\(worktree.path, privacy: .public) start"
@@ -1140,8 +1214,10 @@ public final class CLISessionsViewModel {
 
         let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
         let encodedPath = worktree.path.claudeProjectPathEncoded
-        let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
-        if currentSessions.isEmpty && FileManager.default.fileExists(atPath: sessionFilePath) {
+        let fallbackSessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
+        if providerKind == .claude,
+           currentSessions.isEmpty,
+           FileManager.default.fileExists(atPath: fallbackSessionFilePath) {
           // Session file exists but not in history.jsonl yet - create directly
           let newSession = CLISession(
             id: sessionId,
@@ -1174,6 +1250,42 @@ public final class CLISessionsViewModel {
           return
         }
 
+        if providerKind == .codex,
+           currentSessions.isEmpty,
+           let sessionFilePath {
+          let newSession = CLISession(
+            id: sessionId,
+            projectPath: worktree.path,
+            branchName: worktree.name,
+            isWorktree: worktree.isWorktree,
+            lastActivityAt: Date(),
+            messageCount: 0,
+            isActive: true,
+            firstMessage: nil,
+            lastMessage: nil,
+            slug: nil,
+            sessionFilePath: sessionFilePath
+          )
+
+          for repoIndex in selectedRepositories.indices {
+            if let wtIndex = selectedRepositories[repoIndex].worktrees.firstIndex(where: { $0.path == worktree.path }) {
+              selectedRepositories[repoIndex].worktrees[wtIndex].sessions.insert(newSession, at: 0)
+              break
+            }
+          }
+
+          pendingHubSessions.removeAll { $0.id == pending.id }
+          transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
+          sessionsWithTerminalView.insert(sessionId)
+          startMonitoring(session: newSession)
+#if DEBUG
+          AppLogger.session.info(
+            "[HandleNewSession-Fallback] sessionId=\(sessionId, privacy: .public) created Codex session directly from file"
+          )
+#endif
+          return
+        }
+
         // Log retry attempt (only if not the last attempt)
         if attempt < maxAttempts {
 #if DEBUG
@@ -1196,7 +1308,7 @@ public final class CLISessionsViewModel {
 
   /// Fallback: polls for the project directory to be created, then watches it
   @MainActor
-  private func pollForNewSessionFallback(pending: PendingHubSession, worktree: WorktreeBranch) async {
+  private func pollForNewClaudeSessionFallback(pending: PendingHubSession, worktree: WorktreeBranch) async {
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
     let encodedPath = worktree.path.claudeProjectPathEncoded
     let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
@@ -1228,10 +1340,115 @@ public final class CLISessionsViewModel {
         )
 #endif
         // Directory exists now - restart watching
-        await watchForNewSession(pending: pending, worktree: worktree)
+        await watchForNewClaudeSession(pending: pending, worktree: worktree)
         return
       }
     }
+  }
+
+  // MARK: - Codex New Session Detection
+
+  /// Watches the Codex sessions directory for a new session file.
+  @MainActor
+  private func watchForNewCodexSession(pending: PendingHubSession, worktree: WorktreeBranch) async {
+    let codexPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.codex"
+    var knownFiles = Set(CodexSessionFileScanner.listSessionFiles(codexDataPath: codexPath))
+
+    if let meta = findRecentCodexSession(
+      in: knownFiles,
+      worktree: worktree,
+      pendingStartedAt: pending.startedAt
+    ) {
+      handleNewSessionFound(
+        sessionId: meta.sessionId,
+        pending: pending,
+        worktree: worktree,
+        sessionFilePath: meta.sessionFilePath
+      )
+      return
+    }
+
+    await pollForNewCodexSession(
+      pending: pending,
+      worktree: worktree,
+      codexPath: codexPath,
+      knownFiles: &knownFiles
+    )
+  }
+
+  @MainActor
+  private func pollForNewCodexSession(
+    pending: PendingHubSession,
+    worktree: WorktreeBranch,
+    codexPath: String,
+    knownFiles: inout Set<String>
+  ) async {
+    while true {
+      try? await Task.sleep(for: .seconds(1))
+
+      // Cancel if pending session is gone
+      if !pendingHubSessions.contains(where: { $0.id == pending.id }) {
+        return
+      }
+
+      let currentFiles = Set(CodexSessionFileScanner.listSessionFiles(codexDataPath: codexPath))
+      let newFiles = currentFiles.subtracting(knownFiles)
+
+      if let meta = findRecentCodexSession(
+        in: newFiles.isEmpty ? currentFiles : newFiles,
+        worktree: worktree,
+        pendingStartedAt: pending.startedAt
+      ) {
+        handleNewSessionFound(
+          sessionId: meta.sessionId,
+          pending: pending,
+          worktree: worktree,
+          sessionFilePath: meta.sessionFilePath
+        )
+        return
+      }
+
+      knownFiles = currentFiles
+    }
+  }
+
+  private func findRecentCodexSession(
+    in filePaths: Set<String>,
+    worktree: WorktreeBranch,
+    pendingStartedAt: Date
+  ) -> CodexSessionMeta? {
+    guard !filePaths.isEmpty else { return nil }
+
+    let cutoff = pendingStartedAt.addingTimeInterval(-2)
+    var newest: (meta: CodexSessionMeta, modifiedAt: Date)?
+
+    for path in filePaths {
+      guard let modifiedAt = fileModificationDate(path), modifiedAt >= cutoff else { continue }
+      guard let meta = CodexSessionFileScanner.readSessionMeta(from: path) else { continue }
+      guard codexSessionMatchesWorktree(meta, worktree: worktree) else { continue }
+
+      if let current = newest {
+        if modifiedAt > current.modifiedAt {
+          newest = (meta, modifiedAt)
+        }
+      } else {
+        newest = (meta, modifiedAt)
+      }
+    }
+
+    return newest?.meta
+  }
+
+  private func codexSessionMatchesWorktree(_ meta: CodexSessionMeta, worktree: WorktreeBranch) -> Bool {
+    meta.projectPath == worktree.path || meta.projectPath.hasPrefix(worktree.path + "/")
+  }
+
+  private func fileModificationDate(_ path: String) -> Date? {
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+          let modDate = attrs[.modificationDate] as? Date else {
+      return nil
+    }
+    return modDate
   }
 
   /// Copies the full session ID to the clipboard
@@ -1371,9 +1588,18 @@ public final class CLISessionsViewModel {
 
       guard !Task.isCancelled, let self = self else { return }
 
+      guard let searchService = self.searchService else {
+        await MainActor.run {
+          self.searchResults = []
+          self.isSearching = false
+          self.hasPerformedSearch = true
+        }
+        return
+      }
+
       let query = self.searchQuery
       let filterPath = self.searchFilterPath
-      let results = await self.searchService.search(query: query, filterPath: filterPath)
+      let results = await searchService.search(query: query, filterPath: filterPath)
 
       guard !Task.isCancelled else { return }
 
