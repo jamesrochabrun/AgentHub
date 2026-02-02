@@ -9,15 +9,6 @@ import ClaudeCodeSDK
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - CodeChangesSheetItem
-
-/// Identifiable wrapper for sheet(item:) pattern - captures all data needed for the sheet
-private struct CodeChangesSheetItem: Identifiable {
-  let id = UUID()
-  let session: CLISession
-  let codeChangesState: CodeChangesState
-}
-
 // MARK: - GitDiffSheetItem
 
 /// Identifiable wrapper for git diff sheet - captures session and project path
@@ -51,9 +42,9 @@ private struct PendingChangesSheetItem: Identifiable {
 public struct MonitoringCardView: View {
   let session: CLISession
   let state: SessionMonitorState?
-  let codeChangesState: CodeChangesState?
   let planState: PlanState?
   let claudeClient: (any ClaudeCode)?
+  let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
   let showTerminal: Bool
   let initialPrompt: String?
@@ -70,7 +61,6 @@ public struct MonitoringCardView: View {
   let isMaximized: Bool
   let onToggleMaximize: () -> Void
 
-  @State private var codeChangesSheetItem: CodeChangesSheetItem?
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
   @State private var pendingChangesSheetItem: PendingChangesSheetItem?
@@ -83,9 +73,9 @@ public struct MonitoringCardView: View {
   public init(
     session: CLISession,
     state: SessionMonitorState?,
-    codeChangesState: CodeChangesState? = nil,
     planState: PlanState? = nil,
     claudeClient: (any ClaudeCode)? = nil,
+    cliConfiguration: CLICommandConfiguration? = nil,
     providerKind: SessionProviderKind = .claude,
     showTerminal: Bool = false,
     initialPrompt: String? = nil,
@@ -104,9 +94,9 @@ public struct MonitoringCardView: View {
   ) {
     self.session = session
     self.state = state
-    self.codeChangesState = codeChangesState
     self.planState = planState
     self.claudeClient = claudeClient
+    self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.showTerminal = showTerminal
     self.initialPrompt = initialPrompt
@@ -173,20 +163,14 @@ public struct MonitoringCardView: View {
       handleDroppedFiles(providers)
       return true
     }
-    .sheet(item: $codeChangesSheetItem) { item in
-      CodeChangesView(
-        session: item.session,
-        codeChangesState: item.codeChangesState,
-        onDismiss: { codeChangesSheetItem = nil },
-        claudeClient: claudeClient
-      )
-    }
     .sheet(item: $gitDiffSheetItem) { item in
       GitDiffView(
         session: item.session,
         projectPath: item.projectPath,
         onDismiss: { gitDiffSheetItem = nil },
         claudeClient: claudeClient,
+        cliConfiguration: cliConfiguration,
+        providerKind: providerKind,
         onInlineRequestSubmit: onInlineRequestSubmit
       )
     }

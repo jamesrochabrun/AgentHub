@@ -22,8 +22,9 @@ struct InlineEditorView: View {
   let side: String
   let fileName: String
   let errorMessage: String?
+  let providerKind: SessionProviderKind
 
-  /// Called when user presses Enter - sends immediately to Claude
+  /// Called when user presses Enter - sends immediately to the provider
   let onSubmit: (String) -> Void
 
   /// Called when user presses Cmd+Enter - adds to comment collection (optional)
@@ -54,6 +55,7 @@ struct InlineEditorView: View {
     side: String,
     fileName: String,
     errorMessage: String?,
+    providerKind: SessionProviderKind = .claude,
     onSubmit: @escaping (String) -> Void,
     onAddComment: ((String) -> Void)? = nil,
     onDeleteComment: (() -> Void)? = nil,
@@ -65,6 +67,7 @@ struct InlineEditorView: View {
     self.side = side
     self.fileName = fileName
     self.errorMessage = errorMessage
+    self.providerKind = providerKind
     self.onSubmit = onSubmit
     self.onAddComment = onAddComment
     self.onDeleteComment = onDeleteComment
@@ -167,7 +170,7 @@ struct InlineEditorView: View {
     )
     .overlay(
       RoundedRectangle(cornerRadius: 8)
-        .stroke(isFocused ? Color.brandPrimary.opacity(0.5) : Color(NSColor.separatorColor), lineWidth: 1)
+        .stroke(isFocused ? Color.brandPrimary(for: providerKind).opacity(0.5) : Color(NSColor.separatorColor), lineWidth: 1)
     )
   }
 
@@ -202,19 +205,22 @@ struct InlineEditorView: View {
       Image(systemName: "arrow.up")
         .font(.system(size: 14, weight: .semibold))
         .foregroundColor(.white)
+        .frame(width: 32, height: 32)
+        .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
     .frame(width: 32, height: 32)
     .background(
       RoundedRectangle(cornerRadius: 8)
-        .fill(isTextEmpty ? Color.secondary.opacity(0.3) : Color.brandPrimary)
+        .fill(isTextEmpty ? Color.secondary.opacity(0.3) : Color.brandPrimary(for: providerKind))
     )
     .overlay(
       RoundedRectangle(cornerRadius: 8)
         .stroke(Color(NSColor.separatorColor), lineWidth: 1)
     )
+    .contentShape(Rectangle())
     .disabled(isTextEmpty)
-    .help("Send to Claude (Enter)")
+    .help("Send to \(providerKind.rawValue) (Enter)")
   }
 
   // MARK: - Add Comment Button
@@ -224,6 +230,8 @@ struct InlineEditorView: View {
       Image(systemName: isEditMode ? "checkmark" : "plus")
         .font(.system(size: 14, weight: .semibold))
         .foregroundColor(isTextEmpty ? .secondary : .primary)
+        .frame(width: 32, height: 32)
+        .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
     .frame(width: 32, height: 32)
@@ -233,8 +241,9 @@ struct InlineEditorView: View {
     )
     .overlay(
       RoundedRectangle(cornerRadius: 8)
-        .stroke(isTextEmpty ? Color(NSColor.separatorColor) : Color.brandPrimary.opacity(0.5), lineWidth: 1)
+        .stroke(isTextEmpty ? Color(NSColor.separatorColor) : Color.brandPrimary(for: providerKind).opacity(0.5), lineWidth: 1)
     )
+    .contentShape(Rectangle())
     .disabled(isTextEmpty)
     .help(isEditMode ? "Update comment (⌘↵)" : "Add to review (⌘↵)")
   }

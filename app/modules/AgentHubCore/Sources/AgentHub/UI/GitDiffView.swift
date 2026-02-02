@@ -25,7 +25,14 @@ public struct GitDiffView: View {
   let projectPath: String
   let onDismiss: () -> Void
   let claudeClient: (any ClaudeCode)?
+  let cliConfiguration: CLICommandConfiguration?
+  let providerKind: SessionProviderKind
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
+
+  /// Inline editor is enabled when either claudeClient or cliConfiguration is available
+  private var isInlineEditorEnabled: Bool {
+    claudeClient != nil || cliConfiguration != nil
+  }
 
   @State private var diffState: GitDiffState = .empty
   @State private var isLoading = true
@@ -50,12 +57,16 @@ public struct GitDiffView: View {
     projectPath: String,
     onDismiss: @escaping () -> Void,
     claudeClient: (any ClaudeCode)? = nil,
+    cliConfiguration: CLICommandConfiguration? = nil,
+    providerKind: SessionProviderKind = .claude,
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil
   ) {
     self.session = session
     self.projectPath = projectPath
     self.onDismiss = onDismiss
     self.claudeClient = claudeClient
+    self.cliConfiguration = cliConfiguration
+    self.providerKind = providerKind
     self.onInlineRequestSubmit = onInlineRequestSubmit
   }
 
@@ -88,6 +99,7 @@ public struct GitDiffView: View {
           if commentsState.hasComments {
             DiffCommentsPanelView(
               commentsState: commentsState,
+              providerKind: providerKind,
               onSendToCloud: sendAllCommentsToCloud
             )
           }
@@ -136,7 +148,7 @@ public struct GitDiffView: View {
       HStack(spacing: 8) {
         Image(systemName: "arrow.left.arrow.right")
           .font(.title3)
-          .foregroundColor(.brandPrimary)
+          .foregroundColor(.brandPrimary(for: providerKind))
 
         Text("Git Diff")
           .font(.title3.weight(.semibold))
@@ -153,12 +165,12 @@ public struct GitDiffView: View {
             Text("\(commentsState.commentCount)")
               .font(.caption.bold())
           }
-          .foregroundColor(.white)
+          .foregroundColor(.primary)
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
           .background(
             Capsule()
-              .fill(Color.brandPrimary)
+              .fill(Color.secondary.opacity(0.2))
           )
         }
       }
@@ -339,6 +351,8 @@ public struct GitDiffView: View {
             inlineEditorState: inlineEditorState,
             commentsState: commentsState,
             claudeClient: claudeClient,
+            cliConfiguration: cliConfiguration,
+            providerKind: providerKind,
             session: session,
             onDismissView: onDismiss,
             onInlineRequestSubmit: onInlineRequestSubmit
@@ -538,7 +552,7 @@ public struct GitDiffView: View {
 
   /// Sends all pending comments to Claude as a batch review
   private func sendAllCommentsToCloud() {
-    guard commentsState.hasComments else { return }
+    guard commentsState.hasComments, isInlineEditorEnabled else { return }
 
     let prompt = commentsState.generatePrompt()
 
@@ -548,7 +562,7 @@ public struct GitDiffView: View {
       commentsState.clearAll()
       onDismiss()
     } else if let client = claudeClient {
-      // Fallback to external Terminal
+      // Fallback to external Terminal with claudeClient
       if let error = TerminalLauncher.launchTerminalWithSession(
         session.id,
         claudeClient: client,
@@ -557,7 +571,19 @@ public struct GitDiffView: View {
       ) {
         inlineEditorState.errorMessage = error.localizedDescription
       } else {
-        // Clear comments and dismiss
+        commentsState.clearAll()
+        onDismiss()
+      }
+    } else if let config = cliConfiguration {
+      // Fallback to external Terminal with cliConfiguration
+      if let error = TerminalLauncher.launchTerminalWithSession(
+        session.id,
+        cliConfiguration: config,
+        projectPath: session.projectPath,
+        initialPrompt: prompt
+      ) {
+        inlineEditorState.errorMessage = error.localizedDescription
+      } else {
         commentsState.clearAll()
         onDismiss()
       }
@@ -641,12 +667,20 @@ private struct GitDiffContentView: View {
   @Bindable var inlineEditorState: InlineEditorState
   @Bindable var commentsState: DiffCommentsState
   let claudeClient: (any ClaudeCode)?
+  let cliConfiguration: CLICommandConfiguration?
+  let providerKind: SessionProviderKind
   let session: CLISession
   let onDismissView: () -> Void
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
 
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
+
+  /// Inline editor is enabled when either claudeClient or cliConfiguration is available
+  private var isInlineEditorEnabled: Bool {
+    let enabled = claudeClient != nil || cliConfiguration != nil
+    return enabled
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
@@ -662,8 +696,8 @@ private struct GitDiffContentView: View {
             fileName: fileName,
             diffStyle: $diffStyle,
             overflowMode: $overflowMode,
-            onLineClickWithPosition: claudeClient != nil ? { position, localPoint in
-              // Only enable inline editor when claudeClient is available
+            onLineClickWithPosition: isInlineEditorEnabled ? { position, localPoint in
+              print("[GitDiffContentView] Line clicked! lineNumber=\(position.lineNumber), side=\(position.side)")
               let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
 
               // Determine which content to use based on the side (left=old, right=new)
@@ -701,11 +735,12 @@ private struct GitDiffContentView: View {
             .transition(.opacity)
           }
 
-          // Inline editor overlay - only shown when claudeClient is available
-          if let client = claudeClient {
+          // Inline editor overlay - shown when claudeClient or cliConfiguration is available
+          if isInlineEditorEnabled {
             InlineEditorOverlay(
               state: inlineEditorState,
               containerSize: geometry.size,
+              providerKind: providerKind,
               onSubmit: { message, lineNumber, side, file in
                 // Build contextual prompt with line context
                 let prompt = buildInlinePrompt(
@@ -719,10 +754,10 @@ private struct GitDiffContentView: View {
                 // Use callback if provided (redirects to built-in terminal)
                 if let callback = onInlineRequestSubmit {
                   callback(prompt, session)
-                  inlineEditorState.dismiss()  // Dismiss inline editor first
+                  inlineEditorState.dismiss()
                   onDismissView()
-                } else {
-                  // Fallback to external Terminal
+                } else if let client = claudeClient {
+                  // Fallback to external Terminal with claudeClient
                   if let error = TerminalLauncher.launchTerminalWithSession(
                     session.id,
                     claudeClient: client,
@@ -731,7 +766,18 @@ private struct GitDiffContentView: View {
                   ) {
                     inlineEditorState.errorMessage = error.localizedDescription
                   } else {
-                    // Dismiss entire diff view - session continues in Terminal
+                    onDismissView()
+                  }
+                } else if let config = cliConfiguration {
+                  // Fallback to external Terminal with cliConfiguration
+                  if let error = TerminalLauncher.launchTerminalWithSession(
+                    session.id,
+                    cliConfiguration: config,
+                    projectPath: session.projectPath,
+                    initialPrompt: prompt
+                  ) {
+                    inlineEditorState.errorMessage = error.localizedDescription
+                  } else {
                     onDismissView()
                   }
                 }
