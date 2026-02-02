@@ -146,7 +146,7 @@ extension Color {
     case .claude:
       return Color(hex: "#D4A27F")  // kraft
     case .codex:
-      return Color(hex: "#9333EA")  // purple
+      return Color(hex: "#00A5B2")  // teal (same as primary)
     }
   }
 
@@ -155,7 +155,7 @@ extension Color {
     case .claude:
       return Color(hex: "#EBDBBC")  // manilla
     case .codex:
-      return Color(hex: "#64748B")  // slate
+      return Color(hex: "#00A5B2")  // teal (same as primary)
     }
   }
 
@@ -175,8 +175,8 @@ extension Color {
     case .codex:
       return ThemeColors(
         brandPrimary: Color(hex: "#00A5B2"),   // teal
-        brandSecondary: Color(hex: "#9333EA"), // purple
-        brandTertiary: Color(hex: "#64748B")   // slate
+        brandSecondary: Color(hex: "#00A5B2"), // teal (same as primary)
+        brandTertiary: Color(hex: "#00A5B2")   // teal (same as primary)
       )
     case .bat:
       // Bat: purple primary, real mustard secondary, slate tertiary
