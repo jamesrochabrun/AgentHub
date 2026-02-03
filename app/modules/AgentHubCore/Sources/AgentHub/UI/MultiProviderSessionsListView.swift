@@ -491,7 +491,7 @@ public struct MultiProviderSessionsListView: View {
       }
 
       HStack {
-        Text("\(currentViewModel.selectedRepositories.count) \(currentViewModel.selectedRepositories.count == 1 ? "module" : "modules") · \(currentViewModel.totalSessionCount) sessions")
+        Text("\(currentViewModel.selectedRepositories.count) \(currentViewModel.selectedRepositories.count == 1 ? "module" : "modules") · \(currentViewModel.monitoredSessionIds.count) in Hub")
           .font(.caption)
           .foregroundColor(.secondary)
 

@@ -42,6 +42,7 @@ public enum AgentHubDefaults {
 
   /// Persisted selected repositories (JSON-encoded array of paths)
   /// Type: Data (JSON-encoded [String])
+  /// Note: Used with provider suffix (e.g., `.claude` or `.codex`) for provider-specific storage
   public static let selectedRepositories = "\(keyPrefix)sessions.selectedRepositories"
 
   /// Persisted monitored session IDs (JSON-encoded array of session IDs)
@@ -62,6 +63,14 @@ public enum AgentHubDefaults {
   /// Selected provider in side panel segmented control
   /// Type: String (default: "Claude")
   public static let selectedSidePanelProvider = "\(keyPrefix)sidepanel.selectedProvider"
+
+  // MARK: - Theme Settings
+
+  // MARK: - UI Settings
+
+  /// Monitoring panel layout mode (list, 2-column, 3-column grid)
+  /// Type: Int (default: 0 = list)
+  public static let monitoringPanelLayoutMode = "\(keyPrefix)ui.monitoringPanelLayoutMode"
 
   // MARK: - Theme Settings
 
