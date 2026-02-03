@@ -43,6 +43,22 @@ private enum LayoutMode: Int, CaseIterable {
   }
 }
 
+// MARK: - HubFilterMode
+
+private enum HubFilterMode: Int, CaseIterable {
+  case all = 0
+  case claude = 1
+  case codex = 2
+
+  var displayName: String {
+    switch self {
+    case .all: return "All"
+    case .claude: return "Claude"
+    case .codex: return "Codex"
+    }
+  }
+}
+
 // MARK: - ModuleSectionHeader
 
 private struct ModuleSectionHeader: View {
@@ -62,6 +78,42 @@ private struct ModuleSectionHeader: View {
     .padding(.horizontal, 4)
     .padding(.top, 6)
     .padding(.bottom, 10)
+  }
+}
+
+// MARK: - HubFilterControl
+
+private struct HubFilterControl: View {
+  @Binding var filterMode: HubFilterMode
+  let claudeCount: Int
+  let codexCount: Int
+  let totalCount: Int
+
+  var body: some View {
+    HStack(spacing: 4) {
+      filterButton(for: .all, count: totalCount)
+      filterButton(for: .claude, count: claudeCount)
+      filterButton(for: .codex, count: codexCount)
+    }
+    .padding(4)
+    .background(Color.secondary.opacity(0.12))
+    .clipShape(RoundedRectangle(cornerRadius: 6))
+  }
+
+  private func filterButton(for mode: HubFilterMode, count: Int) -> some View {
+    Button(action: { filterMode = mode }) {
+      HStack(spacing: 2) {
+        Text(mode.displayName)
+        Text("(\(count))")
+      }
+      .font(.caption)
+      .foregroundColor(filterMode == mode ? .primary : .secondary)
+      .padding(.horizontal, 8)
+      .padding(.vertical, 4)
+      .background(filterMode == mode ? Color.secondary.opacity(0.2) : Color.clear)
+      .clipShape(RoundedRectangle(cornerRadius: 4))
+    }
+    .buttonStyle(.plain)
   }
 }
 
@@ -131,6 +183,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
+  @State private var filterMode: HubFilterMode = .all
   @Environment(\.colorScheme) private var colorScheme
 
   private var layoutMode: LayoutMode {
@@ -155,6 +208,8 @@ public struct MultiProviderMonitoringPanelView: View {
 
         if allItems.isEmpty {
           emptyState
+        } else if visibleItemCount == 0 {
+          filteredEmptyState
         } else {
           monitoredSessionsList
         }
@@ -187,6 +242,14 @@ public struct MultiProviderMonitoringPanelView: View {
     HStack(spacing: 12) {
       Text("Hub")
         .font(.headline)
+
+      // Provider filter toggle
+      HubFilterControl(
+        filterMode: $filterMode,
+        claudeCount: claudeItemCount,
+        codexCount: codexItemCount,
+        totalCount: allItems.count
+      )
 
       Spacer()
 
@@ -232,6 +295,26 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .padding()
+  }
+
+  // MARK: - Filtered Empty State
+
+  private var filteredEmptyState: some View {
+    VStack(spacing: 12) {
+      Image(systemName: "line.3.horizontal.decrease.circle")
+        .font(.largeTitle)
+        .foregroundColor(.secondary.opacity(0.5))
+
+      Text("No \(filterMode.displayName) Sessions")
+        .font(.headline)
+        .foregroundColor(.secondary)
+
+      Button("Show All") {
+        filterMode = .all
+      }
+      .buttonStyle(.bordered)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   // MARK: - Monitored Sessions List
@@ -351,6 +434,32 @@ public struct MultiProviderMonitoringPanelView: View {
     }
   }
 
+  // MARK: - Filter Helpers
+
+  private func shouldShowItem(_ item: ProviderMonitoringItem) -> Bool {
+    switch filterMode {
+    case .all: return true
+    case .claude: return item.providerKind == .claude
+    case .codex: return item.providerKind == .codex
+    }
+  }
+
+  private var claudeItemCount: Int {
+    allItems.filter { $0.providerKind == .claude }.count
+  }
+
+  private var codexItemCount: Int {
+    allItems.filter { $0.providerKind == .codex }.count
+  }
+
+  private var visibleItemCount: Int {
+    allItems.filter { shouldShowItem($0) }.count
+  }
+
+  private var filteredItems: [ProviderMonitoringItem] {
+    allItems.filter { shouldShowItem($0) }
+  }
+
   // MARK: - Helpers
 
   @ViewBuilder
@@ -468,7 +577,7 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private var groupedMonitoredSessions: [(modulePath: String, items: [ProviderMonitoringItem])] {
-    let grouped = Dictionary(grouping: allItems) { findModulePath(for: $0) }
+    let grouped = Dictionary(grouping: filteredItems) { findModulePath(for: $0) }
     return grouped.sorted { $0.key < $1.key }
       .map { (modulePath: $0.key, items: $0.value.sorted { $0.timestamp > $1.timestamp }) }
   }
