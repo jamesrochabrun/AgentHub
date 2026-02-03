@@ -9,12 +9,27 @@ import Foundation
 
 public struct CodexSessionJSONLParser {
 
+  // MARK: - Lightweight Parse Result for Global Stats
+
+  /// Minimal parsing result containing only fields needed for global stats aggregation.
+  /// Significantly reduces memory overhead by skipping activities, tool calls, timestamps, and status.
+  public struct GlobalStatsParseResult {
+    public var model: String?
+    public var totalInputTokens: Int = 0
+    public var totalOutputTokens: Int = 0
+    public var cacheReadTokens: Int = 0
+    public var messageCount: Int = 0
+
+    public init() {}
+  }
+
   // MARK: - Parsing Results
 
   public struct ParseResult {
     public var model: String?
     public var lastInputTokens: Int = 0
     public var lastOutputTokens: Int = 0
+    public var totalInputTokens: Int = 0  // Cumulative input tokens from total_token_usage
     public var totalOutputTokens: Int = 0
     public var cacheReadTokens: Int = 0
     public var cacheCreationTokens: Int = 0
@@ -36,6 +51,59 @@ public struct CodexSessionJSONLParser {
   }
 
   // MARK: - Public API
+
+  /// Lightweight parsing for global stats aggregation.
+  /// Skips activity tracking, tool call tracking, timestamp parsing, and status computation.
+  /// Memory efficient: only extracts model, tokens, and message count.
+  public static func parseForGlobalStats(at path: String) -> GlobalStatsParseResult {
+    var result = GlobalStatsParseResult()
+
+    guard let handle = FileHandle(forReadingAtPath: path) else {
+      return result
+    }
+    defer { try? handle.close() }
+
+    guard let data = try? handle.readToEnd(),
+          let content = String(data: data, encoding: .utf8) else {
+      return result
+    }
+
+    for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+      guard let lineData = line.data(using: .utf8),
+            let entry = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+            let type = entry["type"] as? String else { continue }
+
+      switch type {
+      case "turn_context":
+        if let payload = entry["payload"] as? [String: Any],
+           let model = payload["model"] as? String {
+          result.model = model
+        }
+
+      case "event_msg":
+        guard let payload = entry["payload"] as? [String: Any],
+              let eventType = payload["type"] as? String else { continue }
+
+        if eventType == "user_message" || eventType == "agent_message" {
+          result.messageCount += 1
+        } else if eventType == "token_count",
+                  let info = payload["info"] as? [String: Any],
+                  let total = info["total_token_usage"] as? [String: Any] {
+          let input = (total["input_tokens"] as? Int) ?? 0
+          let cached = (total["cached_input_tokens"] as? Int) ?? 0
+          let output = (total["output_tokens"] as? Int) ?? 0
+          result.totalInputTokens = input + cached
+          result.totalOutputTokens = output
+          result.cacheReadTokens = cached
+        }
+
+      default:
+        break
+      }
+    }
+
+    return result
+  }
 
   public static func parseSessionFile(at path: String, approvalTimeoutSeconds: Int = 0) -> ParseResult {
     var result = ParseResult()
@@ -136,22 +204,23 @@ public struct CodexSessionJSONLParser {
 
     case "token_count":
       guard let info = payload["info"] as? [String: Any] else { return }
+      // Use total_token_usage for cumulative session totals (used by global stats)
+      if let total = info["total_token_usage"] as? [String: Any] {
+        let input = (total["input_tokens"] as? Int) ?? 0
+        let cached = (total["cached_input_tokens"] as? Int) ?? 0
+        let output = (total["output_tokens"] as? Int) ?? 0
+        // Store the latest totals (the API accumulates these values)
+        result.totalInputTokens = input + cached
+        result.totalOutputTokens = output
+        result.cacheReadTokens = cached
+      }
+      // Use last_token_usage for real-time monitoring
       if let last = info["last_token_usage"] as? [String: Any] {
         let input = (last["input_tokens"] as? Int) ?? 0
         let cached = (last["cached_input_tokens"] as? Int) ?? 0
         let output = (last["output_tokens"] as? Int) ?? 0
         result.lastInputTokens = input + cached
         result.lastOutputTokens = output
-        result.totalOutputTokens += output
-        result.cacheReadTokens = cached
-      } else if let total = info["total_token_usage"] as? [String: Any] {
-        let input = (total["input_tokens"] as? Int) ?? 0
-        let cached = (total["cached_input_tokens"] as? Int) ?? 0
-        let output = (total["output_tokens"] as? Int) ?? 0
-        result.lastInputTokens = input + cached
-        result.lastOutputTokens = output
-        result.totalOutputTokens = output
-        result.cacheReadTokens = cached
       }
 
     default:

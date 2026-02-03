@@ -64,7 +64,11 @@ public enum AgentHubDefaults {
   /// Type: String (default: "Claude")
   public static let selectedSidePanelProvider = "\(keyPrefix)sidepanel.selectedProvider"
 
-  // MARK: - Theme Settings
+  // MARK: - Stats Settings
+
+  /// Selected provider in stats view segmented control
+  /// Type: String (default: "Claude")
+  public static let selectedStatsProvider = "\(keyPrefix)stats.selectedProvider"
 
   // MARK: - UI Settings
 

@@ -80,7 +80,10 @@ public struct AgentHubSessionsView: View {
             // IntelligencePopoverButton(isShowingOverlay: $isShowingIntelligenceOverlay)
             // Stats button (popover mode only)
             if provider.displaySettings.isPopoverMode {
-              GlobalStatsPopoverButton(service: provider.statsService)
+              GlobalStatsPopoverButton(
+                claudeService: provider.statsService,
+                codexService: provider.codexStatsService
+              )
             }
           }
           .frame(maxWidth: .infinity)
@@ -124,7 +127,8 @@ public struct AgentHubMenuBarContent: View {
   public var body: some View {
     if let provider = agentHub {
       GlobalStatsMenuView(
-        service: provider.statsService,
+        claudeService: provider.statsService,
+        codexService: provider.codexStatsService,
         sessionsViewModel: provider.sessionsViewModel
       )
     } else {
@@ -159,9 +163,6 @@ public struct AgentHubMenuBarLabel: View {
   }
 
   public var body: some View {
-    HStack(spacing: 4) {
-      Image(systemName: "sparkle")
-      Text(provider.statsService.formattedTotalTokens)
-    }
+    Image(systemName: "apple.terminal.on.rectangle")
   }
 }

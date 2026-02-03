@@ -51,9 +51,14 @@ public final class AgentHubProvider {
     GitWorktreeService()
   }()
 
-  /// Global stats service for usage metrics
+  /// Global stats service for Claude usage metrics
   public private(set) lazy var statsService: GlobalStatsService = {
     GlobalStatsService(claudePath: configuration.claudeDataPath)
+  }()
+
+  /// Global stats service for Codex usage metrics
+  public private(set) lazy var codexStatsService: CodexGlobalStatsService = {
+    CodexGlobalStatsService(codexPath: configuration.codexDataPath)
   }()
 
   /// Codex file watcher for real-time monitoring

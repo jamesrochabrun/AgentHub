@@ -9,77 +9,63 @@ import SwiftUI
 
 // MARK: - GlobalStatsMenuView
 
-/// View for displaying global Claude Code stats in a menu bar dropdown
+/// View for displaying global Claude Code or Codex stats in a menu bar dropdown
 public struct GlobalStatsMenuView: View {
-  let service: GlobalStatsService
+  let claudeService: GlobalStatsService
+  let codexService: CodexGlobalStatsService?
   let sessionsViewModel: CLISessionsViewModel?
   let showQuitButton: Bool
 
+  @AppStorage(AgentHubDefaults.selectedStatsProvider)
+  private var selectedProviderRaw: String = SessionProviderKind.claude.rawValue
+
+  private var selectedProvider: SessionProviderKind {
+    get { SessionProviderKind(rawValue: selectedProviderRaw) ?? .claude }
+  }
+
+  public init(
+    claudeService: GlobalStatsService,
+    codexService: CodexGlobalStatsService? = nil,
+    sessionsViewModel: CLISessionsViewModel? = nil,
+    showQuitButton: Bool = true
+  ) {
+    self.claudeService = claudeService
+    self.codexService = codexService
+    self.sessionsViewModel = sessionsViewModel
+    self.showQuitButton = showQuitButton
+  }
+
+  /// Backwards-compatible initializer
   public init(
     service: GlobalStatsService,
     sessionsViewModel: CLISessionsViewModel? = nil,
     showQuitButton: Bool = true
   ) {
-    self.service = service
+    self.claudeService = service
+    self.codexService = nil
     self.sessionsViewModel = sessionsViewModel
     self.showQuitButton = showQuitButton
   }
 
   public var body: some View {
     VStack(alignment: .leading, spacing: 0) {
-      if service.isAvailable {
-        // Header
-        headerSection
+      // Segmented control at top (only if Codex service provided)
+      if codexService != nil {
+        StatsProviderSegmentedControl(
+          selectedProvider: Binding(
+            get: { selectedProvider },
+            set: { selectedProviderRaw = $0.rawValue }
+          ),
+          claudeSessionCount: claudeService.stats.totalSessions,
+          codexSessionCount: codexService?.totalSessions ?? 0
+        )
+        .padding(.bottom, 12)
+      }
 
-        Divider()
-          .padding(.vertical, 8)
-
-        // Total stats
-        totalStatsSection
-
-        Divider()
-          .padding(.vertical, 8)
-
-        // Today's activity (only shown when data exists)
-        if service.todayActivity != nil {
-          todaySection
-
-          Divider()
-            .padding(.vertical, 8)
-        }
-
-        // Model breakdown
-        modelBreakdownSection
-
-        // Orphaned processes (only if any exist)
-        if let vm = sessionsViewModel, vm.orphanedProcessCount > 0 {
-          Divider()
-            .padding(.vertical, 8)
-
-          orphanedProcessesSection(viewModel: vm)
-        }
-
-        Divider()
-          .padding(.vertical, 8)
-
-        // Footer with refresh
-        footerSection
-
-        // Quit button at the bottom
-        if showQuitButton {
-          Divider()
-            .padding(.vertical, 8)
-
-          Button("Quit app") {
-            NSApplication.shared.terminate(nil)
-          }
-          .buttonStyle(.plain)
-          .font(.caption)
-        }
+      if selectedProvider == .claude {
+        claudeStatsContent
       } else {
-        Text("Stats not available")
-          .foregroundColor(.secondary)
-          .padding()
+        codexStatsContent
       }
     }
     .padding(12)
@@ -87,68 +73,206 @@ public struct GlobalStatsMenuView: View {
     .onAppear {
       sessionsViewModel?.refreshOrphanedProcessCount()
     }
+    .onDisappear {
+      codexService?.cancelLoading()
+    }
+  }
+
+  // MARK: - Claude Stats Content
+
+  @ViewBuilder
+  private var claudeStatsContent: some View {
+    if claudeService.isAvailable {
+      // Header
+      headerSection(title: "Claude Stats", icon: "chart.bar.fill", provider: .claude)
+
+      Divider()
+        .padding(.vertical, 8)
+
+      // Total stats
+      claudeTotalStatsSection
+
+      Divider()
+        .padding(.vertical, 8)
+
+      // Today's activity (only shown when data exists)
+      if claudeService.todayActivity != nil {
+        claudeTodaySection
+
+        Divider()
+          .padding(.vertical, 8)
+      }
+
+      // Model breakdown
+      claudeModelBreakdownSection
+
+      // Orphaned processes (only if any exist)
+      if let vm = sessionsViewModel, vm.orphanedProcessCount > 0 {
+        Divider()
+          .padding(.vertical, 8)
+
+        orphanedProcessesSection(viewModel: vm)
+      }
+
+      Divider()
+        .padding(.vertical, 8)
+
+      // Footer with refresh
+      footerSection(onRefresh: { claudeService.refresh() }, lastUpdated: claudeService.lastUpdated)
+
+      // Quit button at the bottom
+      if showQuitButton {
+        Divider()
+          .padding(.vertical, 8)
+
+        quitButton
+      }
+    } else {
+      Text("Claude stats not available")
+        .foregroundColor(.secondary)
+        .padding()
+    }
+  }
+
+  // MARK: - Codex Stats Content
+
+  @ViewBuilder
+  private var codexStatsContent: some View {
+    if let codex = codexService, codex.isAvailable {
+      // Header with optional loading indicator
+      HStack {
+        headerSection(title: "Codex Stats", icon: "chart.bar.fill", provider: .codex)
+        if codex.isLoading {
+          ProgressView()
+            .scaleEffect(0.6)
+            .frame(width: 16, height: 16)
+        }
+      }
+
+      Divider()
+        .padding(.vertical, 8)
+
+      // Total stats
+      codexTotalStatsSection(codex)
+
+      Divider()
+        .padding(.vertical, 8)
+
+      // Model breakdown
+      codexModelBreakdownSection(codex)
+
+      Divider()
+        .padding(.vertical, 8)
+
+      // Footer with refresh
+      footerSection(onRefresh: { codex.refresh() }, lastUpdated: codex.lastUpdated)
+
+      // Quit button at the bottom
+      if showQuitButton {
+        Divider()
+          .padding(.vertical, 8)
+
+        quitButton
+      }
+    } else {
+      Text("Codex stats not available")
+        .foregroundColor(.secondary)
+        .padding()
+    }
   }
 
   // MARK: - Header Section
 
-  private var headerSection: some View {
+  private func headerSection(title: String, icon: String, provider: SessionProviderKind) -> some View {
     HStack {
-      Image(systemName: "chart.bar.fill")
-        .foregroundColor(.brandPrimary)
-      Text("Claude Code Stats")
+      Image(systemName: icon)
+        .foregroundColor(.brandPrimary(for: provider))
+      Text(title)
         .font(.headline)
       Spacer()
     }
   }
 
-  // MARK: - Total Stats Section
+  // MARK: - Claude Total Stats Section
 
-  private var totalStatsSection: some View {
+  private var claudeTotalStatsSection: some View {
     VStack(alignment: .leading, spacing: 6) {
       StatRow(
         label: "Total Tokens",
-        value: service.formattedTotalTokens,
-        icon: "number.circle.fill"
+        value: claudeService.formattedTotalTokens,
+        icon: "number.circle.fill",
+        provider: .claude
       )
 
       StatRow(
         label: "Estimated Cost",
-        value: service.formattedCost,
-        icon: "dollarsign.circle.fill"
+        value: claudeService.formattedCost,
+        icon: "dollarsign.circle.fill",
+        provider: .claude
       )
 
       StatRow(
         label: "Sessions",
-        value: "~\(service.stats.totalSessions)",
-        icon: "terminal.fill"
+        value: "~\(claudeService.stats.totalSessions)",
+        icon: "terminal.fill",
+        provider: .claude
       )
 
       StatRow(
         label: "Messages",
-        value: formatNumber(service.stats.totalMessages),
-        icon: "message.fill"
+        value: formatNumber(claudeService.stats.totalMessages),
+        icon: "message.fill",
+        provider: .claude
       )
 
-      if service.daysActive > 0 {
+      if claudeService.daysActive > 0 {
         StatRow(
           label: "Days Active",
-          value: "\(service.daysActive)",
-          icon: "calendar"
+          value: "\(claudeService.daysActive)",
+          icon: "calendar",
+          provider: .claude
         )
       }
     }
   }
 
-  // MARK: - Today Section
+  // MARK: - Codex Total Stats Section
 
-  private var todaySection: some View {
+  private func codexTotalStatsSection(_ codex: CodexGlobalStatsService) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      StatRow(
+        label: "Total Tokens",
+        value: codex.formattedTotalTokens,
+        icon: "number.circle.fill",
+        provider: .codex
+      )
+
+      StatRow(
+        label: "Sessions",
+        value: "\(codex.totalSessions)",
+        icon: "terminal.fill",
+        provider: .codex
+      )
+
+      StatRow(
+        label: "Messages",
+        value: formatNumber(codex.totalMessages),
+        icon: "message.fill",
+        provider: .codex
+      )
+    }
+  }
+
+  // MARK: - Claude Today Section
+
+  private var claudeTodaySection: some View {
     VStack(alignment: .leading, spacing: 6) {
       Text("Today")
         .font(.subheadline)
         .fontWeight(.semibold)
         .foregroundColor(.secondary)
 
-      if let today = service.todayActivity {
+      if let today = claudeService.todayActivity {
         HStack(spacing: 16) {
           MiniStat(value: "\(today.messageCount)", label: "msgs")
           MiniStat(value: "\(today.sessionCount)", label: "sessions")
@@ -158,16 +282,16 @@ public struct GlobalStatsMenuView: View {
     }
   }
 
-  // MARK: - Model Breakdown Section
+  // MARK: - Claude Model Breakdown Section
 
-  private var modelBreakdownSection: some View {
+  private var claudeModelBreakdownSection: some View {
     VStack(alignment: .leading, spacing: 6) {
       Text("By Model")
         .font(.subheadline)
         .fontWeight(.semibold)
         .foregroundColor(.secondary)
 
-      ForEach(service.modelStats, id: \.name) { model in
+      ForEach(claudeService.modelStats, id: \.name) { model in
         HStack {
           Text(model.name)
             .font(.caption)
@@ -179,6 +303,34 @@ public struct GlobalStatsMenuView: View {
             .font(.caption)
             .fontWeight(.medium)
         }
+      }
+    }
+  }
+
+  // MARK: - Codex Model Breakdown Section
+
+  private func codexModelBreakdownSection(_ codex: CodexGlobalStatsService) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Text("By Model")
+        .font(.subheadline)
+        .fontWeight(.semibold)
+        .foregroundColor(.secondary)
+
+      ForEach(codex.sortedModelStats, id: \.name) { model in
+        HStack {
+          Text(model.name)
+            .font(.caption)
+          Spacer()
+          Text(formatTokenCount(model.usage.totalTokens))
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+      }
+
+      if codex.sortedModelStats.isEmpty {
+        Text("No model data")
+          .font(.caption)
+          .foregroundColor(.secondary)
       }
     }
   }
@@ -217,9 +369,9 @@ public struct GlobalStatsMenuView: View {
 
   // MARK: - Footer Section
 
-  private var footerSection: some View {
+  private func footerSection(onRefresh: @escaping () -> Void, lastUpdated: Date?) -> some View {
     HStack {
-      if let lastUpdated = service.lastUpdated {
+      if let lastUpdated = lastUpdated {
         Text("Updated \(lastUpdated, style: .relative) ago")
           .font(.caption2)
           .foregroundColor(.secondary)
@@ -227,13 +379,23 @@ public struct GlobalStatsMenuView: View {
 
       Spacer()
 
-      Button(action: { service.refresh() }) {
+      Button(action: onRefresh) {
         Image(systemName: "arrow.clockwise")
           .font(.caption)
       }
       .buttonStyle(.plain)
       .help("Refresh stats")
     }
+  }
+
+  // MARK: - Quit Button
+
+  private var quitButton: some View {
+    Button("Quit app") {
+      NSApplication.shared.terminate(nil)
+    }
+    .buttonStyle(.plain)
+    .font(.caption)
   }
 
   // MARK: - Helpers
@@ -270,11 +432,12 @@ private struct StatRow: View {
   let label: String
   let value: String
   let icon: String
+  var provider: SessionProviderKind = .claude
 
   var body: some View {
     HStack {
       Image(systemName: icon)
-        .foregroundColor(.brandPrimary)
+        .foregroundColor(.brandPrimary(for: provider))
         .frame(width: 16)
       Text(label)
         .font(.caption)
@@ -308,6 +471,6 @@ private struct MiniStat: View {
 
 #if DEBUG
 #Preview {
-  GlobalStatsMenuView(service: GlobalStatsService())
+  GlobalStatsMenuView(claudeService: GlobalStatsService())
 }
 #endif
