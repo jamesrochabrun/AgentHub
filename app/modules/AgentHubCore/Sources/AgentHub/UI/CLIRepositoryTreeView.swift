@@ -23,7 +23,9 @@ public struct CLIRepositoryTreeView: View {
   let onToggleMonitoring: (CLISession) -> Void
   let onCreateWorktree: () -> Void
   let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
+  let onOpenTerminalDangerousForWorktree: (WorktreeBranch) -> Void
   let onStartInHubForWorktree: (WorktreeBranch) -> Void
+  let onStartInHubDangerousForWorktree: (WorktreeBranch) -> Void
   let onDeleteWorktree: ((WorktreeBranch) -> Void)?
   let getCustomName: ((String) -> String?)?
   var showLastMessage: Bool = false
@@ -46,7 +48,9 @@ public struct CLIRepositoryTreeView: View {
     onToggleMonitoring: @escaping (CLISession) -> Void,
     onCreateWorktree: @escaping () -> Void,
     onOpenTerminalForWorktree: @escaping (WorktreeBranch) -> Void,
+    onOpenTerminalDangerousForWorktree: @escaping (WorktreeBranch) -> Void = { _ in },
     onStartInHubForWorktree: @escaping (WorktreeBranch) -> Void,
+    onStartInHubDangerousForWorktree: @escaping (WorktreeBranch) -> Void = { _ in },
     onDeleteWorktree: ((WorktreeBranch) -> Void)? = nil,
     getCustomName: ((String) -> String?)? = nil,
     showLastMessage: Bool = false,
@@ -65,7 +69,9 @@ public struct CLIRepositoryTreeView: View {
     self.onToggleMonitoring = onToggleMonitoring
     self.onCreateWorktree = onCreateWorktree
     self.onOpenTerminalForWorktree = onOpenTerminalForWorktree
+    self.onOpenTerminalDangerousForWorktree = onOpenTerminalDangerousForWorktree
     self.onStartInHubForWorktree = onStartInHubForWorktree
+    self.onStartInHubDangerousForWorktree = onStartInHubDangerousForWorktree
     self.onDeleteWorktree = onDeleteWorktree
     self.getCustomName = getCustomName
     self.showLastMessage = showLastMessage
@@ -92,7 +98,9 @@ public struct CLIRepositoryTreeView: View {
             providerKind: providerKind,
             onToggleExpanded: { onToggleWorktreeExpanded(worktree) },
             onOpenTerminal: { onOpenTerminalForWorktree(worktree) },
+            onOpenTerminalDangerous: { onOpenTerminalDangerousForWorktree(worktree) },
             onStartInHub: { onStartInHubForWorktree(worktree) },
+            onStartInHubDangerous: { onStartInHubDangerousForWorktree(worktree) },
             onDeleteWorktree: {
               worktreeToDelete = worktree
               showDeleteConfirmation = true

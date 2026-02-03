@@ -286,6 +286,7 @@ public struct MonitoringPanelView: View {
         initialPrompt: pending.initialPrompt,
         terminalKey: "pending-\(pending.id.uuidString)",
         viewModel: viewModel,
+        dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
         onToggleTerminal: { _ in },
         onStopMonitoring: {
           viewModel.cancelPendingSession(pending)
@@ -404,6 +405,7 @@ public struct MonitoringPanelView: View {
         initialPrompt: pending.initialPrompt,
         terminalKey: pendingId,
         viewModel: viewModel,
+        dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
         onToggleTerminal: { _ in },
         onStopMonitoring: {
           viewModel.cancelPendingSession(pending)
@@ -502,6 +504,7 @@ public struct MonitoringPanelView: View {
               initialPrompt: pending.initialPrompt,
               terminalKey: pendingId,
               viewModel: viewModel,
+              dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
               onToggleTerminal: { _ in },
               onStopMonitoring: {
                 viewModel.cancelPendingSession(pending)

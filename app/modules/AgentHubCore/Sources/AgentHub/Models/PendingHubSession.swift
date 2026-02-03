@@ -14,12 +14,18 @@ public struct PendingHubSession: Identifiable {
   public let worktree: WorktreeBranch
   public let startedAt: Date
   public let initialPrompt: String?
+  public let dangerouslySkipPermissions: Bool
 
-  public init(worktree: WorktreeBranch, initialPrompt: String? = "Hello!") {
+  public init(
+    worktree: WorktreeBranch,
+    initialPrompt: String? = "Hello!",
+    dangerouslySkipPermissions: Bool = false
+  ) {
     self.id = UUID()
     self.worktree = worktree
     self.startedAt = Date()
     self.initialPrompt = initialPrompt
+    self.dangerouslySkipPermissions = dangerouslySkipPermissions
   }
 
   /// Creates a placeholder CLISession for use with MonitoringCardView

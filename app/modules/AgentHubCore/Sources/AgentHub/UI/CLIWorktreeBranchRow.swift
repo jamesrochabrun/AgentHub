@@ -17,7 +17,9 @@ public struct CLIWorktreeBranchRow: View {
   let providerKind: SessionProviderKind
   let onToggleExpanded: () -> Void
   let onOpenTerminal: () -> Void
+  let onOpenTerminalDangerous: () -> Void
   let onStartInHub: () -> Void
+  let onStartInHubDangerous: () -> Void
   let onDeleteWorktree: (() -> Void)?
   let onConnectSession: (CLISession) -> Void
   let onCopySessionId: (CLISession) -> Void
@@ -77,7 +79,9 @@ public struct CLIWorktreeBranchRow: View {
     providerKind: SessionProviderKind = .claude,
     onToggleExpanded: @escaping () -> Void,
     onOpenTerminal: @escaping () -> Void,
+    onOpenTerminalDangerous: @escaping () -> Void = {},
     onStartInHub: @escaping () -> Void,
+    onStartInHubDangerous: @escaping () -> Void = {},
     onDeleteWorktree: (() -> Void)? = nil,
     onConnectSession: @escaping (CLISession) -> Void,
     onCopySessionId: @escaping (CLISession) -> Void,
@@ -94,7 +98,9 @@ public struct CLIWorktreeBranchRow: View {
     self.providerKind = providerKind
     self.onToggleExpanded = onToggleExpanded
     self.onOpenTerminal = onOpenTerminal
+    self.onOpenTerminalDangerous = onOpenTerminalDangerous
     self.onStartInHub = onStartInHub
+    self.onStartInHubDangerous = onStartInHubDangerous
     self.onDeleteWorktree = onDeleteWorktree
     self.onConnectSession = onConnectSession
     self.onCopySessionId = onCopySessionId
@@ -197,13 +203,28 @@ public struct CLIWorktreeBranchRow: View {
           .help("Start new \(providerLabel) session")
           .popover(isPresented: $showNewSessionMenu, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 0) {
+              // Start in Hub (Recommended)
               Button(action: {
                 showNewSessionMenu = false
                 onStartInHub()
               }) {
-                Label("Start in Hub", systemImage: "square.grid.2x2")
+                Label("Start in Hub (Recommended)", systemImage: "square.grid.2x2")
                   .frame(maxWidth: .infinity, alignment: .leading)
                   .foregroundColor(.brandPrimary(for: providerKind))
+              }
+              .buttonStyle(.plain)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 8)
+              .contentShape(Rectangle())
+
+              // Start in Hub (Dangerously)
+              Button(action: {
+                showNewSessionMenu = false
+                onStartInHubDangerous()
+              }) {
+                Label("Start in Hub (Dangerously)", systemImage: "exclamationmark.triangle")
+                  .frame(maxWidth: .infinity, alignment: .leading)
+                  .foregroundColor(.orange)
               }
               .buttonStyle(.plain)
               .padding(.horizontal, 12)
@@ -213,12 +234,27 @@ public struct CLIWorktreeBranchRow: View {
               if supportsExternalTerminal {
                 Divider()
 
+                // Open in Terminal (Recommended)
                 Button(action: {
                   showNewSessionMenu = false
                   onOpenTerminal()
                 }) {
-                  Label("Open in Terminal", systemImage: "terminal")
+                  Label("Open in Terminal (Recommended)", systemImage: "terminal")
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+
+                // Open in Terminal (Dangerously)
+                Button(action: {
+                  showNewSessionMenu = false
+                  onOpenTerminalDangerous()
+                }) {
+                  Label("Open in Terminal (Dangerously)", systemImage: "exclamationmark.triangle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundColor(.orange)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
@@ -227,7 +263,7 @@ public struct CLIWorktreeBranchRow: View {
               }
             }
             .padding(.vertical, 8)
-            .frame(width: 180)
+            .frame(width: 260)
           }
         }
         .padding(.vertical, 14)

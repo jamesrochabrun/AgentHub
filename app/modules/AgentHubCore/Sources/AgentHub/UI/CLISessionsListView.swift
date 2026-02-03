@@ -537,10 +537,18 @@ public struct CLISessionsListView: View {
                 }
               }
             },
+            onOpenTerminalDangerousForWorktree: { worktree in
+              // Open in terminal with --dangerously-skip-permissions flag
+              _ = viewModel.openTerminalInWorktree(worktree, skipCheckout: true, dangerouslySkipPermissions: true)
+            },
             onStartInHubForWorktree: { worktree in
               // Start a new session in the Hub's embedded terminal
               // No external terminal is opened - runs directly in the embedded terminal
               viewModel.startNewSessionInHub(worktree)
+            },
+            onStartInHubDangerousForWorktree: { worktree in
+              // Start a new session in the Hub with --dangerously-skip-permissions flag
+              viewModel.startNewSessionInHub(worktree, dangerouslySkipPermissions: true)
             },
             onDeleteWorktree: { worktree in
               Task {

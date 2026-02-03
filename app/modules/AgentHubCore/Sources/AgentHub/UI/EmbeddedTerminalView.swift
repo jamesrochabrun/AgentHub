@@ -50,6 +50,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   let cliConfiguration: CLICommandConfiguration
   let initialPrompt: String?  // Optional: prompt to include with resume command
   let viewModel: CLISessionsViewModel?  // For shared terminal storage
+  let dangerouslySkipPermissions: Bool  // One-shot flag for new sessions
 
   public init(
     terminalKey: String,
@@ -57,7 +58,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
-    viewModel: CLISessionsViewModel? = nil
+    viewModel: CLISessionsViewModel? = nil,
+    dangerouslySkipPermissions: Bool = false
   ) {
     self.terminalKey = terminalKey
     self.sessionId = sessionId
@@ -65,6 +67,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     self.cliConfiguration = cliConfiguration
     self.initialPrompt = initialPrompt
     self.viewModel = viewModel
+    self.dangerouslySkipPermissions = dangerouslySkipPermissions
   }
 
   public func makeNSView(context: Context) -> TerminalContainerView {
@@ -78,7 +81,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         projectPath: projectPath,
         cliConfiguration: cliConfiguration,
         initialPrompt: initialPrompt,
-        isDark: isDark
+        isDark: isDark,
+        dangerouslySkipPermissions: dangerouslySkipPermissions
       )
     }
 
@@ -89,7 +93,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       projectPath: projectPath,
       cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
-      isDark: isDark
+      isDark: isDark,
+      dangerouslySkipPermissions: dangerouslySkipPermissions
     )
     return containerView
   }
@@ -160,7 +165,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
-    isDark: Bool = true
+    isDark: Bool = true,
+    dangerouslySkipPermissions: Bool = false
   ) {
     guard !isConfigured else { return }
     isConfigured = true
@@ -190,7 +196,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       sessionId: sessionId,
       projectPath: projectPath,
       cliConfiguration: cliConfiguration,
-      initialPrompt: initialPrompt
+      initialPrompt: initialPrompt,
+      dangerouslySkipPermissions: dangerouslySkipPermissions
     )
     registerProcessIfNeeded(for: terminal)
   }
@@ -268,7 +275,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     sessionId: String?,
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
-    initialPrompt: String? = nil
+    initialPrompt: String? = nil,
+    dangerouslySkipPermissions: Bool = false
   ) {
     // Find the CLI executable
     let command = cliConfiguration.command
@@ -335,7 +343,11 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 #endif
 
     // Build command: resume existing session or start new session
-    let args = cliConfiguration.argumentsForSession(sessionId: sessionId, prompt: initialPrompt)
+    let args = cliConfiguration.argumentsForSession(
+      sessionId: sessionId,
+      prompt: initialPrompt,
+      dangerouslySkipPermissions: dangerouslySkipPermissions
+    )
     let escapedArgs = args.map { $0.replacingOccurrences(of: "'", with: "'\\''") }
     let joinedArgs = escapedArgs.map { "'\($0)'" }.joined(separator: " ")
     let shellCommand = joinedArgs.isEmpty
