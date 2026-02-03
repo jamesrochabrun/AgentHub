@@ -39,6 +39,10 @@ public struct AgentHubConfiguration: Sendable {
   /// Companies can configure this for white-labeling (e.g., "acme" instead of "claude")
   public var cliCommand: String
 
+  /// The Codex CLI command name to use (default: "codex")
+  /// Companies can configure this for white-labeling
+  public var codexCommand: String
+
   /// Session provider to use (Claude or Codex)
   public var sessionProvider: SessionProviderKind
 
@@ -50,6 +54,7 @@ public struct AgentHubConfiguration: Sendable {
     additionalCLIPaths: [String] = [],
     statsDisplayMode: StatsDisplayMode = .menuBar,
     cliCommand: String = "claude",
+    codexCommand: String = "codex",
     sessionProvider: SessionProviderKind = .claude
   ) {
     let expanded = NSString(string: claudeDataPath).expandingTildeInPath
@@ -59,6 +64,7 @@ public struct AgentHubConfiguration: Sendable {
     self.additionalCLIPaths = additionalCLIPaths
     self.statsDisplayMode = statsDisplayMode
     self.cliCommand = cliCommand
+    self.codexCommand = codexCommand
     self.sessionProvider = sessionProvider
   }
 

@@ -83,7 +83,7 @@ public struct CreateWorktreeSheet: View {
       HStack {
         Image(systemName: "arrow.triangle.branch")
           .font(.title2)
-          .foregroundColor(.brandPrimary)
+          .foregroundColor(.primary)
 
         Text("Create Worktree")
           .font(.headline)
@@ -197,7 +197,7 @@ public struct CreateWorktreeSheet: View {
       HStack(spacing: 6) {
         Image(systemName: "folder.badge.plus")
           .font(.caption)
-          .foregroundColor(.brandPrimary)
+          .foregroundColor(.primary)
         Text("Worktree Location")
           .font(.caption)
           .fontWeight(.medium)
@@ -217,7 +217,7 @@ public struct CreateWorktreeSheet: View {
           Text(directoryName.isEmpty ? "<directory>" : directoryName)
             .font(.system(.subheadline, design: .monospaced))
             .fontWeight(.semibold)
-            .foregroundColor(.brandPrimary)
+            .foregroundColor(.primary)
         }
       }
     }
@@ -225,11 +225,11 @@ public struct CreateWorktreeSheet: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
       RoundedRectangle(cornerRadius: 8)
-        .fill(Color.brandPrimary.opacity(0.05))
+        .fill(Color.primary.opacity(0.05))
     )
     .overlay(
       RoundedRectangle(cornerRadius: 8)
-        .stroke(Color.brandPrimary.opacity(0.3), lineWidth: 1)
+        .stroke(Color.primary.opacity(0.3), lineWidth: 1)
     )
   }
 
@@ -264,7 +264,7 @@ public struct CreateWorktreeSheet: View {
         .keyboardShortcut(.return)
         .disabled(!isValid || creationProgress.isInProgress)
         .buttonStyle(.borderedProminent)
-        .tint(.brandPrimary)
+        .tint(.primary)
       }
     }
   }
@@ -275,14 +275,14 @@ public struct CreateWorktreeSheet: View {
     VStack(alignment: .leading, spacing: 8) {
       // Progress bar with real file counts
       ProgressView(value: creationProgress.progressValue)
-        .tint(.brandPrimary)
+        .tint(.primary)
         .animation(.linear(duration: 0.1), value: creationProgress.progressValue)
 
       // Status message: "Updating files: 84/194"
       HStack {
         Image(systemName: creationProgress.icon)
           .font(.caption)
-          .foregroundColor(.brandPrimary)
+          .foregroundColor(.primary)
 
         Text(creationProgress.statusMessage)
           .font(.caption)
@@ -299,7 +299,7 @@ public struct CreateWorktreeSheet: View {
       }
     }
     .padding(12)
-    .background(Color.brandPrimary.opacity(0.05))
+    .background(Color.primary.opacity(0.05))
     .cornerRadius(8)
   }
 

@@ -127,7 +127,7 @@ public struct CLIWorktreeBranchRow: View {
           // Branch icon
           Image(systemName: "arrow.triangle.branch")
             .font(.subheadline)
-            .foregroundColor(worktree.isWorktree ? .brandSecondary(for: providerKind) : .brandPrimary(for: providerKind))
+            .foregroundColor(.primary)
 
           // Path
           Text(worktree.path)
@@ -174,7 +174,7 @@ public struct CLIWorktreeBranchRow: View {
               Button(action: { onDeleteWorktree?() }) {
                 Image(systemName: "trash")
                   .font(.caption)
-                  .foregroundColor(.brandSecondary(for: providerKind).opacity(0.8))
+                  .foregroundColor(.primary.opacity(0.8))
                   .frame(width: 24, height: 24)
                   .background(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -191,7 +191,7 @@ public struct CLIWorktreeBranchRow: View {
           Button(action: { showNewSessionMenu.toggle() }) {
             Image(systemName: "plus")
               .font(.caption)
-              .foregroundColor(.brandSecondary(for: providerKind))
+              .foregroundColor(.primary)
               .frame(width: 24, height: 24)
               .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -210,7 +210,7 @@ public struct CLIWorktreeBranchRow: View {
               }) {
                 Label("Start in Hub (Recommended)", systemImage: "square.grid.2x2")
                   .frame(maxWidth: .infinity, alignment: .leading)
-                  .foregroundColor(.brandPrimary(for: providerKind))
+                  .foregroundColor(.primary)
               }
               .buttonStyle(.plain)
               .padding(.horizontal, 12)
