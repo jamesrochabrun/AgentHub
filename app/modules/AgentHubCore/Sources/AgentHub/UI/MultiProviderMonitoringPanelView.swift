@@ -129,8 +129,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @Bindable var codexViewModel: CLISessionsViewModel
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
-  @AppStorage(AgentHubDefaults.monitoringPanelLayoutMode)
-  private var layoutModeRawValue: Int = LayoutMode.list.rawValue
+  @State private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
   @Environment(\.colorScheme) private var colorScheme
 

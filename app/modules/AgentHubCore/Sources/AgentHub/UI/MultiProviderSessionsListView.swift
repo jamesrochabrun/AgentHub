@@ -519,6 +519,24 @@ public struct MultiProviderSessionsListView: View {
         }
         .buttonStyle(.plain)
         .help(currentViewModel.showLastMessage ? "Showing last message" : "Showing first message")
+
+        // Refresh button
+        Button(action: { currentViewModel.refresh() }) {
+          Image(systemName: "arrow.clockwise")
+            .font(.system(size: DesignTokens.IconSize.md))
+            .frame(width: 28, height: 28)
+            .background(
+              RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                .fill(Color.surfaceOverlay)
+            )
+            .overlay(
+              RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+                .stroke(Color.borderSubtle, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
+        .help("Refresh sessions")
       }
       .padding(.horizontal, 4)
     }

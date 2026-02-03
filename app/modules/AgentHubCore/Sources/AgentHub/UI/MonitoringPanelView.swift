@@ -96,8 +96,7 @@ public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
-  @AppStorage(AgentHubDefaults.monitoringPanelLayoutMode)
-  private var layoutModeRawValue: Int = LayoutMode.list.rawValue
+  @State private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
   @Environment(\.colorScheme) private var colorScheme
 
