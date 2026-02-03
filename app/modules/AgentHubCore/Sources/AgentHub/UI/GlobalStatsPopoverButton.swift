@@ -7,33 +7,38 @@ import SwiftUI
 
 /// A toolbar button that shows stats in a popover
 public struct GlobalStatsPopoverButton: View {
-  let service: GlobalStatsService
+  let claudeService: GlobalStatsService
+  let codexService: CodexGlobalStatsService?
   @State private var isShowingPopover = false
 
+  public init(claudeService: GlobalStatsService, codexService: CodexGlobalStatsService? = nil) {
+    self.claudeService = claudeService
+    self.codexService = codexService
+  }
+
+  /// Backwards-compatible initializer
   public init(service: GlobalStatsService) {
-    self.service = service
+    self.claudeService = service
+    self.codexService = nil
   }
 
   public var body: some View {
     Button(action: { isShowingPopover.toggle() }) {
-      HStack(spacing: 4) {
-        Image(systemName: "sparkle")
-          .font(.system(size: DesignTokens.IconSize.sm))
-        Text(service.formattedTotalTokens)
-          .font(.caption)
-          .fontWeight(.medium)
-          .fontDesign(.monospaced)
-          .padding(.trailing, 8)
-      }
-      .foregroundColor(.brandPrimary)
-      .padding(.horizontal, 4)
-      .padding(.vertical, 2)
+      Image(systemName: "apple.terminal.on.rectangle")
+        .font(.system(size: DesignTokens.IconSize.md))
+        .foregroundColor(.brandPrimary)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
     }
     .buttonStyle(.plain)
     .contentShape(Rectangle())
-    .help("Claude Code Stats: \(service.formattedTotalTokens) tokens")
+    .help("View Stats")
     .popover(isPresented: $isShowingPopover, arrowEdge: .bottom) {
-      GlobalStatsMenuView(service: service, showQuitButton: false)
+      GlobalStatsMenuView(
+        claudeService: claudeService,
+        codexService: codexService,
+        showQuitButton: false
+      )
     }
   }
 }
