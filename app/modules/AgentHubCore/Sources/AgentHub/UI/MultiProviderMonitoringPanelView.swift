@@ -129,9 +129,14 @@ public struct MultiProviderMonitoringPanelView: View {
   @Bindable var codexViewModel: CLISessionsViewModel
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
-  @State private var layoutMode: LayoutMode = .list
+  @AppStorage(AgentHubDefaults.monitoringPanelLayoutMode)
+  private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
   @Environment(\.colorScheme) private var colorScheme
+
+  private var layoutMode: LayoutMode {
+    get { LayoutMode(rawValue: layoutModeRawValue) ?? .list }
+  }
 
   public init(claudeViewModel: CLISessionsViewModel, codexViewModel: CLISessionsViewModel) {
     self.claudeViewModel = claudeViewModel
@@ -181,7 +186,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
   private var header: some View {
     HStack(spacing: 12) {
-      Text("Monitoring")
+      Text("Hub")
         .font(.headline)
 
       Spacer()
@@ -190,7 +195,7 @@ public struct MultiProviderMonitoringPanelView: View {
       if allItems.count >= 2 {
         HStack(spacing: 6) {
           ForEach(LayoutMode.allCases, id: \.self) { mode in
-            Button(action: { layoutMode = mode }) {
+            Button(action: { layoutModeRawValue = mode.rawValue }) {
               Image(systemName: mode.icon)
                 .font(.caption)
                 .foregroundColor(layoutMode == mode ? .primary : .secondary)
@@ -251,7 +256,7 @@ public struct MultiProviderMonitoringPanelView: View {
     .onChange(of: allItems.count) { _, newCount in
       if newCount < 2 && layoutMode != .list {
         withAnimation(.easeInOut(duration: 0.2)) {
-          layoutMode = .list
+          layoutModeRawValue = LayoutMode.list.rawValue
         }
       }
     }

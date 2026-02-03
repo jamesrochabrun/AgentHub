@@ -133,6 +133,7 @@ public enum CLISessionSourceType: String, CaseIterable, Sendable {
 public enum CLILoadingState: Equatable, Sendable {
   case idle
   case restoringRepositories
+  case restoringMonitoredSessions
   case addingRepository(name: String)
   case detectingWorktrees
   case scanningSessions
@@ -146,6 +147,7 @@ public enum CLILoadingState: Equatable, Sendable {
     switch self {
     case .idle: return ""
     case .restoringRepositories: return "Restoring saved repositories..."
+    case .restoringMonitoredSessions: return "Restoring monitored sessions..."
     case .addingRepository(let name): return "Adding \(name)..."
     case .detectingWorktrees: return "Detecting worktrees..."
     case .scanningSessions: return "Scanning sessions..."

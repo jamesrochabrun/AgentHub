@@ -96,9 +96,14 @@ public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
-  @State private var layoutMode: LayoutMode = .list
+  @AppStorage(AgentHubDefaults.monitoringPanelLayoutMode)
+  private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
   @Environment(\.colorScheme) private var colorScheme
+
+  private var layoutMode: LayoutMode {
+    get { LayoutMode(rawValue: layoutModeRawValue) ?? .list }
+  }
 
   public init(viewModel: CLISessionsViewModel, claudeClient: (any ClaudeCode)?) {
     self.viewModel = viewModel
@@ -210,7 +215,7 @@ public struct MonitoringPanelView: View {
       if totalSessions >= 2 {
         HStack(spacing: 4) {
           ForEach(LayoutMode.allCases, id: \.rawValue) { mode in
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { layoutMode = mode } }) {
+            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { layoutModeRawValue = mode.rawValue } }) {
               Image(systemName: mode.icon)
                 .font(.caption)
                 .frame(width: 28, height: 22)
@@ -379,7 +384,7 @@ public struct MonitoringPanelView: View {
     .onChange(of: viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count) { _, newCount in
       if newCount < 2 && layoutMode != .list {
         withAnimation(.easeInOut(duration: 0.2)) {
-          layoutMode = .list
+          layoutModeRawValue = LayoutMode.list.rawValue
         }
       }
     }

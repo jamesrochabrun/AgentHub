@@ -323,7 +323,12 @@ public final class CLISessionsViewModel {
   // MARK: - Private
 
   private var subscriptionTask: Task<Void, Never>?
-  private let persistenceKey = "CLISessionsSelectedRepositories"
+  private var persistenceKey: String {
+    AgentHubDefaults.selectedRepositories + "." + providerDefaultsSuffix
+  }
+  private var expansionStateKey: String {
+    AgentHubDefaults.keyPrefix + "sessions.expansionState." + providerDefaultsSuffix
+  }
   private var providerDefaultsSuffix: String {
     providerKind == .claude ? "claude" : "codex"
   }
@@ -497,25 +502,88 @@ public final class CLISessionsViewModel {
 
   private func restorePersistedRepositories() {
     Task {
-      // [CLISessionsVM] restorePersistedRepositories called")
+      // Load persisted repository paths
       guard let data = UserDefaults.standard.data(forKey: persistenceKey),
-            let paths = try? JSONDecoder().decode([String].self, from: data) else {
-        // [CLISessionsVM] No persisted repositories found")
+            let paths = try? JSONDecoder().decode([String].self, from: data),
+            !paths.isEmpty else {
         return
       }
 
-      // [CLISessionsVM] Found \(paths.count) persisted paths: \(paths)")
+      // Load persisted monitored session IDs
+      let persistedSessionIds = loadPersistedSessionIds()
+
+      // Phase 1: Add repositories
       loadingState = .restoringRepositories
-      // [CLISessionsVM] loadingState = .restoringRepositories")
       for path in paths {
-        // [CLISessionsVM] Adding repository: \(path)")
         await monitorService.addRepository(path)
       }
-      loadingState = .idle
-      // [CLISessionsVM] loadingState = .idle")
+      restoreExpansionState()
 
-      // Restore monitored sessions after all repositories have loaded
-      restoreMonitoredSessions()
+      // If no sessions to restore, we're done
+      guard !persistedSessionIds.isEmpty else {
+        loadingState = .idle
+        return
+      }
+
+      // Phase 2: Wait for sessions to appear in selectedRepositories
+      loadingState = .restoringMonitoredSessions
+      let foundSessions = await waitForSessions(
+        sessionIds: persistedSessionIds,
+        timeout: .seconds(3)
+      )
+
+      // Phase 3: Restore monitoring for found sessions
+      if !foundSessions.isEmpty {
+        restoreMonitoredSessions(sessionIdsToRestore: Set(foundSessions.map { $0.id }))
+      }
+
+      loadingState = .idle
+    }
+  }
+
+  /// Loads persisted session IDs from UserDefaults
+  private func loadPersistedSessionIds() -> Set<String> {
+    guard let data = UserDefaults.standard.data(forKey: monitoredSessionsKey),
+          let sessionIds = try? JSONDecoder().decode([String].self, from: data) else {
+      return []
+    }
+    return Set(sessionIds)
+  }
+
+  /// Waits for sessions to appear in selectedRepositories
+  private func waitForSessions(
+    sessionIds: Set<String>,
+    timeout: Duration
+  ) async -> [CLISession] {
+    let deadline = ContinuousClock.now + timeout
+
+    while ContinuousClock.now < deadline {
+      let foundSessions = allSessions.filter { sessionIds.contains($0.id) }
+      if !foundSessions.isEmpty {
+        return foundSessions
+      }
+      try? await Task.sleep(for: .milliseconds(100))
+    }
+
+    // Timeout - return whatever we have
+    return allSessions.filter { sessionIds.contains($0.id) }
+  }
+
+  private func restoreExpansionState() {
+    guard let data = UserDefaults.standard.data(forKey: expansionStateKey),
+          let state = try? JSONDecoder().decode([String: Bool].self, from: data) else {
+      return
+    }
+
+    for i in selectedRepositories.indices {
+      if let expanded = state["repo:" + selectedRepositories[i].path] {
+        selectedRepositories[i].isExpanded = expanded
+      }
+      for j in selectedRepositories[i].worktrees.indices {
+        if let expanded = state["wt:" + selectedRepositories[i].worktrees[j].path] {
+          selectedRepositories[i].worktrees[j].isExpanded = expanded
+        }
+      }
     }
   }
 
@@ -523,6 +591,20 @@ public final class CLISessionsViewModel {
     let paths = selectedRepositories.map { $0.path }
     if let data = try? JSONEncoder().encode(paths) {
       UserDefaults.standard.set(data, forKey: persistenceKey)
+    }
+    persistExpansionState()
+  }
+
+  private func persistExpansionState() {
+    var state: [String: Bool] = [:]
+    for repo in selectedRepositories {
+      state["repo:" + repo.path] = repo.isExpanded
+      for worktree in repo.worktrees {
+        state["wt:" + worktree.path] = worktree.isExpanded
+      }
+    }
+    if let data = try? JSONEncoder().encode(state) {
+      UserDefaults.standard.set(data, forKey: expansionStateKey)
     }
   }
 
@@ -559,31 +641,25 @@ public final class CLISessionsViewModel {
     }
   }
 
-  /// Restores monitored sessions from UserDefaults after repositories have loaded
-  private func restoreMonitoredSessions() {
-    // [CLISessionsVM] restoreMonitoredSessions called")
+  /// Restores monitored sessions from UserDefaults or provided set
+  private func restoreMonitoredSessions(sessionIdsToRestore: Set<String>? = nil) {
+    let sessionIds: [String]
 
-    // Restore monitored session IDs
-    let legacyMonitoredKey = providerKind == .claude ? AgentHubDefaults.monitoredSessionIds : nil
-    let monitoredData = UserDefaults.standard.data(forKey: monitoredSessionsKey)
-      ?? (legacyMonitoredKey.flatMap { UserDefaults.standard.data(forKey: $0) })
+    if let provided = sessionIdsToRestore {
+      sessionIds = Array(provided)
+    } else if let data = UserDefaults.standard.data(forKey: monitoredSessionsKey),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) {
+      sessionIds = decoded
+    } else {
+      return
+    }
 
-    if let data = monitoredData,
-       let sessionIds = try? JSONDecoder().decode([String].self, from: data) {
-      // [CLISessionsVM] Found \(sessionIds.count) persisted monitored session IDs")
+    guard !sessionIds.isEmpty else { return }
 
-      for sessionId in sessionIds {
-        // Find the session in loaded repositories
-        if let session = findSession(byId: sessionId) {
-          // Verify session file still exists
-          if sessionFileExists(session: session) {
-            // [CLISessionsVM] Restoring monitoring for session: \(sessionId.prefix(8))...")
-            startMonitoring(session: session)
-          } else {
-            // [CLISessionsVM] Session file no longer exists: \(sessionId.prefix(8))...")
-          }
-        } else {
-          // [CLISessionsVM] Session not found in loaded repos: \(sessionId.prefix(8))...")
+    for sessionId in sessionIds {
+      if let session = findSession(byId: sessionId) {
+        if sessionFileExists(session: session) {
+          startMonitoring(session: session)
         }
       }
     }
@@ -591,11 +667,7 @@ public final class CLISessionsViewModel {
     // Restore terminal view state and start polling for sessions in monitor/list mode.
     // After startMonitoring, all sessions default to terminal view (no polling).
     // We need to switch sessions that were in monitor/list mode back to that mode with polling.
-    let legacyTerminalKey = providerKind == .claude ? AgentHubDefaults.sessionsWithTerminalView : nil
-    let terminalData = UserDefaults.standard.data(forKey: terminalViewKey)
-      ?? (legacyTerminalKey.flatMap { UserDefaults.standard.data(forKey: $0) })
-
-    if let data = terminalData,
+    if let data = UserDefaults.standard.data(forKey: terminalViewKey),
        let persistedTerminalSessionIds = try? JSONDecoder().decode([String].self, from: data) {
       let persistedSet = Set(persistedTerminalSessionIds)
 
@@ -649,6 +721,12 @@ public final class CLISessionsViewModel {
 
   /// Checks if the session file exists for the current provider
   private func sessionFileExists(session: CLISession) -> Bool {
+    // For Codex, if we found the session in allSessions, the monitor service
+    // already verified the file exists during scanning
+    if providerKind == .codex {
+      return session.sessionFilePath != nil
+    }
+
     guard let url = sessionFileURL(for: session) else { return false }
     return FileManager.default.fileExists(atPath: url.path)
   }
