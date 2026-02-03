@@ -60,6 +60,24 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true)
   public static let enabledProviders = "\(keyPrefix)settings.enabledProviders"
 
+  // MARK: - CLI Command Settings
+
+  /// Custom Claude CLI command name
+  /// Type: String (default: "claude")
+  public static let claudeCommand = "\(keyPrefix)cli.claudeCommand"
+
+  /// Custom Codex CLI command name
+  /// Type: String (default: "codex")
+  public static let codexCommand = "\(keyPrefix)cli.codexCommand"
+
+  /// Whether Claude command was set by developer (not user-editable)
+  /// Type: Bool (default: false)
+  public static let claudeCommandLockedByDeveloper = "\(keyPrefix)cli.claudeCommandLocked"
+
+  /// Whether Codex command was set by developer (not user-editable)
+  /// Type: Bool (default: false)
+  public static let codexCommandLockedByDeveloper = "\(keyPrefix)cli.codexCommandLocked"
+
   /// Selected provider in side panel segmented control
   /// Type: String (default: "Claude")
   public static let selectedSidePanelProvider = "\(keyPrefix)sidepanel.selectedProvider"

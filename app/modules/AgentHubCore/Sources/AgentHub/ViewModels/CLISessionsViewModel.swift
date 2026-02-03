@@ -209,6 +209,26 @@ public final class CLISessionsViewModel {
 
   // MARK: - Terminal Management
 
+  /// Returns the current CLI command, reading from UserDefaults for user-configured values
+  private var currentCLICommand: String {
+    let defaults = UserDefaults.standard
+    switch providerKind {
+    case .claude:
+      return defaults.string(forKey: AgentHubDefaults.claudeCommand) ?? cliConfiguration.command
+    case .codex:
+      return defaults.string(forKey: AgentHubDefaults.codexCommand) ?? cliConfiguration.command
+    }
+  }
+
+  /// Returns a CLI configuration with the current command from UserDefaults
+  private var currentCLIConfiguration: CLICommandConfiguration {
+    CLICommandConfiguration(
+      command: currentCLICommand,
+      additionalPaths: cliConfiguration.additionalPaths,
+      mode: cliConfiguration.mode
+    )
+  }
+
   /// Gets an existing terminal or creates a new one for the given key.
   /// Key should be session ID for real sessions, or "pending-{pendingId}" for pending sessions.
   /// This preserves the terminal PTY across pending → real session transitions.
@@ -239,7 +259,7 @@ public final class CLISessionsViewModel {
     AppLogger.session.debug("[Terminal] CREATING new terminal for key: \(key, privacy: .public)")
     #endif
     let terminal = TerminalContainerView()
-    let config = cliConfiguration ?? self.cliConfiguration
+    let config = cliConfiguration ?? self.currentCLIConfiguration
     terminal.configure(
       sessionId: sessionId,
       projectPath: projectPath,
@@ -272,7 +292,7 @@ public final class CLISessionsViewModel {
   /// This reloads the session history from the JSONL file (useful when session was updated externally).
   public func refreshTerminal(forKey key: String, sessionId: String?, projectPath: String) {
     guard let terminal = activeTerminals[key] else { return }
-    terminal.restart(sessionId: sessionId, projectPath: projectPath, cliConfiguration: cliConfiguration)
+    terminal.restart(sessionId: sessionId, projectPath: projectPath, cliConfiguration: currentCLIConfiguration)
   }
 
   /// Types text into the terminal for a given key without pressing Enter.

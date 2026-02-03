@@ -133,6 +133,26 @@ public final class AgentHubProvider {
   /// - Parameter configuration: Configuration for services. Defaults to `.default`
   public init(configuration: AgentHubConfiguration = .default) {
     self.configuration = configuration
+
+    // Persist developer-provided commands to UserDefaults
+    let defaults = UserDefaults.standard
+
+    // Claude command: if developer provided non-default, lock it
+    if configuration.cliCommand != "claude" {
+      defaults.set(configuration.cliCommand, forKey: AgentHubDefaults.claudeCommand)
+      defaults.set(true, forKey: AgentHubDefaults.claudeCommandLockedByDeveloper)
+    } else if defaults.string(forKey: AgentHubDefaults.claudeCommand) == nil {
+      // Set default if not already set by user
+      defaults.set("claude", forKey: AgentHubDefaults.claudeCommand)
+    }
+
+    // Codex command: same logic
+    if configuration.codexCommand != "codex" {
+      defaults.set(configuration.codexCommand, forKey: AgentHubDefaults.codexCommand)
+      defaults.set(true, forKey: AgentHubDefaults.codexCommandLockedByDeveloper)
+    } else if defaults.string(forKey: AgentHubDefaults.codexCommand) == nil {
+      defaults.set("codex", forKey: AgentHubDefaults.codexCommand)
+    }
   }
 
   /// Creates a provider with default configuration
@@ -193,13 +213,20 @@ public final class AgentHubProvider {
 
   private func makeSessionsViewModel(providerKind: SessionProviderKind) -> CLISessionsViewModel {
     let cliConfiguration: CLICommandConfiguration
+    let defaults = UserDefaults.standard
     switch providerKind {
     case .claude:
-      let command = claudeClient?.configuration.command ?? "claude"
+      let command = defaults.string(forKey: AgentHubDefaults.claudeCommand)
+        ?? claudeClient?.configuration.command
+        ?? configuration.cliCommand
       let paths = claudeClient?.configuration.additionalPaths ?? configuration.additionalCLIPaths
       cliConfiguration = CLICommandConfiguration(command: command, additionalPaths: paths, mode: .claude)
     case .codex:
-      let codexCommand = TerminalLauncher.findCodexExecutable(additionalPaths: configuration.additionalCLIPaths) ?? "codex"
+      let userCommand = defaults.string(forKey: AgentHubDefaults.codexCommand) ?? configuration.codexCommand
+      let codexCommand = TerminalLauncher.findCodexExecutable(
+        command: userCommand,
+        additionalPaths: configuration.additionalCLIPaths
+      ) ?? userCommand
       cliConfiguration = CLICommandConfiguration(command: codexCommand, additionalPaths: configuration.additionalCLIPaths, mode: .codex)
     }
 

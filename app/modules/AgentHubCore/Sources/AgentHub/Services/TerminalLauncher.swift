@@ -427,16 +427,18 @@ public struct TerminalLauncher {
 
   /// Finds the full path to the Codex executable, preferring local installs.
   /// - Parameters:
+  ///   - command: The command name to search for (default: "codex")
   ///   - additionalPaths: Additional paths to search from configuration
   /// - Returns: The full path to the executable if found, nil otherwise
   public static func findCodexExecutable(
+    command: String = "codex",
     additionalPaths: [String]?
   ) -> String? {
     let fileManager = FileManager.default
     let homeDir = NSHomeDirectory()
 
     // Priority 1: Local codex installation
-    let localCodexPath = "\(homeDir)/.codex/local/codex"
+    let localCodexPath = "\(homeDir)/.codex/local/\(command)"
     if fileManager.fileExists(atPath: localCodexPath) {
       return localCodexPath
     }
@@ -450,14 +452,14 @@ public struct TerminalLauncher {
     ]
 
     for nvmPath in nvmPaths {
-      let codexPath = "\(nvmPath)/codex"
+      let codexPath = "\(nvmPath)/\(command)"
       if fileManager.fileExists(atPath: codexPath) {
         return codexPath
       }
     }
 
     // Fallback: search using generic resolver
-    return findExecutable(command: "codex", additionalPaths: additionalPaths)
+    return findExecutable(command: command, additionalPaths: additionalPaths)
   }
 
   /// Finds the full path to a CLI executable
@@ -499,6 +501,11 @@ public struct TerminalLauncher {
     }
 
     // Fallback: try using 'which' command
+    // Skip on main thread to avoid blocking UI and causing run loop reentrancy crashes
+    guard !Thread.isMainThread else {
+      return nil
+    }
+
     let task = Process()
     task.launchPath = "/usr/bin/which"
     task.arguments = [command]
