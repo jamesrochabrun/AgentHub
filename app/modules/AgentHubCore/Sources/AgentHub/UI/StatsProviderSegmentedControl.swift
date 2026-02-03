@@ -43,6 +43,7 @@ public struct StatsProviderSegmentedControl: View {
       .frame(height: 2)
       .padding(.top, 6)
     }
+    .padding(.horizontal, 4)
   }
 
   private func segmentButton(for provider: SessionProviderKind, count: Int) -> some View {
@@ -61,10 +62,10 @@ public struct StatsProviderSegmentedControl: View {
         if provider == .codex {
           Text("Beta")
             .font(.system(size: 9, weight: .medium))
-            .foregroundColor(.secondary)
+            .foregroundStyle(selectedProvider == .codex ? .secondary : .tertiary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Color.gray.opacity(0.2))
+            .background(selectedProvider == .codex ? Color.gray.opacity(0.2) : Color.clear)
             .clipShape(Capsule())
         }
       }
