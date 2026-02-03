@@ -706,8 +706,14 @@ private struct ProviderSectionView: View {
           onOpenTerminalForWorktree: { worktree in
             onOpenTerminalForWorktree(worktree)
           },
+          onOpenTerminalDangerousForWorktree: { worktree in
+            _ = viewModel.openTerminalInWorktree(worktree, skipCheckout: true, dangerouslySkipPermissions: true)
+          },
           onStartInHubForWorktree: { worktree in
             viewModel.startNewSessionInHub(worktree)
+          },
+          onStartInHubDangerousForWorktree: { worktree in
+            viewModel.startNewSessionInHub(worktree, dangerouslySkipPermissions: true)
           },
           onDeleteWorktree: { worktree in
             Task { await viewModel.deleteWorktree(worktree) }

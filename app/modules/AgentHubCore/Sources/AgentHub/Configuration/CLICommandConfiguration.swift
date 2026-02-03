@@ -35,21 +35,33 @@ public struct CLICommandConfiguration: Codable, Sendable {
     CLICommandConfiguration(command: "codex", additionalPaths: [], mode: .codex)
   }
 
-  public func argumentsForSession(sessionId: String?, prompt: String?) -> [String] {
+  public func argumentsForSession(
+    sessionId: String?,
+    prompt: String?,
+    dangerouslySkipPermissions: Bool = false
+  ) -> [String] {
     switch mode {
     case .claude:
+      var args: [String] = []
+
+      // Add flag only for NEW sessions (not resume)
+      if dangerouslySkipPermissions && (sessionId == nil || sessionId?.isEmpty == true || sessionId?.hasPrefix("pending-") == true) {
+        args.append("--dangerously-skip-permissions")
+      }
+
       if let sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
         if let prompt, !prompt.isEmpty {
-          return ["-r", sessionId, prompt]
+          return args + ["-r", sessionId, prompt]
         }
-        return ["-r", sessionId]
+        return args + ["-r", sessionId]
       }
       if let prompt, !prompt.isEmpty {
-        return [prompt]
+        return args + [prompt]
       }
-      return []
+      return args
 
     case .codex:
+      // Codex doesn't support this flag
       if let sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
         // Codex CLI resume: codex resume <SESSION_ID>
         return ["resume", sessionId]

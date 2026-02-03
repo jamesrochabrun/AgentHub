@@ -218,7 +218,8 @@ public final class CLISessionsViewModel {
     projectPath: String,
     cliConfiguration: CLICommandConfiguration? = nil,
     initialPrompt: String?,
-    isDark: Bool = true
+    isDark: Bool = true,
+    dangerouslySkipPermissions: Bool = false
   ) -> TerminalContainerView {
     if let existing = activeTerminals[key] {
       #if DEBUG
@@ -244,7 +245,8 @@ public final class CLISessionsViewModel {
       projectPath: projectPath,
       cliConfiguration: config,
       initialPrompt: initialPrompt,
-      isDark: isDark
+      isDark: isDark,
+      dangerouslySkipPermissions: dangerouslySkipPermissions
     )
     activeTerminals[key] = terminal
     return terminal
@@ -953,8 +955,9 @@ public final class CLISessionsViewModel {
   /// - Parameters:
   ///   - worktree: The worktree to open
   ///   - skipCheckout: If true, skips git checkout even for non-worktrees (already on correct branch)
+  ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
   /// - Returns: An error if launching failed, nil on success
-  public func openTerminalInWorktree(_ worktree: WorktreeBranch, skipCheckout: Bool = false) -> Error? {
+  public func openTerminalInWorktree(_ worktree: WorktreeBranch, skipCheckout: Bool = false, dangerouslySkipPermissions: Bool = false) -> Error? {
     guard providerKind == .claude else {
       return NSError(
         domain: "CLISessionsViewModel",
@@ -975,7 +978,8 @@ public final class CLISessionsViewModel {
       branchName: worktree.name,
       isWorktree: worktree.isWorktree,
       skipCheckout: skipCheckout,
-      claudeClient: claudeClient
+      claudeClient: claudeClient,
+      dangerouslySkipPermissions: dangerouslySkipPermissions
     )
   }
 
@@ -1060,12 +1064,18 @@ public final class CLISessionsViewModel {
   ///   - skipCheckout: If true, skips git checkout even for non-worktrees
   /// - Returns: An error if launching failed, nil on success
   /// Starts a new Claude session in the Hub's embedded terminal (not external terminal)
-  /// - Parameter worktree: The worktree to start the session in
-  public func startNewSessionInHub(_ worktree: WorktreeBranch) {
+  /// - Parameters:
+  ///   - worktree: The worktree to start the session in
+  ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
+  public func startNewSessionInHub(_ worktree: WorktreeBranch, dangerouslySkipPermissions: Bool = false) {
     // Each pending session gets a unique ID, so no need to clear existing terminals
     // Terminals are now keyed by session ID, not worktree path
     // No auto-prompt: let user type naturally in the terminal
-    let pending = PendingHubSession(worktree: worktree, initialPrompt: nil)
+    let pending = PendingHubSession(
+      worktree: worktree,
+      initialPrompt: nil,
+      dangerouslySkipPermissions: dangerouslySkipPermissions
+    )
     pendingHubSessions.append(pending)
 
 #if DEBUG
