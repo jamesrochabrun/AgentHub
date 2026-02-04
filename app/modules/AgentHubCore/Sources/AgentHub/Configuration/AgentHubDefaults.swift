@@ -94,6 +94,10 @@ public enum AgentHubDefaults {
   /// Type: Int (default: 0 = list)
   public static let monitoringPanelLayoutMode = "\(keyPrefix)ui.monitoringPanelLayoutMode"
 
+  /// Hub session display mode (single vs all monitored)
+  /// Type: Int (default: 0 = single)
+  public static let hubSessionDisplayMode = "\(keyPrefix)hub.sessionDisplayMode"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name
