@@ -35,6 +35,8 @@ public struct CLISessionsListView: View {
   @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var isSearchSheetVisible: Bool = false
+  @State private var sidePanelMode: SidePanelMode = .all
+  @State private var primarySessionId: String?
   @Environment(\.colorScheme) private var colorScheme
   @FocusState private var isSearchFieldFocused: Bool
 
@@ -46,7 +48,7 @@ public struct CLISessionsListView: View {
   public var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       // Sidebar: Session list
-      sessionListPanel
+      sidePanelView
         .padding(12)
         .agentHubPanel()
         .navigationSplitViewColumnWidth(min: 300, ideal: 400)
@@ -54,7 +56,11 @@ public struct CLISessionsListView: View {
         .padding(.horizontal, 8)
     } detail: {
       // Detail: Monitoring panel
-      MonitoringPanelView(viewModel: viewModel, claudeClient: viewModel.claudeClient)
+      MonitoringPanelView(
+        viewModel: viewModel,
+        claudeClient: viewModel.claudeClient,
+        primarySessionId: $primarySessionId
+      )
         .padding(12)
         .agentHubPanel()
         .frame(minWidth: 300)
@@ -189,6 +195,25 @@ public struct CLISessionsListView: View {
 
   // MARK: - Session List Panel
 
+  private enum SidePanelMode: Int {
+    case all
+    case selected
+
+    var title: String {
+      switch self {
+      case .all: return "All Sessions"
+      case .selected: return "Selected"
+      }
+    }
+
+    var icon: String {
+      switch self {
+      case .all: return "list.bullet"
+      case .selected: return "star"
+      }
+    }
+  }
+
   private var sessionListPanel: some View {
     VStack(spacing: 0) {
       // Add repository button (always visible)
@@ -214,6 +239,76 @@ public struct CLISessionsListView: View {
       }
     }
     .animation(.easeInOut(duration: 0.2), value: isSearchSheetVisible)
+  }
+
+  private var sidePanelView: some View {
+    VStack(spacing: 8) {
+      sidePanelNavigationBar
+
+      GeometryReader { geo in
+        ZStack(alignment: .leading) {
+          sessionListPanel
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+            .offset(x: sidePanelMode == .all ? 0 : -geo.size.width)
+            .opacity(sidePanelMode == .all ? 1 : 0)
+            .allowsHitTesting(sidePanelMode == .all)
+
+          selectedSessionsPanel
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+            .offset(x: sidePanelMode == .selected ? 0 : geo.size.width)
+            .opacity(sidePanelMode == .selected ? 1 : 0)
+            .allowsHitTesting(sidePanelMode == .selected)
+        }
+        .clipped()
+        .animation(.easeInOut(duration: 0.25), value: sidePanelMode)
+      }
+    }
+  }
+
+  private var sidePanelNavigationBar: some View {
+    HStack(spacing: 4) {
+      if sidePanelMode == .selected {
+        Button(action: {
+          withAnimation(.easeInOut(duration: 0.25)) {
+            sidePanelMode = .all
+          }
+        }) {
+          HStack(spacing: 6) {
+            Image(systemName: "chevron.left")
+            Text("All Sessions")
+          }
+          .font(.caption)
+          .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+      }
+
+      Spacer()
+
+      if sidePanelMode == .all {
+        Button(action: {
+          withAnimation(.easeInOut(duration: 0.25)) {
+            sidePanelMode = .selected
+          }
+        }) {
+          HStack(spacing: 6) {
+            Text("Selected")
+            Image(systemName: "chevron.right")
+          }
+          .font(.caption)
+          .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .padding(.horizontal, 4)
+  }
+
+  private var selectedSessionsPanel: some View {
+    SelectedSessionsPanelView(
+      viewModel: viewModel,
+      primarySessionId: $primarySessionId
+    )
   }
 
   // MARK: - Search Bar

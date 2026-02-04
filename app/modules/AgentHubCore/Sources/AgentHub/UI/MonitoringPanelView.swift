@@ -98,15 +98,28 @@ public struct MonitoringPanelView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
+  /// Primary session shown in Single mode and highlighted in All mode
+  @Binding var primarySessionId: String?
+  @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
+  private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue
   @Environment(\.colorScheme) private var colorScheme
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .list }
   }
 
-  public init(viewModel: CLISessionsViewModel, claudeClient: (any ClaudeCode)?) {
+  private var displayMode: HubSessionDisplayMode {
+    HubSessionDisplayMode(rawValue: displayModeRawValue) ?? .single
+  }
+
+  public init(
+    viewModel: CLISessionsViewModel,
+    claudeClient: (any ClaudeCode)?,
+    primarySessionId: Binding<String?>
+  ) {
     self.viewModel = viewModel
     self.claudeClient = claudeClient
+    self._primarySessionId = primarySessionId
   }
 
   /// Finds the main module path for an item (maps worktree paths to their parent repository)
@@ -128,22 +141,40 @@ public struct MonitoringPanelView: View {
     return itemPath  // Fallback to original path
   }
 
+  private var allItems: [MonitoringItem] {
+    var items: [MonitoringItem] = []
+
+    for pending in viewModel.pendingHubSessions {
+      items.append(.pending(pending))
+    }
+
+    for item in viewModel.monitoredSessions {
+      items.append(.monitored(session: item.session, state: item.state))
+    }
+
+    return items
+  }
+
+  private var effectivePrimarySessionId: String? {
+    if let current = primarySessionId, allItems.contains(where: { $0.id == current }) {
+      return current
+    }
+    return allItems.sorted { timestamp(for: $0) > timestamp(for: $1) }.first?.id
+  }
+
+  private var visibleItems: [MonitoringItem] {
+    switch displayMode {
+    case .allMonitored:
+      return allItems
+    case .single:
+      guard let selectedId = effectivePrimarySessionId else { return [] }
+      return allItems.filter { $0.id == selectedId }
+    }
+  }
+
   /// All sessions (pending + monitored) grouped by module (main repository path)
   private var groupedMonitoredSessions: [(modulePath: String, items: [MonitoringItem])] {
-    var allItems: [MonitoringItem] = []
-
-    // Add pending sessions
-    for pending in viewModel.pendingHubSessions {
-      allItems.append(.pending(pending))
-    }
-
-    // Add monitored sessions
-    for item in viewModel.monitoredSessions {
-      allItems.append(.monitored(session: item.session, state: item.state))
-    }
-
-    // Group by MODULE path (not worktree path)
-    let grouped = Dictionary(grouping: allItems) { findModulePath(for: $0) }
+    let grouped = Dictionary(grouping: visibleItems) { findModulePath(for: $0) }
     return grouped.sorted { $0.key < $1.key }
       .map { (modulePath: $0.key, items: $0.value.sorted { item1, item2 in
         // Sort by timestamp descending (newest first)
@@ -173,7 +204,7 @@ public struct MonitoringPanelView: View {
 
         Divider()
 
-        if viewModel.monitoredSessionIds.isEmpty && viewModel.pendingHubSessions.isEmpty {
+        if visibleItems.isEmpty {
           emptyState
         } else {
           monitoredSessionsList
@@ -198,6 +229,12 @@ public struct MonitoringPanelView: View {
       }
       return .ignored
     }
+    .onAppear {
+      ensurePrimarySelection()
+    }
+    .onChange(of: allItems.map(\.id)) { _, _ in
+      ensurePrimarySelection()
+    }
   }
 
   // MARK: - Header
@@ -211,7 +248,7 @@ public struct MonitoringPanelView: View {
 
       // Layout toggle (only show when > 2 sessions total)
       let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
-      if totalSessions >= 2 {
+      if displayMode == .allMonitored, totalSessions >= 2 {
         HStack(spacing: 4) {
           ForEach(LayoutMode.allCases, id: \.rawValue) { mode in
             Button(action: { withAnimation(.easeInOut(duration: 0.2)) { layoutModeRawValue = mode.rawValue } }) {
@@ -274,6 +311,7 @@ public struct MonitoringPanelView: View {
 
   @ViewBuilder
   private func maximizedCardContent(for sessionId: String) -> some View {
+    let isPrimary = sessionId == effectivePrimarySessionId
     // Find the session to maximize (check both pending and monitored)
     if let pending = viewModel.pendingHubSessions.first(where: { "pending-\($0.id.uuidString)" == sessionId }) {
       MonitoringCardView(
@@ -303,7 +341,9 @@ public struct MonitoringPanelView: View {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             maximizedSessionId = nil
           }
-        }
+        },
+        isPrimarySession: isPrimary,
+        showPrimaryIndicator: displayMode == .allMonitored
       )
     } else if let item = viewModel.monitoredSessions.first(where: { $0.session.id == sessionId }) {
       let planState = item.state.flatMap {
@@ -358,34 +398,132 @@ public struct MonitoringPanelView: View {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             maximizedSessionId = nil
           }
-        }
+        },
+        isPrimarySession: isPrimary,
+        showPrimaryIndicator: displayMode == .allMonitored
       )
     }
   }
 
   // MARK: - Monitored Sessions List
 
+  @ViewBuilder
   private var monitoredSessionsList: some View {
-    ScrollView {
-      if layoutMode == .list {
-        LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-          monitoredSessionsGroupedContent
+    if displayMode == .single {
+      singleModeContent
+    } else {
+      ScrollView {
+        if layoutMode == .list {
+          LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+            monitoredSessionsGroupedContent
+          }
+          .padding(12)
+        } else {
+          let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
+          LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
+            monitoredSessionsGroupedContent
+          }
+          .padding(12)
         }
-        .padding(12)
-      } else {
-        let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
-        LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
-          monitoredSessionsGroupedContent
+      }
+      .animation(.easeInOut(duration: 0.2), value: layoutMode)
+      .onChange(of: allItems.count) { _, newCount in
+        if newCount < 2 && layoutMode != .list {
+          withAnimation(.easeInOut(duration: 0.2)) {
+            layoutModeRawValue = LayoutMode.list.rawValue
+          }
         }
-        .padding(12)
       }
     }
-    .animation(.easeInOut(duration: 0.2), value: layoutMode)
-    .onChange(of: viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count) { _, newCount in
-      if newCount < 2 && layoutMode != .list {
-        withAnimation(.easeInOut(duration: 0.2)) {
-          layoutModeRawValue = LayoutMode.list.rawValue
-        }
+  }
+
+  // MARK: - Single Mode Content
+
+  @ViewBuilder
+  private var singleModeContent: some View {
+    if let item = visibleItems.first {
+      switch item {
+      case .pending(let pending):
+        let pendingId = "pending-\(pending.id.uuidString)"
+        MonitoringCardView(
+          session: pending.placeholderSession,
+          state: nil,
+          claudeClient: claudeClient,
+          cliConfiguration: viewModel.cliConfiguration,
+          providerKind: viewModel.providerKind,
+          showTerminal: true,
+          initialPrompt: pending.initialPrompt,
+          terminalKey: pendingId,
+          viewModel: viewModel,
+          dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
+          onToggleTerminal: { _ in },
+          onStopMonitoring: {
+            viewModel.cancelPendingSession(pending)
+          },
+          onConnect: { },
+          onCopySessionId: { },
+          onOpenSessionFile: { },
+          onRefreshTerminal: { },
+          isMaximized: false,
+          onToggleMaximize: { },
+          isPrimarySession: true,
+          showPrimaryIndicator: false
+        )
+        .id(pendingId)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(12)
+
+      case .monitored(let session, let state):
+        let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
+        let initialPrompt = viewModel.pendingPrompt(for: session.id)
+
+        MonitoringCardView(
+          session: session,
+          state: state,
+          planState: planState,
+          claudeClient: claudeClient,
+          cliConfiguration: viewModel.cliConfiguration,
+          providerKind: viewModel.providerKind,
+          showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
+          initialPrompt: initialPrompt,
+          terminalKey: session.id,
+          viewModel: viewModel,
+          onToggleTerminal: { show in
+            viewModel.setTerminalView(for: session.id, show: show)
+          },
+          onStopMonitoring: {
+            viewModel.stopMonitoring(session: session)
+          },
+          onConnect: {
+            _ = viewModel.connectToSession(session)
+          },
+          onCopySessionId: {
+            viewModel.copySessionId(session)
+          },
+          onOpenSessionFile: {
+            openSessionFile(for: session)
+          },
+          onRefreshTerminal: {
+            viewModel.refreshTerminal(
+              forKey: session.id,
+              sessionId: session.id,
+              projectPath: session.projectPath
+            )
+          },
+          onInlineRequestSubmit: { prompt, sess in
+            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          },
+          onPromptConsumed: {
+            viewModel.clearPendingPrompt(for: session.id)
+          },
+          isMaximized: false,
+          onToggleMaximize: { },
+          isPrimarySession: true,
+          showPrimaryIndicator: false
+        )
+        .id(session.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(12)
       }
     }
   }
@@ -395,6 +533,7 @@ public struct MonitoringPanelView: View {
     // Pending sessions (new sessions starting in Hub)
     ForEach(viewModel.pendingHubSessions) { pending in
       let pendingId = "pending-\(pending.id.uuidString)"
+      let isPrimary = pendingId == effectivePrimarySessionId
       MonitoringCardView(
         session: pending.placeholderSession,
         state: nil,
@@ -419,12 +558,15 @@ public struct MonitoringPanelView: View {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             maximizedSessionId = maximizedSessionId == pendingId ? nil : pendingId
           }
-        }
+        },
+        isPrimarySession: isPrimary,
+        showPrimaryIndicator: displayMode == .allMonitored
       )
     }
 
     // Monitored sessions (existing sessions)
     ForEach(viewModel.monitoredSessions, id: \.session.id) { item in
+      let isPrimary = item.session.id == effectivePrimarySessionId
       let planState = item.state.flatMap {
         PlanState.from(activities: $0.recentActivities)
       }
@@ -475,7 +617,9 @@ public struct MonitoringPanelView: View {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             maximizedSessionId = maximizedSessionId == item.session.id ? nil : item.session.id
           }
-        }
+        },
+        isPrimarySession: isPrimary,
+        showPrimaryIndicator: displayMode == .allMonitored
       )
     }
   }
@@ -494,6 +638,7 @@ public struct MonitoringPanelView: View {
           switch item {
           case .pending(let pending):
             let pendingId = "pending-\(pending.id.uuidString)"
+            let isPrimary = pendingId == effectivePrimarySessionId
             MonitoringCardView(
               session: pending.placeholderSession,
               state: nil,
@@ -518,10 +663,13 @@ public struct MonitoringPanelView: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                   maximizedSessionId = maximizedSessionId == pendingId ? nil : pendingId
                 }
-              }
+              },
+              isPrimarySession: isPrimary,
+              showPrimaryIndicator: displayMode == .allMonitored
             )
 
           case .monitored(let session, let state):
+            let isPrimary = session.id == effectivePrimarySessionId
             let planState = state.flatMap {
               PlanState.from(activities: $0.recentActivities)
             }
@@ -571,7 +719,9 @@ public struct MonitoringPanelView: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                   maximizedSessionId = maximizedSessionId == session.id ? nil : session.id
                 }
-              }
+              },
+              isPrimarySession: isPrimary,
+              showPrimaryIndicator: displayMode == .allMonitored
             )
           }
         }
@@ -596,6 +746,19 @@ public struct MonitoringPanelView: View {
         content: content
       )
     }
+  }
+
+  private func ensurePrimarySelection() {
+    guard !allItems.isEmpty else {
+      primarySessionId = nil
+      return
+    }
+
+    if let current = primarySessionId, allItems.contains(where: { $0.id == current }) {
+      return
+    }
+
+    primarySessionId = effectivePrimarySessionId
   }
 }
 
@@ -787,6 +950,6 @@ private struct MonitoringSessionFileSheetView: View {
     providerKind: .claude
   )
 
-  MonitoringPanelView(viewModel: viewModel, claudeClient: nil)
+  MonitoringPanelView(viewModel: viewModel, claudeClient: nil, primarySessionId: .constant(nil))
     .frame(width: 350, height: 500)
 }

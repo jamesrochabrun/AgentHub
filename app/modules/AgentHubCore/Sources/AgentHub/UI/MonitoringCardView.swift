@@ -61,6 +61,8 @@ public struct MonitoringCardView: View {
   let onPromptConsumed: (() -> Void)?
   let isMaximized: Bool
   let onToggleMaximize: () -> Void
+  let isPrimarySession: Bool
+  let showPrimaryIndicator: Bool
 
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
@@ -92,7 +94,9 @@ public struct MonitoringCardView: View {
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     isMaximized: Bool = false,
-    onToggleMaximize: @escaping () -> Void = {}
+    onToggleMaximize: @escaping () -> Void = {},
+    isPrimarySession: Bool = false,
+    showPrimaryIndicator: Bool = false
   ) {
     self.session = session
     self.state = state
@@ -115,6 +119,8 @@ public struct MonitoringCardView: View {
     self.onPromptConsumed = onPromptConsumed
     self.isMaximized = isMaximized
     self.onToggleMaximize = onToggleMaximize
+    self.isPrimarySession = isPrimarySession
+    self.showPrimaryIndicator = showPrimaryIndicator
   }
 
   public var body: some View {
@@ -153,6 +159,15 @@ public struct MonitoringCardView: View {
     }
     .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
     .clipShape(RoundedRectangle(cornerRadius: 8))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8)
+        .stroke(
+          showPrimaryIndicator && isPrimarySession
+            ? Color.brandPrimary(for: providerKind).opacity(0.35)
+            : Color.clear,
+          lineWidth: 1
+        )
+    )
     .shadow(
       color: Color.blue.opacity(isDragging ? 0.875 : 0),
       radius: isDragging ? 12 : 0
@@ -380,6 +395,21 @@ public struct MonitoringCardView: View {
         .font(.caption)
         .foregroundColor(.brandPrimary(for: providerKind))
 
+      if showPrimaryIndicator && isPrimarySession {
+        HStack(spacing: 4) {
+          Circle()
+            .fill(Color.brandPrimary(for: providerKind))
+            .frame(width: 6, height: 6)
+          Text("Primary")
+            .font(.caption2)
+        }
+        .foregroundColor(.brandPrimary(for: providerKind))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color.brandPrimary(for: providerKind).opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+      }
+
       Spacer()
 
       // Terminal/List segmented control (hidden when maximized)
@@ -411,17 +441,18 @@ public struct MonitoringCardView: View {
         .animation(.easeInOut(duration: 0.2), value: showTerminal)
       }
 
+      // TODO: Consider removing later
       // Maximize/Minimize button
-      Button(action: onToggleMaximize) {
-        Image(systemName: isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .frame(width: 24, height: 24)
-          .background(Color.secondary.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: 4))
-      }
-      .buttonStyle(.plain)
-      .help(isMaximized ? "Minimize" : "Maximize")
+//      Button(action: onToggleMaximize) {
+//        Image(systemName: isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+//          .font(.caption)
+//          .foregroundColor(.secondary)
+//          .frame(width: 24, height: 24)
+//          .background(Color.secondary.opacity(0.1))
+//          .clipShape(RoundedRectangle(cornerRadius: 4))
+//      }
+//      .buttonStyle(.plain)
+//      .help(isMaximized ? "Minimize" : "Maximize")
 
       // Close button (inline, hidden when maximized)
       if !isMaximized {
