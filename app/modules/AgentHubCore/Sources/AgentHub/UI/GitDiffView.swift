@@ -49,6 +49,8 @@ public struct GitDiffView: View {
   @State private var detectedBaseBranch: String?
   @State private var commentsState = DiffCommentsState()
   @State private var showDiscardCommentsAlert = false
+  @State private var expandedPaths: Set<String> = []
+  @State private var treeCommonPrefix: String = ""
 
   private let gitDiffService = GitDiffService()
 
@@ -280,6 +282,117 @@ public struct GitDiffView: View {
 
   // MARK: - File List Sidebar
 
+  /// Builds a hierarchical tree from flat file entries
+  private var fileTree: [FileTreeNode] {
+    buildFileTree(from: diffState.files).nodes
+  }
+
+  /// Finds the longest common directory prefix among all file paths
+  private func findCommonPrefix(from files: [GitDiffFileEntry]) -> [String] {
+    guard let first = files.first else { return [] }
+
+    // Get directory components (exclude filename)
+    var commonComponents = Array(first.relativePath.components(separatedBy: "/").dropLast())
+
+    for file in files.dropFirst() {
+      let components = Array(file.relativePath.components(separatedBy: "/").dropLast())
+      // Keep only matching prefix components
+      var matchCount = 0
+      for (a, b) in zip(commonComponents, components) {
+        if a == b {
+          matchCount += 1
+        } else {
+          break
+        }
+      }
+      commonComponents = Array(commonComponents.prefix(matchCount))
+      if commonComponents.isEmpty { break }
+    }
+
+    return commonComponents
+  }
+
+  /// Result of building the file tree
+  private struct FileTreeResult {
+    let nodes: [FileTreeNode]
+    let commonPrefix: String
+    let allFolderPaths: Set<String>
+  }
+
+  private func buildFileTree(from files: [GitDiffFileEntry]) -> FileTreeResult {
+    guard !files.isEmpty else {
+      return FileTreeResult(nodes: [], commonPrefix: "", allFolderPaths: [])
+    }
+
+    // Find common prefix to strip
+    let commonComponents = findCommonPrefix(from: files)
+    let commonPrefix = commonComponents.joined(separator: "/")
+    let stripCount = commonComponents.count
+
+    // Root node to hold top-level children
+    let root = FileTreeNode(name: "", fullPath: "", file: nil)
+    var allFolderPaths: Set<String> = []
+
+    for file in files {
+      // Strip common prefix from path components
+      let allComponents = file.relativePath.components(separatedBy: "/")
+      let pathComponents = Array(allComponents.dropFirst(stripCount))
+
+      var currentNode = root
+      var currentPath = ""
+
+      for (index, component) in pathComponents.enumerated() {
+        let isLastComponent = index == pathComponents.count - 1
+        currentPath = currentPath.isEmpty ? component : "\(currentPath)/\(component)"
+
+        if isLastComponent {
+          // This is a file node
+          let fileNode = FileTreeNode(
+            name: component,
+            fullPath: currentPath,
+            file: file
+          )
+          currentNode.childrenDict[component] = fileNode
+        } else {
+          // This is a folder node
+          if currentNode.childrenDict[component] == nil {
+            let folderNode = FileTreeNode(
+              name: component,
+              fullPath: currentPath,
+              file: nil
+            )
+            currentNode.childrenDict[component] = folderNode
+          }
+          allFolderPaths.insert(currentPath)
+          // Move into this folder
+          currentNode = currentNode.childrenDict[component]!
+        }
+      }
+    }
+
+    // Convert dictionary to sorted array starting from root's children
+    let nodes = sortNodes(from: root.childrenDict)
+    return FileTreeResult(nodes: nodes, commonPrefix: commonPrefix, allFolderPaths: allFolderPaths)
+  }
+
+  private func sortNodes(from dict: [String: FileTreeNode]) -> [FileTreeNode] {
+    dict.values
+      .map { node in
+        // Recursively sort children
+        if !node.childrenDict.isEmpty {
+          node.children = sortNodes(from: node.childrenDict)
+        }
+        return node
+      }
+      .sorted { lhs, rhs in
+        // Folders first, then alphabetically
+        if lhs.isFolder != rhs.isFolder {
+          return lhs.isFolder
+        }
+        return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+      }
+  }
+
   private var fileListSidebar: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header
@@ -292,14 +405,34 @@ public struct GitDiffView: View {
 
       Divider()
 
-      // File list
+      // Common prefix header (shows collapsed path context)
+      if !treeCommonPrefix.isEmpty {
+        HStack(spacing: 4) {
+          Image(systemName: "folder.fill")
+            .font(.caption2)
+            .foregroundColor(.secondary)
+          Text(treeCommonPrefix)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.03))
+      }
+
+      // Hierarchical file tree
       ScrollView {
-        LazyVStack(alignment: .leading, spacing: 4) {
-          ForEach(diffState.files) { file in
-            GitDiffFileRow(
-              entry: file,
-              isSelected: selectedFileId == file.id,
-              onSelect: {
+        LazyVStack(alignment: .leading, spacing: 0) {
+          ForEach(fileTree) { node in
+            FileTreeNodeRow(
+              node: node,
+              depth: 0,
+              expandedPaths: $expandedPaths,
+              selectedFileId: selectedFileId,
+              onSelectFile: { file in
                 selectedFileId = file.id
                 loadFileDiff(for: file, mode: diffMode)
               }
@@ -386,6 +519,8 @@ public struct GitDiffView: View {
       selectedFileId = nil
       loadingStates = [:]
       fileErrorMessages = [:]
+      treeCommonPrefix = ""
+      expandedPaths = []
     }
 
     do {
@@ -426,6 +561,11 @@ public struct GitDiffView: View {
         diffState = GitDiffState(files: entries)
         parsedDiffs = parsedLookup
         isLoading = false
+
+        // Build tree and auto-expand all folders
+        let treeResult = buildFileTree(from: entries)
+        treeCommonPrefix = treeResult.commonPrefix
+        expandedPaths = treeResult.allFolderPaths
 
         // Auto-select first file
         if let first = entries.first {
@@ -590,6 +730,138 @@ public struct GitDiffView: View {
     }
   }
 
+}
+
+// MARK: - FileTreeNode
+
+/// Represents a node in the hierarchical file tree (folder or file)
+private class FileTreeNode: Identifiable {
+  let id = UUID()
+  let name: String                        // Folder or file name
+  let fullPath: String                    // Full relative path
+  var children: [FileTreeNode] = []       // Child nodes (populated after tree build)
+  var childrenDict: [String: FileTreeNode] = [:] // Used during tree construction
+  let file: GitDiffFileEntry?             // Non-nil for leaf file nodes
+
+  var isFolder: Bool { file == nil }
+
+  init(name: String, fullPath: String, file: GitDiffFileEntry?) {
+    self.name = name
+    self.fullPath = fullPath
+    self.file = file
+  }
+}
+
+// MARK: - FileTreeNodeRow
+
+/// Recursive view for rendering tree nodes with proper indentation
+private struct FileTreeNodeRow: View {
+  let node: FileTreeNode
+  let depth: Int
+  @Binding var expandedPaths: Set<String>
+  let selectedFileId: UUID?
+  let onSelectFile: (GitDiffFileEntry) -> Void
+
+  private var isExpanded: Bool {
+    expandedPaths.contains(node.fullPath)
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      // This row
+      Button(action: toggleOrSelect) {
+        HStack(spacing: 4) {
+          // Indentation based on depth
+          if depth > 0 {
+            Spacer()
+              .frame(width: CGFloat(depth) * 16)
+          }
+
+          // Chevron (folders only)
+          if node.isFolder {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+              .font(.caption2)
+              .foregroundColor(.secondary)
+              .frame(width: 12)
+          } else {
+            Spacer()
+              .frame(width: 12)
+          }
+
+          // Icon
+          Image(systemName: node.isFolder ? "folder.fill" : "doc.text")
+            .font(.caption)
+            .foregroundColor(node.isFolder ? .yellow : .blue)
+            .frame(width: 16)
+
+          // Name
+          Text(node.name)
+            .font(.system(.caption, design: .monospaced))
+            .fontWeight(node.isFolder ? .medium : .regular)
+            .lineLimit(1)
+
+          Spacer()
+
+          // Change counts (files only)
+          if let file = node.file {
+            HStack(spacing: 2) {
+              Text("+\(file.additions)")
+                .foregroundColor(.green)
+              Text("/")
+                .foregroundColor(.secondary)
+              Text("-\(file.deletions)")
+                .foregroundColor(.red)
+            }
+            .font(.caption2.bold())
+          }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+          RoundedRectangle(cornerRadius: 6)
+            .fill(isSelected ? Color.primary.opacity(0.15) : Color.clear)
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: 6)
+            .stroke(isSelected ? Color.primary.opacity(0.3) : Color.clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+
+      // Children (if expanded folder)
+      if node.isFolder && isExpanded {
+        ForEach(node.children) { child in
+          FileTreeNodeRow(
+            node: child,
+            depth: depth + 1,
+            expandedPaths: $expandedPaths,
+            selectedFileId: selectedFileId,
+            onSelectFile: onSelectFile
+          )
+        }
+      }
+    }
+  }
+
+  private var isSelected: Bool {
+    guard let file = node.file else { return false }
+    return file.id == selectedFileId
+  }
+
+  private func toggleOrSelect() {
+    if node.isFolder {
+      // Toggle expansion
+      if isExpanded {
+        expandedPaths.remove(node.fullPath)
+      } else {
+        expandedPaths.insert(node.fullPath)
+      }
+    } else if let file = node.file {
+      // Select file
+      onSelectFile(file)
+    }
+  }
 }
 
 // MARK: - GitDiffFileRow
