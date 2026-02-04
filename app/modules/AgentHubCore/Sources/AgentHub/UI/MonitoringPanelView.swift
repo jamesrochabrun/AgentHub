@@ -98,6 +98,7 @@ public struct MonitoringPanelView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
+  /// Primary session shown in Single mode and highlighted in All mode
   @Binding var primarySessionId: String?
   @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
   private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue

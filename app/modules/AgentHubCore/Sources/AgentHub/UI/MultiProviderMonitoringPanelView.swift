@@ -120,7 +120,7 @@ private struct HubFilterControl: View {
 
 // MARK: - ProviderMonitoringItem
 
-private enum ProviderMonitoringItem: Identifiable {
+enum ProviderMonitoringItem: Identifiable {
   case pending(provider: SessionProviderKind, viewModel: CLISessionsViewModel, pending: PendingHubSession)
   case monitored(provider: SessionProviderKind, viewModel: CLISessionsViewModel, session: CLISession, state: SessionMonitorState?)
 

@@ -17,4 +17,15 @@ public enum HubSessionDisplayMode: Int, CaseIterable {
     case .allMonitored: return "All"
     }
   }
+
+  var displayName: String {
+    title
+  }
+
+  var icon: String {
+    switch self {
+    case .single: return "1.square"
+    case .allMonitored: return "square.grid.2x2"
+    }
+  }
 }
