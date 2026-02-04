@@ -69,6 +69,7 @@ public struct StatsProviderSegmentedControl: View {
             .clipShape(Capsule())
         }
       }
+      .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
   }

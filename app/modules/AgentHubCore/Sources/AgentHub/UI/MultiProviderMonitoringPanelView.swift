@@ -112,6 +112,7 @@ private struct HubFilterControl: View {
       .padding(.vertical, 4)
       .background(filterMode == mode ? Color.secondary.opacity(0.2) : Color.clear)
       .clipShape(RoundedRectangle(cornerRadius: 4))
+      .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
   }
@@ -262,6 +263,7 @@ public struct MultiProviderMonitoringPanelView: View {
                 .font(.caption)
                 .foregroundColor(layoutMode == mode ? .primary : .secondary)
                 .frame(width: 26, height: 20)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
           }
