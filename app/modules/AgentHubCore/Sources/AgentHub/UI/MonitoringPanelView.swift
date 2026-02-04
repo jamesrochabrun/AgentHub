@@ -407,27 +407,123 @@ public struct MonitoringPanelView: View {
 
   // MARK: - Monitored Sessions List
 
+  @ViewBuilder
   private var monitoredSessionsList: some View {
-    ScrollView {
-      if displayMode == .single || layoutMode == .list {
-        LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-          monitoredSessionsGroupedContent
+    if displayMode == .single {
+      singleModeContent
+    } else {
+      ScrollView {
+        if layoutMode == .list {
+          LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+            monitoredSessionsGroupedContent
+          }
+          .padding(12)
+        } else {
+          let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
+          LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
+            monitoredSessionsGroupedContent
+          }
+          .padding(12)
         }
-        .padding(12)
-      } else {
-        let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
-        LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
-          monitoredSessionsGroupedContent
+      }
+      .animation(.easeInOut(duration: 0.2), value: layoutMode)
+      .onChange(of: allItems.count) { _, newCount in
+        if newCount < 2 && layoutMode != .list {
+          withAnimation(.easeInOut(duration: 0.2)) {
+            layoutModeRawValue = LayoutMode.list.rawValue
+          }
         }
-        .padding(12)
       }
     }
-    .animation(.easeInOut(duration: 0.2), value: layoutMode)
-    .onChange(of: allItems.count) { _, newCount in
-      if newCount < 2 && layoutMode != .list {
-        withAnimation(.easeInOut(duration: 0.2)) {
-          layoutModeRawValue = LayoutMode.list.rawValue
-        }
+  }
+
+  // MARK: - Single Mode Content
+
+  @ViewBuilder
+  private var singleModeContent: some View {
+    if let item = visibleItems.first {
+      switch item {
+      case .pending(let pending):
+        let pendingId = "pending-\(pending.id.uuidString)"
+        MonitoringCardView(
+          session: pending.placeholderSession,
+          state: nil,
+          claudeClient: claudeClient,
+          cliConfiguration: viewModel.cliConfiguration,
+          providerKind: viewModel.providerKind,
+          showTerminal: true,
+          initialPrompt: pending.initialPrompt,
+          terminalKey: pendingId,
+          viewModel: viewModel,
+          dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
+          onToggleTerminal: { _ in },
+          onStopMonitoring: {
+            viewModel.cancelPendingSession(pending)
+          },
+          onConnect: { },
+          onCopySessionId: { },
+          onOpenSessionFile: { },
+          onRefreshTerminal: { },
+          isMaximized: false,
+          onToggleMaximize: { },
+          isPrimarySession: true,
+          showPrimaryIndicator: false
+        )
+        .id(pendingId)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(12)
+
+      case .monitored(let session, let state):
+        let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
+        let initialPrompt = viewModel.pendingPrompt(for: session.id)
+
+        MonitoringCardView(
+          session: session,
+          state: state,
+          planState: planState,
+          claudeClient: claudeClient,
+          cliConfiguration: viewModel.cliConfiguration,
+          providerKind: viewModel.providerKind,
+          showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
+          initialPrompt: initialPrompt,
+          terminalKey: session.id,
+          viewModel: viewModel,
+          onToggleTerminal: { show in
+            viewModel.setTerminalView(for: session.id, show: show)
+          },
+          onStopMonitoring: {
+            viewModel.stopMonitoring(session: session)
+          },
+          onConnect: {
+            _ = viewModel.connectToSession(session)
+          },
+          onCopySessionId: {
+            viewModel.copySessionId(session)
+          },
+          onOpenSessionFile: {
+            openSessionFile(for: session)
+          },
+          onRefreshTerminal: {
+            viewModel.refreshTerminal(
+              forKey: session.id,
+              sessionId: session.id,
+              projectPath: session.projectPath
+            )
+          },
+          onInlineRequestSubmit: { prompt, sess in
+            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          },
+          onPromptConsumed: {
+            viewModel.clearPendingPrompt(for: session.id)
+          },
+          isMaximized: false,
+          onToggleMaximize: { },
+          isPrimarySession: true,
+          showPrimaryIndicator: false
+        )
+        .id(session.id)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(12)
       }
     }
   }

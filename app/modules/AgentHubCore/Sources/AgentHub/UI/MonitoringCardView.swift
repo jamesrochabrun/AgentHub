@@ -441,17 +441,18 @@ public struct MonitoringCardView: View {
         .animation(.easeInOut(duration: 0.2), value: showTerminal)
       }
 
+      // TODO: Consider removing later
       // Maximize/Minimize button
-      Button(action: onToggleMaximize) {
-        Image(systemName: isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .frame(width: 24, height: 24)
-          .background(Color.secondary.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: 4))
-      }
-      .buttonStyle(.plain)
-      .help(isMaximized ? "Minimize" : "Maximize")
+//      Button(action: onToggleMaximize) {
+//        Image(systemName: isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+//          .font(.caption)
+//          .foregroundColor(.secondary)
+//          .frame(width: 24, height: 24)
+//          .background(Color.secondary.opacity(0.1))
+//          .clipShape(RoundedRectangle(cornerRadius: 4))
+//      }
+//      .buttonStyle(.plain)
+//      .help(isMaximized ? "Minimize" : "Maximize")
 
       // Close button (inline, hidden when maximized)
       if !isMaximized {
