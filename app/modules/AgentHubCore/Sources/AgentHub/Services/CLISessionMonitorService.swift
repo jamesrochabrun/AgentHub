@@ -128,14 +128,25 @@ public actor CLISessionMonitorService {
     // Get all paths to filter by (including worktree paths)
     let allPaths = getAllMonitoredPaths()
 
-    // Parse history for selected paths only
-    let historyEntries = await parseHistoryForPaths(allPaths)
+    async let sessionFiles = scanSessionFilesForPaths(allPaths)
+    async let historyEntries = parseHistoryForPaths(allPaths)
+    let historyBySession = Dictionary(grouping: await historyEntries) { $0.sessionId }
 
-    // Group entries by session ID
-    let sessionEntries = Dictionary(grouping: historyEntries) { $0.sessionId }
+    var sessionEntries: [String: [HistoryEntry]] = [:]
+    var sessionMetadata: [String: SessionMetadata] = [:]
 
-    // Build a map of session ID -> (gitBranch, slug) (read from session files in parallel)
-    let sessionMetadata = await readSessionMetadataBatch(sessionEntries: sessionEntries)
+    for (sessionId, fileInfo) in await sessionFiles {
+      sessionMetadata[sessionId] = SessionMetadata(
+        branch: fileInfo.branch,
+        slug: fileInfo.slug
+      )
+
+      if let historyMessages = historyBySession[sessionId] {
+        sessionEntries[sessionId] = historyMessages
+      } else {
+        sessionEntries[sessionId] = []
+      }
+    }
 
     // Build sessions and assign to worktrees
     var updatedRepositories = selectedRepositories
@@ -168,14 +179,15 @@ public actor CLISessionMonitorService {
         var sessions: [CLISession] = []
 
         for (sessionId, entries) in sessionEntries {
-          guard let firstEntry = entries.first else { continue }
-
           // Skip if already assigned to another worktree
           guard !assignedSessionIds.contains(sessionId) else { continue }
 
+          // Get file info (must exist since we discovered via file scan)
+          guard let fileInfo = await sessionFiles[sessionId] else { continue }
+
           // PRIMARY: Exact path match - session's project directory matches this worktree
-          // This is the most reliable criterion because firstEntry.project IS where the session runs
-          let pathMatchesWorktree = firstEntry.project == worktreePath
+          // Use fileInfo.projectPath as the authoritative source
+          let pathMatchesWorktree = fileInfo.projectPath == worktreePath
 
           if pathMatchesWorktree {
             // This is definitively the correct worktree - use this session
@@ -213,29 +225,33 @@ public actor CLISessionMonitorService {
               try? await metadataStore?.setRepoMapping(mapping)
             }
 
-            // Check if session is active
-            let encodedPath = firstEntry.project.claudeProjectPathEncoded
-            let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
-            var isActive = false
-            if let attrs = try? FileManager.default.attributesOfItem(atPath: sessionFilePath),
-               let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
-              let secondsAgo = Date().timeIntervalSince(modDate)
-              isActive = secondsAgo < 60
-            }
+            var firstMessage: String?
+            var lastMessage: String?
+            var lastActivityAt: Date
+            var messageCount: Int
 
-            let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
-            let firstMessage = sortedEntries.first { !isGreeting($0.display) }?.display
-              ?? sortedEntries.first?.display
-            let lastMessage = sortedEntries.last?.display
+            if !entries.isEmpty {
+              let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
+              firstMessage = sortedEntries.first { !isGreeting($0.display) }?.display
+                ?? sortedEntries.first?.display
+              lastMessage = sortedEntries.last?.display
+              lastActivityAt = entries.map { $0.date }.max() ?? Date()
+              messageCount = entries.count
+            } else {
+              firstMessage = fileInfo.firstMessage
+              lastMessage = fileInfo.lastMessage
+              lastActivityAt = fileInfo.lastTimestamp ?? Date()
+              messageCount = fileInfo.messageCount
+            }
 
             let session = CLISession(
               id: sessionId,
-              projectPath: firstEntry.project,
+              projectPath: fileInfo.projectPath,
               branchName: metadata?.branch ?? worktreeBranch,
               isWorktree: isWorktreeEntry,
-              lastActivityAt: entries.map { $0.date }.max() ?? Date(),
-              messageCount: entries.count,
-              isActive: isActive,
+              lastActivityAt: lastActivityAt,
+              messageCount: messageCount,
+              isActive: fileInfo.isActive,
               firstMessage: firstMessage,
               lastMessage: lastMessage,
               slug: metadata?.slug
@@ -250,7 +266,7 @@ public actor CLISessionMonitorService {
           // (e.g., session in /repo/subfolder should match worktree at /repo)
           // This must check the CURRENT worktree path, not all repo paths,
           // otherwise sessions from other worktrees would be incorrectly assigned
-          let pathIsSubdirectory = firstEntry.project.hasPrefix(worktreePath + "/")
+          let pathIsSubdirectory = fileInfo.projectPath.hasPrefix(worktreePath + "/")
           guard pathIsSubdirectory else { continue }
 
           // Get session's metadata from session file
@@ -288,31 +304,34 @@ public actor CLISessionMonitorService {
             try? await metadataStore?.setRepoMapping(mapping)
           }
 
-          // Check if session is active by looking at session file modification time
-          // A session is active if its .jsonl file was modified in the last 60 seconds
-          let encodedPath = firstEntry.project.claudeProjectPathEncoded
-          let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
-          var isActive = false
-          if let attrs = try? FileManager.default.attributesOfItem(atPath: sessionFilePath),
-             let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
-            let secondsAgo = Date().timeIntervalSince(modDate)
-            isActive = secondsAgo < 60
-          }
+          var firstMessage: String?
+          var lastMessage: String?
+          var lastActivityAt: Date
+          var messageCount: Int
 
           // Get the first and last message (sorted by timestamp)
-          let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
-          let firstMessage = sortedEntries.first { !isGreeting($0.display) }?.display
-            ?? sortedEntries.first?.display
-          let lastMessage = sortedEntries.last?.display
+          if !entries.isEmpty {
+            let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
+            firstMessage = sortedEntries.first { !isGreeting($0.display) }?.display
+              ?? sortedEntries.first?.display
+            lastMessage = sortedEntries.last?.display
+            lastActivityAt = entries.map { $0.date }.max() ?? Date()
+            messageCount = entries.count
+          } else {
+            firstMessage = fileInfo.firstMessage
+            lastMessage = fileInfo.lastMessage
+            lastActivityAt = fileInfo.lastTimestamp ?? Date()
+            messageCount = fileInfo.messageCount
+          }
 
           let session = CLISession(
             id: sessionId,
-            projectPath: firstEntry.project,
+            projectPath: fileInfo.projectPath,
             branchName: metadata?.branch ?? worktreeBranch,
             isWorktree: isWorktreeEntry,
-            lastActivityAt: entries.map { $0.date }.max() ?? Date(),
-            messageCount: entries.count,
-            isActive: isActive,
+            lastActivityAt: lastActivityAt,
+            messageCount: messageCount,
+            isActive: fileInfo.isActive,
             firstMessage: firstMessage,
             lastMessage: lastMessage,
             slug: metadata?.slug
@@ -425,14 +444,145 @@ public actor CLISessionMonitorService {
     let slug: String?
   }
 
+  /// Information extracted from scanning a session file directly
+  private struct SessionFileInfo: Sendable {
+    let sessionId: String
+    let projectPath: String
+    let filePath: String
+    let branch: String?
+    let slug: String?
+    let lastTimestamp: Date?
+    let isActive: Bool
+    let hasUserMessages: Bool
+    let firstMessage: String?
+    let lastMessage: String?
+    let messageCount: Int
+  }
+
+  /// Scans the projects folder directly for session files matching monitored paths
+  private func scanSessionFilesForPaths(_ paths: Set<String>) async -> [String: SessionFileInfo] {
+    let claudePath = claudeDataPath
+
+    return await Task.detached(priority: .userInitiated) {
+      var results: [String: SessionFileInfo] = [:]
+
+      for path in paths {
+        let encodedPath = path.claudeProjectPathEncoded
+        let projectDir = "\(claudePath)/projects/\(encodedPath)"
+
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: projectDir) else {
+          continue
+        }
+
+        for file in files where file.hasSuffix(".jsonl") {
+          let sessionId = String(file.dropLast(6))
+          let filePath = "\(projectDir)/\(file)"
+
+          if let info = Self.readSessionFileInfo(at: filePath, sessionId: sessionId, projectPath: path),
+             info.hasUserMessages {
+            results[sessionId] = info
+          }
+        }
+      }
+
+      return results
+    }.value
+  }
+
+  /// Reads session metadata and message previews from a session file
+  private static func readSessionFileInfo(at path: String, sessionId: String, projectPath: String) -> SessionFileInfo? {
+    guard let data = FileManager.default.contents(atPath: path) else {
+      AppLogger.session.warning("Failed to read session file at \(path, privacy: .public)")
+      return nil
+    }
+
+    guard let content = String(data: data, encoding: .utf8) else {
+      AppLogger.session.warning("Failed to decode session file as UTF-8 at \(path, privacy: .public)")
+      return nil
+    }
+
+    var branch: String?
+    var slug: String?
+    var lastTimestamp: Date?
+    var hasUserMessages = false
+    var firstUserMessage: String?
+    var lastUserMessage: String?
+    var messageCount = 0
+
+    let formatterWithFractional = ISO8601DateFormatter()
+    formatterWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let formatterWithoutFractional = ISO8601DateFormatter()
+    formatterWithoutFractional.formatOptions = [.withInternetDateTime]
+
+    content.enumerateLines { line, stop in
+      guard !line.isEmpty,
+            let jsonData = line.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+        return
+      }
+
+      if branch == nil, let b = json["gitBranch"] as? String { branch = b }
+      if slug == nil, let s = json["slug"] as? String { slug = s }
+      if let ts = json["timestamp"] as? String {
+        if let date = formatterWithFractional.date(from: ts) {
+          lastTimestamp = date
+        } else {
+          lastTimestamp = formatterWithoutFractional.date(from: ts)
+        }
+      }
+
+      if let type = json["type"] as? String, type == "user" {
+        hasUserMessages = true
+        messageCount += 1
+
+        if let message = json["message"] as? [String: Any],
+           let content = message["content"] as? [[String: Any]] {
+          for block in content {
+            if block["type"] as? String == "text",
+               let text = block["text"] as? String {
+              if firstUserMessage == nil {
+                firstUserMessage = text
+              }
+              lastUserMessage = text
+            }
+          }
+        }
+      }
+    }
+
+    var isActive = false
+    do {
+      let attrs = try FileManager.default.attributesOfItem(atPath: path)
+      if let modDate = attrs[FileAttributeKey.modificationDate] as? Date {
+        isActive = Date().timeIntervalSince(modDate) < 60
+      }
+    } catch {
+      AppLogger.session.warning("Failed to get file attributes for \(path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+    }
+
+    return SessionFileInfo(
+      sessionId: sessionId,
+      projectPath: projectPath,
+      filePath: path,
+      branch: branch,
+      slug: slug,
+      lastTimestamp: lastTimestamp,
+      isActive: isActive,
+      hasUserMessages: hasUserMessages,
+      firstMessage: firstUserMessage,
+      lastMessage: lastUserMessage,
+      messageCount: messageCount
+    )
+  }
+
+
   /// Reads gitBranch and slug from multiple session files in parallel using Task.detached
   /// - Parameter sessionEntries: Dictionary of session IDs to their history entries
   /// - Returns: Dictionary mapping session IDs to their metadata (branch and slug)
   private func readSessionMetadataBatch(sessionEntries: [String: [HistoryEntry]]) async -> [String: SessionMetadata] {
-    let claudePath = claudeDataPath  // Capture for sendable closure
+    let claudePath = claudeDataPath
 
     return await Task.detached(priority: .userInitiated) {
-      // Build list of (sessionId, filePath) to read
       var filesToRead: [(sessionId: String, filePath: String)] = []
       for (sessionId, entries) in sessionEntries {
         guard let firstEntry = entries.first else { continue }
@@ -447,13 +597,26 @@ public actor CLISessionMonitorService {
           group.addTask {
             // Read first 16KB to find gitBranch and slug (slug may appear after first few lines)
             guard let handle = FileHandle(forReadingAtPath: filePath) else {
+              AppLogger.session.warning("Failed to open session file at \(filePath, privacy: .public)")
               return (sessionId, nil)
             }
             defer { try? handle.close() }
 
             // Read first 16KB - slug may appear several lines into the file
-            guard let data = try? handle.read(upToCount: 16384),
-                  let content = String(data: data, encoding: .utf8) else {
+            guard let data = try? handle.read(upToCount: 16384) else {
+              AppLogger.session.warning("Failed to read session file at \(filePath, privacy: .public)")
+              return (sessionId, nil)
+            }
+
+            let validData: Data
+            if let lastNewline = data.lastIndex(of: 0x0A) {
+              validData = data[...lastNewline]
+            } else {
+              validData = data
+            }
+
+            guard let content = String(data: validData, encoding: .utf8) else {
+              AppLogger.session.warning("Failed to decode session file as UTF-8 at \(filePath, privacy: .public)")
               return (sessionId, nil)
             }
 
@@ -461,11 +624,11 @@ public actor CLISessionMonitorService {
             var foundBranch: String?
             var foundSlug: String?
 
-            for line in content.components(separatedBy: .newlines) {
+            content.enumerateLines { line, stop in
               guard !line.isEmpty,
                     let jsonData = line.data(using: .utf8),
                     let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                continue
+                return
               }
 
               if foundBranch == nil, let gitBranch = json["gitBranch"] as? String {
@@ -477,7 +640,7 @@ public actor CLISessionMonitorService {
 
               // Early exit if we found both
               if foundBranch != nil && foundSlug != nil {
-                break
+                stop = true
               }
             }
 
