@@ -175,9 +175,24 @@ public struct CLISessionsListView: View {
         }
       }
     }
+    .alert(
+      "Delete Session?",
+      isPresented: Binding(
+        get: { viewModel.sessionToDelete != nil },
+        set: { if !$0 { viewModel.cancelDeleteSession() } }
+      ),
+      presenting: viewModel.sessionToDelete
+    ) { session in
+      Button("Cancel", role: .cancel) {
+        viewModel.cancelDeleteSession()
+      }
+      Button("Delete", role: .destructive) {
+        Task { await viewModel.deleteSession(session) }
+      }
+    } message: { session in
+      Text("Delete session '\(session.slug ?? session.shortId)'?\n\nThis will permanently remove the session file from disk.")
+    }
   }
-
-  // MARK: - App Background
 
   private var appBackground: some View {
     LinearGradient(
@@ -524,7 +539,7 @@ public struct CLISessionsListView: View {
         statusHeader
 
         // Repository tree views
-        ForEach(viewModel.selectedRepositories) { repository in
+        ForEach(viewModel.filteredRepositories) { repository in
           CLIRepositoryTreeView(
             repository: repository,
             providerKind: viewModel.providerKind,
@@ -560,6 +575,12 @@ public struct CLISessionsListView: View {
             },
             onToggleMonitoring: { session in
               viewModel.toggleMonitoring(for: session)
+            },
+            onArchiveSession: { session in
+              viewModel.archiveSession(session)
+            },
+            onDeleteSession: { session in
+              viewModel.confirmDeleteSession(session)
             },
             onCreateWorktree: {
               createWorktreeRepository = repository
@@ -698,6 +719,29 @@ public struct CLISessionsListView: View {
         }
         .buttonStyle(.plain)
         .help(viewModel.showLastMessage ? "Showing last message" : "Showing first message")
+
+        // Show Archived toggle
+        Button(action: { viewModel.showArchivedSessions.toggle() }) {
+          HStack(spacing: 6) {
+            Image(systemName: viewModel.showArchivedSessions ? "archivebox.fill" : "archivebox")
+              .font(.system(size: DesignTokens.IconSize.sm))
+            Text(viewModel.showArchivedSessions ? "Hide archived" : "Show archived")
+              .font(.system(.caption, weight: .medium))
+          }
+          .foregroundColor(viewModel.showArchivedSessions ? .brandPrimary : .secondary)
+          .padding(.horizontal, DesignTokens.Spacing.sm)
+          .padding(.vertical, DesignTokens.Spacing.xs + 2)
+          .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+              .fill(Color.surfaceOverlay)
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+              .stroke(viewModel.showArchivedSessions ? Color.brandPrimary.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+          )
+        }
+        .buttonStyle(.plain)
+        .help(viewModel.showArchivedSessions ? "Hide archived sessions" : "Show archived sessions")
 
         // Refresh button
         Button(action: viewModel.refresh) {

@@ -18,6 +18,9 @@ public struct SessionMetadata: Codable, Sendable, FetchableRecord, PersistableRe
   /// User-provided name for the session (optional)
   public var customName: String?
 
+  /// Whether the session is archived (hidden from main view)
+  public var isArchived: Bool
+
   /// When the metadata was created
   public var createdAt: Date
 
@@ -33,11 +36,13 @@ public struct SessionMetadata: Codable, Sendable, FetchableRecord, PersistableRe
   public init(
     sessionId: String,
     customName: String? = nil,
+    isArchived: Bool = false,
     createdAt: Date = Date(),
     updatedAt: Date = Date()
   ) {
     self.sessionId = sessionId
     self.customName = customName
+    self.isArchived = isArchived
     self.createdAt = createdAt
     self.updatedAt = updatedAt
   }

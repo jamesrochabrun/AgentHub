@@ -21,6 +21,8 @@ public struct CLIRepositoryTreeView: View {
   let onOpenSessionFile: (CLISession) -> Void
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
+  let onArchiveSession: (CLISession) -> Void
+  let onDeleteSession: (CLISession) -> Void
   let onCreateWorktree: () -> Void
   let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
   let onOpenTerminalDangerousForWorktree: (WorktreeBranch) -> Void
@@ -46,6 +48,8 @@ public struct CLIRepositoryTreeView: View {
     onOpenSessionFile: @escaping (CLISession) -> Void,
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
+    onArchiveSession: @escaping (CLISession) -> Void,
+    onDeleteSession: @escaping (CLISession) -> Void,
     onCreateWorktree: @escaping () -> Void,
     onOpenTerminalForWorktree: @escaping (WorktreeBranch) -> Void,
     onOpenTerminalDangerousForWorktree: @escaping (WorktreeBranch) -> Void = { _ in },
@@ -67,6 +71,8 @@ public struct CLIRepositoryTreeView: View {
     self.onOpenSessionFile = onOpenSessionFile
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
+    self.onArchiveSession = onArchiveSession
+    self.onDeleteSession = onDeleteSession
     self.onCreateWorktree = onCreateWorktree
     self.onOpenTerminalForWorktree = onOpenTerminalForWorktree
     self.onOpenTerminalDangerousForWorktree = onOpenTerminalDangerousForWorktree
@@ -110,6 +116,8 @@ public struct CLIRepositoryTreeView: View {
             onOpenSessionFile: onOpenSessionFile,
             isSessionMonitored: isSessionMonitored,
             onToggleMonitoring: onToggleMonitoring,
+            onArchiveSession: onArchiveSession,
+            onDeleteSession: onDeleteSession,
             getCustomName: getCustomName,
             showLastMessage: showLastMessage,
             isDebugMode: isDebugMode,
@@ -263,6 +271,8 @@ public struct CLIRepositoryTreeView: View {
       onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in },
+      onArchiveSession: { _ in },
+      onDeleteSession: { _ in },
       onCreateWorktree: { },
       onOpenTerminalForWorktree: { _ in },
       onStartInHubForWorktree: { _ in }
@@ -290,6 +300,8 @@ public struct CLIRepositoryTreeView: View {
       onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
       onToggleMonitoring: { _ in },
+      onArchiveSession: { _ in },
+      onDeleteSession: { _ in },
       onCreateWorktree: { },
       onOpenTerminalForWorktree: { _ in },
       onStartInHubForWorktree: { _ in }

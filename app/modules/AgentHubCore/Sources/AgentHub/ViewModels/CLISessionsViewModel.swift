@@ -42,6 +42,17 @@ public final class CLISessionsViewModel {
   /// Cache of custom names keyed by session ID
   public private(set) var sessionCustomNames: [String: String] = [:]
 
+  // MARK: - Archive & Delete State
+
+  /// Session pending deletion (for confirmation)
+  public var sessionToDelete: CLISession? = nil
+
+  /// Whether to show archived sessions in the list
+  public var showArchivedSessions: Bool = false
+
+  /// Set of archived session IDs
+  private var archivedSessionIds: Set<String> = []
+
   // MARK: - Worktree Deletion State
 
   public private(set) var deletingWorktreePath: String? = nil
@@ -389,6 +400,7 @@ public final class CLISessionsViewModel {
     setupSubscriptions()
     restorePersistedRepositories()
     requestNotificationPermissions()
+    loadArchivedSessionIds()
 
     // Set initial timeout on file watcher
     Task {
@@ -453,6 +465,112 @@ public final class CLISessionsViewModel {
         }
       } catch {
         AppLogger.session.error("Failed to load custom names: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  // MARK: - Archive & Delete Management
+
+  /// Archives a session (instant, no confirmation needed)
+  public func archiveSession(_ session: CLISession) {
+    guard let store = metadataStore else { return }
+
+    // Stop monitoring if active
+    if monitoredSessionIds.contains(session.id) {
+      stopMonitoring(sessionId: session.id)
+    }
+
+    Task {
+      do {
+        try await store.archiveSession(session.id)
+        await MainActor.run {
+          archivedSessionIds.insert(session.id)
+          refresh()
+        }
+      } catch {
+        AppLogger.session.error("Failed to archive session: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  /// Unarchives a session (restores to view)
+  public func unarchiveSession(_ session: CLISession) {
+    guard let store = metadataStore else { return }
+
+    Task {
+      do {
+        try await store.unarchiveSession(session.id)
+        await MainActor.run {
+          archivedSessionIds.remove(session.id)
+          refresh()
+        }
+      } catch {
+        AppLogger.session.error("Failed to unarchive session: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  /// Deletes a session permanently (requires confirmation)
+  public func deleteSession(_ session: CLISession) async {
+    sessionToDelete = nil
+
+    // Stop monitoring if active
+    if monitoredSessionIds.contains(session.id) {
+      stopMonitoring(sessionId: session.id)
+    }
+
+    // Delete session file from disk
+    if let filePath = session.sessionFilePath {
+      do {
+        try FileManager.default.removeItem(atPath: filePath)
+      } catch {
+        AppLogger.session.error("Failed to delete session file at \(filePath): \(error.localizedDescription)")
+      }
+    } else if let fileURL = sessionFileURL(for: session) {
+      do {
+        try FileManager.default.removeItem(at: fileURL)
+      } catch {
+        AppLogger.session.error("Failed to delete session file at \(fileURL.path): \(error.localizedDescription)")
+      }
+    }
+
+    // Clean up metadata database
+    if let store = metadataStore {
+      try? await store.deleteMetadata(for: session.id)
+      try? await store.deleteRepoMapping(for: session.id)
+    }
+
+    archivedSessionIds.remove(session.id)
+    refresh()
+  }
+
+  /// Shows confirmation dialog for session deletion
+  public func confirmDeleteSession(_ session: CLISession) {
+    sessionToDelete = session
+  }
+
+  /// Cancels session deletion
+  public func cancelDeleteSession() {
+    sessionToDelete = nil
+  }
+
+  /// Check if session is archived
+  public func isArchived(sessionId: String) -> Bool {
+    archivedSessionIds.contains(sessionId)
+  }
+
+  /// Loads archived session IDs from the database
+  private func loadArchivedSessionIds() {
+    guard let store = metadataStore else { return }
+
+    Task {
+      do {
+        let archived = try await store.getArchivedSessionIds()
+        await MainActor.run {
+          archivedSessionIds = archived
+        }
+      } catch {
+        AppLogger.session.error("Failed to load archived session IDs: \(error.localizedDescription)")
       }
     }
   }
@@ -1118,6 +1236,8 @@ public final class CLISessionsViewModel {
     pendingHubSessions.removeAll { $0.id == pending.id }
   }
 
+  /// Resumes an existing session in the Hub's embedded terminal
+
   /// Watches for a new session file for the active provider.
   @MainActor
   private func watchForNewSession(pending: PendingHubSession, worktree: WorktreeBranch) async {
@@ -1594,6 +1714,27 @@ public final class CLISessionsViewModel {
   public var allSessions: [CLISession] {
     selectedRepositories.flatMap { repo in
       repo.worktrees.flatMap { $0.sessions }
+    }
+  }
+
+  /// Repositories with sessions filtered by archive status
+  public var filteredRepositories: [SelectedRepository] {
+    guard !showArchivedSessions else {
+      // Show all sessions including archived
+      return selectedRepositories
+    }
+
+    // Filter out archived sessions from each worktree
+    return selectedRepositories.map { repo in
+      var filteredRepo = repo
+      filteredRepo.worktrees = repo.worktrees.map { worktree in
+        var filteredWorktree = worktree
+        filteredWorktree.sessions = worktree.sessions.filter { session in
+          !archivedSessionIds.contains(session.id)
+        }
+        return filteredWorktree
+      }
+      return filteredRepo
     }
   }
 

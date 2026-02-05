@@ -20,6 +20,8 @@ public struct CLISessionRow: View {
   let onCopyId: () -> Void
   let onOpenFile: () -> Void
   let onToggleMonitoring: () -> Void
+  let onArchive: () -> Void
+  let onDelete: () -> Void
   var showLastMessage: Bool = false
 
   @State private var showCopyConfirmation = false
@@ -33,6 +35,8 @@ public struct CLISessionRow: View {
     onCopyId: @escaping () -> Void,
     onOpenFile: @escaping () -> Void,
     onToggleMonitoring: @escaping () -> Void,
+    onArchive: @escaping () -> Void,
+    onDelete: @escaping () -> Void,
     showLastMessage: Bool = false
   ) {
     self.session = session
@@ -43,6 +47,8 @@ public struct CLISessionRow: View {
     self.onCopyId = onCopyId
     self.onOpenFile = onOpenFile
     self.onToggleMonitoring = onToggleMonitoring
+    self.onArchive = onArchive
+    self.onDelete = onDelete
     self.showLastMessage = showLastMessage
   }
 
@@ -149,6 +155,30 @@ public struct CLISessionRow: View {
       .buttonStyle(.plain)
       .help("Copy full session ID")
 
+      // Resume in Hub button
+      Button {
+        onArchive()
+      } label: {
+        Image(systemName: "archivebox")
+          .font(.caption2)
+          .foregroundColor(.secondary)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("Archive session")
+
+      // Delete button
+      Button {
+        onDelete()
+      } label: {
+        Image(systemName: "trash")
+          .font(.caption2)
+          .foregroundColor(.secondary)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("Delete session")
+
       Spacer()
     }
   }
@@ -225,7 +255,9 @@ extension Date {
       onConnect: { },
       onCopyId: { },
       onOpenFile: { },
-      onToggleMonitoring: { }
+      onToggleMonitoring: { },
+      onArchive: { },
+      onDelete: { }
     )
 
     // Inactive worktree session with long message (being monitored)
@@ -245,7 +277,9 @@ extension Date {
       onConnect: { },
       onCopyId: { },
       onOpenFile: { },
-      onToggleMonitoring: { }
+      onToggleMonitoring: { },
+      onArchive: { },
+      onDelete: { }
     )
 
     // Session without slug (falls back to shortId)
@@ -264,7 +298,9 @@ extension Date {
       onConnect: { },
       onCopyId: { },
       onOpenFile: { },
-      onToggleMonitoring: { }
+      onToggleMonitoring: { },
+      onArchive: { },
+      onDelete: { }
     )
   }
   .padding()
