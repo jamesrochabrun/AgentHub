@@ -58,6 +58,8 @@ public struct MonitoringCardView: View {
   let onOpenSessionFile: () -> Void
   let onRefreshTerminal: () -> Void
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
+  let onShowDiff: ((CLISession, String) -> Void)?
+  let onShowPlan: ((CLISession, PlanState) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let isMaximized: Bool
   let onToggleMaximize: () -> Void
@@ -92,6 +94,8 @@ public struct MonitoringCardView: View {
     onOpenSessionFile: @escaping () -> Void,
     onRefreshTerminal: @escaping () -> Void,
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
+    onShowDiff: ((CLISession, String) -> Void)? = nil,
+    onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     isMaximized: Bool = false,
     onToggleMaximize: @escaping () -> Void = {},
@@ -116,6 +120,8 @@ public struct MonitoringCardView: View {
     self.onOpenSessionFile = onOpenSessionFile
     self.onRefreshTerminal = onRefreshTerminal
     self.onInlineRequestSubmit = onInlineRequestSubmit
+    self.onShowDiff = onShowDiff
+    self.onShowPlan = onShowPlan
     self.onPromptConsumed = onPromptConsumed
     self.isMaximized = isMaximized
     self.onToggleMaximize = onToggleMaximize
@@ -563,10 +569,14 @@ public struct MonitoringCardView: View {
       // Plan button
       if let planState = planState {
         Button(action: {
-          planSheetItem = PlanSheetItem(
-            session: session,
-            planState: planState
-          )
+          if let onShowPlan = onShowPlan {
+            onShowPlan(session, planState)
+          } else {
+            planSheetItem = PlanSheetItem(
+              session: session,
+              planState: planState
+            )
+          }
         }) {
           HStack(spacing: 4) {
             Image(systemName: "list.bullet.clipboard")
@@ -586,10 +596,14 @@ public struct MonitoringCardView: View {
 
       // Diff button
       Button(action: {
-        gitDiffSheetItem = GitDiffSheetItem(
-          session: session,
-          projectPath: session.projectPath
-        )
+        if let onShowDiff = onShowDiff {
+          onShowDiff(session, session.projectPath)
+        } else {
+          gitDiffSheetItem = GitDiffSheetItem(
+            session: session,
+            projectPath: session.projectPath
+          )
+        }
       }) {
         HStack(spacing: 4) {
           Image(systemName: "arrow.left.arrow.right")

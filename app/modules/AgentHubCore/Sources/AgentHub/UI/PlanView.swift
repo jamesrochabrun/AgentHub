@@ -21,6 +21,7 @@ public struct PlanView: View {
   let session: CLISession
   let planState: PlanState
   let onDismiss: () -> Void
+  var isEmbedded: Bool = false
 
   @State private var content: String?
   @State private var isLoading = true
@@ -29,11 +30,13 @@ public struct PlanView: View {
   public init(
     session: CLISession,
     planState: PlanState,
-    onDismiss: @escaping () -> Void
+    onDismiss: @escaping () -> Void,
+    isEmbedded: Bool = false
   ) {
     self.session = session
     self.planState = planState
     self.onDismiss = onDismiss
+    self.isEmbedded = isEmbedded
   }
 
   public var body: some View {
@@ -58,8 +61,8 @@ public struct PlanView: View {
       footer
     }
     .frame(
-      minWidth: 700, idealWidth: 900, maxWidth: .infinity,
-      minHeight: 550, idealHeight: 750, maxHeight: .infinity
+      minWidth: isEmbedded ? 300 : 700, idealWidth: isEmbedded ? .infinity : 900, maxWidth: .infinity,
+      minHeight: isEmbedded ? 300 : 550, idealHeight: isEmbedded ? .infinity : 750, maxHeight: .infinity
     )
     .onKeyPress(.escape) {
       onDismiss()
@@ -222,20 +225,19 @@ public struct PlanView: View {
       let expandedPath = (planState.filePath as NSString).expandingTildeInPath
       let fileURL = URL(fileURLWithPath: expandedPath)
 
-      let data = try Data(contentsOf: fileURL)
-      guard let text = String(data: data, encoding: .utf8) else {
-        throw PlanLoadError.invalidEncoding
-      }
+      let text = try await Task.detached {
+        let data = try Data(contentsOf: fileURL)
+        guard let text = String(data: data, encoding: .utf8) else {
+          throw PlanLoadError.invalidEncoding
+        }
+        return text
+      }.value
 
-      await MainActor.run {
-        self.content = text
-        self.isLoading = false
-      }
+      self.content = text
+      self.isLoading = false
     } catch {
-      await MainActor.run {
-        self.errorMessage = error.localizedDescription
-        self.isLoading = false
-      }
+      self.errorMessage = error.localizedDescription
+      self.isLoading = false
     }
   }
 

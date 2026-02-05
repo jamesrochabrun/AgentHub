@@ -28,6 +28,7 @@ public struct GitDiffView: View {
   let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
+  var isEmbedded: Bool = false
 
   /// Inline editor is enabled when either claudeClient or cliConfiguration is available
   private var isInlineEditorEnabled: Bool {
@@ -61,7 +62,8 @@ public struct GitDiffView: View {
     claudeClient: (any ClaudeCode)? = nil,
     cliConfiguration: CLICommandConfiguration? = nil,
     providerKind: SessionProviderKind = .claude,
-    onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil
+    onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
+    isEmbedded: Bool = false
   ) {
     self.session = session
     self.projectPath = projectPath
@@ -70,6 +72,7 @@ public struct GitDiffView: View {
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.onInlineRequestSubmit = onInlineRequestSubmit
+    self.isEmbedded = isEmbedded
   }
 
   public var body: some View {
@@ -108,8 +111,10 @@ public struct GitDiffView: View {
         }
       }
     }
-    .frame(minWidth: 1200, idealWidth: .infinity, maxWidth: .infinity,
-           minHeight: 800, idealHeight: .infinity, maxHeight: .infinity)
+    .frame(
+      minWidth: isEmbedded ? 400 : 1200, idealWidth: .infinity, maxWidth: .infinity,
+      minHeight: isEmbedded ? 400 : 800, idealHeight: .infinity, maxHeight: .infinity
+    )
     .onKeyPress(.escape) {
       if inlineEditorState.isShowing {
         withAnimation(.easeOut(duration: 0.15)) {
