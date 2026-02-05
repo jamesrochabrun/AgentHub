@@ -213,6 +213,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var maximizedSessionId: String?
   @State private var sidePanelContent: SidePanelContent?
   @State private var filterMode: HubFilterMode = .all
+  @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = LayoutMode.single.rawValue
@@ -220,6 +221,10 @@ public struct MultiProviderMonitoringPanelView: View {
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
+  }
+
+  private var canShowSidePanel: Bool {
+    availableDetailWidth >= 900
   }
 
   public init(
@@ -286,6 +291,13 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: effectivePrimarySessionId) { _, _ in
       sidePanelContent = nil
+    }
+    .onChange(of: canShowSidePanel) { _, canShow in
+      if !canShow {
+        withAnimation(.easeInOut(duration: 0.25)) {
+          sidePanelContent = nil
+        }
+      }
     }
   }
 
@@ -377,6 +389,15 @@ public struct MultiProviderMonitoringPanelView: View {
   private var monitoredSessionsList: some View {
     if layoutMode == .single {
       singleModeContent
+        .background(
+          GeometryReader { geometry in
+            Color.clear
+              .onAppear { availableDetailWidth = geometry.size.width }
+              .onChange(of: geometry.size.width) { _, newWidth in
+                availableDetailWidth = newWidth
+              }
+          }
+        )
     } else {
       ScrollView {
         if layoutMode == .list {
@@ -471,16 +492,12 @@ public struct MultiProviderMonitoringPanelView: View {
             onInlineRequestSubmit: { prompt, sess in
               viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
             },
-            onShowDiff: { session, projectPath in
-              withAnimation(.easeInOut(duration: 0.25)) {
-                sidePanelContent = .diff(sessionId: session.id, session: session, projectPath: projectPath)
-              }
-            },
-            onShowPlan: { session, planState in
-              withAnimation(.easeInOut(duration: 0.25)) {
-                sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
-              }
-            },
+            onShowDiff: canShowSidePanel ? { session, projectPath in
+              sidePanelContent = .diff(sessionId: session.id, session: session, projectPath: projectPath)
+            } : nil,
+            onShowPlan: canShowSidePanel ? { session, planState in
+              sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
+            } : nil,
             onPromptConsumed: {
               viewModel.clearPendingPrompt(for: session.id)
             },
@@ -494,7 +511,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
           if let panelContent = sidePanelContent {
             sidePanelView(for: panelContent, viewModel: viewModel)
-              .frame(minWidth: 400, idealWidth: 600)
+              .frame(minWidth: 700)
           }
         }
         .padding(12)
