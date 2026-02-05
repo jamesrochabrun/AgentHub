@@ -26,7 +26,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
   }
 
   private var headerTextColor: Color {
-    colorScheme == .dark ? .black : .white
+    colorScheme == .dark ? .primary : .white
   }
 
   public init(
@@ -59,7 +59,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
               contentArea
             }
           }
-          .background(.ultraThinMaterial)
+          .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
           .clipShape(RoundedRectangle(cornerRadius: 16))
         }
       }
@@ -100,7 +100,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
     .padding(.horizontal, 8)
     .padding(.vertical, 6)
     .frame(height: headerHeight)
-    .background(Color.secondary)
+    .background(colorScheme == .dark ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(Color.black.opacity(0.8)))
     .contentShape(Rectangle())
     .onTapGesture { cycleSize() }
   }
@@ -121,7 +121,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
             timestamp: item.timestamp,
             isPending: item.isPending,
             isPrimary: item.id == primarySessionId,
-            customName: customName(for: item)
+            customName: customName(for: item),
+            colorScheme: colorScheme
           ) {
             primarySessionId = item.id
           }
@@ -229,7 +230,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
   }
 
   private var headerTextColor: Color {
-    colorScheme == .dark ? .black : .white
+    colorScheme == .dark ? .primary : .white
   }
 
   public init(
@@ -257,7 +258,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
               contentArea
             }
           }
-          .background(.ultraThinMaterial)
+          .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
           .clipShape(RoundedRectangle(cornerRadius: 16))
         }
       }
@@ -298,7 +299,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     .padding(.horizontal, 8)
     .padding(.vertical, 6)
     .frame(height: headerHeight)
-    .background(Color.secondary)
+    .background(colorScheme == .dark ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(Color.black.opacity(0.8)))
     .contentShape(Rectangle())
     .onTapGesture { cycleSize() }
   }
@@ -319,7 +320,8 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
             timestamp: item.timestamp,
             isPending: item.isPending,
             isPrimary: item.id == primarySessionId,
-            customName: viewModel.sessionCustomNames[item.session.id]
+            customName: viewModel.sessionCustomNames[item.session.id],
+            colorScheme: colorScheme
           ) {
             primarySessionId = item.id
           }
@@ -386,12 +388,13 @@ private struct CollapsibleSessionRow: View {
   let isPending: Bool
   let isPrimary: Bool
   let customName: String?
+  let colorScheme: ColorScheme
   let onSelect: () -> Void
 
   var body: some View {
     HStack(spacing: 8) {
       Circle()
-        .fill(isPrimary ? Color.brandPrimary(for: providerKind) : .gray.opacity(0.5))
+        .fill(Color.brandPrimary(for: providerKind))
         .frame(width: 6, height: 6)
 
       VStack(alignment: .leading, spacing: 2) {
@@ -425,13 +428,21 @@ private struct CollapsibleSessionRow: View {
           if let branch = session.branchName {
             Text(branch)
               .font(.system(size: 10))
-              .foregroundColor(.secondary)
+              .foregroundColor(isPrimary ? .primary.opacity(0.7) : .secondary)
               .lineLimit(1)
           }
 
           Text(timestamp.timeAgoDisplay())
             .font(.system(size: 10))
-            .foregroundColor(.secondary.opacity(0.7))
+            .foregroundColor(isPrimary ? .primary.opacity(0.5) : .secondary.opacity(0.7))
+        }
+
+        // First message preview
+        if let message = session.firstMessage, !message.isEmpty {
+          Text(message.prefix(80) + (message.count > 80 ? "..." : ""))
+            .font(.caption)
+            .foregroundColor(.primary.opacity(0.8))
+            .lineLimit(1)
         }
       }
 
@@ -440,20 +451,16 @@ private struct CollapsibleSessionRow: View {
       Text(providerKind.rawValue)
         .font(.system(size: 9, weight: .medium))
         .foregroundColor(.brandPrimary(for: providerKind))
-
-      if isPrimary {
-        Image(systemName: "star.fill")
-          .font(.system(size: 9))
-          .foregroundColor(.brandPrimary(for: providerKind))
-      }
     }
     .padding(.vertical, 6)
     .padding(.horizontal, 8)
+    .foregroundColor(.primary)
     .contentShape(Rectangle())
     .onTapGesture { onSelect() }
     .background(
-      RoundedRectangle(cornerRadius: 6)
-        .fill(isPrimary ? Color.brandPrimary(for: providerKind).opacity(0.1) : Color.clear)
+      colorScheme == .dark
+        ? (isPrimary ? AnyShapeStyle(.thickMaterial) : AnyShapeStyle(Color.clear))
+        : (isPrimary ? AnyShapeStyle(Color.white) : AnyShapeStyle(.thickMaterial))
     )
   }
 }
