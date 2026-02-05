@@ -98,6 +98,14 @@ public enum AgentHubDefaults {
   /// Type: Int (default: 0 = single)
   public static let hubSessionDisplayMode = "\(keyPrefix)hub.sessionDisplayMode"
 
+  /// Whether the selected sessions panel is expanded
+  /// Type: Bool (default: true)
+  public static let selectedSessionsPanelExpanded = "\(keyPrefix)ui.selectedSessionsPanelExpanded"
+
+  /// Selected sessions panel size mode (collapsed, small, medium, full)
+  /// Type: Int (default: 1 = small)
+  public static let selectedSessionsPanelSizeMode = "\(keyPrefix)ui.selectedSessionsPanelSizeMode"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name
