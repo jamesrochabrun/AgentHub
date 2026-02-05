@@ -10,6 +10,23 @@ import Foundation
 import PierreDiffsSwift
 import SwiftUI
 
+// MARK: - SidePanelContent
+
+private enum SidePanelContent: Equatable {
+  case diff(sessionId: String, session: CLISession, projectPath: String)
+  case plan(sessionId: String, session: CLISession, planState: PlanState)
+
+  static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
+    switch (lhs, rhs) {
+    case (.diff(let id1, _, let p1), .diff(let id2, _, let p2)):
+      return id1 == id2 && p1 == p2
+    case (.plan(let id1, _, _), .plan(let id2, _, _)):
+      return id1 == id2
+    default: return false
+    }
+  }
+}
+
 // MARK: - SessionFileSheetItem
 
 private struct SessionFileSheetItem: Identifiable {
@@ -194,6 +211,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
+  @State private var sidePanelContent: SidePanelContent?
   @State private var filterMode: HubFilterMode = .all
   @Binding var primarySessionId: String?
   @AppStorage(AgentHubDefaults.hubLayoutMode)
@@ -265,6 +283,9 @@ public struct MultiProviderMonitoringPanelView: View {
       if layoutMode == .single {
         filterMode = .all
       }
+    }
+    .onChange(of: effectivePrimarySessionId) { _, _ in
+      sidePanelContent = nil
     }
   }
 
@@ -413,54 +434,95 @@ public struct MultiProviderMonitoringPanelView: View {
         let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
         let initialPrompt = viewModel.pendingPrompt(for: session.id)
 
-        MonitoringCardView(
-          session: session,
-          state: state,
-          planState: planState,
-          claudeClient: viewModel.claudeClient,
-          cliConfiguration: viewModel.cliConfiguration,
-          providerKind: item.providerKind,
-          showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
-          initialPrompt: initialPrompt,
-          terminalKey: session.id,
-          viewModel: viewModel,
-          onToggleTerminal: { show in
-            viewModel.setTerminalView(for: session.id, show: show)
-          },
-          onStopMonitoring: {
-            viewModel.stopMonitoring(session: session)
-          },
-          onConnect: {
-            _ = viewModel.connectToSession(session)
-          },
-          onCopySessionId: {
-            viewModel.copySessionId(session)
-          },
-          onOpenSessionFile: {
-            openSessionFile(for: session, viewModel: viewModel)
-          },
-          onRefreshTerminal: {
-            viewModel.refreshTerminal(
-              forKey: session.id,
-              sessionId: session.id,
-              projectPath: session.projectPath
-            )
-          },
-          onInlineRequestSubmit: { prompt, sess in
-            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
-          },
-          onPromptConsumed: {
-            viewModel.clearPendingPrompt(for: session.id)
-          },
-          isMaximized: false,
-          onToggleMaximize: { },
-          isPrimarySession: true,
-          showPrimaryIndicator: false
-        )
-        .id(session.id)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        HSplitView {
+          MonitoringCardView(
+            session: session,
+            state: state,
+            planState: planState,
+            claudeClient: viewModel.claudeClient,
+            cliConfiguration: viewModel.cliConfiguration,
+            providerKind: item.providerKind,
+            showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
+            initialPrompt: initialPrompt,
+            terminalKey: session.id,
+            viewModel: viewModel,
+            onToggleTerminal: { show in
+              viewModel.setTerminalView(for: session.id, show: show)
+            },
+            onStopMonitoring: {
+              viewModel.stopMonitoring(session: session)
+            },
+            onConnect: {
+              _ = viewModel.connectToSession(session)
+            },
+            onCopySessionId: {
+              viewModel.copySessionId(session)
+            },
+            onOpenSessionFile: {
+              openSessionFile(for: session, viewModel: viewModel)
+            },
+            onRefreshTerminal: {
+              viewModel.refreshTerminal(
+                forKey: session.id,
+                sessionId: session.id,
+                projectPath: session.projectPath
+              )
+            },
+            onInlineRequestSubmit: { prompt, sess in
+              viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+            },
+            onShowDiff: { session, projectPath in
+              withAnimation(.easeInOut(duration: 0.25)) {
+                sidePanelContent = .diff(sessionId: session.id, session: session, projectPath: projectPath)
+              }
+            },
+            onShowPlan: { session, planState in
+              withAnimation(.easeInOut(duration: 0.25)) {
+                sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
+              }
+            },
+            onPromptConsumed: {
+              viewModel.clearPendingPrompt(for: session.id)
+            },
+            isMaximized: false,
+            onToggleMaximize: { },
+            isPrimarySession: true,
+            showPrimaryIndicator: false
+          )
+          .id(session.id)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+          if let panelContent = sidePanelContent {
+            sidePanelView(for: panelContent, viewModel: viewModel)
+              .frame(minWidth: 400, idealWidth: 600)
+          }
+        }
         .padding(12)
       }
+    }
+  }
+
+  @ViewBuilder
+  private func sidePanelView(for content: SidePanelContent, viewModel: CLISessionsViewModel) -> some View {
+    switch content {
+    case .diff(_, let session, let projectPath):
+      GitDiffView(
+        session: session,
+        projectPath: projectPath,
+        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        claudeClient: viewModel.claudeClient,
+        cliConfiguration: viewModel.cliConfiguration,
+        providerKind: visibleItems.first?.providerKind ?? .claude,
+        onInlineRequestSubmit: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) },
+        isEmbedded: true
+      )
+    case .plan(_, let session, let planState):
+      PlanView(
+        session: session,
+        planState: planState,
+        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        isEmbedded: true
+      )
     }
   }
 

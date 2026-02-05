@@ -481,11 +481,11 @@ public struct MultiProviderSessionsListView: View {
     let viewModel = isClaudeSelected ? claudeViewModel : codexViewModel
     let providerKind: SessionProviderKind = isClaudeSelected ? .claude : .codex
     let isInstalled = isClaudeSelected ? claudeInstalled : codexInstalled
-    let hasSessions = isClaudeSelected ? claudeHasSessions : codexHasSessions
+    let hasRepositories = isClaudeSelected ? !claudeViewModel.selectedRepositories.isEmpty : !codexViewModel.selectedRepositories.isEmpty
 
     if !isInstalled {
       CLINotInstalledView(provider: selectedProvider)
-    } else if hasSessions {
+    } else if hasRepositories {
       ProviderSectionView(
         viewModel: viewModel,
         onRemoveRepository: removeRepository,
