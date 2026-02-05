@@ -65,6 +65,10 @@ public struct CollapsibleSelectedSessionsPanel: View {
       }
       .animation(.spring(response: 0.3, dampingFraction: 0.8), value: sizeMode)
       .onAppear {
+        // Auto-expand if collapsed when sessions exist
+        if sizeMode == .collapsed {
+          sizeModeRawValue = PanelSizeMode.small.rawValue
+        }
         ensurePrimarySelection()
       }
       .onChange(of: items.map(\.id)) { _, _ in
@@ -259,6 +263,10 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
       }
       .animation(.spring(response: 0.3, dampingFraction: 0.8), value: sizeMode)
       .onAppear {
+        // Auto-expand if collapsed when sessions exist
+        if sizeMode == .collapsed {
+          sizeModeRawValue = PanelSizeMode.small.rawValue
+        }
         ensurePrimarySelection()
       }
       .onChange(of: items.map(\.id)) { _, _ in
