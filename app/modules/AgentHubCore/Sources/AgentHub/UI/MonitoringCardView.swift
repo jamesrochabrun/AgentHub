@@ -425,9 +425,9 @@ public struct MonitoringCardView: View {
           }
           .buttonStyle(.plain)
 
-          // List/Monitor button (right)
+          // Monitor button (right)
           Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(false) } }) {
-            Image(systemName: "list.bullet")
+            Image(systemName: "waveform.circle")
               .font(.caption)
               .frame(width: 28, height: 22)
               .foregroundColor(!showTerminal ? .primary : .secondary)
