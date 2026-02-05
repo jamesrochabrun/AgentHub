@@ -13,9 +13,6 @@ public struct SelectedSessionsPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   @Binding var primarySessionId: String?
 
-  @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
-  private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue
-
   public init(
     viewModel: CLISessionsViewModel,
     primarySessionId: Binding<String?>
@@ -79,7 +76,6 @@ public struct SelectedSessionsPanelView: View {
 
       Spacer()
 
-      HubSessionDisplayModeControl(mode: displayModeBinding)
     }
     .padding(.horizontal, 4)
   }
@@ -103,13 +99,6 @@ public struct SelectedSessionsPanelView: View {
   }
 
   // MARK: - Data
-
-  private var displayModeBinding: Binding<HubSessionDisplayMode> {
-    Binding(
-      get: { HubSessionDisplayMode(rawValue: displayModeRawValue) ?? .single },
-      set: { displayModeRawValue = $0.rawValue }
-    )
-  }
 
   private struct SelectedSessionItem: Identifiable {
     let id: String
@@ -181,9 +170,6 @@ public struct MultiProviderSelectedSessionsPanelView: View {
   @Bindable var codexViewModel: CLISessionsViewModel
   @Binding var primarySessionId: String?
 
-  @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
-  private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue
-
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
@@ -249,7 +235,6 @@ public struct MultiProviderSelectedSessionsPanelView: View {
 
       Spacer()
 
-      HubSessionDisplayModeControl(mode: displayModeBinding)
     }
     .padding(.horizontal, 4)
   }
@@ -273,13 +258,6 @@ public struct MultiProviderSelectedSessionsPanelView: View {
   }
 
   // MARK: - Data
-
-  private var displayModeBinding: Binding<HubSessionDisplayMode> {
-    Binding(
-      get: { HubSessionDisplayMode(rawValue: displayModeRawValue) ?? .single },
-      set: { displayModeRawValue = $0.rawValue }
-    )
-  }
 
   private struct SelectedSessionItem: Identifiable {
     let id: String
@@ -386,33 +364,6 @@ public struct MultiProviderSelectedSessionsPanelView: View {
     }
 
     primarySessionId = items.first?.id
-  }
-}
-
-// MARK: - HubSessionDisplayModeControl
-
-private struct HubSessionDisplayModeControl: View {
-  @Binding var mode: HubSessionDisplayMode
-
-  var body: some View {
-    HStack(spacing: 4) {
-      ForEach(HubSessionDisplayMode.allCases, id: \.rawValue) { item in
-        Button(action: { mode = item }) {
-          Text(item.title)
-            .font(.caption)
-            .foregroundColor(mode == item ? .primary : .secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(mode == item ? Color.secondary.opacity(0.2) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-      }
-    }
-    .padding(4)
-    .background(Color.secondary.opacity(0.12))
-    .clipShape(RoundedRectangle(cornerRadius: 6))
   }
 }
 

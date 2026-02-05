@@ -35,7 +35,6 @@ public struct CLISessionsListView: View {
   @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var isSearchSheetVisible: Bool = false
-  @State private var sidePanelMode: SidePanelMode = .all
   @State private var primarySessionId: String?
   @Environment(\.colorScheme) private var colorScheme
   @FocusState private var isSearchFieldFocused: Bool
@@ -49,7 +48,6 @@ public struct CLISessionsListView: View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       // Sidebar: Session list
       sidePanelView
-        .padding(12)
         .agentHubPanel()
         .navigationSplitViewColumnWidth(min: 300, ideal: 400)
         .padding(.vertical, 8)
@@ -193,28 +191,9 @@ public struct CLISessionsListView: View {
     )
   }
 
-  // MARK: - Session List Panel
+  // MARK: - Session List Content
 
-  private enum SidePanelMode: Int {
-    case all
-    case selected
-
-    var title: String {
-      switch self {
-      case .all: return "All Sessions"
-      case .selected: return "Selected"
-      }
-    }
-
-    var icon: String {
-      switch self {
-      case .all: return "list.bullet"
-      case .selected: return "star"
-      }
-    }
-  }
-
-  private var sessionListPanel: some View {
+  private var sessionListContent: some View {
     VStack(spacing: 0) {
       // Add repository button (always visible)
       CLIRepositoryPickerView(onAddRepository: viewModel.showAddRepositoryPicker)
@@ -241,74 +220,46 @@ public struct CLISessionsListView: View {
     .animation(.easeInOut(duration: 0.2), value: isSearchSheetVisible)
   }
 
+  @AppStorage(AgentHubDefaults.selectedSessionsPanelSizeMode)
+  private var panelSizeModeRawValue: Int = PanelSizeMode.small.rawValue
+
+  private var panelSizeMode: PanelSizeMode {
+    PanelSizeMode(rawValue: panelSizeModeRawValue) ?? .small
+  }
+
   private var sidePanelView: some View {
-    VStack(spacing: 8) {
-      sidePanelNavigationBar
-
-      GeometryReader { geo in
-        ZStack(alignment: .leading) {
-          sessionListPanel
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-            .offset(x: sidePanelMode == .all ? 0 : -geo.size.width)
-            .opacity(sidePanelMode == .all ? 1 : 0)
-            .allowsHitTesting(sidePanelMode == .all)
-
-          selectedSessionsPanel
-            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
-            .offset(x: sidePanelMode == .selected ? 0 : geo.size.width)
-            .opacity(sidePanelMode == .selected ? 1 : 0)
-            .allowsHitTesting(sidePanelMode == .selected)
+    GeometryReader { geometry in
+      VStack(spacing: 0) {
+        if panelSizeMode != .full {
+          sessionListContent
+            .padding(12)
         }
-        .clipped()
-        .animation(.easeInOut(duration: 0.25), value: sidePanelMode)
+
+        SingleProviderCollapsibleSelectedSessionsPanel(
+          viewModel: viewModel,
+          primarySessionId: $primarySessionId
+        )
+        .frame(height: panelHeight(for: geometry.size.height))
       }
     }
   }
 
-  private var sidePanelNavigationBar: some View {
-    HStack(spacing: 4) {
-      if sidePanelMode == .selected {
-        Button(action: {
-          withAnimation(.easeInOut(duration: 0.25)) {
-            sidePanelMode = .all
-          }
-        }) {
-          HStack(spacing: 6) {
-            Image(systemName: "chevron.left")
-            Text("All Sessions")
-          }
-          .font(.caption)
-          .foregroundColor(.secondary)
-        }
-        .buttonStyle(.plain)
-      }
+  private func panelHeight(for availableHeight: CGFloat) -> CGFloat {
+    let headerHeight: CGFloat = 40
+    let monitoredCount = viewModel.monitoredSessions.count + viewModel.pendingHubSessions.count
 
-      Spacer()
+    guard monitoredCount > 0 else { return 0 }
 
-      if sidePanelMode == .all {
-        Button(action: {
-          withAnimation(.easeInOut(duration: 0.25)) {
-            sidePanelMode = .selected
-          }
-        }) {
-          HStack(spacing: 6) {
-            Text("Selected")
-            Image(systemName: "chevron.right")
-          }
-          .font(.caption)
-          .foregroundColor(.secondary)
-        }
-        .buttonStyle(.plain)
-      }
+    switch panelSizeMode {
+    case .collapsed:
+      return headerHeight
+    case .small:
+      return 250 + headerHeight
+    case .medium:
+      return availableHeight / 2  // Center Y point
+    case .full:
+      return availableHeight
     }
-    .padding(.horizontal, 4)
-  }
-
-  private var selectedSessionsPanel: some View {
-    SelectedSessionsPanelView(
-      viewModel: viewModel,
-      primarySessionId: $primarySessionId
-    )
   }
 
   // MARK: - Search Bar

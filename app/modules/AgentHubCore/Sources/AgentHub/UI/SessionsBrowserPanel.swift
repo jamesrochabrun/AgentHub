@@ -17,9 +17,6 @@ public struct SessionsBrowserPanel: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
 
-  @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
-  private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue
-
   @Environment(\.colorScheme) private var colorScheme
 
   public init(claudeViewModel: CLISessionsViewModel, codexViewModel: CLISessionsViewModel) {
@@ -29,9 +26,14 @@ public struct SessionsBrowserPanel: View {
 
   public var body: some View {
     VStack(spacing: 0) {
-      // Header: Display mode toggle (Single/Multi)
-      displayModeHeader
-        .padding(.bottom, 8)
+      // Header
+      HStack {
+        Text("Hub Sessions")
+          .font(.subheadline.weight(.semibold))
+          .foregroundColor(.secondary)
+        Spacer()
+      }
+      .padding(.bottom, 8)
 
       // Monitored sessions grouped by module
       if allMonitoredItems.isEmpty {
@@ -51,48 +53,6 @@ public struct SessionsBrowserPanel: View {
         }
       }
     }
-  }
-
-  // MARK: - Display Mode Header
-
-  private var displayModeHeader: some View {
-    HStack(spacing: 8) {
-      Text("Hub Sessions")
-        .font(.subheadline.weight(.semibold))
-        .foregroundColor(.secondary)
-
-      Spacer()
-
-      // Display mode toggle
-      HStack(spacing: 4) {
-        ForEach(HubSessionDisplayMode.allCases, id: \.self) { mode in
-          displayModeButton(for: mode)
-        }
-      }
-      .padding(3)
-      .background(Color.secondary.opacity(0.12))
-      .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
-  }
-
-  private func displayModeButton(for mode: HubSessionDisplayMode) -> some View {
-    Button {
-      setDisplayMode(mode)
-    } label: {
-      HStack(spacing: 4) {
-        Image(systemName: mode.icon)
-          .font(.system(size: 10))
-        Text(mode.displayName)
-          .font(.caption2)
-      }
-      .foregroundColor(currentDisplayMode == mode ? .primary : .secondary)
-      .padding(.horizontal, 8)
-      .padding(.vertical, 4)
-      .background(currentDisplayMode == mode ? Color.secondary.opacity(0.2) : Color.clear)
-      .clipShape(RoundedRectangle(cornerRadius: 4))
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
   }
 
   // MARK: - Empty State
@@ -249,32 +209,19 @@ public struct SessionsBrowserPanel: View {
 
   // MARK: - Focus/Selection Logic
 
-  private var currentDisplayMode: HubSessionDisplayMode {
-    HubSessionDisplayMode(rawValue: displayModeRawValue) ?? .single
-  }
-
-  private func setDisplayMode(_ mode: HubSessionDisplayMode) {
-    displayModeRawValue = mode.rawValue
-  }
-
   private func isFocused(_ item: ProviderMonitoringItem) -> Bool {
-    guard currentDisplayMode == .single else { return false }
-    // In single mode, just check if this is the only visible item
-    return true
+    false
   }
 
   private func isHighlighted(_ item: ProviderMonitoringItem) -> Bool {
-    guard currentDisplayMode == .allMonitored else { return false }
-    return false  // No highlight tracking for now
+    false
   }
 
   private func selectSession(_ item: ProviderMonitoringItem) {
     switch item {
     case .pending:
-      // Pending sessions can't be selected
       break
     case .monitored(_, let viewModel, let session, _):
-      // Start monitoring if not already monitored
       if !viewModel.isMonitoring(sessionId: session.id) {
         viewModel.startMonitoring(session: session)
       }

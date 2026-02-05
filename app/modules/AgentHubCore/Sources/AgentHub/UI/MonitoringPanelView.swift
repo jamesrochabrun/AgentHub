@@ -23,12 +23,14 @@ private struct SessionFileSheetItem: Identifiable {
 
 /// Layout modes for the monitoring panel
 private enum LayoutMode: Int, CaseIterable {
-  case list = 0
-  case twoColumn = 1
-  case threeColumn = 2
+  case single = 0
+  case list = 1
+  case twoColumn = 2
+  case threeColumn = 3
 
   var columnCount: Int {
     switch self {
+    case .single: return 1
     case .list: return 1
     case .twoColumn: return 2
     case .threeColumn: return 3
@@ -37,6 +39,7 @@ private enum LayoutMode: Int, CaseIterable {
 
   var icon: String {
     switch self {
+    case .single: return "rectangle"
     case .list: return "list.bullet"
     case .twoColumn: return "square.grid.2x2"
     case .threeColumn: return "square.grid.3x3"
@@ -96,20 +99,15 @@ public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
-  @State private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
   /// Primary session shown in Single mode and highlighted in All mode
   @Binding var primarySessionId: String?
-  @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
-  private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue
+  @AppStorage(AgentHubDefaults.hubLayoutMode)
+  private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @Environment(\.colorScheme) private var colorScheme
 
   private var layoutMode: LayoutMode {
-    get { LayoutMode(rawValue: layoutModeRawValue) ?? .list }
-  }
-
-  private var displayMode: HubSessionDisplayMode {
-    HubSessionDisplayMode(rawValue: displayModeRawValue) ?? .single
+    get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
   }
 
   public init(
@@ -163,13 +161,11 @@ public struct MonitoringPanelView: View {
   }
 
   private var visibleItems: [MonitoringItem] {
-    switch displayMode {
-    case .allMonitored:
-      return allItems
-    case .single:
+    if layoutMode == .single {
       guard let selectedId = effectivePrimarySessionId else { return [] }
       return allItems.filter { $0.id == selectedId }
     }
+    return allItems
   }
 
   /// All sessions (pending + monitored) grouped by module (main repository path)
@@ -246,28 +242,26 @@ public struct MonitoringPanelView: View {
 
       Spacer()
 
-      // Layout toggle (only show when > 2 sessions total)
-      let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
-      if displayMode == .allMonitored, totalSessions >= 2 {
-        HStack(spacing: 4) {
-          ForEach(LayoutMode.allCases, id: \.rawValue) { mode in
-            Button(action: { withAnimation(.easeInOut(duration: 0.2)) { layoutModeRawValue = mode.rawValue } }) {
-              Image(systemName: mode.icon)
-                .font(.caption)
-                .frame(width: 28, height: 22)
-                .foregroundColor(layoutMode == mode ? .brandPrimary : .secondary)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+      // Layout toggle (single / list / grid)
+      HStack(spacing: 4) {
+        ForEach(LayoutMode.allCases, id: \.rawValue) { mode in
+          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { layoutModeRawValue = mode.rawValue } }) {
+            Image(systemName: mode.icon)
+              .font(.caption)
+              .frame(width: 28, height: 22)
+              .foregroundColor(layoutMode == mode ? .brandPrimary : .secondary)
+              .contentShape(Rectangle())
           }
+          .buttonStyle(.plain)
         }
-        .padding(4)
-        .background(Color.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .animation(.easeInOut(duration: 0.2), value: layoutMode)
       }
+      .padding(4)
+      .background(Color.secondary.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: 6))
+      .animation(.easeInOut(duration: 0.2), value: layoutMode)
 
       // Count badge (includes both monitored and pending)
+      let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
       if totalSessions > 0 {
         Text("\(totalSessions)")
           .font(.system(.caption, design: .rounded).weight(.semibold))
@@ -343,7 +337,7 @@ public struct MonitoringPanelView: View {
           }
         },
         isPrimarySession: isPrimary,
-        showPrimaryIndicator: displayMode == .allMonitored
+        showPrimaryIndicator: layoutMode != .single
       )
     } else if let item = viewModel.monitoredSessions.first(where: { $0.session.id == sessionId }) {
       let planState = item.state.flatMap {
@@ -400,7 +394,7 @@ public struct MonitoringPanelView: View {
           }
         },
         isPrimarySession: isPrimary,
-        showPrimaryIndicator: displayMode == .allMonitored
+        showPrimaryIndicator: layoutMode != .single
       )
     }
   }
@@ -409,7 +403,7 @@ public struct MonitoringPanelView: View {
 
   @ViewBuilder
   private var monitoredSessionsList: some View {
-    if displayMode == .single {
+    if layoutMode == .single {
       singleModeContent
     } else {
       ScrollView {
@@ -427,13 +421,6 @@ public struct MonitoringPanelView: View {
         }
       }
       .animation(.easeInOut(duration: 0.2), value: layoutMode)
-      .onChange(of: allItems.count) { _, newCount in
-        if newCount < 2 && layoutMode != .list {
-          withAnimation(.easeInOut(duration: 0.2)) {
-            layoutModeRawValue = LayoutMode.list.rawValue
-          }
-        }
-      }
     }
   }
 
@@ -560,7 +547,7 @@ public struct MonitoringPanelView: View {
           }
         },
         isPrimarySession: isPrimary,
-        showPrimaryIndicator: displayMode == .allMonitored
+        showPrimaryIndicator: layoutMode != .single
       )
     }
 
@@ -619,7 +606,7 @@ public struct MonitoringPanelView: View {
           }
         },
         isPrimarySession: isPrimary,
-        showPrimaryIndicator: displayMode == .allMonitored
+        showPrimaryIndicator: layoutMode != .single
       )
     }
   }
@@ -665,7 +652,7 @@ public struct MonitoringPanelView: View {
                 }
               },
               isPrimarySession: isPrimary,
-              showPrimaryIndicator: displayMode == .allMonitored
+              showPrimaryIndicator: layoutMode != .single
             )
 
           case .monitored(let session, let state):
@@ -721,7 +708,7 @@ public struct MonitoringPanelView: View {
                 }
               },
               isPrimarySession: isPrimary,
-              showPrimaryIndicator: displayMode == .allMonitored
+              showPrimaryIndicator: layoutMode != .single
             )
           }
         }
