@@ -176,23 +176,6 @@ public struct GitDiffView: View {
         }
       }
 
-      Spacer()
-
-      // Mode segmented control
-      Picker("Diff Mode", selection: $diffMode) {
-        ForEach(DiffMode.allCases) { mode in
-          Label(mode.rawValue, systemImage: mode.icon)
-            .tag(mode)
-        }
-      }
-      .pickerStyle(.segmented)
-      .frame(width: 280)
-      .onChange(of: diffMode) { _, newMode in
-        Task { await loadChanges(for: newMode) }
-      }
-
-      Spacer()
-
       // Session info
       HStack(spacing: 8) {
         Text(session.shortId)
@@ -207,6 +190,19 @@ public struct GitDiffView: View {
       }
 
       Spacer()
+
+      // Segmented control
+      Picker("", selection: $diffMode) {
+        ForEach(DiffMode.allCases) { mode in
+          Text(mode.rawValue).tag(mode)
+        }
+      }
+      .pickerStyle(.segmented)
+      .frame(width: 250)
+      .tint(Color.primary)
+      .onChange(of: diffMode) { _, newMode in
+        Task { await loadChanges(for: newMode) }
+      }
 
       Button("Close") {
         if commentsState.hasComments {
