@@ -29,7 +29,7 @@ struct InlineEditorOverlay: View {
   let commentsState: DiffCommentsState?
 
   // Editor dimensions for positioning calculations
-  private let editorWidth: CGFloat = 700
+  private let editorWidth: CGFloat = 595
   private let editorHeight: CGFloat = 64
   private let verticalOffset: CGFloat = 12
   private let leadingPadding: CGFloat = 20

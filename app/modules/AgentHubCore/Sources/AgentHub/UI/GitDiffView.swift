@@ -51,6 +51,7 @@ public struct GitDiffView: View {
   @State private var commentsState = DiffCommentsState()
   @State private var showDiscardCommentsAlert = false
   @State private var expandedPaths: Set<String> = []
+  @State private var showSidebar: Bool = true
   @State private var treeCommonPrefix: String = ""
 
   private let gitDiffService = GitDiffService()
@@ -91,14 +92,18 @@ public struct GitDiffView: View {
         emptyState
       } else {
         VStack(spacing: 0) {
-          HSplitView {
-            // File list sidebar
-            fileListSidebar
-              .frame(minWidth: 200, idealWidth: 250, maxWidth: 300)
+          HStack(spacing: 0) {
+            if showSidebar {
+              // File list sidebar
+              fileListSidebar
+                .frame(width: 250)
+              Divider()
+            }
 
             // Diff viewer
             diffViewer
           }
+          .animation(.easeInOut(duration: 0.25), value: showSidebar)
 
           // Comments panel (shown when there are comments)
           if commentsState.hasComments {
@@ -153,17 +158,6 @@ public struct GitDiffView: View {
   private var header: some View {
     HStack {
       HStack(spacing: 8) {
-        Image(systemName: "arrow.left.arrow.right")
-          .font(.title3)
-          .foregroundColor(.brandPrimary(for: providerKind))
-
-        Text("Git Diff")
-          .font(.title3.weight(.semibold))
-
-        Text("(\(diffState.fileCount) files)")
-          .font(.title3)
-          .foregroundColor(.secondary)
-
         // Comment count badge
         if commentsState.hasComments {
           HStack(spacing: 4) {
@@ -182,23 +176,6 @@ public struct GitDiffView: View {
         }
       }
 
-      Spacer()
-
-      // Mode segmented control
-      Picker("Diff Mode", selection: $diffMode) {
-        ForEach(DiffMode.allCases) { mode in
-          Label(mode.rawValue, systemImage: mode.icon)
-            .tag(mode)
-        }
-      }
-      .pickerStyle(.segmented)
-      .frame(width: 280)
-      .onChange(of: diffMode) { _, newMode in
-        Task { await loadChanges(for: newMode) }
-      }
-
-      Spacer()
-
       // Session info
       HStack(spacing: 8) {
         Text(session.shortId)
@@ -213,6 +190,19 @@ public struct GitDiffView: View {
       }
 
       Spacer()
+
+      // Segmented control
+      Picker("", selection: $diffMode) {
+        ForEach(DiffMode.allCases) { mode in
+          Text(mode.rawValue).tag(mode)
+        }
+      }
+      .pickerStyle(.segmented)
+      .frame(width: 250)
+      .tint(Color.primary)
+      .onChange(of: diffMode) { _, newMode in
+        Task { await loadChanges(for: newMode) }
+      }
 
       Button("Close") {
         if commentsState.hasComments {
@@ -484,6 +474,7 @@ public struct GitDiffView: View {
             newContent: contents.new,
             fileName: file.fileName,
             filePath: file.filePath,
+            showSidebar: $showSidebar,
             diffStyle: $diffStyle,
             overflowMode: $overflowMode,
             inlineEditorState: inlineEditorState,
@@ -939,6 +930,7 @@ private struct GitDiffContentView: View {
   let fileName: String
   let filePath: String
 
+  @Binding var showSidebar: Bool
   @Binding var diffStyle: DiffStyle
   @Binding var overflowMode: OverflowMode
   @Bindable var inlineEditorState: InlineEditorState
@@ -1085,6 +1077,16 @@ private struct GitDiffContentView: View {
   private var headerView: some View {
     VStack(alignment: .leading) {
       HStack {
+        Button {
+          showSidebar.toggle()
+        } label: {
+          Image(systemName: "sidebar.left")
+            .font(.system(size: 14))
+            .foregroundStyle(showSidebar ? .primary : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(showSidebar ? "Hide file list" : "Show file list")
+
         // File name with icon
         HStack {
           Image(systemName: "doc.text.fill")
