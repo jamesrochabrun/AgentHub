@@ -94,9 +94,9 @@ public enum AgentHubDefaults {
   /// Type: Int (default: 0 = list)
   public static let monitoringPanelLayoutMode = "\(keyPrefix)ui.monitoringPanelLayoutMode"
 
-  /// Hub session display mode (single vs all monitored)
+  /// Hub layout mode (single, list, 2-column, 3-column)
   /// Type: Int (default: 0 = single)
-  public static let hubSessionDisplayMode = "\(keyPrefix)hub.sessionDisplayMode"
+  public static let hubLayoutMode = "\(keyPrefix)hub.layoutMode"
 
   /// Whether the selected sessions panel is expanded
   /// Type: Bool (default: true)

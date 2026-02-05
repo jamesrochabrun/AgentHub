@@ -19,9 +19,6 @@ public struct CollapsibleSelectedSessionsPanel: View {
   @AppStorage(AgentHubDefaults.selectedSessionsPanelSizeMode)
   private var sizeModeRawValue: Int = PanelSizeMode.small.rawValue
 
-  @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
-  private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue
-
   private let headerHeight: CGFloat = 40
 
   private var sizeMode: PanelSizeMode {
@@ -47,13 +44,6 @@ public struct CollapsibleSelectedSessionsPanel: View {
     codexViewModel.monitoredSessions.count +
     claudeViewModel.pendingHubSessions.count +
     codexViewModel.pendingHubSessions.count
-  }
-
-  private var displayModeBinding: Binding<HubSessionDisplayMode> {
-    Binding(
-      get: { HubSessionDisplayMode(rawValue: displayModeRawValue) ?? .single },
-      set: { displayModeRawValue = $0.rawValue }
-    )
   }
 
   public var body: some View {
@@ -102,7 +92,6 @@ public struct CollapsibleSelectedSessionsPanel: View {
 
       Spacer()
 
-      DisplayModeToggle(mode: displayModeBinding, colorScheme: colorScheme)
     }
     .padding(.horizontal, 8)
     .padding(.vertical, 6)
@@ -229,9 +218,6 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
   @AppStorage(AgentHubDefaults.selectedSessionsPanelSizeMode)
   private var sizeModeRawValue: Int = PanelSizeMode.small.rawValue
 
-  @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
-  private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue
-
   private let headerHeight: CGFloat = 40
 
   private var sizeMode: PanelSizeMode {
@@ -252,13 +238,6 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
 
   private var monitoredCount: Int {
     viewModel.monitoredSessions.count + viewModel.pendingHubSessions.count
-  }
-
-  private var displayModeBinding: Binding<HubSessionDisplayMode> {
-    Binding(
-      get: { HubSessionDisplayMode(rawValue: displayModeRawValue) ?? .single },
-      set: { displayModeRawValue = $0.rawValue }
-    )
   }
 
   public var body: some View {
@@ -307,7 +286,6 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
 
       Spacer()
 
-      DisplayModeToggle(mode: displayModeBinding, colorScheme: colorScheme)
     }
     .padding(.horizontal, 8)
     .padding(.vertical, 6)
@@ -388,41 +366,6 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     }
 
     primarySessionId = items.first?.id
-  }
-}
-
-// MARK: - DisplayModeToggle
-
-private struct DisplayModeToggle: View {
-  @Binding var mode: HubSessionDisplayMode
-  let colorScheme: ColorScheme
-
-  private var textColor: Color {
-    colorScheme == .dark ? .black : .white
-  }
-
-  private var selectedBackground: Color {
-    colorScheme == .dark ? .black : .white
-  }
-
-  var body: some View {
-    HStack(spacing: 2) {
-      ForEach(HubSessionDisplayMode.allCases, id: \.rawValue) { item in
-        Button(action: { mode = item }) {
-          Text(item.title)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(mode == item ? .primary : textColor)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(mode == item ? selectedBackground : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 3))
-        }
-        .buttonStyle(.plain)
-      }
-    }
-    .padding(2)
-    .background(textColor.opacity(0.2))
-    .clipShape(RoundedRectangle(cornerRadius: 4))
   }
 }
 

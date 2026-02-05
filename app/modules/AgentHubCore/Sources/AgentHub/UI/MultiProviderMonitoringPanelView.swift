@@ -22,12 +22,14 @@ private struct SessionFileSheetItem: Identifiable {
 // MARK: - LayoutMode
 
 private enum LayoutMode: Int, CaseIterable {
-  case list = 0
-  case twoColumn = 1
-  case threeColumn = 2
+  case single = 0
+  case list = 1
+  case twoColumn = 2
+  case threeColumn = 3
 
   var columnCount: Int {
     switch self {
+    case .single: return 1
     case .list: return 1
     case .twoColumn: return 2
     case .threeColumn: return 3
@@ -36,6 +38,7 @@ private enum LayoutMode: Int, CaseIterable {
 
   var icon: String {
     switch self {
+    case .single: return "rectangle"
     case .list: return "list.bullet"
     case .twoColumn: return "square.grid.2x2"
     case .threeColumn: return "square.grid.3x3"
@@ -182,20 +185,15 @@ public struct MultiProviderMonitoringPanelView: View {
   @Bindable var codexViewModel: CLISessionsViewModel
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
-  @State private var layoutModeRawValue: Int = LayoutMode.list.rawValue
   @State private var maximizedSessionId: String?
   @State private var filterMode: HubFilterMode = .all
   @Binding var primarySessionId: String?
-  @AppStorage(AgentHubDefaults.hubSessionDisplayMode)
-  private var displayModeRawValue: Int = HubSessionDisplayMode.single.rawValue
+  @AppStorage(AgentHubDefaults.hubLayoutMode)
+  private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @Environment(\.colorScheme) private var colorScheme
 
   private var layoutMode: LayoutMode {
-    get { LayoutMode(rawValue: layoutModeRawValue) ?? .list }
-  }
-
-  private var displayMode: HubSessionDisplayMode {
-    HubSessionDisplayMode(rawValue: displayModeRawValue) ?? .single
+    get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
   }
 
   public init(
@@ -221,7 +219,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
         if allItems.isEmpty {
           emptyState
-        } else if displayMode == .allMonitored && visibleItems.isEmpty {
+        } else if layoutMode != .single && visibleItems.isEmpty {
           filteredEmptyState
         } else if visibleItems.isEmpty {
           emptyState
@@ -255,8 +253,8 @@ public struct MultiProviderMonitoringPanelView: View {
     .onChange(of: allItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
     }
-    .onChange(of: displayModeRawValue) { _, _ in
-      if displayMode == .single {
+    .onChange(of: layoutModeRawValue) { _, _ in
+      if layoutMode == .single {
         filterMode = .all
       }
     }
@@ -276,29 +274,27 @@ public struct MultiProviderMonitoringPanelView: View {
         codexCount: codexItemCount,
         totalCount: allItems.count
       )
-      .disabled(displayMode == .single)
-      .opacity(displayMode == .single ? 0.5 : 1.0)
+      .disabled(layoutMode == .single)
+      .opacity(layoutMode == .single ? 0.5 : 1.0)
 
       Spacer()
 
-      // Layout mode toggle (list / grid)
-      if displayMode == .allMonitored, allItems.count >= 2 {
-        HStack(spacing: 6) {
-          ForEach(LayoutMode.allCases, id: \.self) { mode in
-            Button(action: { layoutModeRawValue = mode.rawValue }) {
-              Image(systemName: mode.icon)
-                .font(.caption)
-                .foregroundColor(layoutMode == mode ? .primary : .secondary)
-                .frame(width: 26, height: 20)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+      // Layout mode toggle (single / list / grid)
+      HStack(spacing: 6) {
+        ForEach(LayoutMode.allCases, id: \.self) { mode in
+          Button(action: { layoutModeRawValue = mode.rawValue }) {
+            Image(systemName: mode.icon)
+              .font(.caption)
+              .foregroundColor(layoutMode == mode ? .primary : .secondary)
+              .frame(width: 26, height: 20)
+              .contentShape(Rectangle())
           }
+          .buttonStyle(.plain)
         }
-        .padding(4)
-        .background(Color.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
       }
+      .padding(4)
+      .background(Color.secondary.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: 6))
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
@@ -350,7 +346,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @ViewBuilder
   private var monitoredSessionsList: some View {
-    if displayMode == .single {
+    if layoutMode == .single {
       singleModeContent
     } else {
       ScrollView {
@@ -368,13 +364,6 @@ public struct MultiProviderMonitoringPanelView: View {
         }
       }
       .animation(.easeInOut(duration: 0.2), value: layoutMode)
-      .onChange(of: allItems.count) { _, newCount in
-        if newCount < 2 && layoutMode != .list {
-          withAnimation(.easeInOut(duration: 0.2)) {
-            layoutModeRawValue = LayoutMode.list.rawValue
-          }
-        }
-      }
     }
   }
 
@@ -502,7 +491,7 @@ public struct MultiProviderMonitoringPanelView: View {
                 }
               },
               isPrimarySession: isPrimary,
-              showPrimaryIndicator: displayMode == .allMonitored
+              showPrimaryIndicator: layoutMode != .single
             )
 
           case .monitored(_, let viewModel, let session, let state):
@@ -555,7 +544,7 @@ public struct MultiProviderMonitoringPanelView: View {
                 }
               },
               isPrimarySession: isPrimary,
-              showPrimaryIndicator: displayMode == .allMonitored
+              showPrimaryIndicator: layoutMode != .single
             )
           }
         }
@@ -580,21 +569,19 @@ public struct MultiProviderMonitoringPanelView: View {
     return allItems.sorted { $0.timestamp > $1.timestamp }.first?.id
   }
 
-  private var itemsForDisplayMode: [ProviderMonitoringItem] {
-    switch displayMode {
-    case .allMonitored:
-      return allItems
-    case .single:
+  private var itemsForLayoutMode: [ProviderMonitoringItem] {
+    if layoutMode == .single {
       guard let selectedId = effectivePrimarySessionId else { return [] }
       return allItems.filter { $0.id == selectedId }
     }
+    return allItems
   }
 
   private var visibleItems: [ProviderMonitoringItem] {
-    if displayMode == .single {
-      return itemsForDisplayMode
+    if layoutMode == .single {
+      return itemsForLayoutMode
     }
-    return itemsForDisplayMode.filter { shouldShowItem($0) }
+    return itemsForLayoutMode.filter { shouldShowItem($0) }
   }
 
   private var claudeItemCount: Int {
@@ -642,7 +629,7 @@ public struct MultiProviderMonitoringPanelView: View {
             }
           },
           isPrimarySession: isPrimary,
-          showPrimaryIndicator: displayMode == .allMonitored
+          showPrimaryIndicator: layoutMode != .single
         )
       case .monitored(_, let viewModel, let session, let state):
         let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
@@ -697,7 +684,7 @@ public struct MultiProviderMonitoringPanelView: View {
             }
           },
           isPrimarySession: isPrimary,
-          showPrimaryIndicator: displayMode == .allMonitored
+          showPrimaryIndicator: layoutMode != .single
         )
       }
     }
