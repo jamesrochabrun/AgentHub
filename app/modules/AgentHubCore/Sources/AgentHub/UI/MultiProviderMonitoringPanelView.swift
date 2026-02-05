@@ -93,31 +93,39 @@ private struct HubFilterControl: View {
   let totalCount: Int
 
   var body: some View {
-    HStack(spacing: 4) {
-      filterButton(for: .all, count: totalCount)
-      filterButton(for: .claude, count: claudeCount)
-      filterButton(for: .codex, count: codexCount)
+    HStack(spacing: 12) {
+      filterTab(for: .all, count: totalCount)
+      filterTab(for: .claude, count: claudeCount)
+      filterTab(for: .codex, count: codexCount)
     }
-    .padding(4)
-    .background(Color.secondary.opacity(0.12))
-    .clipShape(RoundedRectangle(cornerRadius: 6))
   }
 
-  private func filterButton(for mode: HubFilterMode, count: Int) -> some View {
-    Button(action: { filterMode = mode }) {
-      HStack(spacing: 2) {
-        Text(mode.displayName)
-        Text("(\(count))")
+  private func filterTab(for mode: HubFilterMode, count: Int) -> some View {
+    let isSelected = filterMode == mode
+
+    return Button(action: { filterMode = mode }) {
+      VStack(spacing: 2) {
+        HStack(spacing: 3) {
+          Text(mode.displayName)
+            .fontWeight(isSelected ? .semibold : .regular)
+          Text("\(count)")
+            .foregroundColor(.secondary)
+        }
+        .font(.caption)
+        .foregroundColor(isSelected ? .primary : .secondary)
+
+        // Underline indicator
+        Rectangle()
+          .fill(Color.primary)
+          .frame(height: 1.5)
+          .opacity(isSelected ? 1 : 0)
       }
-      .font(.caption)
-      .foregroundColor(filterMode == mode ? .primary : .secondary)
-      .padding(.horizontal, 8)
-      .padding(.vertical, 4)
-      .background(filterMode == mode ? Color.secondary.opacity(0.2) : Color.clear)
-      .clipShape(RoundedRectangle(cornerRadius: 4))
+      .padding(.horizontal, 4)
+      .fixedSize()
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    .animation(.easeInOut(duration: 0.2), value: filterMode)
   }
 }
 
@@ -267,15 +275,15 @@ public struct MultiProviderMonitoringPanelView: View {
       Text("Hub")
         .font(.headline)
 
-      // Provider filter toggle
-      HubFilterControl(
-        filterMode: $filterMode,
-        claudeCount: claudeItemCount,
-        codexCount: codexItemCount,
-        totalCount: allItems.count
-      )
-      .disabled(layoutMode == .single)
-      .opacity(layoutMode == .single ? 0.5 : 1.0)
+      // Provider filter toggle (hidden in single mode)
+      if layoutMode != .single {
+        HubFilterControl(
+          filterMode: $filterMode,
+          claudeCount: claudeItemCount,
+          codexCount: codexItemCount,
+          totalCount: allItems.count
+        )
+      }
 
       Spacer()
 
