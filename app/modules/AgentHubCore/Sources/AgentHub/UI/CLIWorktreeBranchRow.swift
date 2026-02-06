@@ -73,6 +73,10 @@ public struct CLIWorktreeBranchRow: View {
     providerKind == .claude
   }
 
+  private var supportsDangerousMode: Bool {
+    providerKind == .claude
+  }
+
   public init(
     worktree: WorktreeBranch,
     isExpanded: Bool,
@@ -217,19 +221,21 @@ public struct CLIWorktreeBranchRow: View {
               .padding(.vertical, 8)
               .contentShape(Rectangle())
 
-              // Start in Hub (Dangerously)
-              Button(action: {
-                showNewSessionMenu = false
-                onStartInHubDangerous()
-              }) {
-                Label("Start in Hub (Dangerously)", systemImage: "exclamationmark.triangle")
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .foregroundColor(.orange)
+              if supportsDangerousMode {
+                // Start in Hub (Dangerously)
+                Button(action: {
+                  showNewSessionMenu = false
+                  onStartInHubDangerous()
+                }) {
+                  Label("Start in Hub (Dangerously)", systemImage: "exclamationmark.triangle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundColor(.orange)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
               }
-              .buttonStyle(.plain)
-              .padding(.horizontal, 12)
-              .padding(.vertical, 8)
-              .contentShape(Rectangle())
 
               if supportsExternalTerminal {
                 Divider()

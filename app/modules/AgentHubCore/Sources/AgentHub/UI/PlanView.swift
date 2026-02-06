@@ -90,16 +90,16 @@ public struct PlanView: View {
       .disabled(content == nil)
       .help("Copy plan to clipboard")
 
-      // Run in Codex button
-      Button(action: runInCodex) {
-        HStack(spacing: 4) {
-          Image(systemName: "play.fill")
-          Text("Run in Codex")
-        }
-      }
-      .buttonStyle(.borderedProminent)
-      .disabled(content == nil)
-      .help("Start Codex session with this plan")
+      // TODO: Revisit "Run in Codex" button when UX is defined
+      // Button(action: runInCodex) {
+      //   HStack(spacing: 4) {
+      //     Image(systemName: "play.fill")
+      //     Text("Run in Codex")
+      //   }
+      // }
+      // .buttonStyle(.borderedProminent)
+      // .disabled(content == nil)
+      // .help("Start Codex session with this plan")
     }
     .padding()
     .background(Color.surfaceElevated)
