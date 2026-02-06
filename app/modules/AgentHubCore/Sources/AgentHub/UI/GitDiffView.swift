@@ -8,6 +8,7 @@
 import SwiftUI
 import PierreDiffsSwift
 import ClaudeCodeSDK
+import os
 
 // MARK: - GitDiffView
 
@@ -531,6 +532,9 @@ public struct GitDiffView: View {
   // MARK: - Data Loading
 
   private func loadChanges(for mode: DiffMode) async {
+    let clock = ContinuousClock()
+    let totalStart = clock.now
+
     // Clear existing state when switching modes
     await MainActor.run {
       isLoading = true
@@ -548,21 +552,29 @@ public struct GitDiffView: View {
     do {
       // Detect base branch for branch mode (cache it for later use)
       if mode == .branch && detectedBaseBranch == nil {
+        let branchStart = clock.now
         detectedBaseBranch = try await gitDiffService.detectBaseBranch(at: projectPath)
+        AppLogger.git.info("[perf] detectBaseBranch: \(clock.now - branchStart)")
       }
 
+      let gitRootStart = clock.now
       let gitRoot = try await gitDiffService.findGitRoot(at: projectPath)
+      AppLogger.git.info("[perf] findGitRoot: \(clock.now - gitRootStart)")
 
       // Get unified diff in ONE command (fast path)
+      let diffStart = clock.now
       let unifiedDiff = try await gitDiffService.getUnifiedDiffOutput(
         at: projectPath,
         mode: mode,
         baseBranch: detectedBaseBranch
       )
+      AppLogger.git.info("[perf] getUnifiedDiffOutput: \(clock.now - diffStart)")
 
       // Parse all tracked file diffs upfront
+      let parseStart = clock.now
       let parsed = DiffParserUtils.parse(diffOutput: unifiedDiff)
-      var entries = DiffParserUtils.toGitDiffFileEntries(parsed, gitRoot: gitRoot)
+      let entries = DiffParserUtils.toGitDiffFileEntries(parsed, gitRoot: gitRoot)
+      AppLogger.git.info("[perf] parse+toEntries: \(clock.now - parseStart)")
 
       // Build lookup for parsed content by matching relativePath
       var parsedLookup: [UUID: ParsedFileDiff] = [:]
@@ -570,13 +582,6 @@ public struct GitDiffView: View {
         if let entry = entries.first(where: { $0.relativePath == diff.filePath }) {
           parsedLookup[entry.id] = diff
         }
-      }
-
-      // HYBRID: For unstaged mode, also get untracked files (not included in git diff)
-      if mode == .unstaged {
-        let untrackedEntries = try await fetchUntrackedFiles(gitRoot: gitRoot)
-        entries.append(contentsOf: untrackedEntries)
-        // Note: untracked files won't be in parsedLookup, so they'll use fallback
       }
 
       await MainActor.run {
@@ -602,75 +607,14 @@ public struct GitDiffView: View {
         }
       }
 
+      AppLogger.git.info("[perf] loadChanges total (\(mode.rawValue)): \(clock.now - totalStart)")
+
     } catch {
       await MainActor.run {
         errorMessage = error.localizedDescription
         isLoading = false
       }
     }
-  }
-
-  /// Fetches untracked files from git status --porcelain
-  private func fetchUntrackedFiles(gitRoot: String) async throws -> [GitDiffFileEntry] {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    process.arguments = ["status", "--porcelain", "-uall"]
-    process.currentDirectoryURL = URL(fileURLWithPath: gitRoot)
-
-    let outputPipe = Pipe()
-    process.standardOutput = outputPipe
-    process.standardError = Pipe()
-
-    try process.run()
-    process.waitUntilExit()
-
-    let data = try outputPipe.fileHandleForReading.readToEnd() ?? Data()
-    let output = String(data: data, encoding: .utf8) ?? ""
-
-    var untrackedPaths: [(relativePath: String, fullPath: String)] = []
-
-    let lines = output.components(separatedBy: "\n").filter { !$0.isEmpty }
-    for line in lines {
-      guard line.count > 3 else { continue }
-      let statusCode = String(line.prefix(2))
-      let filePath = String(line.dropFirst(3))
-
-      // "??" means untracked file
-      if statusCode == "??" {
-        let fullPath = (gitRoot as NSString).appendingPathComponent(filePath)
-        untrackedPaths.append((relativePath: filePath, fullPath: fullPath))
-      }
-    }
-
-    // Count lines in parallel for untracked files
-    return await withTaskGroup(of: GitDiffFileEntry.self) { group in
-      for (relativePath, fullPath) in untrackedPaths {
-        group.addTask {
-          let lineCount = await self.countLinesInFile(at: fullPath)
-          return GitDiffFileEntry(
-            filePath: fullPath,
-            relativePath: relativePath,
-            additions: lineCount,
-            deletions: 0
-          )
-        }
-      }
-
-      var results: [GitDiffFileEntry] = []
-      for await entry in group {
-        results.append(entry)
-      }
-      return results
-    }
-  }
-
-  /// Counts lines in a file
-  private func countLinesInFile(at path: String) async -> Int {
-    guard let data = FileManager.default.contents(atPath: path),
-          let content = String(data: data, encoding: .utf8) else {
-      return 0
-    }
-    return content.components(separatedBy: .newlines).count
   }
 
   private func loadFileDiff(for file: GitDiffFileEntry, mode: DiffMode? = nil) {
