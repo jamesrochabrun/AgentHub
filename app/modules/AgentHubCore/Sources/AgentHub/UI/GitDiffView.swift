@@ -811,7 +811,7 @@ private struct FileTreeNodeRow: View {
           // Icon
           Image(systemName: node.isFolder ? "folder.fill" : "doc.text")
             .font(.caption)
-            .foregroundColor(node.isFolder ? .yellow : .blue)
+            .foregroundColor(node.isFolder ? .secondary : .blue)
             .frame(width: 16)
 
           // Name
