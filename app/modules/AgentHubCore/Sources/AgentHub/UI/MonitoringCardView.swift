@@ -65,6 +65,7 @@ public struct MonitoringCardView: View {
   let onToggleMaximize: () -> Void
   let isPrimarySession: Bool
   let showPrimaryIndicator: Bool
+  var isSidePanelOpen: Bool = false
 
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
@@ -100,7 +101,8 @@ public struct MonitoringCardView: View {
     isMaximized: Bool = false,
     onToggleMaximize: @escaping () -> Void = {},
     isPrimarySession: Bool = false,
-    showPrimaryIndicator: Bool = false
+    showPrimaryIndicator: Bool = false,
+    isSidePanelOpen: Bool = false
   ) {
     self.session = session
     self.state = state
@@ -127,6 +129,7 @@ public struct MonitoringCardView: View {
     self.onToggleMaximize = onToggleMaximize
     self.isPrimarySession = isPrimarySession
     self.showPrimaryIndicator = showPrimaryIndicator
+    self.isSidePanelOpen = isSidePanelOpen
   }
 
   public var body: some View {
@@ -460,8 +463,8 @@ public struct MonitoringCardView: View {
 //      .buttonStyle(.plain)
 //      .help(isMaximized ? "Minimize" : "Maximize")
 
-      // Close button (inline, hidden when maximized)
-      if !isMaximized {
+      // Close button (inline, hidden when maximized or side panel is open)
+      if !isMaximized && !isSidePanelOpen {
         Button(action: onStopMonitoring) {
           Image(systemName: "xmark")
             .font(.caption)
