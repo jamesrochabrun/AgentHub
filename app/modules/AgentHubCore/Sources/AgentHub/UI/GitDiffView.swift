@@ -96,7 +96,7 @@ public struct GitDiffView: View {
             if showSidebar {
               // File list sidebar
               fileListSidebar
-                .frame(width: 250)
+                .frame(width: computedSidebarWidth)
               Divider()
             }
 
@@ -386,6 +386,30 @@ public struct GitDiffView: View {
         }
         return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
       }
+  }
+
+  /// Computes the ideal sidebar width based on the deepest/widest node in the tree
+  private var computedSidebarWidth: CGFloat {
+    let (maxDepth, longestName) = measureTree(nodes: fileTree, depth: 0)
+    // ~7pt per character for monospaced caption font
+    let nameWidth = CGFloat(longestName) * 7
+    // padding(8) + depth*10 + chevron(12) + icon(16) + spacing(4) + name + spacing(4) + changeCounts(~50) + padding(8)
+    let idealWidth = 8 + CGFloat(maxDepth) * 10 + 12 + 16 + 4 + nameWidth + 4 + 50 + 8
+    return min(max(idealWidth, 220), 400)
+  }
+
+  private func measureTree(nodes: [FileTreeNode], depth: Int) -> (maxDepth: Int, longestName: Int) {
+    var maxDepth = depth
+    var longestName = 0
+    for node in nodes {
+      longestName = max(longestName, node.name.count)
+      if !node.children.isEmpty {
+        let (childDepth, childName) = measureTree(nodes: node.children, depth: depth + 1)
+        maxDepth = max(maxDepth, childDepth)
+        longestName = max(longestName, childName)
+      }
+    }
+    return (maxDepth, longestName)
   }
 
   private var fileListSidebar: some View {
@@ -770,7 +794,7 @@ private struct FileTreeNodeRow: View {
           // Indentation based on depth
           if depth > 0 {
             Spacer()
-              .frame(width: CGFloat(depth) * 16)
+              .frame(width: CGFloat(depth) * 10)
           }
 
           // Chevron (folders only)
@@ -796,7 +820,7 @@ private struct FileTreeNodeRow: View {
             .fontWeight(node.isFolder ? .medium : .regular)
             .lineLimit(1)
 
-          Spacer()
+          Spacer(minLength: 4)
 
           // Change counts (files only)
           if let file = node.file {
