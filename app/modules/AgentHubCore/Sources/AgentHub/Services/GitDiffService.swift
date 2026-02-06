@@ -75,23 +75,17 @@ public actor GitDiffService {
   /// - Parameter repoPath: Path to the git repository (or any subdirectory)
   /// - Returns: GitDiffState containing all files with unstaged changes
   public func getUnstagedChanges(at repoPath: String) async throws -> GitDiffState {
-    // Find git root
     let gitRoot = try await findGitRoot(at: repoPath)
 
-    // Run diff and status commands in parallel
-    async let numstatTask = runGitCommand(["diff", "--numstat"], at: gitRoot)
-    async let porcelainTask = runGitCommand(["status", "--porcelain", "-uall"], at: gitRoot)
-    let (output, untrackedOutput) = try await (numstatTask, porcelainTask)
+    let output = try await runGitCommand(["diff", "--numstat"], at: gitRoot)
 
     var files: [GitDiffFileEntry] = []
 
-    // Parse --numstat output: "77\t7\tpath/to/file.swift"
     let lines = output.components(separatedBy: "\n").filter { !$0.isEmpty }
     for line in lines {
       let parts = line.components(separatedBy: "\t")
       guard parts.count >= 3 else { continue }
 
-      // Handle binary files (shown as "-" for additions/deletions)
       let additions = Int(parts[0]) ?? 0
       let deletions = Int(parts[1]) ?? 0
       let relativePath = parts[2]
@@ -103,55 +97,6 @@ public actor GitDiffService {
         additions: additions,
         deletions: deletions
       ))
-    }
-
-    // Collect untracked file paths for parallel line counting
-    var untrackedFilePaths: [(relativePath: String, fullPath: String)] = []
-
-    // Parse untracked files from porcelain output
-    let untrackedLines = untrackedOutput.components(separatedBy: "\n").filter { !$0.isEmpty }
-    for line in untrackedLines {
-      // Format: "XY filename" where XY is status code
-      guard line.count > 3 else { continue }
-
-      let statusCode = String(line.prefix(2))
-      let filePath = String(line.dropFirst(3))
-
-      // "??" means untracked file
-      if statusCode == "??" {
-        let fullPath = (gitRoot as NSString).appendingPathComponent(filePath)
-
-        // Check if we already have this file from diff output
-        if !files.contains(where: { $0.relativePath == filePath }) {
-          untrackedFilePaths.append((relativePath: filePath, fullPath: fullPath))
-        }
-      }
-    }
-
-    // Count lines in parallel for untracked files
-    if !untrackedFilePaths.isEmpty {
-      let untrackedEntries = await withTaskGroup(of: GitDiffFileEntry?.self) { group in
-        for (relativePath, fullPath) in untrackedFilePaths {
-          group.addTask {
-            let lineCount = await self.countLinesInFile(at: fullPath)
-            return GitDiffFileEntry(
-              filePath: fullPath,
-              relativePath: relativePath,
-              additions: lineCount,
-              deletions: 0
-            )
-          }
-        }
-
-        var results: [GitDiffFileEntry] = []
-        for await entry in group {
-          if let entry = entry {
-            results.append(entry)
-          }
-        }
-        return results
-      }
-      files.append(contentsOf: untrackedEntries)
     }
 
     return GitDiffState(files: files)
@@ -452,15 +397,6 @@ public actor GitDiffService {
   }
 
   // MARK: - Helper Methods
-
-  /// Counts lines in a file
-  private func countLinesInFile(at path: String) async -> Int {
-    guard let data = FileManager.default.contents(atPath: path),
-          let content = String(data: data, encoding: .utf8) else {
-      return 0
-    }
-    return content.components(separatedBy: .newlines).count
-  }
 
   /// Runs a git command and returns the output
   private func runGitCommand(
