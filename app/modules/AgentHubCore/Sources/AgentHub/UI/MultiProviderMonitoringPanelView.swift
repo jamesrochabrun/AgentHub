@@ -504,7 +504,8 @@ public struct MultiProviderMonitoringPanelView: View {
             isMaximized: false,
             onToggleMaximize: { },
             isPrimarySession: true,
-            showPrimaryIndicator: false
+            showPrimaryIndicator: false,
+            isSidePanelOpen: sidePanelContent != nil
           )
           .id(session.id)
           .frame(maxWidth: .infinity, maxHeight: .infinity)

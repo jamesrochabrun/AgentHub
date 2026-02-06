@@ -73,6 +73,10 @@ public struct CLIWorktreeBranchRow: View {
     providerKind == .claude
   }
 
+  private var supportsDangerousMode: Bool {
+    providerKind == .claude
+  }
+
   public init(
     worktree: WorktreeBranch,
     isExpanded: Bool,
@@ -217,44 +221,32 @@ public struct CLIWorktreeBranchRow: View {
               .padding(.vertical, 8)
               .contentShape(Rectangle())
 
-              // Start in Hub (Dangerously)
-              Button(action: {
-                showNewSessionMenu = false
-                onStartInHubDangerous()
-              }) {
-                Label("Start in Hub (Dangerously)", systemImage: "exclamationmark.triangle")
-                  .frame(maxWidth: .infinity, alignment: .leading)
-                  .foregroundColor(.orange)
-              }
-              .buttonStyle(.plain)
-              .padding(.horizontal, 12)
-              .padding(.vertical, 8)
-              .contentShape(Rectangle())
-
-              if supportsExternalTerminal {
-                Divider()
-
-                // Open in Terminal (Recommended)
+              if supportsDangerousMode {
+                // Start in Hub (Dangerously)
                 Button(action: {
                   showNewSessionMenu = false
-                  onOpenTerminal()
+                  onStartInHubDangerous()
                 }) {
-                  Label("Open in Terminal (Recommended)", systemImage: "terminal")
+                  Label("Start in Hub (Dangerously)", systemImage: "exclamationmark.triangle")
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundColor(.orange)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .contentShape(Rectangle())
+              }
 
-                // Open in Terminal (Dangerously)
+              if supportsExternalTerminal {
+                Divider()
+
+                // Open in Terminal
                 Button(action: {
                   showNewSessionMenu = false
-                  onOpenTerminalDangerous()
+                  onOpenTerminal()
                 }) {
-                  Label("Open in Terminal (Dangerously)", systemImage: "exclamationmark.triangle")
+                  Label("Open in Terminal", systemImage: "terminal")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundColor(.orange)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
