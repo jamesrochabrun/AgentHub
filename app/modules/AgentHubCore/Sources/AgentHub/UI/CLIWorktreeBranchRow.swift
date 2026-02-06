@@ -26,6 +26,8 @@ public struct CLIWorktreeBranchRow: View {
   let onOpenSessionFile: (CLISession) -> Void
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
+  let onArchiveSession: (CLISession) -> Void
+  let onDeleteSession: (CLISession) -> Void
   let getCustomName: ((String) -> String?)?
   var showLastMessage: Bool = false
   var isDebugMode: Bool = false
@@ -92,6 +94,8 @@ public struct CLIWorktreeBranchRow: View {
     onOpenSessionFile: @escaping (CLISession) -> Void,
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
+    onArchiveSession: @escaping (CLISession) -> Void,
+    onDeleteSession: @escaping (CLISession) -> Void,
     getCustomName: ((String) -> String?)? = nil,
     showLastMessage: Bool = false,
     isDebugMode: Bool = false,
@@ -111,6 +115,8 @@ public struct CLIWorktreeBranchRow: View {
     self.onOpenSessionFile = onOpenSessionFile
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
+    self.onArchiveSession = onArchiveSession
+    self.onDeleteSession = onDeleteSession
     self.getCustomName = getCustomName
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
@@ -285,6 +291,8 @@ public struct CLIWorktreeBranchRow: View {
                   onCopyId: { onCopySessionId(session) },
                   onOpenFile: { onOpenSessionFile(session) },
                   onToggleMonitoring: { onToggleMonitoring(session) },
+                  onArchive: { onArchiveSession(session) },
+                  onDelete: { onDeleteSession(session) },
                   showLastMessage: showLastMessage
                 )
               }
@@ -351,7 +359,9 @@ public struct CLIWorktreeBranchRow: View {
       onCopySessionId: { _ in },
       onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in }
+      onToggleMonitoring: { _ in },
+      onArchiveSession: { _ in },
+      onDeleteSession: { _ in }
     )
 
     Divider()
@@ -382,7 +392,9 @@ public struct CLIWorktreeBranchRow: View {
       onCopySessionId: { _ in },
       onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in }
+      onToggleMonitoring: { _ in },
+      onArchiveSession: { _ in },
+      onDeleteSession: { _ in }
     )
 
     Divider()
@@ -403,7 +415,9 @@ public struct CLIWorktreeBranchRow: View {
       onCopySessionId: { _ in },
       onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in }
+      onToggleMonitoring: { _ in },
+      onArchiveSession: { _ in },
+      onDeleteSession: { _ in }
     )
   }
   .padding()

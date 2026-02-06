@@ -185,6 +185,40 @@ public struct MultiProviderSessionsListView: View {
         }
       }
     }
+    .alert(
+      "Delete Session?",
+      isPresented: Binding(
+        get: { claudeViewModel.sessionToDelete != nil },
+        set: { if !$0 { claudeViewModel.cancelDeleteSession() } }
+      ),
+      presenting: claudeViewModel.sessionToDelete
+    ) { session in
+      Button("Cancel", role: .cancel) {
+        claudeViewModel.cancelDeleteSession()
+      }
+      Button("Delete", role: .destructive) {
+        Task { await claudeViewModel.deleteSession(session) }
+      }
+    } message: { session in
+      Text("Delete session '\(session.slug ?? session.shortId)'?\n\nThis will permanently remove the session file from disk.")
+    }
+    .alert(
+      "Delete Session?",
+      isPresented: Binding(
+        get: { codexViewModel.sessionToDelete != nil },
+        set: { if !$0 { codexViewModel.cancelDeleteSession() } }
+      ),
+      presenting: codexViewModel.sessionToDelete
+    ) { session in
+      Button("Cancel", role: .cancel) {
+        codexViewModel.cancelDeleteSession()
+      }
+      Button("Delete", role: .destructive) {
+        Task { await codexViewModel.deleteSession(session) }
+      }
+    } message: { session in
+      Text("Delete session '\(session.slug ?? session.shortId)'?\n\nThis will permanently remove the session file from disk.")
+    }
   }
 
   // MARK: - UI Helpers
@@ -567,6 +601,29 @@ public struct MultiProviderSessionsListView: View {
         .buttonStyle(.plain)
         .help(currentViewModel.showLastMessage ? "Showing last message" : "Showing first message")
 
+        // Show Archived toggle
+        Button(action: { toggleShowArchived() }) {
+          HStack(spacing: 6) {
+            Image(systemName: currentViewModel.showArchivedSessions ? "archivebox.fill" : "archivebox")
+              .font(.system(size: DesignTokens.IconSize.sm))
+            Text(currentViewModel.showArchivedSessions ? "Hide" : "Show")
+              .font(.system(.caption, weight: .medium))
+          }
+          .foregroundColor(currentViewModel.showArchivedSessions ? .brandPrimary : .secondary)
+          .padding(.horizontal, DesignTokens.Spacing.sm)
+          .padding(.vertical, DesignTokens.Spacing.xs + 2)
+          .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+              .fill(Color.surfaceOverlay)
+          )
+          .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+              .stroke(currentViewModel.showArchivedSessions ? Color.brandPrimary.opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+          )
+        }
+        .buttonStyle(.plain)
+        .help(currentViewModel.showArchivedSessions ? "Hide archived sessions" : "Show archived sessions")
+
         // Refresh button
         Button(action: { currentViewModel.refresh() }) {
           Image(systemName: "arrow.clockwise")
@@ -666,6 +723,10 @@ public struct MultiProviderSessionsListView: View {
     currentViewModel.showLastMessage.toggle()
   }
 
+  private func toggleShowArchived() {
+    currentViewModel.showArchivedSessions.toggle()
+  }
+
   // MARK: - Computed
 
   private var claudeInstalled: Bool {
@@ -723,7 +784,7 @@ private struct ProviderSectionView: View {
 
   var body: some View {
     VStack(spacing: 12) {
-      ForEach(viewModel.selectedRepositories) { repository in
+      ForEach(viewModel.filteredRepositories) { repository in
         CLIRepositoryTreeView(
           repository: repository,
           providerKind: viewModel.providerKind,
@@ -746,6 +807,12 @@ private struct ProviderSectionView: View {
           },
           onToggleMonitoring: { session in
             viewModel.toggleMonitoring(for: session)
+          },
+          onArchiveSession: { session in
+            viewModel.archiveSession(session)
+          },
+          onDeleteSession: { session in
+            viewModel.confirmDeleteSession(session)
           },
           onCreateWorktree: {
             onCreateWorktree(repository)

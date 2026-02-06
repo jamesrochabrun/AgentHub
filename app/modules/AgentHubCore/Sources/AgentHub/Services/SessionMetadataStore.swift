@@ -67,6 +67,12 @@ public actor SessionMetadataStore {
       }
     }
 
+    migrator.registerMigration("v3_add_isArchived") { db in
+      try db.alter(table: "session_metadata") { t in
+        t.add(column: "isArchived", .boolean).notNull().defaults(to: false)
+      }
+    }
+
     return migrator
   }
 
@@ -122,6 +128,46 @@ public actor SessionMetadataStore {
   public func clearAll() throws {
     try dbQueue.write { db in
       _ = try SessionMetadata.deleteAll(db)
+    }
+  }
+
+  // MARK: - Archive Management
+
+  /// Archives a session (hides from view but keeps files on disk)
+  public func archiveSession(_ sessionId: String) throws {
+    try dbQueue.write { db in
+      if var existing = try SessionMetadata.fetchOne(db, key: sessionId) {
+        // Update existing row
+        existing.isArchived = true
+        existing.updatedAt = Date()
+        try existing.update(db)
+      } else {
+        // Insert new row with isArchived = true
+        let metadata = SessionMetadata(
+          sessionId: sessionId,
+          customName: nil,
+          isArchived: true
+        )
+        try metadata.insert(db)
+      }
+    }
+  }
+
+  /// Unarchives a session (restores to view)
+  public func unarchiveSession(_ sessionId: String) throws {
+    try dbQueue.write { db in
+      try db.execute(
+        sql: "UPDATE session_metadata SET isArchived = 0, updatedAt = ? WHERE sessionId = ?",
+        arguments: [Date(), sessionId]
+      )
+    }
+  }
+
+  /// Gets all archived session IDs
+  public func getArchivedSessionIds() throws -> Set<String> {
+    try dbQueue.read { db in
+      let rows = try Row.fetchAll(db, sql: "SELECT sessionId FROM session_metadata WHERE isArchived = 1")
+      return Set(rows.map { $0["sessionId"] as String })
     }
   }
 
