@@ -15,6 +15,7 @@ import SwiftUI
 private enum SidePanelContent: Equatable {
   case diff(sessionId: String, session: CLISession, projectPath: String)
   case plan(sessionId: String, session: CLISession, planState: PlanState)
+  case webPreview(sessionId: String, session: CLISession, projectPath: String)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -22,6 +23,8 @@ private enum SidePanelContent: Equatable {
       return id1 == id2 && p1 == p2
     case (.plan(let id1, _, _), .plan(let id2, _, _)):
       return id1 == id2
+    case (.webPreview(let id1, _, let p1), .webPreview(let id2, _, let p2)):
+      return id1 == id2 && p1 == p2
     default: return false
     }
   }
@@ -498,6 +501,9 @@ public struct MultiProviderMonitoringPanelView: View {
             onShowPlan: canShowSidePanel ? { session, planState in
               sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
             } : nil,
+            onShowWebPreview: canShowSidePanel ? { session, projectPath in
+              sidePanelContent = .webPreview(sessionId: session.id, session: session, projectPath: projectPath)
+            } : nil,
             onPromptConsumed: {
               viewModel.clearPendingPrompt(for: session.id)
             },
@@ -538,6 +544,13 @@ public struct MultiProviderMonitoringPanelView: View {
       PlanView(
         session: session,
         planState: planState,
+        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        isEmbedded: true
+      )
+    case .webPreview(_, let session, let projectPath):
+      WebPreviewView(
+        session: session,
+        projectPath: projectPath,
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
         isEmbedded: true
       )

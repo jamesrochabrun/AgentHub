@@ -92,6 +92,17 @@ public struct GitDiffFileEntry: Identifiable, Equatable, Sendable {
     URL(fileURLWithPath: relativePath).deletingLastPathComponent().path
   }
 
+  /// File extensions that WKWebView can render standalone (no build step needed)
+  private static let webRenderableExtensions: Set<String> = [
+    "html", "htm", "svg"
+  ]
+
+  /// Whether this file can be previewed as rendered web content in a WebView
+  public var isWebRenderable: Bool {
+    let ext = URL(fileURLWithPath: filePath).pathExtension.lowercased()
+    return Self.webRenderableExtensions.contains(ext)
+  }
+
   public init(
     id: UUID = UUID(),
     filePath: String,

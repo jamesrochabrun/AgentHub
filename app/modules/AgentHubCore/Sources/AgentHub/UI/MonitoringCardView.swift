@@ -36,6 +36,13 @@ private struct PendingChangesSheetItem: Identifiable {
   let pendingToolUse: PendingToolUse
 }
 
+/// Identifiable wrapper for web preview sheet
+private struct WebPreviewSheetItem: Identifiable {
+  let id = UUID()
+  let session: CLISession
+  let projectPath: String
+}
+
 // MARK: - MonitoringCardView
 
 /// Card view for displaying a monitored session in the monitoring panel
@@ -60,6 +67,7 @@ public struct MonitoringCardView: View {
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
   let onShowDiff: ((CLISession, String) -> Void)?
   let onShowPlan: ((CLISession, PlanState) -> Void)?
+  let onShowWebPreview: ((CLISession, String) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let isMaximized: Bool
   let onToggleMaximize: () -> Void
@@ -70,6 +78,7 @@ public struct MonitoringCardView: View {
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
   @State private var pendingChangesSheetItem: PendingChangesSheetItem?
+  @State private var webPreviewSheetItem: WebPreviewSheetItem?
   @State private var isDragging = false
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
@@ -97,6 +106,7 @@ public struct MonitoringCardView: View {
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
     onShowDiff: ((CLISession, String) -> Void)? = nil,
     onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
+    onShowWebPreview: ((CLISession, String) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     isMaximized: Bool = false,
     onToggleMaximize: @escaping () -> Void = {},
@@ -124,6 +134,7 @@ public struct MonitoringCardView: View {
     self.onInlineRequestSubmit = onInlineRequestSubmit
     self.onShowDiff = onShowDiff
     self.onShowPlan = onShowPlan
+    self.onShowWebPreview = onShowWebPreview
     self.onPromptConsumed = onPromptConsumed
     self.isMaximized = isMaximized
     self.onToggleMaximize = onToggleMaximize
@@ -217,6 +228,13 @@ public struct MonitoringCardView: View {
         onApprovalResponse: { response, session in
           viewModel?.showTerminalWithPrompt(for: session, prompt: response)
         }
+      )
+    }
+    .sheet(item: $webPreviewSheetItem) { item in
+      WebPreviewView(
+        session: item.session,
+        projectPath: item.projectPath,
+        onDismiss: { webPreviewSheetItem = nil }
       )
     }
     .sheet(isPresented: $showingNameSheet) {
@@ -465,7 +483,10 @@ public struct MonitoringCardView: View {
 
       // Close button (inline, hidden when maximized or side panel is open)
       if !isMaximized && !isSidePanelOpen {
-        Button(action: onStopMonitoring) {
+        Button {
+          webPreviewSheetItem = nil
+          onStopMonitoring()
+        } label: {
           Image(systemName: "xmark")
             .font(.caption)
             .foregroundColor(.secondary)
@@ -556,7 +577,7 @@ public struct MonitoringCardView: View {
           HStack(spacing: 4) {
             Image(systemName: "eye")
               .font(.caption2)
-            Text("Preview")
+            Text("Edits")
               .font(.caption2)
           }
           .foregroundColor(.orange)
@@ -622,6 +643,37 @@ public struct MonitoringCardView: View {
       }
       .buttonStyle(.plain)
       .help("View git unstaged changes")
+
+      // Web preview button (only visible for web projects)
+      let framework = ProjectFramework.detect(at: session.projectPath)
+      if framework.requiresDevServer
+          || framework == .unknown
+          || FileManager.default.fileExists(atPath: "\(session.projectPath)/index.html") {
+        Button(action: {
+          if let onShowWebPreview = onShowWebPreview {
+            onShowWebPreview(session, session.projectPath)
+          } else {
+            webPreviewSheetItem = WebPreviewSheetItem(
+              session: session,
+              projectPath: session.projectPath
+            )
+          }
+        }) {
+          HStack(spacing: 4) {
+            Image(systemName: "globe")
+              .font(.caption2)
+            Text("Preview")
+              .font(.caption2)
+          }
+          .foregroundColor(.secondary)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help("Preview localhost web app")
+      }
 
       // Terminal refresh button (only visible when terminal is shown)
       if showTerminal {

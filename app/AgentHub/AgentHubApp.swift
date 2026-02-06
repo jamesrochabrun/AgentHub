@@ -28,6 +28,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationWillTerminate(_ notification: Notification) {
     // Terminate all active terminal processes on app quit
     provider.terminateAllTerminals()
+    // Stop all dev servers spawned for web preview
+    DevServerManager.shared.stopAllServers()
   }
 }
 
