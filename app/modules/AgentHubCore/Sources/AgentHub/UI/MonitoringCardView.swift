@@ -577,7 +577,7 @@ public struct MonitoringCardView: View {
           HStack(spacing: 4) {
             Image(systemName: "eye")
               .font(.caption2)
-            Text("Preview")
+            Text("Edits")
               .font(.caption2)
           }
           .foregroundColor(.orange)
@@ -644,31 +644,36 @@ public struct MonitoringCardView: View {
       .buttonStyle(.plain)
       .help("View git unstaged changes")
 
-      // Web preview button
-      Button(action: {
-        if let onShowWebPreview = onShowWebPreview {
-          onShowWebPreview(session, session.projectPath)
-        } else {
-          webPreviewSheetItem = WebPreviewSheetItem(
-            session: session,
-            projectPath: session.projectPath
-          )
+      // Web preview button (only visible for web projects)
+      let framework = ProjectFramework.detect(at: session.projectPath)
+      if framework.requiresDevServer
+          || framework == .unknown
+          || FileManager.default.fileExists(atPath: "\(session.projectPath)/index.html") {
+        Button(action: {
+          if let onShowWebPreview = onShowWebPreview {
+            onShowWebPreview(session, session.projectPath)
+          } else {
+            webPreviewSheetItem = WebPreviewSheetItem(
+              session: session,
+              projectPath: session.projectPath
+            )
+          }
+        }) {
+          HStack(spacing: 4) {
+            Image(systemName: "globe")
+              .font(.caption2)
+            Text("Preview")
+              .font(.caption2)
+          }
+          .foregroundColor(.secondary)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
         }
-      }) {
-        HStack(spacing: 4) {
-          Image(systemName: "globe")
-            .font(.caption2)
-          Text("Web")
-            .font(.caption2)
-        }
-        .foregroundColor(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.secondary.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .buttonStyle(.plain)
+        .help("Preview localhost web app")
       }
-      .buttonStyle(.plain)
-      .help("Preview localhost web app")
 
       // Terminal refresh button (only visible when terminal is shown)
       if showTerminal {

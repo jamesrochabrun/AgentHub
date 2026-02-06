@@ -90,17 +90,6 @@ public struct WebPreviewView: View {
 
   private var header: some View {
     HStack(spacing: 8) {
-      HStack(spacing: 8) {
-        Image(systemName: "globe")
-          .font(.title3)
-          .foregroundColor(.brandPrimary)
-
-        Text("Web Preview")
-          .font(.title3.weight(.semibold))
-      }
-
-      Spacer()
-
       // Center: status/file info based on resolution
       centerIndicator
 
@@ -109,7 +98,8 @@ public struct WebPreviewView: View {
       // Controls
       headerControls
     }
-    .padding()
+    .padding(.horizontal)
+    .padding(.vertical, 8)
     .background(Color.surfaceElevated)
   }
 

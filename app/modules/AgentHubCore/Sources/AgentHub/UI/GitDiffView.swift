@@ -1138,15 +1138,15 @@ private struct GitDiffContentView: View {
             .font(.headline)
         }
 
-        // Code / Preview toggle for web-renderable files
-        if isWebRenderable {
-          Picker("", selection: $showPreview) {
-            Text("Code").tag(false)
-            Text("Preview").tag(true)
-          }
-          .pickerStyle(.segmented)
-          .frame(width: 140)
-        }
+        // TODO: Revisit Code/Preview toggle for web-renderable files
+        // if isWebRenderable {
+        //   Picker("", selection: $showPreview) {
+        //     Text("Code").tag(false)
+        //     Text("Preview").tag(true)
+        //   }
+        //   .pickerStyle(.segmented)
+        //   .frame(width: 140)
+        // }
 
         Spacer()
 
