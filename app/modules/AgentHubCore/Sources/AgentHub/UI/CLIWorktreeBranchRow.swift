@@ -234,27 +234,13 @@ public struct CLIWorktreeBranchRow: View {
               if supportsExternalTerminal {
                 Divider()
 
-                // Open in Terminal (Recommended)
+                // Open in Terminal
                 Button(action: {
                   showNewSessionMenu = false
                   onOpenTerminal()
                 }) {
-                  Label("Open in Terminal (Recommended)", systemImage: "terminal")
+                  Label("Open in Terminal", systemImage: "terminal")
                     .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .contentShape(Rectangle())
-
-                // Open in Terminal (Dangerously)
-                Button(action: {
-                  showNewSessionMenu = false
-                  onOpenTerminalDangerous()
-                }) {
-                  Label("Open in Terminal (Dangerously)", systemImage: "exclamationmark.triangle")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundColor(.orange)
                 }
                 .buttonStyle(.plain)
                 .padding(.horizontal, 12)
