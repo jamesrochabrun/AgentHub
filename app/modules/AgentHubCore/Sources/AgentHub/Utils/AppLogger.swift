@@ -41,4 +41,7 @@ enum AppLogger {
 
   /// UI-related logging
   static let ui = Logger(subsystem: subsystem, category: "UI")
+
+  /// Dev server lifecycle and output
+  static let devServer = Logger(subsystem: subsystem, category: "DevServer")
 }

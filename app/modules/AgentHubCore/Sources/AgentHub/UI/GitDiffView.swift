@@ -498,6 +498,8 @@ public struct GitDiffView: View {
             newContent: contents.new,
             fileName: file.fileName,
             filePath: file.filePath,
+            projectPath: projectPath,
+            isWebRenderable: file.isWebRenderable,
             showSidebar: $showSidebar,
             diffStyle: $diffStyle,
             overflowMode: $overflowMode,
@@ -953,6 +955,8 @@ private struct GitDiffContentView: View {
   let newContent: String
   let fileName: String
   let filePath: String
+  let projectPath: String
+  let isWebRenderable: Bool
 
   @Binding var showSidebar: Bool
   @Binding var diffStyle: DiffStyle
@@ -968,6 +972,9 @@ private struct GitDiffContentView: View {
 
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
+  @State private var showPreview: Bool = false
+  @State private var previewLoading: Bool = false
+  @State private var previewCurrentURL: URL?
 
   /// Inline editor is enabled when either claudeClient or cliConfiguration is available
   private var isInlineEditorEnabled: Bool {
@@ -980,6 +987,17 @@ private struct GitDiffContentView: View {
       // Header with file info and controls
       headerView
 
+      // Web preview or diff view
+      if showPreview {
+        WebPreviewWebView(
+          url: URL(fileURLWithPath: filePath),
+          isFileURL: true,
+          allowingReadAccessTo: URL(fileURLWithPath: projectPath),
+          isLoading: $previewLoading,
+          currentURL: $previewCurrentURL,
+          onError: nil
+        )
+      } else {
       // Diff view with inline editor overlay
       GeometryReader { geometry in
         ZStack {
@@ -1095,6 +1113,7 @@ private struct GitDiffContentView: View {
         }
       }
       .animation(.easeInOut(duration: 0.3), value: isWebViewReady)
+      } // else (diff view)
     }
   }
 
@@ -1117,6 +1136,16 @@ private struct GitDiffContentView: View {
             .foregroundStyle(.blue)
           Text(fileName)
             .font(.headline)
+        }
+
+        // Code / Preview toggle for web-renderable files
+        if isWebRenderable {
+          Picker("", selection: $showPreview) {
+            Text("Code").tag(false)
+            Text("Preview").tag(true)
+          }
+          .pickerStyle(.segmented)
+          .frame(width: 140)
         }
 
         Spacer()
