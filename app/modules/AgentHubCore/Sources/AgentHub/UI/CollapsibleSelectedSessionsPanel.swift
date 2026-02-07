@@ -381,7 +381,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
 
 // MARK: - CollapsibleSessionRow
 
-private struct CollapsibleSessionRow: View {
+struct CollapsibleSessionRow: View {
   let session: CLISession
   let providerKind: SessionProviderKind
   let timestamp: Date
