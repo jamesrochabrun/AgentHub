@@ -3,7 +3,7 @@
 //  AgentHub
 //
 //  Always-visible session launcher for starting Claude, Codex, or both
-//  with a shared prompt and auto-generated worktree branches.
+//  with a shared prompt. Supports local mode and worktree mode.
 //
 
 import SwiftUI
@@ -12,54 +12,39 @@ import SwiftUI
 
 public struct MultiSessionLaunchView: View {
   @Bindable var viewModel: MultiSessionLaunchViewModel
-  let allRepositories: [SelectedRepository]
 
-  @State private var branchInput: String = ""
   @Environment(\.colorScheme) private var colorScheme
+  @State private var isExpanded = false
 
   public var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      // Header
       formHeader
 
-      Divider()
+      if isExpanded {
+        Divider()
 
-      // Provider mode + Repository (side by side)
-      HStack(spacing: 8) {
-        providerModePicker
-        repositoryPicker
+        repositorySection
+
+        promptEditor
+
+        if viewModel.selectedRepository != nil {
+          workModeRow
+        }
+
+        providerPills
+
+        if viewModel.isLaunching {
+          progressSection
+        }
+
+        if let error = viewModel.launchError {
+          errorView(error)
+        }
+
+        Divider()
+
+        actionButtons
       }
-
-      // Prompt textarea
-      promptEditor
-
-      // Branch name input
-      branchInputField
-
-      // Branch preview (only for "Both" mode)
-      if viewModel.selectedProviderMode == .both && !viewModel.claudeBranchName.isEmpty {
-        branchPreview
-      }
-
-      // Base branch picker
-      if !viewModel.availableBranches.isEmpty {
-        baseBranchPicker
-      }
-
-      // Progress section
-      if viewModel.isLaunching {
-        progressSection
-      }
-
-      // Error display
-      if let error = viewModel.launchError {
-        errorView(error)
-      }
-
-      Divider()
-
-      // Action buttons
-      actionButtons
     }
     .padding(DesignTokens.Spacing.md)
     .background(
@@ -70,65 +55,76 @@ public struct MultiSessionLaunchView: View {
       RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
         .stroke(Color.borderSubtle, lineWidth: 1)
     )
+    .onChange(of: viewModel.isLaunching) { wasLaunching, isLaunching in
+      if wasLaunching && !isLaunching {
+        withAnimation(.easeInOut(duration: 0.2)) {
+          isExpanded = false
+        }
+      }
+    }
   }
 
   // MARK: - Header
 
   private var formHeader: some View {
     HStack {
-      Image(systemName: "play.rectangle")
-        .font(.system(size: DesignTokens.IconSize.md))
-        .foregroundColor(.primary)
-      Text("Session Launcher")
-        .font(.system(size: 13, weight: .semibold))
+      Text("Start Project")
+        .font(.system(size: 13, weight: .bold, design: .monospaced))
       Spacer()
-    }
-  }
-
-  // MARK: - Provider Mode Picker
-
-  private var providerModePicker: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("Provider")
-        .font(.caption)
-        .fontWeight(.medium)
-        .foregroundColor(.secondary)
-
-      Picker("Provider", selection: $viewModel.selectedProviderMode) {
-        ForEach(LaunchProviderMode.allCases, id: \.self) { mode in
-          Text(mode.rawValue).tag(mode)
+      Button(action: {
+        withAnimation(.easeInOut(duration: 0.2)) {
+          isExpanded.toggle()
         }
+      }) {
+        Image(systemName: isExpanded ? "minus.circle" : "plus.circle")
+          .font(.system(size: 16))
+          .foregroundColor(.secondary)
       }
-      .pickerStyle(.menu)
-      .onChange(of: viewModel.selectedProviderMode) { _, _ in
-        viewModel.onProviderModeChanged()
+      .buttonStyle(.plain)
+    }
+    .contentShape(Rectangle())
+    .onTapGesture {
+      withAnimation(.easeInOut(duration: 0.2)) {
+        isExpanded.toggle()
       }
     }
+    .padding(.top, 6)
+    .padding(.bottom, 6)
+    .padding(.leading, 6)
   }
 
-  // MARK: - Repository Picker
+  // MARK: - Repository Section
 
-  private var repositoryPicker: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("Repository")
-        .font(.caption)
-        .fontWeight(.medium)
-        .foregroundColor(.secondary)
-
-      Picker("Repository", selection: $viewModel.selectedRepository) {
-        Text("Select...").tag(nil as SelectedRepository?)
-        ForEach(allRepositories) { repo in
-          Text(repo.name).tag(repo as SelectedRepository?)
+  private var repositorySection: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      Button(action: { viewModel.selectRepository() }) {
+        HStack(spacing: 6) {
+          Image(systemName: "folder")
+            .font(.system(size: 11))
+          Text(viewModel.selectedRepository?.name ?? "Select repository")
+            .font(.system(size: 12, weight: .medium))
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+          Capsule()
+            .fill(viewModel.selectedRepository != nil
+                  ? Color.primary.opacity(0.1)
+                  : Color.primary.opacity(0.05))
+        )
+        .overlay(
+          Capsule()
+            .stroke(Color.borderSubtle, lineWidth: 1)
+        )
       }
-      .pickerStyle(.menu)
-      .onChange(of: viewModel.selectedRepository) { _, _ in
-        Task {
-          await viewModel.loadBranches()
-        }
-        if !branchInput.isEmpty {
-          viewModel.updateBranchNames(from: branchInput)
-        }
+      .buttonStyle(.plain)
+
+      if let repo = viewModel.selectedRepository {
+        Text(repo.path)
+          .font(.system(size: 10, design: .monospaced))
+          .foregroundColor(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
       }
     }
   }
@@ -136,162 +132,157 @@ public struct MultiSessionLaunchView: View {
   // MARK: - Prompt Editor
 
   private var promptEditor: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("Prompt")
-        .font(.caption)
-        .fontWeight(.medium)
-        .foregroundColor(.secondary)
-
-      ZStack(alignment: .topLeading) {
-        if viewModel.sharedPrompt.isEmpty {
-          Text(promptPlaceholder)
-            .font(.system(size: 12))
-            .foregroundColor(.secondary.opacity(0.6))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 8)
-        }
-        TextEditor(text: $viewModel.sharedPrompt)
+    ZStack(alignment: .topLeading) {
+      if viewModel.sharedPrompt.isEmpty {
+        Text(promptPlaceholder)
           .font(.system(size: 12))
-          .scrollContentBackground(.hidden)
-          .padding(.horizontal, 2)
-          .padding(.vertical, 2)
+          .foregroundColor(.secondary.opacity(0.6))
+          .padding(.horizontal, 6)
+          .padding(.vertical, 8)
       }
-      .frame(minHeight: 60, maxHeight: 120)
-      .background(
-        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-          .fill(Color(NSColor.controlBackgroundColor))
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-          .stroke(Color.borderSubtle, lineWidth: 1)
-      )
-    }
-  }
-
-  private var promptPlaceholder: String {
-    switch viewModel.selectedProviderMode {
-    case .both: return "Enter prompt for both sessions..."
-    case .claude: return "Enter prompt for Claude session..."
-    case .codex: return "Enter prompt for Codex session..."
-    }
-  }
-
-  // MARK: - Branch Input
-
-  private var branchInputField: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("Branch Name")
-        .font(.caption)
-        .fontWeight(.medium)
-        .foregroundColor(.secondary)
-
-      TextField("feature/my-feature", text: $branchInput)
-        .textFieldStyle(.roundedBorder)
+      TextEditor(text: $viewModel.sharedPrompt)
         .font(.system(size: 12))
-        .onChange(of: branchInput) { _, newValue in
-          viewModel.updateBranchNames(from: newValue)
-        }
-
-      Text(branchHintText)
-        .font(.caption2)
-        .foregroundColor(.secondary)
+        .scrollContentBackground(.hidden)
+        .padding(.horizontal, 2)
+        .padding(.vertical, 2)
     }
-  }
-
-  private var branchHintText: String {
-    switch viewModel.selectedProviderMode {
-    case .both: return "Suffixed with -claude and -codex automatically"
-    case .claude, .codex: return "Branch name for the worktree"
-    }
-  }
-
-  // MARK: - Branch Preview (Both mode only)
-
-  private var branchPreview: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack(spacing: 6) {
-        Image(systemName: "arrow.triangle.branch")
-          .font(.caption)
-          .foregroundColor(.primary)
-        Text("Branches")
-          .font(.caption)
-          .fontWeight(.medium)
-          .foregroundColor(.primary)
-      }
-
-      VStack(alignment: .leading, spacing: 4) {
-        HStack(spacing: 6) {
-          Text("Claude")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(.secondary)
-            .frame(width: 40, alignment: .trailing)
-          Text(viewModel.claudeBranchName)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundColor(.primary)
-        }
-        HStack(spacing: 6) {
-          Text("Codex")
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(.secondary)
-            .frame(width: 40, alignment: .trailing)
-          Text(viewModel.codexBranchName)
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundColor(.primary)
-        }
-      }
-    }
-    .padding(8)
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(minHeight: 60, maxHeight: 120)
     .background(
       RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-        .fill(Color.primary.opacity(0.05))
+        .fill(Color(NSColor.controlBackgroundColor))
     )
     .overlay(
       RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
-        .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+        .stroke(Color.borderSubtle, lineWidth: 1)
     )
   }
 
-  // MARK: - Base Branch Picker
+  private var promptPlaceholder: String {
+    if viewModel.isClaudeSelected && viewModel.isCodexSelected {
+      return "Enter prompt for both sessions..."
+    } else if viewModel.isClaudeSelected {
+      return "Enter prompt for Claude session..."
+    } else if viewModel.isCodexSelected {
+      return "Enter prompt for Codex session..."
+    } else {
+      return "Select a provider..."
+    }
+  }
 
-  private var baseBranchPicker: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text("Based On")
-        .font(.caption)
-        .fontWeight(.medium)
-        .foregroundColor(.secondary)
+  // MARK: - Work Mode Row
 
-      if viewModel.isLoadingBranches {
-        HStack(spacing: 8) {
+  private var workModeRow: some View {
+    HStack(spacing: 0) {
+      // Left: Local / Worktree toggle
+      HStack(spacing: 12) {
+        workModeButton(mode: .local, label: "Local")
+        workModeButton(mode: .worktree, label: "Worktree")
+      }
+
+      Spacer()
+
+      // Right: branch info
+      branchInfoView
+    }
+  }
+
+  private func workModeButton(mode: WorkMode, label: String) -> some View {
+    Button(action: {
+      withAnimation(.easeInOut(duration: 0.2)) {
+        viewModel.workMode = mode
+      }
+    }) {
+      Text(label)
+        .font(.system(size: 11, weight: viewModel.workMode == mode ? .bold : .regular))
+        .foregroundColor(viewModel.workMode == mode ? .primary : .secondary.opacity(0.6))
+    }
+    .buttonStyle(.plain)
+  }
+
+  @ViewBuilder
+  private var branchInfoView: some View {
+    switch viewModel.workMode {
+    case .local:
+      HStack(spacing: 4) {
+        Image(systemName: "arrow.triangle.branch")
+          .font(.system(size: 10))
+          .foregroundColor(.secondary)
+        if viewModel.isLoadingCurrentBranch {
           ProgressView()
-            .scaleEffect(0.7)
-          Text("Loading branches...")
+            .scaleEffect(0.5)
+            .frame(width: 12, height: 12)
+        } else {
+          Text(viewModel.currentBranchName.isEmpty ? "—" : viewModel.currentBranchName)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+        }
+      }
+    case .worktree:
+      if viewModel.isLoadingBranches {
+        HStack(spacing: 4) {
+          ProgressView()
+            .scaleEffect(0.5)
+            .frame(width: 12, height: 12)
+          Text("Loading...")
             .font(.caption)
             .foregroundColor(.secondary)
         }
       } else {
-        Picker("Based On", selection: $viewModel.baseBranch) {
+        Picker("Base", selection: $viewModel.baseBranch) {
           Text("Current HEAD").tag(nil as RemoteBranch?)
           ForEach(viewModel.availableBranches) { branch in
             Text(branch.displayName).tag(branch as RemoteBranch?)
           }
         }
         .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
       }
     }
+  }
+
+  // MARK: - Provider Pills
+
+  private var providerPills: some View {
+    HStack(spacing: 8) {
+      providerPill(
+        label: "Claude",
+        isSelected: $viewModel.isClaudeSelected,
+        selectedColor: Color.brandPrimary(for: .claude)
+      )
+      providerPill(
+        label: "Codex",
+        isSelected: $viewModel.isCodexSelected,
+        selectedColor: Color.brandPrimary(for: .codex)
+      )
+      Spacer()
+    }
+  }
+
+  private func providerPill(label: String, isSelected: Binding<Bool>, selectedColor: Color) -> some View {
+    Button(action: { isSelected.wrappedValue.toggle() }) {
+      Text(label)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(isSelected.wrappedValue ? .white : .secondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 5)
+        .background(
+          Capsule()
+            .fill(isSelected.wrappedValue ? selectedColor : Color.primary.opacity(0.06))
+        )
+    }
+    .buttonStyle(.plain)
   }
 
   // MARK: - Progress
 
   private var progressSection: some View {
     VStack(alignment: .leading, spacing: 6) {
-      switch viewModel.selectedProviderMode {
-      case .both:
+      if viewModel.isClaudeSelected {
         progressRow(label: "Claude", progress: viewModel.claudeProgress)
-        progressRow(label: "Codex", progress: viewModel.codexProgress)
-      case .claude:
-        progressRow(label: "Claude", progress: viewModel.claudeProgress)
-      case .codex:
+      }
+      if viewModel.isCodexSelected {
         progressRow(label: "Codex", progress: viewModel.codexProgress)
       }
     }
@@ -364,7 +355,6 @@ public struct MultiSessionLaunchView: View {
     HStack {
       Button("Reset") {
         viewModel.reset()
-        branchInput = ""
       }
       .disabled(viewModel.isLaunching)
 
@@ -380,12 +370,19 @@ public struct MultiSessionLaunchView: View {
             ProgressView()
               .scaleEffect(0.7)
           }
-          Text(viewModel.isLaunching ? "Launching..." : "Launch")
+          Text(launchButtonTitle)
         }
       }
       .buttonStyle(.borderedProminent)
       .tint(.primary)
       .disabled(!viewModel.isValid || viewModel.isLaunching)
     }
+  }
+
+  private var launchButtonTitle: String {
+    if viewModel.isLaunching {
+      return "Launching..."
+    }
+    return "Launch"
   }
 }
