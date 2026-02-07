@@ -10,22 +10,6 @@ import Foundation
 import PierreDiffsSwift
 import SwiftUI
 
-// MARK: - WorktreeCreateContext
-
-private struct WorktreeCreateContext: Identifiable {
-  let id = UUID()
-  let providerKind: SessionProviderKind
-  let repository: SelectedRepository
-}
-
-// MARK: - TerminalConfirmation
-
-private struct TerminalConfirmation: Identifiable {
-  let id = UUID()
-  let worktree: WorktreeBranch
-  let currentBranch: String
-}
-
 // MARK: - SessionFileSheetItem
 
 private struct SessionFileSheetItem: Identifiable {
@@ -42,8 +26,6 @@ public struct MultiProviderSessionsListView: View {
   @Bindable var codexViewModel: CLISessionsViewModel
   @Binding var columnVisibility: NavigationSplitViewVisibility
 
-  @State private var createWorktreeContext: WorktreeCreateContext?
-  @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var isSearchExpanded: Bool = false
   @State private var isBrowseExpanded: Bool = false
@@ -99,26 +81,6 @@ public struct MultiProviderSessionsListView: View {
       }
       ensurePrimarySelection()
     }
-    .sheet(item: $createWorktreeContext) { context in
-      CreateWorktreeSheet(
-        repositoryPath: context.repository.path,
-        repositoryName: context.repository.name,
-        onDismiss: { createWorktreeContext = nil },
-        onCreate: { branchName, directory, baseBranch, onProgress in
-          let viewModel = viewModel(for: context.providerKind)
-          try await viewModel.createWorktree(
-            for: context.repository,
-            branchName: branchName,
-            directoryName: directory,
-            baseBranch: baseBranch,
-            onProgress: onProgress
-          )
-          // Refresh both providers after worktree operations
-          claudeViewModel.refresh()
-          codexViewModel.refresh()
-        }
-      )
-    }
     .sheet(item: $sessionFileSheetItem) { item in
       SessionFileSheetView(
         session: item.session,
@@ -126,29 +88,6 @@ public struct MultiProviderSessionsListView: View {
         content: item.content,
         onDismiss: { sessionFileSheetItem = nil }
       )
-    }
-    .alert(
-      "Switch Branch?",
-      isPresented: Binding(
-        get: { terminalConfirmation != nil },
-        set: { if !$0 { terminalConfirmation = nil } }
-      ),
-      presenting: terminalConfirmation
-    ) { confirmation in
-      Button("Cancel", role: .cancel) {
-        terminalConfirmation = nil
-      }
-      Button("Switch & Open") {
-        Task {
-          _ = await claudeViewModel.openTerminalAndAutoObserve(
-            confirmation.worktree,
-            skipCheckout: false
-          )
-        }
-        terminalConfirmation = nil
-      }
-    } message: { confirmation in
-      Text("You have uncommitted changes on '\(confirmation.currentBranch)'. Switching to '\(confirmation.worktree.name)' may fail or carry changes over.")
     }
     .alert(
       "Failed to Delete Worktree",
@@ -207,8 +146,7 @@ public struct MultiProviderSessionsListView: View {
       // 1. Session Launcher (always visible)
       if let multiLaunchViewModel {
         MultiSessionLaunchView(
-          viewModel: multiLaunchViewModel,
-          allRepositories: allRepositories
+          viewModel: multiLaunchViewModel
         )
         .padding(.bottom, 8)
       }
@@ -482,14 +420,14 @@ public struct MultiProviderSessionsListView: View {
     if !items.isEmpty {
       VStack(alignment: .leading, spacing: 0) {
         HStack {
-          Text("Selected")
-            .font(.system(.subheadline, weight: .medium))
+          Text("Projects")
+            .font(.system(size: 14, weight: .bold))
           Text("(\(items.count))")
             .font(.caption)
             .foregroundColor(.secondary)
           Spacer()
         }
-        .padding(.bottom, 4)
+        .padding(.vertical, 6)
 
         ForEach(items) { item in
           CollapsibleSessionRow(
@@ -515,7 +453,6 @@ public struct MultiProviderSessionsListView: View {
   private var selectedProviderContent: some View {
     let isClaudeSelected = selectedProvider == .claude
     let viewModel = isClaudeSelected ? claudeViewModel : codexViewModel
-    let providerKind: SessionProviderKind = isClaudeSelected ? .claude : .codex
     let isInstalled = isClaudeSelected ? claudeInstalled : codexInstalled
 
     if !isInstalled {
@@ -524,12 +461,6 @@ public struct MultiProviderSessionsListView: View {
       ProviderSectionView(
         viewModel: viewModel,
         onRemoveRepository: { removeRepository($0, from: viewModel) },
-        onCreateWorktree: { repository in
-          createWorktreeContext = WorktreeCreateContext(providerKind: providerKind, repository: repository)
-        },
-        onOpenTerminalForWorktree: { worktree in
-          handleOpenTerminal(worktree: worktree, viewModel: viewModel)
-        },
         onOpenSessionFile: { session in
           openSessionFile(for: session, viewModel: viewModel)
         }
@@ -689,20 +620,6 @@ public struct MultiProviderSessionsListView: View {
     viewModel.removeRepository(repository)
   }
 
-  private func handleOpenTerminal(worktree: WorktreeBranch, viewModel: CLISessionsViewModel) {
-    Task {
-      let check = await viewModel.checkBeforeOpeningTerminal(worktree)
-
-      if !check.needsCheckout {
-        _ = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: true)
-      } else if check.hasUncommittedChanges {
-        terminalConfirmation = TerminalConfirmation(worktree: worktree, currentBranch: check.currentBranch)
-      } else {
-        _ = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: false)
-      }
-    }
-  }
-
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {
     guard let fileURL = viewModel.sessionFileURL(for: session),
           let data = FileManager.default.contents(atPath: fileURL.path),
@@ -801,8 +718,6 @@ public struct MultiProviderSessionsListView: View {
 private struct ProviderSectionView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let onRemoveRepository: (SelectedRepository) -> Void
-  let onCreateWorktree: (SelectedRepository) -> Void
-  let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
   let onOpenSessionFile: (CLISession) -> Void
 
   var body: some View {
@@ -830,21 +745,6 @@ private struct ProviderSectionView: View {
           },
           onToggleMonitoring: { session in
             viewModel.toggleMonitoring(for: session)
-          },
-          onCreateWorktree: {
-            onCreateWorktree(repository)
-          },
-          onOpenTerminalForWorktree: { worktree in
-            onOpenTerminalForWorktree(worktree)
-          },
-          onOpenTerminalDangerousForWorktree: { worktree in
-            _ = viewModel.openTerminalInWorktree(worktree, skipCheckout: true, dangerouslySkipPermissions: true)
-          },
-          onStartInHubForWorktree: { worktree in
-            viewModel.startNewSessionInHub(worktree)
-          },
-          onStartInHubDangerousForWorktree: { worktree in
-            viewModel.startNewSessionInHub(worktree, dangerouslySkipPermissions: true)
           },
           onDeleteWorktree: { worktree in
             Task { await viewModel.deleteWorktree(worktree) }

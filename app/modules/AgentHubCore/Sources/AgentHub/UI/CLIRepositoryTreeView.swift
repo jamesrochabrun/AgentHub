@@ -21,11 +21,6 @@ public struct CLIRepositoryTreeView: View {
   let onOpenSessionFile: (CLISession) -> Void
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
-  let onCreateWorktree: () -> Void
-  let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
-  let onOpenTerminalDangerousForWorktree: (WorktreeBranch) -> Void
-  let onStartInHubForWorktree: (WorktreeBranch) -> Void
-  let onStartInHubDangerousForWorktree: (WorktreeBranch) -> Void
   let onDeleteWorktree: ((WorktreeBranch) -> Void)?
   let getCustomName: ((String) -> String?)?
   var showLastMessage: Bool = false
@@ -46,11 +41,6 @@ public struct CLIRepositoryTreeView: View {
     onOpenSessionFile: @escaping (CLISession) -> Void,
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
-    onCreateWorktree: @escaping () -> Void,
-    onOpenTerminalForWorktree: @escaping (WorktreeBranch) -> Void,
-    onOpenTerminalDangerousForWorktree: @escaping (WorktreeBranch) -> Void = { _ in },
-    onStartInHubForWorktree: @escaping (WorktreeBranch) -> Void,
-    onStartInHubDangerousForWorktree: @escaping (WorktreeBranch) -> Void = { _ in },
     onDeleteWorktree: ((WorktreeBranch) -> Void)? = nil,
     getCustomName: ((String) -> String?)? = nil,
     showLastMessage: Bool = false,
@@ -67,11 +57,6 @@ public struct CLIRepositoryTreeView: View {
     self.onOpenSessionFile = onOpenSessionFile
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
-    self.onCreateWorktree = onCreateWorktree
-    self.onOpenTerminalForWorktree = onOpenTerminalForWorktree
-    self.onOpenTerminalDangerousForWorktree = onOpenTerminalDangerousForWorktree
-    self.onStartInHubForWorktree = onStartInHubForWorktree
-    self.onStartInHubDangerousForWorktree = onStartInHubDangerousForWorktree
     self.onDeleteWorktree = onDeleteWorktree
     self.getCustomName = getCustomName
     self.showLastMessage = showLastMessage
@@ -97,10 +82,6 @@ public struct CLIRepositoryTreeView: View {
             isExpanded: worktree.isExpanded,
             providerKind: providerKind,
             onToggleExpanded: { onToggleWorktreeExpanded(worktree) },
-            onOpenTerminal: { onOpenTerminalForWorktree(worktree) },
-            onOpenTerminalDangerous: { onOpenTerminalDangerousForWorktree(worktree) },
-            onStartInHub: { onStartInHubForWorktree(worktree) },
-            onStartInHubDangerous: { onStartInHubDangerousForWorktree(worktree) },
             onDeleteWorktree: {
               worktreeToDelete = worktree
               showDeleteConfirmation = true
@@ -177,20 +158,6 @@ public struct CLIRepositoryTreeView: View {
           )
       }
 
-      // Create worktree button
-      Button(action: onCreateWorktree) {
-        Image(systemName: "arrow.triangle.branch")
-          .font(.caption)
-          .foregroundColor(.brandSecondary(for: providerKind))
-          .padding(6)
-          .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-              .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-          )
-      }
-      .buttonStyle(.plain)
-      .help("Create worktree")
-
       // Remove button
       Button(action: onRemove) {
         Image(systemName: "xmark.circle.fill")
@@ -262,10 +229,7 @@ public struct CLIRepositoryTreeView: View {
       onCopySessionId: { _ in },
       onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in },
-      onCreateWorktree: { },
-      onOpenTerminalForWorktree: { _ in },
-      onStartInHubForWorktree: { _ in }
+      onToggleMonitoring: { _ in }
     )
 
     // Collapsed repository
@@ -289,10 +253,7 @@ public struct CLIRepositoryTreeView: View {
       onCopySessionId: { _ in },
       onOpenSessionFile: { _ in },
       isSessionMonitored: { _ in false },
-      onToggleMonitoring: { _ in },
-      onCreateWorktree: { },
-      onOpenTerminalForWorktree: { _ in },
-      onStartInHubForWorktree: { _ in }
+      onToggleMonitoring: { _ in }
     )
   }
   .padding()

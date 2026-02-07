@@ -13,12 +13,6 @@ import SwiftUI
 // MARK: - CLISessionsListView
 
 /// Main list view for displaying CLI sessions with repository-based organization
-/// State for terminal branch switch confirmation
-private struct TerminalConfirmation: Identifiable {
-  let id = UUID()
-  let worktree: WorktreeBranch
-  let currentBranch: String
-}
 
 /// Identifiable wrapper for session file sheet
 private struct SessionFileSheetItem: Identifiable {
@@ -31,8 +25,6 @@ private struct SessionFileSheetItem: Identifiable {
 public struct CLISessionsListView: View {
   @Bindable var viewModel: CLISessionsViewModel
   @Binding var columnVisibility: NavigationSplitViewVisibility
-  @State private var createWorktreeRepository: SelectedRepository?
-  @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var isSearchSheetVisible: Bool = false
   @State private var primarySessionId: String?
@@ -81,22 +73,6 @@ public struct CLISessionsListView: View {
         viewModel.refresh()
       }
     }
-    .sheet(item: $createWorktreeRepository) { repository in
-      CreateWorktreeSheet(
-        repositoryPath: repository.path,
-        repositoryName: repository.name,
-        onDismiss: { createWorktreeRepository = nil },
-        onCreate: { branchName, directory, baseBranch, onProgress in
-          try await viewModel.createWorktree(
-            for: repository,
-            branchName: branchName,
-            directoryName: directory,
-            baseBranch: baseBranch,
-            onProgress: onProgress
-          )
-        }
-      )
-    }
     .sheet(item: $sessionFileSheetItem) { item in
       SessionFileSheetView(
         session: item.session,
@@ -104,26 +80,6 @@ public struct CLISessionsListView: View {
         content: item.content,
         onDismiss: { sessionFileSheetItem = nil }
       )
-    }
-    .alert(
-      "Switch Branch?",
-      isPresented: Binding(
-        get: { terminalConfirmation != nil },
-        set: { if !$0 { terminalConfirmation = nil } }
-      ),
-      presenting: terminalConfirmation
-    ) { confirmation in
-      Button("Cancel", role: .cancel) {
-        terminalConfirmation = nil
-      }
-      Button("Switch & Open") {
-        Task {
-          _ = await viewModel.openTerminalAndAutoObserve(confirmation.worktree, skipCheckout: false)
-        }
-        terminalConfirmation = nil
-      }
-    } message: { confirmation in
-      Text("You have uncommitted changes on '\(confirmation.currentBranch)'. Switching to '\(confirmation.worktree.name)' may fail or carry changes over.")
     }
     .alert(
       "Failed to Delete Worktree",
@@ -560,41 +516,6 @@ public struct CLISessionsListView: View {
             },
             onToggleMonitoring: { session in
               viewModel.toggleMonitoring(for: session)
-            },
-            onCreateWorktree: {
-              createWorktreeRepository = repository
-            },
-            onOpenTerminalForWorktree: { worktree in
-              Task {
-                let check = await viewModel.checkBeforeOpeningTerminal(worktree)
-
-                if !check.needsCheckout {
-                  // Already on correct branch or is a worktree - open directly
-                  _ = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: true)
-                } else if check.hasUncommittedChanges {
-                  // Need checkout but have uncommitted changes - show confirmation
-                  terminalConfirmation = TerminalConfirmation(
-                    worktree: worktree,
-                    currentBranch: check.currentBranch
-                  )
-                } else {
-                  // Need checkout but no uncommitted changes - proceed with checkout
-                  _ = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: false)
-                }
-              }
-            },
-            onOpenTerminalDangerousForWorktree: { worktree in
-              // Open in terminal with --dangerously-skip-permissions flag
-              _ = viewModel.openTerminalInWorktree(worktree, skipCheckout: true, dangerouslySkipPermissions: true)
-            },
-            onStartInHubForWorktree: { worktree in
-              // Start a new session in the Hub's embedded terminal
-              // No external terminal is opened - runs directly in the embedded terminal
-              viewModel.startNewSessionInHub(worktree)
-            },
-            onStartInHubDangerousForWorktree: { worktree in
-              // Start a new session in the Hub with --dangerously-skip-permissions flag
-              viewModel.startNewSessionInHub(worktree, dangerouslySkipPermissions: true)
             },
             onDeleteWorktree: { worktree in
               Task {
