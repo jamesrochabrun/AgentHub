@@ -157,6 +157,15 @@ public struct CLISessionRow: View {
 
   private var metadataRow: some View {
     HStack(spacing: 6) {
+      // Provider label
+      Text(providerKind.rawValue)
+        .font(.system(size: 10, weight: .medium, design: .monospaced))
+        .foregroundColor(.brandPrimary(for: providerKind))
+
+      Text("\u{2022}")
+        .font(.caption)
+        .foregroundColor(.secondary)
+
       // Branch info
       if let branch = session.branchName {
         HStack(spacing: 2) {

@@ -2,8 +2,8 @@
 //  MultiSessionLaunchView.swift
 //  AgentHub
 //
-//  Collapsible panel for launching dual Claude + Codex sessions
-//  with a shared prompt and separate worktree branches.
+//  Always-visible session launcher for starting Claude, Codex, or both
+//  with a shared prompt and auto-generated worktree branches.
 //
 
 import SwiftUI
@@ -12,65 +12,23 @@ import SwiftUI
 
 public struct MultiSessionLaunchView: View {
   @Bindable var viewModel: MultiSessionLaunchViewModel
-  @Binding var isExpanded: Bool
   let allRepositories: [SelectedRepository]
 
   @State private var branchInput: String = ""
   @Environment(\.colorScheme) private var colorScheme
 
   public var body: some View {
-    if isExpanded {
-      expandedForm
-    } else {
-      collapsedButton
-    }
-  }
-
-  // MARK: - Collapsed
-
-  private var collapsedButton: some View {
-    Button(action: {
-      withAnimation(.easeInOut(duration: 0.25)) {
-        isExpanded = true
-      }
-    }) {
-      HStack(spacing: 8) {
-        Image(systemName: "rectangle.split.2x1")
-          .font(.system(size: DesignTokens.IconSize.md))
-          .foregroundColor(.secondary)
-        Text("Multi-Session")
-          .font(.system(size: 13))
-          .foregroundColor(.secondary)
-        Spacer()
-        Image(systemName: "chevron.down")
-          .font(.system(size: 10))
-          .foregroundColor(.secondary.opacity(0.6))
-      }
-      .padding(.horizontal, DesignTokens.Spacing.md)
-      .padding(.vertical, DesignTokens.Spacing.sm)
-      .background(
-        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-          .fill(Color.surfaceOverlay)
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-          .stroke(Color.borderSubtle, lineWidth: 1)
-      )
-    }
-    .buttonStyle(.plain)
-  }
-
-  // MARK: - Expanded Form
-
-  private var expandedForm: some View {
     VStack(alignment: .leading, spacing: 10) {
       // Header
       formHeader
 
       Divider()
 
-      // Repository picker
-      repositoryPicker
+      // Provider mode + Repository (side by side)
+      HStack(spacing: 8) {
+        providerModePicker
+        repositoryPicker
+      }
 
       // Prompt textarea
       promptEditor
@@ -78,8 +36,8 @@ public struct MultiSessionLaunchView: View {
       // Branch name input
       branchInputField
 
-      // Branch names (auto-generated, read-only display)
-      if !viewModel.claudeBranchName.isEmpty {
+      // Branch preview (only for "Both" mode)
+      if viewModel.selectedProviderMode == .both && !viewModel.claudeBranchName.isEmpty {
         branchPreview
       }
 
@@ -118,22 +76,33 @@ public struct MultiSessionLaunchView: View {
 
   private var formHeader: some View {
     HStack {
-      Image(systemName: "rectangle.split.2x1")
+      Image(systemName: "play.rectangle")
         .font(.system(size: DesignTokens.IconSize.md))
         .foregroundColor(.primary)
-      Text("Multi-Session")
+      Text("Session Launcher")
         .font(.system(size: 13, weight: .semibold))
       Spacer()
-      Button(action: {
-        withAnimation(.easeInOut(duration: 0.25)) {
-          isExpanded = false
+    }
+  }
+
+  // MARK: - Provider Mode Picker
+
+  private var providerModePicker: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      Text("Provider")
+        .font(.caption)
+        .fontWeight(.medium)
+        .foregroundColor(.secondary)
+
+      Picker("Provider", selection: $viewModel.selectedProviderMode) {
+        ForEach(LaunchProviderMode.allCases, id: \.self) { mode in
+          Text(mode.rawValue).tag(mode)
         }
-      }) {
-        Image(systemName: "chevron.up")
-          .font(.system(size: 10))
-          .foregroundColor(.secondary)
       }
-      .buttonStyle(.plain)
+      .pickerStyle(.menu)
+      .onChange(of: viewModel.selectedProviderMode) { _, _ in
+        viewModel.onProviderModeChanged()
+      }
     }
   }
 
@@ -157,7 +126,6 @@ public struct MultiSessionLaunchView: View {
         Task {
           await viewModel.loadBranches()
         }
-        // Re-apply branch names with new repo context
         if !branchInput.isEmpty {
           viewModel.updateBranchNames(from: branchInput)
         }
@@ -176,7 +144,7 @@ public struct MultiSessionLaunchView: View {
 
       ZStack(alignment: .topLeading) {
         if viewModel.sharedPrompt.isEmpty {
-          Text("Enter shared prompt for both sessions...")
+          Text(promptPlaceholder)
             .font(.system(size: 12))
             .foregroundColor(.secondary.opacity(0.6))
             .padding(.horizontal, 6)
@@ -200,6 +168,14 @@ public struct MultiSessionLaunchView: View {
     }
   }
 
+  private var promptPlaceholder: String {
+    switch viewModel.selectedProviderMode {
+    case .both: return "Enter prompt for both sessions..."
+    case .claude: return "Enter prompt for Claude session..."
+    case .codex: return "Enter prompt for Codex session..."
+    }
+  }
+
   // MARK: - Branch Input
 
   private var branchInputField: some View {
@@ -216,13 +192,20 @@ public struct MultiSessionLaunchView: View {
           viewModel.updateBranchNames(from: newValue)
         }
 
-      Text("Suffixed with -claude and -codex automatically")
+      Text(branchHintText)
         .font(.caption2)
         .foregroundColor(.secondary)
     }
   }
 
-  // MARK: - Branch Preview
+  private var branchHintText: String {
+    switch viewModel.selectedProviderMode {
+    case .both: return "Suffixed with -claude and -codex automatically"
+    case .claude, .codex: return "Branch name for the worktree"
+    }
+  }
+
+  // MARK: - Branch Preview (Both mode only)
 
   private var branchPreview: some View {
     VStack(alignment: .leading, spacing: 6) {
@@ -302,8 +285,15 @@ public struct MultiSessionLaunchView: View {
 
   private var progressSection: some View {
     VStack(alignment: .leading, spacing: 6) {
-      progressRow(label: "Claude", progress: viewModel.claudeProgress)
-      progressRow(label: "Codex", progress: viewModel.codexProgress)
+      switch viewModel.selectedProviderMode {
+      case .both:
+        progressRow(label: "Claude", progress: viewModel.claudeProgress)
+        progressRow(label: "Codex", progress: viewModel.codexProgress)
+      case .claude:
+        progressRow(label: "Claude", progress: viewModel.claudeProgress)
+      case .codex:
+        progressRow(label: "Codex", progress: viewModel.codexProgress)
+      }
     }
     .padding(8)
     .background(
@@ -372,12 +362,9 @@ public struct MultiSessionLaunchView: View {
 
   private var actionButtons: some View {
     HStack {
-      Button("Cancel") {
-        withAnimation(.easeInOut(duration: 0.25)) {
-          viewModel.reset()
-          branchInput = ""
-          isExpanded = false
-        }
+      Button("Reset") {
+        viewModel.reset()
+        branchInput = ""
       }
       .disabled(viewModel.isLaunching)
 
@@ -385,7 +372,7 @@ public struct MultiSessionLaunchView: View {
 
       Button(action: {
         Task {
-          await viewModel.launchBothSessions()
+          await viewModel.launchSessions()
         }
       }) {
         HStack(spacing: 6) {

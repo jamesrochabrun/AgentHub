@@ -2,11 +2,19 @@
 //  MultiSessionLaunchViewModel.swift
 //  AgentHub
 //
-//  View model for the Multi-Session Launch feature.
-//  Coordinates creating worktrees and starting sessions for both Claude and Codex.
+//  View model for the Session Launcher.
+//  Coordinates creating worktrees and starting sessions for Claude, Codex, or both.
 //
 
 import Foundation
+
+// MARK: - LaunchProviderMode
+
+public enum LaunchProviderMode: String, CaseIterable, Sendable {
+  case claude = "Claude"
+  case codex = "Codex"
+  case both = "Both"
+}
 
 // MARK: - MultiSessionLaunchViewModel
 
@@ -22,9 +30,12 @@ public final class MultiSessionLaunchViewModel {
 
   // MARK: - Form State
 
+  public var selectedProviderMode: LaunchProviderMode = .both
   public var sharedPrompt: String = ""
+  public var branchInput: String = ""
   public var claudeBranchName: String = ""
   public var codexBranchName: String = ""
+  public var singleBranchName: String = ""
   public var baseBranch: RemoteBranch?
   public var selectedRepository: SelectedRepository?
 
@@ -47,10 +58,15 @@ public final class MultiSessionLaunchViewModel {
   // MARK: - Computed
 
   public var isValid: Bool {
-    !sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    && !claudeBranchName.isEmpty
-    && !codexBranchName.isEmpty
-    && selectedRepository != nil
+    let hasPrompt = !sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasRepo = selectedRepository != nil
+
+    switch selectedProviderMode {
+    case .both:
+      return hasPrompt && hasRepo && !claudeBranchName.isEmpty && !codexBranchName.isEmpty
+    case .claude, .codex:
+      return hasPrompt && hasRepo && !singleBranchName.isEmpty
+    }
   }
 
   // MARK: - Init
@@ -84,18 +100,34 @@ public final class MultiSessionLaunchViewModel {
     isLoadingBranches = false
   }
 
-  /// Updates branch names with the repo-name prefix and provider suffix
+  /// Updates branch names based on the current provider mode
   public func updateBranchNames(from input: String) {
-    guard let repo = selectedRepository else { return }
-    let repoName = repo.name
+    branchInput = input
     let sanitized = GitWorktreeService.sanitizeBranchName(input)
     guard !sanitized.isEmpty else {
       claudeBranchName = ""
       codexBranchName = ""
+      singleBranchName = ""
       return
     }
-    claudeBranchName = "\(sanitized)-claude"
-    codexBranchName = "\(sanitized)-codex"
+
+    switch selectedProviderMode {
+    case .both:
+      claudeBranchName = "\(sanitized)-claude"
+      codexBranchName = "\(sanitized)-codex"
+      singleBranchName = ""
+    case .claude, .codex:
+      singleBranchName = sanitized
+      claudeBranchName = ""
+      codexBranchName = ""
+    }
+  }
+
+  /// Re-apply branch names when provider mode changes
+  public func onProviderModeChanged() {
+    if !branchInput.isEmpty {
+      updateBranchNames(from: branchInput)
+    }
   }
 
   /// Directory name for a given branch name in the selected repository
@@ -104,8 +136,8 @@ public final class MultiSessionLaunchViewModel {
     return GitWorktreeService.worktreeDirectoryName(for: branchName, repoName: repo.name)
   }
 
-  /// Creates worktrees for both providers and starts sessions with the shared prompt
-  public func launchBothSessions() async {
+  /// Creates worktrees and starts sessions based on the selected provider mode
+  public func launchSessions() async {
     guard let repo = selectedRepository, isValid else { return }
 
     isLaunching = true
@@ -116,11 +148,51 @@ public final class MultiSessionLaunchViewModel {
     let prompt = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
     let repoPath = repo.path
 
+    switch selectedProviderMode {
+    case .both:
+      await launchBothProviders(prompt: prompt, repoPath: repoPath)
+    case .claude:
+      await launchSingleProvider(
+        prompt: prompt,
+        repoPath: repoPath,
+        branchName: singleBranchName,
+        viewModel: claudeViewModel,
+        progressSetter: { self.claudeProgress = $0 }
+      )
+    case .codex:
+      await launchSingleProvider(
+        prompt: prompt,
+        repoPath: repoPath,
+        branchName: singleBranchName,
+        viewModel: codexViewModel,
+        progressSetter: { self.codexProgress = $0 }
+      )
+    }
+
+    isLaunching = false
+    onLaunchCompleted?()
+    reset()
+  }
+
+  /// Resets all form fields to initial state
+  public func reset() {
+    sharedPrompt = ""
+    branchInput = ""
+    claudeBranchName = ""
+    codexBranchName = ""
+    singleBranchName = ""
+    baseBranch = availableBranches.first
+    claudeProgress = .idle
+    codexProgress = .idle
+    launchError = nil
+  }
+
+  // MARK: - Private
+
+  private func launchBothProviders(prompt: String, repoPath: String) async {
     // Ensure the repository is added to both providers
     claudeViewModel.addRepository(at: repoPath)
     codexViewModel.addRepository(at: repoPath)
-
-    // Brief pause to let addRepository complete
     try? await Task.sleep(for: .milliseconds(300))
 
     // 1. Create Claude worktree
@@ -162,59 +234,65 @@ public final class MultiSessionLaunchViewModel {
       launchError = launchError != nil ? "\(launchError!)\n\(msg)" : msg
     }
 
-    // If both failed, stop
-    guard claudeWorktreePath != nil || codexWorktreePath != nil else {
-      isLaunching = false
-      return
-    }
+    guard claudeWorktreePath != nil || codexWorktreePath != nil else { return }
 
-    // 3. Refresh both view models to pick up new worktrees
+    // 3. Refresh and start sessions
     claudeViewModel.refresh()
     codexViewModel.refresh()
-
-    // Brief pause for refresh to complete
     try? await Task.sleep(for: .milliseconds(500))
 
-    // 4. Start Claude session
     if let path = claudeWorktreePath {
-      let worktree = WorktreeBranch(
-        name: claudeBranchName,
-        path: path,
-        isWorktree: true
-      )
+      let worktree = WorktreeBranch(name: claudeBranchName, path: path, isWorktree: true)
       claudeViewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
     }
 
-    // 800ms delay between launches (matching WorktreeOrchestrationService)
     try? await Task.sleep(for: .milliseconds(800))
 
-    // 5. Start Codex session
     if let path = codexWorktreePath {
-      let worktree = WorktreeBranch(
-        name: codexBranchName,
-        path: path,
-        isWorktree: true
-      )
+      let worktree = WorktreeBranch(name: codexBranchName, path: path, isWorktree: true)
       codexViewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
     }
 
-    // 6. Refresh again to show sessions
     claudeViewModel.refresh()
     codexViewModel.refresh()
-
-    isLaunching = false
-    onLaunchCompleted?()
-    reset()
   }
 
-  /// Resets all form fields to initial state
-  public func reset() {
-    sharedPrompt = ""
-    claudeBranchName = ""
-    codexBranchName = ""
-    baseBranch = availableBranches.first
-    claudeProgress = .idle
-    codexProgress = .idle
-    launchError = nil
+  private func launchSingleProvider(
+    prompt: String,
+    repoPath: String,
+    branchName: String,
+    viewModel: CLISessionsViewModel,
+    progressSetter: @escaping (WorktreeCreationProgress) -> Void
+  ) async {
+    viewModel.addRepository(at: repoPath)
+    try? await Task.sleep(for: .milliseconds(300))
+
+    var worktreePath: String?
+    do {
+      let dirName = directoryName(for: branchName)
+      worktreePath = try await worktreeService.createWorktreeWithNewBranch(
+        at: repoPath,
+        newBranchName: branchName,
+        directoryName: dirName,
+        startPoint: baseBranch?.displayName
+      ) { progress in
+        Task { @MainActor in
+          progressSetter(progress)
+        }
+      }
+    } catch {
+      progressSetter(.failed(error: error.localizedDescription))
+      launchError = error.localizedDescription
+      return
+    }
+
+    guard let path = worktreePath else { return }
+
+    viewModel.refresh()
+    try? await Task.sleep(for: .milliseconds(500))
+
+    let worktree = WorktreeBranch(name: branchName, path: path, isWorktree: true)
+    viewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
+    viewModel.refresh()
   }
 }
