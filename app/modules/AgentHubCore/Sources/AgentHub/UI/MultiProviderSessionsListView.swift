@@ -46,6 +46,8 @@ public struct MultiProviderSessionsListView: View {
   @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var isSearchExpanded: Bool = false
+  @State private var isMultiLaunchExpanded: Bool = false
+  @State private var multiLaunchViewModel: MultiSessionLaunchViewModel?
   @State private var primarySessionId: String?
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
@@ -96,6 +98,18 @@ public struct MultiProviderSessionsListView: View {
       if hasRepositories {
         claudeViewModel.refresh()
         codexViewModel.refresh()
+      }
+      if multiLaunchViewModel == nil {
+        let vm = MultiSessionLaunchViewModel(
+          claudeViewModel: claudeViewModel,
+          codexViewModel: codexViewModel
+        )
+        vm.onLaunchCompleted = {
+          withAnimation(.easeInOut(duration: 0.25)) {
+            isMultiLaunchExpanded = false
+          }
+        }
+        multiLaunchViewModel = vm
       }
     }
     .sheet(item: $createWorktreeContext) { context in
@@ -212,6 +226,16 @@ public struct MultiProviderSessionsListView: View {
         codexSessionCount: codexViewModel.totalSessionCount
       )
       .padding(.bottom, 12)
+
+      // Multi-Session Launch
+      if let multiLaunchViewModel {
+        MultiSessionLaunchView(
+          viewModel: multiLaunchViewModel,
+          isExpanded: $isMultiLaunchExpanded,
+          allRepositories: allRepositories
+        )
+        .padding(.bottom, 6)
+      }
 
       CLIRepositoryPickerView(onAddRepository: showAddRepositoryPicker)
         .padding(.bottom, 6)
