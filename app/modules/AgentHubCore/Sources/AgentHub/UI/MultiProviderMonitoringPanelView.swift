@@ -309,7 +309,7 @@ public struct MultiProviderMonitoringPanelView: View {
   private var header: some View {
     HStack(spacing: 12) {
       Text("Hub")
-        .font(.headline)
+        .font(.system(size: 13, weight: .bold, design: .monospaced))
 
       // Provider filter toggle (hidden in single mode)
       if layoutMode != .single {

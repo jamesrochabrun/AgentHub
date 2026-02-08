@@ -482,10 +482,9 @@ public struct MultiProviderSessionsListView: View {
             .rotationEffect(.degrees(isBrowseExpanded ? 90 : 0))
             .font(.system(size: 10))
           Text("Browse Sessions")
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 13, weight: .bold, design: .monospaced))
           Spacer()
         }
-        .foregroundColor(.secondary)
         .padding(.vertical, 8)
       }
       .buttonStyle(.plain)
@@ -513,14 +512,10 @@ public struct MultiProviderSessionsListView: View {
             collapsedSearchButton
           }
 
-          if hasCurrentProviderRepositories {
-            LazyVStack(spacing: 16) {
-              selectedProviderContent
-            }
-            .padding(.vertical, 4)
-          } else {
-            CLIEmptyStateView(onAddRepository: showAddRepositoryPicker)
+          LazyVStack(spacing: 16) {
+            selectedProviderContent
           }
+          .padding(.vertical, 4)
         }
       }
     }

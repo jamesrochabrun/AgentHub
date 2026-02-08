@@ -248,28 +248,26 @@ public struct MultiSessionLaunchView: View {
     HStack(spacing: 8) {
       providerPill(
         label: "Claude",
-        isSelected: $viewModel.isClaudeSelected,
-        selectedColor: Color.brandPrimary(for: .claude)
+        isSelected: $viewModel.isClaudeSelected
       )
       providerPill(
         label: "Codex",
-        isSelected: $viewModel.isCodexSelected,
-        selectedColor: Color.brandPrimary(for: .codex)
+        isSelected: $viewModel.isCodexSelected
       )
       Spacer()
     }
   }
 
-  private func providerPill(label: String, isSelected: Binding<Bool>, selectedColor: Color) -> some View {
+  private func providerPill(label: String, isSelected: Binding<Bool>) -> some View {
     Button(action: { isSelected.wrappedValue.toggle() }) {
       Text(label)
         .font(.system(size: 11, weight: .medium))
-        .foregroundColor(isSelected.wrappedValue ? .white : .secondary)
+        .foregroundColor(isSelected.wrappedValue ? (colorScheme == .dark ? .black : .white) : .secondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
         .background(
           Capsule()
-            .fill(isSelected.wrappedValue ? selectedColor : Color.primary.opacity(0.06))
+            .fill(isSelected.wrappedValue ? (colorScheme == .dark ? Color.white : Color.black) : Color.primary.opacity(0.06))
         )
     }
     .buttonStyle(.plain)

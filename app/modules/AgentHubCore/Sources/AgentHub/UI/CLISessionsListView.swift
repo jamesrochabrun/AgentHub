@@ -167,8 +167,6 @@ public struct CLISessionsListView: View {
       // Always show normal content
       if viewModel.isLoading && !viewModel.hasRepositories {
         loadingView
-      } else if !viewModel.hasRepositories {
-        CLIEmptyStateView(onAddRepository: viewModel.showAddRepositoryPicker)
       } else {
         repositoriesList
       }

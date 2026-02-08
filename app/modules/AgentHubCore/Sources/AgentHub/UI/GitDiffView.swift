@@ -418,7 +418,7 @@ public struct GitDiffView: View {
       // Header
       HStack {
         Text("Changes")
-          .font(.headline)
+            .font(.system(size: 13, weight: .bold, design: .monospaced))
         Spacer()
       }
       .padding()
