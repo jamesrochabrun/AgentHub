@@ -10,22 +10,6 @@ import Foundation
 import PierreDiffsSwift
 import SwiftUI
 
-// MARK: - WorktreeCreateContext
-
-private struct WorktreeCreateContext: Identifiable {
-  let id = UUID()
-  let providerKind: SessionProviderKind
-  let repository: SelectedRepository
-}
-
-// MARK: - TerminalConfirmation
-
-private struct TerminalConfirmation: Identifiable {
-  let id = UUID()
-  let worktree: WorktreeBranch
-  let currentBranch: String
-}
-
 // MARK: - SessionFileSheetItem
 
 private struct SessionFileSheetItem: Identifiable {
@@ -42,24 +26,16 @@ public struct MultiProviderSessionsListView: View {
   @Bindable var codexViewModel: CLISessionsViewModel
   @Binding var columnVisibility: NavigationSplitViewVisibility
 
-  @State private var createWorktreeContext: WorktreeCreateContext?
-  @State private var terminalConfirmation: TerminalConfirmation?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var isSearchExpanded: Bool = false
+  @State private var isBrowseExpanded: Bool = false
+  @State private var multiLaunchViewModel: MultiSessionLaunchViewModel?
   @State private var primarySessionId: String?
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
 
   @AppStorage(AgentHubDefaults.selectedSidePanelProvider)
   private var selectedProviderRaw: String = "Claude"
-
-  private var selectedProvider: SessionProviderKind {
-    get { SessionProviderKind(rawValue: selectedProviderRaw) ?? .claude }
-  }
-
-  private func setSelectedProvider(_ provider: SessionProviderKind) {
-    selectedProviderRaw = provider.rawValue
-  }
 
   public init(
     claudeViewModel: CLISessionsViewModel,
@@ -97,26 +73,13 @@ public struct MultiProviderSessionsListView: View {
         claudeViewModel.refresh()
         codexViewModel.refresh()
       }
-    }
-    .sheet(item: $createWorktreeContext) { context in
-      CreateWorktreeSheet(
-        repositoryPath: context.repository.path,
-        repositoryName: context.repository.name,
-        onDismiss: { createWorktreeContext = nil },
-        onCreate: { branchName, directory, baseBranch, onProgress in
-          let viewModel = viewModel(for: context.providerKind)
-          try await viewModel.createWorktree(
-            for: context.repository,
-            branchName: branchName,
-            directoryName: directory,
-            baseBranch: baseBranch,
-            onProgress: onProgress
-          )
-          // Refresh both providers after worktree operations
-          claudeViewModel.refresh()
-          codexViewModel.refresh()
-        }
-      )
+      if multiLaunchViewModel == nil {
+        multiLaunchViewModel = MultiSessionLaunchViewModel(
+          claudeViewModel: claudeViewModel,
+          codexViewModel: codexViewModel
+        )
+      }
+      ensurePrimarySelection()
     }
     .sheet(item: $sessionFileSheetItem) { item in
       SessionFileSheetView(
@@ -125,29 +88,6 @@ public struct MultiProviderSessionsListView: View {
         content: item.content,
         onDismiss: { sessionFileSheetItem = nil }
       )
-    }
-    .alert(
-      "Switch Branch?",
-      isPresented: Binding(
-        get: { terminalConfirmation != nil },
-        set: { if !$0 { terminalConfirmation = nil } }
-      ),
-      presenting: terminalConfirmation
-    ) { confirmation in
-      Button("Cancel", role: .cancel) {
-        terminalConfirmation = nil
-      }
-      Button("Switch & Open") {
-        Task {
-          _ = await claudeViewModel.openTerminalAndAutoObserve(
-            confirmation.worktree,
-            skipCheckout: false
-          )
-        }
-        terminalConfirmation = nil
-      }
-    } message: { confirmation in
-      Text("You have uncommitted changes on '\(confirmation.currentBranch)'. Switching to '\(confirmation.worktree.name)' may fail or carry changes over.")
     }
     .alert(
       "Failed to Delete Worktree",
@@ -203,48 +143,23 @@ public struct MultiProviderSessionsListView: View {
 
   private var sessionListContent: some View {
     VStack(spacing: 0) {
-      ProviderSegmentedControl(
-        selectedProvider: Binding(
-          get: { selectedProvider },
-          set: { setSelectedProvider($0) }
-        ),
-        claudeSessionCount: claudeViewModel.totalSessionCount,
-        codexSessionCount: codexViewModel.totalSessionCount
-      )
-      .padding(.bottom, 12)
-
-      CLIRepositoryPickerView(onAddRepository: showAddRepositoryPicker)
-        .padding(.bottom, 6)
-
-      // Collapsible search bar
-      if isSearchExpanded {
-        expandedSearchBar
-          .padding(.bottom, 6)
-      } else {
-        collapsedSearchButton
-          .padding(.bottom, 6)
+      // 1. Session Launcher (always visible)
+      if let multiLaunchViewModel {
+        MultiSessionLaunchView(
+          viewModel: multiLaunchViewModel
+        )
+        .padding(.bottom, 8)
       }
 
-      // Status header (modules/sessions count + First/Last toggle)
-      if hasCurrentProviderRepositories {
-        statusHeader
-          .padding(.bottom, 6)
-      }
+      // 2. Inline Selected Sessions (monitored + pending)
+      inlineSelectedSessions
 
-      if !hasCurrentProviderRepositories {
-        CLIEmptyStateView(onAddRepository: showAddRepositoryPicker)
-      } else {
-        ScrollView(showsIndicators: false) {
-          LazyVStack(spacing: 16) {
-            selectedProviderContent
-          }
-          .padding(.vertical, 4)
-        }
-      }
+      // 3. Collapsible Browse Sessions section
+      browseSectionView
     }
     .animation(.easeInOut(duration: 0.2), value: isSearchExpanded)
+    .animation(.easeInOut(duration: 0.25), value: isBrowseExpanded)
     .onChange(of: currentViewModel.hasPerformedSearch) { oldValue, newValue in
-      // Auto-collapse search when cleared after selecting a result
       if oldValue && !newValue && isSearchExpanded {
         withAnimation(.easeInOut(duration: 0.25)) {
           isSearchExpanded = false
@@ -253,49 +168,10 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
-  @AppStorage(AgentHubDefaults.selectedSessionsPanelSizeMode)
-  private var panelSizeModeRawValue: Int = PanelSizeMode.small.rawValue
-
-  private var panelSizeMode: PanelSizeMode {
-    PanelSizeMode(rawValue: panelSizeModeRawValue) ?? .small
-  }
-
   private var sidePanelView: some View {
-    GeometryReader { geometry in
-      VStack(spacing: 0) {
-        if panelSizeMode != .full {
-          sessionListContent
-            .padding(12)
-        }
-
-        CollapsibleSelectedSessionsPanel(
-          claudeViewModel: claudeViewModel,
-          codexViewModel: codexViewModel,
-          primarySessionId: $primarySessionId
-        )
-        .frame(height: panelHeight(for: geometry.size.height))
-      }
-    }
-  }
-
-  private func panelHeight(for availableHeight: CGFloat) -> CGFloat {
-    let headerHeight: CGFloat = 40
-    let monitoredCount = claudeViewModel.monitoredSessions.count +
-      codexViewModel.monitoredSessions.count +
-      claudeViewModel.pendingHubSessions.count +
-      codexViewModel.pendingHubSessions.count
-
-    guard monitoredCount > 0 else { return 0 }
-
-    switch panelSizeMode {
-    case .collapsed:
-      return headerHeight
-    case .small:
-      return 250 + headerHeight
-    case .medium:
-      return availableHeight / 2  // Center Y point
-    case .full:
-      return availableHeight
+    ScrollView(showsIndicators: false) {
+      sessionListContent
+        .padding(12)
     }
   }
 
@@ -475,49 +351,174 @@ public struct MultiProviderSessionsListView: View {
     currentViewModel.clearSearch()
   }
 
+  // MARK: - Inline Selected Sessions
+
+  private struct SelectedSessionItem: Identifiable {
+    let id: String
+    let session: CLISession
+    let providerKind: SessionProviderKind
+    let timestamp: Date
+    let isPending: Bool
+  }
+
+  private var selectedSessionItems: [SelectedSessionItem] {
+    var results: [SelectedSessionItem] = []
+
+    for pending in claudeViewModel.pendingHubSessions {
+      results.append(SelectedSessionItem(
+        id: "pending-claude-\(pending.id.uuidString)",
+        session: pending.placeholderSession,
+        providerKind: .claude,
+        timestamp: pending.startedAt,
+        isPending: true
+      ))
+    }
+
+    for pending in codexViewModel.pendingHubSessions {
+      results.append(SelectedSessionItem(
+        id: "pending-codex-\(pending.id.uuidString)",
+        session: pending.placeholderSession,
+        providerKind: .codex,
+        timestamp: pending.startedAt,
+        isPending: true
+      ))
+    }
+
+    for item in claudeViewModel.monitoredSessions {
+      results.append(SelectedSessionItem(
+        id: "claude-\(item.session.id)",
+        session: item.session,
+        providerKind: .claude,
+        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
+        isPending: false
+      ))
+    }
+
+    for item in codexViewModel.monitoredSessions {
+      results.append(SelectedSessionItem(
+        id: "codex-\(item.session.id)",
+        session: item.session,
+        providerKind: .codex,
+        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
+        isPending: false
+      ))
+    }
+
+    return results.sorted { $0.timestamp > $1.timestamp }
+  }
+
+  private func selectedSessionCustomName(for item: SelectedSessionItem) -> String? {
+    switch item.providerKind {
+    case .claude: return claudeViewModel.sessionCustomNames[item.session.id]
+    case .codex: return codexViewModel.sessionCustomNames[item.session.id]
+    }
+  }
+
+  @ViewBuilder
+  private var inlineSelectedSessions: some View {
+    let items = selectedSessionItems
+    if !items.isEmpty {
+      VStack(alignment: .leading, spacing: 0) {
+        HStack {
+          Text("Projects")
+            .font(.system(size: 14, weight: .bold))
+          Text("(\(items.count))")
+            .font(.caption)
+            .foregroundColor(.secondary)
+          Spacer()
+        }
+        .padding(.vertical, 6)
+
+        ForEach(items) { item in
+          CollapsibleSessionRow(
+            session: item.session,
+            providerKind: item.providerKind,
+            timestamp: item.timestamp,
+            isPending: item.isPending,
+            isPrimary: item.id == primarySessionId,
+            customName: selectedSessionCustomName(for: item),
+            colorScheme: colorScheme
+          ) {
+            primarySessionId = item.id
+          }
+        }
+      }
+      .padding(.bottom, 8)
+    }
+  }
+
+  // MARK: - Per-Provider Content
+
   @ViewBuilder
   private var selectedProviderContent: some View {
     let isClaudeSelected = selectedProvider == .claude
     let viewModel = isClaudeSelected ? claudeViewModel : codexViewModel
-    let providerKind: SessionProviderKind = isClaudeSelected ? .claude : .codex
     let isInstalled = isClaudeSelected ? claudeInstalled : codexInstalled
-    let hasRepositories = isClaudeSelected ? !claudeViewModel.selectedRepositories.isEmpty : !codexViewModel.selectedRepositories.isEmpty
 
     if !isInstalled {
       CLINotInstalledView(provider: selectedProvider)
-    } else if hasRepositories {
+    } else if !viewModel.selectedRepositories.isEmpty {
       ProviderSectionView(
         viewModel: viewModel,
-        onRemoveRepository: removeRepository,
-        onCreateWorktree: { repository in
-          createWorktreeContext = WorktreeCreateContext(providerKind: providerKind, repository: repository)
-        },
-        onOpenTerminalForWorktree: { worktree in
-          handleOpenTerminal(worktree: worktree, viewModel: viewModel)
-        },
+        onRemoveRepository: { removeRepository($0, from: viewModel) },
         onOpenSessionFile: { session in
           openSessionFile(for: session, viewModel: viewModel)
         }
       )
-    } else {
-      noSessionsView
     }
   }
 
-  private var noSessionsView: some View {
-    VStack(spacing: 10) {
-      Image(systemName: "rectangle.on.rectangle")
-        .font(.system(size: 28))
-        .foregroundColor(.secondary.opacity(0.6))
-      Text("No sessions found")
-        .font(.headline)
-        .foregroundColor(.secondary)
-      Text("Start a session in Claude or Codex to see it here.")
-        .font(.caption)
-        .foregroundColor(.secondary)
+  // MARK: - Browse Section
+
+  private var browseSectionView: some View {
+    VStack(spacing: 0) {
+      Button {
+        withAnimation(.easeInOut(duration: 0.25)) {
+          isBrowseExpanded.toggle()
+        }
+      } label: {
+        HStack(spacing: 8) {
+          Image(systemName: "chevron.right")
+            .rotationEffect(.degrees(isBrowseExpanded ? 90 : 0))
+            .font(.system(size: 10))
+          Text("Browse Sessions")
+            .font(.system(size: 13, weight: .bold, design: .monospaced))
+          Spacer()
+        }
+        .padding(.vertical, 8)
+      }
+      .buttonStyle(.plain)
+
+      if isBrowseExpanded {
+        VStack(spacing: 6) {
+          ProviderSegmentedControl(
+            selectedProvider: Binding(
+              get: { selectedProvider },
+              set: { selectedProviderRaw = $0.rawValue }
+            ),
+            claudeSessionCount: claudeViewModel.totalSessionCount,
+            codexSessionCount: codexViewModel.totalSessionCount
+          )
+
+          if hasCurrentProviderRepositories {
+            statusHeader
+          }
+
+          CLIRepositoryPickerView(onAddRepository: showAddRepositoryPicker)
+
+          if isSearchExpanded {
+            expandedSearchBar
+          } else {
+            collapsedSearchButton
+          }
+
+          LazyVStack(spacing: 16) {
+            selectedProviderContent
+          }
+          .padding(.vertical, 4)
+        }
+      }
     }
-    .frame(maxWidth: .infinity)
-    .padding(.vertical, 24)
   }
 
   private var statusHeader: some View {
@@ -538,13 +539,13 @@ public struct MultiProviderSessionsListView: View {
       }
 
       HStack {
-        Text("\(currentViewModel.selectedRepositories.count) \(currentViewModel.selectedRepositories.count == 1 ? "module" : "modules") · \(currentViewModel.allSessions.count) \(currentViewModel.allSessions.count == 1 ? "session" : "sessions") · \(currentViewModel.monitoredSessionIds.count) in Hub")
+        Text("\(currentViewModel.selectedRepositories.count) \(currentViewModel.selectedRepositories.count == 1 ? "module" : "modules") · \(currentViewModel.allSessions.count) \(currentViewModel.allSessions.count == 1 ? "session" : "sessions")")
           .font(.caption)
           .foregroundColor(.secondary)
 
         Spacer()
 
-        // Toggle first/last message (per provider)
+        // Toggle first/last message
         Button(action: { toggleShowLastMessage() }) {
           HStack(spacing: 6) {
             Image(systemName: currentViewModel.showLastMessage ? "arrow.down.to.line" : "arrow.up.to.line")
@@ -606,25 +607,12 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func addRepository(at path: String) {
-    currentViewModel.addRepository(at: path)
+    claudeViewModel.addRepository(at: path)
+    codexViewModel.addRepository(at: path)
   }
 
-  private func removeRepository(_ repository: SelectedRepository) {
-    currentViewModel.removeRepository(repository)
-  }
-
-  private func handleOpenTerminal(worktree: WorktreeBranch, viewModel: CLISessionsViewModel) {
-    Task {
-      let check = await viewModel.checkBeforeOpeningTerminal(worktree)
-
-      if !check.needsCheckout {
-        _ = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: true)
-      } else if check.hasUncommittedChanges {
-        terminalConfirmation = TerminalConfirmation(worktree: worktree, currentBranch: check.currentBranch)
-      } else {
-        _ = await viewModel.openTerminalAndAutoObserve(worktree, skipCheckout: false)
-      }
-    }
+  private func removeRepository(_ repository: SelectedRepository, from viewModel: CLISessionsViewModel) {
+    viewModel.removeRepository(repository)
   }
 
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {
@@ -658,12 +646,32 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  private var selectedProvider: SessionProviderKind {
+    SessionProviderKind(rawValue: selectedProviderRaw) ?? .claude
+  }
+
   private var currentViewModel: CLISessionsViewModel {
-    viewModel(for: selectedProvider)
+    selectedProvider == .claude ? claudeViewModel : codexViewModel
+  }
+
+  private var hasCurrentProviderRepositories: Bool {
+    !currentViewModel.selectedRepositories.isEmpty
   }
 
   private func toggleShowLastMessage() {
     currentViewModel.showLastMessage.toggle()
+  }
+
+  private func ensurePrimarySelection() {
+    let items = selectedSessionItems
+    guard !items.isEmpty else {
+      primarySessionId = nil
+      return
+    }
+    if let current = primarySessionId, items.contains(where: { $0.id == current }) {
+      return
+    }
+    primarySessionId = items.first?.id
   }
 
   // MARK: - Computed
@@ -676,20 +684,8 @@ public struct MultiProviderSessionsListView: View {
     CLIDetectionService.isCodexInstalled()
   }
 
-  private var claudeHasSessions: Bool {
-    claudeViewModel.totalSessionCount + claudeViewModel.pendingHubSessions.count > 0
-  }
-
-  private var codexHasSessions: Bool {
-    codexViewModel.totalSessionCount + codexViewModel.pendingHubSessions.count > 0
-  }
-
   private var hasRepositories: Bool {
     !allRepositories.isEmpty
-  }
-
-  private var hasCurrentProviderRepositories: Bool {
-    !currentViewModel.selectedRepositories.isEmpty
   }
 
   private var allRepositories: [SelectedRepository] {
@@ -717,8 +713,6 @@ public struct MultiProviderSessionsListView: View {
 private struct ProviderSectionView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let onRemoveRepository: (SelectedRepository) -> Void
-  let onCreateWorktree: (SelectedRepository) -> Void
-  let onOpenTerminalForWorktree: (WorktreeBranch) -> Void
   let onOpenSessionFile: (CLISession) -> Void
 
   var body: some View {
@@ -746,21 +740,6 @@ private struct ProviderSectionView: View {
           },
           onToggleMonitoring: { session in
             viewModel.toggleMonitoring(for: session)
-          },
-          onCreateWorktree: {
-            onCreateWorktree(repository)
-          },
-          onOpenTerminalForWorktree: { worktree in
-            onOpenTerminalForWorktree(worktree)
-          },
-          onOpenTerminalDangerousForWorktree: { worktree in
-            _ = viewModel.openTerminalInWorktree(worktree, skipCheckout: true, dangerouslySkipPermissions: true)
-          },
-          onStartInHubForWorktree: { worktree in
-            viewModel.startNewSessionInHub(worktree)
-          },
-          onStartInHubDangerousForWorktree: { worktree in
-            viewModel.startNewSessionInHub(worktree, dangerouslySkipPermissions: true)
           },
           onDeleteWorktree: { worktree in
             Task { await viewModel.deleteWorktree(worktree) }

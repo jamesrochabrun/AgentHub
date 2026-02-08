@@ -159,12 +159,16 @@ public enum CLILoadingState: Equatable, Sendable {
 // MARK: - SelectedRepository
 
 /// A repository selected by the user for CLI session monitoring
-public struct SelectedRepository: Identifiable, Sendable, Equatable, Codable {
+public struct SelectedRepository: Identifiable, Sendable, Equatable, Hashable, Codable {
   public var id: String { path }
   public let path: String
   public let name: String
   public var worktrees: [WorktreeBranch]
   public var isExpanded: Bool
+
+  public func hash(into hasher: inout Hasher) {
+    hasher.combine(path)
+  }
 
   public init(
     path: String,

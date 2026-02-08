@@ -66,7 +66,10 @@ public struct CLICommandConfiguration: Codable, Sendable {
         // Codex CLI resume: codex resume <SESSION_ID>
         return ["resume", sessionId]
       }
-      // Start a new Codex session (ignore prompt for now).
+      // Start a new Codex session with optional prompt as positional argument
+      if let prompt, !prompt.isEmpty {
+        return [prompt]
+      }
       return []
     }
   }

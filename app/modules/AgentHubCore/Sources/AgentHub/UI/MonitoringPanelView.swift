@@ -238,7 +238,7 @@ public struct MonitoringPanelView: View {
   private var header: some View {
     HStack {
       Text("Hub")
-        .font(.title3.weight(.semibold))
+        .font(.system(size: 13, weight: .bold, design: .monospaced))
 
       Spacer()
 

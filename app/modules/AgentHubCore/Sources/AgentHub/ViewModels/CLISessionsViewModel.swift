@@ -1087,13 +1087,16 @@ public final class CLISessionsViewModel {
   /// - Parameters:
   ///   - worktree: The worktree to start the session in
   ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
-  public func startNewSessionInHub(_ worktree: WorktreeBranch, dangerouslySkipPermissions: Bool = false) {
+  public func startNewSessionInHub(
+    _ worktree: WorktreeBranch,
+    initialPrompt: String? = nil,
+    dangerouslySkipPermissions: Bool = false
+  ) {
     // Each pending session gets a unique ID, so no need to clear existing terminals
     // Terminals are now keyed by session ID, not worktree path
-    // No auto-prompt: let user type naturally in the terminal
     let pending = PendingHubSession(
       worktree: worktree,
-      initialPrompt: nil,
+      initialPrompt: initialPrompt,
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
     pendingHubSessions.append(pending)
