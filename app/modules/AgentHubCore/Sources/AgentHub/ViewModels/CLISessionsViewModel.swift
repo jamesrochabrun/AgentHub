@@ -542,11 +542,9 @@ public final class CLISessionsViewModel {
       // Load persisted monitored session IDs
       let persistedSessionIds = loadPersistedSessionIds()
 
-      // Phase 1: Add repositories
+      // Phase 1: Add repositories (batch — single refreshSessions call instead of N)
       loadingState = .restoringRepositories
-      for path in paths {
-        await monitorService.addRepository(path)
-      }
+      await monitorService.addRepositories(paths)
       restoreExpansionState()
 
       // If no sessions to restore, we're done

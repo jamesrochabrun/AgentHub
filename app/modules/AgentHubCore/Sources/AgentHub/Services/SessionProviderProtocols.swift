@@ -22,6 +22,7 @@ public protocol SessionMonitorServiceProtocol: AnyObject, Sendable {
 
   @discardableResult
   func addRepository(_ path: String) async -> SelectedRepository?
+  func addRepositories(_ paths: [String]) async
   func removeRepository(_ path: String) async
   func getSelectedRepositories() async -> [SelectedRepository]
   func setSelectedRepositories(_ repositories: [SelectedRepository]) async
@@ -33,6 +34,13 @@ public protocol SessionMonitorServiceProtocol: AnyObject, Sendable {
 public extension SessionMonitorServiceProtocol {
   func refreshSessions() async {
     await refreshSessions(skipWorktreeRedetection: false)
+  }
+
+  /// Default implementation: loops addRepository one at a time
+  func addRepositories(_ paths: [String]) async {
+    for path in paths {
+      await addRepository(path)
+    }
   }
 }
 

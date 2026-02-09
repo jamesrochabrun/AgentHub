@@ -31,6 +31,20 @@ public actor CLISessionMonitorService {
 
   private var selectedRepositories: [SelectedRepository] = []
 
+  // MARK: - Caches
+
+  /// Cache of session metadata (branch + slug) keyed by session ID.
+  /// Branch and slug don't change for existing sessions, so cache is always valid.
+  private var sessionMetadataCache: [String: SessionMetadata] = [:]
+
+  /// Byte offset into history.jsonl up to which we've already parsed.
+  private var lastHistoryOffset: UInt64 = 0
+  /// Accumulated history entries from previous incremental parses.
+  private var cachedHistoryEntries: [HistoryEntry] = []
+
+  /// Cache of worktree detection results keyed by repository path.
+  private var worktreeCache: [String: [WorktreeBranch]] = [:]
+
   // MARK: - Initialization
 
   public init(claudeDataPath: String? = nil, metadataStore: SessionMetadataStore? = nil) {
@@ -68,6 +82,32 @@ public actor CLISessionMonitorService {
     return repository
   }
 
+  /// Adds multiple repositories at once, detecting worktrees in parallel and
+  /// calling refreshSessions only once at the end (instead of N times).
+  public func addRepositories(_ paths: [String]) async {
+    // Filter out already-added repos
+    let newPaths = paths.filter { path in
+      !selectedRepositories.contains(where: { $0.path == path })
+    }
+    guard !newPaths.isEmpty else { return }
+
+    // Detect worktrees for all new repos in parallel
+    let allWorktrees = await detectWorktreesBatch(repoPaths: newPaths)
+
+    for path in newPaths {
+      let worktrees = allWorktrees[path] ?? []
+      let repository = SelectedRepository(
+        path: path,
+        worktrees: worktrees,
+        isExpanded: true
+      )
+      selectedRepositories.append(repository)
+    }
+
+    // Single refreshSessions call for all repos
+    await refreshSessions(skipWorktreeRedetection: true)
+  }
+
   /// Removes a repository from monitoring
   /// - Parameter path: Path to the repository to remove
   public func removeRepository(_ path: String) async {
@@ -100,7 +140,8 @@ public actor CLISessionMonitorService {
     if !skipWorktreeRedetection {
       let repoCount = selectedRepositories.count
       AppLogger.git.info("[MonitorService] refreshSessions worktree re-detection start repos=\(repoCount)")
-      // Detect worktrees for all repos in parallel
+      // Detect worktrees for all repos in parallel (invalidate cache for full refresh)
+      worktreeCache.removeAll()
       let allWorktrees = await detectWorktreesBatch(
         repoPaths: selectedRepositories.map { $0.path }
       )
@@ -387,28 +428,59 @@ public actor CLISessionMonitorService {
     }
   }
 
-  /// Detects worktrees for multiple repositories in parallel
-  /// - Parameter repoPaths: Array of repository paths to detect worktrees for
+  /// Detects worktrees for multiple repositories in parallel.
+  /// When `useCache` is true, returns cached results for repos that have been detected before.
+  /// - Parameters:
+  ///   - repoPaths: Array of repository paths to detect worktrees for
+  ///   - useCache: When true, skips detection for repos with cached results
   /// - Returns: Dictionary mapping repository paths to their detected worktrees
-  private func detectWorktreesBatch(repoPaths: [String]) async -> [String: [WorktreeBranch]] {
+  private func detectWorktreesBatch(repoPaths: [String], useCache: Bool = false) async -> [String: [WorktreeBranch]] {
     let start = ContinuousClock.now
-    let results = await withTaskGroup(of: (String, [WorktreeBranch]).self) { group in
-      for repoPath in repoPaths {
-        group.addTask {
-          let worktrees = await self.detectWorktrees(at: repoPath)
-          return (repoPath, worktrees)
+
+    // Separate cached and uncached repos
+    var results: [String: [WorktreeBranch]] = [:]
+    var pathsToDetect: [String] = []
+
+    if useCache {
+      for path in repoPaths {
+        if let cached = worktreeCache[path] {
+          results[path] = cached
+        } else {
+          pathsToDetect.append(path)
         }
       }
+    } else {
+      pathsToDetect = repoPaths
+    }
 
-      var results: [String: [WorktreeBranch]] = [:]
-      for await (path, worktrees) in group {
+    // Detect worktrees for uncached repos in parallel
+    if !pathsToDetect.isEmpty {
+      let detected = await withTaskGroup(of: (String, [WorktreeBranch]).self) { group in
+        for repoPath in pathsToDetect {
+          group.addTask {
+            let worktrees = await self.detectWorktrees(at: repoPath)
+            return (repoPath, worktrees)
+          }
+        }
+
+        var detected: [String: [WorktreeBranch]] = [:]
+        for await (path, worktrees) in group {
+          detected[path] = worktrees
+        }
+        return detected
+      }
+
+      // Update cache and results
+      for (path, worktrees) in detected {
+        worktreeCache[path] = worktrees
         results[path] = worktrees
       }
-      return results
     }
+
     let elapsed = ContinuousClock.now - start
     let totalWorktrees = results.values.reduce(0) { $0 + $1.count }
-    AppLogger.git.info("[MonitorService] detectWorktreesBatch repos=\(repoPaths.count) totalWorktrees=\(totalWorktrees) elapsed=\(elapsed, privacy: .public)")
+    let cachedCount = repoPaths.count - pathsToDetect.count
+    AppLogger.git.info("[MonitorService] detectWorktreesBatch repos=\(repoPaths.count) cached=\(cachedCount) detected=\(pathsToDetect.count) totalWorktrees=\(totalWorktrees) elapsed=\(elapsed, privacy: .public)")
     return results
   }
 
@@ -433,22 +505,33 @@ public actor CLISessionMonitorService {
     let slug: String?
   }
 
-  /// Reads gitBranch and slug from multiple session files in parallel using Task.detached
+  /// Reads gitBranch and slug from multiple session files in parallel using Task.detached.
+  /// Uses `sessionMetadataCache` to skip re-reading files for known sessions.
   /// - Parameter sessionEntries: Dictionary of session IDs to their history entries
   /// - Returns: Dictionary mapping session IDs to their metadata (branch and slug)
   private func readSessionMetadataBatch(sessionEntries: [String: [HistoryEntry]]) async -> [String: SessionMetadata] {
     let claudePath = claudeDataPath  // Capture for sendable closure
 
-    return await Task.detached(priority: .userInitiated) {
-      // Build list of (sessionId, filePath) to read
-      var filesToRead: [(sessionId: String, filePath: String)] = []
-      for (sessionId, entries) in sessionEntries {
+    // Separate cached from uncached sessions
+    var results: [String: SessionMetadata] = [:]
+    var uncachedEntries: [(sessionId: String, filePath: String)] = []
+
+    for (sessionId, entries) in sessionEntries {
+      if let cached = sessionMetadataCache[sessionId] {
+        results[sessionId] = cached
+      } else {
         guard let firstEntry = entries.first else { continue }
         let encodedPath = firstEntry.project.claudeProjectPathEncoded
         let filePath = "\(claudePath)/projects/\(encodedPath)/\(sessionId).jsonl"
-        filesToRead.append((sessionId, filePath))
+        uncachedEntries.append((sessionId, filePath))
       }
+    }
 
+    guard !uncachedEntries.isEmpty else { return results }
+
+    let filesToRead = uncachedEntries  // Capture for sendable closure
+
+    let newMetadata = await Task.detached(priority: .userInitiated) {
       // Read all files in parallel using withTaskGroup
       return await withTaskGroup(of: (String, SessionMetadata?).self) { group in
         for (sessionId, filePath) in filesToRead {
@@ -496,33 +579,81 @@ public actor CLISessionMonitorService {
           }
         }
 
-        var results: [String: SessionMetadata] = [:]
+        var newResults: [String: SessionMetadata] = [:]
         for await (sessionId, metadata) in group {
           if let metadata = metadata {
-            results[sessionId] = metadata
+            newResults[sessionId] = metadata
           }
         }
-        return results
+        return newResults
       }
     }.value
+
+    // Update cache and merge into results
+    for (sessionId, metadata) in newMetadata {
+      sessionMetadataCache[sessionId] = metadata
+      results[sessionId] = metadata
+    }
+
+    return results
   }
 
   // MARK: - Filtered History Parsing
 
-  /// Parses history.jsonl and filters to only entries matching selected paths
-  /// Uses Task.detached to run heavy I/O and parsing off the actor's isolation context
+  /// Parses history.jsonl incrementally — only reads new bytes since last parse.
+  /// On first call or if the file was truncated, does a full parse.
+  /// Uses Task.detached to run heavy I/O and parsing off the actor's isolation context.
   private func parseHistoryForPaths(_ paths: Set<String>) async -> [HistoryEntry] {
     let historyPath = claudeDataPath + "/history.jsonl"
+    let previousOffset = lastHistoryOffset
+    let previousEntries = cachedHistoryEntries
 
-    return await Task.detached(priority: .userInitiated) {
-      guard let data = FileManager.default.contents(atPath: historyPath),
-            let content = String(data: data, encoding: .utf8) else {
-        return []
+    let (newEntries, newOffset) = await Task.detached(priority: .userInitiated) {
+      // Check file size
+      guard let attrs = try? FileManager.default.attributesOfItem(atPath: historyPath),
+            let fileSize = attrs[.size] as? UInt64 else {
+        return ([HistoryEntry](), UInt64(0))
+      }
+
+      // If file was truncated or this is the first parse, do full parse
+      let needsFullParse = fileSize < previousOffset || previousOffset == 0
+
+      let data: Data
+      let baseOffset: UInt64
+
+      if needsFullParse {
+        guard let fullData = FileManager.default.contents(atPath: historyPath) else {
+          return ([HistoryEntry](), UInt64(0))
+        }
+        data = fullData
+        baseOffset = 0
+      } else if fileSize > previousOffset {
+        // Incremental: read only new bytes
+        guard let handle = FileHandle(forReadingAtPath: historyPath) else {
+          return (previousEntries, previousOffset)
+        }
+        defer { try? handle.close() }
+        do {
+          try handle.seek(toOffset: previousOffset)
+          guard let newData = try handle.read(upToCount: Int(fileSize - previousOffset)) else {
+            return (previousEntries, previousOffset)
+          }
+          data = newData
+          baseOffset = previousOffset
+        } catch {
+          return (previousEntries, previousOffset)
+        }
+      } else {
+        // No new data
+        return (previousEntries, previousOffset)
+      }
+
+      guard let content = String(data: data, encoding: .utf8) else {
+        return (needsFullParse ? [HistoryEntry]() : previousEntries, needsFullParse ? UInt64(0) : previousOffset)
       }
 
       let decoder = JSONDecoder()
-
-      return content
+      let parsed = content
         .components(separatedBy: .newlines)
         .compactMap { line -> HistoryEntry? in
           guard !line.isEmpty,
@@ -530,15 +661,26 @@ public actor CLISessionMonitorService {
                 let entry = try? decoder.decode(HistoryEntry.self, from: jsonData) else {
             return nil
           }
-
-          // Only include entries that match a selected path
-          let matchesPath = paths.contains { path in
-            entry.project.hasPrefix(path) || entry.project == path
-          }
-
-          return matchesPath ? entry : nil
+          return entry
         }
+
+      if needsFullParse {
+        return (parsed, fileSize)
+      } else {
+        return (previousEntries + parsed, fileSize)
+      }
     }.value
+
+    // Update cached state
+    cachedHistoryEntries = newEntries
+    lastHistoryOffset = newOffset
+
+    // Filter by paths (always needed since monitored paths may change)
+    return newEntries.filter { entry in
+      paths.contains { path in
+        entry.project.hasPrefix(path) || entry.project == path
+      }
+    }
   }
 
 }
