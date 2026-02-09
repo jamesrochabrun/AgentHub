@@ -102,6 +102,12 @@ public final class CLISessionsViewModel {
   private var existingSessionIdsBeforeTerminal: Set<String> = []
   /// Whether the next auto-observed session should show terminal view (from "Start in Hub")
   public var pendingHubSessionWithTerminal: Bool = false
+
+  /// Session IDs awaiting progressive restoration on app launch
+  private var pendingRestorationSessionIds: Set<String> = []
+
+  /// Terminal view IDs loaded from persistence, used during progressive restoration
+  private var restoringTerminalViewIds: Set<String> = []
   /// Session IDs that should show terminal view (tracks current state for each row)
   public var sessionsWithTerminalView: Set<String> = []
 
@@ -491,6 +497,9 @@ public final class CLISessionsViewModel {
 
           // Check for pending auto-observe
           self.processPendingAutoObserve()
+
+          // Progressively restore sessions from persistence as they become available
+          self.processPendingSessionRestorations()
         }
       }
     }
@@ -539,33 +548,27 @@ public final class CLISessionsViewModel {
         return
       }
 
-      // Load persisted monitored session IDs
+      // Store persisted session IDs for progressive restoration
       let persistedSessionIds = loadPersistedSessionIds()
+      if !persistedSessionIds.isEmpty {
+        pendingRestorationSessionIds = persistedSessionIds
+        // Load terminal view state for restoration decisions
+        if let tvData = UserDefaults.standard.data(forKey: terminalViewKey),
+           let tvIds = try? JSONDecoder().decode([String].self, from: tvData) {
+          restoringTerminalViewIds = Set(tvIds)
+        }
+      }
 
-      // Phase 1: Add repositories (batch — single refreshSessions call instead of N)
+      // Add repositories (triggers refreshSessions → setupSubscriptions)
       loadingState = .restoringRepositories
       await monitorService.addRepositories(paths)
       restoreExpansionState()
-
-      // If no sessions to restore, we're done
-      guard !persistedSessionIds.isEmpty else {
-        loadingState = .idle
-        return
-      }
-
-      // Phase 2: Wait for sessions to appear in selectedRepositories
-      loadingState = .restoringMonitoredSessions
-      let foundSessions = await waitForSessions(
-        sessionIds: persistedSessionIds,
-        timeout: .seconds(3)
-      )
-
-      // Phase 3: Restore monitoring for found sessions
-      if !foundSessions.isEmpty {
-        restoreMonitoredSessions(sessionIdsToRestore: Set(foundSessions.map { $0.id }))
-      }
-
       loadingState = .idle
+
+      // Safety timeout: stop trying to restore after 10 seconds
+      try? await Task.sleep(for: .seconds(10))
+      pendingRestorationSessionIds.removeAll()
+      restoringTerminalViewIds.removeAll()
     }
   }
 
@@ -578,23 +581,39 @@ public final class CLISessionsViewModel {
     return Set(sessionIds)
   }
 
-  /// Waits for sessions to appear in selectedRepositories
-  private func waitForSessions(
-    sessionIds: Set<String>,
-    timeout: Duration
-  ) async -> [CLISession] {
-    let deadline = ContinuousClock.now + timeout
 
-    while ContinuousClock.now < deadline {
-      let foundSessions = allSessions.filter { sessionIds.contains($0.id) }
-      if !foundSessions.isEmpty {
-        return foundSessions
+  /// Progressively restores sessions as they become available via setupSubscriptions.
+  /// Called each time selectedRepositories is updated. Populates monitoring state directly
+  /// (skips persistMonitoredSessions to avoid overwriting the complete persisted state).
+  private func processPendingSessionRestorations() {
+    guard !pendingRestorationSessionIds.isEmpty else { return }
+
+    var restoredIds: Set<String> = []
+
+    for sessionId in pendingRestorationSessionIds {
+      if let session = findSession(byId: sessionId),
+         sessionFileExists(session: session) {
+        // Populate monitoring state directly (skip persistence — persisted state is already correct)
+        monitoredSessionIds.insert(session.id)
+        monitoredSessionBackup[session.id] = session
+
+        // Restore terminal view mode from persisted state
+        if restoringTerminalViewIds.contains(session.id) {
+          sessionsWithTerminalView.insert(session.id)
+        }
+
+        // Start polling for file changes
+        startPolling(session: session)
+
+        restoredIds.insert(sessionId)
       }
-      try? await Task.sleep(for: .milliseconds(100))
     }
 
-    // Timeout - return whatever we have
-    return allSessions.filter { sessionIds.contains($0.id) }
+    if !restoredIds.isEmpty {
+      pendingRestorationSessionIds.subtract(restoredIds)
+      expandItemsContainingMonitoredSessions()
+      loadCustomNames()
+    }
   }
 
   private func restoreExpansionState() {
@@ -669,45 +688,16 @@ public final class CLISessionsViewModel {
     }
   }
 
-  /// Restores monitored sessions from UserDefaults or provided set
-  private func restoreMonitoredSessions(sessionIdsToRestore: Set<String>? = nil) {
-    let sessionIds: [String]
+  /// Restores monitored sessions from a provided set of session IDs.
+  /// Used for non-launch restoration scenarios (e.g., explicit user actions).
+  /// Launch-time restoration is handled progressively via processPendingSessionRestorations().
+  private func restoreMonitoredSessions(sessionIdsToRestore: Set<String>) {
+    guard !sessionIdsToRestore.isEmpty else { return }
 
-    if let provided = sessionIdsToRestore {
-      sessionIds = Array(provided)
-    } else if let data = UserDefaults.standard.data(forKey: monitoredSessionsKey),
-              let decoded = try? JSONDecoder().decode([String].self, from: data) {
-      sessionIds = decoded
-    } else {
-      return
-    }
-
-    guard !sessionIds.isEmpty else { return }
-
-    for sessionId in sessionIds {
-      if let session = findSession(byId: sessionId) {
-        if sessionFileExists(session: session) {
-          startMonitoring(session: session)
-        }
-      }
-    }
-
-    // Restore terminal view state and start polling for sessions in monitor/list mode.
-    // After startMonitoring, all sessions default to terminal view (no polling).
-    // We need to switch sessions that were in monitor/list mode back to that mode with polling.
-    if let data = UserDefaults.standard.data(forKey: terminalViewKey),
-       let persistedTerminalSessionIds = try? JSONDecoder().decode([String].self, from: data) {
-      let persistedSet = Set(persistedTerminalSessionIds)
-
-      // Find sessions that are monitored but were NOT in terminal view (were in monitor/list mode)
-      for sessionId in monitoredSessionIds {
-        if !persistedSet.contains(sessionId) {
-          // This session was in monitor/list mode - switch it back and start polling
-          sessionsWithTerminalView.remove(sessionId)
-          if let session = monitoredSessionBackup[sessionId] {
-            startPolling(session: session)
-          }
-        }
+    for sessionId in sessionIdsToRestore {
+      if let session = findSession(byId: sessionId),
+         sessionFileExists(session: session) {
+        startMonitoring(session: session)
       }
     }
 
