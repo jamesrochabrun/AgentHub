@@ -33,7 +33,7 @@ public struct MultiSessionLaunchView: View {
 
         providerPills
 
-        if viewModel.isLaunching {
+        if viewModel.isLaunching && viewModel.workMode == .worktree {
           progressSection
         }
 
@@ -321,6 +321,13 @@ public struct MultiSessionLaunchView: View {
         .lineLimit(1)
 
       Spacer()
+
+      if progress.isInProgress {
+        Text("\(Int(progress.progressValue * 100))%")
+          .font(.caption2)
+          .foregroundColor(.secondary)
+          .monospacedDigit()
+      }
     }
   }
 
@@ -387,7 +394,7 @@ public struct MultiSessionLaunchView: View {
 
   private var launchButtonTitle: String {
     if viewModel.isLaunching {
-      return "Launching..."
+      return viewModel.workMode == .worktree ? "Generating worktrees..." : "Launching..."
     }
     return "Launch"
   }
