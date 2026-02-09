@@ -91,27 +91,33 @@ public final class MultiSessionLaunchViewModel {
 
   // MARK: - Actions
 
-  /// Opens an NSOpenPanel to select a repository directory
+  /// Opens an NSOpenPanel to select a repository directory.
+  /// Uses DispatchQueue.main.async to break out of SwiftUI's update cycle
+  /// and avoid deadlocking on HIRunLoopSemaphore during NSOpenPanel init.
   public func selectRepository() {
-    let panel = NSOpenPanel()
-    panel.title = "Select Repository"
-    panel.message = "Choose a git repository"
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.canCreateDirectories = false
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        let panel = NSOpenPanel()
+        panel.title = "Select Repository"
+        panel.message = "Choose a git repository"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
 
-    if panel.runModal() == .OK, let url = panel.url {
-      let path = url.path
-      let name = url.lastPathComponent
-      selectedRepository = SelectedRepository(
-        path: path,
-        name: name,
-        worktrees: [],
-        isExpanded: true
-      )
-      Task {
-        await loadBranches()
+        if panel.runModal() == .OK, let url = panel.url {
+          let path = url.path
+          let name = url.lastPathComponent
+          self.selectedRepository = SelectedRepository(
+            path: path,
+            name: name,
+            worktrees: [],
+            isExpanded: true
+          )
+          Task {
+            await self.loadBranches()
+          }
+        }
       }
     }
   }

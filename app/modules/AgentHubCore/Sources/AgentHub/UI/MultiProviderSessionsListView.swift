@@ -81,6 +81,25 @@ public struct MultiProviderSessionsListView: View {
       }
       ensurePrimarySelection()
     }
+    .onChange(of: claudeViewModel.resolvedPendingSessions) { _, newResolutions in
+      handleResolvedSessions(newResolutions, provider: .claude, viewModel: claudeViewModel)
+    }
+    .onChange(of: codexViewModel.resolvedPendingSessions) { _, newResolutions in
+      handleResolvedSessions(newResolutions, provider: .codex, viewModel: codexViewModel)
+    }
+    .onChange(of: claudeViewModel.lastCreatedPendingId) { _, newId in
+      guard let newId else { return }
+      primarySessionId = "pending-claude-\(newId.uuidString)"
+      claudeViewModel.lastCreatedPendingId = nil
+    }
+    .onChange(of: codexViewModel.lastCreatedPendingId) { _, newId in
+      guard let newId else { return }
+      primarySessionId = "pending-codex-\(newId.uuidString)"
+      codexViewModel.lastCreatedPendingId = nil
+    }
+    .onChange(of: selectedSessionItems.map(\.id)) { _, _ in
+      ensurePrimarySelection()
+    }
     .sheet(item: $sessionFileSheetItem) { item in
       SessionFileSheetView(
         session: item.session,
@@ -593,16 +612,20 @@ public struct MultiProviderSessionsListView: View {
   // MARK: - Actions
 
   private func showAddRepositoryPicker() {
-    let panel = NSOpenPanel()
-    panel.title = "Select Repository"
-    panel.message = "Choose a git repository to monitor CLI sessions"
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.canCreateDirectories = false
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        let panel = NSOpenPanel()
+        panel.title = "Select Repository"
+        panel.message = "Choose a git repository to monitor CLI sessions"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
 
-    if panel.runModal() == .OK, let url = panel.url {
-      addRepository(at: url.path)
+        if panel.runModal() == .OK, let url = panel.url {
+          self.addRepository(at: url.path)
+        }
+      }
     }
   }
 
@@ -660,6 +683,23 @@ public struct MultiProviderSessionsListView: View {
 
   private func toggleShowLastMessage() {
     currentViewModel.showLastMessage.toggle()
+  }
+
+  private func handleResolvedSessions(
+    _ resolutions: [UUID: String],
+    provider: SessionProviderKind,
+    viewModel: CLISessionsViewModel
+  ) {
+    guard let currentPrimary = primarySessionId else { return }
+    let providerPrefix = "pending-\(provider.rawValue.lowercased())-"
+    guard currentPrimary.hasPrefix(providerPrefix) else { return }
+    let uuidString = String(currentPrimary.dropFirst(providerPrefix.count))
+    guard let pendingUUID = UUID(uuidString: uuidString),
+          let realSessionId = resolutions[pendingUUID] else { return }
+    let newPrimaryId = "\(provider.rawValue.lowercased())-\(realSessionId)"
+    AppLogger.session.info("[PrimarySelection] Resolved: \(currentPrimary.prefix(20), privacy: .public) -> \(newPrimaryId.prefix(20), privacy: .public)")
+    primarySessionId = newPrimaryId
+    viewModel.resolvedPendingSessions.removeValue(forKey: pendingUUID)
   }
 
   private func ensurePrimarySelection() {

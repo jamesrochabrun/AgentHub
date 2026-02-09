@@ -305,6 +305,14 @@ public final class CLISessionsViewModel {
   /// Sessions being started in Hub's embedded terminal (no session ID yet)
   public var pendingHubSessions: [PendingHubSession] = []
 
+  /// Maps pending session UUIDs to their resolved real session IDs.
+  /// Used by the sidebar to update `primarySessionId` when a pending session becomes real.
+  public var resolvedPendingSessions: [UUID: String] = [:]
+
+  /// Set when a new pending session is created; observed by the sidebar to auto-select it.
+  /// The sidebar nils this out after reading it.
+  public var lastCreatedPendingId: UUID?
+
   /// Active terminal views keyed by worktree path
   /// Preserves terminal PTY across pending → real session transition
   public var activeTerminals: [String: TerminalContainerView] = [:]
@@ -534,11 +542,9 @@ public final class CLISessionsViewModel {
       // Load persisted monitored session IDs
       let persistedSessionIds = loadPersistedSessionIds()
 
-      // Phase 1: Add repositories
+      // Phase 1: Add repositories (batch — single refreshSessions call instead of N)
       loadingState = .restoringRepositories
-      for path in paths {
-        await monitorService.addRepository(path)
-      }
+      await monitorService.addRepositories(paths)
       restoreExpansionState()
 
       // If no sessions to restore, we're done
@@ -772,23 +778,25 @@ public final class CLISessionsViewModel {
 
   // MARK: - Repository Management
 
-  /// Opens a directory picker and adds the selected repository
+  /// Opens a directory picker and adds the selected repository.
+  /// Uses DispatchQueue.main.async to break out of SwiftUI's update cycle
+  /// and avoid deadlocking on HIRunLoopSemaphore during NSOpenPanel init.
   public func showAddRepositoryPicker() {
-    // [CLISessionsVM] showAddRepositoryPicker called")
     #if canImport(AppKit)
-    let panel = NSOpenPanel()
-    panel.title = "Select Repository"
-    panel.message = "Choose a git repository to monitor CLI sessions"
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.canCreateDirectories = false
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        let panel = NSOpenPanel()
+        panel.title = "Select Repository"
+        panel.message = "Choose a git repository to monitor CLI sessions"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
 
-    if panel.runModal() == .OK, let url = panel.url {
-      // [CLISessionsVM] User selected path: \(url.path)")
-      addRepository(at: url.path)
-    } else {
-      // [CLISessionsVM] User cancelled picker")
+        if panel.runModal() == .OK, let url = panel.url {
+          self.addRepository(at: url.path)
+        }
+      }
     }
     #endif
   }
@@ -1100,6 +1108,7 @@ public final class CLISessionsViewModel {
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
     pendingHubSessions.append(pending)
+    lastCreatedPendingId = pending.id
 
 #if DEBUG
     let encodedPath = worktree.path.claudeProjectPathEncoded
@@ -1119,6 +1128,7 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pending.id.uuidString)"
     removeTerminal(forKey: pendingKey)
     pendingHubSessions.removeAll { $0.id == pending.id }
+    resolvedPendingSessions.removeValue(forKey: pending.id)
   }
 
   /// Watches for a new session file for the active provider.
@@ -1288,6 +1298,8 @@ public final class CLISessionsViewModel {
              let session = matchingWorktree.sessions.first(where: { $0.id == sessionId }) {
             // Remove pending only after finding the real session
             pendingHubSessions.removeAll { $0.id == pending.id }
+            resolvedPendingSessions[pending.id] = session.id
+            AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(session.id.prefix(8), privacy: .public)")
             // Transfer terminal from pending key to real session ID
             transferTerminal(fromPendingId: pending.id, toSessionId: session.id)
             // Keep terminal view visible during transition
@@ -1305,6 +1317,8 @@ public final class CLISessionsViewModel {
           for wt in repo.worktrees {
             if let session = wt.sessions.first(where: { $0.id == sessionId }) {
               pendingHubSessions.removeAll { $0.id == pending.id }
+              resolvedPendingSessions[pending.id] = session.id
+              AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(session.id.prefix(8), privacy: .public)")
               // Transfer terminal from pending key to real session ID
               transferTerminal(fromPendingId: pending.id, toSessionId: session.id)
               // Keep terminal view visible during transition
@@ -1350,6 +1364,8 @@ public final class CLISessionsViewModel {
           }
 
           pendingHubSessions.removeAll { $0.id == pending.id }
+          resolvedPendingSessions[pending.id] = sessionId
+          AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(sessionId.prefix(8), privacy: .public)")
           transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
           sessionsWithTerminalView.insert(sessionId)
           startMonitoring(session: newSession)
@@ -1386,6 +1402,8 @@ public final class CLISessionsViewModel {
           }
 
           pendingHubSessions.removeAll { $0.id == pending.id }
+          resolvedPendingSessions[pending.id] = sessionId
+          AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(sessionId.prefix(8), privacy: .public)")
           transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
           sessionsWithTerminalView.insert(sessionId)
           startMonitoring(session: newSession)
@@ -1827,22 +1845,28 @@ public final class CLISessionsViewModel {
 
   // MARK: - Search Filter
 
-  /// Opens a folder picker to select a repository for filtering search results
+  /// Opens a folder picker to select a repository for filtering search results.
+  /// Uses DispatchQueue.main.async to break out of SwiftUI's update cycle
+  /// and avoid deadlocking on HIRunLoopSemaphore during NSOpenPanel init.
   public func showSearchFilterPicker() {
     #if canImport(AppKit)
-    let panel = NSOpenPanel()
-    panel.title = "Filter by Repository"
-    panel.message = "Select a repository to filter search results"
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.canCreateDirectories = false
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated {
+        let panel = NSOpenPanel()
+        panel.title = "Filter by Repository"
+        panel.message = "Select a repository to filter search results"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
 
-    if panel.runModal() == .OK, let url = panel.url {
-      searchFilterPath = url.path
-      // Re-run search with new filter if there's an active query
-      if !searchQuery.isEmpty {
-        performSearch()
+        if panel.runModal() == .OK, let url = panel.url {
+          self.searchFilterPath = url.path
+          // Re-run search with new filter if there's an active query
+          if !self.searchQuery.isEmpty {
+            self.performSearch()
+          }
+        }
       }
     }
     #endif

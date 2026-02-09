@@ -39,6 +39,8 @@ public class GitWorktreeDetector {
 
   /// Detects git worktree information for the given directory
   public static func detectWorktreeInfo(for directoryPath: String) async -> GitWorktreeInfo? {
+    let start = ContinuousClock.now
+    AppLogger.git.info("[WorktreeDetector] detectWorktreeInfo start path=\(directoryPath, privacy: .public)")
     let fileManager = FileManager.default
 
     // Check if .git exists
@@ -46,6 +48,8 @@ public class GitWorktreeDetector {
 
     guard fileManager.fileExists(atPath: gitPath) else {
       // No .git, not a git repository
+      let elapsed = ContinuousClock.now - start
+      AppLogger.git.info("[WorktreeDetector] detectWorktreeInfo end path=\(directoryPath, privacy: .public) result=nil (no .git) elapsed=\(elapsed, privacy: .public)")
       return nil
     }
 
@@ -61,6 +65,8 @@ public class GitWorktreeDetector {
     if isWorktree {
       // Parse the .git file to get the main repo path
       let mainRepoPath = parseWorktreeGitFile(at: gitPath)
+      let elapsed = ContinuousClock.now - start
+      AppLogger.git.info("[WorktreeDetector] detectWorktreeInfo end path=\(directoryPath, privacy: .public) isWorktree=true branch=\(branch ?? "nil", privacy: .public) elapsed=\(elapsed, privacy: .public)")
       return GitWorktreeInfo(
         path: directoryPath,
         branch: branch,
@@ -69,6 +75,8 @@ public class GitWorktreeDetector {
       )
     } else {
       // This is the main repository
+      let elapsed = ContinuousClock.now - start
+      AppLogger.git.info("[WorktreeDetector] detectWorktreeInfo end path=\(directoryPath, privacy: .public) isWorktree=false branch=\(branch ?? "nil", privacy: .public) elapsed=\(elapsed, privacy: .public)")
       return GitWorktreeInfo(
         path: directoryPath,
         branch: branch,
@@ -80,6 +88,7 @@ public class GitWorktreeDetector {
 
   /// Gets the current branch name for the given directory
   private static func getCurrentBranch(at path: String) async -> String? {
+    AppLogger.git.info("[WorktreeDetector] getCurrentBranch start path=\(path, privacy: .public)")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     process.arguments = ["branch", "--show-current"]
@@ -164,6 +173,8 @@ public class GitWorktreeDetector {
 
   /// Lists all worktrees for a repository
   public static func listWorktrees(at repoPath: String) async -> [GitWorktreeInfo] {
+    let start = ContinuousClock.now
+    AppLogger.git.info("[WorktreeDetector] listWorktrees start path=\(repoPath, privacy: .public)")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     process.arguments = ["worktree", "list", "--porcelain"]
@@ -208,16 +219,25 @@ public class GitWorktreeDetector {
 
       // Check if process was terminated due to timeout
       if didTimeout || process.terminationStatus == SIGTERM {
+        let elapsed = ContinuousClock.now - start
+        AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) result=[] (timeout) elapsed=\(elapsed, privacy: .public)")
         return []
       }
 
       let data = pipe.fileHandleForReading.readDataToEndOfFile()
       guard let output = String(data: data, encoding: .utf8) else {
+        let elapsed = ContinuousClock.now - start
+        AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) result=[] (no output) elapsed=\(elapsed, privacy: .public)")
         return []
       }
 
-      return parseWorktreeList(output, mainRepoPath: repoPath)
+      let result = parseWorktreeList(output, mainRepoPath: repoPath)
+      let elapsed = ContinuousClock.now - start
+      AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) count=\(result.count) elapsed=\(elapsed, privacy: .public)")
+      return result
     } catch {
+      let elapsed = ContinuousClock.now - start
+      AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) result=[] (error) elapsed=\(elapsed, privacy: .public)")
       return []
     }
   }
