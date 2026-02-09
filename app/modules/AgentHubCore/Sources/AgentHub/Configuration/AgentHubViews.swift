@@ -70,7 +70,7 @@ public struct AgentHubSessionsView: View {
       codexViewModel: provider.codexSessionsViewModel,
       columnVisibility: $columnVisibility
     )
-      .frame(minWidth: 400, minHeight: 600)
+      .frame(minWidth: 1200, minHeight: 750)
       .modifier(RemoveTitleToolbarModifier())
       .toolbar {
         ToolbarItem(placement: .principal) {

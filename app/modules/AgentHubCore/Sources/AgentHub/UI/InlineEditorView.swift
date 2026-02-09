@@ -101,7 +101,7 @@ struct InlineEditorView: View {
         .padding(8)
       }
     }
-    .frame(width: 700)
+    .frame(width: 595)
     .background(Color(NSColor.controlBackgroundColor))
     .clipShape(RoundedRectangle(cornerRadius: 10))
     .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)

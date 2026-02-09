@@ -268,8 +268,7 @@ public actor CLISessionMonitorService {
             }
 
             let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
-            let firstMessage = sortedEntries.first { !isGreeting($0.display) }?.display
-              ?? sortedEntries.first?.display
+            let firstMessage = sortedEntries.first?.display
             let lastMessage = sortedEntries.last?.display
 
             let session = CLISession(
@@ -345,8 +344,7 @@ public actor CLISessionMonitorService {
 
           // Get the first and last message (sorted by timestamp)
           let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
-          let firstMessage = sortedEntries.first { !isGreeting($0.display) }?.display
-            ?? sortedEntries.first?.display
+          let firstMessage = sortedEntries.first?.display
           let lastMessage = sortedEntries.last?.display
 
           let session = CLISession(
@@ -383,20 +381,6 @@ public actor CLISessionMonitorService {
   // when no session ID is found (happens after only the first message is sent).
   // TODO: Remove once the session refresh/ID detection issue is properly fixed.
 
-  /// Common greetings to skip when finding a meaningful first message
-  private static let greetingPatterns: Set<String> = [
-    "hello", "hello!", "hello.",
-    "hi", "hi!", "hi.",
-    "hey", "hey!", "hey.",
-    "greetings", "greetings!",
-    "howdy", "yo", "sup"
-  ]
-
-  /// Checks if a message is a simple greeting that provides no context
-  private func isGreeting(_ message: String) -> Bool {
-    let normalized = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    return Self.greetingPatterns.contains(normalized)
-  }
 
   // MARK: - Worktree Detection
 
