@@ -92,10 +92,10 @@ public final class MultiSessionLaunchViewModel {
   // MARK: - Actions
 
   /// Opens an NSOpenPanel to select a repository directory.
-  /// Uses DispatchQueue.main.async to break out of SwiftUI's update cycle
-  /// and avoid deadlocking on HIRunLoopSemaphore during NSOpenPanel init.
+  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
+  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
   public func selectRepository() {
-    DispatchQueue.main.async {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
       MainActor.assumeIsolated {
         let panel = NSOpenPanel()
         panel.title = "Select Repository"
@@ -122,24 +122,22 @@ public final class MultiSessionLaunchViewModel {
     }
   }
 
-  /// Loads local branches for the selected repository and fetches current branch
+  /// Loads local branches and current branch for the selected repository.
+  /// Uses a single `git branch` call to get both, reducing process spawns from 3 to 1-2.
   public func loadBranches() async {
     guard let repo = selectedRepository else { return }
     isLoadingBranches = true
     isLoadingCurrentBranch = true
 
     do {
-      availableBranches = try await worktreeService.getLocalBranches(at: repo.path)
+      let result = try await worktreeService.getLocalBranchesWithCurrent(at: repo.path)
+      availableBranches = result.branches
+      currentBranchName = result.currentBranchName
       if let first = availableBranches.first {
         baseBranch = first
       }
     } catch {
       availableBranches = []
-    }
-
-    do {
-      currentBranchName = try await worktreeService.getCurrentBranch(at: repo.path)
-    } catch {
       currentBranchName = ""
     }
 
