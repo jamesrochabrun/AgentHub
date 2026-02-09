@@ -98,10 +98,13 @@ public actor CLISessionMonitorService {
 
     // Re-detect worktrees for all repositories to pick up newly created ones
     if !skipWorktreeRedetection {
+      let repoCount = selectedRepositories.count
+      AppLogger.git.info("[MonitorService] refreshSessions worktree re-detection start repos=\(repoCount)")
       // Detect worktrees for all repos in parallel
       let allWorktrees = await detectWorktreesBatch(
         repoPaths: selectedRepositories.map { $0.path }
       )
+      AppLogger.git.info("[MonitorService] refreshSessions worktree re-detection end repos=\(repoCount)")
 
       // Merge detected worktrees with existing state
       for index in selectedRepositories.indices {
@@ -388,7 +391,8 @@ public actor CLISessionMonitorService {
   /// - Parameter repoPaths: Array of repository paths to detect worktrees for
   /// - Returns: Dictionary mapping repository paths to their detected worktrees
   private func detectWorktreesBatch(repoPaths: [String]) async -> [String: [WorktreeBranch]] {
-    await withTaskGroup(of: (String, [WorktreeBranch]).self) { group in
+    let start = ContinuousClock.now
+    let results = await withTaskGroup(of: (String, [WorktreeBranch]).self) { group in
       for repoPath in repoPaths {
         group.addTask {
           let worktrees = await self.detectWorktrees(at: repoPath)
@@ -402,6 +406,10 @@ public actor CLISessionMonitorService {
       }
       return results
     }
+    let elapsed = ContinuousClock.now - start
+    let totalWorktrees = results.values.reduce(0) { $0 + $1.count }
+    AppLogger.git.info("[MonitorService] detectWorktreesBatch repos=\(repoPaths.count) totalWorktrees=\(totalWorktrees) elapsed=\(elapsed, privacy: .public)")
+    return results
   }
 
   // MARK: - Path Collection
