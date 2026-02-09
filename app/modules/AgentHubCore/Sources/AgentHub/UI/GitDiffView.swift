@@ -916,6 +916,7 @@ private struct GitDiffContentView: View {
 
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
+  @State private var isWindowTransitioning = false
   @State private var showPreview: Bool = false
   @State private var previewLoading: Bool = false
   @State private var previewCurrentURL: URL?
@@ -945,38 +946,44 @@ private struct GitDiffContentView: View {
       // Diff view with inline editor overlay
       GeometryReader { geometry in
         ZStack {
-          PierreDiffView(
-            oldContent: oldContent,
-            newContent: newContent,
-            fileName: fileName,
-            diffStyle: $diffStyle,
-            overflowMode: $overflowMode,
-            onLineClickWithPosition: isInlineEditorEnabled ? { position, localPoint in
-              print("[GitDiffContentView] Line clicked! lineNumber=\(position.lineNumber), side=\(position.side)")
-              let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
+          if isWindowTransitioning {
+            // Static placeholder during window transition to prevent WKWebView crash
+            Color.clear
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+          } else {
+            PierreDiffView(
+              oldContent: oldContent,
+              newContent: newContent,
+              fileName: fileName,
+              diffStyle: $diffStyle,
+              overflowMode: $overflowMode,
+              onLineClickWithPosition: isInlineEditorEnabled ? { position, localPoint in
+                print("[GitDiffContentView] Line clicked! lineNumber=\(position.lineNumber), side=\(position.side)")
+                let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
 
-              // Determine which content to use based on the side (left=old, right=new)
-              let fileContent = position.side == "left" ? oldContent : newContent
-              let lineContent = extractLine(from: fileContent, lineNumber: position.lineNumber)
+                // Determine which content to use based on the side (left=old, right=new)
+                let fileContent = position.side == "left" ? oldContent : newContent
+                let lineContent = extractLine(from: fileContent, lineNumber: position.lineNumber)
 
-              withAnimation(.easeOut(duration: 0.2)) {
-                inlineEditorState.show(
-                  at: anchorPoint,
-                  lineNumber: position.lineNumber,
-                  side: position.side,
-                  fileName: filePath,
-                  lineContent: lineContent,
-                  fullFileContent: fileContent
-                )
+                withAnimation(.easeOut(duration: 0.2)) {
+                  inlineEditorState.show(
+                    at: anchorPoint,
+                    lineNumber: position.lineNumber,
+                    side: position.side,
+                    fileName: filePath,
+                    lineContent: lineContent,
+                    fullFileContent: fileContent
+                  )
+                }
+              } : nil,
+              onReady: {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                  isWebViewReady = true
+                }
               }
-            } : nil,
-            onReady: {
-              withAnimation(.easeInOut(duration: 0.3)) {
-                isWebViewReady = true
-              }
-            }
-          )
-          .opacity(isWebViewReady ? webViewOpacity : 0)
+            )
+            .opacity(isWebViewReady ? webViewOpacity : 0)
+          }
 
           if !isWebViewReady {
             VStack(spacing: 12) {
@@ -1058,6 +1065,29 @@ private struct GitDiffContentView: View {
       }
       .animation(.easeInOut(duration: 0.3), value: isWebViewReady)
       } // else (diff view)
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
+      isWindowTransitioning = true
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { _ in
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(100))
+        isWindowTransitioning = false
+      }
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in
+      isWindowTransitioning = true
+    }
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { _ in
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(100))
+        isWindowTransitioning = false
+      }
+    }
+    .onChange(of: isWindowTransitioning) { _, newValue in
+      if newValue {
+        isWebViewReady = false
+      }
     }
   }
 
