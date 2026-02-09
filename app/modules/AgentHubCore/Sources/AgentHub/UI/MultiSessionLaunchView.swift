@@ -321,6 +321,13 @@ public struct MultiSessionLaunchView: View {
         .lineLimit(1)
 
       Spacer()
+
+      if progress.isInProgress {
+        Text("\(Int(progress.progressValue * 100))%")
+          .font(.caption2)
+          .foregroundColor(.secondary)
+          .monospacedDigit()
+      }
     }
   }
 
