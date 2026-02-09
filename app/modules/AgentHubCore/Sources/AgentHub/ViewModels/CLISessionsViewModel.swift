@@ -779,11 +779,11 @@ public final class CLISessionsViewModel {
   // MARK: - Repository Management
 
   /// Opens a directory picker and adds the selected repository.
-  /// Uses DispatchQueue.main.async to break out of SwiftUI's update cycle
-  /// and avoid deadlocking on HIRunLoopSemaphore during NSOpenPanel init.
+  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
+  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
   public func showAddRepositoryPicker() {
     #if canImport(AppKit)
-    DispatchQueue.main.async {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
       MainActor.assumeIsolated {
         let panel = NSOpenPanel()
         panel.title = "Select Repository"
@@ -1846,11 +1846,11 @@ public final class CLISessionsViewModel {
   // MARK: - Search Filter
 
   /// Opens a folder picker to select a repository for filtering search results.
-  /// Uses DispatchQueue.main.async to break out of SwiftUI's update cycle
-  /// and avoid deadlocking on HIRunLoopSemaphore during NSOpenPanel init.
+  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
+  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
   public func showSearchFilterPicker() {
     #if canImport(AppKit)
-    DispatchQueue.main.async {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
       MainActor.assumeIsolated {
         let panel = NSOpenPanel()
         panel.title = "Filter by Repository"

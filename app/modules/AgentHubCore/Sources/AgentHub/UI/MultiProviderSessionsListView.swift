@@ -611,8 +611,10 @@ public struct MultiProviderSessionsListView: View {
 
   // MARK: - Actions
 
+  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
+  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
   private func showAddRepositoryPicker() {
-    DispatchQueue.main.async {
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
       MainActor.assumeIsolated {
         let panel = NSOpenPanel()
         panel.title = "Select Repository"

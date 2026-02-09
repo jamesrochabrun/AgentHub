@@ -172,17 +172,24 @@ public struct MultiSessionLaunchView: View {
   // MARK: - Work Mode Row
 
   private var workModeRow: some View {
-    HStack(spacing: 0) {
-      // Left: Local / Worktree toggle
-      HStack(spacing: 12) {
-        workModeButton(mode: .local, label: "Local")
-        workModeButton(mode: .worktree, label: "Worktree")
+    ViewThatFits(in: .horizontal) {
+      // Primary: horizontal layout
+      HStack(spacing: 0) {
+        HStack(spacing: 12) {
+          workModeButton(mode: .local, label: "Local")
+          workModeButton(mode: .worktree, label: "Worktree")
+        }
+        Spacer()
+        branchInfoView
       }
-
-      Spacer()
-
-      // Right: branch info
-      branchInfoView
+      // Fallback: vertical layout when horizontal doesn't fit
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 12) {
+          workModeButton(mode: .local, label: "Local")
+          workModeButton(mode: .worktree, label: "Worktree")
+        }
+        branchInfoView
+      }
     }
   }
 
@@ -195,6 +202,7 @@ public struct MultiSessionLaunchView: View {
       Text(label)
         .font(.system(size: 11, weight: viewModel.workMode == mode ? .bold : .regular))
         .foregroundColor(viewModel.workMode == mode ? .primary : .secondary.opacity(0.6))
+        .fixedSize()
     }
     .buttonStyle(.plain)
   }

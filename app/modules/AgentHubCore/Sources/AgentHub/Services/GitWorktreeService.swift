@@ -38,14 +38,26 @@ public enum WorktreeCreationError: LocalizedError, Sendable {
   }
 }
 
+/// Result of loading local branches and current branch from a single `git branch` call.
+public struct LocalBranchesResult: Sendable {
+  public let branches: [RemoteBranch]
+  public let currentBranchName: String
+}
+
 /// Service for creating and managing git worktrees
 public actor GitWorktreeService {
 
   /// Maximum time to wait for quick git commands (in seconds)
-  private static let gitCommandTimeout: TimeInterval = 30.0
+  /// Local-only operations like `git branch` and `git rev-parse` complete instantly;
+  /// 10s is generous while still failing faster on stuck processes.
+  private static let gitCommandTimeout: TimeInterval = 10.0
 
   /// Maximum time to wait for slow git commands like worktree creation (in seconds)
   private static let gitWorktreeTimeout: TimeInterval = 300.0  // 5 minutes
+
+  /// Cache for git root lookups to avoid repeated process spawns for the same path.
+  /// Actor isolation provides thread safety.
+  private var gitRootCache: [String: String] = [:]
 
   public init() { }
 
@@ -53,12 +65,18 @@ public actor GitWorktreeService {
 
   // MARK: - Git Root Detection
 
-  /// Finds the git root directory from any path within a repository
+  /// Finds the git root directory from any path within a repository.
+  /// Results are cached so repeated calls for the same path avoid spawning a process.
   /// - Parameter path: Any path within a git repository
   /// - Returns: The root path of the git repository
   public func findGitRoot(at path: String) async throws -> String {
+    if let cached = gitRootCache[path] {
+      return cached
+    }
     let output = try await runGitCommand(["rev-parse", "--show-toplevel"], at: path)
-    return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    let root = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    gitRootCache[path] = root
+    return root
   }
 
   /// Gets all remote branches for a repository (without fetching from remote)
@@ -136,6 +154,44 @@ public actor GitWorktreeService {
         RemoteBranch(name: branchName, remote: "local")
       }
       .sorted { $0.displayName < $1.displayName }
+  }
+
+  /// Gets all local branches and the current branch name from a single `git branch` call.
+  /// This avoids spawning a separate process for `git branch --show-current`.
+  /// - Parameter repoPath: Path to the git repository (or any subdirectory)
+  /// - Returns: A `LocalBranchesResult` with both the branch list and current branch name
+  public func getLocalBranchesWithCurrent(at repoPath: String) async throws -> LocalBranchesResult {
+    let gitRoot = try await findGitRoot(at: repoPath)
+    let output = try await runGitCommand(["branch"], at: gitRoot)
+    return parseLocalBranchesWithCurrent(output)
+  }
+
+  /// Parses the output of `git branch`, extracting both the branch list and current branch.
+  /// The current branch is indicated by a leading `* ` prefix.
+  /// Handles detached HEAD state (`* (HEAD detached at ...)`) by returning empty currentBranchName.
+  private func parseLocalBranchesWithCurrent(_ output: String) -> LocalBranchesResult {
+    let lines = output.components(separatedBy: .newlines)
+    var currentBranchName = ""
+    var branches: [RemoteBranch] = []
+
+    for line in lines {
+      let trimmed = line.trimmingCharacters(in: .whitespaces)
+      guard !trimmed.isEmpty else { continue }
+
+      if trimmed.hasPrefix("*") {
+        let branchPart = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+        // Detached HEAD looks like "* (HEAD detached at abc1234)"
+        if !branchPart.hasPrefix("(") {
+          currentBranchName = branchPart
+          branches.append(RemoteBranch(name: branchPart, remote: "local"))
+        }
+      } else {
+        branches.append(RemoteBranch(name: trimmed, remote: "local"))
+      }
+    }
+
+    branches.sort { $0.displayName < $1.displayName }
+    return LocalBranchesResult(branches: branches, currentBranchName: currentBranchName)
   }
 
   // MARK: - Progress Regex Pattern
@@ -516,6 +572,60 @@ public actor GitWorktreeService {
   public func getCurrentBranch(at repoPath: String) async throws -> String {
     let output = try await runGitCommand(["branch", "--show-current"], at: repoPath)
     return output.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  /// Fast path to get the current branch by reading `.git/HEAD` directly, avoiding a process spawn.
+  /// Handles worktrees where `.git` is a file containing `gitdir: <path>`.
+  /// Falls back to process-based `getCurrentBranch()` if file read fails.
+  /// - Parameter repoPath: The path to the git repository
+  /// - Returns: The current branch name, or empty string if in detached HEAD state
+  public func getCurrentBranchFast(at repoPath: String) async throws -> String {
+    let gitPath = (repoPath as NSString).appendingPathComponent(".git")
+
+    var headFilePath: String
+    var isDirectory: ObjCBool = false
+
+    if FileManager.default.fileExists(atPath: gitPath, isDirectory: &isDirectory) {
+      if isDirectory.boolValue {
+        // Normal repo: .git is a directory
+        headFilePath = (gitPath as NSString).appendingPathComponent("HEAD")
+      } else {
+        // Worktree: .git is a file with "gitdir: <path>"
+        guard let contents = try? String(contentsOfFile: gitPath, encoding: .utf8),
+              let gitdirLine = contents.components(separatedBy: .newlines).first(where: { $0.hasPrefix("gitdir:") }) else {
+          return try await getCurrentBranch(at: repoPath)
+        }
+        let gitdirPath = gitdirLine
+          .replacingOccurrences(of: "gitdir:", with: "")
+          .trimmingCharacters(in: .whitespaces)
+
+        // Resolve relative paths
+        let resolvedGitdir: String
+        if gitdirPath.hasPrefix("/") {
+          resolvedGitdir = gitdirPath
+        } else {
+          resolvedGitdir = (repoPath as NSString).appendingPathComponent(gitdirPath)
+        }
+        headFilePath = (resolvedGitdir as NSString).appendingPathComponent("HEAD")
+      }
+    } else {
+      return try await getCurrentBranch(at: repoPath)
+    }
+
+    // Read HEAD file
+    guard let headContents = try? String(contentsOfFile: headFilePath, encoding: .utf8) else {
+      return try await getCurrentBranch(at: repoPath)
+    }
+
+    let head = headContents.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // HEAD contains "ref: refs/heads/<branch>" when on a branch
+    if head.hasPrefix("ref: refs/heads/") {
+      return String(head.dropFirst("ref: refs/heads/".count))
+    }
+
+    // Detached HEAD (SHA) or unexpected format
+    return ""
   }
 
   /// Returns true if there are uncommitted changes (staged or unstaged)

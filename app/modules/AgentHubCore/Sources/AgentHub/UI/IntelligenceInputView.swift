@@ -148,16 +148,22 @@ struct IntelligenceInputView: View {
 
   // MARK: - Folder Picker
 
+  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
+  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
   private func showFolderPicker() {
-    let panel = NSOpenPanel()
-    panel.canChooseFiles = false
-    panel.canChooseDirectories = true
-    panel.allowsMultipleSelection = false
-    panel.message = "Select a repository or module"
-    panel.prompt = "Select"
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+      MainActor.assumeIsolated {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Select a repository or module"
+        panel.prompt = "Select"
 
-    if panel.runModal() == .OK, let url = panel.url {
-      selectedModulePath = url.path
+        if panel.runModal() == .OK, let url = panel.url {
+          self.selectedModulePath = url.path
+        }
+      }
     }
   }
 
