@@ -158,7 +158,9 @@ public struct MultiSessionLaunchView: View {
   }
 
   private var promptPlaceholder: String {
-    if viewModel.isClaudeSelected && viewModel.isCodexSelected {
+    if viewModel.claudeMode == .enabledDangerously && !viewModel.isCodexSelected {
+      return "Takes all actions without asking..."
+    } else if viewModel.isClaudeSelected && viewModel.isCodexSelected {
       return "Enter prompt for both sessions..."
     } else if viewModel.isClaudeSelected {
       return "Enter prompt for Claude session..."
