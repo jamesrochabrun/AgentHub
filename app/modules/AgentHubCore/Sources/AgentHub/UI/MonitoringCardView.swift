@@ -481,20 +481,6 @@ public struct MonitoringCardView: View {
 //      .buttonStyle(.plain)
 //      .help(isMaximized ? "Minimize" : "Maximize")
 
-      // Close button (inline, hidden when maximized or side panel is open)
-      if !isMaximized && !isSidePanelOpen {
-        Button {
-          webPreviewSheetItem = nil
-          onStopMonitoring()
-        } label: {
-          Image(systemName: "xmark")
-            .font(.caption)
-            .foregroundColor(.secondary)
-            .frame(width: 24, height: 24)
-        }
-        .buttonStyle(.plain)
-        .help("Stop monitoring")
-      }
     }
   }
 

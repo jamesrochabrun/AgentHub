@@ -456,10 +456,23 @@ public struct MultiProviderSessionsListView: View {
             isPending: item.isPending,
             isPrimary: item.id == primarySessionId,
             customName: selectedSessionCustomName(for: item),
-            colorScheme: colorScheme
-          ) {
-            primarySessionId = item.id
-          }
+            colorScheme: colorScheme,
+            onArchive: item.isPending ? nil : {
+              withAnimation(.easeInOut(duration: 0.25)) {
+                switch item.providerKind {
+                case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                case .codex: codexViewModel.stopMonitoring(session: item.session)
+                }
+              }
+            },
+            onSelect: {
+              primarySessionId = item.id
+            }
+          )
+          .transition(.asymmetric(
+            insertion: .opacity,
+            removal: .move(edge: .trailing).combined(with: .opacity)
+          ))
         }
       }
       .padding(.bottom, 8)
