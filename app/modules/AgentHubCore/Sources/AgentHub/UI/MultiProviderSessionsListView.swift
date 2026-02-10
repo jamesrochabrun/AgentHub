@@ -31,6 +31,8 @@ public struct MultiProviderSessionsListView: View {
   @State private var isBrowseExpanded: Bool = false
   @State private var multiLaunchViewModel: MultiSessionLaunchViewModel?
   @State private var primarySessionId: String?
+  @State private var showDeleteWorktreeAlert = false
+  @State private var sessionToDeleteWorktree: CLISession? = nil
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
 
@@ -143,6 +145,29 @@ public struct MultiProviderSessionsListView: View {
           Text(error.message)
         }
       }
+    }
+    .alert("Delete Worktree?", isPresented: $showDeleteWorktreeAlert) {
+      Button("Cancel", role: .cancel) {
+        sessionToDeleteWorktree = nil
+      }
+      Button("Delete", role: .destructive) {
+        if let session = sessionToDeleteWorktree {
+          let providerKind = selectedSessionItems.first(where: { $0.session.id == session.id })?.providerKind
+          Task {
+            switch providerKind {
+            case .claude:
+              await claudeViewModel.deleteWorktreeForSession(session)
+            case .codex:
+              await codexViewModel.deleteWorktreeForSession(session)
+            case .none:
+              break
+            }
+          }
+          sessionToDeleteWorktree = nil
+        }
+      }
+    } message: {
+      Text("You are about to delete this worktree. This cannot be recovered.")
     }
   }
 
@@ -444,7 +469,7 @@ public struct MultiProviderSessionsListView: View {
     if !items.isEmpty {
       VStack(alignment: .leading, spacing: 0) {
         HStack {
-          Text("Projects")
+          Text("Focused Sessions")
             .font(.system(size: 14, weight: .bold))
           Text("(\(items.count))")
             .font(.caption)
@@ -471,6 +496,16 @@ public struct MultiProviderSessionsListView: View {
                 }
               }
             },
+            onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+              sessionToDeleteWorktree = item.session
+              showDeleteWorktreeAlert = true
+            } : nil,
+            isDeletingWorktree: item.session.isWorktree && {
+              switch item.providerKind {
+              case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+              case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+              }
+            }(),
             onSelect: {
               primarySessionId = item.id
             }
@@ -519,7 +554,7 @@ public struct MultiProviderSessionsListView: View {
           Image(systemName: "chevron.right")
             .rotationEffect(.degrees(isBrowseExpanded ? 90 : 0))
             .font(.system(size: 10))
-          Text("Browse Sessions")
+          Text("Browse all Sessions")
             .font(.system(size: 14, weight: .bold, design: .monospaced))
           Spacer()
         }

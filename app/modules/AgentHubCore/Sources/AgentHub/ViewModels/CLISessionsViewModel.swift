@@ -881,6 +881,39 @@ public final class CLISessionsViewModel {
     }
   }
 
+  /// Deletes the worktree for a monitored session
+  /// - Parameter session: The session whose worktree to delete
+  public func deleteWorktreeForSession(_ session: CLISession) async {
+    deletingWorktreePath = session.projectPath
+    do {
+      try await worktreeService.removeWorktree(at: session.projectPath)
+      deletingWorktreePath = nil
+      stopMonitoring(session: session)
+      refresh()
+    } catch {
+      deletingWorktreePath = nil
+      let syntheticWorktree = WorktreeBranch(
+        name: session.branchName ?? session.projectPath,
+        path: session.projectPath,
+        isWorktree: true
+      )
+      if let orphanInfo = worktreeService.checkIfOrphaned(at: session.projectPath),
+         orphanInfo.isOrphaned {
+        worktreeDeletionError = WorktreeDeletionError(
+          worktree: syntheticWorktree,
+          message: error.localizedDescription,
+          isOrphaned: true,
+          parentRepoPath: orphanInfo.parentRepoPath
+        )
+      } else {
+        worktreeDeletionError = WorktreeDeletionError(
+          worktree: syntheticWorktree,
+          message: error.localizedDescription
+        )
+      }
+    }
+  }
+
   /// Clears the worktree deletion error
   public func clearWorktreeDeletionError() {
     worktreeDeletionError = nil
