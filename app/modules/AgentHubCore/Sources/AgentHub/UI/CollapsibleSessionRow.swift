@@ -12,6 +12,8 @@ struct CollapsibleSessionRow: View {
   let sessionStatus: SessionStatus?
   let colorScheme: ColorScheme
   let onArchive: (() -> Void)?
+  let onDeleteWorktree: (() -> Void)?
+  var isDeletingWorktree: Bool = false
   let onSelect: () -> Void
 
   @State private var gradientProgress: CGFloat = 0
@@ -190,38 +192,61 @@ struct CollapsibleSessionRow: View {
       }
     )
     .overlay(alignment: .bottomTrailing) {
-      if !isPending, let onArchive {
-        Group {
-          if showArchiveConfirm {
-            Button {
-              showArchiveConfirm = false
-              onArchive()
-            } label: {
-              Text("Confirm")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(Color.brandPrimary(for: providerKind))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-            .buttonStyle(.plain)
-          } else {
-            Button {
-              withAnimation(.easeInOut(duration: 0.15)) {
-                showArchiveConfirm = true
+      if !isPending, (onArchive != nil || onDeleteWorktree != nil) {
+        HStack(spacing: 4) {
+          if let onArchive {
+            Group {
+              if showArchiveConfirm {
+                Button {
+                  showArchiveConfirm = false
+                  onArchive()
+                } label: {
+                  Text("Confirm")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.brandPrimary(for: providerKind))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                .buttonStyle(.plain)
+              } else {
+                Button {
+                  withAnimation(.easeInOut(duration: 0.15)) {
+                    showArchiveConfirm = true
+                  }
+                } label: {
+                  Image(systemName: "archivebox")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help("Archive session")
               }
-            } label: {
-              Image(systemName: "archivebox")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-                .frame(width: 20, height: 20)
             }
-            .buttonStyle(.plain)
-            .help("Archive session")
+            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+          }
+
+          if let onDeleteWorktree {
+            if isDeletingWorktree {
+              ProgressView()
+                .controlSize(.small)
+                .frame(width: 20, height: 20)
+            } else {
+              Button {
+                onDeleteWorktree()
+              } label: {
+                Image(systemName: "trash")
+                  .font(.system(size: 11))
+                  .foregroundColor(.secondary)
+                  .frame(width: 20, height: 20)
+              }
+              .buttonStyle(.plain)
+              .help("Delete worktree")
+            }
           }
         }
-        .transition(.opacity.combined(with: .scale(scale: 0.8)))
         .padding(.trailing, 8)
         .padding(.bottom, 8)
       }
@@ -297,6 +322,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: .thinking,
         colorScheme: .dark,
         onArchive: {},
+        onDeleteWorktree: nil,
         onSelect: {}
       )
 
@@ -314,6 +340,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: .idle,
         colorScheme: .dark,
         onArchive: {},
+        onDeleteWorktree: nil,
         onSelect: {}
       )
 
@@ -334,6 +361,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: .executingTool(name: "Bash"),
         colorScheme: .dark,
         onArchive: {},
+        onDeleteWorktree: nil,
         onSelect: {}
       )
 
@@ -351,6 +379,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: .waitingForUser,
         colorScheme: .dark,
         onArchive: {},
+        onDeleteWorktree: nil,
         onSelect: {}
       )
 
@@ -371,6 +400,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: nil,
         colorScheme: .dark,
         onArchive: nil,
+        onDeleteWorktree: nil,
         onSelect: {}
       )
 
@@ -388,6 +418,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: nil,
         colorScheme: .dark,
         onArchive: nil,
+        onDeleteWorktree: nil,
         onSelect: {}
       )
 
@@ -408,6 +439,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: .awaitingApproval(tool: "Edit"),
         colorScheme: .dark,
         onArchive: {},
+        onDeleteWorktree: nil,
         onSelect: {}
       )
 
@@ -428,6 +460,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: .thinking,
         colorScheme: .light,
         onArchive: {},
+        onDeleteWorktree: nil,
         onSelect: {}
       )
       .environment(\.colorScheme, .light)
@@ -446,6 +479,7 @@ struct CollapsibleSessionRow: View {
         sessionStatus: .idle,
         colorScheme: .light,
         onArchive: {},
+        onDeleteWorktree: nil,
         onSelect: {}
       )
       .environment(\.colorScheme, .light)
