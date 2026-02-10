@@ -514,7 +514,7 @@ public struct MultiProviderSessionsListView: View {
             .rotationEffect(.degrees(isBrowseExpanded ? 90 : 0))
             .font(.system(size: 10))
           Text("Browse Sessions")
-            .font(.system(size: 13, weight: .bold, design: .monospaced))
+            .font(.system(size: 14, weight: .bold, design: .monospaced))
           Spacer()
         }
         .padding(.vertical, 8)
