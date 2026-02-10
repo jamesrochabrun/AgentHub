@@ -162,3 +162,63 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update appcast.xml
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PUB_DATE=$(date -u "+%a, %d %b %Y %H:%M:%S %z")
+
+          # Parse Sparkle signature
+          if [ ! -f build/sparkle-signature.txt ]; then
+            echo "Warning: sparkle-signature.txt not found. Skipping appcast update."
+            exit 0
+          fi
+          ED_SIGNATURE=$(grep -o 'edSignature="[^"]*"' build/sparkle-signature.txt | head -1 | sed 's/edSignature="//;s/"//')
+          if [ -z "$ED_SIGNATURE" ]; then
+            ED_SIGNATURE=$(cat build/sparkle-signature.txt | head -1)
+          fi
+          LENGTH=$(cat build/AgentHub.app.zip.size)
+
+          echo "Version: $VERSION"
+          echo "Signature: $ED_SIGNATURE"
+          echo "Length: $LENGTH"
+
+          # Build the new <item> block
+          NEW_ITEM=$(cat <<EOF
+    <item>
+      <title>Version ${VERSION}</title>
+      <link>https://github.com/jamesrochabrun/AgentHub/releases/tag/v${VERSION}</link>
+      <sparkle:version>${VERSION}</sparkle:version>
+      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+      <description><![CDATA[
+        <h2>Version ${VERSION}</h2>
+        <ul>
+          <li>See release notes on GitHub</li>
+        </ul>
+      ]]></description>
+      <pubDate>${PUB_DATE}</pubDate>
+      <enclosure
+        url="https://github.com/jamesrochabrun/AgentHub/releases/download/v${VERSION}/AgentHub.app.zip"
+        sparkle:version="${VERSION}"
+        sparkle:shortVersionString="${VERSION}"
+        sparkle:edSignature="${ED_SIGNATURE}"
+        length="${LENGTH}"
+        type="application/octet-stream" />
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+    </item>
+EOF
+          )
+
+          # Switch to main branch and update appcast.xml
+          git fetch origin main
+          git checkout main
+
+          # Insert new item as first <item> in appcast.xml (after the <language> line)
+          awk -v item="$NEW_ITEM" '/<language>en<\/language>/{print; print ""; print item; next}1' appcast.xml > appcast_tmp.xml
+          mv appcast_tmp.xml appcast.xml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "Update appcast.xml for v${VERSION}"
+          git push origin main
