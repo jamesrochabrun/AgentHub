@@ -122,10 +122,17 @@ public struct CollapsibleSelectedSessionsPanel: View {
             isPending: item.isPending,
             isPrimary: item.id == primarySessionId,
             customName: customName(for: item),
-            colorScheme: colorScheme
-          ) {
-            primarySessionId = item.id
-          }
+            colorScheme: colorScheme,
+            onArchive: item.isPending ? nil : {
+              switch item.providerKind {
+              case .claude: claudeViewModel.stopMonitoring(session: item.session)
+              case .codex: codexViewModel.stopMonitoring(session: item.session)
+              }
+            },
+            onSelect: {
+              primarySessionId = item.id
+            }
+          )
         }
       }
       .padding(.horizontal, 4)
@@ -321,10 +328,14 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
             isPending: item.isPending,
             isPrimary: item.id == primarySessionId,
             customName: viewModel.sessionCustomNames[item.session.id],
-            colorScheme: colorScheme
-          ) {
-            primarySessionId = item.id
-          }
+            colorScheme: colorScheme,
+            onArchive: item.isPending ? nil : {
+              viewModel.stopMonitoring(session: item.session)
+            },
+            onSelect: {
+              primarySessionId = item.id
+            }
+          )
         }
       }
       .padding(.horizontal, 4)

@@ -10,9 +10,11 @@ struct CollapsibleSessionRow: View {
   let isPrimary: Bool
   let customName: String?
   let colorScheme: ColorScheme
+  let onArchive: (() -> Void)?
   let onSelect: () -> Void
 
   @State private var gradientProgress: CGFloat = 0
+  @State private var showArchiveConfirm = false
 
   private var tildeProjectPath: String {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -147,7 +149,51 @@ struct CollapsibleSessionRow: View {
           )
       }
     )
+    .overlay(alignment: .bottomTrailing) {
+      if !isPending, let onArchive {
+        Group {
+          if showArchiveConfirm {
+            Button {
+              showArchiveConfirm = false
+              onArchive()
+            } label: {
+              Text("Confirm")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.brandPrimary(for: providerKind))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            .buttonStyle(.plain)
+          } else {
+            Button {
+              withAnimation(.easeInOut(duration: 0.15)) {
+                showArchiveConfirm = true
+              }
+            } label: {
+              Image(systemName: "archivebox")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .help("Archive session")
+          }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.8)))
+        .padding(.trailing, 8)
+        .padding(.bottom, 8)
+      }
+    }
     .padding(.vertical, 8)
+    .onHover { hovering in
+      if !hovering && showArchiveConfirm {
+        withAnimation(.easeInOut(duration: 0.15)) {
+          showArchiveConfirm = false
+        }
+      }
+    }
     .onAppear {
       gradientProgress = isPrimary ? 1 : 0
     }
@@ -209,6 +255,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: true,
         customName: nil,
         colorScheme: .dark,
+        onArchive: {},
         onSelect: {}
       )
 
@@ -224,6 +271,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: false,
         customName: nil,
         colorScheme: .dark,
+        onArchive: {},
         onSelect: {}
       )
 
@@ -242,6 +290,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: true,
         customName: nil,
         colorScheme: .dark,
+        onArchive: {},
         onSelect: {}
       )
 
@@ -257,6 +306,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: false,
         customName: nil,
         colorScheme: .dark,
+        onArchive: {},
         onSelect: {}
       )
 
@@ -275,6 +325,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: true,
         customName: nil,
         colorScheme: .dark,
+        onArchive: nil,
         onSelect: {}
       )
 
@@ -290,6 +341,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: false,
         customName: nil,
         colorScheme: .dark,
+        onArchive: nil,
         onSelect: {}
       )
 
@@ -308,6 +360,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: true,
         customName: "Auth Refactor",
         colorScheme: .dark,
+        onArchive: {},
         onSelect: {}
       )
 
@@ -326,6 +379,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: true,
         customName: nil,
         colorScheme: .light,
+        onArchive: {},
         onSelect: {}
       )
       .environment(\.colorScheme, .light)
@@ -342,6 +396,7 @@ struct CollapsibleSessionRow: View {
         isPrimary: false,
         customName: nil,
         colorScheme: .light,
+        onArchive: {},
         onSelect: {}
       )
       .environment(\.colorScheme, .light)
