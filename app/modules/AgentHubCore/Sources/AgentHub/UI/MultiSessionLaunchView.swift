@@ -34,8 +34,6 @@ public struct MultiSessionLaunchView: View {
           attachedFilesSection
         }
 
-        attachmentRow
-
         if viewModel.selectedRepository != nil {
           workModeRow
         }
@@ -121,27 +119,49 @@ public struct MultiSessionLaunchView: View {
 
   private var repositorySection: some View {
     VStack(alignment: .leading, spacing: 6) {
-      Button(action: { viewModel.selectRepository() }) {
-        HStack(spacing: 6) {
-          Image(systemName: "folder")
-            .font(.system(size: 11))
-          Text(viewModel.selectedRepository?.name ?? "Select repository")
-            .font(.system(size: 12, weight: .medium))
+      HStack(spacing: 8) {
+        Button(action: { viewModel.selectRepository() }) {
+          HStack(spacing: 6) {
+            Image(systemName: "folder")
+              .font(.system(size: 11))
+            Text(viewModel.selectedRepository?.name ?? "Select repository")
+              .font(.system(size: 12, weight: .medium))
+          }
+          .padding(.horizontal, 12)
+          .padding(.vertical, 6)
+          .background(
+            Capsule()
+              .fill(viewModel.selectedRepository != nil
+                    ? Color.primary.opacity(0.1)
+                    : Color.primary.opacity(0.05))
+          )
+          .overlay(
+            Capsule()
+              .stroke(Color.borderSubtle, lineWidth: 1)
+          )
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-          Capsule()
-            .fill(viewModel.selectedRepository != nil
-                  ? Color.primary.opacity(0.1)
-                  : Color.primary.opacity(0.05))
-        )
-        .overlay(
-          Capsule()
-            .stroke(Color.borderSubtle, lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+
+        Button(action: { showingFilePicker = true }) {
+          HStack(spacing: 6) {
+            Image(systemName: "paperclip")
+              .font(.system(size: 11))
+            Text("Attach files")
+              .font(.system(size: 12, weight: .medium))
+          }
+          .padding(.horizontal, 12)
+          .padding(.vertical, 6)
+          .background(
+            Capsule()
+              .fill(Color.primary.opacity(0.05))
+          )
+          .overlay(
+            Capsule()
+              .stroke(Color.borderSubtle, lineWidth: 1)
+          )
+        }
+        .buttonStyle(.plain)
       }
-      .buttonStyle(.plain)
 
       if let repo = viewModel.selectedRepository {
         Text(repo.path)
@@ -207,7 +227,11 @@ public struct MultiSessionLaunchView: View {
             Text(file.displayName)
               .font(.system(size: 10))
               .lineLimit(1)
-            Button(action: { viewModel.removeAttachedFile(file) }) {
+            Button(action: {
+              withAnimation(.easeInOut(duration: 0.2)) {
+                viewModel.removeAttachedFile(file)
+              }
+            }) {
               Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
                 .foregroundColor(.secondary)
@@ -224,25 +248,14 @@ public struct MultiSessionLaunchView: View {
             Capsule()
               .stroke(Color.borderSubtle, lineWidth: 1)
           )
+          .transition(.asymmetric(
+            insertion: .scale.combined(with: .opacity),
+            removal: .scale.combined(with: .opacity)
+          ))
         }
       }
     }
-  }
-
-  private var attachmentRow: some View {
-    HStack {
-      Button(action: { showingFilePicker = true }) {
-        HStack(spacing: 4) {
-          Image(systemName: "paperclip")
-            .font(.system(size: 11))
-          Text("Attach Files")
-            .font(.system(size: 11))
-        }
-        .foregroundColor(.secondary)
-      }
-      .buttonStyle(.plain)
-      Spacer()
-    }
+    .transition(.move(edge: .top).combined(with: .opacity))
   }
 
   // MARK: - File Handling
@@ -253,7 +266,9 @@ public struct MultiSessionLaunchView: View {
         _ = provider.loadObject(ofClass: URL.self) { url, error in
           guard let url = url, error == nil else { return }
           Task { @MainActor in
-            viewModel.addAttachedFile(url)
+            withAnimation(.easeInOut(duration: 0.2)) {
+              viewModel.addAttachedFile(url)
+            }
           }
         }
       } else if provider.hasItemConformingToTypeIdentifier(UTType.png.identifier) {
@@ -264,7 +279,9 @@ public struct MultiSessionLaunchView: View {
               .appendingPathComponent("screenshot_\(UUID().uuidString).png")
             do {
               try data.write(to: tempURL)
-              viewModel.addAttachedFile(tempURL, isTemporary: true)
+              withAnimation(.easeInOut(duration: 0.2)) {
+                viewModel.addAttachedFile(tempURL, isTemporary: true)
+              }
             } catch {
               print("Failed to save dropped screenshot: \(error)")
             }
@@ -278,7 +295,9 @@ public struct MultiSessionLaunchView: View {
               .appendingPathComponent("screenshot_\(UUID().uuidString).tiff")
             do {
               try data.write(to: tempURL)
-              viewModel.addAttachedFile(tempURL, isTemporary: true)
+              withAnimation(.easeInOut(duration: 0.2)) {
+                viewModel.addAttachedFile(tempURL, isTemporary: true)
+              }
             } catch {
               print("Failed to save dropped screenshot: \(error)")
             }
@@ -292,7 +311,9 @@ public struct MultiSessionLaunchView: View {
               .appendingPathComponent("dropped_image_\(UUID().uuidString).png")
             do {
               try data.write(to: tempURL)
-              viewModel.addAttachedFile(tempURL, isTemporary: true)
+              withAnimation(.easeInOut(duration: 0.2)) {
+                viewModel.addAttachedFile(tempURL, isTemporary: true)
+              }
             } catch {
               print("Failed to save dropped image: \(error)")
             }
@@ -306,7 +327,9 @@ public struct MultiSessionLaunchView: View {
               .appendingPathComponent("dropped_document_\(UUID().uuidString).pdf")
             do {
               try data.write(to: tempURL)
-              viewModel.addAttachedFile(tempURL, isTemporary: true)
+              withAnimation(.easeInOut(duration: 0.2)) {
+                viewModel.addAttachedFile(tempURL, isTemporary: true)
+              }
             } catch {
               print("Failed to save dropped PDF: \(error)")
             }
@@ -319,8 +342,10 @@ public struct MultiSessionLaunchView: View {
   private func handlePickedFiles(_ result: Result<[URL], Error>) {
     switch result {
     case .success(let urls):
-      for url in urls {
-        viewModel.addAttachedFile(url)
+      withAnimation(.easeInOut(duration: 0.2)) {
+        for url in urls {
+          viewModel.addAttachedFile(url)
+        }
       }
     case .failure(let error):
       print("File picker error: \(error.localizedDescription)")
@@ -412,6 +437,9 @@ public struct MultiSessionLaunchView: View {
 
   private var providerPills: some View {
     HStack(spacing: 8) {
+      Text("Select agent")
+        .font(.system(size: 11))
+        .foregroundColor(.secondary)
       claudePill
       providerPill(
         label: "Codex",
