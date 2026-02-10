@@ -58,8 +58,8 @@ public final class MultiSessionLaunchViewModel {
   // MARK: - Form State
 
   public var workMode: WorkMode = .local
-  public var claudeMode: ClaudeMode = .enabled
-  public var isCodexSelected: Bool = true
+  public var claudeMode: ClaudeMode = .disabled
+  public var isCodexSelected: Bool = false
   public var sharedPrompt: String = ""
   public var claudeBranchName: String = ""
   public var codexBranchName: String = ""
