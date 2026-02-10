@@ -9,6 +9,7 @@ struct CollapsibleSessionRow: View {
   let isPending: Bool
   let isPrimary: Bool
   let customName: String?
+  let sessionStatus: SessionStatus?
   let colorScheme: ColorScheme
   let onArchive: (() -> Void)?
   let onSelect: () -> Void
@@ -22,6 +23,35 @@ struct CollapsibleSessionRow: View {
       return "~" + session.projectPath.dropFirst(home.count)
     }
     return session.projectPath
+  }
+
+  private var statusColor: Color {
+    guard let sessionStatus else { return .brandPrimary(for: providerKind) }
+    switch sessionStatus {
+    case .thinking: return .blue
+    case .executingTool: return .orange
+    case .waitingForUser: return .green
+    case .awaitingApproval: return .yellow
+    case .idle: return .gray
+    }
+  }
+
+  private var isActiveStatus: Bool {
+    guard let sessionStatus else { return false }
+    switch sessionStatus {
+    case .thinking, .executingTool: return true
+    default: return false
+    }
+  }
+
+  private func statusDisplayText(_ status: SessionStatus) -> String {
+    switch status {
+    case .thinking: return "Working"
+    case .executingTool(let name): return name
+    case .waitingForUser: return "Ready"
+    case .awaitingApproval(let tool): return "Approval: \(tool)"
+    case .idle: return "Idle"
+    }
   }
 
   var body: some View {
@@ -102,16 +132,25 @@ struct CollapsibleSessionRow: View {
             .foregroundColor(.brandPrimary(for: providerKind))
         }
 
-        // Dot + timestamp
+        // Dot + timestamp + status
         HStack(spacing: 5) {
           Circle()
-            .fill(Color.brandPrimary(for: providerKind))
+            .fill(statusColor)
             .frame(width: 6, height: 6)
+            .opacity(isActiveStatus ? 1.0 : 0.6)
 
           Text(timestamp.timeAgoDisplay())
             .font(.system(size: 11))
             .foregroundColor(.secondary)
+
+          if let sessionStatus, sessionStatus != .idle {
+            Text("· \(statusDisplayText(sessionStatus))")
+              .font(.system(size: 11))
+              .foregroundColor(statusColor)
+              .lineLimit(1)
+          }
         }
+        .animation(.easeInOut(duration: 0.3), value: sessionStatus)
 
         // First message preview
         if let message = session.firstMessage, !message.isEmpty {
@@ -255,6 +294,7 @@ struct CollapsibleSessionRow: View {
         isPending: false,
         isPrimary: true,
         customName: nil,
+        sessionStatus: .thinking,
         colorScheme: .dark,
         onArchive: {},
         onSelect: {}
@@ -271,6 +311,7 @@ struct CollapsibleSessionRow: View {
         isPending: false,
         isPrimary: false,
         customName: nil,
+        sessionStatus: .idle,
         colorScheme: .dark,
         onArchive: {},
         onSelect: {}
@@ -290,6 +331,7 @@ struct CollapsibleSessionRow: View {
         isPending: false,
         isPrimary: true,
         customName: nil,
+        sessionStatus: .executingTool(name: "Bash"),
         colorScheme: .dark,
         onArchive: {},
         onSelect: {}
@@ -306,6 +348,7 @@ struct CollapsibleSessionRow: View {
         isPending: false,
         isPrimary: false,
         customName: nil,
+        sessionStatus: .waitingForUser,
         colorScheme: .dark,
         onArchive: {},
         onSelect: {}
@@ -325,6 +368,7 @@ struct CollapsibleSessionRow: View {
         isPending: true,
         isPrimary: true,
         customName: nil,
+        sessionStatus: nil,
         colorScheme: .dark,
         onArchive: nil,
         onSelect: {}
@@ -341,6 +385,7 @@ struct CollapsibleSessionRow: View {
         isPending: true,
         isPrimary: false,
         customName: nil,
+        sessionStatus: nil,
         colorScheme: .dark,
         onArchive: nil,
         onSelect: {}
@@ -360,6 +405,7 @@ struct CollapsibleSessionRow: View {
         isPending: false,
         isPrimary: true,
         customName: "Auth Refactor",
+        sessionStatus: .awaitingApproval(tool: "Edit"),
         colorScheme: .dark,
         onArchive: {},
         onSelect: {}
@@ -379,6 +425,7 @@ struct CollapsibleSessionRow: View {
         isPending: false,
         isPrimary: true,
         customName: nil,
+        sessionStatus: .thinking,
         colorScheme: .light,
         onArchive: {},
         onSelect: {}
@@ -396,6 +443,7 @@ struct CollapsibleSessionRow: View {
         isPending: false,
         isPrimary: false,
         customName: nil,
+        sessionStatus: .idle,
         colorScheme: .light,
         onArchive: {},
         onSelect: {}

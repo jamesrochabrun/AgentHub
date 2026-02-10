@@ -122,6 +122,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
             isPending: item.isPending,
             isPrimary: item.id == primarySessionId,
             customName: customName(for: item),
+            sessionStatus: item.sessionStatus,
             colorScheme: colorScheme,
             onArchive: item.isPending ? nil : {
               switch item.providerKind {
@@ -148,6 +149,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
     let providerKind: SessionProviderKind
     let timestamp: Date
     let isPending: Bool
+    let sessionStatus: SessionStatus?
   }
 
   private var items: [SelectedSessionItem] {
@@ -159,7 +161,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
         session: pending.placeholderSession,
         providerKind: .claude,
         timestamp: pending.startedAt,
-        isPending: true
+        isPending: true,
+        sessionStatus: nil
       ))
     }
 
@@ -169,7 +172,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
         session: pending.placeholderSession,
         providerKind: .codex,
         timestamp: pending.startedAt,
-        isPending: true
+        isPending: true,
+        sessionStatus: nil
       ))
     }
 
@@ -178,8 +182,9 @@ public struct CollapsibleSelectedSessionsPanel: View {
         id: "claude-\(item.session.id)",
         session: item.session,
         providerKind: .claude,
-        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
-        isPending: false
+        timestamp: item.session.lastActivityAt,
+        isPending: false,
+        sessionStatus: item.state?.status
       ))
     }
 
@@ -188,8 +193,9 @@ public struct CollapsibleSelectedSessionsPanel: View {
         id: "codex-\(item.session.id)",
         session: item.session,
         providerKind: .codex,
-        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
-        isPending: false
+        timestamp: item.session.lastActivityAt,
+        isPending: false,
+        sessionStatus: item.state?.status
       ))
     }
 
@@ -328,6 +334,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
             isPending: item.isPending,
             isPrimary: item.id == primarySessionId,
             customName: viewModel.sessionCustomNames[item.session.id],
+            sessionStatus: item.sessionStatus,
             colorScheme: colorScheme,
             onArchive: item.isPending ? nil : {
               viewModel.stopMonitoring(session: item.session)
@@ -350,6 +357,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     let session: CLISession
     let timestamp: Date
     let isPending: Bool
+    let sessionStatus: SessionStatus?
   }
 
   private var items: [SelectedSessionItem] {
@@ -360,7 +368,8 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
         id: "pending-\(pending.id.uuidString)",
         session: pending.placeholderSession,
         timestamp: pending.startedAt,
-        isPending: true
+        isPending: true,
+        sessionStatus: nil
       ))
     }
 
@@ -368,8 +377,9 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
       results.append(SelectedSessionItem(
         id: item.session.id,
         session: item.session,
-        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
-        isPending: false
+        timestamp: item.session.lastActivityAt,
+        isPending: false,
+        sessionStatus: item.state?.status
       ))
     }
 

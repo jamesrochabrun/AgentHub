@@ -378,6 +378,7 @@ public struct MultiProviderSessionsListView: View {
     let providerKind: SessionProviderKind
     let timestamp: Date
     let isPending: Bool
+    let sessionStatus: SessionStatus?
   }
 
   private var selectedSessionItems: [SelectedSessionItem] {
@@ -389,7 +390,8 @@ public struct MultiProviderSessionsListView: View {
         session: pending.placeholderSession,
         providerKind: .claude,
         timestamp: pending.startedAt,
-        isPending: true
+        isPending: true,
+        sessionStatus: nil
       ))
     }
 
@@ -399,7 +401,8 @@ public struct MultiProviderSessionsListView: View {
         session: pending.placeholderSession,
         providerKind: .codex,
         timestamp: pending.startedAt,
-        isPending: true
+        isPending: true,
+        sessionStatus: nil
       ))
     }
 
@@ -408,8 +411,9 @@ public struct MultiProviderSessionsListView: View {
         id: "claude-\(item.session.id)",
         session: item.session,
         providerKind: .claude,
-        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
-        isPending: false
+        timestamp: item.session.lastActivityAt,
+        isPending: false,
+        sessionStatus: item.state?.status
       ))
     }
 
@@ -418,8 +422,9 @@ public struct MultiProviderSessionsListView: View {
         id: "codex-\(item.session.id)",
         session: item.session,
         providerKind: .codex,
-        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
-        isPending: false
+        timestamp: item.session.lastActivityAt,
+        isPending: false,
+        sessionStatus: item.state?.status
       ))
     }
 
@@ -456,6 +461,7 @@ public struct MultiProviderSessionsListView: View {
             isPending: item.isPending,
             isPrimary: item.id == primarySessionId,
             customName: selectedSessionCustomName(for: item),
+            sessionStatus: item.sessionStatus,
             colorScheme: colorScheme,
             onArchive: item.isPending ? nil : {
               withAnimation(.easeInOut(duration: 0.25)) {
