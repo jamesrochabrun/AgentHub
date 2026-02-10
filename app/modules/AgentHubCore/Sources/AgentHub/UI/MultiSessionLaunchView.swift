@@ -69,7 +69,7 @@ public struct MultiSessionLaunchView: View {
   private var formHeader: some View {
     HStack {
       Text("Start Project")
-        .font(.system(size: 13, weight: .bold, design: .monospaced))
+        .font(.system(size: 14, weight: .bold, design: .monospaced))
       Spacer()
       Button(action: {
         withAnimation(.easeInOut(duration: 0.2)) {
