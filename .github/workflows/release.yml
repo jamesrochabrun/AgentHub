@@ -183,38 +183,37 @@ jobs:
           echo "Signature: $ED_SIGNATURE"
           echo "Length: $LENGTH"
 
-          # Build the new <item> block
-          NEW_ITEM=$(cat <<EOF
-    <item>
-      <title>Version ${VERSION}</title>
-      <link>https://github.com/jamesrochabrun/AgentHub/releases/tag/v${VERSION}</link>
-      <sparkle:version>${VERSION}</sparkle:version>
-      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
-      <description><![CDATA[
-        <h2>Version ${VERSION}</h2>
-        <ul>
-          <li>See release notes on GitHub</li>
-        </ul>
-      ]]></description>
-      <pubDate>${PUB_DATE}</pubDate>
-      <enclosure
-        url="https://github.com/jamesrochabrun/AgentHub/releases/download/v${VERSION}/AgentHub.app.zip"
-        sparkle:version="${VERSION}"
-        sparkle:shortVersionString="${VERSION}"
-        sparkle:edSignature="${ED_SIGNATURE}"
-        length="${LENGTH}"
-        type="application/octet-stream" />
-      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    </item>
-EOF
-          )
+          # Build the new <item> block and write to file
+          {
+            echo '    <item>'
+            echo "      <title>Version ${VERSION}</title>"
+            echo "      <link>https://github.com/jamesrochabrun/AgentHub/releases/tag/v${VERSION}</link>"
+            echo "      <sparkle:version>${VERSION}</sparkle:version>"
+            echo "      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>"
+            echo '      <description><![CDATA['
+            echo "        <h2>Version ${VERSION}</h2>"
+            echo '        <ul>'
+            echo '          <li>See release notes on GitHub</li>'
+            echo '        </ul>'
+            echo '      ]]></description>'
+            echo "      <pubDate>${PUB_DATE}</pubDate>"
+            echo '      <enclosure'
+            echo "        url=\"https://github.com/jamesrochabrun/AgentHub/releases/download/v${VERSION}/AgentHub.app.zip\""
+            echo "        sparkle:version=\"${VERSION}\""
+            echo "        sparkle:shortVersionString=\"${VERSION}\""
+            echo "        sparkle:edSignature=\"${ED_SIGNATURE}\""
+            echo "        length=\"${LENGTH}\""
+            echo '        type="application/octet-stream" />'
+            echo '      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>'
+            echo '    </item>'
+          } > build/new_item.xml
 
           # Switch to main branch and update appcast.xml
           git fetch origin main
           git checkout main
 
           # Insert new item as first <item> in appcast.xml (after the <language> line)
-          awk -v item="$NEW_ITEM" '/<language>en<\/language>/{print; print ""; print item; next}1' appcast.xml > appcast_tmp.xml
+          awk '/<language>en<\/language>/{print; print ""; while ((getline line < "build/new_item.xml") > 0) print line; next}1' appcast.xml > appcast_tmp.xml
           mv appcast_tmp.xml appcast.xml
 
           git config user.name "github-actions[bot]"
