@@ -43,6 +43,31 @@ public enum ClaudeMode: CaseIterable, Sendable {
   }
 }
 
+// MARK: - AttachedFile
+
+public struct AttachedFile: Identifiable, Equatable {
+  public let id = UUID()
+  public let url: URL
+  public let isTemporary: Bool
+
+  public var displayName: String { url.lastPathComponent }
+
+  public var icon: String {
+    let ext = url.pathExtension.lowercased()
+    switch ext {
+    case "png", "jpg", "jpeg", "gif", "tiff", "webp", "heic": return "photo"
+    case "pdf": return "doc.richtext"
+    case "txt", "md", "swift", "py", "js", "ts": return "doc.text"
+    default: return "doc"
+    }
+  }
+
+  public var quotedPath: String {
+    let path = url.path
+    return path.contains(" ") ? "\"\(path)\"" : path
+  }
+}
+
 // MARK: - MultiSessionLaunchViewModel
 
 @MainActor
@@ -61,6 +86,7 @@ public final class MultiSessionLaunchViewModel {
   public var claudeMode: ClaudeMode = .disabled
   public var isCodexSelected: Bool = false
   public var sharedPrompt: String = ""
+  public var attachedFiles: [AttachedFile] = []
   public var claudeBranchName: String = ""
   public var codexBranchName: String = ""
   public var singleBranchName: String = ""
@@ -102,8 +128,9 @@ public final class MultiSessionLaunchViewModel {
 
   public var isValid: Bool {
     let hasPrompt = !sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    let hasFiles = !attachedFiles.isEmpty
     let hasRepo = selectedRepository != nil
-    return hasPrompt && hasRepo && hasAnyProviderSelected
+    return (hasPrompt || hasFiles) && hasRepo && hasAnyProviderSelected
   }
 
   // MARK: - Init
@@ -116,6 +143,20 @@ public final class MultiSessionLaunchViewModel {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self.worktreeService = worktreeService
+  }
+
+  // MARK: - Attachments
+
+  public func addAttachedFile(_ url: URL, isTemporary: Bool = false) {
+    guard !attachedFiles.contains(where: { $0.url == url }) else { return }
+    attachedFiles.append(AttachedFile(url: url, isTemporary: isTemporary))
+  }
+
+  public func removeAttachedFile(_ file: AttachedFile) {
+    if file.isTemporary {
+      try? FileManager.default.removeItem(at: file.url)
+    }
+    attachedFiles.removeAll { $0.id == file.id }
   }
 
   // MARK: - Actions
@@ -214,7 +255,11 @@ public final class MultiSessionLaunchViewModel {
     claudeProgress = .idle
     codexProgress = .idle
 
-    let prompt = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    var prompt = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !attachedFiles.isEmpty {
+      let filePaths = attachedFiles.map { $0.quotedPath }.joined(separator: " ")
+      prompt = prompt.isEmpty ? filePaths : "\(prompt) \(filePaths)"
+    }
     let repoPath = repo.path
 
     switch workMode {
@@ -255,6 +300,10 @@ public final class MultiSessionLaunchViewModel {
 
   /// Fully resets all form state for a fresh start
   public func reset() {
+    for file in attachedFiles where file.isTemporary {
+      try? FileManager.default.removeItem(at: file.url)
+    }
+    attachedFiles = []
     sharedPrompt = ""
     claudeBranchName = ""
     codexBranchName = ""
