@@ -422,21 +422,6 @@ public struct MonitoringCardView: View {
         .font(.caption)
         .foregroundColor(.brandPrimary(for: providerKind))
 
-      if showPrimaryIndicator && isPrimarySession {
-        HStack(spacing: 4) {
-          Circle()
-            .fill(Color.brandPrimary(for: providerKind))
-            .frame(width: 6, height: 6)
-          Text("Primary")
-            .font(.caption2)
-        }
-        .foregroundColor(.brandPrimary(for: providerKind))
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Color.brandPrimary(for: providerKind).opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-      }
-
       Spacer()
 
       // Terminal/List segmented control (hidden when maximized)
