@@ -137,16 +137,16 @@ public struct MultiSessionLaunchView: View {
         Text(promptPlaceholder)
           .font(.system(size: 12))
           .foregroundColor(.secondary.opacity(0.6))
-          .padding(.horizontal, 6)
-          .padding(.vertical, 8)
+          .padding(.leading, 7)
+          .padding(.top, 4)
       }
       TextEditor(text: $viewModel.sharedPrompt)
         .font(.system(size: 12))
         .scrollContentBackground(.hidden)
-        .padding(.horizontal, 2)
-        .padding(.vertical, 2)
+        .padding(2)
     }
     .frame(minHeight: 60, maxHeight: 120)
+    .padding(4)
     .background(
       RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
         .fill(Color(NSColor.controlBackgroundColor))
