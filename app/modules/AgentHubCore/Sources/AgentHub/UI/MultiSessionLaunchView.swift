@@ -69,7 +69,7 @@ public struct MultiSessionLaunchView: View {
   private var formHeader: some View {
     HStack {
       Text("Start Project")
-        .font(.system(size: 13, weight: .bold, design: .monospaced))
+        .font(.system(size: 14, weight: .bold, design: .monospaced))
       Spacer()
       Button(action: {
         withAnimation(.easeInOut(duration: 0.2)) {
@@ -137,16 +137,16 @@ public struct MultiSessionLaunchView: View {
         Text(promptPlaceholder)
           .font(.system(size: 12))
           .foregroundColor(.secondary.opacity(0.6))
-          .padding(.horizontal, 6)
-          .padding(.vertical, 8)
+          .padding(.leading, 7)
+          .padding(.top, 4)
       }
       TextEditor(text: $viewModel.sharedPrompt)
         .font(.system(size: 12))
         .scrollContentBackground(.hidden)
-        .padding(.horizontal, 2)
-        .padding(.vertical, 2)
+        .padding(2)
     }
     .frame(minHeight: 60, maxHeight: 120)
+    .padding(4)
     .background(
       RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
         .fill(Color(NSColor.controlBackgroundColor))
@@ -254,15 +254,55 @@ public struct MultiSessionLaunchView: View {
 
   private var providerPills: some View {
     HStack(spacing: 8) {
-      providerPill(
-        label: "Claude",
-        isSelected: $viewModel.isClaudeSelected
-      )
+      claudePill
       providerPill(
         label: "Codex",
         isSelected: $viewModel.isCodexSelected
       )
       Spacer()
+    }
+  }
+
+  private var claudePill: some View {
+    Button(action: {
+      withAnimation(.easeInOut(duration: 0.2)) {
+        viewModel.claudeMode = viewModel.claudeMode.next
+      }
+    }) {
+      Text(viewModel.claudeMode.label)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(claudePillForeground)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 5)
+        .background(
+          Capsule()
+            .fill(claudePillBackground)
+        )
+    }
+    .buttonStyle(.plain)
+  }
+
+  private var claudePillForeground: Color {
+    switch viewModel.claudeMode {
+    case .disabled:
+      return .secondary
+    case .enabled:
+      return colorScheme == .dark ? .black : .white
+    case .enabledDangerously:
+      return Color(nsColor: NSColor(srgbRed: 0.45, green: 0.1, blue: 0.1, alpha: 1))
+    }
+  }
+
+  private var claudePillBackground: Color {
+    switch viewModel.claudeMode {
+    case .disabled:
+      return Color.primary.opacity(0.06)
+    case .enabled:
+      return colorScheme == .dark ? Color.white : Color.black
+    case .enabledDangerously:
+      return colorScheme == .dark
+        ? Color(nsColor: NSColor(srgbRed: 0.96, green: 0.64, blue: 0.64, alpha: 1))
+        : Color(nsColor: NSColor(srgbRed: 0.91, green: 0.54, blue: 0.54, alpha: 1))
     }
   }
 
