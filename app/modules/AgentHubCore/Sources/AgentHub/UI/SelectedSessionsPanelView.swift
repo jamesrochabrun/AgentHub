@@ -125,7 +125,7 @@ public struct SelectedSessionsPanelView: View {
       results.append(SelectedSessionItem(
         id: item.session.id,
         session: item.session,
-        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
+        timestamp: item.session.lastActivityAt,
         modulePath: findModulePath(for: item.session.projectPath),
         isPending: false
       ))
@@ -298,7 +298,7 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         id: "claude-\(item.session.id)",
         session: item.session,
         providerKind: .claude,
-        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
+        timestamp: item.session.lastActivityAt,
         modulePath: findModulePath(for: item.session.projectPath),
         isPending: false
       ))
@@ -309,7 +309,7 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         id: "codex-\(item.session.id)",
         session: item.session,
         providerKind: .codex,
-        timestamp: item.state?.lastActivityAt ?? item.session.lastActivityAt,
+        timestamp: item.session.lastActivityAt,
         modulePath: findModulePath(for: item.session.projectPath),
         isPending: false
       ))
