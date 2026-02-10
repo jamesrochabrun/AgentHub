@@ -444,7 +444,7 @@ public struct MultiProviderSessionsListView: View {
     if !items.isEmpty {
       VStack(alignment: .leading, spacing: 0) {
         HStack {
-          Text("Projects")
+          Text("Focused Sessions")
             .font(.system(size: 14, weight: .bold))
           Text("(\(items.count))")
             .font(.caption)
@@ -519,7 +519,7 @@ public struct MultiProviderSessionsListView: View {
           Image(systemName: "chevron.right")
             .rotationEffect(.degrees(isBrowseExpanded ? 90 : 0))
             .font(.system(size: 10))
-          Text("Browse Sessions")
+          Text("Browse all Sessions")
             .font(.system(size: 14, weight: .bold, design: .monospaced))
           Spacer()
         }

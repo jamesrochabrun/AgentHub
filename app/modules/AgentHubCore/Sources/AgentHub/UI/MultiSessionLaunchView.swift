@@ -90,7 +90,7 @@ public struct MultiSessionLaunchView: View {
 
   private var formHeader: some View {
     HStack {
-      Text("Start Project")
+      Text("Start Session")
         .font(.system(size: 14, weight: .bold, design: .monospaced))
       Spacer()
       Button(action: {
