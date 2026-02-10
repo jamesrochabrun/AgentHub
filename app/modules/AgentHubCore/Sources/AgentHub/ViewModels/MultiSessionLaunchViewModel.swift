@@ -16,6 +16,33 @@ public enum WorkMode: String, CaseIterable, Sendable {
   case worktree = "Worktree"
 }
 
+// MARK: - ClaudeMode
+
+public enum ClaudeMode: CaseIterable, Sendable {
+  case disabled
+  case enabled
+  case enabledDangerously
+
+  var next: ClaudeMode {
+    switch self {
+    case .disabled: return .enabled
+    case .enabled: return .enabledDangerously
+    case .enabledDangerously: return .disabled
+    }
+  }
+
+  var isSelected: Bool { self != .disabled }
+
+  var dangerouslySkipPermissions: Bool { self == .enabledDangerously }
+
+  var label: String {
+    switch self {
+    case .disabled, .enabled: return "Claude"
+    case .enabledDangerously: return "Claude Dangerously"
+    }
+  }
+}
+
 // MARK: - MultiSessionLaunchViewModel
 
 @MainActor
@@ -31,7 +58,7 @@ public final class MultiSessionLaunchViewModel {
   // MARK: - Form State
 
   public var workMode: WorkMode = .local
-  public var isClaudeSelected: Bool = true
+  public var claudeMode: ClaudeMode = .enabled
   public var isCodexSelected: Bool = true
   public var sharedPrompt: String = ""
   public var claudeBranchName: String = ""
@@ -59,6 +86,8 @@ public final class MultiSessionLaunchViewModel {
   public var onLaunchCompleted: (() -> Void)?
 
   // MARK: - Computed
+
+  public var isClaudeSelected: Bool { claudeMode.isSelected }
 
   public var selectedProviders: [SessionProviderKind] {
     var providers: [SessionProviderKind] = []
@@ -204,6 +233,7 @@ public final class MultiSessionLaunchViewModel {
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: claudeViewModel,
+            dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions,
             progressSetter: { self.claudeProgress = $0 }
           )
         case .codex:
@@ -234,7 +264,7 @@ public final class MultiSessionLaunchViewModel {
     availableBranches = []
     currentBranchName = ""
     workMode = .local
-    isClaudeSelected = false
+    claudeMode = .disabled
     isCodexSelected = false
     claudeProgress = .idle
     codexProgress = .idle
@@ -263,7 +293,7 @@ public final class MultiSessionLaunchViewModel {
     if providers.contains(.claude) {
       claudeViewModel.refresh()
       try? await Task.sleep(for: .milliseconds(300))
-      claudeViewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
+      claudeViewModel.startNewSessionInHub(worktree, initialPrompt: prompt, dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions)
     }
 
     if providers.contains(.codex) {
@@ -331,7 +361,7 @@ public final class MultiSessionLaunchViewModel {
 
     if let path = claudeWorktreePath {
       let worktree = WorktreeBranch(name: claudeBranchName, path: path, isWorktree: true)
-      claudeViewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
+      claudeViewModel.startNewSessionInHub(worktree, initialPrompt: prompt, dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions)
     }
 
     try? await Task.sleep(for: .milliseconds(800))
@@ -350,6 +380,7 @@ public final class MultiSessionLaunchViewModel {
     repoPath: String,
     branchName: String,
     viewModel: CLISessionsViewModel,
+    dangerouslySkipPermissions: Bool = false,
     progressSetter: @escaping (WorktreeCreationProgress) -> Void
   ) async {
     viewModel.addRepository(at: repoPath)
@@ -380,7 +411,7 @@ public final class MultiSessionLaunchViewModel {
     try? await Task.sleep(for: .milliseconds(500))
 
     let worktree = WorktreeBranch(name: branchName, path: path, isWorktree: true)
-    viewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
+    viewModel.startNewSessionInHub(worktree, initialPrompt: prompt, dangerouslySkipPermissions: dangerouslySkipPermissions)
     viewModel.refresh()
   }
 }
