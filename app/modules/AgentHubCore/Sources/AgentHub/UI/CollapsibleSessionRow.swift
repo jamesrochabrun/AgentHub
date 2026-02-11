@@ -160,7 +160,7 @@ struct CollapsibleSessionRow: View {
             .font(.system(size: 11))
             .foregroundColor(.primary.opacity(0.7))
             .lineLimit(1)
-            .padding(.trailing, 20)
+            .padding(.trailing, 56)
         }
       }
       .padding(.horizontal, 8)

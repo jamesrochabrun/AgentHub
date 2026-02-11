@@ -241,7 +241,7 @@ extension Color {
   }
 
   public static var borderSubtle: Color {
-    Color.gray.opacity(0.12)
+      Color.primary.opacity(0.85)
   }
 
   public static var flatCardBackground: Color {

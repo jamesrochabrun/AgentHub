@@ -223,11 +223,9 @@ public final class AgentHubProvider {
       cliConfiguration = CLICommandConfiguration(command: command, additionalPaths: paths, mode: .claude)
     case .codex:
       let userCommand = defaults.string(forKey: AgentHubDefaults.codexCommand) ?? configuration.codexCommand
-      let codexCommand = TerminalLauncher.findCodexExecutable(
-        command: userCommand,
-        additionalPaths: configuration.additionalCLIPaths
-      ) ?? userCommand
-      cliConfiguration = CLICommandConfiguration(command: codexCommand, additionalPaths: configuration.additionalCLIPaths, mode: .codex)
+      // Store the user's configured command string as-is (e.g. "airchat codex")
+      // Executable resolution happens at launch time using executableName
+      cliConfiguration = CLICommandConfiguration(command: userCommand, additionalPaths: configuration.additionalCLIPaths, mode: .codex)
     }
 
     let selectedMonitor: any SessionMonitorServiceProtocol = {
