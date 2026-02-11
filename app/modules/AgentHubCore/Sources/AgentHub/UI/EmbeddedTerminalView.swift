@@ -278,17 +278,20 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     initialPrompt: String? = nil,
     dangerouslySkipPermissions: Bool = false
   ) {
-    // Find the CLI executable
+    // Find the CLI executable using just the executable name (first word of command)
     let command = cliConfiguration.command
     let additionalPaths = cliConfiguration.additionalPaths
 
     let executablePath: String?
     switch cliConfiguration.mode {
     case .codex:
-      executablePath = TerminalLauncher.findCodexExecutable(additionalPaths: additionalPaths)
+      executablePath = TerminalLauncher.findCodexExecutable(
+        command: cliConfiguration.executableName,
+        additionalPaths: additionalPaths
+      )
     case .claude:
       executablePath = TerminalLauncher.findExecutable(
-        command: command,
+        command: cliConfiguration.executableName,
         additionalPaths: additionalPaths
       )
     }

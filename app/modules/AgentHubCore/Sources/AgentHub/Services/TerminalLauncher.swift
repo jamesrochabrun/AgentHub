@@ -317,15 +317,15 @@ public struct TerminalLauncher {
     projectPath: String,
     initialPrompt: String? = nil
   ) -> Error? {
-    // Find the executable
+    // Find the executable using just the executable name (first word of command)
     guard let executablePath = findExecutable(
-      command: cliConfiguration.command,
+      command: cliConfiguration.executableName,
       additionalPaths: cliConfiguration.additionalPaths
     ) else {
       return NSError(
         domain: "TerminalLauncher",
         code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(cliConfiguration.command)' command."]
+        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(cliConfiguration.executableName)' command."]
       )
     }
 
@@ -334,48 +334,21 @@ public struct TerminalLauncher {
       .replacingOccurrences(of: "\"", with: "\\\"")
     let escapedExecPath = executablePath.replacingOccurrences(of: "\\", with: "\\\\")
       .replacingOccurrences(of: "\"", with: "\\\"")
-    let escapedSessionId = sessionId.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
 
-    // Escape the initial prompt if provided
-    let escapedPrompt = initialPrompt?
-      .replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-      .replacingOccurrences(of: "'", with: "'\\''")
+    // Build args using argumentsForSession which prepends subcommand args
+    let args = cliConfiguration.argumentsForSession(sessionId: sessionId, prompt: initialPrompt)
+    let escapedArgs = args.map {
+      $0.replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "'", with: "'\\''")
+    }
+    let joinedArgs = escapedArgs.map { "'\($0)'" }.joined(separator: " ")
 
-    // Build command based on mode
+    // Build command
     let command: String
-    switch cliConfiguration.mode {
-    case .claude:
-      // claude -r "sessionId" 'prompt'
-      if !projectPath.isEmpty {
-        if let prompt = escapedPrompt {
-          command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" -r \"\(escapedSessionId)\" '\(prompt)'"
-        } else {
-          command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" -r \"\(escapedSessionId)\""
-        }
-      } else {
-        if let prompt = escapedPrompt {
-          command = "\"\(escapedExecPath)\" -r \"\(escapedSessionId)\" '\(prompt)'"
-        } else {
-          command = "\"\(escapedExecPath)\" -r \"\(escapedSessionId)\""
-        }
-      }
-    case .codex:
-      // codex resume "sessionId" 'prompt'
-      if !projectPath.isEmpty {
-        if let prompt = escapedPrompt {
-          command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" resume \"\(escapedSessionId)\" '\(prompt)'"
-        } else {
-          command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" resume \"\(escapedSessionId)\""
-        }
-      } else {
-        if let prompt = escapedPrompt {
-          command = "\"\(escapedExecPath)\" resume \"\(escapedSessionId)\" '\(prompt)'"
-        } else {
-          command = "\"\(escapedExecPath)\" resume \"\(escapedSessionId)\""
-        }
-      }
+    if !projectPath.isEmpty {
+      command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" \(joinedArgs)"
+    } else {
+      command = "\"\(escapedExecPath)\" \(joinedArgs)"
     }
 
     return launchTerminalScript(command: command, scriptPrefix: "cli_resume")

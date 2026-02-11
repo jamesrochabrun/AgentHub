@@ -27,6 +27,18 @@ public struct CLICommandConfiguration: Codable, Sendable {
     self.mode = mode
   }
 
+  /// The executable name (first word of command). e.g. "airchat" from "airchat codex"
+  public var executableName: String {
+    String(command.split(separator: " ", maxSplits: 1).first ?? Substring(command))
+  }
+
+  /// Subcommand arguments (remaining words after executable). e.g. ["codex"] from "airchat codex"
+  public var subcommandArgs: [String] {
+    let parts = command.split(separator: " ", maxSplits: 1)
+    guard parts.count > 1 else { return [] }
+    return [String(parts[1])]
+  }
+
   public static var claudeDefault: CLICommandConfiguration {
     CLICommandConfiguration(command: "claude", additionalPaths: [], mode: .claude)
   }
@@ -40,6 +52,8 @@ public struct CLICommandConfiguration: Codable, Sendable {
     prompt: String?,
     dangerouslySkipPermissions: Bool = false
   ) -> [String] {
+    let prefix = subcommandArgs
+
     switch mode {
     case .claude:
       var args: [String] = []
@@ -51,26 +65,26 @@ public struct CLICommandConfiguration: Codable, Sendable {
 
       if let sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
         if let prompt, !prompt.isEmpty {
-          return args + ["-r", sessionId, prompt]
+          return prefix + args + ["-r", sessionId, prompt]
         }
-        return args + ["-r", sessionId]
+        return prefix + args + ["-r", sessionId]
       }
       if let prompt, !prompt.isEmpty {
-        return args + [prompt]
+        return prefix + args + [prompt]
       }
-      return args
+      return prefix + args
 
     case .codex:
       // Codex doesn't support this flag
       if let sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
         // Codex CLI resume: codex resume <SESSION_ID>
-        return ["resume", sessionId]
+        return prefix + ["resume", sessionId]
       }
       // Start a new Codex session with optional prompt as positional argument
       if let prompt, !prompt.isEmpty {
-        return [prompt]
+        return prefix + [prompt]
       }
-      return []
+      return prefix
     }
   }
 }
