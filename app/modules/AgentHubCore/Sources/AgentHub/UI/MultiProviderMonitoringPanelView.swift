@@ -446,6 +446,7 @@ public struct MultiProviderMonitoringPanelView: View {
           onCopySessionId: { },
           onOpenSessionFile: { },
           onRefreshTerminal: { },
+          onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
           isMaximized: false,
           onToggleMaximize: { },
           isPrimarySession: true,
@@ -508,6 +509,7 @@ public struct MultiProviderMonitoringPanelView: View {
             onPromptConsumed: {
               viewModel.clearPendingPrompt(for: session.id)
             },
+            onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
             isMaximized: false,
             onToggleMaximize: { },
             isPrimarySession: true,
@@ -587,6 +589,7 @@ public struct MultiProviderMonitoringPanelView: View {
               onCopySessionId: { },
               onOpenSessionFile: { },
               onRefreshTerminal: { },
+              onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
               isMaximized: maximizedSessionId == item.id,
               onToggleMaximize: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -640,6 +643,7 @@ public struct MultiProviderMonitoringPanelView: View {
               onPromptConsumed: {
                 viewModel.clearPendingPrompt(for: session.id)
               },
+              onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
               isMaximized: maximizedSessionId == item.id,
               onToggleMaximize: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -726,6 +730,7 @@ public struct MultiProviderMonitoringPanelView: View {
           onCopySessionId: { },
           onOpenSessionFile: { },
           onRefreshTerminal: { },
+          onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
           isMaximized: true,
           onToggleMaximize: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -781,6 +786,7 @@ public struct MultiProviderMonitoringPanelView: View {
           onPromptConsumed: {
             viewModel.clearPendingPrompt(for: session.id)
           },
+          onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
           isMaximized: true,
           onToggleMaximize: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -875,6 +881,11 @@ public struct MultiProviderMonitoringPanelView: View {
     }
 
     primarySessionId = effectivePrimarySessionId
+  }
+
+  private func setPrimarySessionIfNeeded(_ sessionId: String) {
+    guard primarySessionId != sessionId else { return }
+    primarySessionId = sessionId
   }
 }
 
