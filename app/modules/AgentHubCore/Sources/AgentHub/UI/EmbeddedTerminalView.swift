@@ -52,6 +52,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   let initialInputText: String?  // Optional: text to prefill terminal input without Enter
   let viewModel: CLISessionsViewModel?  // For shared terminal storage
   let dangerouslySkipPermissions: Bool  // One-shot flag for new sessions
+  let onUserInteraction: (() -> Void)?
 
   public init(
     terminalKey: String,
@@ -61,7 +62,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
-    dangerouslySkipPermissions: Bool = false
+    dangerouslySkipPermissions: Bool = false,
+    onUserInteraction: (() -> Void)? = nil
   ) {
     self.terminalKey = terminalKey
     self.sessionId = sessionId
@@ -71,6 +73,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     self.initialInputText = initialInputText
     self.viewModel = viewModel
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
+    self.onUserInteraction = onUserInteraction
   }
 
   public func makeNSView(context: Context) -> TerminalContainerView {
@@ -78,7 +81,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
 
     // Use shared terminal storage if viewModel is provided
     if let viewModel = viewModel {
-      return viewModel.getOrCreateTerminal(
+      let terminalContainer = viewModel.getOrCreateTerminal(
         forKey: terminalKey,
         sessionId: sessionId,
         projectPath: projectPath,
@@ -88,6 +91,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         isDark: isDark,
         dangerouslySkipPermissions: dangerouslySkipPermissions
       )
+      terminalContainer.onUserInteraction = onUserInteraction
+      return terminalContainer
     }
 
     // Fallback: create standalone terminal (for previews)
@@ -101,12 +106,14 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
+    containerView.onUserInteraction = onUserInteraction
     return containerView
   }
 
   public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
     // Update colors when color scheme changes
     nsView.updateColors(isDark: colorScheme == .dark)
+    nsView.onUserInteraction = onUserInteraction
 
     // If there's a pending prompt in the viewModel, send it (and clear it)
     // Use terminalKey (not sessionId) since it works for both pending and real sessions
@@ -127,6 +134,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
+  private var localEventMonitor: Any?
+  public var onUserInteraction: (() -> Void)?
 
   /// The PID of the current terminal process, if running
   public var currentProcessPID: Int32? {
@@ -137,6 +146,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// Terminate process on deallocation (safety net)
   deinit {
+    if let localEventMonitor {
+      NSEvent.removeMonitor(localEventMonitor)
+    }
     terminateProcess()
   }
 
@@ -197,6 +209,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     ])
 
     self.terminalView = terminal
+    installInteractionMonitorIfNeeded()
 
     // Start the CLI process
     startCLIProcess(
@@ -270,6 +283,39 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
     // Force redraw
     terminal.needsDisplay = true
+  }
+
+  private func installInteractionMonitorIfNeeded() {
+    guard localEventMonitor == nil else { return }
+    localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { [weak self] event in
+      guard let self, let terminal = self.terminalView else { return event }
+
+      switch event.type {
+      case .keyDown:
+        if let window = terminal.window, event.window === window, isTerminalResponderActive(window: window, terminal: terminal) {
+          self.onUserInteraction?()
+        }
+      case .leftMouseDown:
+        guard let window = terminal.window, event.window === window else { return event }
+        let locationInTerminal = terminal.convert(event.locationInWindow, from: nil)
+        if terminal.bounds.contains(locationInTerminal) {
+          self.onUserInteraction?()
+        }
+      default:
+        break
+      }
+
+      return event
+    }
+  }
+
+  private func isTerminalResponderActive(window: NSWindow, terminal: NSView) -> Bool {
+    guard let responder = window.firstResponder else { return false }
+    if responder === terminal { return true }
+    if let responderView = responder as? NSView {
+      return responderView.isDescendant(of: terminal)
+    }
+    return false
   }
 
   private func configureTerminalAppearance(_ terminal: TerminalView, isDark: Bool) {

@@ -70,6 +70,7 @@ public struct MonitoringCardView: View {
   let onShowPlan: ((CLISession, PlanState) -> Void)?
   let onShowWebPreview: ((CLISession, String) -> Void)?
   let onPromptConsumed: (() -> Void)?
+  let onTerminalInteraction: (() -> Void)?
   let isMaximized: Bool
   let onToggleMaximize: () -> Void
   let isPrimarySession: Bool
@@ -110,6 +111,7 @@ public struct MonitoringCardView: View {
     onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
     onShowWebPreview: ((CLISession, String) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
+    onTerminalInteraction: (() -> Void)? = nil,
     isMaximized: Bool = false,
     onToggleMaximize: @escaping () -> Void = {},
     isPrimarySession: Bool = false,
@@ -139,6 +141,7 @@ public struct MonitoringCardView: View {
     self.onShowPlan = onShowPlan
     self.onShowWebPreview = onShowWebPreview
     self.onPromptConsumed = onPromptConsumed
+    self.onTerminalInteraction = onTerminalInteraction
     self.isMaximized = isMaximized
     self.onToggleMaximize = onToggleMaximize
     self.isPrimarySession = isPrimarySession
@@ -684,7 +687,8 @@ public struct MonitoringCardView: View {
           initialPrompt: initialPrompt,
           initialInputText: initialInputText,
           viewModel: viewModel,
-          dangerouslySkipPermissions: dangerouslySkipPermissions
+          dangerouslySkipPermissions: dangerouslySkipPermissions,
+          onUserInteraction: onTerminalInteraction
         )
         .frame(minHeight: 300)
       } else {

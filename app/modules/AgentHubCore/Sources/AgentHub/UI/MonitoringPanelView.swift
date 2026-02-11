@@ -331,6 +331,7 @@ public struct MonitoringPanelView: View {
         onCopySessionId: { },
         onOpenSessionFile: { },
         onRefreshTerminal: { },
+        onTerminalInteraction: { setPrimarySessionIfNeeded(sessionId) },
         isMaximized: true,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -388,6 +389,7 @@ public struct MonitoringPanelView: View {
         onPromptConsumed: {
           viewModel.clearPendingPrompt(for: item.session.id)
         },
+        onTerminalInteraction: { setPrimarySessionIfNeeded(item.session.id) },
         isMaximized: true,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -453,6 +455,7 @@ public struct MonitoringPanelView: View {
           onCopySessionId: { },
           onOpenSessionFile: { },
           onRefreshTerminal: { },
+          onTerminalInteraction: { setPrimarySessionIfNeeded(pendingId) },
           isMaximized: false,
           onToggleMaximize: { },
           isPrimarySession: true,
@@ -505,6 +508,7 @@ public struct MonitoringPanelView: View {
           onPromptConsumed: {
             viewModel.clearPendingPrompt(for: session.id)
           },
+          onTerminalInteraction: { setPrimarySessionIfNeeded(session.id) },
           isMaximized: false,
           onToggleMaximize: { },
           isPrimarySession: true,
@@ -543,6 +547,7 @@ public struct MonitoringPanelView: View {
         onCopySessionId: { },
         onOpenSessionFile: { },
         onRefreshTerminal: { },
+        onTerminalInteraction: { setPrimarySessionIfNeeded(pendingId) },
         isMaximized: maximizedSessionId == pendingId,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -602,6 +607,7 @@ public struct MonitoringPanelView: View {
         onPromptConsumed: {
           viewModel.clearPendingPrompt(for: item.session.id)
         },
+        onTerminalInteraction: { setPrimarySessionIfNeeded(item.session.id) },
         isMaximized: maximizedSessionId == item.session.id,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -649,6 +655,7 @@ public struct MonitoringPanelView: View {
               onCopySessionId: { },
               onOpenSessionFile: { },
               onRefreshTerminal: { },
+              onTerminalInteraction: { setPrimarySessionIfNeeded(pendingId) },
               isMaximized: maximizedSessionId == pendingId,
               onToggleMaximize: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -705,6 +712,7 @@ public struct MonitoringPanelView: View {
               onPromptConsumed: {
                 viewModel.clearPendingPrompt(for: session.id)
               },
+              onTerminalInteraction: { setPrimarySessionIfNeeded(session.id) },
               isMaximized: maximizedSessionId == session.id,
               onToggleMaximize: {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -750,6 +758,11 @@ public struct MonitoringPanelView: View {
     }
 
     primarySessionId = effectivePrimarySessionId
+  }
+
+  private func setPrimarySessionIfNeeded(_ sessionId: String) {
+    guard primarySessionId != sessionId else { return }
+    primarySessionId = sessionId
   }
 }
 
