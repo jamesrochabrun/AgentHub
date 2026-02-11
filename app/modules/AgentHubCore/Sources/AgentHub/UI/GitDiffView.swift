@@ -573,8 +573,22 @@ public struct GitDiffView: View {
       // Parse all tracked file diffs upfront
       let parseStart = clock.now
       let parsed = DiffParserUtils.parse(diffOutput: unifiedDiff)
-      let entries = DiffParserUtils.toGitDiffFileEntries(parsed, gitRoot: gitRoot)
+      var entries = DiffParserUtils.toGitDiffFileEntries(parsed, gitRoot: gitRoot)
       AppLogger.git.info("[perf] parse+toEntries: \(clock.now - parseStart)")
+
+      // Add untracked files in unstaged mode (not present in `git diff` output).
+      if mode == .unstaged {
+        let untrackedStart = clock.now
+        let untrackedEntries = try await gitDiffService.getUntrackedChanges(atGitRoot: gitRoot)
+        AppLogger.git.info("[perf] getUntrackedChanges: \(clock.now - untrackedStart)")
+
+        if !untrackedEntries.isEmpty {
+          var seenPaths = Set(entries.map(\.relativePath))
+          for entry in untrackedEntries where seenPaths.insert(entry.relativePath).inserted {
+            entries.append(entry)
+          }
+        }
+      }
 
       // Build lookup for parsed content by matching relativePath
       var parsedLookup: [UUID: ParsedFileDiff] = [:]

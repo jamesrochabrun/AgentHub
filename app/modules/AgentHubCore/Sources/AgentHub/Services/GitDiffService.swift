@@ -99,7 +99,19 @@ public actor GitDiffService {
       ))
     }
 
-    return GitDiffState(files: files)
+    // Include untracked files so newly generated code is visible in diff consumers.
+    let untrackedFiles = try await getUntrackedChanges(atGitRoot: gitRoot)
+    files.append(contentsOf: untrackedFiles)
+
+    return GitDiffState(files: deduplicateEntriesByRelativePath(files))
+  }
+
+  /// Gets all untracked files in the repository.
+  /// - Parameter repoPath: Path to the git repository (or any subdirectory)
+  /// - Returns: Array of untracked files
+  public func getUntrackedChanges(at repoPath: String) async throws -> [GitDiffFileEntry] {
+    let gitRoot = try await findGitRoot(at: repoPath)
+    return try await getUntrackedChanges(atGitRoot: gitRoot)
   }
 
   /// Gets all staged changes for a repository
@@ -386,6 +398,45 @@ public actor GitDiffService {
       // File might be new or deleted
       return ""
     }
+  }
+
+  /// Gets all untracked files when git root is already known.
+  /// - Parameter gitRoot: Absolute git root path
+  /// - Returns: Array of untracked files
+  public func getUntrackedChanges(atGitRoot gitRoot: String) async throws -> [GitDiffFileEntry] {
+    let output = try await runGitCommand(
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      at: gitRoot
+    )
+    let relativePaths = output.components(separatedBy: "\u{0}").filter { !$0.isEmpty }
+
+    let entries = relativePaths.map { relativePath in
+      let fullPath = (gitRoot as NSString).appendingPathComponent(relativePath)
+      return GitDiffFileEntry(
+        filePath: fullPath,
+        relativePath: relativePath,
+        // Avoid reading each untracked file eagerly for line stats.
+        additions: 0,
+        deletions: 0
+      )
+    }
+
+    return entries.sorted {
+      $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
+    }
+  }
+
+  /// Deduplicates entries by relative path while preserving first occurrence order.
+  private func deduplicateEntriesByRelativePath(_ entries: [GitDiffFileEntry]) -> [GitDiffFileEntry] {
+    var seen = Set<String>()
+    var result: [GitDiffFileEntry] = []
+    result.reserveCapacity(entries.count)
+
+    for entry in entries where seen.insert(entry.relativePath).inserted {
+      result.append(entry)
+    }
+
+    return result
   }
 
   // MARK: - Git Root Detection
