@@ -1,8 +1,14 @@
 # AgentHub
 
-Manage all sessions in Claude Code. Easily create new worktrees, run multiple terminals in parallel, preview edits before accepting them, make inline changes directly from diffs, and more.
+Manage all sessions in Claude Code. Easily create new worktrees, run multiple terminals in parallel, run multiple sessions with Codex or Claude simultaneously, preview edits before accepting them, make inline changes directly from diffs, and more.
 
-https://github.com/user-attachments/assets/98a3b15d-dd74-4c77-b0d6-7d3edbc18812
+Hub
+
+<img width="1913" height="1079" alt="Image" src="https://github.com/user-attachments/assets/99518d02-8ca6-458a-900c-bfd1f4e57419" />
+
+Full screen mode
+
+https://github.com/user-attachments/assets/c616c904-d165-4516-8478-afb810c13606
 
 ## Features
 
@@ -15,10 +21,10 @@ https://github.com/user-attachments/assets/98a3b15d-dd74-4c77-b0d6-7d3edbc18812
 - **Image & file support** — Attach and work with images and files in sessions
 - **Full-screen terminal mode** — Maximize sessions for distraction-free focus
 - **Codex support (Beta)** — Monitor Codex sessions, track token usage, and view global stats
+- Inline code reviews
+- Parallel Execution Claude Code and Codex
 
-**New**, Inline human code reviews
-
-https://github.com/user-attachments/assets/e27b45c6-04dc-4154-a0ae-f1f1a6a28be7
+https://github.com/user-attachments/assets/c20c1f3e-745d-4a39-8599-37ad242b3ae6
 
 ## Requirements
 
