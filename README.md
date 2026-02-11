@@ -14,7 +14,7 @@ https://github.com/user-attachments/assets/98a3b15d-dd74-4c77-b0d6-7d3edbc18812
 - **Preview and edit diffs** - Make inline changes directly from the diff view
 - **Image & file support** — Attach and work with images and files in sessions
 - **Full-screen terminal mode** — Maximize sessions for distraction-free focus
-- **Codex support** - Coming soon
+- **Codex support (Beta)** — Monitor Codex sessions, track token usage, and view global stats
 
 **New**, Inline human code reviews
 
@@ -24,6 +24,7 @@ https://github.com/user-attachments/assets/e27b45c6-04dc-4154-a0ae-f1f1a6a28be7
 
 - macOS 14.0+
 - [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated
+- [Codex CLI](https://openai.com/index/introducing-codex/) installed (optional, for Codex features)
 
 ## Installation & Updates
 
@@ -53,6 +54,13 @@ AgentHub reads Claude Code session data from:
 ```
 ~/.claude/projects/{encoded-path}/{sessionId}.jsonl
 ```
+
+### Codex Data
+
+AgentHub reads Codex session data from `~/.codex/`:
+
+- **Session files:** `~/.codex/sessions/{date-path}/` (JSONL format)
+- **History file:** `~/.codex/history.jsonl`
 
 ## Session States
 

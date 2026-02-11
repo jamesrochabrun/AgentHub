@@ -287,19 +287,33 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private func installInteractionMonitorIfNeeded() {
     guard localEventMonitor == nil else { return }
-    localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { [weak self] event in
+    localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseUp]) { [weak self] event in
       guard let self, let terminal = self.terminalView else { return event }
 
       switch event.type {
       case .keyDown:
-        if let window = terminal.window, event.window === window, isTerminalResponderActive(window: window, terminal: terminal) {
-          self.onUserInteraction?()
+        guard let window = terminal.window,
+              event.window === window,
+              isTerminalResponderActive(window: window, terminal: terminal) else {
+          return event
         }
-      case .leftMouseDown:
+
+        if handleCommandShortcut(event, terminal: terminal) {
+          return nil
+        }
+
+        // Defer state updates until after key processing to avoid fighting selection/rendering.
+        DispatchQueue.main.async { [weak self] in
+          self?.onUserInteraction?()
+        }
+      case .leftMouseUp:
         guard let window = terminal.window, event.window === window else { return event }
         let locationInTerminal = terminal.convert(event.locationInWindow, from: nil)
         if terminal.bounds.contains(locationInTerminal) {
-          self.onUserInteraction?()
+          // Defer selection updates until after mouse handling completes.
+          DispatchQueue.main.async { [weak self] in
+            self?.onUserInteraction?()
+          }
         }
       default:
         break
@@ -316,6 +330,24 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       return responderView.isDescendant(of: terminal)
     }
     return false
+  }
+
+  private func handleCommandShortcut(_ event: NSEvent, terminal: TerminalView) -> Bool {
+    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    let expectsCommandOnly = flags == .command
+    guard expectsCommandOnly else { return false }
+
+    let normalizedCharacters = event.charactersIgnoringModifiers?.lowercased()
+    switch normalizedCharacters {
+    case "c":
+      terminal.copy(self)
+      return true
+    case "v":
+      terminal.paste(self)
+      return true
+    default:
+      return false
+    }
   }
 
   private func configureTerminalAppearance(_ terminal: TerminalView, isDark: Bool) {
