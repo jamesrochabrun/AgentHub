@@ -55,6 +55,7 @@ public struct MonitoringCardView: View {
   let providerKind: SessionProviderKind
   let showTerminal: Bool
   let initialPrompt: String?
+  let initialInputText: String?
   let terminalKey: String?  // Key for terminal storage (session ID or "pending-{pendingId}")
   let viewModel: CLISessionsViewModel?
   var dangerouslySkipPermissions: Bool = false
@@ -94,6 +95,7 @@ public struct MonitoringCardView: View {
     providerKind: SessionProviderKind = .claude,
     showTerminal: Bool = false,
     initialPrompt: String? = nil,
+    initialInputText: String? = nil,
     terminalKey: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
     dangerouslySkipPermissions: Bool = false,
@@ -122,6 +124,7 @@ public struct MonitoringCardView: View {
     self.providerKind = providerKind
     self.showTerminal = showTerminal
     self.initialPrompt = initialPrompt
+    self.initialInputText = initialInputText
     self.terminalKey = terminalKey
     self.viewModel = viewModel
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
@@ -679,6 +682,7 @@ public struct MonitoringCardView: View {
           projectPath: session.projectPath,
           cliConfiguration: viewModel?.cliConfiguration ?? .claudeDefault,
           initialPrompt: initialPrompt,
+          initialInputText: initialInputText,
           viewModel: viewModel,
           dangerouslySkipPermissions: dangerouslySkipPermissions
         )

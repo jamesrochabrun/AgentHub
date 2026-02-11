@@ -49,6 +49,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   let projectPath: String
   let cliConfiguration: CLICommandConfiguration
   let initialPrompt: String?  // Optional: prompt to include with resume command
+  let initialInputText: String?  // Optional: text to prefill terminal input without Enter
   let viewModel: CLISessionsViewModel?  // For shared terminal storage
   let dangerouslySkipPermissions: Bool  // One-shot flag for new sessions
 
@@ -58,6 +59,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
+    initialInputText: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
     dangerouslySkipPermissions: Bool = false
   ) {
@@ -66,6 +68,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     self.projectPath = projectPath
     self.cliConfiguration = cliConfiguration
     self.initialPrompt = initialPrompt
+    self.initialInputText = initialInputText
     self.viewModel = viewModel
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
   }
@@ -81,6 +84,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         projectPath: projectPath,
         cliConfiguration: cliConfiguration,
         initialPrompt: initialPrompt,
+        initialInputText: initialInputText,
         isDark: isDark,
         dangerouslySkipPermissions: dangerouslySkipPermissions
       )
@@ -93,6 +97,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       projectPath: projectPath,
       cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
+      initialInputText: initialInputText,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
@@ -120,6 +125,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var terminalView: SafeLocalProcessTerminalView?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
+  private var hasPrefilledInitialInputText = false
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
 
   /// The PID of the current terminal process, if running
@@ -157,6 +163,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminalView = nil
     isConfigured = false
     hasDeliveredInitialPrompt = false  // Reset for fresh start
+    hasPrefilledInitialInputText = false
     configure(sessionId: sessionId, projectPath: projectPath, cliConfiguration: cliConfiguration)
   }
 
@@ -165,6 +172,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
+    initialInputText: String? = nil,
     isDark: Bool = true,
     dangerouslySkipPermissions: Bool = false
   ) {
@@ -200,6 +208,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
     registerProcessIfNeeded(for: terminal)
+
+    if let initialInputText, !initialInputText.isEmpty {
+      Task { @MainActor [weak self] in
+        try? await Task.sleep(for: .milliseconds(300))
+        self?.typeInitialTextIfNeeded(initialInputText)
+      }
+    }
   }
 
   /// Resets the prompt delivery flag so a new prompt can be sent.
@@ -230,6 +245,14 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   public func typeText(_ text: String) {
     guard let terminal = terminalView else { return }
     terminal.send(txt: text)
+  }
+
+  /// Prefills initial terminal input text once, without pressing Enter.
+  public func typeInitialTextIfNeeded(_ text: String) {
+    guard !text.isEmpty else { return }
+    guard !hasPrefilledInitialInputText else { return }
+    hasPrefilledInitialInputText = true
+    typeText(text)
   }
 
   /// Updates terminal colors based on color scheme.

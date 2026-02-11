@@ -127,10 +127,8 @@ public final class MultiSessionLaunchViewModel {
   }
 
   public var isValid: Bool {
-    let hasPrompt = !sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    let hasFiles = !attachedFiles.isEmpty
     let hasRepo = selectedRepository != nil
-    return (hasPrompt || hasFiles) && hasRepo && hasAnyProviderSelected
+    return hasRepo && hasAnyProviderSelected
   }
 
   // MARK: - Init
@@ -215,13 +213,19 @@ public final class MultiSessionLaunchViewModel {
     isLoadingCurrentBranch = false
   }
 
-  /// Auto-generates branch names from prompt text + short UUID suffix
+  /// Auto-generates branch names from prompt/attachment context + short UUID suffix.
+  /// Falls back to "session" when no context text exists.
   public func autoGenerateBranchNames() {
-    let prompt = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !prompt.isEmpty else { return }
+    let promptSeed = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    let attachmentSeed = attachedFiles
+      .prefix(3)
+      .map { $0.url.deletingPathExtension().lastPathComponent }
+      .joined(separator: "-")
+    let rawSeed = !promptSeed.isEmpty ? promptSeed : attachmentSeed
 
-    // Take first few words from prompt, sanitize, and add short UUID
-    let words = prompt.components(separatedBy: .whitespacesAndNewlines)
+    // Take first few words from available context, sanitize, and add short UUID.
+    let words = rawSeed.components(separatedBy: .whitespacesAndNewlines)
+      .filter { !$0.isEmpty }
       .prefix(4)
       .joined(separator: "-")
     let sanitized = GitWorktreeService.sanitizeBranchName(words)
@@ -255,26 +259,33 @@ public final class MultiSessionLaunchViewModel {
     claudeProgress = .idle
     codexProgress = .idle
 
-    var prompt = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !attachedFiles.isEmpty {
-      let filePaths = attachedFiles.map { $0.quotedPath }.joined(separator: " ")
-      prompt = prompt.isEmpty ? filePaths : "\(prompt) \(filePaths)"
-    }
+    let trimmedPrompt = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    let attachmentPaths = attachedFiles.map { $0.quotedPath }.joined(separator: " ")
+    let initialPrompt: String? = {
+      guard !trimmedPrompt.isEmpty else { return nil }
+      if attachmentPaths.isEmpty {
+        return trimmedPrompt
+      }
+      return "\(trimmedPrompt) \(attachmentPaths)"
+    }()
+    let initialInputText: String? =
+      trimmedPrompt.isEmpty && !attachmentPaths.isEmpty ? "\(attachmentPaths) " : nil
     let repoPath = repo.path
 
     switch workMode {
     case .local:
-      await launchLocalSessions(prompt: prompt, repoPath: repoPath)
+      await launchLocalSessions(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
     case .worktree:
       autoGenerateBranchNames()
       let providers = selectedProviders
       if providers.count > 1 {
-        await launchBothProviders(prompt: prompt, repoPath: repoPath)
+        await launchBothProviders(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
       } else if let provider = providers.first {
         switch provider {
         case .claude:
           await launchSingleProvider(
-            prompt: prompt,
+            initialPrompt: initialPrompt,
+            initialInputText: initialInputText,
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: claudeViewModel,
@@ -283,7 +294,8 @@ public final class MultiSessionLaunchViewModel {
           )
         case .codex:
           await launchSingleProvider(
-            prompt: prompt,
+            initialPrompt: initialPrompt,
+            initialInputText: initialInputText,
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: codexViewModel,
@@ -323,7 +335,7 @@ public final class MultiSessionLaunchViewModel {
   // MARK: - Private
 
   /// Starts sessions directly in repo directory without worktree creation
-  private func launchLocalSessions(prompt: String, repoPath: String) async {
+  private func launchLocalSessions(initialPrompt: String?, initialInputText: String?, repoPath: String) async {
     let providers = selectedProviders
 
     for provider in providers {
@@ -342,21 +354,30 @@ public final class MultiSessionLaunchViewModel {
     if providers.contains(.claude) {
       claudeViewModel.refresh()
       try? await Task.sleep(for: .milliseconds(300))
-      claudeViewModel.startNewSessionInHub(worktree, initialPrompt: prompt, dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions)
+      claudeViewModel.startNewSessionInHub(
+        worktree,
+        initialPrompt: initialPrompt,
+        initialInputText: initialInputText,
+        dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions
+      )
     }
 
     if providers.contains(.codex) {
       try? await Task.sleep(for: .milliseconds(500))
       codexViewModel.refresh()
       try? await Task.sleep(for: .milliseconds(300))
-      codexViewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
+      codexViewModel.startNewSessionInHub(
+        worktree,
+        initialPrompt: initialPrompt,
+        initialInputText: initialInputText
+      )
     }
 
     claudeViewModel.refresh()
     codexViewModel.refresh()
   }
 
-  private func launchBothProviders(prompt: String, repoPath: String) async {
+  private func launchBothProviders(initialPrompt: String?, initialInputText: String?, repoPath: String) async {
     // Ensure the repository is added to both providers
     claudeViewModel.addRepository(at: repoPath)
     codexViewModel.addRepository(at: repoPath)
@@ -410,14 +431,23 @@ public final class MultiSessionLaunchViewModel {
 
     if let path = claudeWorktreePath {
       let worktree = WorktreeBranch(name: claudeBranchName, path: path, isWorktree: true)
-      claudeViewModel.startNewSessionInHub(worktree, initialPrompt: prompt, dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions)
+      claudeViewModel.startNewSessionInHub(
+        worktree,
+        initialPrompt: initialPrompt,
+        initialInputText: initialInputText,
+        dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions
+      )
     }
 
     try? await Task.sleep(for: .milliseconds(800))
 
     if let path = codexWorktreePath {
       let worktree = WorktreeBranch(name: codexBranchName, path: path, isWorktree: true)
-      codexViewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
+      codexViewModel.startNewSessionInHub(
+        worktree,
+        initialPrompt: initialPrompt,
+        initialInputText: initialInputText
+      )
     }
 
     claudeViewModel.refresh()
@@ -425,7 +455,8 @@ public final class MultiSessionLaunchViewModel {
   }
 
   private func launchSingleProvider(
-    prompt: String,
+    initialPrompt: String?,
+    initialInputText: String?,
     repoPath: String,
     branchName: String,
     viewModel: CLISessionsViewModel,
@@ -460,7 +491,12 @@ public final class MultiSessionLaunchViewModel {
     try? await Task.sleep(for: .milliseconds(500))
 
     let worktree = WorktreeBranch(name: branchName, path: path, isWorktree: true)
-    viewModel.startNewSessionInHub(worktree, initialPrompt: prompt, dangerouslySkipPermissions: dangerouslySkipPermissions)
+    viewModel.startNewSessionInHub(
+      worktree,
+      initialPrompt: initialPrompt,
+      initialInputText: initialInputText,
+      dangerouslySkipPermissions: dangerouslySkipPermissions
+    )
     viewModel.refresh()
   }
 }

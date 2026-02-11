@@ -14,17 +14,20 @@ public struct PendingHubSession: Identifiable {
   public let worktree: WorktreeBranch
   public let startedAt: Date
   public let initialPrompt: String?
+  public let initialInputText: String?
   public let dangerouslySkipPermissions: Bool
 
   public init(
     worktree: WorktreeBranch,
-    initialPrompt: String? = "Hello!",
+    initialPrompt: String? = nil,
+    initialInputText: String? = nil,
     dangerouslySkipPermissions: Bool = false
   ) {
     self.id = UUID()
     self.worktree = worktree
     self.startedAt = Date()
     self.initialPrompt = initialPrompt
+    self.initialInputText = initialInputText
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
   }
 

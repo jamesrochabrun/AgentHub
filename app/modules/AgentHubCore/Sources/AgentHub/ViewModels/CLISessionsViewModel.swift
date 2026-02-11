@@ -244,6 +244,7 @@ public final class CLISessionsViewModel {
     projectPath: String,
     cliConfiguration: CLICommandConfiguration? = nil,
     initialPrompt: String?,
+    initialInputText: String? = nil,
     isDark: Bool = true,
     dangerouslySkipPermissions: Bool = false
   ) -> TerminalContainerView {
@@ -258,6 +259,9 @@ public final class CLISessionsViewModel {
         existing.sendPromptIfNeeded(prompt)
         clearPendingPrompt(for: key)  // Clear after sending
       }
+      if let inputText = initialInputText, !inputText.isEmpty {
+        existing.typeInitialTextIfNeeded(inputText)
+      }
       return existing
     }
 
@@ -271,6 +275,7 @@ public final class CLISessionsViewModel {
       projectPath: projectPath,
       cliConfiguration: config,
       initialPrompt: initialPrompt,
+      initialInputText: initialInputText,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
@@ -1095,6 +1100,7 @@ public final class CLISessionsViewModel {
   public func startNewSessionInHub(
     _ worktree: WorktreeBranch,
     initialPrompt: String? = nil,
+    initialInputText: String? = nil,
     dangerouslySkipPermissions: Bool = false
   ) {
     // Each pending session gets a unique ID, so no need to clear existing terminals
@@ -1102,6 +1108,7 @@ public final class CLISessionsViewModel {
     let pending = PendingHubSession(
       worktree: worktree,
       initialPrompt: initialPrompt,
+      initialInputText: initialInputText,
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
     pendingHubSessions.append(pending)

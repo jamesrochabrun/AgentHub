@@ -203,13 +203,13 @@ public struct MultiSessionLaunchView: View {
 
   private var promptPlaceholder: String {
     if viewModel.claudeMode == .enabledDangerously && !viewModel.isCodexSelected {
-      return "Takes all actions without asking..."
+      return "Optional: initial prompt (Claude dangerous mode enabled)..."
     } else if viewModel.isClaudeSelected && viewModel.isCodexSelected {
-      return "Enter prompt for both sessions..."
+      return "Optional: initial prompt for both sessions..."
     } else if viewModel.isClaudeSelected {
-      return "Enter prompt for Claude session..."
+      return "Optional: initial prompt for Claude session..."
     } else if viewModel.isCodexSelected {
-      return "Enter prompt for Codex session..."
+      return "Optional: initial prompt for Codex session..."
     } else {
       return "Select a provider..."
     }
@@ -621,6 +621,15 @@ public struct MultiSessionLaunchView: View {
   private var launchButtonTitle: String {
     if viewModel.isLaunching {
       return viewModel.workMode == .worktree ? "Generating worktrees..." : "Launching..."
+    }
+    if viewModel.isClaudeSelected && viewModel.isCodexSelected {
+      return "Launch Claude + Codex"
+    }
+    if viewModel.isClaudeSelected {
+      return "Launch Claude"
+    }
+    if viewModel.isCodexSelected {
+      return "Launch Codex"
     }
     return "Launch"
   }
