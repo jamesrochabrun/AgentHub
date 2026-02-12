@@ -23,6 +23,7 @@ public struct MultiSessionLaunchView: View {
   @State private var isDragging = false
   @State private var showingFilePicker = false
   @State private var showingPlanSheet = false
+  @State private var showFullSmartPlanningResponse = false
 
   public var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -104,13 +105,11 @@ public struct MultiSessionLaunchView: View {
       handlePickedFiles(result)
     }
     .sheet(isPresented: $showingPlanSheet) {
-      if let plan = viewModel.smartOrchestrationPlan {
-        SmartPlanDetailView(
-          planText: viewModel.smartPlanText,
-          plan: plan,
-          onDismiss: { showingPlanSheet = false }
-        )
-      }
+      SmartPlanDetailView(
+        planText: viewModel.smartPlanText,
+        plan: viewModel.smartOrchestrationPlan,
+        onDismiss: { showingPlanSheet = false }
+      )
     }
     .onChange(of: viewModel.isLaunching) { wasLaunching, isLaunching in
       if wasLaunching && !isLaunching && !viewModel.isSmartInteractive {
@@ -155,12 +154,17 @@ public struct MultiSessionLaunchView: View {
   private var launchModeToggle: some View {
     HStack(spacing: 12) {
       launchModeButton(mode: .manual, label: "Manual", icon: nil)
-      launchModeButton(mode: .smart, label: "Smart", icon: "sparkles")
+      launchModeButton(mode: .smart, label: "Smart", icon: "sparkles", showsBetaBadge: true)
       Spacer()
     }
   }
 
-  private func launchModeButton(mode: LaunchMode, label: String, icon: String?) -> some View {
+  private func launchModeButton(
+    mode: LaunchMode,
+    label: String,
+    icon: String?,
+    showsBetaBadge: Bool = false
+  ) -> some View {
     Button(action: {
       withAnimation(.easeInOut(duration: 0.2)) {
         viewModel.launchMode = mode
@@ -173,6 +177,17 @@ public struct MultiSessionLaunchView: View {
         }
         Text(label)
           .font(.system(size: 11, weight: viewModel.launchMode == mode ? .bold : .regular))
+        if showsBetaBadge {
+          Text("Beta")
+            .font(.system(size: 8, weight: .semibold))
+            .foregroundColor(viewModel.launchMode == mode ? .brandPrimary : .secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(
+              Capsule()
+                .fill(viewModel.launchMode == mode ? Color.brandPrimary.opacity(0.15) : Color.primary.opacity(0.06))
+            )
+        }
       }
       .foregroundColor(viewModel.launchMode == mode ? .primary : .secondary.opacity(0.6))
       .fixedSize()
@@ -672,98 +687,289 @@ public struct MultiSessionLaunchView: View {
   // MARK: - Smart Phase Views
 
   private var smartPlanningSection: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 8) {
-        ProgressView()
-          .scaleEffect(0.7)
-        Text("Generating plan...")
-          .font(.system(size: 11, weight: .medium))
-          .foregroundColor(.secondary)
-        Spacer()
+    let intelligence = intelligenceViewModel
+    let toolSteps = intelligence?.toolSteps ?? []
+    let completedCount = toolSteps.filter(\.isComplete).count
+
+    return VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .top, spacing: 10) {
+        ZStack {
+          Circle()
+            .fill(Color.brandPrimary.opacity(0.15))
+            .frame(width: 24, height: 24)
+          ProgressView()
+            .scaleEffect(0.45)
+            .tint(.brandPrimary)
+        }
+
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Building launch plan")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.primary)
+          Text("Exploring the repository and preparing execution steps")
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+        }
+
+        Spacer(minLength: 8)
+
+        Text("Live")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundColor(.brandPrimary)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 3)
+          .background(
+            Capsule()
+              .fill(Color.brandPrimary.opacity(0.12))
+          )
+
         Button(action: {
           viewModel.cancelSmartLaunch()
         }) {
           Text("Cancel")
             .font(.system(size: 11, weight: .medium))
             .foregroundColor(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+              Capsule()
+                .fill(Color.primary.opacity(0.05))
+            )
         }
         .buttonStyle(.plain)
       }
 
-      if let intelligence = intelligenceViewModel, !intelligence.lastResponse.isEmpty {
-        Text(intelligence.lastResponse)
-          .font(.system(size: 11))
-          .foregroundColor(.secondary)
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-
-      // Tool steps activity feed
-      if let intelligence = intelligenceViewModel, !intelligence.toolSteps.isEmpty {
-        ScrollView {
-          VStack(alignment: .leading, spacing: 4) {
-            ForEach(intelligence.toolSteps) { step in
-              toolStepRow(step)
+      if let intelligence, !intelligence.lastResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let hasOlderUpdates = hasExpandedPlanningResponse(intelligence.lastResponse)
+        VStack(alignment: .leading, spacing: 6) {
+          HStack {
+            Label("Latest agent update", systemImage: "text.bubble")
+              .font(.system(size: 10, weight: .semibold))
+              .foregroundColor(.secondary)
+            Spacer()
+            if hasOlderUpdates {
+              Button(showFullSmartPlanningResponse ? "Show recent" : "Show full") {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                  showFullSmartPlanningResponse.toggle()
+                }
+              }
+              .buttonStyle(.plain)
+              .font(.system(size: 10, weight: .medium))
+              .foregroundColor(.brandPrimary)
             }
           }
-          .frame(maxWidth: .infinity, alignment: .leading)
+
+          Text(showFullSmartPlanningResponse
+            ? intelligence.lastResponse
+            : recentPlanningResponse(intelligence.lastResponse))
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .lineSpacing(1.5)
+            .lineLimit(showFullSmartPlanningResponse ? nil : 5)
         }
-        .frame(maxHeight: 250)
+        .padding(8)
+        .background(
+          RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+            .fill(Color.primary.opacity(0.04))
+        )
       }
+
+      VStack(alignment: .leading, spacing: 6) {
+        HStack {
+          Label("Activity", systemImage: "list.bullet.rectangle.portrait")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundColor(.secondary)
+          Spacer()
+          Text("\(completedCount)/\(toolSteps.count) complete")
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(.secondary)
+            .monospacedDigit()
+        }
+
+        if toolSteps.isEmpty {
+          Text("Waiting for the first exploration step...")
+            .font(.system(size: 11))
+            .foregroundColor(.secondary.opacity(0.8))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 8)
+        } else {
+          ScrollViewReader { proxy in
+            ScrollView {
+              VStack(alignment: .leading, spacing: 6) {
+                ForEach(toolSteps) { step in
+                  toolStepRow(step)
+                }
+                Color.clear
+                  .frame(height: 1)
+                  .id(smartToolFeedBottomID)
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .task(id: toolSteps.count) {
+              guard !toolSteps.isEmpty else { return }
+              withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(smartToolFeedBottomID, anchor: .bottom)
+              }
+            }
+          }
+          .frame(maxHeight: 240)
+        }
+      }
+      .padding(8)
+      .background(
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+          .fill(Color.primary.opacity(0.04))
+      )
     }
     .padding(8)
     .background(
       RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
         .fill(Color.primary.opacity(0.03))
     )
+    .onChange(of: viewModel.smartPhase) { _, phase in
+      if phase != .planning {
+        showFullSmartPlanningResponse = false
+      }
+    }
   }
 
-  private func toolStepRow(_ step: IntelligenceViewModel.ToolStep) -> some View {
-    HStack(spacing: 6) {
+  private func recentPlanningResponse(_ response: String) -> String {
+    let paragraphs = response
+      .components(separatedBy: "\n\n")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+
+    guard !paragraphs.isEmpty else { return response }
+    return paragraphs.last ?? response
+  }
+
+  private func hasExpandedPlanningResponse(_ response: String) -> Bool {
+    let recent = recentPlanningResponse(response).trimmingCharacters(in: .whitespacesAndNewlines)
+    let full = response.trimmingCharacters(in: .whitespacesAndNewlines)
+    return full != recent
+  }
+
+  private var smartToolFeedBottomID: String {
+    "smart-tool-feed-bottom"
+  }
+
+  private func toolStepStatusText(_ step: IntelligenceViewModel.ToolStep) -> String {
+    step.isComplete ? "Done" : "Running"
+  }
+
+  private func toolStepStatusColor(_ step: IntelligenceViewModel.ToolStep) -> Color {
+    step.isComplete ? .green : .brandPrimary
+  }
+
+  private func toolStepIconBackground(_ step: IntelligenceViewModel.ToolStep) -> Color {
+    step.isComplete ? Color.green.opacity(0.15) : Color.brandPrimary.opacity(0.15)
+  }
+
+  private func toolStepRowBackground(_ step: IntelligenceViewModel.ToolStep) -> Color {
+    step.isComplete ? Color.green.opacity(0.06) : Color.primary.opacity(0.03)
+  }
+
+  private func toolStepBorderColor(_ step: IntelligenceViewModel.ToolStep) -> Color {
+    step.isComplete ? Color.green.opacity(0.25) : Color.primary.opacity(0.12)
+  }
+
+  private func toolStepStatusBackground(_ step: IntelligenceViewModel.ToolStep) -> Color {
+    step.isComplete ? Color.green.opacity(0.15) : Color.brandPrimary.opacity(0.15)
+  }
+
+  private func toolStepStateIcon(_ step: IntelligenceViewModel.ToolStep) -> some View {
+    Group {
       if step.isComplete {
         Image(systemName: "checkmark")
           .font(.system(size: 8, weight: .bold))
           .foregroundColor(.green)
-          .frame(width: 12)
       } else {
         ProgressView()
-          .scaleEffect(0.4)
-          .frame(width: 12, height: 12)
+          .scaleEffect(0.35)
+          .tint(.brandPrimary)
       }
-
-      Text(step.toolName)
-        .font(.system(size: 10, weight: .medium, design: .monospaced))
-        .foregroundColor(.primary.opacity(0.7))
-        .padding(.horizontal, 4)
-        .padding(.vertical, 1)
-        .background(
-          RoundedRectangle(cornerRadius: 3)
-            .fill(Color.primary.opacity(0.06))
-        )
-
-      Text(step.summary)
-        .font(.system(size: 10, design: .monospaced))
-        .foregroundColor(.secondary)
-        .lineLimit(1)
-        .truncationMode(.middle)
     }
   }
 
-  private var smartPlanReviewSection: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 6) {
-        Image(systemName: "doc.text")
-          .font(.system(size: 11))
-          .foregroundColor(.secondary)
-        Text("Review Plan")
-          .font(.system(size: 12, weight: .semibold))
-          .foregroundColor(.primary)
+  private func toolStepRow(_ step: IntelligenceViewModel.ToolStep) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+      ZStack {
+        Circle()
+          .fill(toolStepIconBackground(step))
+          .frame(width: 16, height: 16)
+        toolStepStateIcon(step)
       }
 
-      MarkdownView(content: viewModel.smartPlanText)
-        .frame(maxHeight: 250)
+      VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .firstTextBaseline) {
+          Text(step.toolName)
+            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .foregroundColor(.primary.opacity(0.85))
+            .lineLimit(1)
+          Spacer(minLength: 8)
+          Text(toolStepStatusText(step))
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundColor(toolStepStatusColor(step))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(
+              Capsule()
+                .fill(toolStepStatusBackground(step))
+            )
+        }
 
-      if viewModel.smartOrchestrationPlan != nil {
+        Text(step.summary)
+          .font(.system(size: 10))
+          .foregroundColor(.secondary)
+          .lineLimit(2)
+          .truncationMode(.tail)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 6)
+    .background(
+      RoundedRectangle(cornerRadius: 8)
+        .fill(toolStepRowBackground(step))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8)
+        .stroke(toolStepBorderColor(step), lineWidth: 1)
+    )
+  }
+
+  private var smartPlanReviewSection: some View {
+    VStack(alignment: .leading, spacing: 14) {
+      HStack(alignment: .top, spacing: 10) {
+        ZStack {
+          Circle()
+            .fill(Color.brandPrimary.opacity(0.15))
+            .frame(width: 24, height: 24)
+          Image(systemName: "doc.text.fill")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(.brandPrimary)
+        }
+
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Plan ready")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.primary)
+
+          if let plan = viewModel.smartOrchestrationPlan {
+            Text("\(plan.sessions.count) sessions prepared. Review before launching.")
+              .font(.system(size: 11))
+              .foregroundColor(.secondary)
+          } else {
+            Text("Plan generated. Open details before launching.")
+              .font(.system(size: 11))
+              .foregroundColor(.secondary)
+          }
+        }
+
+        Spacer()
+
         Button(action: { showingPlanSheet = true }) {
           HStack(spacing: 4) {
             Image(systemName: "list.bullet.clipboard")
@@ -772,17 +978,19 @@ public struct MultiSessionLaunchView: View {
               .font(.system(size: 11, weight: .medium))
           }
         }
-        .buttonStyle(.plain)
-        .foregroundColor(.accentColor)
+        .buttonStyle(.bordered)
+        .disabled(!hasSmartPlanDetails)
       }
 
-      HStack(spacing: 6) {
-        Image(systemName: "arrow.triangle.branch")
-          .font(.system(size: 10))
-          .foregroundColor(.secondary)
-        Text("Base branch")
-          .font(.system(size: 11))
-          .foregroundColor(.secondary)
+      VStack(alignment: .leading, spacing: 8) {
+        HStack(spacing: 6) {
+          Image(systemName: "arrow.triangle.branch")
+            .font(.system(size: 10))
+            .foregroundColor(.secondary)
+          Text("Base branch")
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+        }
 
         if viewModel.isLoadingBranches {
           ProgressView()
@@ -797,7 +1005,7 @@ public struct MultiSessionLaunchView: View {
           }
           .pickerStyle(.menu)
           .labelsHidden()
-          .fixedSize()
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
 
@@ -828,29 +1036,55 @@ public struct MultiSessionLaunchView: View {
         .buttonStyle(.borderedProminent)
         .tint(.primary)
       }
+      .padding(.top, 2)
     }
-    .padding(8)
+    .padding(10)
     .background(
       RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
         .fill(Color.primary.opacity(0.03))
     )
   }
 
+  private var hasSmartPlanDetails: Bool {
+    !viewModel.smartPlanText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      || viewModel.smartOrchestrationPlan != nil
+  }
+
   private var smartLaunchingSection: some View {
     VStack(alignment: .leading, spacing: 8) {
-      HStack(spacing: 8) {
-        ProgressView()
-          .scaleEffect(0.7)
-        Text("Creating worktree and launching session...")
-          .font(.system(size: 11, weight: .medium))
-          .foregroundColor(.secondary)
+      HStack(alignment: .top, spacing: 10) {
+        ZStack {
+          Circle()
+            .fill(Color.brandPrimary.opacity(0.15))
+            .frame(width: 24, height: 24)
+          ProgressView()
+            .scaleEffect(0.45)
+            .tint(.brandPrimary)
+        }
+
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Launching sessions")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundColor(.primary)
+          Text("Creating worktrees and starting selected agents")
+            .font(.system(size: 11))
+            .foregroundColor(.secondary)
+        }
+
         Spacer()
+
         Button(action: {
           viewModel.cancelSmartLaunch()
         }) {
           Text("Cancel")
             .font(.system(size: 11, weight: .medium))
             .foregroundColor(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+              Capsule()
+                .fill(Color.primary.opacity(0.05))
+            )
         }
         .buttonStyle(.plain)
       }
@@ -942,7 +1176,7 @@ public struct MultiSessionLaunchView: View {
 
 private struct SmartPlanDetailView: View {
   let planText: String
-  let plan: OrchestrationPlan
+  let plan: OrchestrationPlan?
   let onDismiss: () -> Void
 
   @Environment(\.colorScheme) private var colorScheme
@@ -966,14 +1200,28 @@ private struct SmartPlanDetailView: View {
                 .stroke(Color.borderSubtle, lineWidth: 1)
             )
 
-          // Sessions
-          VStack(alignment: .leading, spacing: 8) {
-            Text("Sessions")
-              .font(.system(size: 12, weight: .semibold))
-              .foregroundColor(.primary)
+          Group {
+            if let plan, !plan.sessions.isEmpty {
+              // Sessions
+              VStack(alignment: .leading, spacing: 8) {
+                Text("Sessions")
+                  .font(.system(size: 12, weight: .semibold))
+                  .foregroundColor(.primary)
 
-            ForEach(plan.sessions) { session in
-              sessionRow(session)
+                ForEach(plan.sessions) { session in
+                  sessionRow(session)
+                }
+              }
+            } else {
+              VStack(alignment: .leading, spacing: 6) {
+                Text("Sessions")
+                  .font(.system(size: 12, weight: .semibold))
+                  .foregroundColor(.primary)
+                Text("Structured session details were not parsed for this response.")
+                  .font(.system(size: 11))
+                  .foregroundColor(.secondary)
+              }
+              .frame(maxWidth: .infinity, alignment: .leading)
             }
           }
           .padding(DesignTokens.Spacing.lg)
