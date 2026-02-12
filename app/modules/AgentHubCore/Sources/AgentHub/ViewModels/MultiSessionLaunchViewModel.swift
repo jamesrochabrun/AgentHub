@@ -418,9 +418,10 @@ public final class MultiSessionLaunchViewModel {
     }
 
     // Store completed plan text and parsed orchestration plan
-    smartPlanText = intelligence.lastResponse
+    let rawResponse = intelligence.lastResponse
     smartOrchestrationPlan = intelligence.parsedOrchestrationPlan
-      ?? WorktreeOrchestrationTool.parseFromText(smartPlanText)
+      ?? WorktreeOrchestrationTool.parseFromText(rawResponse)
+    smartPlanText = WorktreeOrchestrationTool.stripPlanMarkers(rawResponse)
     smartPhase = .planReady
     isLaunching = false
     AppLogger.intelligence.info("Smart planning: plan ready (\(self.smartPlanText.count) chars)")

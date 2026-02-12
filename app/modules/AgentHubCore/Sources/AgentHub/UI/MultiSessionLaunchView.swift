@@ -6,6 +6,9 @@
 //  with a shared prompt. Supports local mode and worktree mode.
 //
 
+#if canImport(AppKit)
+import AppKit
+#endif
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -13,11 +16,13 @@ import UniformTypeIdentifiers
 
 public struct MultiSessionLaunchView: View {
   @Bindable var viewModel: MultiSessionLaunchViewModel
+  var intelligenceViewModel: IntelligenceViewModel?
 
   @Environment(\.colorScheme) private var colorScheme
   @State private var isExpanded = false
   @State private var isDragging = false
   @State private var showingFilePicker = false
+  @State private var showingPlanSheet = false
 
   public var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -25,6 +30,10 @@ public struct MultiSessionLaunchView: View {
 
       if isExpanded {
         Divider()
+
+        if viewModel.isSmartModeAvailable {
+          launchModeToggle
+        }
 
         repositorySection
 
@@ -34,14 +43,31 @@ public struct MultiSessionLaunchView: View {
           attachedFilesSection
         }
 
-        if viewModel.selectedRepository != nil {
-          workModeRow
+        if viewModel.launchMode == .manual {
+          if viewModel.selectedRepository != nil {
+            workModeRow
+          }
+
+          providerPills
+
+          if viewModel.isLaunching && viewModel.workMode == .worktree {
+            progressSection
+          }
         }
 
-        providerPills
+        if viewModel.launchMode == .smart {
+          smartProviderPills
 
-        if viewModel.isLaunching && viewModel.workMode == .worktree {
-          progressSection
+          switch viewModel.smartPhase {
+          case .planning:
+            smartPlanningSection
+          case .planReady:
+            smartPlanReviewSection
+          case .launching:
+            smartLaunchingSection
+          case .idle:
+            EmptyView()
+          }
         }
 
         if let error = viewModel.launchError {
@@ -77,8 +103,17 @@ public struct MultiSessionLaunchView: View {
     ) { result in
       handlePickedFiles(result)
     }
+    .sheet(isPresented: $showingPlanSheet) {
+      if let plan = viewModel.smartOrchestrationPlan {
+        SmartPlanDetailView(
+          planText: viewModel.smartPlanText,
+          plan: plan,
+          onDismiss: { showingPlanSheet = false }
+        )
+      }
+    }
     .onChange(of: viewModel.isLaunching) { wasLaunching, isLaunching in
-      if wasLaunching && !isLaunching {
+      if wasLaunching && !isLaunching && !viewModel.isSmartInteractive {
         withAnimation(.easeInOut(duration: 0.2)) {
           isExpanded = false
         }
@@ -113,6 +148,36 @@ public struct MultiSessionLaunchView: View {
     .padding(.top, 6)
     .padding(.bottom, 6)
     .padding(.leading, 6)
+  }
+
+  // MARK: - Launch Mode Toggle
+
+  private var launchModeToggle: some View {
+    HStack(spacing: 12) {
+      launchModeButton(mode: .manual, label: "Manual", icon: nil)
+      launchModeButton(mode: .smart, label: "Smart", icon: "sparkles")
+      Spacer()
+    }
+  }
+
+  private func launchModeButton(mode: LaunchMode, label: String, icon: String?) -> some View {
+    Button(action: {
+      withAnimation(.easeInOut(duration: 0.2)) {
+        viewModel.launchMode = mode
+      }
+    }) {
+      HStack(spacing: 4) {
+        if let icon {
+          Image(systemName: icon)
+            .font(.system(size: 10))
+        }
+        Text(label)
+          .font(.system(size: 11, weight: viewModel.launchMode == mode ? .bold : .regular))
+      }
+      .foregroundColor(viewModel.launchMode == mode ? .primary : .secondary.opacity(0.6))
+      .fixedSize()
+    }
+    .buttonStyle(.plain)
   }
 
   // MARK: - Repository Section
@@ -202,7 +267,9 @@ public struct MultiSessionLaunchView: View {
   }
 
   private var promptPlaceholder: String {
-    if viewModel.claudeMode == .enabledDangerously && !viewModel.isCodexSelected {
+    if viewModel.launchMode == .smart {
+      return "Describe what you want to build..."
+    } else if viewModel.claudeMode == .enabledDangerously && !viewModel.isCodexSelected {
       return "Optional: initial prompt (Claude dangerous mode enabled)..."
     } else if viewModel.isClaudeSelected && viewModel.isCodexSelected {
       return "Optional: initial prompt for both sessions..."
@@ -568,6 +635,237 @@ public struct MultiSessionLaunchView: View {
     }
   }
 
+  // MARK: - Smart Provider Pills
+
+  private var smartProviderPills: some View {
+    HStack(spacing: 8) {
+      Text("Select agent")
+        .font(.system(size: 11))
+        .foregroundColor(.secondary)
+      ForEach(SmartProvider.allCases, id: \.self) { provider in
+        smartProviderPill(provider: provider)
+      }
+      Spacer()
+    }
+  }
+
+  private func smartProviderPill(provider: SmartProvider) -> some View {
+    let isSelected = viewModel.smartProvider == provider
+    return Button(action: {
+      withAnimation(.easeInOut(duration: 0.2)) {
+        viewModel.smartProvider = provider
+      }
+    }) {
+      Text(provider.rawValue)
+        .font(.system(size: 11, weight: .medium))
+        .foregroundColor(isSelected ? (colorScheme == .dark ? .black : .white) : .secondary)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 5)
+        .background(
+          Capsule()
+            .fill(isSelected ? (colorScheme == .dark ? Color.white : Color.black) : Color.primary.opacity(0.06))
+        )
+    }
+    .buttonStyle(.plain)
+  }
+
+  // MARK: - Smart Phase Views
+
+  private var smartPlanningSection: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 8) {
+        ProgressView()
+          .scaleEffect(0.7)
+        Text("Generating plan...")
+          .font(.system(size: 11, weight: .medium))
+          .foregroundColor(.secondary)
+        Spacer()
+        Button(action: {
+          viewModel.cancelSmartLaunch()
+        }) {
+          Text("Cancel")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+      }
+
+      if let intelligence = intelligenceViewModel, !intelligence.lastResponse.isEmpty {
+        Text(intelligence.lastResponse)
+          .font(.system(size: 11))
+          .foregroundColor(.secondary)
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+
+      // Tool steps activity feed
+      if let intelligence = intelligenceViewModel, !intelligence.toolSteps.isEmpty {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 4) {
+            ForEach(intelligence.toolSteps) { step in
+              toolStepRow(step)
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxHeight: 250)
+      }
+    }
+    .padding(8)
+    .background(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+        .fill(Color.primary.opacity(0.03))
+    )
+  }
+
+  private func toolStepRow(_ step: IntelligenceViewModel.ToolStep) -> some View {
+    HStack(spacing: 6) {
+      if step.isComplete {
+        Image(systemName: "checkmark")
+          .font(.system(size: 8, weight: .bold))
+          .foregroundColor(.green)
+          .frame(width: 12)
+      } else {
+        ProgressView()
+          .scaleEffect(0.4)
+          .frame(width: 12, height: 12)
+      }
+
+      Text(step.toolName)
+        .font(.system(size: 10, weight: .medium, design: .monospaced))
+        .foregroundColor(.primary.opacity(0.7))
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+        .background(
+          RoundedRectangle(cornerRadius: 3)
+            .fill(Color.primary.opacity(0.06))
+        )
+
+      Text(step.summary)
+        .font(.system(size: 10, design: .monospaced))
+        .foregroundColor(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+  }
+
+  private var smartPlanReviewSection: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 6) {
+        Image(systemName: "doc.text")
+          .font(.system(size: 11))
+          .foregroundColor(.secondary)
+        Text("Review Plan")
+          .font(.system(size: 12, weight: .semibold))
+          .foregroundColor(.primary)
+      }
+
+      MarkdownView(content: viewModel.smartPlanText)
+        .frame(maxHeight: 250)
+
+      if viewModel.smartOrchestrationPlan != nil {
+        Button(action: { showingPlanSheet = true }) {
+          HStack(spacing: 4) {
+            Image(systemName: "list.bullet.clipboard")
+              .font(.system(size: 10))
+            Text("View Plan")
+              .font(.system(size: 11, weight: .medium))
+          }
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.accentColor)
+      }
+
+      HStack(spacing: 6) {
+        Image(systemName: "arrow.triangle.branch")
+          .font(.system(size: 10))
+          .foregroundColor(.secondary)
+        Text("Base branch")
+          .font(.system(size: 11))
+          .foregroundColor(.secondary)
+
+        if viewModel.isLoadingBranches {
+          ProgressView()
+            .scaleEffect(0.5)
+            .frame(width: 12, height: 12)
+        } else {
+          Picker("", selection: $viewModel.baseBranch) {
+            Text("Current HEAD").tag(nil as RemoteBranch?)
+            ForEach(viewModel.availableBranches) { branch in
+              Text(branch.displayName).tag(branch as RemoteBranch?)
+            }
+          }
+          .pickerStyle(.menu)
+          .labelsHidden()
+          .fixedSize()
+        }
+      }
+
+      HStack {
+        Button(action: {
+          viewModel.rejectSmartPlan()
+        }) {
+          Text("Reject")
+            .font(.system(size: 11, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .foregroundColor(.secondary)
+
+        Spacer()
+
+        Button(action: {
+          Task {
+            await viewModel.approveSmartPlan()
+          }
+        }) {
+          HStack(spacing: 4) {
+            Image(systemName: "checkmark.circle.fill")
+              .font(.system(size: 11))
+            Text("Approve & Launch")
+              .font(.system(size: 11, weight: .medium))
+          }
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.primary)
+      }
+    }
+    .padding(8)
+    .background(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+        .fill(Color.primary.opacity(0.03))
+    )
+  }
+
+  private var smartLaunchingSection: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack(spacing: 8) {
+        ProgressView()
+          .scaleEffect(0.7)
+        Text("Creating worktree and launching session...")
+          .font(.system(size: 11, weight: .medium))
+          .foregroundColor(.secondary)
+        Spacer()
+        Button(action: {
+          viewModel.cancelSmartLaunch()
+        }) {
+          Text("Cancel")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+      }
+
+      if viewModel.claudeProgress != .idle {
+        progressRow(label: "Worktree", progress: viewModel.claudeProgress)
+      }
+    }
+    .padding(8)
+    .background(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+        .fill(Color.primary.opacity(0.03))
+    )
+  }
+
   // MARK: - Error
 
   private func errorView(_ error: String) -> some View {
@@ -599,26 +897,31 @@ public struct MultiSessionLaunchView: View {
 
       Spacer()
 
-      Button(action: {
-        Task {
-          await viewModel.launchSessions()
-        }
-      }) {
-        HStack(spacing: 6) {
-          if viewModel.isLaunching {
-            ProgressView()
-              .scaleEffect(0.7)
+      if !(viewModel.launchMode == .smart && viewModel.isSmartInteractive) {
+        Button(action: {
+          Task {
+            await viewModel.launchSessions()
           }
-          Text(launchButtonTitle)
+        }) {
+          HStack(spacing: 6) {
+            if viewModel.isLaunching {
+              ProgressView()
+                .scaleEffect(0.7)
+            }
+            Text(launchButtonTitle)
+          }
         }
+        .buttonStyle(.borderedProminent)
+        .tint(.primary)
+        .disabled(!viewModel.isValid || viewModel.isLaunching)
       }
-      .buttonStyle(.borderedProminent)
-      .tint(.primary)
-      .disabled(!viewModel.isValid || viewModel.isLaunching)
     }
   }
 
   private var launchButtonTitle: String {
+    if viewModel.launchMode == .smart {
+      return "Launch Smart"
+    }
     if viewModel.isLaunching {
       return viewModel.workMode == .worktree ? "Generating worktrees..." : "Launching..."
     }
@@ -632,5 +935,155 @@ public struct MultiSessionLaunchView: View {
       return "Launch Codex"
     }
     return "Launch"
+  }
+}
+
+// MARK: - SmartPlanDetailView
+
+private struct SmartPlanDetailView: View {
+  let planText: String
+  let plan: OrchestrationPlan
+  let onDismiss: () -> Void
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    VStack(spacing: 0) {
+      // Header
+      header
+
+      Divider()
+
+      // Body
+      ScrollView {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
+          MarkdownView(content: planText, includeScrollView: false)
+            .padding(DesignTokens.Spacing.lg)
+            .background(cardBackground)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+            .overlay(
+              RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .stroke(Color.borderSubtle, lineWidth: 1)
+            )
+
+          // Sessions
+          VStack(alignment: .leading, spacing: 8) {
+            Text("Sessions")
+              .font(.system(size: 12, weight: .semibold))
+              .foregroundColor(.primary)
+
+            ForEach(plan.sessions) { session in
+              sessionRow(session)
+            }
+          }
+          .padding(DesignTokens.Spacing.lg)
+          .background(cardBackground)
+          .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+          .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+              .stroke(Color.borderSubtle, lineWidth: 1)
+          )
+        }
+        .padding(DesignTokens.Spacing.xl)
+      }
+      .background(Color.surfaceCanvas)
+
+      Divider()
+
+      // Footer
+      footer
+    }
+    .frame(minWidth: 600, idealWidth: 800, maxWidth: .infinity,
+           minHeight: 450, idealHeight: 650, maxHeight: .infinity)
+    .onKeyPress(.escape) {
+      onDismiss()
+      return .handled
+    }
+  }
+
+  // MARK: - Header
+
+  private var header: some View {
+    HStack {
+      HStack(spacing: 8) {
+        Image(systemName: "list.bullet.clipboard")
+          .font(.title3)
+          .foregroundColor(.brandPrimary)
+        Text("Orchestration Plan")
+          .font(.title3.weight(.semibold))
+      }
+
+      Spacer()
+
+      Button("Close") {
+        onDismiss()
+      }
+    }
+    .padding()
+    .background(Color.surfaceElevated)
+  }
+
+  // MARK: - Session Row
+
+  private func sessionRow(_ session: OrchestrationSession) -> some View {
+    HStack(alignment: .top, spacing: 8) {
+      Image(systemName: "arrow.triangle.branch")
+        .font(.system(size: 10))
+        .foregroundColor(.secondary)
+        .padding(.top, 2)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(session.description)
+          .font(.system(size: 11, weight: .medium))
+
+        HStack(spacing: 6) {
+          Text(session.branchName)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundColor(.secondary)
+
+          Text(session.sessionType.rawValue)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(
+              Capsule()
+                .fill(Color.primary.opacity(0.06))
+            )
+        }
+      }
+    }
+  }
+
+  // MARK: - Footer
+
+  private var footer: some View {
+    HStack {
+      Spacer()
+
+      Button(action: copyPlanContent) {
+        HStack(spacing: 4) {
+          Image(systemName: "doc.on.doc")
+          Text("Copy")
+        }
+      }
+      .buttonStyle(.bordered)
+      .help("Copy plan to clipboard")
+    }
+    .padding()
+    .background(Color.surfaceElevated)
+  }
+
+  // MARK: - Helpers
+
+  private var cardBackground: Color {
+    colorScheme == .dark ? Color(white: 0.08) : Color.white
+  }
+
+  private func copyPlanContent() {
+    #if canImport(AppKit)
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(planText, forType: .string)
+    #endif
   }
 }

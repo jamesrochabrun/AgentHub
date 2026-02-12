@@ -39,14 +39,18 @@ public struct MultiProviderSessionsListView: View {
   @AppStorage(AgentHubDefaults.selectedSidePanelProvider)
   private var selectedProviderRaw: String = "Claude"
 
+  private let intelligenceViewModel: IntelligenceViewModel?
+
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
-    columnVisibility: Binding<NavigationSplitViewVisibility>
+    columnVisibility: Binding<NavigationSplitViewVisibility>,
+    intelligenceViewModel: IntelligenceViewModel? = nil
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self._columnVisibility = columnVisibility
+    self.intelligenceViewModel = intelligenceViewModel
   }
 
   public var body: some View {
@@ -78,7 +82,8 @@ public struct MultiProviderSessionsListView: View {
       if multiLaunchViewModel == nil {
         multiLaunchViewModel = MultiSessionLaunchViewModel(
           claudeViewModel: claudeViewModel,
-          codexViewModel: codexViewModel
+          codexViewModel: codexViewModel,
+          intelligenceViewModel: intelligenceViewModel
         )
       }
       ensurePrimarySelection()
@@ -190,7 +195,8 @@ public struct MultiProviderSessionsListView: View {
       // 1. Session Launcher (always visible)
       if let multiLaunchViewModel {
         MultiSessionLaunchView(
-          viewModel: multiLaunchViewModel
+          viewModel: multiLaunchViewModel,
+          intelligenceViewModel: intelligenceViewModel
         )
         .padding(.bottom, 8)
       }

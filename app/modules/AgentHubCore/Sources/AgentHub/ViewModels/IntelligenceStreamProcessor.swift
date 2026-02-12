@@ -26,7 +26,7 @@ final class IntelligenceStreamProcessor {
 
   // Callbacks
   var onTextReceived: ((String) -> Void)?
-  var onToolUse: ((String, String) -> Void)?
+  var onToolUse: ((String, String, [String: MessageResponse.Content.DynamicContent]) -> Void)?
   var onToolResult: ((String) -> Void)?
   var onComplete: (() -> Void)?
   var onError: ((Error) -> Void)?
@@ -131,20 +131,23 @@ final class IntelligenceStreamProcessor {
   }
 
   private func processAssistantMessage(_ message: AssistantMessage) {
+    let needsSeparator = !accumulatedText.isEmpty
+
     for content in message.message.content {
       switch content {
       case .text(let textContent, _):
         if !textContent.isEmpty {
-          onTextReceived?(textContent)
+          let fullText = (needsSeparator ? "\n\n" : "") + textContent
+          onTextReceived?(fullText)
 
           // Accumulate text for orchestration plan detection
-          accumulatedText += textContent
+          accumulatedText += fullText
           checkForOrchestrationPlan()
         }
 
       case .toolUse(let toolUse):
         let inputDescription = toolUse.input.formattedDescription()
-        onToolUse?(toolUse.name, inputDescription)
+        onToolUse?(toolUse.name, inputDescription, toolUse.input)
 
         // Check for orchestration tool call (legacy approach)
         if toolUse.name == WorktreeOrchestrationTool.toolName {
