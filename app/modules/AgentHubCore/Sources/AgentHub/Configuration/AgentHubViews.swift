@@ -68,7 +68,8 @@ public struct AgentHubSessionsView: View {
     MultiProviderSessionsListView(
       claudeViewModel: provider.claudeSessionsViewModel,
       codexViewModel: provider.codexSessionsViewModel,
-      columnVisibility: $columnVisibility
+      columnVisibility: $columnVisibility,
+      intelligenceViewModel: provider.intelligenceViewModel
     )
       .frame(minWidth: 1200, minHeight: 750)
       .modifier(RemoveTitleToolbarModifier())

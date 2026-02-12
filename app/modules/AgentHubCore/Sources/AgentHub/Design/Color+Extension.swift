@@ -233,7 +233,7 @@ extension Color {
   }
 
   public static var surfaceOverlay: Color {
-    Color.gray.opacity(0.06)
+    Color.gray.opacity(0.06)    
   }
 
   public static var surfaceHover: Color {

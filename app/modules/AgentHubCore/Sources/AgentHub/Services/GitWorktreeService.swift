@@ -185,6 +185,10 @@ public actor GitWorktreeService {
           currentBranchName = branchPart
           branches.append(RemoteBranch(name: branchPart, remote: "local"))
         }
+      } else if trimmed.hasPrefix("+") {
+        // "+" marks branches checked out in other worktrees — strip the marker
+        let branchPart = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+        branches.append(RemoteBranch(name: branchPart, remote: "local"))
       } else {
         branches.append(RemoteBranch(name: trimmed, remote: "local"))
       }

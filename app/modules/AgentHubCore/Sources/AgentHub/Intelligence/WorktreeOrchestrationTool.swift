@@ -227,4 +227,16 @@ public enum WorktreeOrchestrationTool {
   public static func containsPlanMarkers(_ text: String) -> Bool {
     return text.contains("<orchestration-plan>") && text.contains("</orchestration-plan>")
   }
+
+  /// Strip the <orchestration-plan>...</orchestration-plan> block from text,
+  /// returning only the human-readable plan content.
+  public static func stripPlanMarkers(_ text: String) -> String {
+    guard let startRange = text.range(of: "<orchestration-plan>"),
+          let endRange = text.range(of: "</orchestration-plan>") else {
+      return text
+    }
+    var result = text
+    result.removeSubrange(startRange.lowerBound..<endRange.upperBound)
+    return result.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
 }
