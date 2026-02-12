@@ -9,6 +9,13 @@
 import AppKit
 import Foundation
 
+// MARK: - LaunchMode
+
+public enum LaunchMode: String, CaseIterable, Sendable {
+  case manual = "Manual"
+  case smart = "Smart"
+}
+
 // MARK: - WorkMode
 
 public enum WorkMode: String, CaseIterable, Sendable {
@@ -41,6 +48,22 @@ public enum ClaudeMode: CaseIterable, Sendable {
     case .enabledDangerously: return "Claude Dangerously"
     }
   }
+}
+
+// MARK: - SmartPhase
+
+public enum SmartPhase: Equatable {
+  case idle
+  case planning
+  case planReady
+  case launching
+}
+
+// MARK: - SmartProvider
+
+public enum SmartProvider: String, CaseIterable, Sendable {
+  case claude = "Claude"
+  case codex = "Codex"
 }
 
 // MARK: - AttachedFile
@@ -79,9 +102,11 @@ public final class MultiSessionLaunchViewModel {
   private let claudeViewModel: CLISessionsViewModel
   private let codexViewModel: CLISessionsViewModel
   private let worktreeService: GitWorktreeService
+  private let intelligenceViewModel: IntelligenceViewModel?
 
   // MARK: - Form State
 
+  public var launchMode: LaunchMode = .manual
   public var workMode: WorkMode = .local
   public var claudeMode: ClaudeMode = .disabled
   public var isCodexSelected: Bool = false
@@ -107,6 +132,13 @@ public final class MultiSessionLaunchViewModel {
   public var codexProgress: WorktreeCreationProgress = .idle
   public var launchError: String?
 
+  // MARK: - Smart Mode State
+
+  public var smartPhase: SmartPhase = .idle
+  public var smartProvider: SmartProvider = .claude
+  public var smartPlanText: String = ""
+  public var smartOrchestrationPlan: OrchestrationPlan?
+
   // MARK: - Callbacks
 
   public var onLaunchCompleted: (() -> Void)?
@@ -126,9 +158,23 @@ public final class MultiSessionLaunchViewModel {
     isClaudeSelected || isCodexSelected
   }
 
+  public var isSmartModeAvailable: Bool {
+    intelligenceViewModel != nil
+  }
+
+  public var isSmartInteractive: Bool {
+    smartPhase == .planning || smartPhase == .planReady || smartPhase == .launching
+  }
+
   public var isValid: Bool {
     let hasRepo = selectedRepository != nil
-    return hasRepo && hasAnyProviderSelected
+    switch launchMode {
+    case .manual:
+      return hasRepo && hasAnyProviderSelected
+    case .smart:
+      let hasPrompt = !sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+      return hasRepo && hasPrompt
+    }
   }
 
   // MARK: - Init
@@ -136,11 +182,13 @@ public final class MultiSessionLaunchViewModel {
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
-    worktreeService: GitWorktreeService = GitWorktreeService()
+    worktreeService: GitWorktreeService = GitWorktreeService(),
+    intelligenceViewModel: IntelligenceViewModel? = nil
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self.worktreeService = worktreeService
+    self.intelligenceViewModel = intelligenceViewModel
   }
 
   // MARK: - Attachments
@@ -250,9 +298,31 @@ public final class MultiSessionLaunchViewModel {
     return GitWorktreeService.worktreeDirectoryName(for: branchName, repoName: repo.name)
   }
 
-  /// Creates worktrees and starts sessions based on the selected providers and work mode
+  /// Creates worktrees and starts sessions based on the selected providers and work/launch mode
   public func launchSessions() async {
-    guard let repo = selectedRepository, isValid else { return }
+    guard isValid else { return }
+
+    switch launchMode {
+    case .manual:
+      await launchManualMode()
+    case .smart:
+      await startSmartPlanning()
+    }
+  }
+
+  /// Cancels an in-progress smart launch and resets state
+  public func cancelSmartLaunch() {
+    AppLogger.intelligence.info("Smart launch: cancelled by user")
+    intelligenceViewModel?.cancelRequest()
+    smartPhase = .idle
+    isLaunching = false
+    launchError = nil
+  }
+
+  // MARK: - Manual Mode
+
+  private func launchManualMode() async {
+    guard let repo = selectedRepository else { return }
 
     isLaunching = true
     launchError = nil
@@ -310,6 +380,216 @@ public final class MultiSessionLaunchViewModel {
     reset()
   }
 
+  // MARK: - Smart Mode
+
+  /// Phase 1: Send prompt to SDK with plan permission mode and stream a plan.
+  private func startSmartPlanning() async {
+    guard let repo = selectedRepository,
+          let intelligence = intelligenceViewModel else { return }
+
+    let trimmedPrompt = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedPrompt.isEmpty else { return }
+
+    AppLogger.intelligence.info("Smart planning: starting for repo \(repo.path)")
+
+    smartPhase = .planning
+    isLaunching = true
+    launchError = nil
+
+    // Build prompt with attachment paths if any
+    let attachmentPaths = attachedFiles.map { $0.quotedPath }.joined(separator: " ")
+    let fullPrompt = attachmentPaths.isEmpty ? trimmedPrompt : "\(trimmedPrompt) \(attachmentPaths)"
+
+    // Generate plan via SDK (plan mode, no execution)
+    intelligence.generatePlan(prompt: fullPrompt, workingDirectory: repo.path)
+
+    // Poll for completion
+    while intelligence.isLoading {
+      try? await Task.sleep(for: .milliseconds(200))
+    }
+
+    // Check for errors
+    if let error = intelligence.errorMessage {
+      AppLogger.intelligence.error("Smart planning: error — \(error)")
+      launchError = error
+      smartPhase = .idle
+      isLaunching = false
+      return
+    }
+
+    // Store completed plan text and parsed orchestration plan
+    smartPlanText = intelligence.lastResponse
+    smartOrchestrationPlan = intelligence.parsedOrchestrationPlan
+      ?? WorktreeOrchestrationTool.parseFromText(smartPlanText)
+    smartPhase = .planReady
+    isLaunching = false
+    AppLogger.intelligence.info("Smart planning: plan ready (\(self.smartPlanText.count) chars)")
+  }
+
+  /// Phase 2: User approved the plan — create worktrees and start sessions.
+  /// If a parsed orchestration plan exists, launches one session per task.
+  /// Otherwise falls back to a single session using the full plan text.
+  public func approveSmartPlan() async {
+    guard let repo = selectedRepository else { return }
+
+    AppLogger.intelligence.info("Smart plan: approved")
+
+    smartPhase = .launching
+    isLaunching = true
+    launchError = nil
+
+    let viewModel = smartProvider == .claude ? claudeViewModel : codexViewModel
+    let repoPath = repo.path
+    let dangerously = smartProvider == .claude ? claudeMode.dangerouslySkipPermissions : false
+
+    viewModel.addRepository(at: repoPath)
+    try? await Task.sleep(for: .milliseconds(300))
+
+    if let plan = smartOrchestrationPlan, !plan.sessions.isEmpty {
+      // Multi-session launch from parsed orchestration plan
+      await launchOrchestrationSessions(
+        plan: plan,
+        repoPath: repoPath,
+        viewModel: viewModel,
+        dangerouslySkipPermissions: dangerously
+      )
+    } else {
+      // Fallback: single session with the full plan text (not the original prompt)
+      await launchFallbackSession(
+        repoPath: repoPath,
+        repoName: repo.name,
+        viewModel: viewModel,
+        dangerouslySkipPermissions: dangerously
+      )
+    }
+  }
+
+  /// Launches one worktree + session per orchestration session.
+  private func launchOrchestrationSessions(
+    plan: OrchestrationPlan,
+    repoPath: String,
+    viewModel: CLISessionsViewModel,
+    dangerouslySkipPermissions: Bool
+  ) async {
+    var errors: [String] = []
+
+    for (index, session) in plan.sessions.enumerated() {
+      AppLogger.intelligence.info(
+        "Smart plan: creating session \(index + 1)/\(plan.sessions.count) — \(session.branchName)"
+      )
+
+      do {
+        let dirName = GitWorktreeService.worktreeDirectoryName(
+          for: session.branchName, repoName: URL(fileURLWithPath: repoPath).lastPathComponent
+        )
+        let worktreePath = try await worktreeService.createWorktreeWithNewBranch(
+          at: repoPath,
+          newBranchName: session.branchName,
+          directoryName: dirName,
+          startPoint: baseBranch?.displayName
+        ) { [weak self] progress in
+          Task { @MainActor in
+            self?.claudeProgress = progress
+          }
+        }
+
+        viewModel.refresh()
+        try? await Task.sleep(for: .milliseconds(500))
+
+        let worktree = WorktreeBranch(name: session.branchName, path: worktreePath, isWorktree: true)
+        viewModel.startNewSessionInHub(
+          worktree,
+          initialPrompt: session.prompt,
+          dangerouslySkipPermissions: dangerouslySkipPermissions
+        )
+        viewModel.refresh()
+
+        AppLogger.intelligence.info("Smart plan: session launched at \(worktreePath)")
+
+        // Delay between launches to prevent macOS race conditions
+        if index < plan.sessions.count - 1 {
+          try? await Task.sleep(for: .milliseconds(800))
+        }
+      } catch {
+        let msg = "\(session.branchName): \(error.localizedDescription)"
+        AppLogger.intelligence.error("Smart plan: worktree failed — \(msg)")
+        errors.append(msg)
+      }
+    }
+
+    if !errors.isEmpty {
+      launchError = "Some sessions failed:\n\(errors.joined(separator: "\n"))"
+    }
+
+    isLaunching = false
+    onLaunchCompleted?()
+    reset()
+  }
+
+  /// Fallback: launches a single session with the full plan text as the prompt.
+  private func launchFallbackSession(
+    repoPath: String,
+    repoName: String,
+    viewModel: CLISessionsViewModel,
+    dangerouslySkipPermissions: Bool
+  ) async {
+    // Auto-generate branch name from prompt
+    let promptSeed = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    let words = promptSeed.components(separatedBy: .whitespacesAndNewlines)
+      .filter { !$0.isEmpty }
+      .prefix(4)
+      .joined(separator: "-")
+    let sanitized = GitWorktreeService.sanitizeBranchName(words)
+    let suffix = String(UUID().uuidString.prefix(6)).lowercased()
+    let branchName = sanitized.isEmpty ? "smart-\(suffix)" : "\(sanitized)-\(suffix)"
+
+    // Use the full plan text as the prompt, not the original user message
+    let initialPrompt = smartPlanText.isEmpty ? sharedPrompt : smartPlanText
+
+    do {
+      let dirName = GitWorktreeService.worktreeDirectoryName(for: branchName, repoName: repoName)
+      let worktreePath = try await worktreeService.createWorktreeWithNewBranch(
+        at: repoPath,
+        newBranchName: branchName,
+        directoryName: dirName,
+        startPoint: baseBranch?.displayName
+      ) { [weak self] progress in
+        Task { @MainActor in
+          self?.claudeProgress = progress
+        }
+      }
+
+      viewModel.refresh()
+      try? await Task.sleep(for: .milliseconds(500))
+
+      let worktree = WorktreeBranch(name: branchName, path: worktreePath, isWorktree: true)
+      viewModel.startNewSessionInHub(
+        worktree,
+        initialPrompt: initialPrompt,
+        dangerouslySkipPermissions: dangerouslySkipPermissions
+      )
+      viewModel.refresh()
+
+      AppLogger.intelligence.info("Smart plan: fallback session launched at \(worktreePath)")
+      isLaunching = false
+      onLaunchCompleted?()
+      reset()
+    } catch {
+      AppLogger.intelligence.error("Smart plan: worktree creation failed — \(error.localizedDescription)")
+      launchError = "Worktree creation failed: \(error.localizedDescription)"
+      smartPhase = .planReady
+      isLaunching = false
+    }
+  }
+
+  /// Phase 2 (reject): User rejected the plan — go back to idle keeping prompt and repo.
+  public func rejectSmartPlan() {
+    AppLogger.intelligence.info("Smart plan: rejected by user")
+    smartPhase = .idle
+    smartPlanText = ""
+    smartOrchestrationPlan = nil
+  }
+
   /// Fully resets all form state for a fresh start
   public func reset() {
     for file in attachedFiles where file.isTemporary {
@@ -324,12 +604,17 @@ public final class MultiSessionLaunchViewModel {
     selectedRepository = nil
     availableBranches = []
     currentBranchName = ""
+    launchMode = .manual
     workMode = .local
     claudeMode = .disabled
     isCodexSelected = false
     claudeProgress = .idle
     codexProgress = .idle
     launchError = nil
+    smartPhase = .idle
+    smartProvider = .claude
+    smartPlanText = ""
+    smartOrchestrationPlan = nil
   }
 
   // MARK: - Private
