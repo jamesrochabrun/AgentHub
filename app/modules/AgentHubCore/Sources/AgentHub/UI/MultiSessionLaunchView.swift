@@ -18,6 +18,8 @@ public struct MultiSessionLaunchView: View {
   @Bindable var viewModel: MultiSessionLaunchViewModel
   var intelligenceViewModel: IntelligenceViewModel?
 
+  @AppStorage(AgentHubDefaults.smartModeEnabled) private var smartModeEnabled: Bool = false
+
   @Environment(\.colorScheme) private var colorScheme
   @State private var isExpanded = false
   @State private var isDragging = false
@@ -32,7 +34,7 @@ public struct MultiSessionLaunchView: View {
       if isExpanded {
         Divider()
 
-        if viewModel.isSmartModeAvailable {
+        if viewModel.isSmartModeAvailable && smartModeEnabled {
           launchModeToggle
         }
 
@@ -110,6 +112,11 @@ public struct MultiSessionLaunchView: View {
         plan: viewModel.smartOrchestrationPlan,
         onDismiss: { showingPlanSheet = false }
       )
+    }
+    .onChange(of: smartModeEnabled) { _, enabled in
+      if !enabled {
+        viewModel.launchMode = .manual
+      }
     }
     .onChange(of: viewModel.isLaunching) { wasLaunching, isLaunching in
       if wasLaunching && !isLaunching && !viewModel.isSmartInteractive {

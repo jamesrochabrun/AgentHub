@@ -8,6 +8,9 @@
 import SwiftUI
 
 public struct SettingsView: View {
+  @AppStorage(AgentHubDefaults.smartModeEnabled)
+  private var smartModeEnabled: Bool = false
+
   @AppStorage(AgentHubDefaults.notificationSoundsEnabled)
   private var notificationSoundsEnabled: Bool = true
 
@@ -103,8 +106,19 @@ public struct SettingsView: View {
       } header: {
         Text("Notifications")
       }
+
+      Section("Features") {
+        Toggle(isOn: $smartModeEnabled) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Smart mode")
+            Text("Use AI to plan and orchestrate multi-session launches")
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+        }
+      }
     }
     .formStyle(.grouped)
-    .frame(width: 300, height: 280)
+    .frame(width: 300, height: 360)
   }
 }
