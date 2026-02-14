@@ -419,9 +419,33 @@ public final class MultiSessionLaunchViewModel {
 
     // Store completed plan text and parsed orchestration plan
     let rawResponse = intelligence.lastResponse
+    let lastMessage = intelligence.lastAssistantMessage
     smartOrchestrationPlan = intelligence.parsedOrchestrationPlan
       ?? WorktreeOrchestrationTool.parseFromText(rawResponse)
-    smartPlanText = WorktreeOrchestrationTool.stripPlanMarkers(rawResponse)
+      ?? WorktreeOrchestrationTool.parseFromText(lastMessage)
+      ?? WorktreeOrchestrationTool.parseJSONFromText(rawResponse)
+      ?? WorktreeOrchestrationTool.parseJSONFromText(lastMessage)
+
+    // Use only the final assistant message for display (excludes exploration text)
+    smartPlanText = WorktreeOrchestrationTool.stripPlanMarkers(lastMessage)
+
+    // Diagnostic logging
+    let planSummary = self.smartOrchestrationPlan.map { "\($0.sessions.count) sessions" } ?? "nil"
+    AppLogger.intelligence.info("""
+      Smart planning diagnostics:
+      - rawResponse length: \(rawResponse.count)
+      - lastMessage length: \(lastMessage.count)
+      - has XML markers (raw): \(WorktreeOrchestrationTool.containsPlanMarkers(rawResponse))
+      - has XML markers (last): \(WorktreeOrchestrationTool.containsPlanMarkers(lastMessage))
+      - has JSON keys (raw): \(rawResponse.contains("\"modulePath\""))
+      - parsedOrchestrationPlan: \(planSummary)
+      """)
+
+    if smartOrchestrationPlan == nil && WorktreeOrchestrationTool.containsPlanMarkers(rawResponse) {
+      AppLogger.intelligence.error("Plan markers found but parsing failed. Raw response length: \(rawResponse.count)")
+      assertionFailure("Orchestration plan markers present but all parsing attempts failed")
+    }
+
     smartPhase = .planReady
     isLaunching = false
     AppLogger.intelligence.info("Smart planning: plan ready (\(self.smartPlanText.count) chars)")
