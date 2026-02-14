@@ -167,61 +167,6 @@ public enum DiffParserUtils {
     return String(diffLine[range])
   }
 
-  /// Extracts old and new content from unified diff
-  /// This reconstructs the file contents from the diff hunks
-  /// - Parameters:
-  ///   - diffContent: The unified diff content for a single file
-  ///   - oldContent: Optional original file content (for more accurate reconstruction)
-  /// - Returns: Tuple of (oldContent, newContent) reconstructed from diff
-  public static func extractContentsFromDiff(_ diffContent: String) -> (old: String, new: String) {
-    var oldLines: [String] = []
-    var newLines: [String] = []
-    var inHunk = false
-
-    let lines = diffContent.components(separatedBy: "\n")
-
-    for line in lines {
-      // Skip diff headers
-      if line.hasPrefix("diff --git") ||
-          line.hasPrefix("index ") ||
-          line.hasPrefix("---") ||
-          line.hasPrefix("+++") ||
-          line.hasPrefix("new file") ||
-          line.hasPrefix("deleted file") ||
-          line.hasPrefix("old mode") ||
-          line.hasPrefix("new mode") {
-        continue
-      }
-
-      // Hunk header: @@ -start,count +start,count @@
-      if line.hasPrefix("@@") {
-        inHunk = true
-        continue
-      }
-
-      guard inHunk else { continue }
-
-      if line.hasPrefix("-") {
-        // Removed line - only in old
-        oldLines.append(String(line.dropFirst()))
-      } else if line.hasPrefix("+") {
-        // Added line - only in new
-        newLines.append(String(line.dropFirst()))
-      } else if line.hasPrefix(" ") {
-        // Context line - in both
-        let contextLine = String(line.dropFirst())
-        oldLines.append(contextLine)
-        newLines.append(contextLine)
-      } else if line.isEmpty {
-        // Empty line in diff (context)
-        oldLines.append("")
-        newLines.append("")
-      }
-    }
-
-    return (old: oldLines.joined(separator: "\n"), new: newLines.joined(separator: "\n"))
-  }
-
   /// Converts ParsedFileDiff array to GitDiffFileEntry array for compatibility
   /// - Parameters:
   ///   - parsedDiffs: Array of parsed file diffs
