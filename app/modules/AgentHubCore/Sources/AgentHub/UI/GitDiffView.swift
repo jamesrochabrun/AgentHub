@@ -41,7 +41,6 @@ public struct GitDiffView: View {
   @State private var errorMessage: String?
   @State private var selectedFileId: UUID?
   @State private var diffContents: [UUID: (old: String, new: String)] = [:]
-  @State private var parsedDiffs: [UUID: ParsedFileDiff] = [:]
   @State private var loadingStates: [UUID: Bool] = [:]
   @State private var fileErrorMessages: [UUID: String] = [:]
   @State private var diffStyle: DiffStyle = .unified
@@ -541,7 +540,6 @@ public struct GitDiffView: View {
       errorMessage = nil
       diffState = .empty
       diffContents = [:]
-      parsedDiffs = [:]
       selectedFileId = nil
       loadingStates = [:]
       fileErrorMessages = [:]
@@ -590,17 +588,8 @@ public struct GitDiffView: View {
         }
       }
 
-      // Build lookup for parsed content by matching relativePath
-      var parsedLookup: [UUID: ParsedFileDiff] = [:]
-      for diff in parsed {
-        if let entry = entries.first(where: { $0.relativePath == diff.filePath }) {
-          parsedLookup[entry.id] = diff
-        }
-      }
-
       await MainActor.run {
         diffState = GitDiffState(files: entries)
-        parsedDiffs = parsedLookup
         isLoading = false
 
         // Build tree and auto-expand all folders
@@ -611,13 +600,7 @@ public struct GitDiffView: View {
         // Auto-select first file
         if let first = entries.first {
           selectedFileId = first.id
-          // Use cache if available (instant), otherwise loadFileDiff handles fallback
-          if let cachedParsed = parsedLookup[first.id] {
-            let contents = DiffParserUtils.extractContentsFromDiff(cachedParsed.diffContent)
-            diffContents[first.id] = contents
-          } else {
-            loadFileDiff(for: first, mode: mode)
-          }
+          loadFileDiff(for: first, mode: mode)
         }
       }
 
@@ -635,14 +618,7 @@ public struct GitDiffView: View {
     // Skip if already loaded
     if diffContents[file.id] != nil { return }
 
-    // Check parsed cache first (instant - no async needed)
-    if let parsed = parsedDiffs[file.id] {
-      let contents = DiffParserUtils.extractContentsFromDiff(parsed.diffContent)
-      diffContents[file.id] = contents
-      return
-    }
-
-    // Fallback to old approach for untracked files (not in git diff output)
+    // Fetch full file contents via git (preserves real line numbers)
     loadingStates[file.id] = true
 
     let currentMode = mode ?? diffMode
