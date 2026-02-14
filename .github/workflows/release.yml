@@ -18,7 +18,7 @@ jobs:
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: '16.1'
 
       - name: Install create-dmg
         run: brew install create-dmg
@@ -46,29 +46,12 @@ jobs:
           # Allow codesign to access the key without UI prompt
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
 
-      - name: Fix SwiftTerm manifest
-        run: |
-          # Resolve packages (will fail due to broken SwiftTerm manifest, but clones repos)
-          xcodebuild -project app/AgentHub.xcodeproj \
-            -scheme AgentHub \
-            -resolvePackageDependencies || true
-
-          # Fix trailing commas after commented-out swiftSettings in SwiftTerm Package.swift
-          find ~/Library/Developer/Xcode/DerivedData -path "*/checkouts/SwiftTerm/Package.swift" \
-            -exec sed -i '' 's/exclude: platformExcludes + \["Mac\/README.md"\],/exclude: platformExcludes + ["Mac\/README.md"]/g' {} \;
-
-          # Resolve again with the fixed manifest
-          xcodebuild -project app/AgentHub.xcodeproj \
-            -scheme AgentHub \
-            -resolvePackageDependencies
-
       - name: Build app
         run: |
           xcodebuild -project app/AgentHub.xcodeproj \
             -scheme AgentHub \
             -configuration Release \
             -archivePath build/AgentHub.xcarchive \
-            -disableAutomaticPackageResolution \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
             DEVELOPMENT_TEAM=${{ secrets.TEAM_ID }} \
