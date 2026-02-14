@@ -16,7 +16,7 @@ let package = Package(
   dependencies: [
     .package(url: "https://github.com/jamesrochabrun/ClaudeCodeSDK", exact: "1.2.4"),
     .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.1.4"),
-    .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.10.0"),
+    .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.10.1"),
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
     .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),
     .package(url: "https://github.com/appstefan/HighlightSwift", from: "1.1.0"),
