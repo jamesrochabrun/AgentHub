@@ -106,6 +106,12 @@ public enum AgentHubDefaults {
   /// Type: Int (default: 1 = small)
   public static let selectedSessionsPanelSizeMode = "\(keyPrefix)ui.selectedSessionsPanelSizeMode"
 
+  // MARK: - Feature Flags
+
+  /// Whether smart mode (AI-powered orchestration planning) is enabled
+  /// Type: Bool (default: false)
+  public static let smartModeEnabled = "\(keyPrefix)features.smartModeEnabled"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

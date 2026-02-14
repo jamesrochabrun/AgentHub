@@ -21,6 +21,8 @@ final class IntelligenceStreamProcessor {
 
   /// Accumulated text for detecting orchestration plans
   private var accumulatedText = ""
+  /// Text from the current (most recent) assistant message only
+  private var lastAssistantMessageText = ""
   /// Flag to prevent processing the same plan multiple times
   private var planAlreadyProcessed = false
 
@@ -33,6 +35,12 @@ final class IntelligenceStreamProcessor {
 
   /// Callback for orchestration tool calls
   var onOrchestrationPlan: ((OrchestrationPlan) -> Void)?
+
+  /// Callback fired at the end of each assistant message with its full text
+  var onLastAssistantMessage: ((String) -> Void)?
+
+  /// Callback fired when a ResultMessage is received (carries final assembled text + metadata)
+  var onResultMessage: ((ResultMessage) -> Void)?
 
   /// Cancels the current stream processing
   func cancelStream() {
@@ -51,6 +59,7 @@ final class IntelligenceStreamProcessor {
   func processStream(_ publisher: AnyPublisher<ResponseChunk, Error>) async {
     continuationResumed = false
     accumulatedText = ""
+    lastAssistantMessageText = ""
     planAlreadyProcessed = false
 
     await withCheckedContinuation { continuation in
@@ -125,13 +134,16 @@ final class IntelligenceStreamProcessor {
     case .user(let userMessage):
       processUserMessage(userMessage)
 
-    case .result:
-      break
+    case .result(let resultMessage):
+      processResultMessage(resultMessage)
     }
   }
 
   private func processAssistantMessage(_ message: AssistantMessage) {
     let needsSeparator = !accumulatedText.isEmpty
+
+    // Reset per-message text so we capture only this message's content
+    lastAssistantMessageText = ""
 
     for content in message.message.content {
       switch content {
@@ -142,17 +154,13 @@ final class IntelligenceStreamProcessor {
 
           // Accumulate text for orchestration plan detection
           accumulatedText += fullText
+          lastAssistantMessageText += textContent
           checkForOrchestrationPlan()
         }
 
       case .toolUse(let toolUse):
         let inputDescription = toolUse.input.formattedDescription()
         onToolUse?(toolUse.name, inputDescription, toolUse.input)
-
-        // Check for orchestration tool call (legacy approach)
-        if toolUse.name == WorktreeOrchestrationTool.toolName {
-          handleOrchestrationToolCall(toolUse.input)
-        }
 
       case .toolResult(let toolResult):
         let resultContent = formatToolResult(toolResult.content)
@@ -165,6 +173,11 @@ final class IntelligenceStreamProcessor {
         break
       }
     }
+
+    // Notify with the complete text of this assistant message
+    if !lastAssistantMessageText.isEmpty {
+      onLastAssistantMessage?(lastAssistantMessageText)
+    }
   }
 
   /// Check accumulated text for orchestration plan JSON
@@ -172,11 +185,9 @@ final class IntelligenceStreamProcessor {
     // Don't process if already handled
     guard !planAlreadyProcessed else { return }
 
-    // Check if we have complete plan markers
-    guard WorktreeOrchestrationTool.containsPlanMarkers(accumulatedText) else { return }
-
-    // Try to parse the plan
-    guard let plan = WorktreeOrchestrationTool.parseFromText(accumulatedText) else {
+    // Try marker-based parsing first, then fallback to bare JSON
+    guard let plan = WorktreeOrchestrationTool.parseFromText(accumulatedText)
+            ?? WorktreeOrchestrationTool.parseJSONFromText(accumulatedText) else {
       return
     }
 
@@ -185,6 +196,19 @@ final class IntelligenceStreamProcessor {
 
     // Trigger the callback
     onOrchestrationPlan?(plan)
+  }
+
+  /// Process the final result message from Claude
+  private func processResultMessage(_ resultMessage: ResultMessage) {
+    // Forward metadata
+    onResultMessage?(resultMessage)
+
+    // If the result contains text, accumulate and check for plan
+    if let resultText = resultMessage.result, !resultText.isEmpty {
+      accumulatedText += "\n\n" + resultText
+      onTextReceived?("\n\n" + resultText)
+      checkForOrchestrationPlan()
+    }
   }
 
   private func processUserMessage(_ userMessage: UserMessage) {
@@ -207,51 +231,4 @@ final class IntelligenceStreamProcessor {
     }
   }
 
-  // MARK: - Orchestration Tool Handling
-
-  private func handleOrchestrationToolCall(_ input: [String: MessageResponse.Content.DynamicContent]) {
-    // Convert DynamicContent to standard types for parsing
-    let convertedInput = convertDynamicContent(input)
-
-    // Parse the orchestration plan
-    guard let plan = WorktreeOrchestrationTool.parseInput(convertedInput) else {
-      return
-    }
-
-    // Trigger the callback
-    onOrchestrationPlan?(plan)
-  }
-
-  private func convertDynamicContent(_ input: [String: MessageResponse.Content.DynamicContent]) -> [String: Any] {
-    var result: [String: Any] = [:]
-
-    for (key, value) in input {
-      result[key] = convertDynamicValue(value)
-    }
-
-    return result
-  }
-
-  private func convertDynamicValue(_ value: MessageResponse.Content.DynamicContent) -> Any {
-    switch value {
-    case .string(let str):
-      return str
-    case .integer(let num):
-      return num
-    case .double(let num):
-      return num
-    case .bool(let bool):
-      return bool
-    case .array(let arr):
-      return arr.map { convertDynamicValue($0) }
-    case .dictionary(let dict):
-      var result: [String: Any] = [:]
-      for (k, v) in dict {
-        result[k] = convertDynamicValue(v)
-      }
-      return result
-    case .null:
-      return NSNull()
-    }
-  }
 }

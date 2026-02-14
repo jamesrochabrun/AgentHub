@@ -18,6 +18,8 @@ public struct MultiSessionLaunchView: View {
   @Bindable var viewModel: MultiSessionLaunchViewModel
   var intelligenceViewModel: IntelligenceViewModel?
 
+  @AppStorage(AgentHubDefaults.smartModeEnabled) private var smartModeEnabled: Bool = false
+
   @Environment(\.colorScheme) private var colorScheme
   @State private var isExpanded = false
   @State private var isDragging = false
@@ -32,7 +34,7 @@ public struct MultiSessionLaunchView: View {
       if isExpanded {
         Divider()
 
-        if viewModel.isSmartModeAvailable {
+        if viewModel.isSmartModeAvailable && smartModeEnabled {
           launchModeToggle
         }
 
@@ -110,6 +112,11 @@ public struct MultiSessionLaunchView: View {
         plan: viewModel.smartOrchestrationPlan,
         onDismiss: { showingPlanSheet = false }
       )
+    }
+    .onChange(of: smartModeEnabled) { _, enabled in
+      if !enabled {
+        viewModel.launchMode = .manual
+      }
     }
     .onChange(of: viewModel.isLaunching) { wasLaunching, isLaunching in
       if wasLaunching && !isLaunching && !viewModel.isSmartInteractive {
@@ -1274,32 +1281,51 @@ private struct SmartPlanDetailView: View {
   // MARK: - Session Row
 
   private func sessionRow(_ session: OrchestrationSession) -> some View {
-    HStack(alignment: .top, spacing: 8) {
-      Image(systemName: "arrow.triangle.branch")
-        .font(.system(size: 10))
-        .foregroundColor(.secondary)
-        .padding(.top, 2)
+    VStack(alignment: .leading, spacing: 0) {
+      HStack(alignment: .top, spacing: 8) {
+        Image(systemName: "arrow.triangle.branch")
+          .font(.system(size: 10))
+          .foregroundColor(.secondary)
+          .padding(.top, 2)
 
-      VStack(alignment: .leading, spacing: 2) {
-        Text(session.description)
-          .font(.system(size: 11, weight: .medium))
+        VStack(alignment: .leading, spacing: 2) {
+          Text(session.description)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.primary)
 
-        HStack(spacing: 6) {
-          Text(session.branchName)
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundColor(.secondary)
+          HStack(spacing: 6) {
+            Text(session.branchName)
+              .font(.system(size: 10, design: .monospaced))
+              .foregroundColor(.secondary)
 
-          Text(session.sessionType.rawValue)
-            .font(.system(size: 9, weight: .medium))
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(
-              Capsule()
-                .fill(Color.primary.opacity(0.06))
-            )
+            Text(session.sessionType.rawValue)
+              .font(.system(size: 9, weight: .medium))
+              .foregroundColor(.secondary)
+              .padding(.horizontal, 6)
+              .padding(.vertical, 1)
+              .background(
+                Capsule()
+                  .fill(Color.primary.opacity(0.06))
+              )
+          }
         }
+
+        Spacer()
       }
+
+      VStack(alignment: .leading, spacing: 6) {
+        Divider()
+
+        Text("Agent Prompt")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundColor(.secondary)
+          .textCase(.uppercase)
+
+        MarkdownView(content: session.prompt, includeScrollView: false)
+          .textSelection(.enabled)
+      }
+      .padding(.top, 8)
+      .padding(.leading, 18)
     }
   }
 

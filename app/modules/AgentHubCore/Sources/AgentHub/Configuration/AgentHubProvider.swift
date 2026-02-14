@@ -120,11 +120,7 @@ public final class AgentHubProvider {
 
   /// Intelligence view model - created lazily and cached
   public private(set) lazy var intelligenceViewModel: IntelligenceViewModel = {
-    IntelligenceViewModel(
-      claudeClient: claudeClient,
-      gitService: gitService,
-      monitorService: monitorService
-    )
+    IntelligenceViewModel(claudeClient: claudeClient)
   }()
 
   // MARK: - Initialization
