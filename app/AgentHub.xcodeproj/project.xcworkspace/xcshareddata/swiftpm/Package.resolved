@@ -283,10 +283,10 @@
     {
       "identity" : "swiftterm",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/migueldeicaza/SwiftTerm",
+      "location" : "https://github.com/jamesrochabrun/SwiftTerm",
       "state" : {
-        "revision" : "5c83a9d214e7354697624c11deb4e488bdcfabad",
-        "version" : "1.10.1"
+        "branch" : "fix/package-manifest-trailing-commas",
+        "revision" : "3a8d38e9cfe8f6000ebb8db13d2eb17beceb091e"
       }
     }
   ],
