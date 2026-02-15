@@ -130,6 +130,21 @@ extension Color {
     getCurrentThemeColors().brandTertiary
   }
 
+  // MARK: - Runtime Theme Support
+
+  /// Get brand colors from runtime theme or fallback to UserDefaults
+  public static func brandPrimary(from theme: RuntimeTheme?) -> Color {
+    theme?.brandPrimary ?? brandPrimary
+  }
+
+  public static func brandSecondary(from theme: RuntimeTheme?) -> Color {
+    theme?.brandSecondary ?? brandSecondary
+  }
+
+  public static func brandTertiary(from theme: RuntimeTheme?) -> Color {
+    theme?.brandTertiary ?? brandTertiary
+  }
+
   // MARK: - Provider-Aware Colors
 
   public static func brandPrimary(for provider: SessionProviderKind) -> Color {
@@ -262,6 +277,10 @@ extension Color {
     )
   }
 
+  public static func backgroundGradient(from theme: RuntimeTheme?) -> LinearGradient {
+    theme?.backgroundGradient ?? backgroundGradient
+  }
+
   // MARK: - Adaptive Colors
 
   static func adaptiveBackground(for colorScheme: ColorScheme) -> Color {
@@ -270,6 +289,28 @@ extension Color {
 
   static func adaptiveExpandedContentBackground(for colorScheme: ColorScheme) -> Color {
     colorScheme == .dark ? expandedContentBackgroundDark : expandedContentBackgroundLight
+  }
+
+  public static func adaptiveBackground(for colorScheme: ColorScheme, theme: RuntimeTheme?) -> Color {
+    if let theme = theme {
+      if colorScheme == .dark, let dark = theme.backgroundDark {
+        return dark
+      } else if colorScheme == .light, let light = theme.backgroundLight {
+        return light
+      }
+    }
+    return adaptiveBackground(for: colorScheme)
+  }
+
+  public static func adaptiveExpandedContentBackground(for colorScheme: ColorScheme, theme: RuntimeTheme?) -> Color {
+    if let theme = theme {
+      if colorScheme == .dark, let dark = theme.expandedContentBackgroundDark {
+        return dark
+      } else if colorScheme == .light, let light = theme.expandedContentBackgroundLight {
+        return light
+      }
+    }
+    return adaptiveExpandedContentBackground(for: colorScheme)
   }
 
 }

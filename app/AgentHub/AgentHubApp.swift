@@ -66,6 +66,7 @@ struct AgentHubApp: App {
 
     Settings {
       SettingsView()
+        .agentHub(appDelegate.provider)
     }
   }
 }

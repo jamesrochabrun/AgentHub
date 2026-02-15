@@ -34,6 +34,8 @@ public struct MultiProviderSessionsListView: View {
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
   @FocusState private var isSearchFieldFocused: Bool
+  @State private var hubFilterMode: HubFilterMode = .all
+  @State private var showCommandPalette = false
   @Environment(\.colorScheme) private var colorScheme
 
   @AppStorage(AgentHubDefaults.selectedSidePanelProvider)
@@ -54,26 +56,17 @@ public struct MultiProviderSessionsListView: View {
   }
 
   public var body: some View {
-    NavigationSplitView(columnVisibility: $columnVisibility) {
-      sidePanelView
-        .agentHubPanel()
-        .navigationSplitViewColumnWidth(min: 300, ideal: 420)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 8)
-    } detail: {
-      MultiProviderMonitoringPanelView(
-        claudeViewModel: claudeViewModel,
-        codexViewModel: codexViewModel,
-        primarySessionId: $primarySessionId
-      )
-      .padding(12)
-      .agentHubPanel()
-      .frame(minWidth: 300)
-      .padding(.vertical, 8)
-      .padding(.horizontal, 8)
+    ZStack {
+      mainContent
+        .navigationSplitViewStyle(.balanced)
+        .background(appBackground.ignoresSafeArea())
+
+      // Invisible keyboard shortcut buttons
+      keyboardShortcutButtons
     }
-    .navigationSplitViewStyle(.balanced)
-    .background(appBackground.ignoresSafeArea())
+    .overlay {
+      commandPaletteOverlay
+    }
     .onAppear {
       if hasRepositories {
         claudeViewModel.refresh()
@@ -176,7 +169,86 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  // MARK: - Main Content
+
+  private var mainContent: some View {
+    NavigationSplitView(columnVisibility: $columnVisibility) {
+      sidebarContent
+    } detail: {
+      detailContent
+    }
+    .focusable()
+  }
+
+  private var sidebarContent: some View {
+    sidePanelView
+      .agentHubPanel()
+      .navigationSplitViewColumnWidth(min: 300, ideal: 420)
+      .padding(.vertical, 8)
+      .padding(.horizontal, 8)
+  }
+
+  private var detailContent: some View {
+    MultiProviderMonitoringPanelView(
+      claudeViewModel: claudeViewModel,
+      codexViewModel: codexViewModel,
+      primarySessionId: $primarySessionId,
+      filterMode: $hubFilterMode
+    )
+    .padding(12)
+    .agentHubPanel()
+    .frame(minWidth: 300)
+    .padding(.vertical, 8)
+    .padding(.horizontal, 8)
+  }
+
+  // MARK: - Keyboard Shortcuts
+
+  private var keyboardShortcutButtons: some View {
+    Group {
+      Button("") { showCommandPalette = true }
+        .keyboardShortcut("k", modifiers: .command)
+        .hidden()
+
+      Button("") { focusSearch() }
+        .keyboardShortcut("f", modifiers: .command)
+        .hidden()
+
+      Button("") { switchToSession(index: 0) }
+        .keyboardShortcut("1", modifiers: .command)
+        .hidden()
+
+      Button("") { switchToSession(index: 1) }
+        .keyboardShortcut("2", modifiers: .command)
+        .hidden()
+
+      Button("") { switchToSession(index: 2) }
+        .keyboardShortcut("3", modifiers: .command)
+        .hidden()
+
+      Button("") { navigateSessionHistory(direction: .backward) }
+        .keyboardShortcut("[", modifiers: .command)
+        .hidden()
+
+      Button("") { navigateSessionHistory(direction: .forward) }
+        .keyboardShortcut("]", modifiers: .command)
+        .hidden()
+    }
+  }
+
   // MARK: - UI Helpers
+
+  @ViewBuilder
+  private var commandPaletteOverlay: some View {
+    if showCommandPalette {
+      CommandPaletteView(
+        isPresented: $showCommandPalette,
+        sessions: makeCommandPaletteSessions(),
+        repositories: makeCommandPaletteRepositories(),
+        onAction: handleCommandPaletteAction
+      )
+    }
+  }
 
   private var appBackground: some View {
     LinearGradient(
@@ -192,19 +264,27 @@ public struct MultiProviderSessionsListView: View {
 
   private var sessionListContent: some View {
     VStack(spacing: 0) {
-      // 1. Session Launcher (always visible)
+      // 1. New Session Button (command palette trigger)
       if let multiLaunchViewModel {
-        MultiSessionLaunchView(
+        NewSessionButton(
           viewModel: multiLaunchViewModel,
           intelligenceViewModel: intelligenceViewModel
         )
-        .padding(.bottom, 8)
+        .padding(.bottom, 12)
       }
 
-      // 2. Inline Selected Sessions (monitored + pending)
+      // 2. Provider Filter (All/Claude/Codex)
+      ProviderFilterControl(
+        filterMode: $hubFilterMode,
+        claudeCount: claudeViewModel.monitoredSessions.count + claudeViewModel.pendingHubSessions.count,
+        codexCount: codexViewModel.monitoredSessions.count + codexViewModel.pendingHubSessions.count
+      )
+      .padding(.bottom, 16)
+
+      // 3. Inline Selected Sessions (monitored + pending)
       inlineSelectedSessions
 
-      // 3. Collapsible Browse Sessions section
+      // 4. Collapsible Browse Sessions section
       browseSectionView
     }
     .animation(.easeInOut(duration: 0.2), value: isSearchExpanded)
@@ -238,27 +318,54 @@ public struct MultiProviderSessionsListView: View {
         isSearchFieldFocused = true
       }
     }) {
-      HStack(spacing: 8) {
+      HStack(spacing: 10) {
+        // Search icon
         Image(systemName: "magnifyingglass")
-          .font(.system(size: DesignTokens.IconSize.md))
+          .font(.system(size: 14))
           .foregroundColor(.secondary)
+
         Text("Search all sessions...")
           .font(.system(size: 13))
-          .foregroundColor(.secondary)
+          .foregroundColor(.secondary.opacity(0.8))
+
         Spacer()
+
+        // Keyboard shortcut badge
+        HStack(spacing: 3) {
+          Text("⌘")
+          Text("F")
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .foregroundColor(.secondary.opacity(0.6))
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(
+          Capsule()
+            .fill(Color.secondary.opacity(0.1))
+        )
       }
-      .padding(.horizontal, DesignTokens.Spacing.md)
-      .padding(.vertical, DesignTokens.Spacing.sm)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 10)
       .background(
-        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-          .fill(Color.surfaceOverlay)
+        RoundedRectangle(cornerRadius: 8)
+          .fill(
+            LinearGradient(
+              colors: [
+                Color.surfaceOverlay.opacity(0.5),
+                Color.surfaceOverlay.opacity(0.8)
+              ],
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing
+            )
+          )
       )
       .overlay(
-        RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-          .stroke(Color.borderSubtle, lineWidth: 1)
+        RoundedRectangle(cornerRadius: 8)
+          .strokeBorder(Color.borderSubtle.opacity(0.5), lineWidth: 1)
       )
     }
     .buttonStyle(.plain)
+    .help("Search sessions (⌘F)")
   }
 
   // MARK: - Expanded Search Bar
@@ -286,44 +393,54 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private var searchBarContent: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 10) {
+      // Search icon
       Image(systemName: "magnifyingglass")
-        .font(.system(size: DesignTokens.IconSize.md))
-        .foregroundColor(.secondary)
+        .font(.system(size: 14))
+        .foregroundColor(isSearchFieldFocused ? .brandPrimary(for: currentViewModel.providerKind) : .secondary)
 
+      // Repository filter button
       Button(action: { currentViewModel.showSearchFilterPicker() }) {
         Image(systemName: "folder.badge.plus")
-          .font(.system(size: DesignTokens.IconSize.md))
+          .font(.system(size: 13))
           .foregroundColor(currentViewModel.hasSearchFilter ? .brandPrimary(for: currentViewModel.providerKind) : .secondary)
       }
       .buttonStyle(.plain)
       .help("Filter by repository")
 
+      // Active filter chip
       if let filterName = currentViewModel.searchFilterName {
         HStack(spacing: 4) {
           Text(filterName)
             .font(.system(.caption, weight: .medium))
             .foregroundColor(.brandPrimary(for: currentViewModel.providerKind))
           Button(action: { currentViewModel.clearSearchFilter() }) {
-            Image(systemName: "xmark")
-              .font(.system(size: 8, weight: .bold))
-              .foregroundColor(.brandPrimary(for: currentViewModel.providerKind).opacity(0.8))
+            Image(systemName: "xmark.circle.fill")
+              .font(.system(size: 12))
+              .foregroundColor(.brandPrimary(for: currentViewModel.providerKind).opacity(0.7))
           }
           .buttonStyle(.plain)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
         .background(
           Capsule()
             .fill(Color.brandPrimary(for: currentViewModel.providerKind).opacity(0.15))
         )
       }
 
+      // Search text field
       TextField(
         currentViewModel.hasSearchFilter ? "Search in \(currentViewModel.searchFilterName ?? "")..." : "Search all sessions...",
         text: Binding(
           get: { currentViewModel.searchQuery },
-          set: { currentViewModel.searchQuery = $0 }
+          set: {
+            currentViewModel.searchQuery = $0
+            // Real-time filtering as user types
+            if !$0.isEmpty {
+              currentViewModel.performSearch()
+            }
+          }
         )
       )
       .textFieldStyle(.plain)
@@ -331,36 +448,71 @@ public struct MultiProviderSessionsListView: View {
       .focused($isSearchFieldFocused)
       .onSubmit { currentViewModel.performSearch() }
 
+      Spacer(minLength: 4)
+
+      // Clear button when text is present
       if !currentViewModel.searchQuery.isEmpty {
-        Button(action: { currentViewModel.clearSearch() }) {
-          Image(systemName: "delete.left.fill")
-            .foregroundColor(.secondary)
+        Button(action: {
+          currentViewModel.clearSearch()
+          isSearchFieldFocused = true
+        }) {
+          Image(systemName: "xmark.circle.fill")
+            .font(.system(size: 14))
+            .foregroundColor(.secondary.opacity(0.6))
         }
         .buttonStyle(.plain)
+        .help("Clear search")
+      }
 
-        if currentViewModel.isSearching {
-          ProgressView()
-            .scaleEffect(0.7)
-            .frame(width: 20, height: 20)
-        } else {
-          Button(action: { currentViewModel.performSearch() }) {
-            Image(systemName: "arrow.right.circle.fill")
-              .foregroundColor(.brandPrimary(for: currentViewModel.providerKind))
-          }
-          .buttonStyle(.plain)
+      // Search indicator or keyboard hint
+      if currentViewModel.isSearching {
+        ProgressView()
+          .scaleEffect(0.7)
+          .frame(width: 18, height: 18)
+      } else if currentViewModel.searchQuery.isEmpty && !isSearchFieldFocused {
+        // Show keyboard hint when empty and not focused
+        HStack(spacing: 3) {
+          Text("⌘")
+          Text("F")
         }
+        .font(.system(size: 10, design: .monospaced))
+        .foregroundColor(.secondary.opacity(0.5))
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(
+          Capsule()
+            .fill(Color.secondary.opacity(0.08))
+        )
       }
     }
-    .padding(.horizontal, DesignTokens.Spacing.md)
-    .padding(.vertical, DesignTokens.Spacing.sm)
+    .padding(.horizontal, 12)
+    .padding(.vertical, isSearchFieldFocused ? 11 : 10)
     .background(
-      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-        .fill(Color.surfaceOverlay)
+      RoundedRectangle(cornerRadius: 8)
+        .fill(
+          LinearGradient(
+            colors: [
+              isSearchFieldFocused ? Color.surfaceElevated : Color.surfaceOverlay.opacity(0.5),
+              isSearchFieldFocused ? Color.surfaceElevated.opacity(0.95) : Color.surfaceOverlay.opacity(0.8)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+          )
+        )
     )
     .overlay(
-      RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-        .stroke(currentViewModel.isSearchActive || currentViewModel.hasSearchFilter ? Color.brandPrimary(for: currentViewModel.providerKind).opacity(0.5) : Color.borderSubtle, lineWidth: 1)
+      RoundedRectangle(cornerRadius: 8)
+        .strokeBorder(
+          isSearchFieldFocused
+            ? Color.brandPrimary(for: currentViewModel.providerKind).opacity(0.6)
+            : (currentViewModel.hasSearchFilter
+                ? Color.brandPrimary(for: currentViewModel.providerKind).opacity(0.3)
+                : Color.borderSubtle.opacity(0.5)),
+          lineWidth: isSearchFieldFocused ? 1.5 : 1
+        )
     )
+    .scaleEffect(isSearchFieldFocused ? 1.02 : 1.0)
+    .animation(.easeInOut(duration: 0.2), value: isSearchFieldFocused)
   }
 
   private var searchResultsDropdown: some View {
@@ -386,6 +538,7 @@ public struct MultiProviderSessionsListView: View {
         ForEach(currentViewModel.searchResults) { result in
           SearchResultRow(
             result: result,
+            searchQuery: currentViewModel.searchQuery,
             onSelect: { handleSearchSelection(result, for: currentViewModel) }
           )
         }
@@ -807,6 +960,155 @@ public struct MultiProviderSessionsListView: View {
 
   private var isLoading: Bool {
     claudeViewModel.isLoading || codexViewModel.isLoading
+  }
+
+  // MARK: - Keyboard Shortcuts
+
+  private func makeCommandPaletteSessions() -> [CommandPaletteSession] {
+    var result: [CommandPaletteSession] = []
+    for item in selectedSessionItems {
+      let name = selectedSessionCustomName(for: item) ?? item.session.slug ?? item.session.shortId
+      result.append(CommandPaletteSession(id: item.id, name: name, provider: item.providerKind))
+    }
+    return result
+  }
+
+  private func makeCommandPaletteRepositories() -> [CommandPaletteRepository] {
+    var result: [CommandPaletteRepository] = []
+    for repo in allRepositories {
+      let name = URL(fileURLWithPath: repo.path).lastPathComponent
+      result.append(CommandPaletteRepository(path: repo.path, name: name))
+    }
+    return result
+  }
+
+  private func handleCommandPaletteAction(_ action: CommandPaletteAction) {
+    switch action {
+    case .newSession:
+      // Trigger new session - already handled by button
+      break
+
+    case .focusSearch:
+      focusSearch()
+
+    case .switchToSession(let id, _, _):
+      if let item = selectedSessionItems.first(where: { $0.id == id }) {
+        primarySessionId = item.id
+      }
+
+    case .selectRepository(let path, _):
+      // Already selected, could focus or expand
+      break
+
+    case .openSettings:
+      // Handle settings - would need to pass through to app level
+      break
+
+    case .toggleSidebar:
+      columnVisibility = columnVisibility == .all ? .detailOnly : .all
+    }
+  }
+
+  private func focusSearch() {
+    withAnimation(.easeInOut(duration: 0.25)) {
+      isSearchExpanded = true
+      isBrowseExpanded = true
+    }
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(150))
+      isSearchFieldFocused = true
+    }
+  }
+
+  private func switchToSession(index: Int) {
+    let items = selectedSessionItems
+    guard index < items.count else { return }
+    primarySessionId = items[index].id
+  }
+
+  private enum NavigationDirection {
+    case forward, backward
+  }
+
+  private func navigateSessionHistory(direction: NavigationDirection) {
+    let items = selectedSessionItems
+    guard !items.isEmpty else { return }
+
+    if let currentId = primarySessionId,
+       let currentIndex = items.firstIndex(where: { $0.id == currentId }) {
+      let newIndex: Int
+      switch direction {
+      case .forward:
+        newIndex = min(currentIndex + 1, items.count - 1)
+      case .backward:
+        newIndex = max(currentIndex - 1, 0)
+      }
+      primarySessionId = items[newIndex].id
+    } else {
+      // No current session, select first
+      primarySessionId = items.first?.id
+    }
+  }
+}
+
+// MARK: - ProviderFilterControl
+
+private struct ProviderFilterControl: View {
+  @Binding var filterMode: HubFilterMode
+  let claudeCount: Int
+  let codexCount: Int
+  @Environment(\.runtimeTheme) private var runtimeTheme
+
+  private var totalCount: Int {
+    claudeCount + codexCount
+  }
+
+  var body: some View {
+    HStack(spacing: 8) {
+      ForEach(HubFilterMode.allCases, id: \.self) { mode in
+        filterChip(for: mode)
+      }
+    }
+    .padding(.horizontal, 4)
+  }
+
+  private func filterChip(for mode: HubFilterMode) -> some View {
+    let isSelected = filterMode == mode
+    let count = mode == .all ? totalCount : (mode == .claude ? claudeCount : codexCount)
+
+    return Button(action: {
+      withAnimation(.easeInOut(duration: 0.2)) {
+        filterMode = mode
+      }
+    }) {
+      HStack(spacing: 6) {
+        Text(mode.displayName)
+          .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+        Text("\(count)")
+          .font(.system(size: 11, weight: .medium, design: .rounded))
+          .padding(.horizontal, 5)
+          .padding(.vertical, 2)
+          .background(
+            Capsule()
+              .fill(isSelected ? Color.white.opacity(0.2) : Color.secondary.opacity(0.15))
+          )
+      }
+      .foregroundColor(isSelected ? .white : .primary)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .background(
+        RoundedRectangle(cornerRadius: 8)
+          .fill(isSelected ? Color.brandPrimary(from: runtimeTheme) : Color.surfaceOverlay)
+      )
+      .overlay(
+        RoundedRectangle(cornerRadius: 8)
+          .strokeBorder(
+            isSelected ? Color.brandPrimary(from: runtimeTheme).opacity(0.5) : Color.borderSubtle,
+            lineWidth: 1
+          )
+      )
+    }
+    .buttonStyle(.plain)
   }
 }
 

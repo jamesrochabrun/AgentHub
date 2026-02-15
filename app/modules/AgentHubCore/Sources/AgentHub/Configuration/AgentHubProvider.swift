@@ -101,6 +101,17 @@ public final class AgentHubProvider {
     }
   }()
 
+  // MARK: - Theme Management
+
+  /// Theme manager for YAML and built-in themes
+  public private(set) lazy var themeManager: ThemeManager = {
+    let manager = ThemeManager()
+    Task { @MainActor in
+      await manager.loadSavedTheme()
+    }
+    return manager
+  }()
+
   // MARK: - View Models
 
   /// Claude sessions view model - created lazily and cached

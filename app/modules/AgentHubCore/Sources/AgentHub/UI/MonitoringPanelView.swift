@@ -282,23 +282,20 @@ public struct MonitoringPanelView: View {
   // MARK: - Empty State
 
   private var emptyState: some View {
-    VStack(spacing: 12) {
-      Image(systemName: "rectangle.on.rectangle")
-        .font(.largeTitle)
-        .foregroundColor(.secondary.opacity(0.5))
-
-      Text("No Session Selected")
-        .font(.headline)
-        .foregroundColor(.secondary)
-
-      (Text("Select a session from the sidebar or ") + Text("start a new one").bold() + Text(" to get started."))
-        .font(.caption)
-        .foregroundColor(.secondary)
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, 24)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .padding()
+    WelcomeView(viewModel: viewModel, onStartSession: {
+      // Trigger the "Start New Session" flow
+      // This should show the repository/worktree selection UI
+      // For now, we'll select the first available worktree if any exist
+      if let firstRepo = viewModel.selectedRepositories.first,
+         let firstWorktree = firstRepo.worktrees.first {
+        viewModel.startNewSessionInHub(
+          firstWorktree,
+          initialPrompt: nil,
+          initialInputText: nil,
+          dangerouslySkipPermissions: false
+        )
+      }
+    })
   }
 
   // MARK: - Maximized Card Content

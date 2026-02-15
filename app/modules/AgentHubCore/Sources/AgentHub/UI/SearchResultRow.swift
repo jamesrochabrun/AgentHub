@@ -13,9 +13,11 @@ import SwiftUI
 public struct SearchResultRow: View {
   let result: SessionSearchResult
   let onSelect: () -> Void
+  var searchQuery: String = ""
 
-  public init(result: SessionSearchResult, onSelect: @escaping () -> Void) {
+  public init(result: SessionSearchResult, searchQuery: String = "", onSelect: @escaping () -> Void) {
     self.result = result
+    self.searchQuery = searchQuery
     self.onSelect = onSelect
   }
 
@@ -96,11 +98,40 @@ public struct SearchResultRow: View {
         .font(.system(size: 10))
         .foregroundColor(.brandSecondary)
 
-      Text(result.matchedText)
-        .font(.caption)
-        .foregroundColor(.primary.opacity(0.8))
-        .lineLimit(1)
+      if searchQuery.isEmpty {
+        Text(result.matchedText)
+          .font(.caption)
+          .foregroundColor(.primary.opacity(0.8))
+          .lineLimit(1)
+      } else {
+        highlightedText(result.matchedText, matching: searchQuery)
+          .font(.caption)
+          .lineLimit(1)
+      }
     }
+  }
+
+  // MARK: - Text Highlighting
+
+  private func highlightedText(_ text: String, matching query: String) -> Text {
+    // Case-insensitive search
+    let lowercaseText = text.lowercased()
+    let lowercaseQuery = query.lowercased()
+
+    guard let range = lowercaseText.range(of: lowercaseQuery) else {
+      // No match found, return original text
+      return Text(text).foregroundColor(.primary.opacity(0.8))
+    }
+
+    let beforeMatch = String(text[..<range.lowerBound])
+    let match = String(text[range])
+    let afterMatch = String(text[range.upperBound...])
+
+    return Text(beforeMatch).foregroundColor(.primary.opacity(0.8))
+      + Text(match)
+        .foregroundColor(.brandPrimary)
+        .fontWeight(.bold)
+      + Text(afterMatch).foregroundColor(.primary.opacity(0.8))
   }
 
   // MARK: - Time Formatting

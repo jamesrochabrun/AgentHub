@@ -20,6 +20,7 @@ let package = Package(
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
     .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),
     .package(url: "https://github.com/appstefan/HighlightSwift", from: "1.1.0"),
+    .package(url: "https://github.com/jpsim/Yams", from: "5.0.0"),
   ],
   targets: [
     .target(
@@ -31,6 +32,7 @@ let package = Package(
         .product(name: "MarkdownUI", package: "swift-markdown-ui"),
         .product(name: "GRDB", package: "GRDB.swift"),
         .product(name: "HighlightSwift", package: "HighlightSwift"),
+        .product(name: "Yams", package: "Yams"),
       ],
       path: "Sources/AgentHub",
       swiftSettings: [

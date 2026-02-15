@@ -30,24 +30,28 @@ public struct SelectedSessionsPanelView: View {
         emptyState
       } else {
         ScrollView(showsIndicators: false) {
-          LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+          LazyVStack(spacing: 16, pinnedViews: [.sectionHeaders]) {
             ForEach(groupedItems, id: \.modulePath) { group in
               Section(header: ModuleSectionHeader(
                 name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
                 sessionCount: group.items.count
               )) {
-                ForEach(group.items) { item in
-                  SelectedSessionRow(
-                    session: item.session,
-                    providerKind: viewModel.providerKind,
-                    timestamp: item.timestamp,
-                    isPending: item.isPending,
-                    isPrimary: item.id == primarySessionId,
-                    customName: viewModel.sessionCustomNames[item.session.id]
-                  ) {
-                    primarySessionId = item.id
+                VStack(spacing: 6) {
+                  ForEach(group.items) { item in
+                    SelectedSessionRow(
+                      session: item.session,
+                      providerKind: viewModel.providerKind,
+                      timestamp: item.timestamp,
+                      isPending: item.isPending,
+                      isPrimary: item.id == primarySessionId,
+                      customName: viewModel.sessionCustomNames[item.session.id]
+                    ) {
+                      primarySessionId = item.id
+                    }
                   }
                 }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
               }
             }
           }
@@ -189,24 +193,28 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         emptyState
       } else {
         ScrollView(showsIndicators: false) {
-          LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+          LazyVStack(spacing: 16, pinnedViews: [.sectionHeaders]) {
             ForEach(groupedItems, id: \.modulePath) { group in
               Section(header: ModuleSectionHeader(
                 name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
                 sessionCount: group.items.count
               )) {
-                ForEach(group.items) { item in
-                  SelectedSessionRow(
-                    session: item.session,
-                    providerKind: item.providerKind,
-                    timestamp: item.timestamp,
-                    isPending: item.isPending,
-                    isPrimary: item.id == primarySessionId,
-                    customName: customName(for: item)
-                  ) {
-                    primarySessionId = item.id
+                VStack(spacing: 6) {
+                  ForEach(group.items) { item in
+                    SelectedSessionRow(
+                      session: item.session,
+                      providerKind: item.providerKind,
+                      timestamp: item.timestamp,
+                      isPending: item.isPending,
+                      isPrimary: item.id == primarySessionId,
+                      customName: customName(for: item)
+                    ) {
+                      primarySessionId = item.id
+                    }
                   }
                 }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
               }
             }
           }
@@ -378,97 +386,140 @@ private struct SelectedSessionRow: View {
   let customName: String?
   let onSelect: () -> Void
 
+  @Environment(\.colorScheme) private var colorScheme
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack(spacing: 6) {
-        Circle()
-          .fill(isPrimary ? Color.brandPrimary(for: providerKind) : .gray.opacity(0.5))
-          .frame(width: 8, height: 8)
+    HStack(spacing: 0) {
+      // Indentation spacer
+      Color.clear
+        .frame(width: 20)
 
-        if let customName {
-          Text(customName)
-            .font(.system(.subheadline, design: .monospaced))
-            .fontWeight(.semibold)
-            .lineLimit(1)
-        } else if let slug = session.slug {
-          Text(slug)
-            .font(.system(.subheadline, design: .monospaced))
-            .fontWeight(.semibold)
-            .lineLimit(1)
+      // Status indicator dot - more prominent
+      Circle()
+        .fill(statusColor)
+        .frame(width: 10, height: 10)
+        .overlay(
+          Circle()
+            .strokeBorder(statusColor.opacity(0.3), lineWidth: 2)
+        )
+        .padding(.trailing, 12)
 
-          Text("•")
-            .font(.caption)
-            .foregroundColor(.secondary)
+      // Content
+      VStack(alignment: .leading, spacing: 6) {
+        // Top row: Session name and badges
+        HStack(spacing: 6) {
+          if let customName {
+            Text(customName)
+              .font(.system(size: 13, weight: .medium, design: .monospaced))
+              .lineLimit(1)
+          } else if let slug = session.slug {
+            Text(slug)
+              .font(.system(size: 13, weight: .medium, design: .monospaced))
+              .lineLimit(1)
 
-          Text(session.shortId)
-            .font(.system(.subheadline, design: .monospaced))
-            .fontWeight(.semibold)
-        } else {
-          Text("Session: \(session.shortId)")
-            .font(.system(.subheadline, design: .monospaced))
-            .fontWeight(.semibold)
-            .lineLimit(1)
-        }
+            Text("•")
+              .font(.caption2)
+              .foregroundColor(.secondary)
 
-        Text(providerKind.rawValue)
-          .font(.caption)
-          .foregroundColor(.brandPrimary(for: providerKind))
+            Text(session.shortId)
+              .font(.system(size: 11, design: .monospaced))
+              .foregroundColor(.secondary)
+          } else {
+            Text(session.shortId)
+              .font(.system(size: 13, weight: .medium, design: .monospaced))
+              .lineLimit(1)
+          }
 
-        if isPending {
-          Text("Starting")
-            .font(.caption2)
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 6)
+          if isPending {
+            Text("Starting")
+              .font(.system(size: 9, weight: .semibold))
+              .foregroundColor(.orange)
+              .padding(.horizontal, 5)
+              .padding(.vertical, 2)
+              .background(Color.orange.opacity(0.15))
+              .clipShape(RoundedRectangle(cornerRadius: 4))
+          }
+
+          Spacer()
+
+          // Provider badge (smaller)
+          Text(providerKind.rawValue)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(.brandPrimary(for: providerKind))
+            .padding(.horizontal, 5)
             .padding(.vertical, 2)
-            .background(Color.secondary.opacity(0.12))
+            .background(Color.brandPrimary(for: providerKind).opacity(0.12))
             .clipShape(RoundedRectangle(cornerRadius: 4))
         }
 
-        Spacer()
+        // Bottom row: Branch and metadata - monospace and smaller
+        HStack(spacing: 6) {
+          if let branch = session.branchName {
+            HStack(spacing: 4) {
+              Image(systemName: "arrow.triangle.branch")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+              Text(branch)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            }
 
-        if isPrimary {
-          Image(systemName: "star.fill")
-            .font(.caption2)
-            .foregroundColor(.brandPrimary(for: providerKind))
-        }
-      }
-
-      HStack(spacing: 6) {
-        if let branch = session.branchName {
-          HStack(spacing: 2) {
-            Image(systemName: "arrow.triangle.branch")
-              .font(.caption)
-            Text(branch)
-              .font(.caption)
-              .lineLimit(1)
+            Text("•")
+              .font(.system(size: 10))
+              .foregroundColor(.secondary.opacity(0.6))
           }
-          .foregroundColor(.secondary)
 
-          Text("\u{2022}")
-            .font(.caption)
+          Text("\(session.messageCount) msgs")
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundColor(.secondary)
+
+          Text("•")
+            .font(.system(size: 10))
+            .foregroundColor(.secondary.opacity(0.6))
+
+          Text(timestamp.timeAgoDisplay())
+            .font(.system(size: 11, design: .monospaced))
             .foregroundColor(.secondary)
         }
-
-        Text("\(session.messageCount) msgs")
-          .font(.caption)
-          .foregroundColor(.secondary)
-
-        Text("\u{2022}")
-          .font(.caption)
-          .foregroundColor(.secondary)
-
-        Text(timestamp.timeAgoDisplay())
-          .font(.caption)
-          .foregroundColor(.secondary)
+        .lineLimit(1)
       }
-      .lineLimit(1)
+      .padding(.vertical, 10)
+
+      Spacer(minLength: 8)
     }
-    .padding(.vertical, 8)
-    .padding(.horizontal, 10)
+    .padding(.trailing, 12)
     .contentShape(Rectangle())
     .onTapGesture { onSelect() }
-    .agentHubFlatRow(isHighlighted: isPrimary, providerKind: providerKind)
-    .help(isPrimary ? "Primary session" : "Set as primary")
+    .background(
+      RoundedRectangle(cornerRadius: 6)
+        .fill(rowBackgroundColor)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 6)
+        .strokeBorder(isPrimary ? Color.brandPrimary(for: providerKind).opacity(0.3) : Color.clear, lineWidth: 1.5)
+    )
+    .help(isPrimary ? "Primary session (active)" : "Click to select")
+  }
+
+  private var statusColor: Color {
+    if isPrimary {
+      return Color.green // Active session
+    } else if isPending {
+      return Color.orange // Starting
+    } else {
+      return Color.gray.opacity(0.4) // Idle
+    }
+  }
+
+  private var rowBackgroundColor: Color {
+    if isPrimary {
+      return colorScheme == .dark
+        ? Color.brandPrimary(for: providerKind).opacity(0.12)
+        : Color.brandPrimary(for: providerKind).opacity(0.08)
+    } else {
+      return Color.clear
+    }
   }
 }
 
@@ -477,19 +528,31 @@ private struct SelectedSessionRow: View {
 private struct ModuleSectionHeader: View {
   let name: String
   let sessionCount: Int
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   var body: some View {
-    HStack {
+    HStack(spacing: 8) {
+      // Repository name - larger and bolder
       Text(name)
-        .font(.subheadline.weight(.semibold))
-        .foregroundColor(.secondary)
-      Spacer()
+        .font(.system(size: 14, weight: .bold))
+        .foregroundColor(.primary)
+
+      // Session count badge
       Text("\(sessionCount)")
-        .font(.caption)
-        .foregroundColor(.secondary)
+        .font(.system(size: 11, weight: .semibold, design: .rounded))
+        .foregroundColor(.white)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+          Capsule()
+            .fill(Color.brandPrimary(from: runtimeTheme).opacity(0.8))
+        )
+
+      Spacer()
     }
-    .padding(.horizontal, 4)
-    .padding(.top, 6)
-    .padding(.bottom, 10)
+    .padding(.horizontal, 8)
+    .padding(.top, 12)
+    .padding(.bottom, 8)
+    .background(Color.surfaceCanvas.opacity(0.5))
   }
 }

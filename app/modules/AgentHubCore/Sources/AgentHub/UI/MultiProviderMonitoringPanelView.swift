@@ -68,12 +68,12 @@ private enum LayoutMode: Int, CaseIterable {
 
 // MARK: - HubFilterMode
 
-private enum HubFilterMode: Int, CaseIterable {
+public enum HubFilterMode: Int, CaseIterable {
   case all = 0
   case claude = 1
   case codex = 2
 
-  var displayName: String {
+  public var displayName: String {
     switch self {
     case .all: return "All"
     case .claude: return "Claude"
@@ -104,48 +104,101 @@ private struct ModuleSectionHeader: View {
   }
 }
 
-// MARK: - HubFilterControl
+// MARK: - SessionContextHeader
 
-private struct HubFilterControl: View {
-  @Binding var filterMode: HubFilterMode
-  let claudeCount: Int
-  let codexCount: Int
-  let totalCount: Int
+private struct SessionContextHeader: View {
+  let item: ProviderMonitoringItem
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   var body: some View {
     HStack(spacing: 12) {
-      filterTab(for: .all, count: totalCount)
-      filterTab(for: .claude, count: claudeCount)
-      filterTab(for: .codex, count: codexCount)
+      // Provider badge
+      HStack(spacing: 4) {
+        Circle()
+          .fill(Color.brandPrimary(for: item.providerKind))
+          .frame(width: 6, height: 6)
+        Text(item.providerKind.rawValue)
+          .font(.system(size: 11, weight: .semibold, design: .rounded))
+          .foregroundColor(Color.brandPrimary(for: item.providerKind))
+      }
+      .padding(.horizontal, 8)
+      .padding(.vertical, 4)
+      .background(
+        Capsule()
+          .fill(Color.brandPrimary(for: item.providerKind).opacity(0.12))
+      )
+
+      // Repository name
+      Text(repositoryName)
+        .font(.system(size: 13, weight: .bold, design: .monospaced))
+        .foregroundColor(.primary)
+
+      // Branch (if available)
+      if let branch = branchName {
+        HStack(spacing: 4) {
+          Image(systemName: "arrow.branch")
+            .font(.system(size: 10))
+          Text(branch)
+            .font(.system(size: 12, design: .monospaced))
+        }
+        .foregroundColor(.secondary)
+      }
+
+      // Duration
+      HStack(spacing: 4) {
+        Image(systemName: "clock")
+          .font(.system(size: 10))
+        Text(duration)
+          .font(.system(size: 12, design: .monospaced))
+      }
+      .foregroundColor(.secondary)
+
+      // Token usage (if available)
+      if let tokens = tokenCount {
+        HStack(spacing: 4) {
+          Image(systemName: "doc.text")
+            .font(.system(size: 10))
+          Text("\(tokens) tokens")
+            .font(.system(size: 12, design: .monospaced))
+        }
+        .foregroundColor(.secondary)
+      }
     }
   }
 
-  private func filterTab(for mode: HubFilterMode, count: Int) -> some View {
-    let isSelected = filterMode == mode
+  private var repositoryName: String {
+    URL(fileURLWithPath: item.projectPath).lastPathComponent
+  }
 
-    return Button(action: { filterMode = mode }) {
-      VStack(spacing: 2) {
-        HStack(spacing: 3) {
-          Text(mode.displayName)
-            .fontWeight(isSelected ? .semibold : .regular)
-          Text("\(count)")
-            .foregroundColor(.secondary)
-        }
-        .font(.caption)
-        .foregroundColor(isSelected ? .primary : .secondary)
-
-        // Underline indicator
-        Rectangle()
-          .fill(Color.primary)
-          .frame(height: 1.5)
-          .opacity(isSelected ? 1 : 0)
-      }
-      .padding(.horizontal, 4)
-      .fixedSize()
-      .contentShape(Rectangle())
+  private var branchName: String? {
+    switch item {
+    case .pending(_, _, let pending):
+      return pending.worktree.name
+    case .monitored(_, _, let session, _):
+      return session.branchName
     }
-    .buttonStyle(.plain)
-    .animation(.easeInOut(duration: 0.2), value: filterMode)
+  }
+
+  private var duration: String {
+    let elapsed = Date().timeIntervalSince(item.timestamp)
+    if elapsed < 60 {
+      return "\(Int(elapsed))s"
+    } else if elapsed < 3600 {
+      return "\(Int(elapsed / 60))m"
+    } else {
+      let hours = Int(elapsed / 3600)
+      let minutes = Int((elapsed.truncatingRemainder(dividingBy: 3600)) / 60)
+      return "\(hours)h \(minutes)m"
+    }
+  }
+
+  private var tokenCount: Int? {
+    switch item {
+    case .pending:
+      return nil
+    case .monitored(_, _, _, let state):
+      return state?.totalTokens
+    }
   }
 }
 
@@ -215,9 +268,9 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
   @State private var sidePanelContent: SidePanelContent?
-  @State private var filterMode: HubFilterMode = .all
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
+  @Binding var filterMode: HubFilterMode
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @Environment(\.colorScheme) private var colorScheme
@@ -233,11 +286,13 @@ public struct MultiProviderMonitoringPanelView: View {
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
-    primarySessionId: Binding<String?>
+    primarySessionId: Binding<String?>,
+    filterMode: Binding<HubFilterMode>
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self._primarySessionId = primarySessionId
+    self._filterMode = filterMode
   }
 
   public var body: some View {
@@ -308,17 +363,12 @@ public struct MultiProviderMonitoringPanelView: View {
 
   private var header: some View {
     HStack(spacing: 12) {
-      Text("Hub")
-        .font(.system(size: 13, weight: .bold, design: .monospaced))
-
-      // Provider filter toggle (hidden in single mode)
-      if layoutMode != .single {
-        HubFilterControl(
-          filterMode: $filterMode,
-          claudeCount: claudeItemCount,
-          codexCount: codexItemCount,
-          totalCount: allItems.count
-        )
+      // Session Context (in single mode) or Hub title (in list/grid mode)
+      if layoutMode == .single, let item = visibleItems.first {
+        SessionContextHeader(item: item)
+      } else {
+        Text("Hub")
+          .font(.system(size: 13, weight: .bold, design: .monospaced))
       }
 
       Spacer()
@@ -347,23 +397,21 @@ public struct MultiProviderMonitoringPanelView: View {
   // MARK: - Empty State
 
   private var emptyState: some View {
-    VStack(spacing: 12) {
-      Image(systemName: "rectangle.on.rectangle")
-        .font(.largeTitle)
-        .foregroundColor(.secondary.opacity(0.5))
+    // Show welcome view with the appropriate provider's view model
+    let activeViewModel = filterMode == .codex ? codexViewModel : claudeViewModel
 
-      Text("No Session Selected")
-        .font(.headline)
-        .foregroundColor(.secondary)
-
-      (Text("Select a session from the sidebar or ") + Text("start a new one").bold() + Text(" to get started."))
-        .font(.caption)
-        .foregroundColor(.secondary)
-        .multilineTextAlignment(.center)
-        .padding(.horizontal, 24)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .padding()
+    return WelcomeView(viewModel: activeViewModel, onStartSession: {
+      // Start a new session with the first available worktree
+      if let firstRepo = activeViewModel.selectedRepositories.first,
+         let firstWorktree = firstRepo.worktrees.first {
+        activeViewModel.startNewSessionInHub(
+          firstWorktree,
+          initialPrompt: nil,
+          initialInputText: nil,
+          dangerouslySkipPermissions: false
+        )
+      }
+    })
   }
 
   // MARK: - Filtered Empty State

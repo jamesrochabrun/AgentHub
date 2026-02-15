@@ -23,6 +23,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.codexCommandLockedByDeveloper)
   private var codexCommandLocked: Bool = false
 
+  @EnvironmentObject private var themeManager: ThemeManager
+  @State private var selectedThemeId: String = UserDefaults.standard.string(forKey: "selectedTheme") ?? "claude"
+
   public init() {}
 
   public var body: some View {
@@ -103,8 +106,95 @@ public struct SettingsView: View {
       } header: {
         Text("Notifications")
       }
+
+      Section {
+        Picker("Theme", selection: $selectedThemeId) {
+          // Built-in themes
+          ForEach(AppTheme.allCases) { theme in
+            Text(theme.displayName).tag(theme.rawValue)
+          }
+
+          // YAML themes
+          if !themeManager.availableYAMLThemes.isEmpty {
+            Divider()
+            ForEach(themeManager.availableYAMLThemes) { metadata in
+              Text(metadata.name).tag(metadata.id)
+            }
+          }
+        }
+        .onChange(of: selectedThemeId) { _, newValue in
+          Task {
+            if let appTheme = AppTheme(rawValue: newValue) {
+              themeManager.loadBuiltInTheme(appTheme)
+            } else if let yamlTheme = themeManager.availableYAMLThemes.first(where: { $0.id == newValue }),
+                      let fileURL = yamlTheme.fileURL {
+              try? await themeManager.loadTheme(fileURL: fileURL)
+            }
+          }
+        }
+
+        HStack(spacing: 8) {
+          Button("Import Theme...") {
+            showThemeImportPanel()
+          }
+
+          Button("Open Themes Folder") {
+            themeManager.openThemesFolder()
+          }
+
+          Button(action: {
+            Task { await themeManager.discoverThemes() }
+          }) {
+            Image(systemName: "arrow.clockwise")
+          }
+          .help("Refresh theme list")
+        }
+      } header: {
+        Text("Theme")
+      } footer: {
+        VStack(alignment: .leading, spacing: 4) {
+          Text("Place .yaml theme files in ~/Library/Application Support/AgentHub/Themes/")
+          if themeManager.currentTheme.isYAML {
+            Text("✨ Theme changes are automatically reloaded")
+              .foregroundColor(.green)
+          }
+        }
+        .font(.caption)
+      }
     }
     .formStyle(.grouped)
-    .frame(width: 300, height: 280)
+    .frame(width: 300, height: 500)
+  }
+
+  private func showThemeImportPanel() {
+    let panel = NSOpenPanel()
+    panel.allowedContentTypes = [.init(filenameExtension: "yaml")!, .init(filenameExtension: "yml")!]
+    panel.allowsMultipleSelection = false
+    panel.canChooseDirectories = false
+
+    guard panel.runModal() == .OK, let url = panel.url else { return }
+
+    // Copy to themes directory
+    let themesDir = ThemeManager.themesDirectory()
+    let destination = themesDir.appendingPathComponent(url.lastPathComponent)
+
+    do {
+      try FileManager.default.createDirectory(at: themesDir, withIntermediateDirectories: true)
+
+      // Remove existing file if it exists
+      if FileManager.default.fileExists(atPath: destination.path) {
+        try FileManager.default.removeItem(at: destination)
+      }
+
+      try FileManager.default.copyItem(at: url, to: destination)
+      Task {
+        await themeManager.discoverThemes()
+        try? await themeManager.loadTheme(fileURL: destination)
+        selectedThemeId = destination.lastPathComponent
+      }
+    } catch {
+      // In a real app, show a proper error alert
+      print("Failed to import theme: \(error)")
+    }
   }
 }

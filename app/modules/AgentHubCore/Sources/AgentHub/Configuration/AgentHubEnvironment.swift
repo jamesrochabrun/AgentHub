@@ -47,6 +47,8 @@ private struct AgentHubModifier: ViewModifier {
       .environment(\.agentHub, provider)
       .environment(provider.statsService)
       .environment(provider.displaySettings)
+      .environmentObject(provider.themeManager)
+      .environment(\.runtimeTheme, provider.themeManager.currentTheme)
   }
 }
 

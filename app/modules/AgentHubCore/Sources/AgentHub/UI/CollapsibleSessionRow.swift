@@ -18,6 +18,10 @@ struct CollapsibleSessionRow: View {
 
   @State private var gradientProgress: CGFloat = 0
   @State private var showArchiveConfirm = false
+  @State private var pulseScale: CGFloat = 1.0
+  @State private var glowOpacity: Double = 0.0
+  @State private var lastSeenActivityAt: Date?
+  @State private var hasNewActivity = false
 
   private var tildeProjectPath: String {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -44,6 +48,21 @@ struct CollapsibleSessionRow: View {
     case .thinking, .executingTool: return true
     default: return false
     }
+  }
+
+  private var statusIcon: String? {
+    guard let sessionStatus else { return nil }
+    switch sessionStatus {
+    case .thinking: return nil  // Use pulsing dot
+    case .executingTool: return nil  // Use pulsing dot
+    case .waitingForUser: return "checkmark.circle.fill"
+    case .awaitingApproval: return "exclamationmark.circle.fill"
+    case .idle: return nil
+    }
+  }
+
+  private var shouldPulse: Bool {
+    isActiveStatus
   }
 
   private func statusDisplayText(_ status: SessionStatus) -> String {
@@ -134,12 +153,24 @@ struct CollapsibleSessionRow: View {
             .foregroundColor(.brandPrimary(for: providerKind))
         }
 
-        // Dot + timestamp + status
+        // Status indicator + timestamp + status
         HStack(spacing: 5) {
-          Circle()
-            .fill(statusColor)
-            .frame(width: 6, height: 6)
-            .opacity(isActiveStatus ? 1.0 : 0.6)
+          // Status indicator (icon or pulsing dot)
+          ZStack {
+            if let icon = statusIcon {
+              Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(statusColor)
+            } else {
+              // Pulsing dot for active states
+              Circle()
+                .fill(statusColor)
+                .frame(width: 6, height: 6)
+                .scaleEffect(shouldPulse ? pulseScale : 1.0)
+                .opacity(isActiveStatus ? 1.0 : 0.6)
+            }
+          }
+          .frame(width: 10, height: 10)
 
           Text(timestamp.timeAgoDisplay())
             .font(.system(size: 11))
@@ -168,7 +199,12 @@ struct CollapsibleSessionRow: View {
     }
     .foregroundColor(.primary)
     .contentShape(Rectangle())
-    .onTapGesture { onSelect() }
+    .onTapGesture {
+      // Mark as seen when user taps
+      hasNewActivity = false
+      lastSeenActivityAt = timestamp
+      onSelect()
+    }
     .background(
       ZStack {
         RoundedRectangle(cornerRadius: 8)
@@ -191,6 +227,29 @@ struct CollapsibleSessionRow: View {
           )
       }
     )
+    .overlay {
+      // New activity glow border
+      if hasNewActivity {
+        RoundedRectangle(cornerRadius: 8)
+          .strokeBorder(
+            LinearGradient(
+              colors: [
+                Color.brandPrimary(for: providerKind).opacity(glowOpacity),
+                Color.brandPrimary(for: providerKind).opacity(glowOpacity * 0.5)
+              ],
+              startPoint: .topLeading,
+              endPoint: .bottomTrailing
+            ),
+            lineWidth: 2
+          )
+          .shadow(
+            color: Color.brandPrimary(for: providerKind).opacity(glowOpacity * 0.4),
+            radius: 8,
+            x: 0,
+            y: 0
+          )
+      }
+    }
     .overlay(alignment: .bottomTrailing) {
       if !isPending, (onArchive != nil || onDeleteWorktree != nil) {
         HStack(spacing: 4) {
@@ -261,10 +320,77 @@ struct CollapsibleSessionRow: View {
     }
     .onAppear {
       gradientProgress = isPrimary ? 1 : 0
+      lastSeenActivityAt = timestamp
+      startPulseAnimation()
     }
     .onChange(of: isPrimary) { _, newValue in
       withAnimation(.interpolatingSpring(mass: 0.8, stiffness: 350, damping: 22, initialVelocity: 0)) {
         gradientProgress = newValue ? 1 : 0
+      }
+
+      // Mark as seen when becomes primary
+      if newValue {
+        hasNewActivity = false
+        lastSeenActivityAt = timestamp
+      }
+    }
+    .onChange(of: sessionStatus) { oldValue, newValue in
+      // Restart pulse animation if status changed
+      startPulseAnimation()
+
+      // Detect status changes that indicate new activity
+      if oldValue != newValue, !isPrimary {
+        detectNewActivity()
+      }
+    }
+    .onChange(of: timestamp) { oldValue, newValue in
+      // Detect new activity based on timestamp change
+      if !isPrimary, let lastSeen = lastSeenActivityAt, newValue > lastSeen {
+        detectNewActivity()
+      }
+    }
+  }
+
+  // MARK: - Animations
+
+  private func startPulseAnimation() {
+    guard shouldPulse else {
+      pulseScale = 1.0
+      return
+    }
+
+    withAnimation(
+      .easeInOut(duration: 1.0)
+      .repeatForever(autoreverses: true)
+    ) {
+      pulseScale = 1.4
+    }
+  }
+
+  private func detectNewActivity() {
+    guard !isPrimary else { return }
+
+    hasNewActivity = true
+
+    // Animate glow in
+    withAnimation(.easeInOut(duration: 0.3)) {
+      glowOpacity = 0.8
+    }
+
+    // Pulse the glow
+    withAnimation(
+      .easeInOut(duration: 1.5)
+      .repeatForever(autoreverses: true)
+    ) {
+      glowOpacity = 0.4
+    }
+
+    // Auto-dismiss after 30 seconds
+    Task { @MainActor in
+      try? await Task.sleep(for: .seconds(30))
+      withAnimation(.easeOut(duration: 0.5)) {
+        hasNewActivity = false
+        glowOpacity = 0.0
       }
     }
   }

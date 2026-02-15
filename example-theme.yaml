@@ -1,0 +1,27 @@
+name: "Midnight Aurora"
+version: "1.0"
+author: "AgentHub Team"
+description: "A beautiful dark theme with aurora-inspired colors"
+
+colors:
+  # Brand colors (required)
+  brand:
+    primary: "#9333EA"
+    secondary: "#D946EF"
+    tertiary: "#C4B5FD"
+
+  # Background colors (optional)
+  backgrounds:
+    dark: "#262624"
+    light: "#FAF9F5"
+    expandedContentDark: "#1F2421"
+    expandedContentLight: "#FFFFFF"
+
+  # Background gradient (optional)
+  backgroundGradient:
+    - color: "#9333EA"
+      opacity: 0.08
+    - color: "#D946EF"
+      opacity: 0.04
+    - color: "#000000"
+      opacity: 0.0
