@@ -18,6 +18,8 @@ struct CollapsibleSessionRow: View {
 
   @State private var gradientProgress: CGFloat = 0
   @State private var showArchiveConfirm = false
+  @State private var pulseScale: CGFloat = 1.0
+  @State private var isPulseAnimating = false
 
   private var tildeProjectPath: String {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -44,6 +46,21 @@ struct CollapsibleSessionRow: View {
     case .thinking, .executingTool: return true
     default: return false
     }
+  }
+
+  private var statusIcon: String? {
+    guard let sessionStatus else { return nil }
+    switch sessionStatus {
+    case .thinking: return nil  // Use pulsing dot
+    case .executingTool: return nil  // Use pulsing dot
+    case .waitingForUser: return "checkmark.circle.fill"
+    case .awaitingApproval: return "exclamationmark.circle.fill"
+    case .idle: return nil
+    }
+  }
+
+  private var shouldPulse: Bool {
+    isActiveStatus
   }
 
   private func statusDisplayText(_ status: SessionStatus) -> String {
@@ -134,12 +151,24 @@ struct CollapsibleSessionRow: View {
             .foregroundColor(.brandPrimary(for: providerKind))
         }
 
-        // Dot + timestamp + status
+        // Status indicator + timestamp + status
         HStack(spacing: 5) {
-          Circle()
-            .fill(statusColor)
-            .frame(width: 6, height: 6)
-            .opacity(isActiveStatus ? 1.0 : 0.6)
+          // Status indicator (icon or pulsing dot)
+          ZStack {
+            if let icon = statusIcon {
+              Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(statusColor)
+            } else {
+              // Pulsing dot for active states
+              Circle()
+                .fill(statusColor)
+                .frame(width: 6, height: 6)
+                .scaleEffect(shouldPulse ? pulseScale : 1.0)
+                .opacity(isActiveStatus ? 1.0 : 0.6)
+            }
+          }
+          .frame(width: 10, height: 10)
 
           Text(timestamp.timeAgoDisplay())
             .font(.system(size: 11))
@@ -261,11 +290,40 @@ struct CollapsibleSessionRow: View {
     }
     .onAppear {
       gradientProgress = isPrimary ? 1 : 0
+      startPulseAnimation()
     }
     .onChange(of: isPrimary) { _, newValue in
       withAnimation(.interpolatingSpring(mass: 0.8, stiffness: 350, damping: 22, initialVelocity: 0)) {
         gradientProgress = newValue ? 1 : 0
       }
+    }
+    .onChange(of: sessionStatus) { _, _ in
+      // Restart pulse animation if status changed
+      startPulseAnimation()
+    }
+  }
+
+  // MARK: - Animations
+
+  private func startPulseAnimation() {
+    guard shouldPulse else {
+      guard isPulseAnimating else { return }
+      isPulseAnimating = false
+      withAnimation(.easeOut(duration: 0.2)) {
+        pulseScale = 1.0
+      }
+      return
+    }
+
+    guard !isPulseAnimating else { return }
+    isPulseAnimating = true
+    pulseScale = 1.0
+
+    withAnimation(
+      .easeInOut(duration: 1.0)
+      .repeatForever(autoreverses: true)
+    ) {
+      pulseScale = 1.4
     }
   }
 }
