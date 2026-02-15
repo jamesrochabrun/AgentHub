@@ -41,14 +41,20 @@ extension EnvironmentValues {
 /// View modifier that injects AgentHub provider into the environment
 private struct AgentHubModifier: ViewModifier {
   let provider: AgentHubProvider
+  @ObservedObject var themeManager: ThemeManager
+
+  init(provider: AgentHubProvider) {
+    self.provider = provider
+    self.themeManager = provider.themeManager
+  }
 
   func body(content: Content) -> some View {
     content
       .environment(\.agentHub, provider)
       .environment(provider.statsService)
       .environment(provider.displaySettings)
-      .environmentObject(provider.themeManager)
-      .environment(\.runtimeTheme, provider.themeManager.currentTheme)
+      .environmentObject(themeManager)
+      .environment(\.runtimeTheme, themeManager.currentTheme)
   }
 }
 

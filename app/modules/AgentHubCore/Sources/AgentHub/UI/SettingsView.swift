@@ -24,7 +24,7 @@ public struct SettingsView: View {
   private var codexCommandLocked: Bool = false
 
   @EnvironmentObject private var themeManager: ThemeManager
-  @State private var selectedThemeId: String = UserDefaults.standard.string(forKey: "selectedTheme") ?? "claude"
+  @AppStorage("selectedTheme") private var selectedThemeId: String = "claude"
 
   public init() {}
 
