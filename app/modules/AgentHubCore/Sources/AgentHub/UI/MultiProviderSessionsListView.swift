@@ -34,6 +34,7 @@ public struct MultiProviderSessionsListView: View {
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
   @State private var showCommandPalette = false
+  @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
@@ -266,9 +267,18 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private var sidePanelView: some View {
-    ScrollView(showsIndicators: false) {
-      sessionListContent
-        .padding(12)
+    ScrollViewReader { proxy in
+      ScrollView(showsIndicators: false) {
+        sessionListContent
+          .padding(12)
+      }
+      .onChange(of: scrollToSessionId) { _, newId in
+        guard let newId else { return }
+        withAnimation(.easeInOut(duration: 0.25)) {
+          proxy.scrollTo(newId, anchor: .top)
+        }
+        scrollToSessionId = nil
+      }
     }
   }
 
@@ -567,6 +577,7 @@ public struct MultiProviderSessionsListView: View {
             insertion: .opacity,
             removal: .move(edge: .trailing).combined(with: .opacity)
           ))
+          .id(item.id)
         }
       }
       .padding(.bottom, 8)
@@ -882,6 +893,7 @@ public struct MultiProviderSessionsListView: View {
     case .switchToSession(let id, _, _, _):
       if let item = selectedSessionItems.first(where: { $0.id == id }) {
         primarySessionId = item.id
+        scrollToSessionId = item.id
       }
 
     case .selectRepository:
