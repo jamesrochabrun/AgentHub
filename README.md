@@ -26,6 +26,16 @@ https://github.com/user-attachments/assets/c616c904-d165-4516-8478-afb810c13606
 
 https://github.com/user-attachments/assets/c20c1f3e-745d-4a39-8599-37ad242b3ae6
 
+## Integrated Community Work
+
+This branch includes selected ideas from community contribution [#127](https://github.com/jamesrochabrun/AgentHub/pull/127), incorporated into the current AgentHub direction:
+
+- **Realtime status indicators** integrated into the current monitoring surfaces
+- **Keyboard navigation and command palette improvements** aligned with focused-session workflows
+- **Search behavior updates** tuned to prioritize first-message relevance for session discovery
+- **Theme foundation work** expanded with bundled Sentry YAML support and runtime theme propagation
+- **Empty state and start-session UX** brought into the latest Hub layout and interaction patterns
+
 ## Requirements
 
 - macOS 14.0+
