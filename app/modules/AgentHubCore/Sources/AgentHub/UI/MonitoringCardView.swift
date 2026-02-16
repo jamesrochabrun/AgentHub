@@ -658,7 +658,7 @@ public struct MonitoringCardView: View {
           HStack(spacing: 4) {
             Image(systemName: "arrow.clockwise")
               .font(.caption2)
-            Text("Refresh")
+            Text("Refresh terminal")
               .font(.caption2)
           }
           .foregroundColor(.secondary)

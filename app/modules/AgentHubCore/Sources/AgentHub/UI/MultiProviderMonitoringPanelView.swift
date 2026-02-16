@@ -257,7 +257,9 @@ public struct MultiProviderMonitoringPanelView: View {
 
         Divider()
 
-        if allItems.isEmpty {
+        if isLoading {
+          loadingState
+        } else if allItems.isEmpty {
           emptyState
         } else if visibleItems.isEmpty {
           filteredEmptyState
@@ -353,6 +355,23 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
+  }
+
+  // MARK: - Loading State
+
+  private var isLoading: Bool {
+    claudeViewModel.isLoading || codexViewModel.isLoading
+  }
+
+  private var loadingState: some View {
+    VStack(spacing: 12) {
+      ProgressView()
+        .scaleEffect(0.8)
+      Text("Restoring sessions...")
+        .font(.system(size: 12, weight: .regular, design: .monospaced))
+        .foregroundColor(.secondary)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   // MARK: - Empty State

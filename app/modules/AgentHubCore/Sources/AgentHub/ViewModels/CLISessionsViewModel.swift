@@ -417,6 +417,13 @@ public final class CLISessionsViewModel {
     let savedTimeout = UserDefaults.standard.integer(forKey: "CLISessionsApprovalTimeout")
     self.approvalTimeoutSeconds = savedTimeout > 0 ? savedTimeout : 5
 
+    // Set loading state synchronously so the UI never shows empty state during restoration
+    if let data = UserDefaults.standard.data(forKey: persistenceKey),
+       let paths = try? JSONDecoder().decode([String].self, from: data),
+       !paths.isEmpty {
+      loadingState = .restoringRepositories
+    }
+
     setupSubscriptions()
     restorePersistedRepositories()
     requestNotificationPermissions()
