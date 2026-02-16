@@ -17,6 +17,7 @@ import UniformTypeIdentifiers
 public struct MultiSessionLaunchView: View {
   @Bindable var viewModel: MultiSessionLaunchViewModel
   var intelligenceViewModel: IntelligenceViewModel?
+  var expandRequestID: Int = 0
 
   @AppStorage(AgentHubDefaults.smartModeEnabled) private var smartModeEnabled: Bool = false
 
@@ -123,6 +124,11 @@ public struct MultiSessionLaunchView: View {
         withAnimation(.easeInOut(duration: 0.2)) {
           isExpanded = false
         }
+      }
+    }
+    .onChange(of: expandRequestID) { _, _ in
+      withAnimation(.easeInOut(duration: 0.2)) {
+        isExpanded = true
       }
     }
   }

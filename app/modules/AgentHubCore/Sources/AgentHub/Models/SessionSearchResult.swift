@@ -20,6 +20,7 @@ public struct SessionSearchResult: Identifiable, Sendable, Equatable {
   public let lastActivityAt: Date
   public let matchedField: SearchMatchField
   public let matchedText: String
+  public let relevanceScore: Int
 
   public init(
     id: String,
@@ -30,7 +31,8 @@ public struct SessionSearchResult: Identifiable, Sendable, Equatable {
     summaries: [String],
     lastActivityAt: Date,
     matchedField: SearchMatchField,
-    matchedText: String
+    matchedText: String,
+    relevanceScore: Int = 0
   ) {
     self.id = id
     self.slug = slug
@@ -41,6 +43,7 @@ public struct SessionSearchResult: Identifiable, Sendable, Equatable {
     self.lastActivityAt = lastActivityAt
     self.matchedField = matchedField
     self.matchedText = matchedText
+    self.relevanceScore = relevanceScore
   }
 
   /// Returns the repository name (last path component)

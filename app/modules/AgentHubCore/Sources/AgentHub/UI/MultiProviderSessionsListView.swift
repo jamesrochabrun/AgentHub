@@ -33,8 +33,11 @@ public struct MultiProviderSessionsListView: View {
   @State private var primarySessionId: String?
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
+  @State private var showCommandPalette = false
+  @State private var launchExpandRequestID = 0
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.openSettings) private var openSettings
 
   @AppStorage(AgentHubDefaults.selectedSidePanelProvider)
   private var selectedProviderRaw: String = "Claude"
@@ -54,26 +57,34 @@ public struct MultiProviderSessionsListView: View {
   }
 
   public var body: some View {
-    NavigationSplitView(columnVisibility: $columnVisibility) {
-      sidePanelView
+    ZStack {
+      NavigationSplitView(columnVisibility: $columnVisibility) {
+        sidePanelView
+          .agentHubPanel()
+          .navigationSplitViewColumnWidth(min: 300, ideal: 420)
+          .padding(.vertical, 8)
+          .padding(.horizontal, 8)
+      } detail: {
+        MultiProviderMonitoringPanelView(
+          claudeViewModel: claudeViewModel,
+          codexViewModel: codexViewModel,
+          primarySessionId: $primarySessionId
+        )
+        .padding(12)
         .agentHubPanel()
-        .navigationSplitViewColumnWidth(min: 300, ideal: 420)
+        .frame(minWidth: 300)
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
-    } detail: {
-      MultiProviderMonitoringPanelView(
-        claudeViewModel: claudeViewModel,
-        codexViewModel: codexViewModel,
-        primarySessionId: $primarySessionId
-      )
-      .padding(12)
-      .agentHubPanel()
-      .frame(minWidth: 300)
-      .padding(.vertical, 8)
-      .padding(.horizontal, 8)
+      }
+      .navigationSplitViewStyle(.balanced)
+      .background(appBackground.ignoresSafeArea())
+
+      // Invisible global keyboard shortcuts.
+      keyboardShortcutButtons
     }
-    .navigationSplitViewStyle(.balanced)
-    .background(appBackground.ignoresSafeArea())
+    .overlay {
+      commandPaletteOverlay
+    }
     .onAppear {
       if hasRepositories {
         claudeViewModel.refresh()
@@ -178,6 +189,41 @@ public struct MultiProviderSessionsListView: View {
 
   // MARK: - UI Helpers
 
+  private var keyboardShortcutButtons: some View {
+    Group {
+      Button("") { showCommandPalette = true }
+        .keyboardShortcut("k", modifiers: .command)
+        .hidden()
+
+      Button("") { handleCommandPaletteAction(.newSession) }
+        .keyboardShortcut("n", modifiers: .command)
+        .hidden()
+
+      Button("") { handleCommandPaletteAction(.toggleSidebar) }
+        .keyboardShortcut("b", modifiers: .command)
+        .hidden()
+
+      Button("") { navigateSessionHistory(direction: .backward) }
+        .keyboardShortcut("[", modifiers: .command)
+        .hidden()
+
+      Button("") { navigateSessionHistory(direction: .forward) }
+        .keyboardShortcut("]", modifiers: .command)
+        .hidden()
+    }
+  }
+
+  @ViewBuilder
+  private var commandPaletteOverlay: some View {
+    if showCommandPalette {
+      CommandPaletteView(
+        isPresented: $showCommandPalette,
+        sessions: makeCommandPaletteSessions(),
+        onAction: handleCommandPaletteAction
+      )
+    }
+  }
+
   private var appBackground: some View {
     LinearGradient(
       colors: [
@@ -196,7 +242,8 @@ public struct MultiProviderSessionsListView: View {
       if let multiLaunchViewModel {
         MultiSessionLaunchView(
           viewModel: multiLaunchViewModel,
-          intelligenceViewModel: intelligenceViewModel
+          intelligenceViewModel: intelligenceViewModel,
+          expandRequestID: launchExpandRequestID
         )
         .padding(.bottom, 8)
       }
@@ -807,6 +854,77 @@ public struct MultiProviderSessionsListView: View {
 
   private var isLoading: Bool {
     claudeViewModel.isLoading || codexViewModel.isLoading
+  }
+
+  // MARK: - Keyboard Shortcuts
+
+  private func makeCommandPaletteSessions() -> [CommandPaletteSession] {
+    var result: [CommandPaletteSession] = []
+    for item in selectedSessionItems {
+      let name = selectedSessionCustomName(for: item) ?? item.session.slug ?? item.session.shortId
+      result.append(
+        CommandPaletteSession(
+          id: item.id,
+          name: name,
+          provider: item.providerKind,
+          firstMessage: item.session.firstMessage
+        )
+      )
+    }
+    return result
+  }
+
+  private func handleCommandPaletteAction(_ action: CommandPaletteAction) {
+    switch action {
+    case .newSession:
+      triggerNewSessionFlow()
+
+    case .switchToSession(let id, _, _, _):
+      if let item = selectedSessionItems.first(where: { $0.id == id }) {
+        primarySessionId = item.id
+      }
+
+    case .selectRepository:
+      break
+
+    case .openSettings:
+      openSettings()
+
+    case .toggleSidebar:
+      columnVisibility = columnVisibility == .all ? .detailOnly : .all
+    }
+  }
+
+  private func triggerNewSessionFlow() {
+    withAnimation(.easeInOut(duration: 0.2)) {
+      isBrowseExpanded = true
+    }
+    launchExpandRequestID += 1
+    multiLaunchViewModel?.reset()
+    multiLaunchViewModel?.selectRepository()
+  }
+
+  private enum NavigationDirection {
+    case forward, backward
+  }
+
+  private func navigateSessionHistory(direction: NavigationDirection) {
+    let items = selectedSessionItems
+    guard !items.isEmpty else { return }
+
+    if let currentId = primarySessionId,
+       let currentIndex = items.firstIndex(where: { $0.id == currentId }) {
+      let newIndex: Int
+      switch direction {
+      case .forward:
+        newIndex = min(currentIndex + 1, items.count - 1)
+      case .backward:
+        newIndex = max(currentIndex - 1, 0)
+      }
+      primarySessionId = items[newIndex].id
+    } else {
+      primarySessionId = items.first?.id
+    }
   }
 }
 
