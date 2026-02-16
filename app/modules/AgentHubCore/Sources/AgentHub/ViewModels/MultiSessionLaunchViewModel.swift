@@ -238,6 +238,30 @@ public final class MultiSessionLaunchViewModel {
     }
   }
 
+  /// Clears the currently selected repository and related branch state.
+  public func clearSelectedRepository() {
+    selectedRepository = nil
+    availableBranches = []
+    currentBranchName = ""
+    baseBranch = nil
+    isLoadingBranches = false
+    isLoadingCurrentBranch = false
+  }
+
+  /// Preselects a repository already tracked by either provider.
+  /// Returns true when a matching repository was found and selected.
+  @discardableResult
+  public func preselectRepository(path: String) async -> Bool {
+    let combined = claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
+    guard let repository = combined.last(where: { $0.path == path }) else {
+      return false
+    }
+
+    selectedRepository = repository
+    await loadBranches()
+    return true
+  }
+
   /// Loads local branches and current branch for the selected repository.
   /// Uses a single `git branch` call to get both, reducing process spawns from 3 to 1-2.
   public func loadBranches() async {
