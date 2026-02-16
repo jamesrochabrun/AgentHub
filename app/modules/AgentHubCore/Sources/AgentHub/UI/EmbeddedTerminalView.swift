@@ -128,8 +128,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
 // MARK: - TerminalContainerView
 
 /// Container view that manages the terminal lifecycle
-public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDelegate {
-  private var terminalView: SafeLocalProcessTerminalView?
+public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDelegate, NSMenuItemValidation {
+  var terminalView: SafeLocalProcessTerminalView?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
@@ -140,6 +140,46 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// The PID of the current terminal process, if running
   public var currentProcessPID: Int32? {
     terminalView?.currentProcessId
+  }
+
+  // MARK: - First Responder & Key Equivalents
+
+  public override var acceptsFirstResponder: Bool { true }
+
+  public override func mouseDown(with event: NSEvent) {
+    if let terminal = terminalView {
+      window?.makeFirstResponder(terminal)
+    }
+    super.mouseDown(with: event)
+  }
+
+  public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    guard event.modifierFlags.contains(.command),
+          let terminal = terminalView,
+          let characters = event.charactersIgnoringModifiers
+    else {
+      return super.performKeyEquivalent(with: event)
+    }
+
+    switch characters {
+    case "c":
+      // Only copy if there's an active selection; otherwise let Ctrl+C
+      // (SIGINT) pass through by returning false.
+      guard terminal.selectionActive else { return false }
+      terminal.copy(self)
+      return true
+
+    case "v":
+      terminal.paste(self)
+      return true
+
+    case "a":
+      terminal.selectAll(nil)
+      return true
+
+    default:
+      return super.performKeyEquivalent(with: event)
+    }
   }
 
   // MARK: - Lifecycle
@@ -209,6 +249,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     ])
 
     self.terminalView = terminal
+    configureEditMenu(on: terminal)
     installInteractionMonitorIfNeeded()
 
     // Start the CLI process
@@ -287,33 +328,19 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private func installInteractionMonitorIfNeeded() {
     guard localEventMonitor == nil else { return }
-    localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseUp]) { [weak self] event in
+    localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { [weak self] event in
       guard let self, let terminal = self.terminalView else { return event }
 
       switch event.type {
       case .keyDown:
-        guard let window = terminal.window,
-              event.window === window,
-              isTerminalResponderActive(window: window, terminal: terminal) else {
-          return event
+        if let window = terminal.window, event.window === window, isTerminalResponderActive(window: window, terminal: terminal) {
+          self.onUserInteraction?()
         }
-
-        if handleCommandShortcut(event, terminal: terminal) {
-          return nil
-        }
-
-        // Defer state updates until after key processing to avoid fighting selection/rendering.
-        DispatchQueue.main.async { [weak self] in
-          self?.onUserInteraction?()
-        }
-      case .leftMouseUp:
+      case .leftMouseDown:
         guard let window = terminal.window, event.window === window else { return event }
         let locationInTerminal = terminal.convert(event.locationInWindow, from: nil)
         if terminal.bounds.contains(locationInTerminal) {
-          // Defer selection updates until after mouse handling completes.
-          DispatchQueue.main.async { [weak self] in
-            self?.onUserInteraction?()
-          }
+          self.onUserInteraction?()
         }
       default:
         break
@@ -332,21 +359,53 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     return false
   }
 
-  private func handleCommandShortcut(_ event: NSEvent, terminal: TerminalView) -> Bool {
-    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-    let expectsCommandOnly = flags == .command
-    guard expectsCommandOnly else { return false }
+  // MARK: - Edit Menu
 
-    let normalizedCharacters = event.charactersIgnoringModifiers?.lowercased()
-    switch normalizedCharacters {
-    case "c":
-      terminal.copy(self)
-      return true
-    case "v":
-      terminal.paste(self)
-      return true
+  private func configureEditMenu(on view: NSView) {
+    let editMenu = NSMenu()
+
+    let copy = NSMenuItem(title: "Copy", action: #selector(handleCopy(_:)), keyEquivalent: "c")
+    copy.keyEquivalentModifierMask = .command
+    copy.target = self
+
+    let paste = NSMenuItem(title: "Paste", action: #selector(handlePaste(_:)), keyEquivalent: "v")
+    paste.keyEquivalentModifierMask = .command
+    paste.target = self
+
+    let selectAll = NSMenuItem(title: "Select All", action: #selector(handleSelectAll(_:)), keyEquivalent: "a")
+    selectAll.keyEquivalentModifierMask = .command
+    selectAll.target = self
+
+    editMenu.addItem(copy)
+    editMenu.addItem(paste)
+    editMenu.addItem(.separator())
+    editMenu.addItem(selectAll)
+
+    view.menu = editMenu
+  }
+
+  @objc private func handleCopy(_ sender: Any?) {
+    terminalView?.copy(self)
+  }
+
+  @objc private func handlePaste(_ sender: Any?) {
+    terminalView?.paste(self)
+  }
+
+  @objc private func handleSelectAll(_ sender: Any?) {
+    terminalView?.selectAll(nil)
+  }
+
+  public func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    switch menuItem.action {
+    case #selector(handleCopy(_:)):
+      return terminalView?.selectionActive ?? false
+    case #selector(handlePaste(_:)):
+      return NSPasteboard.general.string(forType: .string) != nil
+    case #selector(handleSelectAll(_:)):
+      return terminalView != nil
     default:
-      return false
+      return true
     }
   }
 

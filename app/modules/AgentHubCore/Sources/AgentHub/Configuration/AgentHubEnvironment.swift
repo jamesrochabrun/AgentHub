@@ -41,7 +41,7 @@ extension EnvironmentValues {
 /// View modifier that injects AgentHub provider into the environment
 private struct AgentHubModifier: ViewModifier {
   let provider: AgentHubProvider
-  @ObservedObject var themeManager: ThemeManager
+  let themeManager: ThemeManager
 
   init(provider: AgentHubProvider) {
     self.provider = provider
@@ -53,7 +53,7 @@ private struct AgentHubModifier: ViewModifier {
       .environment(\.agentHub, provider)
       .environment(provider.statsService)
       .environment(provider.displaySettings)
-      .environmentObject(themeManager)
+      .environment(themeManager)
       .environment(\.runtimeTheme, themeManager.currentTheme)
   }
 }

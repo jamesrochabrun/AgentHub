@@ -36,28 +36,13 @@ private struct RemoveTitleToolbarModifier: ViewModifier {
 /// ```
 public struct AgentHubSessionsView: View {
   @Environment(\.agentHub) private var agentHub
-  @State private var isShowingIntelligenceOverlay = false
   @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
   public init() {}
 
   public var body: some View {
     if let provider = agentHub {
-      ZStack(alignment: .top) {
-        // Main content
-        sessionsListView(provider: provider)
-
-        // Intelligence overlay
-        if isShowingIntelligenceOverlay {
-          IntelligenceOverlayView(
-            viewModel: Binding(
-              get: { provider.intelligenceViewModel },
-              set: { _ in }
-            ),
-            isPresented: $isShowingIntelligenceOverlay
-          )
-        }
-      }
+      sessionsListView(provider: provider)
     } else {
       missingProviderView
     }
@@ -77,8 +62,6 @@ public struct AgentHubSessionsView: View {
         ToolbarItem(placement: .principal) {
           HStack {
             Spacer()
-            // TODO: Re-enable IntelligencePopoverButton after investigation
-            // IntelligencePopoverButton(isShowingOverlay: $isShowingIntelligenceOverlay)
             // Stats button (popover mode only)
             if provider.displaySettings.isPopoverMode {
               GlobalStatsPopoverButton(

@@ -189,7 +189,7 @@ public struct MonitoringCardView: View {
       RoundedRectangle(cornerRadius: 8)
         .stroke(
           showPrimaryIndicator && isPrimarySession
-            ? Color.brandPrimary(for: providerKind).opacity(0.35)
+           ? Color.brandPrimary(for: providerKind)
             : Color.clear,
           lineWidth: 1
         )

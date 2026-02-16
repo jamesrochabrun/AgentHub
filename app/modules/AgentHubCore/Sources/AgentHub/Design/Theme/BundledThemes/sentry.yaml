@@ -1,0 +1,14 @@
+name: "Sentry"
+version: "1.0"
+author: "Sentry"
+description: "Official Sentry-inspired color theme"
+
+colors:
+  brand:
+    primary: "#E1567C"
+    secondary: "#362D59"
+    tertiary: "#584774"
+
+  backgrounds:
+    dark: "#1A1625"
+    light: "#FAF9FB"

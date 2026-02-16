@@ -29,6 +29,7 @@ public struct CLISessionsListView: View {
   @State private var isSearchSheetVisible: Bool = false
   @State private var primarySessionId: String?
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
   @FocusState private var isSearchFieldFocused: Bool
 
   public init(viewModel: CLISessionsViewModel, columnVisibility: Binding<NavigationSplitViewVisibility>) {
@@ -136,15 +137,21 @@ public struct CLISessionsListView: View {
   // MARK: - App Background
 
   private var appBackground: some View {
-    LinearGradient(
-      colors: [
-        Color.surfaceCanvas,
-        Color.surfaceCanvas.opacity(colorScheme == .dark ? 0.98 : 0.94),
-        Color.brandTertiary.opacity(colorScheme == .dark ? 0.06 : 0.1)
-      ],
-      startPoint: .topLeading,
-      endPoint: .bottomTrailing
-    )
+    Group {
+      if runtimeTheme?.hasCustomBackgrounds == true {
+        Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+      } else {
+        LinearGradient(
+          colors: [
+            Color.surfaceCanvas,
+            Color.surfaceCanvas.opacity(colorScheme == .dark ? 0.98 : 0.94),
+            Color.brandTertiary.opacity(colorScheme == .dark ? 0.06 : 0.1)
+          ],
+          startPoint: .topLeading,
+          endPoint: .bottomTrailing
+        )
+      }
+    }
   }
 
   // MARK: - Session List Content

@@ -73,7 +73,7 @@ public enum HubFilterMode: Int, CaseIterable {
   case claude = 1
   case codex = 2
 
-  public var displayName: String {
+  var displayName: String {
     switch self {
     case .all: return "All"
     case .claude: return "Claude"
@@ -104,101 +104,48 @@ private struct ModuleSectionHeader: View {
   }
 }
 
-// MARK: - SessionContextHeader
+// MARK: - HubFilterControl
 
-private struct SessionContextHeader: View {
-  let item: ProviderMonitoringItem
-  @Environment(\.runtimeTheme) private var runtimeTheme
+struct HubFilterControl: View {
+  @Binding var filterMode: HubFilterMode
+  let claudeCount: Int
+  let codexCount: Int
+  let totalCount: Int
 
   var body: some View {
     HStack(spacing: 12) {
-      // Provider badge
-      HStack(spacing: 4) {
-        Circle()
-          .fill(Color.brandPrimary(for: item.providerKind))
-          .frame(width: 6, height: 6)
-        Text(item.providerKind.rawValue)
-          .font(.system(size: 11, weight: .semibold, design: .rounded))
-          .foregroundColor(Color.brandPrimary(for: item.providerKind))
-      }
-      .padding(.horizontal, 8)
-      .padding(.vertical, 4)
-      .background(
-        Capsule()
-          .fill(Color.brandPrimary(for: item.providerKind).opacity(0.12))
-      )
+      filterTab(for: .all, count: totalCount)
+      filterTab(for: .claude, count: claudeCount)
+      filterTab(for: .codex, count: codexCount)
+    }
+  }
 
-      // Repository name
-      Text(repositoryName)
-        .font(.system(size: 13, weight: .bold, design: .monospaced))
-        .foregroundColor(.primary)
+  private func filterTab(for mode: HubFilterMode, count: Int) -> some View {
+    let isSelected = filterMode == mode
 
-      // Branch (if available)
-      if let branch = branchName {
-        HStack(spacing: 4) {
-          Image(systemName: "arrow.branch")
-            .font(.system(size: 10))
-          Text(branch)
-            .font(.system(size: 12, design: .monospaced))
+    return Button(action: { filterMode = mode }) {
+      VStack(spacing: 2) {
+        HStack(spacing: 3) {
+          Text(mode.displayName)
+            .fontWeight(isSelected ? .semibold : .regular)
+          Text("\(count)")
+            .foregroundColor(.secondary)
         }
-        .foregroundColor(.secondary)
+        .font(.caption)
+        .foregroundColor(isSelected ? .primary : .secondary)
+
+        // Underline indicator
+        Rectangle()
+          .fill(Color.primary)
+          .frame(height: 1.5)
+          .opacity(isSelected ? 1 : 0)
       }
-
-      // Duration
-      HStack(spacing: 4) {
-        Image(systemName: "clock")
-          .font(.system(size: 10))
-        Text(duration)
-          .font(.system(size: 12, design: .monospaced))
-      }
-      .foregroundColor(.secondary)
-
-      // Token usage (if available)
-      if let tokens = tokenCount {
-        HStack(spacing: 4) {
-          Image(systemName: "doc.text")
-            .font(.system(size: 10))
-          Text("\(tokens) tokens")
-            .font(.system(size: 12, design: .monospaced))
-        }
-        .foregroundColor(.secondary)
-      }
+      .padding(.horizontal, 4)
+      .fixedSize()
+      .contentShape(Rectangle())
     }
-  }
-
-  private var repositoryName: String {
-    URL(fileURLWithPath: item.projectPath).lastPathComponent
-  }
-
-  private var branchName: String? {
-    switch item {
-    case .pending(_, _, let pending):
-      return pending.worktree.name
-    case .monitored(_, _, let session, _):
-      return session.branchName
-    }
-  }
-
-  private var duration: String {
-    let elapsed = Date().timeIntervalSince(item.timestamp)
-    if elapsed < 60 {
-      return "\(Int(elapsed))s"
-    } else if elapsed < 3600 {
-      return "\(Int(elapsed / 60))m"
-    } else {
-      let hours = Int(elapsed / 3600)
-      let minutes = Int((elapsed.truncatingRemainder(dividingBy: 3600)) / 60)
-      return "\(hours)h \(minutes)m"
-    }
-  }
-
-  private var tokenCount: Int? {
-    switch item {
-    case .pending:
-      return nil
-    case .monitored(_, _, _, let state):
-      return state?.totalTokens
-    }
+    .buttonStyle(.plain)
+    .animation(.easeInOut(duration: 0.2), value: filterMode)
   }
 }
 
@@ -264,16 +211,18 @@ enum ProviderMonitoringItem: Identifiable {
 public struct MultiProviderMonitoringPanelView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
+  let onRequestStartSession: (String?) -> Void
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
   @State private var sidePanelContent: SidePanelContent?
+  @Binding var filterMode: HubFilterMode
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
-  @Binding var filterMode: HubFilterMode
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
@@ -286,13 +235,15 @@ public struct MultiProviderMonitoringPanelView: View {
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
+    filterMode: Binding<HubFilterMode>,
     primarySessionId: Binding<String?>,
-    filterMode: Binding<HubFilterMode>
+    onRequestStartSession: @escaping (String?) -> Void
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
-    self._primarySessionId = primarySessionId
     self._filterMode = filterMode
+    self._primarySessionId = primarySessionId
+    self.onRequestStartSession = onRequestStartSession
   }
 
   public var body: some View {
@@ -300,7 +251,7 @@ public struct MultiProviderMonitoringPanelView: View {
       if let maximizedId = maximizedSessionId {
         maximizedCardContent(for: maximizedId)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .background(Color(white: colorScheme == .dark ? 0.07 : 0.92))
+          .background(maximizedContainerBackgroundColor)
       } else {
         header
 
@@ -308,16 +259,14 @@ public struct MultiProviderMonitoringPanelView: View {
 
         if allItems.isEmpty {
           emptyState
-        } else if layoutMode != .single && visibleItems.isEmpty {
-          filteredEmptyState
         } else if visibleItems.isEmpty {
-          emptyState
+          filteredEmptyState
         } else {
           monitoredSessionsList
         }
       }
     }
-    .background(colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.96))
+    .background(monitorContainerBackgroundColor)
     .cornerRadius(8)
     .sheet(item: $sessionFileSheetItem) { item in
       MonitoringSessionFileSheetView(
@@ -342,11 +291,6 @@ public struct MultiProviderMonitoringPanelView: View {
     .onChange(of: allItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
     }
-    .onChange(of: layoutModeRawValue) { _, _ in
-      if layoutMode == .single {
-        filterMode = .all
-      }
-    }
     .onChange(of: effectivePrimarySessionId) { _, _ in
       sidePanelContent = nil
     }
@@ -359,17 +303,28 @@ public struct MultiProviderMonitoringPanelView: View {
     }
   }
 
+  private var monitorContainerBackgroundColor: Color {
+    let defaultBackground = colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.96)
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    }
+    return defaultBackground
+  }
+
+  private var maximizedContainerBackgroundColor: Color {
+    let defaultBackground = colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92)
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    }
+    return defaultBackground
+  }
+
   // MARK: - Header
 
   private var header: some View {
     HStack(spacing: 12) {
-      // Session Context (in single mode) or Hub title (in list/grid mode)
-      if layoutMode == .single, let item = visibleItems.first {
-        SessionContextHeader(item: item)
-      } else {
-        Text("Hub")
-          .font(.system(size: 13, weight: .bold, design: .monospaced))
-      }
+      Text("Hub")
+        .font(.system(size: 13, weight: .bold, design: .monospaced))
 
       Spacer()
 
@@ -397,21 +352,10 @@ public struct MultiProviderMonitoringPanelView: View {
   // MARK: - Empty State
 
   private var emptyState: some View {
-    // Show welcome view with the appropriate provider's view model
-    let activeViewModel = filterMode == .codex ? codexViewModel : claudeViewModel
-
-    return WelcomeView(viewModel: activeViewModel, onStartSession: {
-      // Start a new session with the first available worktree
-      if let firstRepo = activeViewModel.selectedRepositories.first,
-         let firstWorktree = firstRepo.worktrees.first {
-        activeViewModel.startNewSessionInHub(
-          firstWorktree,
-          initialPrompt: nil,
-          initialInputText: nil,
-          dangerouslySkipPermissions: false
-        )
-      }
-    })
+    WelcomeView(
+      viewModel: emptyStateViewModel,
+      onStartSession: onRequestStartSession
+    )
   }
 
   // MARK: - Filtered Empty State
@@ -450,21 +394,29 @@ public struct MultiProviderMonitoringPanelView: View {
           }
         )
     } else {
-      ScrollView {
-        if layoutMode == .list {
-          LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-            monitoredSessionsGroupedContent
+      ScrollViewReader { proxy in
+        ScrollView {
+          if layoutMode == .list {
+            LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+              monitoredSessionsGroupedContent
+            }
+            .padding(12)
+          } else {
+            let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
+            LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
+              monitoredSessionsGroupedContent
+            }
+            .padding(12)
           }
-          .padding(12)
-        } else {
-          let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
-          LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
-            monitoredSessionsGroupedContent
+        }
+        .animation(.easeInOut(duration: 0.2), value: layoutMode)
+        .onChange(of: primarySessionId) { _, newId in
+          guard let newId else { return }
+          withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(newId, anchor: .top)
           }
-          .padding(12)
         }
       }
-      .animation(.easeInOut(duration: 0.2), value: layoutMode)
     }
   }
 
@@ -647,6 +599,7 @@ public struct MultiProviderMonitoringPanelView: View {
               isPrimarySession: isPrimary,
               showPrimaryIndicator: layoutMode != .single
             )
+            .id(item.id)
 
           case .monitored(_, let viewModel, let session, let state):
             let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
@@ -701,6 +654,7 @@ public struct MultiProviderMonitoringPanelView: View {
               isPrimarySession: isPrimary,
               showPrimaryIndicator: layoutMode != .single
             )
+            .id(item.id)
           }
         }
       }
@@ -717,26 +671,23 @@ public struct MultiProviderMonitoringPanelView: View {
     }
   }
 
-  private var effectivePrimarySessionId: String? {
-    if let current = primarySessionId, allItems.contains(where: { $0.id == current }) {
-      return current
-    }
-    return allItems.sorted { $0.timestamp > $1.timestamp }.first?.id
+  private var filteredItems: [ProviderMonitoringItem] {
+    allItems.filter { shouldShowItem($0) }
   }
 
-  private var itemsForLayoutMode: [ProviderMonitoringItem] {
-    if layoutMode == .single {
-      guard let selectedId = effectivePrimarySessionId else { return [] }
-      return allItems.filter { $0.id == selectedId }
+  private var effectivePrimarySessionId: String? {
+    if let current = primarySessionId, filteredItems.contains(where: { $0.id == current }) {
+      return current
     }
-    return allItems
+    return filteredItems.sorted { $0.timestamp > $1.timestamp }.first?.id
   }
 
   private var visibleItems: [ProviderMonitoringItem] {
     if layoutMode == .single {
-      return itemsForLayoutMode
+      guard let selectedId = effectivePrimarySessionId else { return [] }
+      return filteredItems.filter { $0.id == selectedId }
     }
-    return itemsForLayoutMode.filter { shouldShowItem($0) }
+    return filteredItems
   }
 
   private var claudeItemCount: Int {
@@ -887,6 +838,19 @@ public struct MultiProviderMonitoringPanelView: View {
       map[repo.path] = repo
     }
     return map.values.sorted { $0.path < $1.path }
+  }
+
+  private var emptyStateViewModel: CLISessionsViewModel {
+    switch filterMode {
+    case .claude:
+      return claudeViewModel
+    case .codex:
+      return codexViewModel
+    case .all:
+      if !claudeViewModel.selectedRepositories.isEmpty { return claudeViewModel }
+      if !codexViewModel.selectedRepositories.isEmpty { return codexViewModel }
+      return claudeViewModel
+    }
   }
 
   private func findModulePath(for item: ProviderMonitoringItem) -> String {

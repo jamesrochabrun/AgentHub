@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 // MARK: - GlobalSearchService
 
@@ -44,7 +45,7 @@ public actor GlobalSearchService {
 
     guard !query.isEmpty else { return [] }
 
-    let lowercaseQuery = query.lowercased()
+    let searchStart = ContinuousClock.now
     var results: [SessionSearchResult] = []
 
     for (_, entry) in sessionIndex {
@@ -55,22 +56,71 @@ public actor GlobalSearchService {
         }
       }
 
-      // Check each searchable field in priority order
-      if entry.slug.lowercased().contains(lowercaseQuery) {
-        results.append(makeResult(from: entry, matchedField: .slug, matchedText: entry.slug))
-      } else if entry.projectPath.lowercased().contains(lowercaseQuery) {
-        results.append(makeResult(from: entry, matchedField: .path, matchedText: entry.projectPath))
-      } else if let branch = entry.gitBranch, branch.lowercased().contains(lowercaseQuery) {
-        results.append(makeResult(from: entry, matchedField: .gitBranch, matchedText: branch))
-      } else if let matchedSummary = entry.summaries.first(where: { $0.lowercased().contains(lowercaseQuery) }) {
-        results.append(makeResult(from: entry, matchedField: .summary, matchedText: matchedSummary))
-      } else if let message = entry.firstMessage, message.lowercased().contains(lowercaseQuery) {
-        results.append(makeResult(from: entry, matchedField: .firstMessage, matchedText: message))
+      // Score ALL fields and keep the best match
+      var bestScore = 0
+      var bestField: SearchMatchField = .slug
+      var bestText = ""
+
+      let candidates: [(String?, SearchMatchField, Int)] = [
+        (entry.slug, .slug, 5),
+        (entry.firstMessage, .firstMessage, 3),
+        (entry.gitBranch, .gitBranch, 2),
+        (entry.projectPath, .path, 0),
+      ]
+
+      for (text, field, fieldBonus) in candidates {
+        guard let text, !text.isEmpty else { continue }
+        if let match = SearchScoring.score(query: query, against: text) {
+          let total = match.score + fieldBonus
+          if total > bestScore {
+            bestScore = total
+            bestField = field
+            bestText = text
+          }
+        }
+      }
+
+      // Score summaries separately (pick best)
+      for summary in entry.summaries {
+        if let match = SearchScoring.score(query: query, against: summary) {
+          let total = match.score + 1
+          if total > bestScore {
+            bestScore = total
+            bestField = .summary
+            bestText = summary
+          }
+        }
+      }
+
+      if bestScore > 0 {
+        results.append(SessionSearchResult(
+          id: entry.sessionId,
+          slug: entry.slug,
+          projectPath: entry.projectPath,
+          gitBranch: entry.gitBranch,
+          firstMessage: entry.firstMessage,
+          summaries: entry.summaries,
+          lastActivityAt: entry.lastActivityAt,
+          matchedField: bestField,
+          matchedText: bestText,
+          relevanceScore: bestScore
+        ))
+        AppLogger.search.debug("[GlobalSearch] match: \(entry.slug) field=\(bestField.rawValue) score=\(bestScore)")
       }
     }
 
-    // Sort by last activity (most recent first)
-    return results.sorted { $0.lastActivityAt > $1.lastActivityAt }
+    // Sort by relevance descending, then by last activity as tiebreaker
+    results.sort { lhs, rhs in
+      if lhs.relevanceScore != rhs.relevanceScore {
+        return lhs.relevanceScore > rhs.relevanceScore
+      }
+      return lhs.lastActivityAt > rhs.lastActivityAt
+    }
+
+    let elapsed = ContinuousClock.now - searchStart
+    AppLogger.search.info("[GlobalSearch] query=\(query) results=\(results.count) elapsed=\(elapsed)")
+
+    return results
   }
 
   /// Forces a rebuild of the search index
@@ -87,6 +137,7 @@ public actor GlobalSearchService {
   // MARK: - Index Building
 
   private func buildIndex() async {
+    let buildStart = ContinuousClock.now
     sessionIndex.removeAll()
 
     // Step 1: Parse history.jsonl to discover all sessions
@@ -138,6 +189,10 @@ public actor GlobalSearchService {
 
     isIndexBuilt = true
     updateLastHistoryModTime()
+
+    let indexCount = sessionIndex.count
+    let elapsed = ContinuousClock.now - buildStart
+    AppLogger.search.info("[GlobalSearch] index built: \(indexCount) sessions in \(elapsed)")
   }
 
   // MARK: - History Parsing
@@ -272,25 +327,6 @@ public actor GlobalSearchService {
     }
   }
 
-  // MARK: - Result Building
-
-  private func makeResult(
-    from entry: SessionIndexEntry,
-    matchedField: SearchMatchField,
-    matchedText: String
-  ) -> SessionSearchResult {
-    SessionSearchResult(
-      id: entry.sessionId,
-      slug: entry.slug,
-      projectPath: entry.projectPath,
-      gitBranch: entry.gitBranch,
-      firstMessage: entry.firstMessage,
-      summaries: entry.summaries,
-      lastActivityAt: entry.lastActivityAt,
-      matchedField: matchedField,
-      matchedText: matchedText
-    )
-  }
 }
 
 // MARK: - Protocol Conformance

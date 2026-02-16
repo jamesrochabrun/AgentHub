@@ -24,35 +24,20 @@ public final class IntelligenceViewModel {
   /// Stream processor for handling responses
   private let streamProcessor = IntelligenceStreamProcessor()
 
-  /// Orchestration service for parallel worktree operations
-  private var orchestrationService: WorktreeOrchestrationService?
-
   /// Current loading state
   public private(set) var isLoading: Bool = false
 
-  /// Last assistant response text
+  /// Last assistant response text (accumulated across all messages)
   public private(set) var lastResponse: String = ""
+
+  /// Text from the most recent assistant message only (excludes exploration/tool steps)
+  public private(set) var lastAssistantMessage: String = ""
 
   /// Error message if any
   public private(set) var errorMessage: String?
 
-  /// Working directory for Claude operations
-  public var workingDirectory: String?
-
-  /// Orchestration progress message
-  public private(set) var orchestrationProgress: String?
-
-  /// Detailed worktree creation progress
-  public private(set) var worktreeProgress: WorktreeCreationProgress?
-
-  /// Pending orchestration plan to execute after stream completes
-  private var pendingOrchestrationPlan: OrchestrationPlan?
-
   /// Parsed orchestration plan captured during planning mode (exposed for smart launch)
   public private(set) var parsedOrchestrationPlan: OrchestrationPlan?
-
-  /// When true, orchestration plans are captured instead of auto-executed
-  private var isPlanningMode = false
 
   /// Steps tracked during tool use (planning / exploration)
   public struct ToolStep: Identifiable {
@@ -67,11 +52,7 @@ public final class IntelligenceViewModel {
   // MARK: - Initialization
 
   /// Creates a new IntelligenceViewModel with a Claude Code client
-  public init(
-    claudeClient: ClaudeCode? = nil,
-    gitService: GitWorktreeService? = nil,
-    monitorService: CLISessionMonitorService? = nil
-  ) {
+  public init(claudeClient: ClaudeCode? = nil) {
     // Create Claude client
     if let client = claudeClient {
       self.claudeClient = client
@@ -106,27 +87,6 @@ public final class IntelligenceViewModel {
       }
     }
 
-    // Create orchestration service if dependencies provided
-    if let gitService = gitService, let monitorService = monitorService {
-      self.orchestrationService = WorktreeOrchestrationService(
-        gitService: gitService,
-        monitorService: monitorService,
-        claudeClient: self.claudeClient
-      )
-
-      self.orchestrationService?.onProgress = { [weak self] progress in
-        Task { @MainActor in
-          self?.orchestrationProgress = progress.message
-        }
-      }
-
-      self.orchestrationService?.onWorktreeProgress = { [weak self] progress in
-        Task { @MainActor in
-          self?.worktreeProgress = progress
-        }
-      }
-    }
-
     setupStreamCallbacks()
   }
 
@@ -152,115 +112,38 @@ public final class IntelligenceViewModel {
     streamProcessor.onComplete = { [weak self] in
       guard let self = self else { return }
       Task { @MainActor in
-        // Execute pending orchestration AFTER stream completes (avoids race condition)
-        if let plan = self.pendingOrchestrationPlan {
-          self.pendingOrchestrationPlan = nil
-          if self.isPlanningMode {
-            // Capture for smart launch — don't auto-execute
-            self.parsedOrchestrationPlan = plan
-          } else {
-            await self.executeOrchestrationPlan(plan)
-          }
-        }
         self.isLoading = false
-        self.orchestrationProgress = nil
-        self.worktreeProgress = nil
       }
     }
 
     streamProcessor.onError = { [weak self] error in
       Task { @MainActor in
         self?.isLoading = false
-        self?.orchestrationProgress = nil
-        self?.worktreeProgress = nil
         self?.errorMessage = error.localizedDescription
       }
     }
 
-    // Store orchestration plan for execution after stream completes (avoid race condition)
     streamProcessor.onOrchestrationPlan = { [weak self] plan in
-      self?.pendingOrchestrationPlan = plan
-    }
-  }
-
-  private func executeOrchestrationPlan(_ plan: OrchestrationPlan) async {
-    guard let orchestrationService = orchestrationService else {
-      return
+      self?.parsedOrchestrationPlan = plan
     }
 
-    do {
-      _ = try await orchestrationService.executePlan(plan)
-    } catch {
-      self.errorMessage = "Orchestration failed: \(error.localizedDescription)"
+    streamProcessor.onLastAssistantMessage = { [weak self] text in
+      self?.lastAssistantMessage = text
+    }
+
+    streamProcessor.onResultMessage = { [weak self] resultMessage in
+      guard let self, self.parsedOrchestrationPlan == nil,
+            let resultText = resultMessage.result, !resultText.isEmpty else { return }
+      // Try parsing orchestration plan from the result message text
+      if let plan = WorktreeOrchestrationTool.parseFromText(resultText)
+           ?? WorktreeOrchestrationTool.parseJSONFromText(resultText) {
+        self.parsedOrchestrationPlan = plan
+        AppLogger.intelligence.info("Parsed orchestration plan from ResultMessage (\(plan.sessions.count) sessions)")
+      }
     }
   }
 
   // MARK: - Public Methods
-
-  /// Send a message to Claude Code
-  /// - Parameter text: The user's prompt
-  public func sendMessage(_ text: String) {
-    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-    guard !isLoading else { return }
-
-    // Reset state
-    lastResponse = ""
-    errorMessage = nil
-    orchestrationProgress = nil
-    worktreeProgress = nil
-    pendingOrchestrationPlan = nil
-    isPlanningMode = false
-    toolSteps = []
-    isLoading = true
-
-    AppLogger.intelligence.info("sendMessage: starting (\(text.prefix(80))…)")
-
-    // Determine if we're in orchestration mode (working directory selected)
-    let isOrchestrationMode = workingDirectory != nil && orchestrationService != nil
-
-    Task {
-      do {
-        // Configure working directory if set
-        if let workingDir = workingDirectory {
-          claudeClient.configuration.workingDirectory = workingDir
-        }
-
-        // Create options
-        var options = ClaudeCodeOptions()
-        // Use default permission mode for simple operations
-        options.permissionMode = .default
-
-        // Use orchestration system prompt if in orchestration mode
-        if isOrchestrationMode, let workingDir = workingDirectory {
-          options.systemPrompt = """
-            \(WorktreeOrchestrationTool.systemPrompt)
-
-            CONTEXT:
-            - Working directory: \(workingDir)
-            - Use this path as the modulePath in your orchestration plan
-            """
-
-          // Use disallowedTools to prevent file modifications during orchestration
-          options.disallowedTools = ["Edit", "MultiEdit", "Write", "AskUserQuestion", "Bash"]
-        }
-
-        // Send the prompt
-        let result = try await claudeClient.runSinglePrompt(
-          prompt: text,
-          outputFormat: .streamJson,
-          options: options
-        )
-
-        // Process the result
-        await processResult(result)
-      } catch {
-        await MainActor.run {
-          self.isLoading = false
-          self.errorMessage = error.localizedDescription
-        }
-      }
-    }
-  }
 
   /// Cancel the current request
   public func cancelRequest() {
@@ -272,18 +155,16 @@ public final class IntelligenceViewModel {
 
   /// Generate a plan using Claude Code SDK in plan mode.
   /// Streams a structured implementation plan without executing any changes.
-  /// Sets `isPlanningMode` so any detected `<orchestration-plan>` is captured
-  /// in `parsedOrchestrationPlan` instead of being auto-executed.
+  /// Any detected `<orchestration-plan>` is captured in `parsedOrchestrationPlan`.
   public func generatePlan(prompt: String, workingDirectory: String) {
     guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     guard !isLoading else { return }
 
     // Reset state
     lastResponse = ""
+    lastAssistantMessage = ""
     errorMessage = nil
-    pendingOrchestrationPlan = nil
     parsedOrchestrationPlan = nil
-    isPlanningMode = true
     toolSteps = []
     isLoading = true
 
@@ -345,38 +226,6 @@ public final class IntelligenceViewModel {
         }
       }
     }
-  }
-
-  /// System prompt optimized for planning (no execution).
-  static func planningSystemPrompt(workingDirectory: String) -> String {
-    """
-    You are a senior software engineering planner. Your job is to explore the \
-    codebase and then design a detailed, actionable implementation plan.
-
-    CONTEXT:
-    - Working directory: \(workingDirectory)
-
-    PHASE 1 — EXPLORE (use tools):
-    Use Read, Grep, Glob, and Bash (read-only commands like ls, git log, git diff, \
-    cat, find) to understand the codebase structure, existing patterns, and relevant \
-    files before planning. Explore thoroughly — the better you understand the code, \
-    the better your plan will be.
-
-    PHASE 2 — PLAN (output markdown):
-    After exploring, present a clear structured plan in markdown:
-    - **Summary**: One-paragraph overview of the approach
-    - **Files to modify**: List each file with what changes are needed and why
-    - **Files to create** (if any): New files with their purpose
-    - **Implementation order**: Numbered steps in dependency order
-    - **Risks / considerations**: Edge cases, breaking changes, testing notes
-
-    RULES:
-    - Do NOT execute any changes (no Edit, Write, or MultiEdit)
-    - Do NOT ask the user questions
-    - Bash is allowed ONLY for read-only commands (git, ls, find, cat, head, wc)
-    - Be specific: reference actual file paths, function names, and line ranges
-    - Use markdown formatting
-    """
   }
 
   /// Update the Claude client

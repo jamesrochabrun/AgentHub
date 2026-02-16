@@ -2,45 +2,39 @@
 //  WelcomeView.swift
 //  AgentHub
 //
-//  Rich welcome/onboarding view for the empty state
+//  Rich welcome/onboarding view for the empty state.
 //
 
 import SwiftUI
 
 // MARK: - WelcomeView
 
-/// Rich welcome screen shown when no session is selected
+/// Rich welcome screen shown when no session is selected.
 public struct WelcomeView: View {
   let viewModel: CLISessionsViewModel
-  let onStartSession: () -> Void
+  let onStartSession: (String?) -> Void
 
   @Environment(\.colorScheme) private var colorScheme
-  @Environment(\.runtimeTheme) private var runtimeTheme
 
-  public init(viewModel: CLISessionsViewModel, onStartSession: @escaping () -> Void) {
+  public init(viewModel: CLISessionsViewModel, onStartSession: @escaping (String?) -> Void) {
     self.viewModel = viewModel
     self.onStartSession = onStartSession
   }
 
   public var body: some View {
     ScrollView {
-      VStack(spacing: 32) {
-        // Hero section
+      VStack(spacing: 24) {
         heroSection
-
-        // Quick start guide
         quickStartSection
 
-        // Recent repositories
-        if !viewModel.selectedRepositories.isEmpty {
+        if !recentRepositories.isEmpty {
           recentRepositoriesSection
         }
 
-        // Tips section
         tipsSection
       }
-      .padding(40)
-      .frame(maxWidth: 800)
+      .padding(28)
+      .frame(maxWidth: 760)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(backgroundGradient)
@@ -49,108 +43,78 @@ public struct WelcomeView: View {
   // MARK: - Hero Section
 
   private var heroSection: some View {
-    VStack(spacing: 20) {
-      // App icon/logo area
+    VStack(spacing: 14) {
       ZStack {
         Circle()
-          .fill(Color.brandPrimary(from: runtimeTheme).opacity(0.1))
-          .frame(width: 100, height: 100)
+          .fill(Color.brandPrimary.opacity(0.1))
+          .frame(width: 76, height: 76)
 
-        Image(systemName: "terminal.fill")
-          .font(.system(size: 44))
-          .foregroundColor(Color.brandPrimary(from: runtimeTheme))
+        Image(systemName: "apple.terminal.on.rectangle")
+          .font(.system(size: 30))
+          .foregroundColor(.brandPrimary)
       }
 
-      VStack(spacing: 8) {
+      VStack(spacing: 6) {
         Text("Welcome to AgentHub")
-          .font(.system(size: 32, weight: .bold))
+          .font(.system(size: 22, weight: .semibold, design: .monospaced))
           .foregroundColor(.primary)
 
-        Text("Start a new session to begin working with Claude Code")
-          .font(.system(size: 15))
+        Text("Start a new session with Claude, Codex, or both.")
+          .font(.system(size: 12, weight: .regular, design: .monospaced))
           .foregroundColor(.secondary)
           .multilineTextAlignment(.center)
       }
 
-      // Primary CTA button
-      Button(action: onStartSession) {
-        HStack(spacing: 12) {
+      Button(action: {
+        onStartSession(latestRecentRepositoryPath)
+      }) {
+        HStack(spacing: 8) {
           Image(systemName: "plus.circle.fill")
-            .font(.system(size: 18))
+            .font(.system(size: 13))
           Text("Start New Session")
-            .font(.system(size: 16, weight: .semibold))
+            .font(.system(size: 12, weight: .semibold, design: .monospaced))
         }
-        .foregroundColor(.white)
-        .frame(height: 44)
-        .padding(.horizontal, 32)
+        .foregroundColor(colorScheme == .dark ? .black : .white)
+        .frame(height: 36)
+        .padding(.horizontal, 20)
         .background(
-          RoundedRectangle(cornerRadius: 12)
-            .fill(Color.brandPrimary(from: runtimeTheme))
+          RoundedRectangle(cornerRadius: 10)
+            .fill(Color.brandPrimary)
         )
-        .shadow(color: Color.brandPrimary(from: runtimeTheme).opacity(0.3), radius: 8, y: 4)
+        .shadow(color: Color.brandPrimary.opacity(0.28), radius: 6, y: 3)
       }
       .buttonStyle(.plain)
-      .padding(.top, 8)
+      .padding(.top, 2)
     }
   }
 
   // MARK: - Quick Start Section
 
   private var quickStartSection: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: 12) {
       sectionHeader(title: "Quick Start", icon: "bolt.fill")
 
-      VStack(spacing: 12) {
-        shortcutRow(
-          key: "⌘ N",
-          description: "Start new session",
-          icon: "plus.circle"
-        )
-
-        shortcutRow(
-          key: "⌘ K",
-          description: "Command palette",
-          icon: "command"
-        )
-
-        shortcutRow(
-          key: "⌘ F",
-          description: "Focus search",
-          icon: "magnifyingglass"
-        )
-
-        shortcutRow(
-          key: "⌘ 1/2/3",
-          description: "Switch sessions",
-          icon: "square.stack.3d.up"
-        )
-
-        shortcutRow(
-          key: "⌘ [ / ]",
-          description: "Navigate history",
-          icon: "arrow.left.arrow.right"
-        )
-
-        shortcutRow(
-          key: "⌘ ,",
-          description: "Open settings",
-          icon: "gearshape"
-        )
+      VStack(spacing: 10) {
+        shortcutRow(key: "⌘ N", description: "Start new session", icon: "plus.circle")
+        shortcutRow(key: "⌘ K", description: "Command palette", icon: "command")
+        shortcutRow(key: "⌘ B", description: "Toggle sidebar", icon: "sidebar.left")
+        shortcutRow(key: "⌘ [ / ]", description: "Navigate history", icon: "arrow.left.arrow.right")
+        shortcutRow(key: "⌘ ,", description: "Open settings", icon: "gearshape")
       }
-      .padding(20)
+      .padding(14)
       .background(cardBackground)
-      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .clipShape(RoundedRectangle(cornerRadius: 10))
     }
   }
 
   // MARK: - Recent Repositories Section
 
   private var recentRepositoriesSection: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: 12) {
       sectionHeader(title: "Recent Repositories", icon: "folder.fill")
 
-      LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-        ForEach(viewModel.selectedRepositories.prefix(4), id: \.path) { repo in
+      LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+        ForEach(recentRepositories, id: \.path) { repo in
           repositoryCard(repo)
         }
       }
@@ -158,134 +122,134 @@ public struct WelcomeView: View {
   }
 
   private func repositoryCard(_ repo: SelectedRepository) -> some View {
-    VStack(alignment: .leading, spacing: 8) {
-      HStack {
-        Image(systemName: "folder.fill")
-          .font(.system(size: 20))
-          .foregroundColor(Color.brandPrimary(from: runtimeTheme))
+    Button(action: { onStartSession(repo.path) }) {
+      VStack(alignment: .leading, spacing: 8) {
+        HStack {
+          Image(systemName: "folder.fill")
+            .font(.system(size: 14))
+            .foregroundColor(.primary)
 
-        Spacer()
+          Spacer()
 
-        if hasActiveSessions(for: repo) {
-          Circle()
-            .fill(Color.green)
-            .frame(width: 8, height: 8)
+          if hasActiveSessions(for: repo) {
+            Circle()
+              .fill(Color.green)
+              .frame(width: 6, height: 6)
+          }
         }
-      }
 
-      Text(repoName(repo))
-        .font(.system(size: 14, weight: .semibold))
-        .foregroundColor(.primary)
-        .lineLimit(1)
+        Text(repoName(repo))
+          .font(.system(size: 11, weight: .semibold, design: .monospaced))
+          .foregroundColor(.primary)
+          .lineLimit(1)
 
-      Text(repoPath(repo))
-        .font(.system(size: 11))
+        Text(repoPath(repo))
+          .font(.system(size: 10, weight: .regular, design: .monospaced))
+          .foregroundColor(.secondary)
+          .lineLimit(1)
+
+        HStack(spacing: 4) {
+          Image(systemName: "arrow.triangle.branch")
+            .font(.system(size: 8))
+          Text("\(repo.worktrees.count)")
+            .font(.system(size: 10, design: .monospaced))
+        }
         .foregroundColor(.secondary)
-        .lineLimit(1)
-
-      Spacer()
-
-      HStack(spacing: 4) {
-        Image(systemName: "arrow.triangle.branch")
-          .font(.system(size: 10))
-        Text("\(repo.worktrees.count)")
-          .font(.system(size: 11))
       }
-      .foregroundColor(.secondary)
+      .padding(.horizontal, 14)
+      .padding(.vertical, 12)
+      .frame(height: 96, alignment: .topLeading)
+      .background(cardBackground)
+      .clipShape(RoundedRectangle(cornerRadius: 10))
+      .overlay(
+        RoundedRectangle(cornerRadius: 10)
+          .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+      )
     }
-    .padding(16)
-    .frame(height: 120)
-    .background(cardBackground)
-    .clipShape(RoundedRectangle(cornerRadius: 12))
-    .overlay(
-      RoundedRectangle(cornerRadius: 12)
-        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
-    )
+    .buttonStyle(.plain)
   }
 
   // MARK: - Tips Section
 
   private var tipsSection: some View {
-    VStack(alignment: .leading, spacing: 16) {
+    VStack(alignment: .leading, spacing: 12) {
       sectionHeader(title: "Pro Tips", icon: "lightbulb.fill")
 
-      VStack(spacing: 12) {
+      VStack(spacing: 10) {
         tipRow(
           icon: "folder.badge.plus",
-          title: "Multiple Projects",
-          description: "Add multiple repositories to track sessions across different projects"
+          title: "Easy Worktree Management",
+          description: "Create and manage worktrees quickly from the launcher."
         )
-
         tipRow(
           icon: "square.grid.2x2",
           title: "Layout Modes",
-          description: "Switch between single, list, and grid views using the layout toggle"
+          description: "Switch between single, list, and grid views."
         )
-
         tipRow(
-          icon: "paintbrush.fill",
-          title: "Custom Themes",
-          description: "Create your own color themes with YAML files for a personalized experience"
+          icon: "arrow.left.arrow.right",
+          title: "Fast Navigation",
+          description: "Use command palette and history shortcuts."
         )
       }
-      .padding(20)
+      .padding(14)
       .background(cardBackground)
-      .clipShape(RoundedRectangle(cornerRadius: 12))
+      .clipShape(RoundedRectangle(cornerRadius: 10))
     }
   }
 
   // MARK: - Helper Views
 
   private func sectionHeader(title: String, icon: String) -> some View {
-    HStack(spacing: 8) {
+    HStack(spacing: 7) {
       Image(systemName: icon)
-        .font(.system(size: 14))
-        .foregroundColor(Color.brandPrimary(from: runtimeTheme))
+        .font(.system(size: 11))
+        .foregroundColor(.brandPrimary)
 
       Text(title)
-        .font(.system(size: 18, weight: .semibold))
+        .font(.system(size: 13, weight: .semibold, design: .monospaced))
         .foregroundColor(.primary)
     }
   }
 
   private func shortcutRow(key: String, description: String, icon: String) -> some View {
-    HStack(spacing: 16) {
+    HStack(spacing: 12) {
       Image(systemName: icon)
-        .font(.system(size: 16))
-        .foregroundColor(Color.brandPrimary(from: runtimeTheme))
-        .frame(width: 24)
+        .font(.system(size: 12))
+        .foregroundColor(.brandPrimary)
+        .frame(width: 16)
 
       Text(description)
-        .font(.system(size: 14))
+        .font(.system(size: 11, weight: .regular, design: .monospaced))
         .foregroundColor(.primary)
         .frame(maxWidth: .infinity, alignment: .leading)
 
       Text(key)
-        .font(.system(size: 13, design: .monospaced))
+        .font(.system(size: 11, weight: .semibold, design: .monospaced))
         .foregroundColor(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
         .background(
-          RoundedRectangle(cornerRadius: 6)
+          RoundedRectangle(cornerRadius: 5)
             .fill(Color.primary.opacity(0.06))
         )
     }
   }
 
   private func tipRow(icon: String, title: String, description: String) -> some View {
-    HStack(alignment: .top, spacing: 16) {
+    HStack(alignment: .top, spacing: 12) {
       Image(systemName: icon)
-        .font(.system(size: 18))
-        .foregroundColor(Color.brandSecondary(from: runtimeTheme))
-        .frame(width: 24)
+        .font(.system(size: 12))
+        .foregroundColor(.brandSecondary)
+        .frame(width: 16)
 
-      VStack(alignment: .leading, spacing: 4) {
+      VStack(alignment: .leading, spacing: 3) {
         Text(title)
-          .font(.system(size: 14, weight: .semibold))
+          .font(.system(size: 11, weight: .semibold, design: .monospaced))
           .foregroundColor(.primary)
 
         Text(description)
-          .font(.system(size: 13))
+          .font(.system(size: 10, weight: .regular, design: .monospaced))
           .foregroundColor(.secondary)
           .fixedSize(horizontal: false, vertical: true)
       }
@@ -294,6 +258,14 @@ public struct WelcomeView: View {
   }
 
   // MARK: - Helpers
+
+  private var recentRepositories: [SelectedRepository] {
+    Array(viewModel.selectedRepositories.suffix(4).reversed())
+  }
+
+  private var latestRecentRepositoryPath: String? {
+    viewModel.selectedRepositories.last?.path
+  }
 
   private func repoName(_ repo: SelectedRepository) -> String {
     URL(fileURLWithPath: repo.path).lastPathComponent
@@ -309,53 +281,22 @@ public struct WelcomeView: View {
   }
 
   private func hasActiveSessions(for repo: SelectedRepository) -> Bool {
-    viewModel.monitoredSessions.contains { session in
-      repo.worktrees.contains { $0.path == session.session.projectPath }
+    viewModel.monitoredSessions.contains { monitored in
+      repo.worktrees.contains { $0.path == monitored.session.projectPath }
     }
   }
 
   // MARK: - Background
 
   private var backgroundGradient: some View {
-    ZStack {
-      Color.surfaceCanvas
-
-      // Subtle gradient overlay
-      LinearGradient(
-        colors: [
-          Color.brandPrimary(from: runtimeTheme).opacity(0.03),
-          Color.brandSecondary(from: runtimeTheme).opacity(0.02),
-          Color.clear
-        ],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-      )
-    }
+    colorScheme == .dark ? Color.black : Color.white
   }
 
   private var cardBackground: some View {
-    ZStack {
-      if colorScheme == .dark {
-        Color(white: 0.12)
-      } else {
-        Color.white
-      }
+    if colorScheme == .dark {
+      Color(white: 0.12)
+    } else {
+      Color.white
     }
   }
-}
-
-// MARK: - Preview
-
-#Preview {
-  let service = CLISessionMonitorService()
-  let viewModel = CLISessionsViewModel(
-    monitorService: service,
-    fileWatcher: SessionFileWatcher(),
-    searchService: GlobalSearchService(),
-    cliConfiguration: .claudeDefault,
-    providerKind: .claude
-  )
-
-  WelcomeView(viewModel: viewModel, onStartSession: {})
-    .frame(width: 800, height: 700)
 }

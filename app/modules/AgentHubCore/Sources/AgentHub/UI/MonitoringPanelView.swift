@@ -105,6 +105,7 @@ public struct MonitoringPanelView: View {
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
@@ -193,7 +194,7 @@ public struct MonitoringPanelView: View {
         // Maximized single card view
         maximizedCardContent(for: maximizedId)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .background(Color(white: colorScheme == .dark ? 0.07 : 0.92))
+          .background(maximizedContainerBackgroundColor)
       } else {
         // Normal list view
         header
@@ -207,6 +208,7 @@ public struct MonitoringPanelView: View {
         }
       }
     }
+    .background(monitorContainerBackgroundColor)
     .frame(minWidth: 300)
     .sheet(item: $sessionFileSheetItem) { item in
       MonitoringSessionFileSheetView(
@@ -231,6 +233,21 @@ public struct MonitoringPanelView: View {
     .onChange(of: allItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
     }
+  }
+
+  private var monitorContainerBackgroundColor: Color {
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    }
+    return .clear
+  }
+
+  private var maximizedContainerBackgroundColor: Color {
+    let defaultBackground = colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92)
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    }
+    return defaultBackground
   }
 
   // MARK: - Header
@@ -282,20 +299,23 @@ public struct MonitoringPanelView: View {
   // MARK: - Empty State
 
   private var emptyState: some View {
-    WelcomeView(viewModel: viewModel, onStartSession: {
-      // Trigger the "Start New Session" flow
-      // This should show the repository/worktree selection UI
-      // For now, we'll select the first available worktree if any exist
-      if let firstRepo = viewModel.selectedRepositories.first,
-         let firstWorktree = firstRepo.worktrees.first {
-        viewModel.startNewSessionInHub(
-          firstWorktree,
-          initialPrompt: nil,
-          initialInputText: nil,
-          dangerouslySkipPermissions: false
-        )
-      }
-    })
+    VStack(spacing: 12) {
+      Image(systemName: "rectangle.on.rectangle")
+        .font(.largeTitle)
+        .foregroundColor(.secondary.opacity(0.5))
+
+      Text("No Session Selected")
+        .font(.headline)
+        .foregroundColor(.secondary)
+
+      (Text("Select a session from the sidebar or ") + Text("start a new one").bold() + Text(" to get started."))
+        .font(.caption)
+        .foregroundColor(.secondary)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 24)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .padding()
   }
 
   // MARK: - Maximized Card Content

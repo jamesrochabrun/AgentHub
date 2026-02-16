@@ -49,6 +49,22 @@ public struct OrchestrationSession: Codable, Sendable, Identifiable {
     self.sessionType = sessionType
     self.prompt = prompt
   }
+
+  /// Custom decoder that defaults `sessionType` to `.parallel` when the field
+  /// is missing or contains an unrecognized value.
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    self.description = try container.decode(String.self, forKey: .description)
+    self.branchName = try container.decode(String.self, forKey: .branchName)
+    self.prompt = try container.decode(String.self, forKey: .prompt)
+
+    if let rawType = try container.decodeIfPresent(String.self, forKey: .sessionType),
+       let parsed = SessionType(rawValue: rawType) {
+      self.sessionType = parsed
+    } else {
+      self.sessionType = .parallel
+    }
+  }
 }
 
 // MARK: - Orchestration Plan
@@ -67,134 +83,10 @@ public struct OrchestrationPlan: Codable, Sendable {
   }
 }
 
-// MARK: - Tool Schema
+// MARK: - Plan Parsing
 
-/// Schema definition for the create_parallel_worktrees tool
+/// Utilities for parsing orchestration plans from text
 public enum WorktreeOrchestrationTool {
-
-  /// The tool name that Claude will call
-  public static let toolName = "create_parallel_worktrees"
-
-  /// JSON Schema for the tool input
-  public static let inputSchema: [String: Any] = [
-    "type": "object",
-    "properties": [
-      "modulePath": [
-        "type": "string",
-        "description": "Absolute path to the repository or module"
-      ],
-      "sessions": [
-        "type": "array",
-        "description": "Sessions to spawn immediately in parallel worktrees",
-        "items": [
-          "type": "object",
-          "properties": [
-            "description": [
-              "type": "string",
-              "description": "Brief description of the session's focus"
-            ],
-            "branchName": [
-              "type": "string",
-              "description": "Unique branch name (lowercase with hyphens)"
-            ],
-            "sessionType": [
-              "type": "string",
-              "enum": ["parallel", "prototype", "exploration"],
-              "description": "Type of session: parallel (same task, different targets), prototype (same goal, different approach), exploration (related features)"
-            ],
-            "prompt": [
-              "type": "string",
-              "description": "Starting prompt for the Claude Code session"
-            ]
-          ],
-          "required": ["description", "branchName", "sessionType", "prompt"]
-        ]
-      ]
-    ],
-    "required": ["modulePath", "sessions"]
-  ]
-
-  /// System prompt for orchestration mode
-  public static let systemPrompt = """
-    You are a session orchestrator. Your ONLY job is to output a JSON plan.
-
-    CRITICAL RULES:
-    1. DO NOT ask questions
-    2. ONLY output the JSON plan wrapped in <orchestration-plan> tags
-
-    BRANCH NAME GENERATION:
-    Generate unique, memorable branch names using this format: {module}-{word}-{word}
-    - Use creative, fun words (animals, colors, food, nature, etc.)
-    - Each session MUST have a different word combination
-    - Keep it lowercase with hyphens
-    - Examples: mathgame-cosmic-penguin, agenthub-dancing-waffle, myapp-golden-phoenix
-
-    PROMPT GENERATION RULES:
-
-    **For "prototype" sessions** (same goal, different approaches):
-    - ALL sessions get the EXACT SAME prompt
-    - Extract the core task/feature from the user's request
-    - Remove any "try X versions" or "different approaches" phrasing
-    - Each Claude will independently decide their implementation approach
-    - Example: "Implement caching, try 3 versions" → prompt: "Implement caching" for ALL sessions
-
-    **For "parallel" sessions** (same task, different targets):
-    - Each session gets a DIFFERENT prompt targeting a specific module/file
-    - Divide the work across the codebase
-    - Example: "Add logging everywhere" → prompts target different modules
-
-    **For "exploration" sessions** (related but distinct tasks):
-    - Each session gets a DIFFERENT prompt for a distinct subtask
-    - Break the user's request into independent pieces of work
-    - Example: "Analyze and improve the app" → different improvement areas
-
-    OUTPUT FORMAT:
-    <orchestration-plan>
-    {
-      "modulePath": "/absolute/path/to/repository",
-      "sessions": [
-        {
-          "description": "Brief description of session focus",
-          "branchName": "feature-branch-name",
-          "sessionType": "prototype|parallel|exploration",
-          "prompt": "The starting prompt for this Claude session"
-        }
-      ]
-    }
-    </orchestration-plan>
-
-    IMPORTANT:
-    - The modulePath MUST be the working directory provided in the context
-    - Output the JSON immediately without asking questions
-    - After the JSON, briefly confirm what sessions you're creating
-    """
-
-  /// Parse tool input from Claude's response (for tool call approach)
-  public static func parseInput(_ input: [String: Any]) -> OrchestrationPlan? {
-    guard let modulePath = input["modulePath"] as? String,
-          let sessionsArray = input["sessions"] as? [[String: Any]] else {
-      return nil
-    }
-
-    let sessions = sessionsArray.compactMap { sessionDict -> OrchestrationSession? in
-      guard let description = sessionDict["description"] as? String,
-            let branchName = sessionDict["branchName"] as? String,
-            let sessionTypeStr = sessionDict["sessionType"] as? String,
-            let sessionType = SessionType(rawValue: sessionTypeStr),
-            let prompt = sessionDict["prompt"] as? String else {
-        return nil
-      }
-
-      return OrchestrationSession(
-        description: description,
-        branchName: branchName,
-        sessionType: sessionType,
-        prompt: prompt
-      )
-    }
-
-    return OrchestrationPlan(modulePath: modulePath, sessions: sessions)
-  }
 
   /// Parse orchestration plan from text containing <orchestration-plan> tags
   public static func parseFromText(_ text: String) -> OrchestrationPlan? {
@@ -206,7 +98,20 @@ public enum WorktreeOrchestrationTool {
 
     let jsonStart = startRange.upperBound
     let jsonEnd = endRange.lowerBound
-    let jsonString = String(text[jsonStart..<jsonEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+    var jsonString = String(text[jsonStart..<jsonEnd]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Strip markdown code fences — Claude sometimes wraps JSON in ```json ... ```
+    if jsonString.hasPrefix("```") {
+      // Remove opening fence (```json or ```)
+      if let firstNewline = jsonString.firstIndex(of: "\n") {
+        jsonString = String(jsonString[jsonString.index(after: firstNewline)...])
+      }
+      // Remove closing fence
+      if jsonString.hasSuffix("```") {
+        jsonString = String(jsonString.dropLast(3))
+      }
+      jsonString = jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     // Parse JSON
     guard let data = jsonString.data(using: .utf8) else {
@@ -218,7 +123,9 @@ public enum WorktreeOrchestrationTool {
       let plan = try JSONDecoder().decode(OrchestrationPlan.self, from: data)
       return plan
     } catch {
-      AppLogger.orchestration.error("Failed to decode JSON: \(error.localizedDescription)")
+      AppLogger.orchestration.error("Failed to decode orchestration plan JSON: \(error)")
+      AppLogger.orchestration.error("Raw JSON:\n\(jsonString)")
+      assertionFailure("Orchestration plan JSON found but failed to decode: \(error)")
       return nil
     }
   }
@@ -226,6 +133,70 @@ public enum WorktreeOrchestrationTool {
   /// Check if text contains orchestration plan markers
   public static func containsPlanMarkers(_ text: String) -> Bool {
     return text.contains("<orchestration-plan>") && text.contains("</orchestration-plan>")
+  }
+
+  /// Fallback parser: scans text for JSON that decodes as OrchestrationPlan
+  /// without requiring <orchestration-plan> XML markers.
+  public static func parseJSONFromText(_ text: String) -> OrchestrationPlan? {
+    // Quick check — must contain expected keys
+    guard text.contains("\"modulePath\""), text.contains("\"sessions\"") else { return nil }
+
+    let decoder = JSONDecoder()
+    var candidates: [String] = []
+
+    // Strategy 1: JSON inside markdown code fences (```json ... ``` or ``` ... ```)
+    if let fenceRegex = try? NSRegularExpression(pattern: "```(?:json)?\\s*\\n([\\s\\S]*?)```", options: []) {
+      let nsText = text as NSString
+      let matches = fenceRegex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+      for match in matches {
+        guard match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else { continue }
+        let candidate = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if candidate.hasPrefix("{") {
+          candidates.append(candidate)
+        }
+      }
+    }
+
+    // Strategy 2: Bare balanced { ... } blocks containing expected keys
+    if candidates.isEmpty {
+      var searchStart = text.startIndex
+      while let openIndex = text[searchStart...].firstIndex(of: "{") {
+        // Find matching closing brace using depth tracking
+        var depth = 0
+        var closeIndex: String.Index?
+        for idx in text.indices[openIndex...] {
+          if text[idx] == "{" { depth += 1 }
+          else if text[idx] == "}" {
+            depth -= 1
+            if depth == 0 {
+              closeIndex = idx
+              break
+            }
+          }
+        }
+        if let close = closeIndex {
+          let candidate = String(text[openIndex...close])
+          if candidate.contains("\"modulePath\"") && candidate.contains("\"sessions\"") {
+            candidates.append(candidate)
+          }
+          searchStart = text.index(after: close)
+        } else {
+          break
+        }
+      }
+    }
+
+    // Try decoding each candidate
+    for candidate in candidates {
+      guard let data = candidate.data(using: .utf8) else { continue }
+      if let plan = try? decoder.decode(OrchestrationPlan.self, from: data) {
+        AppLogger.orchestration.info("Parsed orchestration plan via JSON fallback (\(plan.sessions.count) sessions)")
+        return plan
+      }
+    }
+
+    return nil
   }
 
   /// Strip the <orchestration-plan>...</orchestration-plan> block from text,

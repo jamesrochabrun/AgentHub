@@ -11,8 +11,7 @@ import SwiftUI
 
 public enum CommandPaletteAction: Identifiable {
   case newSession
-  case focusSearch
-  case switchToSession(id: String, name: String, provider: SessionProviderKind)
+  case switchToSession(id: String, name: String, provider: SessionProviderKind, firstMessage: String?)
   case selectRepository(path: String, name: String)
   case openSettings
   case toggleSidebar
@@ -20,8 +19,7 @@ public enum CommandPaletteAction: Identifiable {
   public var id: String {
     switch self {
     case .newSession: return "new-session"
-    case .focusSearch: return "focus-search"
-    case .switchToSession(let id, _, _): return "session-\(id)"
+    case .switchToSession(let id, _, _, _): return "session-\(id)"
     case .selectRepository(let path, _): return "repo-\(path)"
     case .openSettings: return "settings"
     case .toggleSidebar: return "toggle-sidebar"
@@ -31,8 +29,7 @@ public enum CommandPaletteAction: Identifiable {
   var title: String {
     switch self {
     case .newSession: return "New Session"
-    case .focusSearch: return "Focus Search"
-    case .switchToSession(_, let name, _): return name
+    case .switchToSession(_, let name, _, _): return name
     case .selectRepository(_, let name): return name
     case .openSettings: return "Open Settings"
     case .toggleSidebar: return "Toggle Sidebar"
@@ -42,8 +39,14 @@ public enum CommandPaletteAction: Identifiable {
   var subtitle: String? {
     switch self {
     case .newSession: return "Start a new Claude or Codex session"
-    case .focusSearch: return "Search all sessions"
-    case .switchToSession(_, _, let provider): return "Switch to \(provider.rawValue) session"
+    case .switchToSession(_, _, let provider, let firstMessage):
+      if let firstMessage {
+        let trimmed = firstMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+          return trimmed
+        }
+      }
+      return "Switch to \(provider.rawValue) session"
     case .selectRepository(let path, _): return path
     case .openSettings: return "Open application settings"
     case .toggleSidebar: return "Show or hide the sidebar"
@@ -53,7 +56,6 @@ public enum CommandPaletteAction: Identifiable {
   var icon: String {
     switch self {
     case .newSession: return "plus.circle.fill"
-    case .focusSearch: return "magnifyingglass"
     case .switchToSession: return "arrow.right.circle"
     case .selectRepository: return "folder"
     case .openSettings: return "gear"
@@ -64,7 +66,7 @@ public enum CommandPaletteAction: Identifiable {
   var shortcut: String? {
     switch self {
     case .newSession: return "⌘N"
-    case .focusSearch: return "⌘F"
+    case .toggleSidebar: return "⌘B"
     case .openSettings: return "⌘,"
     default: return nil
     }
@@ -76,61 +78,118 @@ public enum CommandPaletteAction: Identifiable {
 public struct CommandPaletteView: View {
   @Binding var isPresented: Bool
   let sessions: [CommandPaletteSession]
-  let repositories: [CommandPaletteRepository]
   let onAction: (CommandPaletteAction) -> Void
 
   @State private var searchQuery = ""
   @State private var selectedIndex = 0
+  @State private var filteredSessionActions: [CommandPaletteAction] = []
+  @State private var searchTask: Task<Void, Never>?
   @FocusState private var isSearchFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
-  @Environment(\.runtimeTheme) private var runtimeTheme
 
-  private var filteredActions: [CommandPaletteAction] {
-    var actions: [CommandPaletteAction] = []
+  private var normalizedQuery: String {
+    searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
 
-    // Quick actions
-    actions.append(.newSession)
-    actions.append(.focusSearch)
-    actions.append(.openSettings)
-    actions.append(.toggleSidebar)
+  private var quickActions: [CommandPaletteAction] {
+    [
+      .newSession,
+      .openSettings,
+      .toggleSidebar,
+    ]
+  }
 
-    // Filter sessions
-    let filteredSessions = sessions.filter { session in
-      searchQuery.isEmpty || session.name.localizedCaseInsensitiveContains(searchQuery)
+  private var displayedActions: [CommandPaletteAction] {
+    quickActions + filteredSessionActions
+  }
+
+  private func performSearch() {
+    searchTask?.cancel()
+
+    let query = normalizedQuery
+    let currentSessions = sessions
+
+    // Empty query — show all sessions immediately (no scoring needed)
+    guard !query.isEmpty else {
+      filteredSessionActions = currentSessions.map { session in
+        .switchToSession(
+          id: session.id,
+          name: session.name,
+          provider: session.provider,
+          firstMessage: session.firstMessage
+        )
+      }
+      return
     }
-    actions.append(contentsOf: filteredSessions.map { session in
-      .switchToSession(id: session.id, name: session.name, provider: session.provider)
-    })
 
-    // Filter repositories
-    let filteredRepos = repositories.filter { repo in
-      searchQuery.isEmpty || repo.name.localizedCaseInsensitiveContains(searchQuery)
+    // Non-empty query — debounce and score off main thread
+    searchTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(150))
+      guard !Task.isCancelled else { return }
+
+      let results = await Task.detached(priority: .userInitiated) {
+        let indexedSessions = Array(currentSessions.enumerated())
+
+        let rankedMatches = indexedSessions.compactMap { index, session -> SessionMatch? in
+          var bestScore = 0
+
+          if let firstMessage = session.firstMessage, !firstMessage.isEmpty {
+            if let match = SearchScoring.score(query: query, against: firstMessage) {
+              bestScore = match.score + 5
+            }
+          } else {
+            if let match = SearchScoring.score(query: query, against: session.name) {
+              bestScore = match.score + 3
+            }
+          }
+
+          guard bestScore > 0 else { return nil }
+
+          return SessionMatch(
+            index: index,
+            relevanceScore: bestScore,
+            session: session
+          )
+        }
+        .sorted { lhs, rhs in
+          if lhs.relevanceScore != rhs.relevanceScore {
+            return lhs.relevanceScore > rhs.relevanceScore
+          }
+          return lhs.index < rhs.index
+        }
+
+        return rankedMatches.map { match in
+          CommandPaletteAction.switchToSession(
+            id: match.session.id,
+            name: match.session.name,
+            provider: match.session.provider,
+            firstMessage: match.session.firstMessage
+          )
+        }
+      }.value
+
+      guard !Task.isCancelled else { return }
+      filteredSessionActions = results
     }
-    actions.append(contentsOf: filteredRepos.map { repo in
-      .selectRepository(path: repo.path, name: repo.name)
-    })
+  }
 
-    return actions
+  private var displayedActionIDs: [String] {
+    displayedActions.map(\.id)
   }
 
   public var body: some View {
     ZStack {
-      // Overlay background
       Color.black.opacity(0.4)
         .ignoresSafeArea()
-        .onTapGesture {
-          isPresented = false
-        }
+        .onTapGesture { isPresented = false }
 
-      // Command palette
       VStack(spacing: 0) {
-        // Search field
         HStack(spacing: 12) {
           Image(systemName: "magnifyingglass")
             .font(.system(size: 16))
             .foregroundColor(.secondary)
 
-          TextField("Search sessions, repositories, or actions...", text: $searchQuery)
+          TextField("Find focused sessions...", text: $searchQuery)
             .textFieldStyle(.plain)
             .font(.system(size: 14))
             .focused($isSearchFocused)
@@ -143,7 +202,8 @@ public struct CommandPaletteView: View {
             .buttonStyle(.plain)
           }
 
-          // Esc hint
+          Spacer()
+
           Text("esc")
             .font(.system(size: 11, design: .monospaced))
             .foregroundColor(.secondary.opacity(0.6))
@@ -168,22 +228,19 @@ public struct CommandPaletteView: View {
 
         Divider()
 
-        // Results list
         ScrollViewReader { proxy in
           ScrollView {
             LazyVStack(spacing: 2) {
-              if filteredActions.isEmpty {
+              if displayedActions.isEmpty {
                 emptyState
               } else {
-                ForEach(Array(filteredActions.enumerated()), id: \.element.id) { index, action in
+                ForEach(Array(displayedActions.enumerated()), id: \.element.id) { index, action in
                   CommandPaletteRow(
                     action: action,
                     isSelected: index == selectedIndex
                   )
-                  .id(index)
-                  .onTapGesture {
-                    executeAction(action)
-                  }
+                  .id(action.id)
+                  .onTapGesture { executeAction(action) }
                 }
               }
             }
@@ -191,8 +248,10 @@ public struct CommandPaletteView: View {
           }
           .frame(maxHeight: 400)
           .onChange(of: selectedIndex) { _, newIndex in
+            let actions = displayedActions
+            guard newIndex >= 0, newIndex < actions.count else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
-              proxy.scrollTo(newIndex, anchor: .center)
+              proxy.scrollTo(actions[newIndex].id, anchor: .center)
             }
           }
         }
@@ -209,43 +268,79 @@ public struct CommandPaletteView: View {
       .shadow(color: Color.black.opacity(0.3), radius: 20, y: 10)
     }
     .onAppear {
-      isSearchFocused = true
+      searchQuery = ""
+      selectedIndex = 0
+      performSearch()
+      DispatchQueue.main.async {
+        isSearchFocused = true
+      }
+    }
+    .onDisappear {
+      searchTask?.cancel()
+    }
+    .onChange(of: displayedActionIDs) { _, _ in
+      if !normalizedQuery.isEmpty && !filteredSessionActions.isEmpty {
+        selectedIndex = quickActions.count
+      } else {
+        clampSelectedIndex()
+      }
+    }
+    .onChange(of: searchQuery) { _, _ in
+      performSearch()
+
+      guard !normalizedQuery.isEmpty else {
+        selectedIndex = 0
+        return
+      }
+
+      if !filteredSessionActions.isEmpty {
+        selectedIndex = quickActions.count
+      } else {
+        selectedIndex = 0
+      }
     }
     .onKeyPress(.upArrow) {
+      guard !displayedActions.isEmpty else { return .handled }
       if selectedIndex > 0 {
         selectedIndex -= 1
       }
       return .handled
     }
     .onKeyPress(.downArrow) {
-      if selectedIndex < filteredActions.count - 1 {
+      guard !displayedActions.isEmpty else { return .handled }
+      if selectedIndex < displayedActions.count - 1 {
         selectedIndex += 1
       }
       return .handled
     }
     .onKeyPress(.return) {
-      if !filteredActions.isEmpty {
-        executeAction(filteredActions[selectedIndex])
-      }
+      let actions = displayedActions
+      guard !actions.isEmpty else { return .handled }
+      let safeIndex = max(0, min(selectedIndex, actions.count - 1))
+      selectedIndex = safeIndex
+      executeAction(actions[safeIndex])
       return .handled
     }
     .onKeyPress(.escape) {
       isPresented = false
       return .handled
     }
+    .onExitCommand {
+      isPresented = false
+    }
   }
 
   private var emptyState: some View {
     VStack(spacing: 12) {
-      Image(systemName: "magnifyingglass")
+      Image(systemName: "bubble.left.and.bubble.right")
         .font(.system(size: 32))
         .foregroundColor(.secondary.opacity(0.5))
 
-      Text("No results found")
+      Text("No Focused Sessions")
         .font(.headline)
         .foregroundColor(.secondary)
 
-      Text("Try a different search term")
+      Text("Start or focus a session to show it here")
         .font(.caption)
         .foregroundColor(.secondary.opacity(0.8))
     }
@@ -253,15 +348,30 @@ public struct CommandPaletteView: View {
     .padding(.vertical, 40)
   }
 
+  private func clampSelectedIndex() {
+    let count = displayedActions.count
+    if count == 0 {
+      selectedIndex = 0
+      return
+    }
+    selectedIndex = max(0, min(selectedIndex, count - 1))
+  }
+
   private func executeAction(_ action: CommandPaletteAction) {
     isPresented = false
 
-    // Small delay to let the palette dismiss smoothly
     Task { @MainActor in
       try? await Task.sleep(for: .milliseconds(100))
       onAction(action)
     }
   }
+
+}
+
+private struct SessionMatch {
+  let index: Int
+  let relevanceScore: Int
+  let session: CommandPaletteSession
 }
 
 // MARK: - CommandPaletteRow
@@ -269,17 +379,14 @@ public struct CommandPaletteView: View {
 private struct CommandPaletteRow: View {
   let action: CommandPaletteAction
   let isSelected: Bool
-  @Environment(\.runtimeTheme) private var runtimeTheme
 
   var body: some View {
     HStack(spacing: 12) {
-      // Icon
       Image(systemName: action.icon)
         .font(.system(size: 16))
-        .foregroundColor(isSelected ? Color.brandPrimary(from: runtimeTheme) : .secondary)
+        .foregroundColor(isSelected ? .brandPrimary : .secondary)
         .frame(width: 20)
 
-      // Title and subtitle
       VStack(alignment: .leading, spacing: 2) {
         Text(action.title)
           .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
@@ -295,7 +402,6 @@ private struct CommandPaletteRow: View {
 
       Spacer()
 
-      // Keyboard shortcut hint
       if let shortcut = action.shortcut {
         Text(shortcut)
           .font(.system(size: 11, design: .monospaced))
@@ -312,7 +418,7 @@ private struct CommandPaletteRow: View {
     .padding(.vertical, 10)
     .background(
       RoundedRectangle(cornerRadius: 6)
-        .fill(isSelected ? Color.brandPrimary(from: runtimeTheme).opacity(0.12) : Color.clear)
+        .fill(isSelected ? Color.brandPrimary.opacity(0.12) : Color.clear)
     )
     .contentShape(Rectangle())
   }
@@ -324,38 +430,12 @@ public struct CommandPaletteSession {
   public let id: String
   public let name: String
   public let provider: SessionProviderKind
+  public let firstMessage: String?
 
-  public init(id: String, name: String, provider: SessionProviderKind) {
+  public init(id: String, name: String, provider: SessionProviderKind, firstMessage: String? = nil) {
     self.id = id
     self.name = name
     self.provider = provider
+    self.firstMessage = firstMessage
   }
-}
-
-public struct CommandPaletteRepository {
-  public let path: String
-  public let name: String
-
-  public init(path: String, name: String) {
-    self.path = path
-    self.name = name
-  }
-}
-
-// MARK: - Preview
-
-#Preview {
-  CommandPaletteView(
-    isPresented: .constant(true),
-    sessions: [
-      CommandPaletteSession(id: "1", name: "Refactor Auth Module", provider: .claude),
-      CommandPaletteSession(id: "2", name: "Write Unit Tests", provider: .codex),
-      CommandPaletteSession(id: "3", name: "Update Documentation", provider: .claude)
-    ],
-    repositories: [
-      CommandPaletteRepository(path: "/Users/dev/AgentHub", name: "AgentHub"),
-      CommandPaletteRepository(path: "/Users/dev/MyProject", name: "MyProject")
-    ],
-    onAction: { _ in }
-  )
 }

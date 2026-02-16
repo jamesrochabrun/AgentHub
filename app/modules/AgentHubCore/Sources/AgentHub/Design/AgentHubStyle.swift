@@ -16,10 +16,13 @@ public enum AgentHubLayout {
 
 private struct AgentHubPanelModifier: ViewModifier {
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   func body(content: Content) -> some View {
-    // Simple black/white background based on color scheme
-    let backgroundColor = colorScheme == .dark ? Color.black : Color.white
+    let defaultBackground = colorScheme == .dark ? Color.black : Color.white
+    let backgroundColor = runtimeTheme?.hasCustomBackgrounds == true
+      ? Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+      : defaultBackground
 
     return content
       .background(

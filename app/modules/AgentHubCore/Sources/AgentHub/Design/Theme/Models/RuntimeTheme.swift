@@ -8,8 +8,7 @@
 import SwiftUI
 
 /// Runtime theme with resolved colors
-@MainActor
-public final class RuntimeTheme: ObservableObject, Identifiable, Sendable {
+public struct RuntimeTheme: Identifiable {
   public let id: String
   public let name: String
   public let isYAML: Bool
@@ -29,11 +28,24 @@ public final class RuntimeTheme: ObservableObject, Identifiable, Sendable {
   // Background gradient (optional)
   public let backgroundGradient: LinearGradient?
 
-  public init(from yaml: YAMLTheme) {
+  // Source file name for YAML themes (e.g., "sentry.yaml")
+  public let sourceFileName: String?
+
+  // Theme version from YAML (e.g., "1.0")
+  public let version: String?
+
+  /// Whether this theme provides custom background colors
+  public var hasCustomBackgrounds: Bool {
+    backgroundDark != nil || backgroundLight != nil
+  }
+
+  public init(from yaml: YAMLTheme, sourceFileName: String? = nil) {
     self.id = yaml.name
     self.name = yaml.name
     self.isYAML = true
     self.isBuiltIn = false
+    self.sourceFileName = sourceFileName
+    self.version = yaml.version
 
     // Resolve brand colors
     self.brandPrimary = Color(hex: yaml.colors.brand.primary)
@@ -72,6 +84,8 @@ public final class RuntimeTheme: ObservableObject, Identifiable, Sendable {
     self.name = appTheme.displayName
     self.isYAML = false
     self.isBuiltIn = true
+    self.sourceFileName = nil
+    self.version = nil
 
     self.brandPrimary = colors.brandPrimary
     self.brandSecondary = colors.brandSecondary

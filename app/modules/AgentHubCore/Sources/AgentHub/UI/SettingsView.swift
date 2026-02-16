@@ -8,6 +8,9 @@
 import SwiftUI
 
 public struct SettingsView: View {
+  @AppStorage(AgentHubDefaults.smartModeEnabled)
+  private var smartModeEnabled: Bool = false
+
   @AppStorage(AgentHubDefaults.notificationSoundsEnabled)
   private var notificationSoundsEnabled: Bool = true
 
@@ -23,8 +26,10 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.codexCommandLockedByDeveloper)
   private var codexCommandLocked: Bool = false
 
-  @EnvironmentObject private var themeManager: ThemeManager
-  @AppStorage("selectedTheme") private var selectedThemeId: String = "claude"
+  @Environment(ThemeManager.self) private var themeManager
+  @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "claude"
+  private let defaultThemeId = "claude"
+  private let sentryThemeFileId = "sentry.yaml"
 
   public init() {}
 
@@ -107,41 +112,24 @@ public struct SettingsView: View {
         Text("Notifications")
       }
 
-      Section {
-        Picker("Theme", selection: $selectedThemeId) {
-          // Built-in themes
-          ForEach(AppTheme.allCases) { theme in
-            Text(theme.displayName).tag(theme.rawValue)
-          }
-
-          // YAML themes
-          if !themeManager.availableYAMLThemes.isEmpty {
-            Divider()
-            ForEach(themeManager.availableYAMLThemes) { metadata in
-              Text(metadata.name).tag(metadata.id)
-            }
+      Section("Features") {
+        Toggle(isOn: $smartModeEnabled) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Smart mode")
+            Text("Use AI to plan and orchestrate multi-session launches")
+              .font(.caption)
+              .foregroundColor(.secondary)
           }
         }
-        .onChange(of: selectedThemeId) { _, newValue in
-          Task {
-            if let appTheme = AppTheme(rawValue: newValue) {
-              themeManager.loadBuiltInTheme(appTheme)
-            } else if let yamlTheme = themeManager.availableYAMLThemes.first(where: { $0.id == newValue }),
-                      let fileURL = yamlTheme.fileURL {
-              try? await themeManager.loadTheme(fileURL: fileURL)
-            }
-          }
+      }
+
+      Section {
+        Picker("Theme", selection: themeSelectionBinding) {
+          Text("Default").tag(defaultThemeId)
+          Text("Sentry").tag(sentryThemeFileId)
         }
 
         HStack(spacing: 8) {
-          Button("Import Theme...") {
-            showThemeImportPanel()
-          }
-
-          Button("Open Themes Folder") {
-            themeManager.openThemesFolder()
-          }
-
           Button(action: {
             Task { await themeManager.discoverThemes() }
           }) {
@@ -152,49 +140,77 @@ public struct SettingsView: View {
       } header: {
         Text("Theme")
       } footer: {
-        VStack(alignment: .leading, spacing: 4) {
-          Text("Place .yaml theme files in ~/Library/Application Support/AgentHub/Themes/")
-          if themeManager.currentTheme.isYAML {
-            Text("✨ Theme changes are automatically reloaded")
-              .foregroundColor(.green)
-          }
+        if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+          Text("AgentHub v\(appVersion)")
+            .font(.caption)
         }
-        .font(.caption)
       }
     }
     .formStyle(.grouped)
     .frame(width: 300, height: 500)
+    .task {
+      await ensureSupportedThemeSelection()
+    }
   }
 
-  private func showThemeImportPanel() {
-    let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.init(filenameExtension: "yaml")!, .init(filenameExtension: "yml")!]
-    panel.allowsMultipleSelection = false
-    panel.canChooseDirectories = false
-
-    guard panel.runModal() == .OK, let url = panel.url else { return }
-
-    // Copy to themes directory
-    let themesDir = ThemeManager.themesDirectory()
-    let destination = themesDir.appendingPathComponent(url.lastPathComponent)
-
-    do {
-      try FileManager.default.createDirectory(at: themesDir, withIntermediateDirectories: true)
-
-      // Remove existing file if it exists
-      if FileManager.default.fileExists(atPath: destination.path) {
-        try FileManager.default.removeItem(at: destination)
+  private var themeSelectionBinding: Binding<String> {
+    Binding(
+      get: {
+        isSentryThemeId(selectedThemeId) ? sentryThemeFileId : defaultThemeId
+      },
+      set: { newValue in
+        Task {
+          await applyThemeSelection(newValue)
+        }
       }
+    )
+  }
 
-      try FileManager.default.copyItem(at: url, to: destination)
-      Task {
-        await themeManager.discoverThemes()
-        try? await themeManager.loadTheme(fileURL: destination)
-        selectedThemeId = destination.lastPathComponent
-      }
-    } catch {
-      // In a real app, show a proper error alert
-      print("Failed to import theme: \(error)")
+  private func ensureSupportedThemeSelection() async {
+    if isSentryThemeId(selectedThemeId) {
+      await applyThemeSelection(sentryThemeFileId)
+      return
     }
+
+    if selectedThemeId != defaultThemeId {
+      selectedThemeId = defaultThemeId
+      themeManager.loadBuiltInTheme(.claude)
+    }
+  }
+
+  private func applyThemeSelection(_ selection: String) async {
+    if selection == defaultThemeId {
+      selectedThemeId = defaultThemeId
+      themeManager.loadBuiltInTheme(.claude)
+      return
+    }
+
+    await themeManager.discoverThemes()
+
+    if let sentryTheme = themeManager.availableYAMLThemes.first(where: isSentryTheme),
+       let fileURL = sentryTheme.fileURL {
+      try? await themeManager.loadTheme(fileURL: fileURL)
+      selectedThemeId = sentryTheme.id
+      return
+    }
+
+    let sentryURL = ThemeManager.themesDirectory().appendingPathComponent(sentryThemeFileId)
+    if FileManager.default.fileExists(atPath: sentryURL.path) {
+      try? await themeManager.loadTheme(fileURL: sentryURL)
+      selectedThemeId = sentryThemeFileId
+      return
+    }
+
+    selectedThemeId = defaultThemeId
+    themeManager.loadBuiltInTheme(.claude)
+  }
+
+  private func isSentryTheme(_ metadata: ThemeManager.ThemeMetadata) -> Bool {
+    isSentryThemeId(metadata.id) || metadata.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "sentry"
+  }
+
+  private func isSentryThemeId(_ value: String) -> Bool {
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "sentry" || normalized == "sentry.yaml" || normalized == "sentry.yml"
   }
 }

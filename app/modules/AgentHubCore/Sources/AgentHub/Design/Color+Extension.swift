@@ -148,6 +148,10 @@ extension Color {
   // MARK: - Provider-Aware Colors
 
   public static func brandPrimary(for provider: SessionProviderKind) -> Color {
+    if let yamlProviderColor = yamlProviderPrimaryColor(for: provider) {
+      return yamlProviderColor
+    }
+
     switch provider {
     case .claude:
       return Color(hex: "#CC785C")  // bookCloth
@@ -177,49 +181,65 @@ extension Color {
   // MARK: - Theme Colors Helper
 
   private static func getCurrentThemeColors() -> ThemeColors {
-    let selectedTheme = UserDefaults.standard.string(forKey: "selectedTheme") ?? "claude"
-    let theme = AppTheme(rawValue: selectedTheme) ?? .claude
-
-    switch theme {
-    case .claude:
+    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "claude"
+    guard let theme = AppTheme(rawValue: selectedTheme) else {
+      // YAML theme — read cached hex values
+      let yamlPrimary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlPrimaryHex) ?? "#CC785C"
+      let yamlSecondary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlSecondaryHex) ?? "#D4A27F"
+      let yamlTertiary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlTertiaryHex) ?? "#EBDBBC"
       return ThemeColors(
-        brandPrimary: Color(hex: "#CC785C"),   // bookCloth
-        brandSecondary: Color(hex: "#D4A27F"), // kraft
-        brandTertiary: Color(hex: "#EBDBBC")   // manilla
-      )
-    case .codex:
-      return ThemeColors(
-        brandPrimary: Color(hex: "#00A5B2"),   // teal
-        brandSecondary: Color(hex: "#00A5B2"), // teal (same as primary)
-        brandTertiary: Color(hex: "#00A5B2")   // teal (same as primary)
-      )
-    case .bat:
-      // Bat: purple primary, real mustard secondary, slate tertiary
-      return ThemeColors(
-        brandPrimary: Color(hex: "#7C3AED"),   // deep purple
-        brandSecondary: Color(hex: "#FFB000"), // mustard
-        brandTertiary: Color(hex: "#64748B")  // slate gray
-      )
-    case .xcode:
-      // Xcode: dynamic system colors inspired by Xcode syntax highlights
-      // Use system variants to adapt to light/dark automatically
-      return ThemeColors(
-        brandPrimary: Color(nsColor: .systemBlue),
-        brandSecondary: Color(nsColor: .systemIndigo),
-        brandTertiary: Color(nsColor: .systemTeal)
-      )
-    case .custom:
-      // Read user-defined custom palette from UserDefaults (hex strings)
-      let primary = UserDefaults.standard.string(forKey: "customPrimaryHex") ?? "#7C3AED"
-      let secondary = UserDefaults.standard.string(forKey: "customSecondaryHex") ?? "#FFB000"
-      let tertiary = UserDefaults.standard.string(forKey: "customTertiaryHex") ?? "#64748B"
-      return ThemeColors(
-        brandPrimary: Color(hex: primary),
-        brandSecondary: Color(hex: secondary),
-        brandTertiary: Color(hex: tertiary)
+        brandPrimary: Color(hex: yamlPrimary),
+        brandSecondary: Color(hex: yamlSecondary),
+        brandTertiary: Color(hex: yamlTertiary)
       )
     }
+
+    // Delegate to ThemeManager as single source of truth for built-in themes
+    return ThemeManager.getThemeColors(for: theme)
   }
+
+  private static func yamlProviderPrimaryColor(for provider: SessionProviderKind) -> Color? {
+    guard isYAMLThemeSelected else { return nil }
+
+    let claudePrimary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlPrimaryHex)
+    let sentryLightCodex = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlSecondaryHex) ?? "#362D59"
+    let sentryDarkCodex = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlTertiaryHex) ?? "#584774"
+    let codexPrimary: String? = {
+      if isSentryYAMLSelected {
+        return sentryDarkCodex
+      }
+      return UserDefaults.standard.string(forKey: AgentHubDefaults.yamlSecondaryHex)
+    }()
+
+    switch provider {
+    case .claude:
+      guard let claudePrimary else { return nil }
+      return Color(hex: claudePrimary)
+    case .codex:
+      if isSentryYAMLSelected {
+        let dynamicCodex = NSColor(name: nil) { appearance in
+          let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+          return NSColor.fromHex(isDark ? sentryDarkCodex : sentryLightCodex)
+        }
+        return Color(nsColor: dynamicCodex)
+      }
+      guard let codexPrimary else { return nil }
+      return Color(hex: codexPrimary)
+    }
+  }
+
+  private static var isYAMLThemeSelected: Bool {
+    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "claude"
+    return AppTheme(rawValue: selectedTheme) == nil
+  }
+
+  private static var isSentryYAMLSelected: Bool {
+    let selectedTheme = (UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased()
+    return selectedTheme == "sentry.yaml" || selectedTheme == "sentry.yml"
+  }
+
   static let backgroundDark = Color(hex: "#262624")
   static let backgroundLight = Color(hex: "#FAF9F5")
   static let expandedContentBackgroundDark = Color(hex: "#1F2421")
@@ -311,6 +331,10 @@ extension Color {
       }
     }
     return adaptiveExpandedContentBackground(for: colorScheme)
+  }
+
+  public static var isSentryThemeSelectedStrict: Bool {
+    isSentryYAMLSelected
   }
 
 }

@@ -105,11 +105,7 @@ public final class AgentHubProvider {
 
   /// Theme manager for YAML and built-in themes
   public private(set) lazy var themeManager: ThemeManager = {
-    let manager = ThemeManager()
-    Task { @MainActor in
-      await manager.loadSavedTheme()
-    }
-    return manager
+    ThemeManager()
   }()
 
   // MARK: - View Models
@@ -131,11 +127,7 @@ public final class AgentHubProvider {
 
   /// Intelligence view model - created lazily and cached
   public private(set) lazy var intelligenceViewModel: IntelligenceViewModel = {
-    IntelligenceViewModel(
-      claudeClient: claudeClient,
-      gitService: gitService,
-      monitorService: monitorService
-    )
+    IntelligenceViewModel(claudeClient: claudeClient)
   }()
 
   // MARK: - Initialization

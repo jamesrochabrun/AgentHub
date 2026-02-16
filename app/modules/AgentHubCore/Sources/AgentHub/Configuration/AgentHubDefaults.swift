@@ -106,6 +106,12 @@ public enum AgentHubDefaults {
   /// Type: Int (default: 1 = small)
   public static let selectedSessionsPanelSizeMode = "\(keyPrefix)ui.selectedSessionsPanelSizeMode"
 
+  // MARK: - Feature Flags
+
+  /// Whether smart mode (AI-powered orchestration planning) is enabled
+  /// Type: Bool (default: false)
+  public static let smartModeEnabled = "\(keyPrefix)features.smartModeEnabled"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name
@@ -123,6 +129,25 @@ public enum AgentHubDefaults {
   /// Custom tertiary color hex value
   /// Type: String (default: "#64748B")
   public static let customTertiaryHex = "\(keyPrefix)theme.customTertiaryHex"
+
+  /// Active YAML theme primary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlPrimaryHex = "\(keyPrefix)theme.yamlPrimaryHex"
+
+  /// Active YAML theme secondary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlSecondaryHex = "\(keyPrefix)theme.yamlSecondaryHex"
+
+  /// Active YAML theme tertiary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlTertiaryHex = "\(keyPrefix)theme.yamlTertiaryHex"
+
+  /// Installed bundled theme version for a given theme name
+  /// Type: String (default: unset)
+  /// Usage: `UserDefaults.standard.string(forKey: AgentHubDefaults.installedBundledThemeVersion(for: "sentry"))`
+  public static func installedBundledThemeVersion(for themeName: String) -> String {
+    "\(keyPrefix)theme.installedVersion.\(themeName)"
+  }
 
   // MARK: - Migration
 
