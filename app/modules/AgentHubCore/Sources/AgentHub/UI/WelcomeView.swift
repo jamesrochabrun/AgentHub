@@ -46,18 +46,23 @@ public struct WelcomeView: View {
     VStack(spacing: 14) {
       ZStack {
         Circle()
-          .fill(Color.brandPrimary.opacity(0.1))
+          .fill(Color.primary.opacity(0.1))
           .frame(width: 76, height: 76)
 
         Image(systemName: "apple.terminal.on.rectangle")
           .font(.system(size: 30))
-          .foregroundColor(.brandPrimary)
+          .foregroundColor(.primary)
       }
 
       VStack(spacing: 6) {
         Text("Welcome to AgentHub")
           .font(.system(size: 22, weight: .semibold, design: .monospaced))
           .foregroundColor(.primary)
+
+        Text("Start a new session with Claude, Codex, or both.")
+          .font(.system(size: 12, weight: .regular, design: .monospaced))
+          .foregroundColor(.secondary)
+          .multilineTextAlignment(.center)
       }
 
       Button(action: {
@@ -69,14 +74,14 @@ public struct WelcomeView: View {
           Text("Start New Session")
             .font(.system(size: 12, weight: .semibold, design: .monospaced))
         }
-        .foregroundColor(.white)
+        .foregroundColor(colorScheme == .dark ? .black : .white)
         .frame(height: 36)
         .padding(.horizontal, 20)
         .background(
           RoundedRectangle(cornerRadius: 10)
-            .fill(Color.brandPrimary)
+            .fill(Color.primary)
         )
-        .shadow(color: Color.brandPrimary.opacity(0.28), radius: 6, y: 3)
+        .shadow(color: Color.primary.opacity(0.28), radius: 6, y: 3)
       }
       .buttonStyle(.plain)
       .padding(.top, 2)
@@ -122,7 +127,7 @@ public struct WelcomeView: View {
         HStack {
           Image(systemName: "folder.fill")
             .font(.system(size: 14))
-            .foregroundColor(.brandPrimary)
+            .foregroundColor(.primary)
 
           Spacer()
 
@@ -199,7 +204,7 @@ public struct WelcomeView: View {
     HStack(spacing: 7) {
       Image(systemName: icon)
         .font(.system(size: 11))
-        .foregroundColor(.brandPrimary)
+        .foregroundColor(.primary)
 
       Text(title)
         .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -211,7 +216,7 @@ public struct WelcomeView: View {
     HStack(spacing: 12) {
       Image(systemName: icon)
         .font(.system(size: 12))
-        .foregroundColor(.brandPrimary)
+        .foregroundColor(.primary)
         .frame(width: 16)
 
       Text(description)
@@ -235,7 +240,7 @@ public struct WelcomeView: View {
     HStack(alignment: .top, spacing: 12) {
       Image(systemName: icon)
         .font(.system(size: 12))
-        .foregroundColor(.brandSecondary)
+        .foregroundColor(.primary)
         .frame(width: 16)
 
       VStack(alignment: .leading, spacing: 3) {
