@@ -402,21 +402,29 @@ public struct MultiProviderMonitoringPanelView: View {
           }
         )
     } else {
-      ScrollView {
-        if layoutMode == .list {
-          LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-            monitoredSessionsGroupedContent
+      ScrollViewReader { proxy in
+        ScrollView {
+          if layoutMode == .list {
+            LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+              monitoredSessionsGroupedContent
+            }
+            .padding(12)
+          } else {
+            let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
+            LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
+              monitoredSessionsGroupedContent
+            }
+            .padding(12)
           }
-          .padding(12)
-        } else {
-          let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
-          LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
-            monitoredSessionsGroupedContent
+        }
+        .animation(.easeInOut(duration: 0.2), value: layoutMode)
+        .onChange(of: primarySessionId) { _, newId in
+          guard let newId else { return }
+          withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(newId, anchor: .top)
           }
-          .padding(12)
         }
       }
-      .animation(.easeInOut(duration: 0.2), value: layoutMode)
     }
   }
 
@@ -599,6 +607,7 @@ public struct MultiProviderMonitoringPanelView: View {
               isPrimarySession: isPrimary,
               showPrimaryIndicator: layoutMode != .single
             )
+            .id(item.id)
 
           case .monitored(_, let viewModel, let session, let state):
             let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
@@ -653,6 +662,7 @@ public struct MultiProviderMonitoringPanelView: View {
               isPrimarySession: isPrimary,
               showPrimaryIndicator: layoutMode != .single
             )
+            .id(item.id)
           }
         }
       }
