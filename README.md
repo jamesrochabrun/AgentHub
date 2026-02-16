@@ -1,10 +1,8 @@
 # AgentHub
 
-Manage all sessions in Claude Code. Easily create new worktrees, run multiple terminals in parallel, run multiple sessions with Codex or Claude simultaneously, preview edits before accepting them, make inline changes directly from diffs, and more.
+A native macOS app for managing Claude Code and Codex CLI sessions. Monitor sessions in real-time, run multiple terminals in parallel, preview diffs, create worktrees, launch multi-provider sessions, and more — all from a single hub.
 
-Hub
-
-<img width="1913" height="1079" alt="Image" src="https://github.com/user-attachments/assets/99518d02-8ca6-458a-900c-bfd1f4e57419" />
+<img width="1913" height="1079" alt="Hub" src="https://github.com/user-attachments/assets/99518d02-8ca6-458a-900c-bfd1f4e57419" />
 
 Full screen mode
 
@@ -12,17 +10,26 @@ https://github.com/user-attachments/assets/c616c904-d165-4516-8478-afb810c13606
 
 ## Features
 
-- **Works immediately** - No setup required, works with your Claude Code plan
-- **Observe sessions in real-time** - Monitor all your Claude Code sessions
-- **Search across all sessions** - Find any session instantly
-- **Run sessions in parallel** - Create and manage multiple Claude Code sessions in the hub
-- **Create worktrees** - Easily spin up new git worktrees from the UI
-- **Preview and edit diffs** - Make inline changes directly from the diff view
-- **Image & file support** — Attach and work with images and files in sessions
-- **Full-screen terminal mode** — Maximize sessions for distraction-free focus
-- **Codex support (Beta)** — Monitor Codex sessions, track token usage, and view global stats
-- Inline code reviews
-- Parallel Execution Claude Code and Codex
+- **Multi-provider support** — Monitor and launch Claude Code and Codex sessions side by side
+- **Real-time session monitoring** — Watch all sessions update live via file-system watchers (no polling)
+- **Embedded terminal** — Full PTY terminal (SwiftTerm) inside each monitoring card; resume or start sessions without leaving the app
+- **Hub panel** — Unified view of all sessions across providers with single, list, 2-column, and 3-column grid layouts
+- **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
+- **Git worktree management** — Create and delete worktrees from the UI; launch sessions on new branches
+- **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
+- **Web preview** — Auto-detects project type, starts dev servers for framework projects, and live-reloads static HTML
+- **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting
+- **Global search** — Search across all session files with ranked results
+- **Usage stats** — Track token counts, costs, and daily activity per provider (menu bar or popover)
+- **Command palette** — Quick access to sessions, repositories, and actions via Cmd+K
+- **Pending changes preview** — Review Edit/Write/MultiEdit tool diffs before accepting
+- **Custom themes** — Ship with default and Sentry themes; load custom YAML themes with hot-reload
+- **Image & file attachments** — Drag-and-drop files into sessions
+- **Session naming** — Rename any session with custom names (SQLite-backed)
+- **Notification sounds** — Configurable audio alert when a tool call awaits approval
+- **Privacy-first** — Runs entirely on your machine; no data is collected or transmitted
+
+Parallel execution with Claude Code and Codex
 
 https://github.com/user-attachments/assets/c20c1f3e-745d-4a39-8599-37ad242b3ae6
 
@@ -38,9 +45,65 @@ Download the latest release from [GitHub Releases](https://github.com/jamesrocha
 
 Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) with EdDSA signature verification. You'll be prompted when a new version is available.
 
-## Privacy
+## Keyboard Shortcuts
 
-AgentHub runs entirely on your machine. It does not collect, transmit, or store any data externally. The app simply reads your local Claude Code session files to display their status.
+| Shortcut | Action |
+|---|---|
+| **Cmd+K** | Open command palette |
+| **Cmd+N** | New session |
+| **Cmd+B** | Toggle sidebar |
+| **Cmd+,** | Open settings |
+| **Cmd+[** | Navigate to previous session |
+| **Cmd+]** | Navigate to next session |
+| **Escape** | Dismiss maximized card / side panel / sheet |
+
+### Diff View
+
+| Shortcut | Action |
+|---|---|
+| **Return** | Send inline comment to Claude |
+| **Cmd+Return** | Add comment to review collection |
+| **Shift+Return** | Insert newline in editor |
+| **Escape** | Close inline editor or diff view |
+
+### Embedded Terminal
+
+| Shortcut | Action |
+|---|---|
+| **Cmd+C** | Copy selected text |
+| **Cmd+V** | Paste |
+| **Cmd+A** | Select all |
+
+### Command Palette
+
+| Shortcut | Action |
+|---|---|
+| **Up / Down** | Navigate items |
+| **Return** | Execute selected action |
+| **Escape** | Close palette |
+
+## Hub Layouts
+
+The monitoring panel supports multiple layout modes:
+
+| Mode | Description |
+|---|---|
+| **Single** | One session at full size with optional side panel (diff, plan, web preview) |
+| **List** | Vertical card list grouped by provider |
+| **2-Column** | Two-column grid |
+| **3-Column** | Three-column grid |
+
+Any card can be maximized to full panel with a click (Escape to restore).
+
+## Session States
+
+| Status | Description |
+|---|---|
+| Thinking | Claude/Codex is processing |
+| Executing Tool | Running a tool call |
+| Awaiting Approval | Tool requires user confirmation |
+| Waiting for User | Awaiting input |
+| Idle | Session inactive |
 
 ## Configuration
 
@@ -48,8 +111,8 @@ AgentHub runs entirely on your machine. It does not collect, transmit, or store 
 
 AgentHub supports two display modes:
 
-- **Menu Bar Mode** (default) - Stats appear in the system menu bar
-- **Popover Mode** - Stats appear as a toolbar button in the app window
+- **Menu Bar Mode** (default) — Stats appear in the system menu bar
+- **Popover Mode** — Stats appear as a toolbar button in the app window
 
 Toggle between modes in the app settings.
 
@@ -68,15 +131,27 @@ AgentHub reads Codex session data from `~/.codex/`:
 - **Session files:** `~/.codex/sessions/{date-path}/` (JSONL format)
 - **History file:** `~/.codex/history.jsonl`
 
-## Session States
+### Custom Themes
 
-| Status | Description |
-|--------|-------------|
-| Thinking | Claude is processing |
-| Executing Tool | Running a tool call |
-| Awaiting Approval | Tool requires user confirmation |
-| Waiting for User | Awaiting input |
-| Idle | Session inactive |
+Place YAML theme files in `~/Library/Application Support/AgentHub/themes/`. Themes are hot-reloaded on save.
+
+```yaml
+name: My Theme
+version: 1
+author: Your Name
+colors:
+  brand:
+    primary: "#7C3AED"
+    secondary: "#6D28D9"
+    tertiary: "#5B21B6"
+  backgrounds:
+    dark: "#1A1A2E"
+    light: "#FFFFFF"
+```
+
+## Privacy
+
+AgentHub runs entirely on your machine. It does not collect, transmit, or store any data externally. The app simply reads your local CLI session files to display their status.
 
 ## License
 
