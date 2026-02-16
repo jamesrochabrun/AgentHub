@@ -282,7 +282,11 @@ public struct CommandPaletteView: View {
       searchTask?.cancel()
     }
     .onChange(of: displayedActionIDs) { _, _ in
-      clampSelectedIndex()
+      if !normalizedQuery.isEmpty && !filteredSessionActions.isEmpty {
+        selectedIndex = quickActions.count
+      } else {
+        clampSelectedIndex()
+      }
     }
     .onChange(of: searchQuery) { _, _ in
       performSearch()
