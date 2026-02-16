@@ -8,6 +8,14 @@ Full screen mode
 
 https://github.com/user-attachments/assets/c616c904-d165-4516-8478-afb810c13606
 
+Custom Theme
+
+https://github.com/user-attachments/assets/d4462101-a42b-446c-8491-9a4344539ac6
+
+Shortcuts 
+
+https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
+
 ## Features
 
 - **Multi-provider support** — Monitor and launch Claude Code and Codex sessions side by side
