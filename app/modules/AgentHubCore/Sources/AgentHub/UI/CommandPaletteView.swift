@@ -133,16 +133,13 @@ public struct CommandPaletteView: View {
         let rankedMatches = indexedSessions.compactMap { index, session -> SessionMatch? in
           var bestScore = 0
 
-          if let match = SearchScoring.score(query: query, against: session.name) {
-            bestScore = match.score + 5
-          }
-
           if let firstMessage = session.firstMessage, !firstMessage.isEmpty {
             if let match = SearchScoring.score(query: query, against: firstMessage) {
-              let total = match.score + 3
-              if total > bestScore {
-                bestScore = total
-              }
+              bestScore = match.score + 5
+            }
+          } else {
+            if let match = SearchScoring.score(query: query, against: session.name) {
+              bestScore = match.score + 3
             }
           }
 
