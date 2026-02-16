@@ -130,6 +130,25 @@ public enum AgentHubDefaults {
   /// Type: String (default: "#64748B")
   public static let customTertiaryHex = "\(keyPrefix)theme.customTertiaryHex"
 
+  /// Active YAML theme primary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlPrimaryHex = "\(keyPrefix)theme.yamlPrimaryHex"
+
+  /// Active YAML theme secondary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlSecondaryHex = "\(keyPrefix)theme.yamlSecondaryHex"
+
+  /// Active YAML theme tertiary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlTertiaryHex = "\(keyPrefix)theme.yamlTertiaryHex"
+
+  /// Installed bundled theme version for a given theme name
+  /// Type: String (default: unset)
+  /// Usage: `UserDefaults.standard.string(forKey: AgentHubDefaults.installedBundledThemeVersion(for: "sentry"))`
+  public static func installedBundledThemeVersion(for themeName: String) -> String {
+    "\(keyPrefix)theme.installedVersion.\(themeName)"
+  }
+
   // MARK: - Migration
 
   /// Legacy keys mapping for migration

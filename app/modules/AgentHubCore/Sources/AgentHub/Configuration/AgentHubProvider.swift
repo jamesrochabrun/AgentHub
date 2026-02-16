@@ -101,6 +101,13 @@ public final class AgentHubProvider {
     }
   }()
 
+  // MARK: - Theme Management
+
+  /// Theme manager for YAML and built-in themes
+  public private(set) lazy var themeManager: ThemeManager = {
+    ThemeManager()
+  }()
+
   // MARK: - View Models
 
   /// Claude sessions view model - created lazily and cached

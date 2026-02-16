@@ -1,5 +1,5 @@
 {
-  "originHash" : "4ae26beec838978b4f229b6dd51a37efbfba96be64b26c154d84a8b39349d19e",
+  "originHash" : "3c7a1493c521895ac51e28cb73aab3bb308e0d9972a008d74ce463ddfdbb6a6c",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -278,6 +278,15 @@
       "state" : {
         "branch" : "fix/package-manifest-trailing-commas",
         "revision" : "3a8d38e9cfe8f6000ebb8db13d2eb17beceb091e"
+      }
+    },
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jpsim/Yams",
+      "state" : {
+        "revision" : "3d6871d5b4a5cd519adf233fbb576e0a2af71c17",
+        "version" : "5.4.0"
       }
     }
   ],

@@ -222,6 +222,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
@@ -250,7 +251,7 @@ public struct MultiProviderMonitoringPanelView: View {
       if let maximizedId = maximizedSessionId {
         maximizedCardContent(for: maximizedId)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .background(Color(white: colorScheme == .dark ? 0.07 : 0.92))
+          .background(maximizedContainerBackgroundColor)
       } else {
         header
 
@@ -265,7 +266,7 @@ public struct MultiProviderMonitoringPanelView: View {
         }
       }
     }
-    .background(colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.96))
+    .background(monitorContainerBackgroundColor)
     .cornerRadius(8)
     .sheet(item: $sessionFileSheetItem) { item in
       MonitoringSessionFileSheetView(
@@ -300,6 +301,22 @@ public struct MultiProviderMonitoringPanelView: View {
         }
       }
     }
+  }
+
+  private var monitorContainerBackgroundColor: Color {
+    let defaultBackground = colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.96)
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    }
+    return defaultBackground
+  }
+
+  private var maximizedContainerBackgroundColor: Color {
+    let defaultBackground = colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92)
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    }
+    return defaultBackground
   }
 
   // MARK: - Header

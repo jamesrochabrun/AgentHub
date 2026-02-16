@@ -105,6 +105,7 @@ public struct MonitoringPanelView: View {
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
@@ -193,7 +194,7 @@ public struct MonitoringPanelView: View {
         // Maximized single card view
         maximizedCardContent(for: maximizedId)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .background(Color(white: colorScheme == .dark ? 0.07 : 0.92))
+          .background(maximizedContainerBackgroundColor)
       } else {
         // Normal list view
         header
@@ -207,6 +208,7 @@ public struct MonitoringPanelView: View {
         }
       }
     }
+    .background(monitorContainerBackgroundColor)
     .frame(minWidth: 300)
     .sheet(item: $sessionFileSheetItem) { item in
       MonitoringSessionFileSheetView(
@@ -231,6 +233,21 @@ public struct MonitoringPanelView: View {
     .onChange(of: allItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
     }
+  }
+
+  private var monitorContainerBackgroundColor: Color {
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    }
+    return .clear
+  }
+
+  private var maximizedContainerBackgroundColor: Color {
+    let defaultBackground = colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92)
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    }
+    return defaultBackground
   }
 
   // MARK: - Header

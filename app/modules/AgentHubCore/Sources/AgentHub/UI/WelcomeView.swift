@@ -46,12 +46,12 @@ public struct WelcomeView: View {
     VStack(spacing: 14) {
       ZStack {
         Circle()
-          .fill(Color.primary.opacity(0.1))
+          .fill(Color.brandPrimary.opacity(0.1))
           .frame(width: 76, height: 76)
 
         Image(systemName: "apple.terminal.on.rectangle")
           .font(.system(size: 30))
-          .foregroundColor(.primary)
+          .foregroundColor(.brandPrimary)
       }
 
       VStack(spacing: 6) {
@@ -79,9 +79,9 @@ public struct WelcomeView: View {
         .padding(.horizontal, 20)
         .background(
           RoundedRectangle(cornerRadius: 10)
-            .fill(Color.primary)
+            .fill(Color.brandPrimary)
         )
-        .shadow(color: Color.primary.opacity(0.28), radius: 6, y: 3)
+        .shadow(color: Color.brandPrimary.opacity(0.28), radius: 6, y: 3)
       }
       .buttonStyle(.plain)
       .padding(.top, 2)
@@ -204,7 +204,7 @@ public struct WelcomeView: View {
     HStack(spacing: 7) {
       Image(systemName: icon)
         .font(.system(size: 11))
-        .foregroundColor(.primary)
+        .foregroundColor(.brandPrimary)
 
       Text(title)
         .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -216,7 +216,7 @@ public struct WelcomeView: View {
     HStack(spacing: 12) {
       Image(systemName: icon)
         .font(.system(size: 12))
-        .foregroundColor(.primary)
+        .foregroundColor(.brandPrimary)
         .frame(width: 16)
 
       Text(description)
@@ -240,7 +240,7 @@ public struct WelcomeView: View {
     HStack(alignment: .top, spacing: 12) {
       Image(systemName: icon)
         .font(.system(size: 12))
-        .foregroundColor(.primary)
+        .foregroundColor(.brandSecondary)
         .frame(width: 16)
 
       VStack(alignment: .leading, spacing: 3) {
