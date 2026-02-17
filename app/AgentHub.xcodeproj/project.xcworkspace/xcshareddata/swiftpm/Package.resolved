@@ -1,5 +1,5 @@
 {
-  "originHash" : "776b3387f2cf7d967557a3a6bbd80247c22276bac7490a33773d22d6df205de9",
+  "originHash" : "0902c7a92d5daddf48b1355b43dd3d941d9c296fc8885595c4e2aa07c311d27d",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -285,8 +285,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/SwiftTerm",
       "state" : {
-        "branch" : "fix/package-manifest-trailing-commas",
-        "revision" : "3a8d38e9cfe8f6000ebb8db13d2eb17beceb091e"
+        "branch" : "main",
+        "revision" : "765e6f0d6c1c844e3681d51a530a0064518b9303"
       }
     },
     {
