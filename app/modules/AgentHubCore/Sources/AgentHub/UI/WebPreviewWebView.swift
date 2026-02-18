@@ -27,7 +27,9 @@ struct WebPreviewWebView: NSViewRepresentable {
 
   func makeNSView(context: Context) -> WKWebView {
     let configuration = WKWebViewConfiguration()
+    #if DEBUG
     configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
+    #endif
 
     let webView = WKWebView(frame: .zero, configuration: configuration)
     webView.navigationDelegate = context.coordinator
