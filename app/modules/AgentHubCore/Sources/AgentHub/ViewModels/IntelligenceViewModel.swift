@@ -18,8 +18,8 @@ public final class IntelligenceViewModel {
 
   // MARK: - Properties
 
-  /// The Claude Code client for SDK communication
-  private var claudeClient: ClaudeCode
+  /// The Claude Code client for SDK communication (nil if CLI is unavailable)
+  private var claudeClient: ClaudeCode?
 
   /// Stream processor for handling responses
   private let streamProcessor = IntelligenceStreamProcessor()
@@ -60,7 +60,9 @@ public final class IntelligenceViewModel {
       // Create client with NVM support and local Claude path
       do {
         var config = ClaudeCodeConfiguration.withNvmSupport()
+        #if DEBUG
         config.enableDebugLogging = true
+        #endif
 
         let homeDir = NSHomeDirectory()
 
@@ -83,7 +85,9 @@ public final class IntelligenceViewModel {
 
         self.claudeClient = try ClaudeCodeClient(configuration: config)
       } catch {
-        fatalError("Failed to create ClaudeCodeClient: \(error)")
+        AppLogger.intelligence.error("Failed to create ClaudeCodeClient: \(error)")
+        self.claudeClient = nil
+        self.errorMessage = "Claude CLI not available: \(error.localizedDescription)"
       }
     }
 
@@ -149,7 +153,7 @@ public final class IntelligenceViewModel {
   public func cancelRequest() {
     AppLogger.intelligence.info("cancelRequest: cancelling active request")
     streamProcessor.cancelStream()
-    claudeClient.cancel()
+    claudeClient?.cancel()
     isLoading = false
   }
 
@@ -159,6 +163,10 @@ public final class IntelligenceViewModel {
   public func generatePlan(prompt: String, workingDirectory: String) {
     guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     guard !isLoading else { return }
+    guard claudeClient != nil else {
+      errorMessage = "Claude CLI not available. Please ensure Claude Code CLI is installed."
+      return
+    }
 
     // Reset state
     lastResponse = ""
@@ -172,7 +180,7 @@ public final class IntelligenceViewModel {
 
     Task {
       do {
-        claudeClient.configuration.workingDirectory = workingDirectory
+        claudeClient?.configuration.workingDirectory = workingDirectory
 
         var options = ClaudeCodeOptions()
         options.permissionMode = .plan
@@ -210,6 +218,7 @@ public final class IntelligenceViewModel {
           - If the request is a single task, still output one session in the plan
           """
 
+        guard let claudeClient else { return }
         let result = try await claudeClient.runSinglePrompt(
           prompt: prompt,
           outputFormat: .streamJson,
