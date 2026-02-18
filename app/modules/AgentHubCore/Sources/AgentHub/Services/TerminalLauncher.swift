@@ -12,6 +12,29 @@ import ClaudeCodeSDK
 /// Helper object to handle launching Terminal with Claude sessions
 public struct TerminalLauncher {
 
+  // MARK: - Shell Escaping
+
+  /// Escapes a string for safe use inside a single-quoted shell argument.
+  /// Single-quoted strings in POSIX shells treat all characters literally (no expansion),
+  /// so we only need to handle the single quote itself using the break-and-rejoin idiom: '\''
+  /// Newlines are rejected for paths/IDs/branches where they indicate malicious input.
+  /// - Returns: The escaped string wrapped in single quotes, or nil if input contains newlines.
+  private static func shellEscapeSingleQuoted(_ value: String) -> String? {
+    if value.contains("\n") || value.contains("\r") {
+      return nil
+    }
+    let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
+    return "'\(escaped)'"
+  }
+
+  /// Escapes a string for safe use inside a single-quoted shell argument, allowing newlines.
+  /// Use this for prompt values where multiline content is legitimate.
+  /// Newlines are safe inside single-quoted strings (treated literally, no expansion).
+  private static func shellEscapeSingleQuotedAllowingNewlines(_ value: String) -> String {
+    let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
+    return "'\(escaped)'"
+  }
+
   /// Runs a Claude session in the background without opening Terminal
   /// - Parameters:
   ///   - sessionId: The session ID to resume
@@ -145,33 +168,39 @@ public struct TerminalLauncher {
       )
     }
 
-    // Escape paths for shell
-    let escapedPath = projectPath.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-    let escapedClaudePath = claudeExecutablePath.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-    let escapedSessionId = sessionId.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
+    // Escape all values for safe shell interpolation (single-quoted)
+    guard let escapedClaudePath = shellEscapeSingleQuoted(claudeExecutablePath),
+          let escapedSessionId = shellEscapeSingleQuoted(sessionId) else {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "Session ID or executable path contains invalid characters (newlines)."]
+      )
+    }
 
-    // Escape the initial prompt if provided
-    let escapedPrompt = initialPrompt?
-      .replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-      .replacingOccurrences(of: "'", with: "'\\''")
+    // Prompts may contain newlines (multiline content is legitimate)
+    let escapedPrompt = initialPrompt.map { shellEscapeSingleQuotedAllowingNewlines($0) }
 
-    // Construct the command
+    // Construct the command using single-quoted arguments
     let command: String
     if !projectPath.isEmpty {
+      guard let escapedPath = shellEscapeSingleQuoted(projectPath) else {
+        return NSError(
+          domain: "TerminalLauncher",
+          code: 3,
+          userInfo: [NSLocalizedDescriptionKey: "Project path contains invalid characters (newlines)."]
+        )
+      }
       if let prompt = escapedPrompt {
-        command = "cd \"\(escapedPath)\" && \"\(escapedClaudePath)\" -r \"\(escapedSessionId)\" '\(prompt)'"
+        command = "cd \(escapedPath) && \(escapedClaudePath) -r \(escapedSessionId) \(prompt)"
       } else {
-        command = "cd \"\(escapedPath)\" && \"\(escapedClaudePath)\" -r \"\(escapedSessionId)\""
+        command = "cd \(escapedPath) && \(escapedClaudePath) -r \(escapedSessionId)"
       }
     } else {
       if let prompt = escapedPrompt {
-        command = "\"\(escapedClaudePath)\" -r \"\(escapedSessionId)\" '\(prompt)'"
+        command = "\(escapedClaudePath) -r \(escapedSessionId) \(prompt)"
       } else {
-        command = "\"\(escapedClaudePath)\" -r \"\(escapedSessionId)\""
+        command = "\(escapedClaudePath) -r \(escapedSessionId)"
       }
     }
 
@@ -244,20 +273,21 @@ public struct TerminalLauncher {
       )
     }
 
-    let escapedPath = path.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-    let escapedClaudePath = claudeExecutablePath.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-    let escapedBranch = branchName.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
+    // Escape all values for safe shell interpolation (single-quoted)
+    guard let escapedPath = shellEscapeSingleQuoted(path),
+          let escapedClaudePath = shellEscapeSingleQuoted(claudeExecutablePath),
+          let escapedBranch = shellEscapeSingleQuoted(branchName) else {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "Path, branch name, or executable path contains invalid characters (newlines)."]
+      )
+    }
 
-    // Escape the initial prompt if provided
-    let escapedPrompt = initialPrompt?
-      .replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-      .replacingOccurrences(of: "'", with: "'\\''")
+    // Prompts may contain newlines (multiline content is legitimate)
+    let escapedPrompt = initialPrompt.map { shellEscapeSingleQuotedAllowingNewlines($0) }
 
-    // Build the dangerous flag if needed
+    // Build the dangerous flag if needed (hardcoded literal, safe to append)
     let dangerousFlag = dangerouslySkipPermissions ? " --dangerously-skip-permissions" : ""
 
     // Build the command - for worktrees or when skipCheckout is true, just cd and run claude
@@ -265,12 +295,12 @@ public struct TerminalLauncher {
     let command: String
     if isWorktree || skipCheckout {
       if let prompt = escapedPrompt {
-        command = "cd \"\(escapedPath)\" && \"\(escapedClaudePath)\"\(dangerousFlag) '\(prompt)'"
+        command = "cd \(escapedPath) && \(escapedClaudePath)\(dangerousFlag) \(prompt)"
       } else {
-        command = "cd \"\(escapedPath)\" && \"\(escapedClaudePath)\"\(dangerousFlag)"
+        command = "cd \(escapedPath) && \(escapedClaudePath)\(dangerousFlag)"
       }
     } else {
-      command = "cd \"\(escapedPath)\" && git checkout \"\(escapedBranch)\" && \"\(escapedClaudePath)\"\(dangerousFlag)"
+      command = "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath)\(dangerousFlag)"
     }
 
     let tempDir = NSTemporaryDirectory()
@@ -329,26 +359,33 @@ public struct TerminalLauncher {
       )
     }
 
-    // Escape paths for shell
-    let escapedPath = projectPath.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-    let escapedExecPath = executablePath.replacingOccurrences(of: "\\", with: "\\\\")
-      .replacingOccurrences(of: "\"", with: "\\\"")
-
-    // Build args using argumentsForSession which prepends subcommand args
-    let args = cliConfiguration.argumentsForSession(sessionId: sessionId, prompt: initialPrompt)
-    let escapedArgs = args.map {
-      $0.replacingOccurrences(of: "\\", with: "\\\\")
-        .replacingOccurrences(of: "'", with: "'\\''")
+    // Escape paths for shell (single-quoted)
+    guard let escapedExecPath = shellEscapeSingleQuoted(executablePath) else {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "Executable path contains invalid characters (newlines)."]
+      )
     }
-    let joinedArgs = escapedArgs.map { "'\($0)'" }.joined(separator: " ")
+
+    // Build args using argumentsForSession which prepends subcommand args.
+    // Args may include multiline prompts, so use the permissive escaping variant.
+    let args = cliConfiguration.argumentsForSession(sessionId: sessionId, prompt: initialPrompt)
+    let joinedArgs = args.map { shellEscapeSingleQuotedAllowingNewlines($0) }.joined(separator: " ")
 
     // Build command
     let command: String
     if !projectPath.isEmpty {
-      command = "cd \"\(escapedPath)\" && \"\(escapedExecPath)\" \(joinedArgs)"
+      guard let escapedPath = shellEscapeSingleQuoted(projectPath) else {
+        return NSError(
+          domain: "TerminalLauncher",
+          code: 3,
+          userInfo: [NSLocalizedDescriptionKey: "Project path contains invalid characters (newlines)."]
+        )
+      }
+      command = "cd \(escapedPath) && \(escapedExecPath) \(joinedArgs)"
     } else {
-      command = "\"\(escapedExecPath)\" \(joinedArgs)"
+      command = "\(escapedExecPath) \(joinedArgs)"
     }
 
     return launchTerminalScript(command: command, scriptPrefix: "cli_resume")
