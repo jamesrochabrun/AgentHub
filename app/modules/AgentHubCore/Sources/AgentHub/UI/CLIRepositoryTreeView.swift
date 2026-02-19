@@ -23,6 +23,9 @@ public struct CLIRepositoryTreeView: View {
   let onToggleMonitoring: (CLISession) -> Void
   let onDeleteWorktree: ((WorktreeBranch) -> Void)?
   let getCustomName: ((String) -> String?)?
+  let onCreateWorktree: ((SelectedRepository) -> Void)?
+  let onStartInHubForWorktree: ((WorktreeBranch) -> Void)?
+  let onStartInHubDangerousForWorktree: ((WorktreeBranch) -> Void)?
   var showLastMessage: Bool = false
   var isDebugMode: Bool = false
   var deletingWorktreePath: String? = nil
@@ -43,6 +46,9 @@ public struct CLIRepositoryTreeView: View {
     onToggleMonitoring: @escaping (CLISession) -> Void,
     onDeleteWorktree: ((WorktreeBranch) -> Void)? = nil,
     getCustomName: ((String) -> String?)? = nil,
+    onCreateWorktree: ((SelectedRepository) -> Void)? = nil,
+    onStartInHubForWorktree: ((WorktreeBranch) -> Void)? = nil,
+    onStartInHubDangerousForWorktree: ((WorktreeBranch) -> Void)? = nil,
     showLastMessage: Bool = false,
     isDebugMode: Bool = false,
     deletingWorktreePath: String? = nil
@@ -59,6 +65,9 @@ public struct CLIRepositoryTreeView: View {
     self.onToggleMonitoring = onToggleMonitoring
     self.onDeleteWorktree = onDeleteWorktree
     self.getCustomName = getCustomName
+    self.onCreateWorktree = onCreateWorktree
+    self.onStartInHubForWorktree = onStartInHubForWorktree
+    self.onStartInHubDangerousForWorktree = onStartInHubDangerousForWorktree
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
     self.deletingWorktreePath = deletingWorktreePath
@@ -92,6 +101,8 @@ public struct CLIRepositoryTreeView: View {
             isSessionMonitored: isSessionMonitored,
             onToggleMonitoring: onToggleMonitoring,
             getCustomName: getCustomName,
+            onStartInHub: { onStartInHubForWorktree?(worktree) },
+            onStartInHubDangerous: { onStartInHubDangerousForWorktree?(worktree) },
             showLastMessage: showLastMessage,
             isDebugMode: isDebugMode,
             isDeleting: worktree.path == deletingWorktreePath
@@ -156,6 +167,22 @@ public struct CLIRepositoryTreeView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
               .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
           )
+      }
+
+      // Create worktree button
+      if onCreateWorktree != nil {
+        Button(action: { onCreateWorktree?(repository) }) {
+          Image(systemName: "arrow.triangle.branch")
+            .font(.caption)
+            .foregroundColor(.brandPrimary(for: providerKind))
+            .padding(6)
+            .background(
+              RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.brandPrimary(for: providerKind).opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Create worktree")
       }
 
       // Remove button
