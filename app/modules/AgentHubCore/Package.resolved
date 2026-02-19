@@ -1,5 +1,5 @@
 {
-  "originHash" : "3c7a1493c521895ac51e28cb73aab3bb308e0d9972a008d74ce463ddfdbb6a6c",
+  "originHash" : "1753f6839d31b7554a1884805af2c782b46c47ec5d44db08076a6f3b62c21c2c",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -274,10 +274,10 @@
     {
       "identity" : "swiftterm",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/jamesrochabrun/SwiftTerm",
+      "location" : "https://github.com/migueldeicaza/SwiftTerm",
       "state" : {
-        "branch" : "fix/package-manifest-trailing-commas",
-        "revision" : "3a8d38e9cfe8f6000ebb8db13d2eb17beceb091e"
+        "revision" : "36642aa383e14834604bb5f2bafbbde47142bd0c",
+        "version" : "1.11.0"
       }
     },
     {
