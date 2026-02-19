@@ -21,6 +21,12 @@ private struct SessionFileSheetItem: Identifiable {
 
 // MARK: - MultiProviderSessionsListView
 
+private struct WorktreeCreateContext: Identifiable {
+  let id = UUID()
+  let providerKind: SessionProviderKind
+  let repository: SelectedRepository
+}
+
 public struct MultiProviderSessionsListView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
@@ -37,6 +43,7 @@ public struct MultiProviderSessionsListView: View {
   @State private var hubFilterMode: HubFilterMode = .all
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
+  @State private var createWorktreeContext: WorktreeCreateContext?
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -152,18 +159,31 @@ public struct MultiProviderSessionsListView: View {
       let error = claudeViewModel.worktreeDeletionError ?? codexViewModel.worktreeDeletionError
       if let error, error.isOrphaned, let parentRepoPath = error.parentRepoPath {
         Button("Prune & Delete") {
-          Task {
-            let worktree = error.worktree
-            await claudeViewModel.deleteOrphanedWorktree(worktree, parentRepoPath: parentRepoPath)
-            await codexViewModel.deleteOrphanedWorktree(worktree, parentRepoPath: parentRepoPath)
+          let isClaudeError = claudeViewModel.worktreeDeletionError != nil
+          if isClaudeError {
+            codexViewModel.clearWorktreeDeletionError()
+            claudeViewModel.forceDeleteOrphanedWorktree(error.worktree, parentRepoPath: parentRepoPath)
+          } else {
+            claudeViewModel.clearWorktreeDeletionError()
+            codexViewModel.forceDeleteOrphanedWorktree(error.worktree, parentRepoPath: parentRepoPath)
           }
         }
         Button("Cancel", role: .cancel) {
           claudeViewModel.clearWorktreeDeletionError()
           codexViewModel.clearWorktreeDeletionError()
         }
-      } else {
-        Button("OK", role: .cancel) {
+      } else if let error {
+        Button("Force Delete", role: .destructive) {
+          let isClaudeError = claudeViewModel.worktreeDeletionError != nil
+          if isClaudeError {
+            codexViewModel.clearWorktreeDeletionError()
+            claudeViewModel.forceDeleteWorktree(error.worktree)
+          } else {
+            claudeViewModel.clearWorktreeDeletionError()
+            codexViewModel.forceDeleteWorktree(error.worktree)
+          }
+        }
+        Button("Cancel", role: .cancel) {
           claudeViewModel.clearWorktreeDeletionError()
           codexViewModel.clearWorktreeDeletionError()
         }
@@ -174,7 +194,7 @@ public struct MultiProviderSessionsListView: View {
         if error.isOrphaned, let parentRepoPath = error.parentRepoPath {
           Text("The worktree at:\n\(error.worktree.path)\n\nhas no parent repo. You can prune and delete it from:\n\(parentRepoPath)")
         } else {
-          Text(error.message)
+          Text("\(error.message)\n\n\"Force Delete\" will remove the worktree even if it contains untracked files.")
         }
       }
     }
@@ -200,6 +220,23 @@ public struct MultiProviderSessionsListView: View {
       }
     } message: {
       Text("You are about to delete this worktree. This cannot be recovered.")
+    }
+    .sheet(item: $createWorktreeContext) { context in
+      CreateWorktreeSheet(
+        repositoryPath: context.repository.path,
+        repositoryName: context.repository.name,
+        onDismiss: { createWorktreeContext = nil },
+        onCreate: { branchName, directoryName, baseBranch, onProgress in
+          let vm = viewModel(for: context.providerKind)
+          try await vm.createWorktree(
+            for: context.repository,
+            branchName: branchName,
+            directoryName: directoryName,
+            baseBranch: baseBranch,
+            onProgress: onProgress
+          )
+        }
+      )
     }
   }
 
@@ -658,6 +695,12 @@ public struct MultiProviderSessionsListView: View {
         onRemoveRepository: { removeRepository($0, from: viewModel) },
         onOpenSessionFile: { session in
           openSessionFile(for: session, viewModel: viewModel)
+        },
+        onCreateWorktree: { repository in
+          createWorktreeContext = WorktreeCreateContext(
+            providerKind: viewModel.providerKind,
+            repository: repository
+          )
         }
       )
     }
@@ -1061,6 +1104,7 @@ private struct ProviderSectionView: View {
   @Bindable var viewModel: CLISessionsViewModel
   let onRemoveRepository: (SelectedRepository) -> Void
   let onOpenSessionFile: (CLISession) -> Void
+  var onCreateWorktree: ((SelectedRepository) -> Void)? = nil
 
   var body: some View {
     VStack(spacing: 12) {
@@ -1093,6 +1137,15 @@ private struct ProviderSectionView: View {
           },
           getCustomName: { sessionId in
             viewModel.sessionCustomNames[sessionId]
+          },
+          onCreateWorktree: onCreateWorktree != nil ? { repository in
+            onCreateWorktree?(repository)
+          } : nil,
+          onStartInHubForWorktree: { worktree in
+            viewModel.startNewSessionInHub(worktree)
+          },
+          onStartInHubDangerousForWorktree: { worktree in
+            viewModel.startNewSessionInHub(worktree, dangerouslySkipPermissions: true)
           },
           showLastMessage: viewModel.showLastMessage,
           isDebugMode: true,

@@ -45,7 +45,10 @@ let package = Package(
     .testTarget(
       name: "AgentHubTests",
       dependencies: ["AgentHubCore"],
-      path: "Tests/AgentHubTests"
+      path: "Tests/AgentHubTests",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
     ),
   ]
 )

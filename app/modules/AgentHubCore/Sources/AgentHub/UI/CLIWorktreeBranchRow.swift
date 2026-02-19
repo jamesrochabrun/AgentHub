@@ -23,11 +23,22 @@ public struct CLIWorktreeBranchRow: View {
   let isSessionMonitored: (String) -> Bool
   let onToggleMonitoring: (CLISession) -> Void
   let getCustomName: ((String) -> String?)?
+  let onStartInHub: () -> Void
+  let onStartInHubDangerous: () -> Void
   var showLastMessage: Bool = false
   var isDebugMode: Bool = false
   var isDeleting: Bool = false
 
   @State private var visibleSessionCount: Int = 5
+  @State private var showNewSessionMenu: Bool = false
+
+  private var providerLabel: String {
+    providerKind == .claude ? "Claude" : "Codex"
+  }
+
+  private var supportsDangerousMode: Bool {
+    providerKind == .claude
+  }
 
   // Initial visible sessions and load increment
   private let initialVisibleSessions = 5
@@ -72,6 +83,8 @@ public struct CLIWorktreeBranchRow: View {
     isSessionMonitored: @escaping (String) -> Bool,
     onToggleMonitoring: @escaping (CLISession) -> Void,
     getCustomName: ((String) -> String?)? = nil,
+    onStartInHub: @escaping () -> Void = {},
+    onStartInHubDangerous: @escaping () -> Void = {},
     showLastMessage: Bool = false,
     isDebugMode: Bool = false,
     isDeleting: Bool = false
@@ -87,6 +100,8 @@ public struct CLIWorktreeBranchRow: View {
     self.isSessionMonitored = isSessionMonitored
     self.onToggleMonitoring = onToggleMonitoring
     self.getCustomName = getCustomName
+    self.onStartInHub = onStartInHub
+    self.onStartInHubDangerous = onStartInHubDangerous
     self.showLastMessage = showLastMessage
     self.isDebugMode = isDebugMode
     self.isDeleting = isDeleting
@@ -164,6 +179,48 @@ public struct CLIWorktreeBranchRow: View {
               .buttonStyle(.plain)
               .help("Delete worktree")
             }
+          }
+
+          // New session button
+          Button(action: { showNewSessionMenu = true }) {
+            Image(systemName: "plus")
+              .font(.caption)
+              .foregroundColor(.brandPrimary(for: providerKind))
+              .frame(width: 24, height: 24)
+              .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                  .stroke(Color.brandPrimary(for: providerKind).opacity(0.3), lineWidth: 1)
+              )
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help("New \(providerLabel) session")
+          .popover(isPresented: $showNewSessionMenu, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 4) {
+              Button(action: {
+                showNewSessionMenu = false
+                onStartInHub()
+              }) {
+                Label("Start in Hub", systemImage: "play.circle.fill")
+              }
+              .buttonStyle(.plain)
+              .padding(.horizontal, 12)
+              .padding(.vertical, 6)
+
+              if supportsDangerousMode {
+                Button(action: {
+                  showNewSessionMenu = false
+                  onStartInHubDangerous()
+                }) {
+                  Label("Start in Hub (Dangerously)", systemImage: "bolt.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+              }
+
+            }
+            .padding(.vertical, 8)
           }
 
         }

@@ -63,6 +63,7 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 | **Cmd+,** | Open settings |
 | **Cmd+[** | Navigate to previous session |
 | **Cmd+]** | Navigate to next session |
+| **Cmd+\\** | Toggle focus mode (single ↔ previous layout) |
 | **Escape** | Dismiss maximized card / side panel / sheet |
 
 ### Diff View

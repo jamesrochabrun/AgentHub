@@ -6,7 +6,7 @@
 //
 
 import Testing
-@testable import AgentHubDemo
+@testable import AgentHub
 
 struct AgentHubDemoTests {
 

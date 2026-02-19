@@ -28,6 +28,7 @@ public struct CLISessionsListView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var isSearchSheetVisible: Bool = false
   @State private var primarySessionId: String?
+  @State private var createWorktreeRepository: SelectedRepository?
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @FocusState private var isSearchFieldFocused: Bool
@@ -93,22 +94,15 @@ public struct CLISessionsListView: View {
         if error.isOrphaned, let parentRepoPath = error.parentRepoPath {
           // Orphaned worktree - offer to prune & delete
           Button("Prune & Delete") {
-            Task {
-              let worktree = error.worktree
-              await viewModel.deleteOrphanedWorktree(worktree, parentRepoPath: parentRepoPath)
-            }
+            viewModel.forceDeleteOrphanedWorktree(error.worktree, parentRepoPath: parentRepoPath)
           }
           Button("Cancel", role: .cancel) {
             viewModel.clearWorktreeDeletionError()
           }
         } else {
-          // Regular error - offer retry
-          Button("Try Again") {
-            Task {
-              let worktree = error.worktree
-              viewModel.clearWorktreeDeletionError()
-              await viewModel.deleteWorktree(worktree)
-            }
+          // Regular error - offer force delete (double --force for untracked files)
+          Button("Force Delete", role: .destructive) {
+            viewModel.forceDeleteWorktree(error.worktree)
           }
           Button("Cancel", role: .cancel) {
             viewModel.clearWorktreeDeletionError()
@@ -128,9 +122,25 @@ public struct CLISessionsListView: View {
             Path: \(error.worktree.path)
             """)
         } else {
-          Text("Could not delete worktree at:\n\(error.worktree.path)\n\nError: \(error.message)")
+          Text("Could not delete worktree at:\n\(error.worktree.path)\n\nError: \(error.message)\n\n\"Force Delete\" will remove the worktree even if it contains untracked files.")
         }
       }
+    }
+    .sheet(item: $createWorktreeRepository) { repository in
+      CreateWorktreeSheet(
+        repositoryPath: repository.path,
+        repositoryName: repository.name,
+        onDismiss: { createWorktreeRepository = nil },
+        onCreate: { branchName, directoryName, baseBranch, onProgress in
+          try await viewModel.createWorktree(
+            for: repository,
+            branchName: branchName,
+            directoryName: directoryName,
+            baseBranch: baseBranch,
+            onProgress: onProgress
+          )
+        }
+      )
     }
   }
 
@@ -529,6 +539,15 @@ public struct CLISessionsListView: View {
             },
             getCustomName: { sessionId in
               viewModel.sessionCustomNames[sessionId]
+            },
+            onCreateWorktree: { repository in
+              createWorktreeRepository = repository
+            },
+            onStartInHubForWorktree: { worktree in
+              viewModel.startNewSessionInHub(worktree)
+            },
+            onStartInHubDangerousForWorktree: { worktree in
+              viewModel.startNewSessionInHub(worktree, dangerouslySkipPermissions: true)
             },
             showLastMessage: viewModel.showLastMessage,
             isDebugMode: true,  // Enable debug mode for now
