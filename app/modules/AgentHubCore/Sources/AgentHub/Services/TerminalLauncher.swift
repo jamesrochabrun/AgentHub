@@ -204,41 +204,7 @@ public struct TerminalLauncher {
       }
     }
 
-    // Create a temporary script file
-    let tempDir = NSTemporaryDirectory()
-    let scriptPath = (tempDir as NSString).appendingPathComponent("claude_resume_\(UUID().uuidString).command")
-
-    // Create the script content
-    let scriptContent = """
-    #!/bin/bash
-    \(command)
-    """
-
-    do {
-      // Write the script to file
-      try scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
-
-      // Make it executable
-      let attributes = [FileAttributeKey.posixPermissions: 0o700]
-      try FileManager.default.setAttributes(attributes, ofItemAtPath: scriptPath)
-
-      // Open the script with Terminal
-      let url = URL(fileURLWithPath: scriptPath)
-      NSWorkspace.shared.open(url)
-
-      // Clean up the script file after a delay
-      DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-        try? FileManager.default.removeItem(atPath: scriptPath)
-      }
-
-      return nil
-    } catch {
-      return NSError(
-        domain: "TerminalLauncher",
-        code: 2,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to launch Terminal: \(error.localizedDescription)"]
-      )
-    }
+    return launchTerminalScript(command: command, scriptPrefix: "claude_resume")
   }
 
   /// Launches Terminal with a new Claude session in the specified path
@@ -303,35 +269,7 @@ public struct TerminalLauncher {
       command = "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath)\(dangerousFlag)"
     }
 
-    let tempDir = NSTemporaryDirectory()
-    let scriptPath = (tempDir as NSString).appendingPathComponent("claude_open_\(UUID().uuidString).command")
-
-    let scriptContent = """
-    #!/bin/bash
-    \(command)
-    """
-
-    do {
-      try scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
-      let attributes = [FileAttributeKey.posixPermissions: 0o700]
-      try FileManager.default.setAttributes(attributes, ofItemAtPath: scriptPath)
-
-      let url = URL(fileURLWithPath: scriptPath)
-      NSWorkspace.shared.open(url)
-
-      // Clean up script after Terminal has had time to read it
-      DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
-        try? FileManager.default.removeItem(atPath: scriptPath)
-      }
-
-      return nil
-    } catch {
-      return NSError(
-        domain: "TerminalLauncher",
-        code: 2,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to launch Terminal: \(error.localizedDescription)"]
-      )
-    }
+    return launchTerminalScript(command: command, scriptPrefix: "claude_open")
   }
 
   /// Launches Terminal with a session resume command using CLICommandConfiguration
@@ -391,36 +329,58 @@ public struct TerminalLauncher {
     return launchTerminalScript(command: command, scriptPrefix: "cli_resume")
   }
 
-  /// Creates and executes a terminal script
+  /// Creates and executes a terminal script using secure temp-file creation.
+  /// Uses O_CREAT | O_EXCL to atomically create the file, eliminating TOCTOU races.
   private static func launchTerminalScript(command: String, scriptPrefix: String) -> Error? {
     let tempDir = NSTemporaryDirectory()
     let scriptPath = (tempDir as NSString).appendingPathComponent("\(scriptPrefix)_\(UUID().uuidString).command")
 
-    let scriptContent = """
-    #!/bin/bash
-    \(command)
-    """
+    let scriptContent = "#!/bin/bash\n\(command)\n"
 
-    do {
-      try scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
-      let attributes = [FileAttributeKey.posixPermissions: 0o700]
-      try FileManager.default.setAttributes(attributes, ofItemAtPath: scriptPath)
-
-      let url = URL(fileURLWithPath: scriptPath)
-      NSWorkspace.shared.open(url)
-
-      DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-        try? FileManager.default.removeItem(atPath: scriptPath)
-      }
-
-      return nil
-    } catch {
+    // Atomically create the file with O_CREAT | O_EXCL (fails if path exists)
+    // and set permissions to 0o700 at creation time — no separate chmod step.
+    let fd = open(scriptPath, O_WRONLY | O_CREAT | O_EXCL, 0o700)
+    guard fd >= 0 else {
       return NSError(
         domain: "TerminalLauncher",
         code: 2,
-        userInfo: [NSLocalizedDescriptionKey: "Failed to launch Terminal: \(error.localizedDescription)"]
+        userInfo: [NSLocalizedDescriptionKey: "Failed to create temp script: \(String(cString: strerror(errno)))"]
       )
     }
+    defer { close(fd) }
+
+    guard let data = scriptContent.data(using: .utf8) else {
+      try? FileManager.default.removeItem(atPath: scriptPath)
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to encode script content."]
+      )
+    }
+
+    let written = data.withUnsafeBytes { ptr -> Int in
+      Darwin.write(fd, ptr.baseAddress!, ptr.count)
+    }
+
+    guard written == data.count else {
+      try? FileManager.default.removeItem(atPath: scriptPath)
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Failed to write temp script."]
+      )
+    }
+
+    let url = URL(fileURLWithPath: scriptPath)
+    NSWorkspace.shared.open(url)
+
+    // Clean up after Terminal has read the file. 2s is sufficient —
+    // Terminal reads .command file contents at open time, not streaming.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+      try? FileManager.default.removeItem(atPath: scriptPath)
+    }
+
+    return nil
   }
 
   /// Finds the full path to the Claude executable
