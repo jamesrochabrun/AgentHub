@@ -49,6 +49,9 @@ public struct MultiProviderSessionsListView: View {
   @Environment(\.runtimeTheme) private var runtimeTheme
   @Environment(\.openSettings) private var openSettings
 
+  @AppStorage(AgentHubDefaults.terminalFontSize)
+  private var terminalFontSize: Double = 12
+
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = 0
 
@@ -266,6 +269,14 @@ public struct MultiProviderSessionsListView: View {
 
       Button("") { toggleFocusMode() }
         .keyboardShortcut("\\", modifiers: .command)
+        .hidden()
+
+      Button("") { terminalFontSize = min(terminalFontSize + 1, 24) }
+        .keyboardShortcut("+", modifiers: .command)
+        .hidden()
+
+      Button("") { terminalFontSize = max(terminalFontSize - 1, 8) }
+        .keyboardShortcut("-", modifiers: .command)
         .hidden()
     }
   }

@@ -90,6 +90,10 @@ public enum AgentHubDefaults {
 
   // MARK: - UI Settings
 
+  /// Terminal font size in points
+  /// Type: Double (default: 12.0)
+  public static let terminalFontSize = "\(keyPrefix)terminal.fontSize"
+
   /// Monitoring panel layout mode (list, 2-column, 3-column grid)
   /// Type: Int (default: 0 = list)
   public static let monitoringPanelLayoutMode = "\(keyPrefix)ui.monitoringPanelLayoutMode"

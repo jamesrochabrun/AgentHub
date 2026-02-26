@@ -11,6 +11,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
 
+  @AppStorage(AgentHubDefaults.terminalFontSize)
+  private var terminalFontSize: Double = 12
+
   @AppStorage(AgentHubDefaults.notificationSoundsEnabled)
   private var notificationSoundsEnabled: Bool = true
 
@@ -119,6 +122,18 @@ public struct SettingsView: View {
             Text("Use AI to plan and orchestrate multi-session launches")
               .font(.caption)
               .foregroundColor(.secondary)
+          }
+        }
+      }
+
+      Section("Terminal") {
+        Stepper(value: $terminalFontSize, in: 8...24, step: 1) {
+          HStack {
+            Text("Font size")
+            Spacer()
+            Text("\(Int(terminalFontSize)) pt")
+              .foregroundColor(.secondary)
+              .monospacedDigit()
           }
         }
       }

@@ -43,6 +43,7 @@ class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
 /// Provides an embedded terminal for interacting with Claude sessions
 public struct EmbeddedTerminalView: NSViewRepresentable {
   @Environment(\.colorScheme) private var colorScheme
+  @AppStorage(AgentHubDefaults.terminalFontSize) private var terminalFontSize: Double = 12
 
   let terminalKey: String  // Key for terminal storage (session ID or "pending-{pendingId}")
   let sessionId: String?  // Optional: nil for new sessions, set for resume
@@ -114,6 +115,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     // Update colors when color scheme changes
     nsView.updateColors(isDark: colorScheme == .dark)
     nsView.onUserInteraction = onUserInteraction
+    nsView.updateFont(size: CGFloat(terminalFontSize))
 
     // If there's a pending prompt in the viewModel, send it (and clear it)
     // Use terminalKey (not sessionId) since it works for both pending and real sessions
@@ -266,6 +268,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard !hasPrefilledInitialInputText else { return }
     hasPrefilledInitialInputText = true
     typeText(text)
+  }
+
+  /// Updates terminal font size.
+  public func updateFont(size: CGFloat) {
+    guard let terminal = terminalView else { return }
+    let font = NSFont(name: "SF Mono", size: size)
+      ?? NSFont(name: "Menlo", size: size)
+      ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    terminal.font = font
   }
 
   /// Updates terminal colors based on color scheme.
