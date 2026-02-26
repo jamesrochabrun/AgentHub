@@ -1172,6 +1172,63 @@ public final class CLISessionsViewModel {
   ///   - worktree: The worktree to open
   ///   - skipCheckout: If true, skips git checkout even for non-worktrees
   /// - Returns: An error if launching failed, nil on success
+  /// Creates a git worktree from the session's HEAD, optionally carries uncommitted changes,
+  /// then opens a new hub session pre-filled with a reference to the original.
+  public func remixSession(_ session: CLISession) {
+    Task { @MainActor in
+      let worktreeService = GitWorktreeService()
+      let projectName = session.projectName
+      let branchSuffix = session.branchName.map { GitWorktreeService.sanitizeBranchName($0) } ?? "no-branch"
+      let timestamp = Int(Date().timeIntervalSince1970)
+      let branchName = "remix-\(branchSuffix)-\(session.shortId)-\(timestamp)"
+      let dirName = "\(projectName)-\(branchName)"
+
+      do {
+        // 1. Capture uncommitted state as a stash object (non-destructive)
+        let stashRef = try await worktreeService.captureStash(at: session.projectPath)
+
+        // 2. Create worktree at HEAD
+        let worktreePath = try await worktreeService.createWorktreeWithNewBranch(
+          at: session.projectPath,
+          newBranchName: branchName,
+          directoryName: dirName
+        )
+
+        // 3. Apply uncommitted changes into the new worktree (if any existed)
+        if let stashRef {
+          try await worktreeService.applyStash(stashRef, at: worktreePath)
+        }
+
+        let worktree = WorktreeBranch(
+          name: branchName,
+          path: worktreePath,
+          isWorktree: true,
+          sessions: [],
+          isExpanded: true
+        )
+
+        // Build a transcript reference to orient the new session.
+        // sessionFilePath is the canonical, provider-agnostic path already stored on the model:
+        //   - Claude sessions: ~/.claude/projects/{encoded-path}/{sessionId}.jsonl
+        //   - Codex sessions:  ~/.codex/sessions/{date-path}/{sessionId}.jsonl
+        // The fallback only fires for Claude sessions where sessionFilePath was not populated
+        // at scan time; it must never be reached for Codex (sessionFilePath is always set there).
+        var reference = "If you need specific details from the previous session, read the full transcript at:"
+        if let filePath = session.sessionFilePath {
+          reference += " \(filePath)"
+        } else {
+          // Claude-specific fallback: reconstruct the path from the encoded project path.
+          let encodedPath = session.projectPath.claudeProjectPathEncoded
+          reference += " ~/.claude/projects/\(encodedPath)/\(session.id).jsonl"
+        }
+
+        startNewSessionInHub(worktree, initialPrompt: reference)
+      } catch {
+        AppLogger.session.error("[Remix] Failed: \(error)")
+      }
+    }
+  }
+
   /// Starts a new Claude session in the Hub's embedded terminal (not external terminal)
   /// - Parameters:
   ///   - worktree: The worktree to start the session in

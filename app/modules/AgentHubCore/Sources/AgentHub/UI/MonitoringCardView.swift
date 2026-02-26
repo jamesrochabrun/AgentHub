@@ -499,6 +499,12 @@ public struct MonitoringCardView: View {
         showingNameSheet = true
       }
 
+      // Remix action
+      PopoverButton(icon: "arrowshape.zigzag.forward", title: "Remix") {
+        showingActionsPopover = false
+        viewModel?.remixSession(session)
+      }
+
       // Media actions (only in terminal mode)
       if showTerminal {
         Divider()

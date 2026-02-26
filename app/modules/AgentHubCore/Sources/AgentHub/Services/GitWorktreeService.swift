@@ -568,6 +568,23 @@ public actor GitWorktreeService {
     return output
   }
 
+  // MARK: - Stash Helpers
+
+  /// Captures uncommitted working tree state without modifying it.
+  /// Returns the stash object SHA, or nil if there is nothing to stash.
+  public func captureStash(at repoPath: String) async throws -> String? {
+    let gitRoot = try await findGitRoot(at: repoPath)
+    let output = try await runGitCommand(["stash", "create"], at: gitRoot)
+    let sha = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    return sha.isEmpty ? nil : sha
+  }
+
+  /// Applies a stash object (by SHA) in the given directory.
+  public func applyStash(_ ref: String, at path: String) async throws {
+    let gitRoot = try await findGitRoot(at: path)
+    try await runGitCommand(["stash", "apply", ref], at: gitRoot, timeout: 60)
+  }
+
   // MARK: - Git Status Helpers
 
   /// Returns the current branch name at the given path
