@@ -17,6 +17,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.notificationSoundsEnabled)
   private var notificationSoundsEnabled: Bool = true
 
+  @AppStorage(AgentHubDefaults.pushNotificationsEnabled)
+  private var pushNotificationsEnabled: Bool = true
+
   @AppStorage(AgentHubDefaults.claudeCommand)
   private var claudeCommand: String = "claude"
 
@@ -107,6 +110,14 @@ public struct SettingsView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("Notification sounds")
             Text("Play a sound when tools require approval")
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+        }
+        Toggle(isOn: $pushNotificationsEnabled) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Push notifications")
+            Text("Show a notification banner when tools require approval")
               .font(.caption)
               .foregroundColor(.secondary)
           }

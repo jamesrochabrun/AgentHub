@@ -9,10 +9,11 @@ import Foundation
 #if canImport(AppKit)
 import AppKit
 #endif
+import UserNotifications
 
 // MARK: - ApprovalNotificationService
 
-/// Service for playing alert sounds when tools need approval
+/// Service for playing alert sounds and sending push notifications when tools need approval
 public final class ApprovalNotificationService {
 
   // MARK: - Singleton
@@ -23,17 +24,21 @@ public final class ApprovalNotificationService {
 
   private init() {}
 
-  // MARK: - Permission (no longer needed, but keep for API compatibility)
+  // MARK: - Permission
 
   @discardableResult
   public func requestPermission() async -> Bool {
-    // No permission needed for playing sounds
-    return true
+    do {
+      let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+      return granted
+    } catch {
+      return false
+    }
   }
 
-  // MARK: - Play Alert Sound
+  // MARK: - Send Approval Notification
 
-  /// Play an alert sound when a tool needs approval
+  /// Send an approval notification (sound and/or push) when a tool needs approval
   /// - Parameters:
   ///   - sessionId: The session ID
   ///   - toolName: The name of the tool awaiting approval
@@ -48,12 +53,21 @@ public final class ApprovalNotificationService {
     lastMessage: String? = nil
   ) {
     playAlertSound()
+    if pushNotificationsEnabled {
+      Task(priority: .userInitiated) {
+        await sendPushNotification(toolName: toolName, projectPath: projectPath, sessionId: sessionId)
+      }
+    }
   }
 
   // MARK: - Private
 
   private var soundsEnabled: Bool {
     UserDefaults.standard.object(forKey: AgentHubDefaults.notificationSoundsEnabled) as? Bool ?? true
+  }
+
+  private var pushNotificationsEnabled: Bool {
+    UserDefaults.standard.object(forKey: AgentHubDefaults.pushNotificationsEnabled) as? Bool ?? true
   }
 
   private func playAlertSound() {
@@ -63,5 +77,29 @@ public final class ApprovalNotificationService {
     // Play system alert sound
     NSSound.beep()
     #endif
+  }
+
+  private func sendPushNotification(toolName: String, projectPath: String?, sessionId: String) async {
+    let content = UNMutableNotificationContent()
+    content.title = "Approval Required"
+    content.body = "\(toolName) needs your approval"
+    if let projectPath {
+      content.subtitle = URL(fileURLWithPath: projectPath).lastPathComponent
+    }
+    content.sound = .none
+    content.userInfo = ["sessionId": sessionId]
+
+    let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+    let request = UNNotificationRequest(
+      identifier: "approval-\(sessionId)",
+      content: content,
+      trigger: trigger
+    )
+
+    do {
+      try await UNUserNotificationCenter.current().add(request)
+    } catch {
+      // Silently fail — notification is a best-effort enhancement
+    }
   }
 }

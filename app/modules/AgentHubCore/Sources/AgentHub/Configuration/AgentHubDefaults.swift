@@ -40,6 +40,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true)
   public static let notificationSoundsEnabled = "\(keyPrefix)notifications.soundsEnabled"
 
+  /// Whether push notifications are enabled for tool approvals
+  /// Type: Bool (default: true)
+  public static let pushNotificationsEnabled = "\(keyPrefix)notifications.pushEnabled"
+
   /// Persisted selected repositories (JSON-encoded array of paths)
   /// Type: Data (JSON-encoded [String])
   /// Note: Used with provider suffix (e.g., `.claude` or `.codex`) for provider-specific storage

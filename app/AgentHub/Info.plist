@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSUserNotificationsUsageDescription</key>
+  <string>AgentHub sends notifications when a Claude or Codex session requires tool approval.</string>
   <key>SUFeedURL</key>
   <string>https://raw.githubusercontent.com/jamesrochabrun/AgentHub/main/appcast.xml</string>
   <key>SUPublicEDKey</key>
