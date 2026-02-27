@@ -65,6 +65,8 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 | **Cmd+[** | Navigate to previous session |
 | **Cmd+]** | Navigate to next session |
 | **Cmd+\\** | Toggle focus mode (single ↔ previous layout) |
+| **Cmd++** | Increase terminal font size |
+| **Cmd+-** | Decrease terminal font size |
 | **Escape** | Dismiss maximized card / side panel / sheet |
 
 ### Diff View
