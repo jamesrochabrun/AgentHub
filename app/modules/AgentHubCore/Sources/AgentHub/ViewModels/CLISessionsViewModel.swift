@@ -30,6 +30,7 @@ public final class CLISessionsViewModel {
   private let worktreeService = GitWorktreeService()
   private let metadataStore: SessionMetadataStore?
   private let fileWatcher: any SessionFileWatcherProtocol
+  weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
 
@@ -1174,7 +1175,7 @@ public final class CLISessionsViewModel {
   /// - Returns: An error if launching failed, nil on success
   /// Creates a git worktree from the session's HEAD, optionally carries uncommitted changes,
   /// then opens a new hub session pre-filled with a reference to the original.
-  public func remixSession(_ session: CLISession) {
+  public func remixSession(_ session: CLISession, targetProvider: SessionProviderKind? = nil) {
     Task { @MainActor in
       let worktreeService = GitWorktreeService()
       let projectName = session.projectName
@@ -1222,7 +1223,17 @@ public final class CLISessionsViewModel {
           reference += " ~/.claude/projects/\(encodedPath)/\(session.id).jsonl"
         }
 
-        startNewSessionInHub(worktree, initialPrompt: reference)
+        // Resolve which ViewModel launches the new session
+        let resolvedProvider = targetProvider ?? providerKind
+        if resolvedProvider != providerKind, let hub = agentHubProvider {
+          let targetViewModel = resolvedProvider == .claude
+            ? hub.claudeSessionsViewModel
+            : hub.codexSessionsViewModel
+          targetViewModel.addRepository(at: session.projectPath)
+          targetViewModel.startNewSessionInHub(worktree, initialPrompt: reference)
+        } else {
+          startNewSessionInHub(worktree, initialPrompt: reference)
+        }
       } catch {
         AppLogger.session.error("[Remix] Failed: \(error)")
       }

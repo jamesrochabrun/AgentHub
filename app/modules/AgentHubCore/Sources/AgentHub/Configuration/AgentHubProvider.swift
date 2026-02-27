@@ -252,7 +252,7 @@ public final class AgentHubProvider {
       }
     }()
 
-    return CLISessionsViewModel(
+    let vm = CLISessionsViewModel(
       monitorService: selectedMonitor,
       fileWatcher: selectedWatcher,
       searchService: selectedSearch,
@@ -261,6 +261,8 @@ public final class AgentHubProvider {
       claudeClient: providerKind == .claude ? claudeClient : nil,
       metadataStore: metadataStore
     )
+    vm.agentHubProvider = self
+    return vm
   }
 
   // MARK: - Public Factory Methods

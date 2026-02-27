@@ -24,6 +24,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Hub panel** — Unified view of all sessions across providers with single, list, 2-column, and 3-column grid layouts
 - **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
 - **Git worktree management** — Create and delete worktrees from the UI; launch sessions on new branches
+- **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
 - **Web preview** — Auto-detects project type, starts dev servers for framework projects, and live-reloads static HTML
 - **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting

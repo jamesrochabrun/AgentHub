@@ -85,6 +85,7 @@ public struct MonitoringCardView: View {
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
+  @State private var showingRemixProviderPicker = false
   @Environment(\.colorScheme) private var colorScheme
 
   public init(
@@ -252,6 +253,9 @@ public struct MonitoringCardView: View {
         },
         onDismiss: { showingNameSheet = false }
       )
+    }
+    .sheet(isPresented: $showingRemixProviderPicker) {
+      RemixProviderPickerView(session: session, viewModel: viewModel)
     }
     .fileImporter(
       isPresented: $showingFilePicker,
@@ -502,7 +506,7 @@ public struct MonitoringCardView: View {
       // Remix action
       PopoverButton(icon: "arrowshape.zigzag.forward", title: "Remix") {
         showingActionsPopover = false
-        viewModel?.remixSession(session)
+        showingRemixProviderPicker = true
       }
 
       // Media actions (only in terminal mode)
