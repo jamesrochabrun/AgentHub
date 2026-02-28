@@ -45,7 +45,7 @@ https://github.com/user-attachments/assets/c20c1f3e-745d-4a39-8599-37ad242b3ae6
 
 Mermaid diagram rendering with image export
 
-https://github.com/user-attachments/assets/49b4f084-5c60-46c6-b7f7-aeab3e840bf8
+https://github.com/user-attachments/assets/f6a304de-fc7c-4024-94c6-9e2222210dff
 
 ## Requirements
 
