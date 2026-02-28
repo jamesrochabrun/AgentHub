@@ -26,6 +26,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Git worktree management** — Create and delete worktrees from the UI; launch sessions on new branches
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
+- **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
 - **Web preview** — Auto-detects project type, starts dev servers for framework projects, and live-reloads static HTML
 - **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting
 - **Global search** — Search across all session files with ranked results
@@ -41,6 +42,10 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 Parallel execution with Claude Code and Codex
 
 https://github.com/user-attachments/assets/c20c1f3e-745d-4a39-8599-37ad242b3ae6
+
+Mermaid diagram rendering with image export
+
+https://github.com/user-attachments/assets/49b4f084-5c60-46c6-b7f7-aeab3e840bf8
 
 ## Requirements
 
