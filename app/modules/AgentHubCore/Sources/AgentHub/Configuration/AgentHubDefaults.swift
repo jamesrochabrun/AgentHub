@@ -124,6 +124,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let smartModeEnabled = "\(keyPrefix)features.smartModeEnabled"
 
+  /// Whether to show sessions in a flat list without per-repository section headers
+  /// Type: Bool (default: false)
+  public static let flatSessionLayout = "\(keyPrefix)hub.flatSessionLayout"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

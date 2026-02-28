@@ -11,6 +11,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
 
+  @AppStorage(AgentHubDefaults.flatSessionLayout)
+  private var flatSessionLayout: Bool = false
+
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
@@ -131,6 +134,14 @@ public struct SettingsView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("Smart mode")
             Text("Use AI to plan and orchestrate multi-session launches")
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+        }
+        Toggle(isOn: $flatSessionLayout) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Flat session layout")
+            Text("Show all sessions without per-repository sections")
               .font(.caption)
               .foregroundColor(.secondary)
           }
