@@ -71,6 +71,7 @@ public struct MonitoringCardView: View {
   let onShowPlan: ((CLISession, PlanState) -> Void)?
   let onShowWebPreview: ((CLISession, String) -> Void)?
   let onShowMermaid: ((CLISession) -> Void)?
+  let onShowSimulator: ((CLISession) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
   let isMaximized: Bool
@@ -84,6 +85,7 @@ public struct MonitoringCardView: View {
   @State private var pendingChangesSheetItem: PendingChangesSheetItem?
   @State private var webPreviewSheetItem: WebPreviewSheetItem?
   @State private var mermaidSheetSession: CLISession?
+  @State private var simulatorSheetSession: CLISession?
   @State private var isDragging = false
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
@@ -116,6 +118,7 @@ public struct MonitoringCardView: View {
     onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
     onShowWebPreview: ((CLISession, String) -> Void)? = nil,
     onShowMermaid: ((CLISession) -> Void)? = nil,
+    onShowSimulator: ((CLISession) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
     isMaximized: Bool = false,
@@ -148,6 +151,7 @@ public struct MonitoringCardView: View {
     self.onShowPlan = onShowPlan
     self.onShowWebPreview = onShowWebPreview
     self.onShowMermaid = onShowMermaid
+    self.onShowSimulator = onShowSimulator
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
     self.isMaximized = isMaximized
@@ -259,6 +263,12 @@ public struct MonitoringCardView: View {
       MermaidDiagramView(
         session: session,
         onDismiss: { mermaidSheetSession = nil }
+      )
+    }
+    .sheet(item: $simulatorSheetSession) { session in
+      SimulatorPickerView(
+        session: session,
+        onDismiss: { simulatorSheetSession = nil }
       )
     }
     .sheet(isPresented: $showingNameSheet) {
@@ -712,6 +722,31 @@ public struct MonitoringCardView: View {
           }
           .buttonStyle(.plain)
           .help("View Mermaid diagrams")
+        }
+
+        // Simulator button (only visible for Xcode projects)
+        if XcodeProjectDetector.isXcodeProject(at: session.projectPath) {
+          Button(action: {
+            if let onShowSimulator {
+              onShowSimulator(session)
+            } else {
+              simulatorSheetSession = session
+            }
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "iphone")
+                .font(.caption2)
+              Text("Simulator")
+                .font(.caption2)
+            }
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+          }
+          .buttonStyle(.plain)
+          .help("Manage iOS Simulators")
         }
 
         // Terminal refresh button (only visible when terminal is shown)

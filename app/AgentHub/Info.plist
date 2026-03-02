@@ -4,6 +4,8 @@
 <dict>
   <key>NSUserNotificationsUsageDescription</key>
   <string>AgentHub sends notifications when a Claude or Codex session requires tool approval.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>AgentHub can embed the iOS Simulator window so you can monitor your app alongside your Claude Code session.</string>
   <key>SUFeedURL</key>
   <string>https://raw.githubusercontent.com/jamesrochabrun/AgentHub/main/appcast.xml</string>
   <key>SUPublicEDKey</key>
