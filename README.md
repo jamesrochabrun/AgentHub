@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
 - **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
 - **Web preview** — Auto-detects project type, starts dev servers for framework projects, and live-reloads static HTML
-- **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting
+- **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting; switch to Review mode to annotate individual lines and send batch feedback directly to Claude's interactive plan prompt
 - **Global search** — Search across all session files with ranked results
 - **Usage stats** — Track token counts, costs, and daily activity per provider (menu bar or popover)
 - **Command palette** — Quick access to sessions, repositories, and actions via Cmd+K
@@ -42,6 +42,10 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 Parallel execution with Claude Code and Codex
 
 https://github.com/user-attachments/assets/c20c1f3e-745d-4a39-8599-37ad242b3ae6
+
+Plan view with inline review and batch feedback
+
+https://github.com/user-attachments/assets/b7661b65-dc58-4f8e-a4c5-df1e17a4076d
 
 Mermaid diagram rendering with image export
 

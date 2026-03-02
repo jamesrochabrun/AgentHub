@@ -230,7 +230,11 @@ public struct MonitoringCardView: View {
       PlanView(
         session: item.session,
         planState: item.planState,
-        onDismiss: { planSheetItem = nil }
+        onDismiss: { planSheetItem = nil },
+        providerKind: providerKind,
+        onSendFeedback: { feedback, sess in
+          viewModel?.showTerminalWithPrompt(for: sess, prompt: feedback)
+        }
       )
     }
     .sheet(item: $pendingChangesSheetItem) { item in

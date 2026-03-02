@@ -610,7 +610,11 @@ public struct MultiProviderMonitoringPanelView: View {
         session: session,
         planState: planState,
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-        isEmbedded: true
+        isEmbedded: true,
+        providerKind: visibleItems.first?.providerKind ?? .claude,
+        onSendFeedback: { feedback, sess in
+          viewModel.showTerminalWithPrompt(for: sess, prompt: feedback)
+        }
       )
     case .webPreview(_, let session, let projectPath):
       WebPreviewView(

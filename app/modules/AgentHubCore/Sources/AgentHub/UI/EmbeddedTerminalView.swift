@@ -251,11 +251,31 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard !hasDeliveredInitialPrompt else { return }
     hasDeliveredInitialPrompt = true
 
-    // Send the prompt text first
-    terminal.send(txt: prompt)
+    // Detect plan-feedback prefix: 3 down-arrows + Enter marks step-by-step delivery
+    let planFeedbackPrefix = "\u{1B}[B\u{1B}[B\u{1B}[B\r"
+    if prompt.hasPrefix(planFeedbackPrefix) {
+      let feedback = String(prompt.dropFirst(planFeedbackPrefix.count))
+      Task { @MainActor [weak terminal] in
+        let down: [UInt8] = [0x1B, 0x5B, 0x42]  // ESC [ B = down arrow
+        terminal?.send(down)
+        try? await Task.sleep(for: .milliseconds(80))
+        terminal?.send(down)
+        try? await Task.sleep(for: .milliseconds(80))
+        terminal?.send(down)
+        try? await Task.sleep(for: .milliseconds(80))
+        terminal?.send([13])                            // select option 4
+        try? await Task.sleep(for: .milliseconds(150)) // wait for text input to open
+        if !feedback.isEmpty {
+          terminal?.send(txt: feedback)
+          try? await Task.sleep(for: .milliseconds(100))
+        }
+        terminal?.send([13])                            // submit
+      }
+      return
+    }
 
-    // Small delay before sending Enter to ensure the terminal's input buffer
-    // processes the text before receiving the carriage return
+    // Normal prompt: send text then Enter
+    terminal.send(txt: prompt)
     Task { @MainActor [weak terminal] in
       try? await Task.sleep(for: .milliseconds(100))
       terminal?.send([13])  // ASCII 13 = carriage return (Enter key)
