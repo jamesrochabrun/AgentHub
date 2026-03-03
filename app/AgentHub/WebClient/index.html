@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AgentHub Web</title>
+  <link rel="stylesheet" href="/xterm.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0F172A; --panel: #1E293B; --border: #334155;
+      --accent: #22C55E; --text: #F8FAFC; --muted: #94A3B8;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text);
+      font-family: 'IBM Plex Sans', system-ui, sans-serif; overflow: hidden; }
+    .app { display: flex; flex-direction: column; height: 100vh; }
+    /* Topbar */
+    .topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+      border-bottom: 1px solid var(--border); background: var(--panel); flex-shrink: 0; }
+    .topbar-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
+      transition: background 300ms; flex-shrink: 0; }
+    .topbar-dot.connected { background: var(--accent); }
+    .topbar-title { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600; }
+    .topbar-status { font-size: 12px; color: var(--muted); margin-left: auto; }
+    /* Main layout */
+    .main { display: flex; flex: 1; overflow: hidden; }
+    /* Sidebar */
+    .sidebar { width: 200px; flex-shrink: 0; border-right: 1px solid var(--border);
+      overflow-y: auto; background: var(--panel); display: flex; flex-direction: column; }
+    .sidebar-header { padding: 12px 14px 6px; font-size: 10px; font-weight: 600;
+      letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .session-item { display: flex; align-items: center; gap: 8px; padding: 9px 14px;
+      cursor: pointer; border-left: 2px solid transparent; transition: background 150ms, border-color 150ms; }
+    .session-item:hover { background: rgba(255,255,255,.04); }
+    .session-item.active { background: rgba(34,197,94,.08); border-left-color: var(--accent); }
+    .session-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+    .session-dot.active { background: var(--accent); }
+    .session-info { min-width: 0; }
+    .session-name { font-size: 13px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .session-meta { font-size: 11px; color: var(--muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .session-status { font-size: 10px; color: var(--accent); margin-top: 1px; }
+    .sidebar-empty { padding: 16px 14px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+    /* Terminal area */
+    .terminal-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+    .terminal-titlebar { padding: 9px 16px; border-bottom: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--muted);
+      background: var(--panel); flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .terminal-titlebar b { color: var(--text); font-weight: 500; }
+    #term-wrap { flex: 1; overflow: hidden; padding: 4px; background: var(--bg); }
+    .placeholder { display: flex; align-items: center; justify-content: center;
+      height: 100%; flex-direction: column; gap: 10px; }
+    .placeholder svg { opacity: .15; }
+    .placeholder p { color: var(--muted); font-size: 14px; }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="topbar-dot" id="dot"></div>
+    <span class="topbar-title">AgentHub Web</span>
+    <span class="topbar-status" id="status">Connecting…</span>
+  </header>
+  <div class="main">
+    <nav class="sidebar">
+      <div class="sidebar-header">Focused Sessions</div>
+      <div id="session-list"></div>
+    </nav>
+    <div class="terminal-area">
+      <div class="terminal-titlebar" id="titlebar">Select a session</div>
+      <div id="term-wrap">
+        <div class="placeholder" id="placeholder">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+            <rect x="2" y="4" width="20" height="16" rx="2"/>
+            <path d="M8 9l3 3-3 3M13 15h3"/>
+          </svg>
+          <p>Select a session to open terminal</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="/xterm.js"></script>
+<script>
+'use strict';
+let sessions = [], activeId = null, term = null, ws = null;
+const $ = id => document.getElementById(id);
+
+// ── Session polling ─────────────────────────────────────────────────────────
+async function poll() {
+  try {
+    const r = await fetch('/api/sessions');
+    if (!r.ok) throw new Error(r.status);
+    sessions = await r.json();
+    renderSidebar();
+    $('dot').classList.add('connected');
+    $('status').textContent = `${sessions.length} session${sessions.length !== 1 ? 's' : ''} · :${location.port}`;
+  } catch {
+    $('dot').classList.remove('connected');
+    $('status').textContent = 'Disconnected';
+  }
+}
+
+// ── Sidebar ─────────────────────────────────────────────────────────────────
+function renderSidebar() {
+  const el = $('session-list');
+  if (!sessions.length) {
+    el.innerHTML = '<div class="sidebar-empty">No focused sessions.<br>Add sessions in AgentHub first.</div>';
+    return;
+  }
+  el.innerHTML = sessions.map(s => `
+    <div class="session-item${s.id === activeId ? ' active' : ''}"
+         onclick="connect('${esc(s.id)}')" title="${esc(s.projectPath)}">
+      <div class="session-dot${s.id === activeId ? ' active' : ''}"></div>
+      <div class="session-info">
+        <div class="session-name">${esc(s.slug)}</div>
+        ${s.branchName ? `<div class="session-meta">${esc(s.branchName)}</div>` : ''}
+        <div class="session-status">${esc(s.statusLabel)}</div>
+      </div>
+    </div>`).join('');
+}
+
+// ── Terminal ─────────────────────────────────────────────────────────────────
+function connect(id) {
+  if (ws) { ws.close(); ws = null; }
+  activeId = id;
+  renderSidebar();
+
+  const s = sessions.find(x => x.id === id);
+  $('titlebar').innerHTML = s
+    ? `<b>${esc(s.slug)}</b> · ${esc(s.projectPath)}${s.branchName ? ' [' + esc(s.branchName) + ']' : ''}`
+    : id;
+
+  // Create terminal
+  if (term) { term.dispose(); }
+  $('term-wrap').innerHTML = '';
+  $('placeholder') && ($('placeholder').style.display = 'none');
+  term = new Terminal({
+    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    fontSize: 14, lineHeight: 1.2, cursorBlink: true, scrollback: 5000,
+    theme: {
+      background: '#0F172A', foreground: '#F8FAFC', cursor: '#22C55E',
+      selectionBackground: '#334155',
+      black: '#1E293B', brightBlack: '#475569',
+      red: '#F87171',   brightRed: '#FCA5A5',
+      green: '#22C55E', brightGreen: '#4ADE80',
+      yellow: '#FACC15',brightYellow: '#FDE047',
+      blue: '#60A5FA',  brightBlue: '#93C5FD',
+      magenta: '#C084FC',brightMagenta: '#D8B4FE',
+      cyan: '#22D3EE',  brightCyan: '#67E8F9',
+      white: '#CBD5E1', brightWhite: '#F8FAFC',
+    }
+  });
+  term.open($('term-wrap'));
+  fit();
+
+  const ro = new ResizeObserver(fit);
+  ro.observe($('term-wrap'));
+
+  term.onData(d => ws?.readyState === 1 && ws.send(new TextEncoder().encode(d)));
+  term.writeln('\x1b[32mConnecting…\x1b[0m');
+
+  // WebSocket
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/terminal/${id}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = fit;
+  ws.onmessage = e => term?.write(e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data);
+  ws.onclose = () => term?.writeln('\r\n\x1b[33m[Disconnected]\x1b[0m');
+  ws.onerror = () => term?.writeln('\r\n\x1b[31m[Connection error]\x1b[0m');
+}
+
+// ── Fit terminal to container ─────────────────────────────────────────────────
+function fit() {
+  if (!term) return;
+  const wrap = $('term-wrap');
+  const core = term._core;
+  const cw = core?._renderService?.dimensions?.actualCellWidth || 9;
+  const ch = core?._renderService?.dimensions?.actualCellHeight || 18;
+  const cols = Math.max(2, Math.floor((wrap.clientWidth  - 8) / cw));
+  const rows = Math.max(2, Math.floor((wrap.clientHeight - 8) / ch));
+  if (term.cols !== cols || term.rows !== rows) {
+    term.resize(cols, rows);
+    ws?.readyState === 1 && ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+  }
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>
