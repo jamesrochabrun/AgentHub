@@ -31,10 +31,15 @@ enum XcodeProjectDetector {
     var platforms: Set<XcodePlatform> = []
     if content.contains("SDKROOT = macosx") { platforms.insert(.macOS) }
     if content.contains("SDKROOT = iphoneos") { platforms.insert(.iOS) }
-    // Multi-platform projects (SDKROOT = auto) list all platforms under SUPPORTED_PLATFORMS
-    if content.contains("SUPPORTED_PLATFORMS") {
-      if content.contains("macosx") { platforms.insert(.macOS) }
-      if content.contains("iphoneos") { platforms.insert(.iOS) }
+    // Multi-platform projects (SDKROOT = auto) list all platforms under SUPPORTED_PLATFORMS.
+    // Scope to lines that actually assign the key to avoid false positives from SDK-keyed
+    // settings like EXCLUDED_ARCHS[sdk=iphoneos*] that appear in macOS-only projects.
+    let supportedPlatformLines = content
+      .components(separatedBy: "\n")
+      .filter { $0.contains("SUPPORTED_PLATFORMS") && $0.contains("=") }
+    if !supportedPlatformLines.isEmpty {
+      if supportedPlatformLines.contains(where: { $0.contains("macosx") }) { platforms.insert(.macOS) }
+      if supportedPlatformLines.contains(where: { $0.contains("iphoneos") }) { platforms.insert(.iOS) }
     }
     return platforms.isEmpty ? [.iOS] : platforms
   }

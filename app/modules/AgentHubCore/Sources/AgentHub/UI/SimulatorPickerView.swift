@@ -67,15 +67,19 @@ public struct SimulatorPickerView: View {
 
       Spacer()
 
-      Button(action: {
-        Task { await SimulatorService.shared.listDevices() }
-      }) {
-        Image(systemName: "arrow.clockwise")
-          .font(.caption)
-          .foregroundColor(.secondary)
+      if SimulatorService.shared.isLoadingDevices {
+        ProgressView()
+          .scaleEffect(0.6)
+          .frame(width: 16, height: 16)
+      } else {
+        Button(action: { Task { await SimulatorService.shared.listDevices() } }) {
+          Image(systemName: "arrow.clockwise")
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Refresh device list")
       }
-      .buttonStyle(.plain)
-      .help("Refresh device list")
 
       Button(action: onDismiss) {
         Image(systemName: "xmark")
@@ -180,9 +184,13 @@ public struct SimulatorPickerView: View {
     }()
 
     return HStack(spacing: 10) {
-      Circle()
-        .fill(macStatusColor(for: state))
-        .frame(width: 8, height: 8)
+      StatusDotView(
+        color: macStatusColor(for: state),
+        isAnimating: {
+          if case .building = state { return true }
+          return false
+        }()
+      )
 
       VStack(alignment: .leading, spacing: 2) {
         Text("My Mac")
@@ -190,7 +198,9 @@ public struct SimulatorPickerView: View {
           .lineLimit(1)
         Text(macStateLabel(for: state))
           .font(.caption)
-          .foregroundColor(.secondary)
+          .foregroundColor(macStateLabelColor(for: state))
+          .lineLimit(nil)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
       Spacer()
@@ -271,13 +281,19 @@ public struct SimulatorPickerView: View {
   // MARK: - Device Row
 
   private func deviceRow(_ device: SimulatorDevice) -> some View {
-    let serviceState = SimulatorService.shared.state(for: device.udid)
+    let serviceState = SimulatorService.shared.state(for: device.udid, projectPath: session.projectPath)
 
     return HStack(spacing: 10) {
       // Status dot
-      Circle()
-        .fill(statusColor(for: serviceState, device: device))
-        .frame(width: 8, height: 8)
+      StatusDotView(
+        color: statusColor(for: serviceState, device: device),
+        isAnimating: {
+          switch serviceState {
+          case .booting, .building, .shuttingDown: return true
+          default: return false
+          }
+        }()
+      )
 
       // Device info
       VStack(alignment: .leading, spacing: 2) {
@@ -286,7 +302,9 @@ public struct SimulatorPickerView: View {
           .lineLimit(1)
         Text(stateLabel(for: serviceState, device: device))
           .font(.caption)
-          .foregroundColor(.secondary)
+          .foregroundColor(stateLabelColor(for: serviceState))
+          .lineLimit(nil)
+          .fixedSize(horizontal: false, vertical: true)
       }
 
       Spacer()
@@ -338,7 +356,7 @@ public struct SimulatorPickerView: View {
           .font(.caption)
           .foregroundColor(.secondary)
         Button("Cancel") {
-          SimulatorService.shared.cancelSimulatorBuild(udid: device.udid)
+          SimulatorService.shared.cancelSimulatorBuild(udid: device.udid, projectPath: session.projectPath)
         }
         .font(.caption)
         .buttonStyle(.bordered)
@@ -429,7 +447,7 @@ public struct SimulatorPickerView: View {
     case .idle: return "Ready"
     case .building: return "Building..."
     case .done: return "Running"
-    case .failed: return "Build failed"
+    case .failed(let error): return error
     }
   }
 
@@ -460,8 +478,39 @@ public struct SimulatorPickerView: View {
       return "Booted"
     case .shuttingDown:
       return "Shutting Down..."
-    case .failed:
-      return "Failed"
+    case .failed(let error):
+      return error
     }
+  }
+
+  private func stateLabelColor(for state: SimulatorState) -> Color {
+    if case .failed = state { return .red }
+    return .secondary
+  }
+
+  private func macStateLabelColor(for state: MacRunState) -> Color {
+    if case .failed = state { return .red }
+    return .secondary
+  }
+}
+
+// MARK: - StatusDotView
+
+private struct StatusDotView: View {
+  let color: Color
+  let isAnimating: Bool
+  @State private var pulse = false
+
+  var body: some View {
+    Circle()
+      .fill(color)
+      .frame(width: 8, height: 8)
+      .opacity(isAnimating ? (pulse ? 0.35 : 1.0) : 1.0)
+      .onAppear {
+        guard isAnimating else { return }
+        withAnimation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true)) {
+          pulse = true
+        }
+      }
   }
 }

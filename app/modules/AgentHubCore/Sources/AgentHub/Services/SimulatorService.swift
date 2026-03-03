@@ -14,10 +14,12 @@ import Foundation
 /// Holds a running xcodebuild Process so it can be terminated from the main actor.
 private final class ProcessRef: @unchecked Sendable {
   let process: Process
+  let outputPipe: Pipe
   let errorPipe: Pipe
 
-  init(process: Process, errorPipe: Pipe) {
+  init(process: Process, outputPipe: Pipe, errorPipe: Pipe) {
     self.process = process
+    self.outputPipe = outputPipe
     self.errorPipe = errorPipe
   }
 }
@@ -47,8 +49,11 @@ public final class SimulatorService {
 
   // MARK: - Observable State
 
-  /// Per-UDID lifecycle state, observed by SimulatorPickerView
+  /// Per-UDID global boot/shutdown state, shared across all sessions
   private(set) var deviceStates: [String: SimulatorState] = [:]
+
+  /// Per-(projectPath|UDID) build state — isolated per worktree session
+  private(set) var sessionBuildStates: [String: SimulatorState] = [:]
 
   /// Cached list of runtimes with their available devices
   private(set) var runtimes: [SimulatorRuntime] = []
@@ -62,14 +67,22 @@ public final class SimulatorService {
   /// Live process references for in-flight Mac builds, keyed by projectPath
   private var macBuildProcesses: [String: ProcessRef] = [:]
 
-  /// Live process references for in-flight simulator builds, keyed by UDID
+  /// Live process references for in-flight simulator builds, keyed by projectPath|UDID
   private var simulatorBuildProcesses: [String: ProcessRef] = [:]
 
   // MARK: - Public API
 
-  /// Returns the current state for a device UDID, or `.idle` if none.
-  public func state(for udid: String) -> SimulatorState {
-    deviceStates[udid] ?? .idle
+  /// Returns the combined state for a device in a given session's context.
+  /// Build state (building/failed) is per-session; boot state (booted/booting/shuttingDown) is global.
+  public func state(for udid: String, projectPath: String) -> SimulatorState {
+    let key = sessionKey(projectPath: projectPath, udid: udid)
+    if let buildState = sessionBuildStates[key] {
+      switch buildState {
+      case .building, .failed: return buildState
+      default: break
+      }
+    }
+    return deviceStates[udid] ?? .idle
   }
 
   /// Fetches the device list from `xcrun simctl list devices --json`.
@@ -176,11 +189,12 @@ public final class SimulatorService {
       buildArgs += ["-project", setup.targetPath]
     }
     process.arguments = buildArgs
-    process.standardOutput = FileHandle.nullDevice
+    let outputPipe = Pipe()
+    process.standardOutput = outputPipe
     let errorPipe = Pipe()
     process.standardError = errorPipe
 
-    let ref = ProcessRef(process: process, errorPipe: errorPipe)
+    let ref = ProcessRef(process: process, outputPipe: outputPipe, errorPipe: errorPipe)
     macBuildProcesses[projectPath] = ref
 
     // Phase 3: execute off main actor
@@ -213,7 +227,8 @@ public final class SimulatorService {
 
   /// Builds for an iOS simulator, installs, and launches the app.
   public func buildAndRunOnSimulator(udid: String, projectPath: String) async {
-    deviceStates[udid] = .building
+    let key = sessionKey(projectPath: projectPath, udid: udid)
+    sessionBuildStates[key] = .building
     AppLogger.simulator.info("Building for simulator \(udid)")
 
     // Phase 1: detect workspace/scheme off main actor
@@ -223,7 +238,7 @@ public final class SimulatorService {
 
     guard case .success(let setup) = detectResult else {
       if case .failure(let e) = detectResult {
-        deviceStates[udid] = .failed(error: e.localizedDescription)
+        sessionBuildStates[key] = .failed(error: e.localizedDescription)
         AppLogger.simulator.error("Simulator build setup failed: \(e.localizedDescription)")
       }
       return
@@ -240,38 +255,47 @@ public final class SimulatorService {
       buildArgs += ["-project", setup.targetPath]
     }
     process.arguments = buildArgs
-    process.standardOutput = FileHandle.nullDevice
+    let outputPipe = Pipe()
+    process.standardOutput = outputPipe
     let errorPipe = Pipe()
     process.standardError = errorPipe
 
-    let ref = ProcessRef(process: process, errorPipe: errorPipe)
-    simulatorBuildProcesses[udid] = ref
+    let ref = ProcessRef(process: process, outputPipe: outputPipe, errorPipe: errorPipe)
+    simulatorBuildProcesses[key] = ref
 
     // Phase 3: execute off main actor
     let result = await Task.detached {
       SimulatorService.executeSimulatorBuild(ref: ref, udid: udid, setup: setup)
     }.value
 
-    simulatorBuildProcesses.removeValue(forKey: udid)
+    simulatorBuildProcesses.removeValue(forKey: key)
 
-    guard deviceStates[udid] == .building else { return }
+    guard sessionBuildStates[key] == .building else { return }
 
     switch result {
     case .success:
+      sessionBuildStates.removeValue(forKey: key)
       deviceStates[udid] = .booted
       AppLogger.simulator.info("Simulator build+run succeeded for \(udid)")
     case .failure(let error):
-      deviceStates[udid] = .failed(error: error.localizedDescription)
+      sessionBuildStates[key] = .failed(error: error.localizedDescription)
       AppLogger.simulator.error("Simulator build failed: \(error.localizedDescription)")
     }
   }
 
-  /// Terminates an in-flight simulator build and resets device state to idle.
-  public func cancelSimulatorBuild(udid: String) {
-    simulatorBuildProcesses[udid]?.process.terminate()
-    simulatorBuildProcesses.removeValue(forKey: udid)
-    deviceStates[udid] = .idle
+  /// Terminates an in-flight simulator build and clears this session's build state.
+  public func cancelSimulatorBuild(udid: String, projectPath: String) {
+    let key = sessionKey(projectPath: projectPath, udid: udid)
+    simulatorBuildProcesses[key]?.process.terminate()
+    simulatorBuildProcesses.removeValue(forKey: key)
+    sessionBuildStates.removeValue(forKey: key)
     AppLogger.simulator.info("Cancelled simulator build for \(udid)")
+  }
+
+  // MARK: - Key Helpers
+
+  private func sessionKey(projectPath: String, udid: String) -> String {
+    "\(projectPath)|\(udid)"
   }
 
   // MARK: - Process Helpers (nonisolated)
@@ -341,17 +365,54 @@ public final class SimulatorService {
     ))
   }
 
+  /// Extracts a human-readable error from xcodebuild output.
+  /// xcodebuild writes compiler errors (`: error: `) to stdout; the stderr summary only has
+  /// `** BUILD FAILED ** (N failures)` which is not helpful on its own.
+  private nonisolated static func extractBuildError(
+    outputText: String,
+    stderrText: String,
+    exitCode: Int32
+  ) -> String {
+    let errors = outputText
+      .components(separatedBy: "\n")
+      .filter { $0.contains(": error: ") }
+      .compactMap { line -> String? in
+        guard let range = line.range(of: ": error: ") else { return nil }
+        return String(line[range.upperBound...])
+      }
+    if !errors.isEmpty {
+      return errors.joined(separator: "\n")
+    }
+    return stderrText
+      .components(separatedBy: "\n")
+      .filter { !$0.isEmpty }
+      .last ?? "Build failed (exit \(exitCode))"
+  }
+
   /// Phase 3: runs the already-configured process, waits for it, finds and opens the app.
   private nonisolated static func executeBuild(
     ref: ProcessRef,
     setup: BuildSetup
   ) -> Result<String, Error> {
+    var stdoutChunks: [Data] = []
+    let stdoutLock = NSLock()
+    ref.outputPipe.fileHandleForReading.readabilityHandler = { handle in
+      let chunk = handle.availableData
+      guard !chunk.isEmpty else { return }
+      stdoutLock.lock()
+      stdoutChunks.append(chunk)
+      stdoutLock.unlock()
+    }
     do {
       try ref.process.run()
       ref.process.waitUntilExit()
     } catch {
+      ref.outputPipe.fileHandleForReading.readabilityHandler = nil
       return .failure(error)
     }
+    ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+    let tail = ref.outputPipe.fileHandleForReading.readDataToEndOfFile()
+    if !tail.isEmpty { stdoutChunks.append(tail) }
 
     guard ref.process.terminationStatus == 0 else {
       // Terminated by signal means the user cancelled — return a benign error
@@ -359,14 +420,12 @@ public final class SimulatorService {
         return .failure(NSError(domain: "SimulatorService", code: -7,
           userInfo: [NSLocalizedDescriptionKey: "Build cancelled"]))
       }
-      let errorData = ref.errorPipe.fileHandleForReading.readDataToEndOfFile()
-      let errorText = String(data: errorData, encoding: .utf8) ?? ""
-      let shortError = errorText.components(separatedBy: "\n")
-        .filter { !$0.isEmpty }
-        .last ?? "Build failed (exit \(ref.process.terminationStatus))"
+      let outputText = String(data: stdoutChunks.reduce(Data(), +), encoding: .utf8) ?? ""
+      let stderrText = String(data: ref.errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let msg = SimulatorService.extractBuildError(outputText: outputText, stderrText: stderrText, exitCode: ref.process.terminationStatus)
       return .failure(NSError(domain: "SimulatorService",
         code: Int(ref.process.terminationStatus),
-        userInfo: [NSLocalizedDescriptionKey: shortError]))
+        userInfo: [NSLocalizedDescriptionKey: msg]))
     }
 
     let target = (path: setup.targetPath, isWorkspace: setup.isWorkspace)
@@ -385,26 +444,37 @@ public final class SimulatorService {
     udid: String,
     setup: BuildSetup
   ) -> Result<Void, Error> {
+    var stdoutChunks: [Data] = []
+    let stdoutLock = NSLock()
+    ref.outputPipe.fileHandleForReading.readabilityHandler = { handle in
+      let chunk = handle.availableData
+      guard !chunk.isEmpty else { return }
+      stdoutLock.lock()
+      stdoutChunks.append(chunk)
+      stdoutLock.unlock()
+    }
     do {
       try ref.process.run()
       ref.process.waitUntilExit()
     } catch {
+      ref.outputPipe.fileHandleForReading.readabilityHandler = nil
       return .failure(error)
     }
+    ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+    let tail = ref.outputPipe.fileHandleForReading.readDataToEndOfFile()
+    if !tail.isEmpty { stdoutChunks.append(tail) }
 
     guard ref.process.terminationStatus == 0 else {
       if ref.process.terminationReason == .uncaughtSignal {
         return .failure(NSError(domain: "SimulatorService", code: -7,
           userInfo: [NSLocalizedDescriptionKey: "Build cancelled"]))
       }
-      let errorData = ref.errorPipe.fileHandleForReading.readDataToEndOfFile()
-      let errorText = String(data: errorData, encoding: .utf8) ?? ""
-      let shortError = errorText.components(separatedBy: "\n")
-        .filter { !$0.isEmpty }
-        .last ?? "Build failed (exit \(ref.process.terminationStatus))"
+      let outputText = String(data: stdoutChunks.reduce(Data(), +), encoding: .utf8) ?? ""
+      let stderrText = String(data: ref.errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let msg = SimulatorService.extractBuildError(outputText: outputText, stderrText: stderrText, exitCode: ref.process.terminationStatus)
       return .failure(NSError(domain: "SimulatorService",
         code: Int(ref.process.terminationStatus),
-        userInfo: [NSLocalizedDescriptionKey: shortError]))
+        userInfo: [NSLocalizedDescriptionKey: msg]))
     }
 
     return installAndLaunch(udid: udid, setup: setup)
