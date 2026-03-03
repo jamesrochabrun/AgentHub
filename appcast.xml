@@ -7,6 +7,28 @@
     <language>en</language>
 
     <item>
+      <title>Version 2.9.0</title>
+      <link>https://github.com/jamesrochabrun/AgentHub/releases/tag/v2.9.0</link>
+      <sparkle:version>2.9.0</sparkle:version>
+      <sparkle:shortVersionString>2.9.0</sparkle:shortVersionString>
+      <description><![CDATA[
+        <h2>Version 2.9.0</h2>
+        <ul>
+          <li>See release notes on GitHub</li>
+        </ul>
+      ]]></description>
+      <pubDate>Tue, 03 Mar 2026 13:38:39 +0000</pubDate>
+      <enclosure
+        url="https://github.com/jamesrochabrun/AgentHub/releases/download/v2.9.0/AgentHub.app.zip"
+        sparkle:version="2.9.0"
+        sparkle:shortVersionString="2.9.0"
+        sparkle:edSignature="n6vAX/kaVpb8ewHU4r/+ezT5vXtGBvgQYap1OuyxspyTWpvxk7bmH1b5xrxaeWCgV06laiB8sjffYZHGelc2CQ=="
+        length="9299155"
+        type="application/octet-stream" />
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+    </item>
+
+    <item>
       <title>Version 2.8.9</title>
       <link>https://github.com/jamesrochabrun/AgentHub/releases/tag/v2.8.9</link>
       <sparkle:version>2.8.9</sparkle:version>
