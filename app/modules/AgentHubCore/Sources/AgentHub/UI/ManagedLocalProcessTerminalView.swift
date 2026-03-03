@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Combine
 import Darwin
 import SwiftTerm
 
@@ -23,6 +24,10 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
 
   /// Delegate for process-related events.
   public weak var processDelegate: ManagedLocalProcessTerminalViewDelegate?
+
+  /// Publishes raw PTY bytes as they arrive from the child process.
+  /// Subscribe to this to stream terminal output to external clients (e.g. web server).
+  public let dataPublisher = PassthroughSubject<Data, Never>()
 
   public override init(frame: CGRect) {
     super.init(frame: frame)
@@ -123,6 +128,13 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
 
   open func dataReceived(slice: ArraySlice<UInt8>) {
     feed(byteArray: slice)
+    dataPublisher.send(Data(slice))  // tee for web streaming
+  }
+
+  /// Write raw bytes to the PTY process (simulates keyboard input).
+  /// Called by the web server to forward browser input to the terminal.
+  public func writeToProcess(_ data: Data) {
+    process.send(data: ArraySlice(data))
   }
 
   open func getWindowSize() -> winsize {
