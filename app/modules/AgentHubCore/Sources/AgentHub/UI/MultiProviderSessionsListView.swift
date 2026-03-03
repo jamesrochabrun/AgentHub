@@ -9,6 +9,7 @@ import AppKit
 import Foundation
 import PierreDiffsSwift
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - SessionFileSheetItem
 
@@ -39,6 +40,8 @@ public struct MultiProviderSessionsListView: View {
   @State private var primarySessionId: String?
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
+  @State private var dropTargetId: String?
+  @State private var draggedItemId: String?
   @State private var showCommandPalette = false
   @State private var hubFilterMode: HubFilterMode = .all
   @State private var scrollToSessionId: String?
@@ -603,7 +606,10 @@ public struct MultiProviderSessionsListView: View {
       ))
     }
 
-    return results.sorted { $0.timestamp > $1.timestamp }
+    // Pending sessions sorted by timestamp; monitored sessions preserve ViewModel order
+    let pending = results.filter { $0.isPending }.sorted { $0.timestamp > $1.timestamp }
+    let monitored = results.filter { !$0.isPending }
+    return pending + monitored
   }
 
   private var filteredSelectedSessionItems: [SelectedSessionItem] {
@@ -648,45 +654,137 @@ public struct MultiProviderSessionsListView: View {
         .padding(.vertical, 6)
 
         ForEach(items) { item in
-          CollapsibleSessionRow(
-            session: item.session,
-            providerKind: item.providerKind,
-            timestamp: item.timestamp,
-            isPending: item.isPending,
-            isPrimary: item.id == primarySessionId,
-            customName: selectedSessionCustomName(for: item),
-            sessionStatus: item.sessionStatus,
-            colorScheme: colorScheme,
-            onArchive: item.isPending ? nil : {
-              withAnimation(.easeInOut(duration: 0.25)) {
-                switch item.providerKind {
-                case .claude: claudeViewModel.stopMonitoring(session: item.session)
-                case .codex: codexViewModel.stopMonitoring(session: item.session)
-                }
-              }
-            },
-            onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-              sessionToDeleteWorktree = item.session
-              showDeleteWorktreeAlert = true
-            } : nil,
-            isDeletingWorktree: item.session.isWorktree && {
-              switch item.providerKind {
-              case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-              case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-              }
-            }(),
-            onSelect: {
-              primarySessionId = item.id
+          let draggedIdx = items.firstIndex(where: { $0.id == draggedItemId })
+          let targetIdx = items.firstIndex(where: { $0.id == item.id })
+          let isTargeted = dropTargetId == item.id
+          let isDraggingDown = isTargeted && draggedIdx != nil && targetIdx != nil && draggedIdx! < targetIdx!
+          let isDraggingUp = isTargeted && draggedIdx != nil && targetIdx != nil && draggedIdx! > targetIdx!
+
+          VStack(spacing: 0) {
+            // Top indicator: dragging UP onto this item
+            if isDraggingUp {
+              Rectangle()
+                .fill(Color.accentColor)
+                .frame(height: 2)
             }
-          )
-          .transition(.asymmetric(
-            insertion: .opacity,
-            removal: .move(edge: .trailing).combined(with: .opacity)
-          ))
-          .id(item.id)
+
+            CollapsibleSessionRow(
+              session: item.session,
+              providerKind: item.providerKind,
+              timestamp: item.timestamp,
+              isPending: item.isPending,
+              isPrimary: item.id == primarySessionId,
+              customName: selectedSessionCustomName(for: item),
+              sessionStatus: item.sessionStatus,
+              colorScheme: colorScheme,
+              onArchive: item.isPending ? nil : {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                  switch item.providerKind {
+                  case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                  case .codex: codexViewModel.stopMonitoring(session: item.session)
+                  }
+                }
+              },
+              onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+                sessionToDeleteWorktree = item.session
+                showDeleteWorktreeAlert = true
+              } : nil,
+              isDeletingWorktree: item.session.isWorktree && {
+                switch item.providerKind {
+                case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+                case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+                }
+              }(),
+              onSelect: { primarySessionId = item.id },
+              dragProvider: item.isPending ? nil : {
+                draggedItemId = item.id
+                return NSItemProvider(object: NSString(string: item.id))
+              }
+            )
+            .transition(.asymmetric(
+              insertion: .opacity,
+              removal: .move(edge: .trailing).combined(with: .opacity)
+            ))
+            .id(item.id)
+
+            // Bottom indicator: dragging DOWN onto this item
+            if isDraggingDown {
+              Rectangle()
+                .fill(Color.accentColor)
+                .frame(height: 2)
+            }
+          }
+          .contentShape(Rectangle())
+          .onDrop(of: [.utf8PlainText], isTargeted: Binding(
+            get: { dropTargetId == item.id },
+            set: { isTargeted in dropTargetId = isTargeted ? item.id : nil }
+          )) { providers in
+            let targetId = item.id
+            guard let provider = providers.first else { return false }
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.utf8PlainText.identifier) { data, _ in
+              guard let data, let dragId = String(data: data, encoding: .utf8) else { return }
+              DispatchQueue.main.async {
+                handleFocusedSessionDrop(itemId: dragId, targetItemId: targetId, in: items)
+              }
+            }
+            return true
+          }
         }
       }
       .padding(.bottom, 8)
+    }
+  }
+
+  private func handleFocusedSessionDrop(itemId: String, targetItemId: String, in items: [SelectedSessionItem]) {
+    dropTargetId = nil
+    draggedItemId = nil
+    guard itemId != targetItemId, !itemId.hasPrefix("pending-") else { return }
+
+    // Move to front (drop on a pending item)
+    if targetItemId.hasPrefix("pending-") {
+      if itemId.hasPrefix("claude-") {
+        claudeViewModel.reorderMonitoredSession(id: String(itemId.dropFirst(7)), toAfter: nil)
+      } else if itemId.hasPrefix("codex-") {
+        codexViewModel.reorderMonitoredSession(id: String(itemId.dropFirst(6)), toAfter: nil)
+      }
+      return
+    }
+
+    let isClaude = itemId.hasPrefix("claude-")
+    let isCodex = itemId.hasPrefix("codex-")
+    guard (isClaude && targetItemId.hasPrefix("claude-")) || (isCodex && targetItemId.hasPrefix("codex-")) else { return }
+
+    // Determine drag direction from displayed order
+    let draggedIdx = items.firstIndex(where: { $0.id == itemId })
+    let targetIdx = items.firstIndex(where: { $0.id == targetItemId })
+    let isDraggingDown = draggedIdx != nil && targetIdx != nil && draggedIdx! < targetIdx!
+
+    if isClaude {
+      let rawItemId = String(itemId.dropFirst(7))
+      let rawTargetId = String(targetItemId.dropFirst(7))
+      if isDraggingDown {
+        // Indicator at bottom → insert AFTER target
+        claudeViewModel.reorderMonitoredSession(id: rawItemId, toAfter: rawTargetId)
+      } else {
+        // Indicator at top → insert BEFORE target = AFTER predecessor
+        let orderWithoutDragged = claudeViewModel.monitoredSessionOrder.filter { $0 != rawItemId }
+        let predecessorId = orderWithoutDragged.firstIndex(of: rawTargetId).flatMap { idx in
+          idx > 0 ? orderWithoutDragged[idx - 1] : nil
+        }
+        claudeViewModel.reorderMonitoredSession(id: rawItemId, toAfter: predecessorId)
+      }
+    } else if isCodex {
+      let rawItemId = String(itemId.dropFirst(6))
+      let rawTargetId = String(targetItemId.dropFirst(6))
+      if isDraggingDown {
+        codexViewModel.reorderMonitoredSession(id: rawItemId, toAfter: rawTargetId)
+      } else {
+        let orderWithoutDragged = codexViewModel.monitoredSessionOrder.filter { $0 != rawItemId }
+        let predecessorId = orderWithoutDragged.firstIndex(of: rawTargetId).flatMap { idx in
+          idx > 0 ? orderWithoutDragged[idx - 1] : nil
+        }
+        codexViewModel.reorderMonitoredSession(id: rawItemId, toAfter: predecessorId)
+      }
     }
   }
 

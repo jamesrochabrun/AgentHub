@@ -348,6 +348,10 @@ public final class CLISessionsViewModel {
   /// Set of session IDs currently being monitored
   public private(set) var monitoredSessionIds: Set<String> = []
 
+  /// Ordered list of monitored session IDs (user-defined via drag-reorder)
+  /// Parallel to monitoredSessionIds — contains same IDs in display order
+  public private(set) var monitoredSessionOrder: [String] = []
+
   /// Current monitoring states keyed by session ID
   public private(set) var monitorStates: [String: SessionMonitorState] = [:]
 
@@ -390,6 +394,9 @@ public final class CLISessionsViewModel {
   }
   private var monitoredSessionsKey: String {
     AgentHubDefaults.monitoredSessionIds + "." + providerDefaultsSuffix
+  }
+  private var monitoredSessionOrderKey: String {
+    AgentHubDefaults.monitoredSessionOrder + "." + providerDefaultsSuffix
   }
   private var terminalViewKey: String {
     AgentHubDefaults.sessionsWithTerminalView + "." + providerDefaultsSuffix
@@ -579,6 +586,7 @@ public final class CLISessionsViewModel {
       let persistedSessionIds = loadPersistedSessionIds()
       if !persistedSessionIds.isEmpty {
         pendingRestorationSessionIds = persistedSessionIds
+        loadMonitoredSessionOrder()
         // Load terminal view state for restoration decisions
         if let tvData = UserDefaults.standard.data(forKey: terminalViewKey),
            let tvIds = try? JSONDecoder().decode([String].self, from: tvData) {
@@ -640,6 +648,17 @@ public final class CLISessionsViewModel {
       pendingRestorationSessionIds.subtract(restoredIds)
       expandItemsContainingMonitoredSessions()
       loadCustomNames()
+
+      // Only prune stale order entries once all pending restorations are complete
+      if pendingRestorationSessionIds.isEmpty {
+        let validIds = monitoredSessionIds
+        monitoredSessionOrder.removeAll { !validIds.contains($0) }
+        // Ensure all restored sessions appear in the order (first-time or migrated installs)
+        for sessionId in validIds where !monitoredSessionOrder.contains(sessionId) {
+          monitoredSessionOrder.append(sessionId)
+        }
+        persistMonitoredSessionOrder()
+      }
     }
   }
 
@@ -688,6 +707,20 @@ public final class CLISessionsViewModel {
     if let data = try? JSONEncoder().encode(sessionIds) {
       UserDefaults.standard.set(data, forKey: monitoredSessionsKey)
     }
+  }
+
+  private func persistMonitoredSessionOrder() {
+    if let data = try? JSONEncoder().encode(monitoredSessionOrder) {
+      UserDefaults.standard.set(data, forKey: monitoredSessionOrderKey)
+    }
+  }
+
+  private func loadMonitoredSessionOrder() {
+    guard let data = UserDefaults.standard.data(forKey: monitoredSessionOrderKey),
+          let order = try? JSONDecoder().decode([String].self, from: data) else {
+      return
+    }
+    monitoredSessionOrder = order
   }
 
   /// Persists which sessions have terminal view enabled
@@ -1853,6 +1886,16 @@ public final class CLISessionsViewModel {
 
   // MARK: - Monitoring Management
 
+  /// Resolves the main repository path for a session (handles worktrees)
+  private func mainRepoPath(for session: CLISession) -> String {
+    for repo in selectedRepositories {
+      for worktree in repo.worktrees where worktree.path == session.projectPath {
+        return repo.path
+      }
+    }
+    return session.projectPath
+  }
+
   /// Toggle monitoring for a session
   public func toggleMonitoring(for session: CLISession) {
     if monitoredSessionIds.contains(session.id) {
@@ -1871,10 +1914,22 @@ public final class CLISessionsViewModel {
     monitoredSessionBackup[session.id] = session
     sessionsWithTerminalView.insert(session.id)  // Default to terminal view
 
-    persistMonitoredSessions()
-    persistSessionsWithTerminalView()
+    // Insert near same-project sessions (worktrees share mainRepoPath)
+    let newRepoPath = mainRepoPath(for: session)
+    if let insertAfterIndex = monitoredSessionOrder.indices.reversed().first(where: { idx in
+      let id = monitoredSessionOrder[idx]
+      guard let existing = allSessions.first(where: { $0.id == id })
+              ?? monitoredSessionBackup[id] else { return false }
+      return mainRepoPath(for: existing) == newRepoPath
+    }) {
+      monitoredSessionOrder.insert(session.id, at: insertAfterIndex + 1)
+    } else {
+      monitoredSessionOrder.append(session.id)
+    }
 
-    // Start polling for Preview/Plan buttons (works in both terminal and monitor modes)
+    persistMonitoredSessions()
+    persistMonitoredSessionOrder()
+
     startPolling(session: session)
   }
 
@@ -1886,6 +1941,7 @@ public final class CLISessionsViewModel {
   /// Stop monitoring by session ID
   public func stopMonitoring(sessionId: String) {
     monitoredSessionIds.remove(sessionId)
+    monitoredSessionOrder.removeAll { $0 == sessionId }
     monitoredSessionBackup.removeValue(forKey: sessionId)
     sessionsWithTerminalView.remove(sessionId)
     monitorStates.removeValue(forKey: sessionId)
@@ -1895,11 +1951,36 @@ public final class CLISessionsViewModel {
     removeTerminal(forKey: sessionId)
 
     persistMonitoredSessions()
+    persistMonitoredSessionOrder()
     persistSessionsWithTerminalView()
 
     Task {
       await fileWatcher.stopMonitoring(sessionId: sessionId)
     }
+  }
+
+  /// Moves a session to immediately after the target session in the display order.
+  /// Pass nil for targetId to move the session to the beginning.
+  public func reorderMonitoredSession(id: String, toAfter targetId: String?) {
+    guard monitoredSessionIds.contains(id) else { return }
+
+    // Sync any monitored sessions not yet in order (migration / race-condition safety)
+    for sessionId in monitoredSessionIds where !monitoredSessionOrder.contains(sessionId) {
+      monitoredSessionOrder.append(sessionId)
+    }
+
+    // If targetId is specified, verify it exists in the order before mutating
+    if let targetId, !monitoredSessionOrder.contains(targetId) { return }
+
+    monitoredSessionOrder.removeAll { $0 == id }
+
+    if let targetId, let toIndex = monitoredSessionOrder.firstIndex(of: targetId) {
+      monitoredSessionOrder.insert(id, at: toIndex + 1)
+    } else {
+      monitoredSessionOrder.insert(id, at: 0)
+    }
+
+    persistMonitoredSessionOrder()
   }
 
   /// Check if a session is being monitored
@@ -1910,18 +1991,30 @@ public final class CLISessionsViewModel {
   /// Get all currently monitored sessions with their states.
   /// Uses a backup store to preserve sessions that may not yet be in history.jsonl.
   public var monitoredSessions: [(session: CLISession, state: SessionMonitorState?)] {
-    monitoredSessionIds.compactMap { sessionId in
-      // First try to get from allSessions (authoritative source if available)
-      if let session = allSessions.first(where: { $0.id == sessionId }) {
-        return (session: session, state: monitorStates[sessionId])
-      }
-      // Fallback to backup if not in allSessions (race condition during refresh)
-      if let backupSession = monitoredSessionBackup[sessionId] {
-        return (session: backupSession, state: monitorStates[sessionId])
-      }
-      // Session not found anywhere - should not happen, but handle gracefully
-      return nil
+    let sessionLookup = Dictionary(uniqueKeysWithValues: allSessions.map { ($0.id, $0) })
+    var result: [(session: CLISession, state: SessionMonitorState?)] = []
+    var seen = Set<String>()
+
+    // Sessions in user-defined order first
+    for sessionId in monitoredSessionOrder where monitoredSessionIds.contains(sessionId) {
+      if let session = sessionLookup[sessionId] {
+        result.append((session: session, state: monitorStates[sessionId]))
+      } else if let backup = monitoredSessionBackup[sessionId] {
+        result.append((session: backup, state: monitorStates[sessionId]))
+      } else { continue }
+      seen.insert(sessionId)
     }
+
+    // Any monitored sessions not yet in order (race condition fallback)
+    for sessionId in monitoredSessionIds where !seen.contains(sessionId) {
+      if let session = sessionLookup[sessionId] {
+        result.append((session: session, state: monitorStates[sessionId]))
+      } else if let backup = monitoredSessionBackup[sessionId] {
+        result.append((session: backup, state: monitorStates[sessionId]))
+      }
+    }
+
+    return result
   }
 
   // MARK: - Search
