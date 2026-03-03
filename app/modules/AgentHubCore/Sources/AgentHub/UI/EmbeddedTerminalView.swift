@@ -244,6 +244,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       registeredSessionId = sid
       Task { @MainActor in
         TerminalStreamProxy.shared.register(sessionId: sid, terminal: terminal)
+        // Broadcast initial PTY size so any pending listeners receive it
+        let cols = terminal.terminal.cols
+        let rows = terminal.terminal.rows
+        if cols > 0 && rows > 0 {
+          TerminalStreamProxy.shared.broadcastResize(sessionId: sid, cols: cols, rows: rows)
+        }
       }
     }
 
@@ -504,7 +510,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   // MARK: - ManagedLocalProcessTerminalViewDelegate
 
-  public func sizeChanged(source: ManagedLocalProcessTerminalView, newCols: Int, newRows: Int) {}
+  public func sizeChanged(source: ManagedLocalProcessTerminalView, newCols: Int, newRows: Int) {
+    guard let sid = registeredSessionId else { return }
+    Task { @MainActor in
+      TerminalStreamProxy.shared.broadcastResize(sessionId: sid, cols: newCols, rows: newRows)
+    }
+  }
 
   public func setTerminalTitle(source: ManagedLocalProcessTerminalView, title: String) {}
 
