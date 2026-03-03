@@ -101,6 +101,11 @@ public final class AgentHubProvider {
     }
   }()
 
+  /// Bridges CLAUDE.md ↔ AGENTS.md symlinks across providers
+  public private(set) lazy var instructionFileBridgeService: any InstructionFileBridgeServiceProtocol = {
+    InstructionFileBridgeService()
+  }()
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes
@@ -282,6 +287,23 @@ public final class AgentHubProvider {
   /// when the app crashed or was force-quit.
   public func cleanupOrphanedProcesses() {
     TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+  }
+
+  /// Creates symlink bridges for the given directory paths (repo root + each worktree).
+  public func bridgeInstructionFiles(for paths: [String]) {
+    Task {
+      await instructionFileBridgeService.bridgeDirectories(paths)
+    }
+  }
+
+  /// Removes all instruction file symlinks synchronously (for use in applicationWillTerminate).
+  public func cleanupInstructionFileBridgesSync() {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached(priority: .userInitiated) { [weak self] in
+      await self?.instructionFileBridgeService.cleanupAll()
+      semaphore.signal()
+    }
+    semaphore.wait(timeout: .now() + 2.0)
   }
 
   /// Terminates all active terminal processes.

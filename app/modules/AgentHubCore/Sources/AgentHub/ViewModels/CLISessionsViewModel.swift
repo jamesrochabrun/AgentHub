@@ -589,6 +589,10 @@ public final class CLISessionsViewModel {
       // Add repositories (triggers refreshSessions → setupSubscriptions)
       loadingState = .restoringRepositories
       await monitorService.addRepositories(paths)
+      // Bridge instruction files for all restored repos and their worktrees
+      let repos = await monitorService.getSelectedRepositories()
+      let allPaths = repos.flatMap { repo in [repo.path] + repo.worktrees.map(\.path) }
+      agentHubProvider?.bridgeInstructionFiles(for: allPaths)
       restoreExpansionState()
       loadingState = .idle
 
@@ -826,7 +830,10 @@ public final class CLISessionsViewModel {
       // [CLISessionsVM] loadingState = .addingRepository(\(repoName))")
       loadingState = .addingRepository(name: repoName)
       // [CLISessionsVM] Calling monitorService.addRepository...")
-      await monitorService.addRepository(path)
+      if let repo = await monitorService.addRepository(path) {
+        let allPaths = [repo.path] + repo.worktrees.map(\.path)
+        agentHubProvider?.bridgeInstructionFiles(for: allPaths)
+      }
       // [CLISessionsVM] monitorService.addRepository completed")
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
@@ -847,6 +854,14 @@ public final class CLISessionsViewModel {
         if monitoredSessionIds.contains(session.id) {
           stopMonitoring(sessionId: session.id)
         }
+      }
+    }
+
+    // Remove instruction file bridges for this repo and its worktrees
+    let pathsToRemove = [repository.path] + repository.worktrees.map(\.path)
+    Task {
+      for p in pathsToRemove {
+        await agentHubProvider?.instructionFileBridgeService.removeBridges(for: p)
       }
     }
 
