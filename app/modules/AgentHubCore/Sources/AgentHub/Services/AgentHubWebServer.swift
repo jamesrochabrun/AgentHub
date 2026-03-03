@@ -215,8 +215,9 @@ final class WebSocketClientSession: TerminalListener, @unchecked Sendable {
       Task { [weak self] in
         guard let self, let server = self.server else { return }
         let response = await server.route(path: path, method: method)
-        self.sendRaw(response.toData())
-        self.connection.cancel()
+        self.sendRaw(response.toData()) {
+          self.connection.cancel()
+        }
       }
     }
   }
@@ -382,7 +383,11 @@ final class WebSocketClientSession: TerminalListener, @unchecked Sendable {
 
   // MARK: - Raw send
 
-  private func sendRaw(_ data: Data) {
-    connection.send(content: data, completion: .idempotent)
+  private func sendRaw(_ data: Data, completion: (() -> Void)? = nil) {
+    if let completion {
+      connection.send(content: data, completion: .contentProcessed { _ in completion() })
+    } else {
+      connection.send(content: data, completion: .idempotent)
+    }
   }
 }
