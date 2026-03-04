@@ -133,7 +133,12 @@ public final class AgentHubProvider {
   /// Embedded HTTP + WebSocket server for web terminal client
   public private(set) lazy var webServer: AgentHubWebServer = {
     let storedPort = UserDefaults.standard.integer(forKey: AgentHubDefaults.webServerPort)
-    let port = (1024...65535).contains(storedPort) ? UInt16(storedPort) : 8080
+    #if DEBUG
+    let defaultPort: UInt16 = 8081
+    #else
+    let defaultPort: UInt16 = 8080
+    #endif
+    let port = (1024...65535).contains(storedPort) ? UInt16(storedPort) : defaultPort
     return AgentHubWebServer(port: port) { [weak self] in
       guard let self else { return [] }
       return await MainActor.run {

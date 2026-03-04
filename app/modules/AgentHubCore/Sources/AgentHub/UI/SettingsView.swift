@@ -20,8 +20,11 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.webServerEnabled)
   private var webServerEnabled: Bool = false
 
-  @AppStorage(AgentHubDefaults.webServerPort)
-  private var webServerPort: Int = 8080
+  #if DEBUG
+  @AppStorage(AgentHubDefaults.webServerPort) private var webServerPort: Int = 8081
+  #else
+  @AppStorage(AgentHubDefaults.webServerPort) private var webServerPort: Int = 8080
+  #endif
 
   @AppStorage(AgentHubDefaults.notificationSoundsEnabled)
   private var notificationSoundsEnabled: Bool = true

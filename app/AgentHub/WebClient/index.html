@@ -335,6 +335,23 @@
 let sessions = [], activeId = null, term = null, ws = null;
 const $ = id => document.getElementById(id);
 
+// ── Mobile autocorrect fix ─────────────────────────────────────────────────
+// iOS autocorrect fires compositionend which causes xterm.js to re-send the
+// full replacement word even though individual chars were already sent.
+// We track chars since the last word boundary so we can prepend the right
+// number of backspaces before the composed replacement arrives via onData.
+let mobileWordLen = 0;   // printable chars since last word boundary
+let mobilePendingBS = 0; // backspaces to prepend on next onData call
+
+function onMobileCompositionEnd(e) {
+  // Composition ended (autocorrect replacement). xterm.js will immediately
+  // call onData() with the replacement word. We must erase what was already sent.
+  if (mobileWordLen > 0 && e.data) {
+    mobilePendingBS = mobileWordLen;
+    mobileWordLen = 0;
+  }
+}
+
 // ── Theme ─────────────────────────────────────────────────────────────────
 
 const storedTheme = localStorage.getItem('ah-theme') ||
@@ -508,7 +525,40 @@ function connect(id) {
   term.open($('terminal'));
   setTimeout(applyScale, 100); // initial scale after xterm.js renders
 
-  term.onData(d => ws?.readyState === 1 && ws.send(new TextEncoder().encode(d)));
+  // Reset mobile input state for each new connection
+  mobileWordLen = 0;
+  mobilePendingBS = 0;
+  // Register composition fix on mobile: capture phase runs before xterm's own handler
+  if (isMobile()) {
+    setTimeout(() => {
+      term._core?.textarea?.addEventListener('compositionend', onMobileCompositionEnd, true);
+    }, 0);
+  }
+
+  term.onData(d => {
+    let out = d;
+
+    // Mobile autocorrect fix: prepend backspaces to erase the partial word
+    // that was already sent char-by-char before the composition replacement.
+    if (mobilePendingBS > 0) {
+      out = '\x7f'.repeat(mobilePendingBS) + d;
+      mobilePendingBS = 0;
+    }
+
+    // Track chars in current word (resets at spaces / control chars / backspace).
+    // Used by onMobileCompositionEnd to know how many backspaces to send.
+    for (const ch of d) {
+      if (ch === '\x7f' || ch === '\x08') {
+        mobileWordLen = Math.max(0, mobileWordLen - 1);
+      } else if (ch.charCodeAt(0) < 32 || ch === ' ') {
+        mobileWordLen = 0;
+      } else {
+        mobileWordLen++;
+      }
+    }
+
+    if (ws?.readyState === 1) ws.send(new TextEncoder().encode(out));
+  });
   term.writeln('\x1b[32mConnecting…\x1b[0m');
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
