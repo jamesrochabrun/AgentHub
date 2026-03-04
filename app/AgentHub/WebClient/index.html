@@ -505,6 +505,8 @@ function connect(id) {
   activeId = id;
   history.replaceState(null, '', '#' + id);
   renderSidebar();
+  // Notify the Mac app to focus this session in the Hub UI
+  fetch('/api/sessions/' + encodeURIComponent(id) + '/focus', { method: 'POST' }).catch(() => {});
 
   const s = sessions.find(x => x.id === id);
   if (s) setTitlebar(s);

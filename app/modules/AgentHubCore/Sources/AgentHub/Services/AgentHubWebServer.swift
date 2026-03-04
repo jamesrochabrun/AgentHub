@@ -13,10 +13,17 @@ public actor AgentHubWebServer {
   private let port: UInt16
   /// Provides the current list of monitored sessions for the /api/sessions endpoint.
   private let sessionProvider: @Sendable () async -> [WebSessionInfo]
+  /// Called when the web client selects a session (POST /api/sessions/{id}/focus).
+  private let sessionFocusHandler: (@Sendable (String) async -> Void)?
 
-  public init(port: UInt16, sessionProvider: @Sendable @escaping () async -> [WebSessionInfo]) {
+  public init(
+    port: UInt16,
+    sessionProvider: @Sendable @escaping () async -> [WebSessionInfo],
+    sessionFocusHandler: (@Sendable (String) async -> Void)? = nil
+  ) {
     self.port = port
     self.sessionProvider = sessionProvider
+    self.sessionFocusHandler = sessionFocusHandler
   }
 
   // MARK: - Lifecycle
@@ -79,6 +86,13 @@ public actor AgentHubWebServer {
         return HTTPResponse(status: 200, contentType: "application/json", body: data)
       }
       return HTTPResponse(status: 500, contentType: "text/plain", body: Data("Encoding error".utf8))
+
+    case ("POST", _) where path.hasPrefix("/api/sessions/") && path.hasSuffix("/focus"):
+      let sessionId = String(path.dropFirst("/api/sessions/".count).dropLast("/focus".count))
+      if !sessionId.isEmpty, let handler = sessionFocusHandler {
+        await handler(sessionId)
+      }
+      return HTTPResponse(status: 200, contentType: "application/json", body: Data("{}".utf8))
 
     default:
       return HTTPResponse(status: 404, contentType: "text/plain", body: Data("Not found".utf8))

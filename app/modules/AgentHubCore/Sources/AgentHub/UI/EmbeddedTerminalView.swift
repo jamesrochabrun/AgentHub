@@ -261,6 +261,21 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
   }
 
+  /// Registers this terminal with TerminalStreamProxy under a new session ID.
+  /// Called when a pending session (sessionId: nil) transitions to a real session.
+  public func registerWithProxy(sessionId: String) {
+    guard let tv = terminalView else { return }
+    registeredSessionId = sessionId
+    let cols = tv.terminal.cols
+    let rows = tv.terminal.rows
+    Task { @MainActor in
+      TerminalStreamProxy.shared.register(sessionId: sessionId, terminal: tv)
+      if cols > 0 && rows > 0 {
+        TerminalStreamProxy.shared.broadcastResize(sessionId: sessionId, cols: cols, rows: rows)
+      }
+    }
+  }
+
   /// Resets the prompt delivery flag so a new prompt can be sent.
   /// Call this before sendPromptIfNeeded when sending a follow-up prompt (e.g., from inline editor).
   func resetPromptDeliveryFlag() {
