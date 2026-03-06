@@ -22,6 +22,7 @@ let package = Package(
     .package(url: "https://github.com/appstefan/HighlightSwift", from: "1.1.0"),
     .package(url: "https://github.com/jpsim/Yams", from: "5.0.0"),
     .package(url: "https://github.com/lukilabs/beautiful-mermaid-swift", from: "0.1.0"),
+    .package(url: "https://github.com/CodeEditApp/CodeEditTextView", from: "0.9.0"),
   ],
   targets: [
     .target(
@@ -35,6 +36,7 @@ let package = Package(
         .product(name: "HighlightSwift", package: "HighlightSwift"),
         .product(name: "Yams", package: "Yams"),
         .product(name: "BeautifulMermaid", package: "beautiful-mermaid-swift"),
+        .product(name: "CodeEditTextView", package: "CodeEditTextView"),
       ],
       path: "Sources/AgentHub",
       resources: [
