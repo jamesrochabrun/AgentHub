@@ -268,7 +268,12 @@ public struct MonitoringCardView: View {
     .sheet(item: $simulatorSheetSession) { session in
       SimulatorPickerView(
         session: session,
-        onDismiss: { simulatorSheetSession = nil }
+        onDismiss: { simulatorSheetSession = nil },
+        onSendToSession: { error in
+          guard let vm = viewModel else { return }
+          vm.showTerminalWithPrompt(for: session, prompt: "Fix this build error:\n\(error)")
+          simulatorSheetSession = nil
+        }
       )
     }
     .sheet(isPresented: $showingNameSheet) {
