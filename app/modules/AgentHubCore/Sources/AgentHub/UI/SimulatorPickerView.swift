@@ -13,6 +13,7 @@ import SwiftUI
 public struct SimulatorPickerView: View {
   let session: CLISession
   let onDismiss: () -> Void
+  let onSendToSession: ((String) -> Void)?
   var isEmbedded: Bool = false
 
   @State private var preferredUDID: String?
@@ -23,10 +24,12 @@ public struct SimulatorPickerView: View {
   public init(
     session: CLISession,
     onDismiss: @escaping () -> Void,
+    onSendToSession: ((String) -> Void)? = nil,
     isEmbedded: Bool = false
   ) {
     self.session = session
     self.onDismiss = onDismiss
+    self.onSendToSession = onSendToSession
     self.isEmbedded = isEmbedded
   }
 
@@ -232,7 +235,27 @@ public struct SimulatorPickerView: View {
         .controlSize(.small)
         .tint(.red)
       }
-    case .idle, .done, .failed:
+    case .failed(let error):
+      HStack(spacing: 6) {
+        if onSendToSession != nil {
+          Button("Fix with Claude") {
+            onSendToSession?(error)
+          }
+          .font(.caption)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .tint(.accentColor)
+        }
+        Button("Build & Run") {
+          Task {
+            await SimulatorService.shared.buildAndRunOnMac(projectPath: session.projectPath)
+          }
+        }
+        .font(.caption)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+      }
+    case .idle, .done:
       Button("Build & Run") {
         Task {
           await SimulatorService.shared.buildAndRunOnMac(projectPath: session.projectPath)
@@ -283,7 +306,7 @@ public struct SimulatorPickerView: View {
   private func deviceRow(_ device: SimulatorDevice) -> some View {
     let serviceState = SimulatorService.shared.state(for: device.udid, projectPath: session.projectPath)
 
-    return HStack(spacing: 10) {
+    return HStack(alignment: .firstTextBaseline, spacing: 10) {
       // Status dot
       StatusDotView(
         color: statusColor(for: serviceState, device: device),
@@ -379,13 +402,18 @@ public struct SimulatorPickerView: View {
       }
 
     case .failed(let error):
-      VStack(alignment: .trailing, spacing: 2) {
-        Text("Failed")
+      HStack(spacing: 6) {
+        if onSendToSession != nil {
+          Button("Fix with Claude") {
+            onSendToSession?(error)
+          }
           .font(.caption)
-          .foregroundColor(.red)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .tint(.accentColor)
+        }
         runButton(udid: device.udid)
       }
-      .help(error)
     }
   }
 
@@ -447,7 +475,7 @@ public struct SimulatorPickerView: View {
     case .idle: return "Ready"
     case .building: return "Building..."
     case .done: return "Running"
-    case .failed(let error): return error
+    case .failed: return "Build failed"
     }
   }
 
@@ -478,8 +506,8 @@ public struct SimulatorPickerView: View {
       return "Booted"
     case .shuttingDown:
       return "Shutting Down..."
-    case .failed(let error):
-      return error
+    case .failed:
+      return "Build failed"
     }
   }
 
