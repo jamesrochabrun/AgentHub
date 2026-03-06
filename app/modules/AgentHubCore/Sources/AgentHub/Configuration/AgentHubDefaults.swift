@@ -128,6 +128,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let flatSessionLayout = "\(keyPrefix)hub.flatSessionLayout"
 
+  /// Whether to always show diff in a modal window instead of side panel
+  /// Type: Bool (default: false)
+  public static let diffAlwaysModal = "\(keyPrefix)hub.diffAlwaysModal"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

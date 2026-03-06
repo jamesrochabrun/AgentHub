@@ -14,6 +14,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
 
+  @AppStorage(AgentHubDefaults.diffAlwaysModal)
+  private var diffAlwaysModal: Bool = false
+
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
@@ -142,6 +145,14 @@ public struct SettingsView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("Flat session layout")
             Text("Show all sessions without per-repository sections")
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+        }
+        Toggle(isOn: $diffAlwaysModal) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Diff in modal window")
+            Text("Always open diff in a popup window instead of the side panel")
               .font(.caption)
               .foregroundColor(.secondary)
           }

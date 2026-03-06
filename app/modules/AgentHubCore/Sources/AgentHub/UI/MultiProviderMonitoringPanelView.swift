@@ -228,6 +228,8 @@ public struct MultiProviderMonitoringPanelView: View {
   private var previousLayoutModeRawValue: Int = -1
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
+  @AppStorage(AgentHubDefaults.diffAlwaysModal)
+  private var diffAlwaysModal: Bool = false
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
 
@@ -556,7 +558,7 @@ public struct MultiProviderMonitoringPanelView: View {
             onInlineRequestSubmit: { prompt, sess in
               viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
             },
-            onShowDiff: canShowSidePanel ? { session, projectPath in
+            onShowDiff: (canShowSidePanel && !diffAlwaysModal) ? { session, projectPath in
               sidePanelContent = .diff(sessionId: session.id, session: session, projectPath: projectPath)
             } : nil,
             onShowPlan: canShowSidePanel ? { session, planState in
