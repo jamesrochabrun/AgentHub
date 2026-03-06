@@ -312,7 +312,7 @@ public struct SimulatorPickerView: View {
         color: statusColor(for: serviceState, device: device),
         isAnimating: {
           switch serviceState {
-          case .booting, .building, .shuttingDown: return true
+          case .booting, .building, .installing, .launching, .shuttingDown: return true
           default: return false
           }
         }()
@@ -378,13 +378,29 @@ public struct SimulatorPickerView: View {
         Text("Building...")
           .font(.caption)
           .foregroundColor(.secondary)
-        Button("Cancel") {
-          SimulatorService.shared.cancelSimulatorBuild(udid: device.udid, projectPath: session.projectPath)
-        }
-        .font(.caption)
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .tint(.red)
+        cancelButton(udid: device.udid)
+      }
+
+    case .installing:
+      HStack(spacing: 6) {
+        ProgressView()
+          .scaleEffect(0.6)
+          .frame(width: 16, height: 16)
+        Text("Installing...")
+          .font(.caption)
+          .foregroundColor(.secondary)
+        cancelButton(udid: device.udid)
+      }
+
+    case .launching:
+      HStack(spacing: 6) {
+        ProgressView()
+          .scaleEffect(0.6)
+          .frame(width: 16, height: 16)
+        Text("Launching...")
+          .font(.caption)
+          .foregroundColor(.secondary)
+        cancelButton(udid: device.udid)
       }
 
     case .booted:
@@ -418,17 +434,31 @@ public struct SimulatorPickerView: View {
   }
 
   private func runButton(udid: String) -> some View {
-    Button("Run") {
+    Button {
       Task {
         await SimulatorService.shared.buildAndRunOnSimulator(
           udid: udid,
           projectPath: session.projectPath
         )
       }
+    } label: {
+      Image(systemName: "play.fill")
+        .font(.caption)
     }
-    .font(.caption)
     .buttonStyle(.bordered)
     .controlSize(.small)
+  }
+
+  private func cancelButton(udid: String) -> some View {
+    Button {
+      SimulatorService.shared.cancelSimulatorBuild(udid: udid, projectPath: session.projectPath)
+    } label: {
+      Image(systemName: "stop.fill")
+        .font(.caption)
+    }
+    .buttonStyle(.bordered)
+    .controlSize(.small)
+    .tint(.red)
   }
 
   private func openButton(udid: String) -> some View {
@@ -483,7 +513,7 @@ public struct SimulatorPickerView: View {
     switch state {
     case .idle:
       return device.isBooted ? .green : .gray.opacity(0.5)
-    case .booting, .building:
+    case .booting, .building, .installing, .launching:
       return .yellow
     case .booted:
       return .green
@@ -502,6 +532,10 @@ public struct SimulatorPickerView: View {
       return "Booting..."
     case .building:
       return "Building..."
+    case .installing:
+      return "Installing..."
+    case .launching:
+      return "Launching..."
     case .booted:
       return "Booted"
     case .shuttingDown:

@@ -102,10 +102,13 @@ struct SimulatorStateTests {
     #expect(SimulatorState.idle == .idle)
     #expect(SimulatorState.booting == .booting)
     #expect(SimulatorState.building == .building)
+    #expect(SimulatorState.installing == .installing)
+    #expect(SimulatorState.launching == .launching)
     #expect(SimulatorState.booted == .booted)
     #expect(SimulatorState.shuttingDown == .shuttingDown)
     #expect(SimulatorState.booted != .idle)
     #expect(SimulatorState.booting != .booted)
+    #expect(SimulatorState.installing != .launching)
   }
 
   @Test func failedEqualityMatchesErrorString() {

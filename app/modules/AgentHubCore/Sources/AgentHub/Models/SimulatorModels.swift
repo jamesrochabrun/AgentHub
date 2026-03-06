@@ -37,6 +37,8 @@ public enum SimulatorState: Equatable, Sendable {
   case idle
   case booting
   case building
+  case installing
+  case launching
   case booted
   case shuttingDown
   case failed(error: String)

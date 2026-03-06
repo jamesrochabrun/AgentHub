@@ -120,7 +120,11 @@ struct ParseDeviceListTests {
 struct StateQueryTests {
 
   @Test @MainActor func returnsIdleForUnknownUDID() {
-    let state = SimulatorService.shared.state(for: "NONEXISTENT-UDID-\(UUID().uuidString)")
+    let projectPath = "/tmp/FakeProject-\(UUID().uuidString)"
+    let state = SimulatorService.shared.state(
+      for: "NONEXISTENT-UDID-\(UUID().uuidString)",
+      projectPath: projectPath
+    )
     #expect(state == .idle)
   }
 }
@@ -152,9 +156,79 @@ struct CancelSimulatorBuildTests {
 
   @Test @MainActor func setsDeviceStateToIdleWithoutActiveProcess() {
     let udid = "FAKE-UDID-\(UUID().uuidString)"
-    SimulatorService.shared.cancelSimulatorBuild(udid: udid)
+    let projectPath = "/tmp/FakeProject-\(UUID().uuidString)"
+    SimulatorService.shared.cancelSimulatorBuild(udid: udid, projectPath: projectPath)
     // After cancel the device state must be .idle
-    let state = SimulatorService.shared.state(for: udid)
+    let state = SimulatorService.shared.state(for: udid, projectPath: projectPath)
     #expect(state == .idle)
+  }
+}
+
+// MARK: - build helpers
+
+@Suite("build helpers")
+struct BuildHelperTests {
+
+  @Test func derivedDataPathIsStableAndScopedToAgentHubBuilds() {
+    let projectPath = "/tmp/MyProject"
+    let first = SimulatorService.derivedDataPath(for: projectPath)
+    let second = SimulatorService.derivedDataPath(for: projectPath)
+    let other = SimulatorService.derivedDataPath(for: "/tmp/OtherProject")
+
+    #expect(first == second)
+    #expect(first != other)
+    #expect(first.contains("/Library/Application Support/AgentHub/Builds/"))
+  }
+
+  @Test func preferredAppBundlePathPrefersSchemeMatchOverTestRunner() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("SimulatorServiceTests-\(UUID().uuidString)", isDirectory: true)
+    let products = root.appendingPathComponent("Build/Products/Debug-iphonesimulator", isDirectory: true)
+
+    try FileManager.default.createDirectory(at: products, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: products.appendingPathComponent("Demo.app", isDirectory: true),
+      withIntermediateDirectories: true
+    )
+    try FileManager.default.createDirectory(
+      at: products.appendingPathComponent("DemoTests-Runner.app", isDirectory: true),
+      withIntermediateDirectories: true
+    )
+
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let appPath = SimulatorService.preferredAppBundlePath(
+      in: products.path,
+      preferredAppName: "Demo"
+    )
+
+    let expectedPath = products
+      .appendingPathComponent("Demo.app")
+      .standardizedFileURL
+      .path
+    #expect(URL(fileURLWithPath: try #require(appPath)).standardizedFileURL.path == expectedPath)
+  }
+
+  @Test func bundleIdentifierReadsInfoPlist() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("SimulatorServiceTests-\(UUID().uuidString)", isDirectory: true)
+    let app = root.appendingPathComponent("Demo.app", isDirectory: true)
+
+    try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+
+    let infoPlist: [String: Any] = [
+      "CFBundleIdentifier": "com.agenthub.demo"
+    ]
+    let data = try PropertyListSerialization.data(
+      fromPropertyList: infoPlist,
+      format: .xml,
+      options: 0
+    )
+    try data.write(to: app.appendingPathComponent("Info.plist"))
+
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let bundleIdentifier = SimulatorService.bundleIdentifier(atAppPath: app.path)
+    #expect(bundleIdentifier == "com.agenthub.demo")
   }
 }
