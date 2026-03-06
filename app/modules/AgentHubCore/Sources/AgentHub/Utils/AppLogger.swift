@@ -44,4 +44,7 @@ enum AppLogger {
 
   /// Dev server lifecycle and output
   static let devServer = Logger(subsystem: subsystem, category: "DevServer")
+
+  /// iOS Simulator management
+  static let simulator = Logger(subsystem: subsystem, category: "Simulator")
 }
