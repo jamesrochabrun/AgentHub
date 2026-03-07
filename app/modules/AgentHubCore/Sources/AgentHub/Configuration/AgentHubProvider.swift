@@ -105,6 +105,7 @@ public final class AgentHubProvider {
   public private(set) lazy var instructionFileBridgeService: any InstructionFileBridgeServiceProtocol = {
     InstructionFileBridgeService()
   }()
+  private var instructionBridgePathsByProvider: [SessionProviderKind: Set<String>] = [:]
 
   // MARK: - Theme Management
 
@@ -289,15 +290,22 @@ public final class AgentHubProvider {
     TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
   }
 
-  /// Creates symlink bridges for the given directory paths (repo root + each worktree).
-  public func bridgeInstructionFiles(for paths: [String]) {
+  /// Reconciles symlink bridges using the union of all monitored paths across providers.
+  @MainActor
+  public func reconcileInstructionFileBridges(for paths: [String], providerKind: SessionProviderKind) {
+    instructionBridgePathsByProvider[providerKind] = Set(paths)
+    let allPaths = instructionBridgePathsByProvider.values.reduce(into: Set<String>()) { result, providerPaths in
+      result.formUnion(providerPaths)
+    }
+
     Task {
-      await instructionFileBridgeService.bridgeDirectories(paths)
+      await instructionFileBridgeService.reconcileDirectories(Array(allPaths))
     }
   }
 
   /// Removes all instruction file symlinks synchronously (for use in applicationWillTerminate).
   public func cleanupInstructionFileBridgesSync() {
+    instructionBridgePathsByProvider.removeAll()
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached(priority: .userInitiated) { [weak self] in
       await self?.instructionFileBridgeService.cleanupAll()

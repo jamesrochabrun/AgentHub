@@ -3,6 +3,24 @@ import Testing
 
 @testable import AgentHubCore
 
+private func waitUntil(
+  timeout: Duration = .seconds(1),
+  pollInterval: Duration = .milliseconds(10),
+  condition: @escaping @Sendable () -> Bool
+) async -> Bool {
+  let clock = ContinuousClock()
+  let deadline = clock.now + timeout
+
+  while clock.now < deadline {
+    if condition() {
+      return true
+    }
+    try? await Task.sleep(for: pollInterval)
+  }
+
+  return condition()
+}
+
 // MARK: - bridgeDirectories Tests
 
 @Suite("InstructionFileBridgeService.bridgeDirectories")
@@ -197,6 +215,28 @@ struct BridgeDirectoriesTests {
     let contents = (try? String(contentsOfFile: excludePath, encoding: .utf8)) ?? ""
     #expect(!contents.contains("/AGENTS.md"))
   }
+
+  @Test("Removes stale exclude when a real file appears after the managed symlink is deleted")
+  func removesStaleExcludeForRealFileAfterSymlinkDeletion() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Claude".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let firstService = InstructionFileBridgeService()
+    await firstService.bridgeDirectories([fixture.repoPath])
+
+    let agentsPath = fixture.repoPath + "/AGENTS.md"
+    try FileManager.default.removeItem(atPath: agentsPath)
+    try "# Real Agents".write(toFile: agentsPath, atomically: true, encoding: .utf8)
+
+    let secondService = InstructionFileBridgeService()
+    await secondService.bridgeDirectories([fixture.repoPath])
+
+    #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: agentsPath)) == nil)
+    let contents = (try? String(contentsOfFile: fixture.repoPath + "/.git/info/exclude", encoding: .utf8)) ?? ""
+    #expect(!contents.contains("/AGENTS.md"))
+  }
 }
 
 // MARK: - cleanupAll Tests
@@ -240,7 +280,7 @@ struct CleanupAllTests {
     await service.bridgeDirectories([fixture.repoPath])
     await service.cleanupAll()
 
-    // After cleanup the directory is no longer tracked as scanned,
+    // After cleanup there is no managed bridge left for this path,
     // so bridging it again should recreate the symlink.
     await service.bridgeDirectories([fixture.repoPath])
 
@@ -290,11 +330,75 @@ struct RemoveBridgesTests {
     await service.bridgeDirectories([fixture.repoPath])
     await service.removeBridges(for: fixture.repoPath)
 
-    // Directory is no longer tracked, bridging again should work
+    // No managed bridge remains for the directory, so bridging again should work
     await service.bridgeDirectories([fixture.repoPath])
 
     let dest = try FileManager.default.destinationOfSymbolicLink(atPath: fixture.repoPath + "/AGENTS.md")
     #expect(dest == "CLAUDE.md")
+  }
+
+  @Test("reconcileDirectories removes bridges for directories no longer monitored")
+  func reconcileDirectoriesRemovesBridgesOutsideCurrentSet() async throws {
+    let fixture1 = try GitRepoFixture.create()
+    let fixture2 = try GitRepoFixture.create()
+    defer {
+      fixture1.cleanup()
+      fixture2.cleanup()
+    }
+
+    try "# Instructions".write(toFile: fixture1.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+    try "# Instructions".write(toFile: fixture2.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.reconcileDirectories([fixture1.repoPath, fixture2.repoPath])
+    await service.reconcileDirectories([fixture1.repoPath])
+
+    let fixture1Dest = try FileManager.default.destinationOfSymbolicLink(atPath: fixture1.repoPath + "/AGENTS.md")
+    #expect(fixture1Dest == "CLAUDE.md")
+    #expect(!FileManager.default.fileExists(atPath: fixture2.repoPath + "/AGENTS.md"))
+
+    let exclude2 = (try? String(contentsOfFile: fixture2.repoPath + "/.git/info/exclude", encoding: .utf8)) ?? ""
+    #expect(!exclude2.contains("/AGENTS.md"))
+  }
+}
+
+// MARK: - AgentHubProvider Integration Tests
+
+@Suite("AgentHubProvider instruction bridge reconciliation")
+struct AgentHubProviderInstructionBridgeTests {
+
+  @Test("Reconciles the union of monitored directories across providers")
+  @MainActor
+  func reconcilesUnionAcrossProviders() async throws {
+    let fixture1 = try GitRepoFixture.create()
+    let fixture2 = try GitRepoFixture.create()
+    defer {
+      fixture1.cleanup()
+      fixture2.cleanup()
+    }
+
+    try "# Claude".write(toFile: fixture1.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+    try "# Claude".write(toFile: fixture2.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let provider = AgentHubProvider()
+    provider.reconcileInstructionFileBridges(for: [fixture1.repoPath], providerKind: .claude)
+    provider.reconcileInstructionFileBridges(for: [fixture2.repoPath], providerKind: .codex)
+
+    let bothBridged = await waitUntil {
+      let dest1 = try? FileManager.default.destinationOfSymbolicLink(atPath: fixture1.repoPath + "/AGENTS.md")
+      let dest2 = try? FileManager.default.destinationOfSymbolicLink(atPath: fixture2.repoPath + "/AGENTS.md")
+      return dest1 == "CLAUDE.md" && dest2 == "CLAUDE.md"
+    }
+    #expect(bothBridged)
+
+    provider.reconcileInstructionFileBridges(for: [], providerKind: .claude)
+
+    let codexBridgePreserved = await waitUntil {
+      let fixture1Exists = FileManager.default.fileExists(atPath: fixture1.repoPath + "/AGENTS.md")
+      let dest2 = try? FileManager.default.destinationOfSymbolicLink(atPath: fixture2.repoPath + "/AGENTS.md")
+      return !fixture1Exists && dest2 == "CLAUDE.md"
+    }
+    #expect(codexBridgePreserved)
   }
 }
 

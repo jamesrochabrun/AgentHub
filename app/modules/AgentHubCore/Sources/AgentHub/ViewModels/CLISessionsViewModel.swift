@@ -518,7 +518,7 @@ public final class CLISessionsViewModel {
           let allPaths = repositories.flatMap { repo in
             [repo.path] + repo.worktrees.map(\.path)
           }
-          self.agentHubProvider?.bridgeInstructionFiles(for: allPaths)
+          self.agentHubProvider?.reconcileInstructionFileBridges(for: allPaths, providerKind: self.providerKind)
 
           // Persist after state is updated to ensure consistency
           self.persistSelectedRepositories()
@@ -596,7 +596,7 @@ public final class CLISessionsViewModel {
       // Bridge instruction files for all restored repos and their worktrees
       let repos = await monitorService.getSelectedRepositories()
       let allPaths = repos.flatMap { repo in [repo.path] + repo.worktrees.map(\.path) }
-      agentHubProvider?.bridgeInstructionFiles(for: allPaths)
+      agentHubProvider?.reconcileInstructionFileBridges(for: allPaths, providerKind: providerKind)
       restoreExpansionState()
       loadingState = .idle
 
@@ -834,9 +834,10 @@ public final class CLISessionsViewModel {
       // [CLISessionsVM] loadingState = .addingRepository(\(repoName))")
       loadingState = .addingRepository(name: repoName)
       // [CLISessionsVM] Calling monitorService.addRepository...")
-      if let repo = await monitorService.addRepository(path) {
-        let allPaths = [repo.path] + repo.worktrees.map(\.path)
-        agentHubProvider?.bridgeInstructionFiles(for: allPaths)
+      if await monitorService.addRepository(path) != nil {
+        let repos = await monitorService.getSelectedRepositories()
+        let allPaths = repos.flatMap { repo in [repo.path] + repo.worktrees.map(\.path) }
+        agentHubProvider?.reconcileInstructionFileBridges(for: allPaths, providerKind: providerKind)
       }
       // [CLISessionsVM] monitorService.addRepository completed")
       loadingState = .idle
@@ -861,13 +862,10 @@ public final class CLISessionsViewModel {
       }
     }
 
-    // Remove instruction file bridges for this repo and its worktrees
-    let pathsToRemove = [repository.path] + repository.worktrees.map(\.path)
-    Task {
-      for p in pathsToRemove {
-        await agentHubProvider?.instructionFileBridgeService.removeBridges(for: p)
-      }
-    }
+    let remainingPaths = selectedRepositories
+      .filter { $0.path != repository.path }
+      .flatMap { repo in [repo.path] + repo.worktrees.map(\.path) }
+    agentHubProvider?.reconcileInstructionFileBridges(for: remainingPaths, providerKind: providerKind)
 
     Task {
       await monitorService.removeRepository(repository.path)

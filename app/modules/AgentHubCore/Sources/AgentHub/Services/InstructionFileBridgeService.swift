@@ -16,6 +16,10 @@ public protocol InstructionFileBridgeServiceProtocol: AnyObject, Sendable {
   /// Safe to call multiple times — existing managed bridges are reconciled on each pass.
   func bridgeDirectories(_ paths: [String]) async
 
+  /// Reconcile bridges to match the exact set of monitored directory paths.
+  /// Managed bridges outside this set are removed.
+  func reconcileDirectories(_ paths: [String]) async
+
   /// Remove bridges for one directory (called on repo/worktree removal).
   func removeBridges(for directoryPath: String) async
 
@@ -54,6 +58,18 @@ public actor InstructionFileBridgeService: InstructionFileBridgeServiceProtocol 
     }
   }
 
+  public func reconcileDirectories(_ paths: [String]) async {
+    let directoryPaths = Set(paths)
+    let staleBridges = managedBridges.values.filter { !directoryPaths.contains($0.directoryPath) }
+    for bridge in staleBridges {
+      removeManagedBridge(bridge)
+    }
+
+    for path in directoryPaths {
+      reconcileDirectory(path)
+    }
+  }
+
   public func removeBridges(for directoryPath: String) async {
     let bridgesToRemove = managedBridges.values.filter { $0.directoryPath == directoryPath }
     for bridge in bridgesToRemove {
@@ -78,6 +94,8 @@ public actor InstructionFileBridgeService: InstructionFileBridgeServiceProtocol 
 
     reconcileManagedBridge(at: claudePath)
     reconcileManagedBridge(at: agentsPath)
+    removeStaleExcludeIfNeeded(at: claudePath, target: "AGENTS.md", dirPath: dirPath)
+    removeStaleExcludeIfNeeded(at: agentsPath, target: "CLAUDE.md", dirPath: dirPath)
 
     let claudeExists = bridgeSourceExists(at: claudePath)
     let agentsExists = bridgeSourceExists(at: agentsPath)
@@ -146,6 +164,17 @@ public actor InstructionFileBridgeService: InstructionFileBridgeServiceProtocol 
       directoryPath: dirPath
     )
     AppLogger.bridge.info("Adopted existing bridge at \(symlinkPath)")
+  }
+
+  private func removeStaleExcludeIfNeeded(at symlinkPath: String, target: String, dirPath: String) {
+    guard managedBridges[symlinkPath] == nil else { return }
+
+    let symlinkName = URL(fileURLWithPath: symlinkPath).lastPathComponent
+    guard gitExcludeContainsEntry(symlinkName: symlinkName, dirPath: dirPath) else { return }
+    guard symlinkDestination(at: symlinkPath) != target else { return }
+
+    unregisterGitExclude(symlinkName: symlinkName, dirPath: dirPath)
+    AppLogger.bridge.info("Removed stale git exclude for \(symlinkPath)")
   }
 
   private func removeManagedBridge(_ bridge: ManagedBridge) {
