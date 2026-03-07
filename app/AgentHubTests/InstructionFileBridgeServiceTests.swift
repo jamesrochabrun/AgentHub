@@ -105,6 +105,98 @@ struct BridgeDirectoriesTests {
     let dest2 = try FileManager.default.destinationOfSymbolicLink(atPath: fixture2.repoPath + "/CLAUDE.md")
     #expect(dest2 == "AGENTS.md")
   }
+
+  @Test("Does not replace a pre-existing dangling symlink")
+  func doesNotReplaceDanglingSymlink() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+    try FileManager.default.createSymbolicLink(
+      atPath: fixture.repoPath + "/AGENTS.md",
+      withDestinationPath: "UserManaged.md"
+    )
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture.repoPath])
+
+    let dest = try FileManager.default.destinationOfSymbolicLink(atPath: fixture.repoPath + "/AGENTS.md")
+    #expect(dest == "UserManaged.md")
+
+    let excludePath = fixture.repoPath + "/.git/info/exclude"
+    let contents = try String(contentsOfFile: excludePath, encoding: .utf8)
+    #expect(!contents.contains("/AGENTS.md"))
+  }
+
+  @Test("Rescan removes a managed symlink when its source file disappears")
+  func rescanRemovesManagedDanglingSymlink() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture.repoPath])
+
+    try FileManager.default.removeItem(atPath: fixture.repoPath + "/CLAUDE.md")
+    await service.bridgeDirectories([fixture.repoPath])
+
+    let agentsPath = fixture.repoPath + "/AGENTS.md"
+    #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: agentsPath)) == nil)
+
+    let excludePath = fixture.repoPath + "/.git/info/exclude"
+    let contents = (try? String(contentsOfFile: excludePath, encoding: .utf8)) ?? ""
+    #expect(!contents.contains("/AGENTS.md"))
+  }
+
+  @Test("Rescan stops ignoring a real file that replaces our managed symlink")
+  func rescanStopsIgnoringRealReplacement() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture.repoPath])
+
+    let agentsPath = fixture.repoPath + "/AGENTS.md"
+    try FileManager.default.removeItem(atPath: agentsPath)
+    try "# Real AGENTS".write(toFile: agentsPath, atomically: true, encoding: .utf8)
+
+    await service.bridgeDirectories([fixture.repoPath])
+
+    #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: agentsPath)) == nil)
+
+    let excludePath = fixture.repoPath + "/.git/info/exclude"
+    let contents = (try? String(contentsOfFile: excludePath, encoding: .utf8)) ?? ""
+    #expect(!contents.contains("/AGENTS.md"))
+
+    await service.cleanupAll()
+    #expect(FileManager.default.fileExists(atPath: agentsPath))
+  }
+
+  @Test("Adopts a previously created bridge on a new service instance")
+  func adoptsExistingBridgeFromPreviousServiceInstance() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let firstService = InstructionFileBridgeService()
+    await firstService.bridgeDirectories([fixture.repoPath])
+
+    try FileManager.default.removeItem(atPath: fixture.repoPath + "/CLAUDE.md")
+
+    let secondService = InstructionFileBridgeService()
+    await secondService.bridgeDirectories([fixture.repoPath])
+
+    let agentsPath = fixture.repoPath + "/AGENTS.md"
+    #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: agentsPath)) == nil)
+
+    let excludePath = fixture.repoPath + "/.git/info/exclude"
+    let contents = (try? String(contentsOfFile: excludePath, encoding: .utf8)) ?? ""
+    #expect(!contents.contains("/AGENTS.md"))
+  }
 }
 
 // MARK: - cleanupAll Tests

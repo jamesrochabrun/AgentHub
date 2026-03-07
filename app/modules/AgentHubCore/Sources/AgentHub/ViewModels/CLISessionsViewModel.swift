@@ -515,6 +515,10 @@ public final class CLISessionsViewModel {
             current: self.selectedRepositories,
             updated: repositories
           )
+          let allPaths = repositories.flatMap { repo in
+            [repo.path] + repo.worktrees.map(\.path)
+          }
+          self.agentHubProvider?.bridgeInstructionFiles(for: allPaths)
 
           // Persist after state is updated to ensure consistency
           self.persistSelectedRepositories()
