@@ -99,15 +99,52 @@ public actor InstructionFileBridgeService: InstructionFileBridgeServiceProtocol 
   }
 
   private func removeSymlink(at path: String) {
-    do {
-      try FileManager.default.removeItem(atPath: path)
-      AppLogger.bridge.info("Removed symlink: \(path)")
-    } catch {
-      AppLogger.bridge.warning("Failed to remove symlink at \(path): \(error.localizedDescription)")
+    let url = URL(fileURLWithPath: path)
+    let fm = FileManager.default
+
+    if (try? fm.destinationOfSymbolicLink(atPath: path)) != nil {
+      do {
+        try fm.removeItem(atPath: path)
+        AppLogger.bridge.info("Removed symlink: \(path)")
+      } catch {
+        AppLogger.bridge.warning("Failed to remove symlink at \(path): \(error.localizedDescription)")
+      }
+    } else {
+      AppLogger.bridge.info("Symlink at \(path) already gone, skipping removal")
     }
+
+    // Always unregister: exclude entry must go regardless of how the symlink disappeared
+    unregisterGitExclude(
+      symlinkName: url.lastPathComponent,
+      dirPath: url.deletingLastPathComponent().path
+    )
   }
 
   // MARK: - Git Exclude
+
+  private func unregisterGitExclude(symlinkName: String, dirPath: String) {
+    guard let excludePath = findGitExcludePath(for: dirPath) else { return }
+    guard let content = try? String(contentsOfFile: excludePath, encoding: .utf8) else { return }
+
+    let pattern = "/\(symlinkName)"
+    let marker = "# AgentHub instruction file bridge"
+
+    let lines = content.components(separatedBy: "\n")
+    var result: [String] = []
+    var i = 0
+    while i < lines.count {
+      if lines[i] == marker, i + 1 < lines.count, lines[i + 1] == pattern {
+        i += 2
+      } else {
+        result.append(lines[i])
+        i += 1
+      }
+    }
+
+    let newContent = result.joined(separator: "\n")
+    try? newContent.write(toFile: excludePath, atomically: true, encoding: .utf8)
+    AppLogger.bridge.info("Unregistered \(pattern) from \(excludePath)")
+  }
 
   private func registerGitExclude(symlinkName: String, dirPath: String) {
     guard let excludePath = findGitExcludePath(for: dirPath) else { return }

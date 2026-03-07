@@ -260,6 +260,123 @@ struct GitExcludeTests {
     #expect(contents.contains("/CLAUDE.md"))
   }
 
+  @Test("cleanupAll removes the exclude entry")
+  func cleanupAllRemovesExcludeEntry() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture.repoPath])
+    await service.cleanupAll()
+
+    let excludePath = fixture.repoPath + "/.git/info/exclude"
+    let contents = (try? String(contentsOfFile: excludePath, encoding: .utf8)) ?? ""
+    #expect(!contents.contains("/AGENTS.md"))
+  }
+
+  @Test("removeBridges removes only the target directory's exclude entry")
+  func removeBridgesRemovesOnlyTargetExcludeEntry() async throws {
+    let fixture1 = try GitRepoFixture.create()
+    let fixture2 = try GitRepoFixture.create()
+    defer {
+      fixture1.cleanup()
+      fixture2.cleanup()
+    }
+
+    try "# Instructions".write(toFile: fixture1.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+    try "# Instructions".write(toFile: fixture2.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture1.repoPath, fixture2.repoPath])
+    await service.removeBridges(for: fixture1.repoPath)
+
+    let exclude1 = (try? String(contentsOfFile: fixture1.repoPath + "/.git/info/exclude", encoding: .utf8)) ?? ""
+    #expect(!exclude1.contains("/AGENTS.md"))
+
+    let exclude2 = try String(contentsOfFile: fixture2.repoPath + "/.git/info/exclude", encoding: .utf8)
+    #expect(exclude2.contains("/AGENTS.md"))
+  }
+
+  @Test("cleanup then re-bridge writes the exclude entry exactly once (round-trip)")
+  func cleanupAndRebridgeWritesEntryOnce() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture.repoPath])
+    await service.cleanupAll()
+    await service.bridgeDirectories([fixture.repoPath])
+
+    let excludePath = fixture.repoPath + "/.git/info/exclude"
+    let contents = try String(contentsOfFile: excludePath, encoding: .utf8)
+    let occurrences = contents.components(separatedBy: "/AGENTS.md").count - 1
+    #expect(occurrences == 1)
+  }
+
+  @Test("cleanupAll removes exclude entry when AGENTS.md is the symlink (CLAUDE.md is real)")
+  func cleanupAllRemovesExcludeEntryForClaudeSymlink() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/AGENTS.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture.repoPath])
+    await service.cleanupAll()
+
+    let contents = (try? String(contentsOfFile: fixture.repoPath + "/.git/info/exclude", encoding: .utf8)) ?? ""
+    #expect(!contents.contains("/CLAUDE.md"))
+  }
+
+  @Test("cleanupAll removes exclude entry even when symlink was already externally deleted")
+  func cleanupRemovesExcludeEvenWhenSymlinkAlreadyGone() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture.repoPath])
+
+    // Simulate external deletion of the symlink (e.g. crash recovery)
+    try FileManager.default.removeItem(atPath: fixture.repoPath + "/AGENTS.md")
+
+    await service.cleanupAll()
+
+    let contents = (try? String(contentsOfFile: fixture.repoPath + "/.git/info/exclude", encoding: .utf8)) ?? ""
+    #expect(!contents.contains("/AGENTS.md"))
+  }
+
+  @Test("cleanupAll does not delete a real file that replaced our symlink")
+  func cleanupDoesNotDeleteRealFileWhenSymlinkReplaced() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "# Instructions".write(toFile: fixture.repoPath + "/CLAUDE.md", atomically: true, encoding: .utf8)
+
+    let service = InstructionFileBridgeService()
+    await service.bridgeDirectories([fixture.repoPath])
+
+    // Simulate user replacing our symlink with their own real file
+    try FileManager.default.removeItem(atPath: fixture.repoPath + "/AGENTS.md")
+    try "# Real AGENTS".write(toFile: fixture.repoPath + "/AGENTS.md", atomically: true, encoding: .utf8)
+
+    await service.cleanupAll()
+
+    // Real file must survive
+    #expect(FileManager.default.fileExists(atPath: fixture.repoPath + "/AGENTS.md"))
+    let isSymlink = (try? FileManager.default.destinationOfSymbolicLink(atPath: fixture.repoPath + "/AGENTS.md")) != nil
+    #expect(!isSymlink)
+
+    // Exclude entry must be removed
+    let contents = (try? String(contentsOfFile: fixture.repoPath + "/.git/info/exclude", encoding: .utf8)) ?? ""
+    #expect(!contents.contains("/AGENTS.md"))
+  }
+
   @Test("Worktree symlink registers exclude in main repo's .git/info/exclude")
   func worktreeExcludeInMainRepo() async throws {
     let fixture = try GitRepoFixture.create()
