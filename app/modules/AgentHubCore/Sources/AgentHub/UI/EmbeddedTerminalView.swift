@@ -44,6 +44,7 @@ class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
 public struct EmbeddedTerminalView: NSViewRepresentable {
   @Environment(\.colorScheme) private var colorScheme
   @AppStorage(AgentHubDefaults.terminalFontSize) private var terminalFontSize: Double = 12
+  @AppStorage(AgentHubDefaults.terminalFontName) private var terminalFontName: String = "SF Mono"
 
   let terminalKey: String  // Key for terminal storage (session ID or "pending-{pendingId}")
   let sessionId: String?  // Optional: nil for new sessions, set for resume
@@ -120,7 +121,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     // Update colors when color scheme changes
     nsView.updateColors(isDark: colorScheme == .dark)
     nsView.onUserInteraction = onUserInteraction
-    nsView.updateFont(size: CGFloat(terminalFontSize))
+    nsView.updateFont(name: terminalFontName, size: CGFloat(terminalFontSize))
 
     // If there's a pending prompt in the viewModel, send it (and clear it)
     // Use terminalKey (not sessionId) since it works for both pending and real sessions
@@ -140,6 +141,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
+  private var appliedFontName: String = ""
+  private var appliedFontSize: CGFloat = 0
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
@@ -297,13 +300,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     typeText(text)
   }
 
-  /// Updates terminal font size.
-  public func updateFont(size: CGFloat) {
+  /// Updates terminal font and size.
+  public func updateFont(name: String, size: CGFloat) {
     guard let terminal = terminalView else { return }
-    let font = NSFont(name: "SF Mono", size: size)
+    guard name != appliedFontName || size != appliedFontSize else { return }
+    appliedFontName = name
+    appliedFontSize = size
+    terminal.font = NSFont(name: name, size: size)
       ?? NSFont(name: "Menlo", size: size)
       ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
-    terminal.font = font
   }
 
   /// Updates terminal colors based on color scheme.
@@ -363,11 +368,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private func configureTerminalAppearance(_ terminal: TerminalView, isDark: Bool) {
     // Use a monospace font that looks good in terminals
-    let fontSize: CGFloat = 12
-    let font = NSFont(name: "SF Mono", size: fontSize)
+    let storedSize = UserDefaults.standard.double(forKey: AgentHubDefaults.terminalFontSize)
+    let fontSize = storedSize > 0 ? CGFloat(storedSize) : 12
+    let fontName = UserDefaults.standard.string(forKey: AgentHubDefaults.terminalFontName) ?? "SF Mono"
+    terminal.font = NSFont(name: fontName, size: fontSize)
       ?? NSFont(name: "Menlo", size: fontSize)
       ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-    terminal.font = font
 
     // Configure colors based on color scheme
     if isDark {

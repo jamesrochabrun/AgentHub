@@ -98,6 +98,10 @@ public enum AgentHubDefaults {
   /// Type: Double (default: 12.0)
   public static let terminalFontSize = "\(keyPrefix)terminal.fontSize"
 
+  /// Terminal font family name
+  /// Type: String (default: "SF Mono")
+  public static let terminalFontName = "\(keyPrefix)terminal.fontName"
+
   /// Monitoring panel layout mode (list, 2-column, 3-column grid)
   /// Type: Int (default: 0 = list)
   public static let monitoringPanelLayoutMode = "\(keyPrefix)ui.monitoringPanelLayoutMode"
