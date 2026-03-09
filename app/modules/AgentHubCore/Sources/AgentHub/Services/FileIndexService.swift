@@ -29,10 +29,20 @@ public actor FileIndexService {
     ".tox", "dist", "build", ".next", ".nuxt", "coverage"
   ]
 
-  /// Hidden files (starting with `.`) that are still useful to index.
+  /// Hidden files/dirs (starting with `.`) that are still useful to index.
   private static let allowedHiddenNames: Set<String> = [
-    ".env", ".gitignore", ".eslintrc", ".prettierrc",
-    ".swiftlint.yml", ".editorconfig", ".nvmrc"
+    ".env", ".env.local", ".env.development", ".env.production", ".env.example",
+    ".gitignore", ".gitmodules", ".gitattributes",
+    ".eslintrc", ".eslintrc.js", ".eslintrc.json", ".eslintrc.yml",
+    ".prettierrc", ".prettierrc.js", ".prettierrc.json", ".prettierrc.yml",
+    ".swiftlint.yml", ".swiftformat",
+    ".editorconfig", ".nvmrc", ".node-version", ".ruby-version", ".python-version",
+    ".npmrc", ".yarnrc", ".yarnrc.yml",
+    ".babelrc", ".babelrc.json",
+    ".dockerignore", ".docker",
+    ".github", ".vscode", ".cursor",
+    ".claude", ".clauderc",
+    ".env.test", ".env.staging"
   ]
 
   // MARK: - Cache
@@ -43,12 +53,42 @@ public actor FileIndexService {
   }
 
   private var cache: [String: CacheEntry] = [:]
+  private var recentPaths: [String] = []
+  private static let maxRecentFiles = 20
 
   // MARK: - Initialization
 
   public init() {}
 
   // MARK: - Public API
+
+  /// Records a file as recently opened (most recent first, deduped).
+  public func addToRecent(_ path: String) {
+    recentPaths.removeAll { $0 == path }
+    recentPaths.insert(path, at: 0)
+    if recentPaths.count > Self.maxRecentFiles {
+      recentPaths = Array(recentPaths.prefix(Self.maxRecentFiles))
+    }
+  }
+
+  /// Returns recently opened files that belong to `projectPath`, as `FileSearchResult` objects.
+  public func recentFiles(in projectPath: String) -> [FileSearchResult] {
+    recentPaths
+      .filter { $0.hasPrefix(projectPath + "/") || $0.hasPrefix(projectPath) }
+      .map { path in
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        let relativePath = path.hasPrefix(projectPath + "/")
+          ? String(path.dropFirst(projectPath.count + 1))
+          : name
+        return FileSearchResult(
+          id: path,
+          name: name,
+          relativePath: relativePath,
+          absolutePath: path,
+          score: 0
+        )
+      }
+  }
 
   /// Returns the cached file tree for `projectPath`, or scans it fresh if the cache is stale.
   public func index(projectPath: String) async -> [FileTreeNode] {
@@ -60,31 +100,55 @@ public actor FileIndexService {
     return nodes
   }
 
-  /// Fuzzy-searches files in `projectPath`.
-  /// - Empty query returns the first 50 files (unsorted).
-  /// - Non-empty query scores each file and returns up to 50 results sorted by score descending.
+  /// Searches files using a strict 3-tier approach:
+  /// 1. Filename starts with query → highest score
+  /// 2. Filename contains query as substring → high score
+  /// 3. Path contains query as substring → medium score
+  /// All matching is case-insensitive substring, no fuzzy.
   public func search(query: String, in projectPath: String) async -> [FileSearchResult] {
-    let tree = await index(projectPath: projectPath)
-    let allFiles = flattenFiles(tree, projectPath: projectPath)
-
-    guard !query.isEmpty else {
-      return Array(allFiles.prefix(Self.maxSearchResults))
-    }
-
+    guard !query.isEmpty else { return [] }
+    let nodes = await index(projectPath: projectPath)
+    let allFiles = flattenFiles(nodes, projectPath: projectPath)
     let q = query.lowercased()
 
-    var scored: [(result: FileSearchResult, score: Int)] = []
+    var scored: [FileSearchResult] = []
     for file in allFiles {
-      let nameScore = SearchScoring.score(query: q, against: file.name.lowercased()).map { $0.score * 2 }
-      let pathScore = SearchScoring.score(query: q, against: file.relativePath.lowercased()).map { $0.score }
-      let best = max(nameScore ?? 0, pathScore ?? 0)
-      if best > 0 {
-        scored.append((result: file, score: best))
+      let nameLower = file.name.lowercased()
+      let nameNoExt = (file.name as NSString).deletingPathExtension.lowercased()
+      let pathLower = file.relativePath.lowercased()
+
+      var score = 0
+      if nameNoExt == q {
+        // Exact match (without extension)
+        score = 5000
+      } else if nameNoExt.hasPrefix(q) {
+        // Filename starts with query (without extension)
+        score = 4000 + (100 - min(nameLower.count, 100))
+      } else if nameLower.hasPrefix(q) {
+        // Filename starts with query (with extension)
+        score = 3500 + (100 - min(nameLower.count, 100))
+      } else if nameLower.contains(q) {
+        // Filename contains query
+        let pos = nameLower.range(of: q)!.lowerBound.utf16Offset(in: nameLower)
+        score = 2000 + (200 - pos) + (100 - min(nameLower.count, 100))
+      } else if pathLower.contains(q) {
+        // Path contains query
+        let pos = pathLower.range(of: q)!.lowerBound.utf16Offset(in: pathLower)
+        score = 1000 + (500 - min(pos, 500))
       }
+
+      guard score > 0 else { continue }
+      scored.append(FileSearchResult(
+        id: file.id, name: file.name, relativePath: file.relativePath,
+        absolutePath: file.absolutePath, score: score
+      ))
     }
 
-    scored.sort { $0.score > $1.score }
-    return scored.prefix(Self.maxSearchResults).map { $0.result }
+    scored.sort {
+      if $0.score != $1.score { return $0.score > $1.score }
+      return $0.name < $1.name
+    }
+    return Array(scored.prefix(Self.maxSearchResults))
   }
 
   /// Removes the cache entry for `projectPath`.
@@ -117,14 +181,18 @@ public actor FileIndexService {
 
   private func scanDirectory(at path: String) async -> [FileTreeNode] {
     await Task.detached(priority: .utility) {
-      FileIndexService.scanDirectorySync(at: path, relativeTo: path, depth: 0)
+      let rootPatterns = FileIndexService.parseGitignore(at: path)
+      return FileIndexService.scanDirectorySync(
+        at: path, relativeTo: path, depth: 0, inheritedPatterns: rootPatterns
+      )
     }.value
   }
 
   private static func scanDirectorySync(
     at path: String,
     relativeTo rootPath: String,
-    depth: Int
+    depth: Int,
+    inheritedPatterns: [String]
   ) -> [FileTreeNode] {
     guard depth < maxDepth else { return [] }
 
@@ -134,8 +202,9 @@ public actor FileIndexService {
       return []
     }
 
-    // Parse .gitignore in this directory
-    let gitignorePatterns = parseGitignore(at: path)
+    // Merge inherited patterns with this directory's own .gitignore
+    let localPatterns = depth == 0 ? [] : parseGitignore(at: path)
+    let allPatterns = inheritedPatterns + localPatterns
 
     var nodes: [FileTreeNode] = []
 
@@ -157,7 +226,7 @@ public actor FileIndexService {
         : name
 
       // Gitignore check
-      if isIgnored(name: name, relativePath: relativePath, patterns: gitignorePatterns) {
+      if isIgnored(name: name, relativePath: relativePath, patterns: allPatterns) {
         continue
       }
 
@@ -165,7 +234,10 @@ public actor FileIndexService {
       fm.fileExists(atPath: fullPath, isDirectory: &isDir)
 
       if isDir.boolValue {
-        let children = scanDirectorySync(at: fullPath, relativeTo: rootPath, depth: depth + 1)
+        let children = scanDirectorySync(
+          at: fullPath, relativeTo: rootPath, depth: depth + 1,
+          inheritedPatterns: allPatterns
+        )
         let node = FileTreeNode(
           id: fullPath,
           name: name,

@@ -17,7 +17,7 @@ public struct QuickFilePickerView: View {
   @State private var searchQuery = ""
   @State private var results: [FileSearchResult] = []
   @State private var selectedIndex = 0
-  @State private var searchTask: Task<Void, Never>?
+  @State private var showingRecent = true
   @FocusState private var isSearchFocused: Bool
 
   public init(
@@ -31,97 +31,132 @@ public struct QuickFilePickerView: View {
   }
 
   public var body: some View {
-    ZStack {
-      Color.black.opacity(0.4)
-        .ignoresSafeArea()
-        .onTapGesture { isPresented = false }
+    VStack(spacing: 0) {
+      // Search field
+      HStack(spacing: 12) {
+        Image(systemName: "magnifyingglass")
+          .font(.system(size: 16))
+          .foregroundColor(.secondary)
 
-      VStack(spacing: 0) {
-        // Search field
-        HStack(spacing: 12) {
-          Image(systemName: "magnifyingglass")
-            .font(.system(size: 16))
-            .foregroundColor(.secondary)
+        TextField("Go to file...", text: $searchQuery)
+          .textFieldStyle(.plain)
+          .font(.system(size: 16))
+          .focused($isSearchFocused)
+          .onSubmit { selectCurrentItem() }
 
-          TextField("Go to file...", text: $searchQuery)
-            .textFieldStyle(.plain)
-            .font(.system(size: 16))
-            .focused($isSearchFocused)
-            .onSubmit { selectCurrentItem() }
-
-          if !searchQuery.isEmpty {
-            Button(action: { searchQuery = "" }) {
-              Image(systemName: "xmark.circle.fill")
-                .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
+        if !searchQuery.isEmpty {
+          Button(action: { searchQuery = "" }) {
+            Image(systemName: "xmark.circle.fill")
+              .foregroundColor(.secondary)
           }
-
-          Spacer()
-
-          Text("esc")
-            .font(.system(size: 11, design: .monospaced))
-            .foregroundColor(.secondary.opacity(0.6))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(
-              RoundedRectangle(cornerRadius: 4)
-                .fill(Color.secondary.opacity(0.12))
-            )
+          .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
 
-        if !results.isEmpty {
-          Divider()
+        Spacer()
 
-          ScrollViewReader { proxy in
-            ScrollView {
-              LazyVStack(spacing: 0) {
-                ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
-                  QuickFileResultRow(result: result, isSelected: index == selectedIndex)
-                    .id(index)
-                    .contentShape(Rectangle())
-                    .onTapGesture { selectItem(at: index) }
-                }
+        Text("esc")
+          .font(.system(size: 11, design: .monospaced))
+          .foregroundColor(.secondary.opacity(0.6))
+          .padding(.horizontal, 6)
+          .padding(.vertical, 3)
+          .background(
+            RoundedRectangle(cornerRadius: 4)
+              .fill(Color.secondary.opacity(0.12))
+          )
+      }
+      .padding(.horizontal, 16)
+      .padding(.vertical, 12)
+
+      if !results.isEmpty {
+        Divider()
+
+        if showingRecent {
+          HStack {
+            Text("Recently Opened")
+              .font(.system(size: 11, weight: .medium))
+              .foregroundColor(.secondary)
+            Spacer()
+          }
+          .padding(.horizontal, 16)
+          .padding(.top, 8)
+          .padding(.bottom, 4)
+        }
+
+        ScrollViewReader { proxy in
+          ScrollView {
+            LazyVStack(spacing: 0) {
+              ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
+                QuickFileResultRow(result: result, isSelected: index == selectedIndex)
+                  .id(index)
+                  .contentShape(Rectangle())
+                  .onTapGesture { selectItem(at: index) }
               }
             }
-            .frame(maxHeight: 300)
-            .onChange(of: selectedIndex) { _, newIndex in
-              withAnimation { proxy.scrollTo(newIndex, anchor: .center) }
-            }
           }
-        } else if !searchQuery.isEmpty {
-          Divider()
-          Text("No files found")
+          .frame(maxHeight: 320)
+          .onChange(of: selectedIndex) { _, newIndex in
+            withAnimation { proxy.scrollTo(newIndex, anchor: .center) }
+          }
+        }
+      } else if !searchQuery.isEmpty {
+        Divider()
+        VStack(spacing: 6) {
+          Image(systemName: "magnifyingglass")
+            .font(.system(size: 20))
+            .foregroundColor(.secondary.opacity(0.5))
+          Text("No files found for \"\(searchQuery)\"")
             .font(.caption)
             .foregroundColor(.secondary)
-            .padding()
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+      } else if results.isEmpty {
+        Divider()
+        VStack(spacing: 6) {
+          Image(systemName: "clock")
+            .font(.system(size: 20))
+            .foregroundColor(.secondary.opacity(0.5))
+          Text("No recently opened files")
+            .font(.caption)
+            .foregroundColor(.secondary)
+          Text("Start typing to search")
+            .font(.caption2)
+            .foregroundColor(.secondary.opacity(0.6))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
       }
-      .background(.regularMaterial)
-      .cornerRadius(12)
-      .shadow(color: .black.opacity(0.3), radius: 20, x: 0, y: 10)
-      .frame(width: 600)
-      .padding(.top, 100)
-      .frame(maxHeight: .infinity, alignment: .top)
     }
+    .frame(width: 580)
     .onAppear {
       isSearchFocused = true
-      Task { await performSearch() }
     }
-    .onDisappear {
-      searchTask?.cancel()
-    }
-    .onChange(of: searchQuery) { _, _ in
+    .task(id: searchQuery) {
+      // Automatically cancels previous task when searchQuery changes
+      if searchQuery.isEmpty {
+        let recent = await FileIndexService.shared.recentFiles(in: projectPath)
+        results = recent
+        showingRecent = true
+        selectedIndex = 0
+        return
+      }
+      showingRecent = false
+      // Debounce — but clear results immediately to avoid showing stale data
+      results = []
       selectedIndex = 0
-      scheduleSearch()
+      try? await Task.sleep(for: .milliseconds(150))
+      guard !Task.isCancelled else { return }
+      let found = await FileIndexService.shared.search(query: searchQuery, in: projectPath)
+      guard !Task.isCancelled else { return }
+      results = found
+      selectedIndex = 0
     }
     .onKeyPress(.upArrow) {
       selectedIndex = max(0, selectedIndex - 1)
       return .handled
     }
     .onKeyPress(.downArrow) {
+      guard !results.isEmpty else { return .handled }
       selectedIndex = min(results.count - 1, selectedIndex + 1)
       return .handled
     }
@@ -132,21 +167,6 @@ public struct QuickFilePickerView: View {
     .onExitCommand {
       isPresented = false
     }
-  }
-
-  // MARK: - Search
-
-  private func scheduleSearch() {
-    searchTask?.cancel()
-    searchTask = Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(150))
-      guard !Task.isCancelled else { return }
-      await performSearch()
-    }
-  }
-
-  private func performSearch() async {
-    results = await FileIndexService.shared.search(query: searchQuery, in: projectPath)
   }
 
   // MARK: - Selection
@@ -169,11 +189,19 @@ private struct QuickFileResultRow: View {
   let result: FileSearchResult
   let isSelected: Bool
 
+  @State private var isHovered = false
+
+  private var rowBackground: Color {
+    if isSelected { return Color.accentColor }
+    if isHovered { return Color.primary.opacity(0.08) }
+    return Color.clear
+  }
+
   var body: some View {
     HStack(spacing: 12) {
       Image(systemName: fileIcon(for: result.name))
         .font(.system(size: 16))
-        .foregroundColor(isSelected ? .white : .secondary)
+        .foregroundColor(isSelected ? .white : fileIconColor(for: result.name))
         .frame(width: 20)
 
       VStack(alignment: .leading, spacing: 2) {
@@ -192,25 +220,43 @@ private struct QuickFileResultRow: View {
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 8)
-    .background(isSelected ? Color.accentColor : Color.clear)
+    .background(rowBackground)
     .contentShape(Rectangle())
+    .onHover { isHovered = $0 }
   }
 
   private func fileIcon(for name: String) -> String {
     let ext = (name as NSString).pathExtension.lowercased()
     switch ext {
-    case "swift":
-      return "swift"
-    case "md":
-      return "doc.richtext"
-    case "json":
-      return "curlybraces"
-    case "yaml", "yml":
-      return "doc.plaintext"
-    case "png", "jpg", "jpeg", "gif", "svg":
-      return "photo"
-    default:
-      return "doc"
+    case "swift":                    return "swift"
+    case "js", "jsx":                return "chevron.left.forwardslash.chevron.right"
+    case "ts", "tsx":                return "chevron.left.forwardslash.chevron.right"
+    case "md", "markdown":           return "doc.richtext"
+    case "json":                     return "curlybraces"
+    case "yaml", "yml":              return "list.bullet.indent"
+    case "html", "htm":              return "globe"
+    case "css", "scss", "sass":      return "paintbrush"
+    case "sh", "bash", "zsh":        return "terminal"
+    case "py":                       return "chevron.left.forwardslash.chevron.right"
+    case "png", "jpg", "jpeg", "gif", "svg": return "photo"
+    default:                         return "doc.text"
+    }
+  }
+
+  private func fileIconColor(for name: String) -> Color {
+    let ext = (name as NSString).pathExtension.lowercased()
+    switch ext {
+    case "swift":                    return .orange
+    case "js", "jsx":                return .yellow
+    case "ts", "tsx":                return .blue
+    case "json":                     return .green
+    case "md", "markdown":           return .secondary
+    case "html", "htm":              return .orange
+    case "css", "scss", "sass":      return .purple
+    case "sh", "bash", "zsh":        return .green
+    case "yaml", "yml":              return .mint
+    case "py":                       return .blue
+    default:                         return .secondary
     }
   }
 }

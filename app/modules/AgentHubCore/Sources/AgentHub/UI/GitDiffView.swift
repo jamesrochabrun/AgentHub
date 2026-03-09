@@ -278,7 +278,7 @@ public struct GitDiffView: View {
   // MARK: - File List Sidebar
 
   /// Builds a hierarchical tree from flat file entries
-  private var fileTree: [FileTreeNode] {
+  private var fileTree: [GitDiffTreeNode] {
     buildFileTree(from: diffState.files).nodes
   }
 
@@ -309,7 +309,7 @@ public struct GitDiffView: View {
 
   /// Result of building the file tree
   private struct FileTreeResult {
-    let nodes: [FileTreeNode]
+    let nodes: [GitDiffTreeNode]
     let commonPrefix: String
     let allFolderPaths: Set<String>
   }
@@ -325,7 +325,7 @@ public struct GitDiffView: View {
     let stripCount = commonComponents.count
 
     // Root node to hold top-level children
-    let root = FileTreeNode(name: "", fullPath: "", file: nil)
+    let root = GitDiffTreeNode(name: "", fullPath: "", file: nil)
     var allFolderPaths: Set<String> = []
 
     for file in files {
@@ -342,7 +342,7 @@ public struct GitDiffView: View {
 
         if isLastComponent {
           // This is a file node
-          let fileNode = FileTreeNode(
+          let fileNode = GitDiffTreeNode(
             name: component,
             fullPath: currentPath,
             file: file
@@ -351,7 +351,7 @@ public struct GitDiffView: View {
         } else {
           // This is a folder node
           if currentNode.childrenDict[component] == nil {
-            let folderNode = FileTreeNode(
+            let folderNode = GitDiffTreeNode(
               name: component,
               fullPath: currentPath,
               file: nil
@@ -370,7 +370,7 @@ public struct GitDiffView: View {
     return FileTreeResult(nodes: nodes, commonPrefix: commonPrefix, allFolderPaths: allFolderPaths)
   }
 
-  private func sortNodes(from dict: [String: FileTreeNode]) -> [FileTreeNode] {
+  private func sortNodes(from dict: [String: GitDiffTreeNode]) -> [GitDiffTreeNode] {
     dict.values
       .map { node in
         // Recursively sort children
@@ -398,7 +398,7 @@ public struct GitDiffView: View {
     return min(max(idealWidth, 220), 400)
   }
 
-  private func measureTree(nodes: [FileTreeNode], depth: Int) -> (maxDepth: Int, longestName: Int) {
+  private func measureTree(nodes: [GitDiffTreeNode], depth: Int) -> (maxDepth: Int, longestName: Int) {
     var maxDepth = depth
     var longestName = 0
     for node in nodes {
@@ -446,7 +446,7 @@ public struct GitDiffView: View {
       ScrollView {
         LazyVStack(alignment: .leading, spacing: 0) {
           ForEach(fileTree) { node in
-            FileTreeNodeRow(
+            GitDiffTreeNodeRow(
               node: node,
               depth: 0,
               expandedPaths: $expandedPaths,
@@ -688,15 +688,15 @@ public struct GitDiffView: View {
 
 }
 
-// MARK: - FileTreeNode
+// MARK: - GitDiffTreeNode
 
 /// Represents a node in the hierarchical file tree (folder or file)
-private class FileTreeNode: Identifiable {
+private class GitDiffTreeNode: Identifiable {
   let id = UUID()
   let name: String                        // Folder or file name
   let fullPath: String                    // Full relative path
-  var children: [FileTreeNode] = []       // Child nodes (populated after tree build)
-  var childrenDict: [String: FileTreeNode] = [:] // Used during tree construction
+  var children: [GitDiffTreeNode] = []       // Child nodes (populated after tree build)
+  var childrenDict: [String: GitDiffTreeNode] = [:] // Used during tree construction
   let file: GitDiffFileEntry?             // Non-nil for leaf file nodes
 
   var isFolder: Bool { file == nil }
@@ -708,11 +708,11 @@ private class FileTreeNode: Identifiable {
   }
 }
 
-// MARK: - FileTreeNodeRow
+// MARK: - GitDiffTreeNodeRow
 
 /// Recursive view for rendering tree nodes with proper indentation
-private struct FileTreeNodeRow: View {
-  let node: FileTreeNode
+private struct GitDiffTreeNodeRow: View {
+  let node: GitDiffTreeNode
   let depth: Int
   @Binding var expandedPaths: Set<String>
   let selectedFileId: UUID?
@@ -788,7 +788,7 @@ private struct FileTreeNodeRow: View {
       // Children (if expanded folder)
       if node.isFolder && isExpanded {
         ForEach(node.children) { child in
-          FileTreeNodeRow(
+          GitDiffTreeNodeRow(
             node: child,
             depth: depth + 1,
             expandedPaths: $expandedPaths,

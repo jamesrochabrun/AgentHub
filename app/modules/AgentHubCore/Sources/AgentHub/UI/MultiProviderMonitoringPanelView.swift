@@ -18,7 +18,7 @@ private enum SidePanelContent: Equatable {
   case webPreview(sessionId: String, session: CLISession, projectPath: String)
   case mermaid(sessionId: String, session: CLISession)
   case simulator(sessionId: String, session: CLISession)
-  case fileExplorer(sessionId: String, session: CLISession, projectPath: String, initialFilePath: String?)
+  case fileExplorer(sessionId: String, session: CLISession, projectPath: String, initialFilePath: String?, navigationId: UUID = UUID())
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -32,10 +32,17 @@ private enum SidePanelContent: Equatable {
       return id1 == id2
     case (.simulator(let id1, _), .simulator(let id2, _)):
       return id1 == id2
-    case (.fileExplorer(let id1, _, let p1, let fp1), .fileExplorer(let id2, _, let p2, let fp2)):
-      return id1 == id2 && p1 == p2 && fp1 == fp2
+    case (.fileExplorer(let id1, _, let p1, _, let n1), .fileExplorer(let id2, _, let p2, _, let n2)):
+      return id1 == id2 && p1 == p2 && n1 == n2
     default: return false
     }
+  }
+}
+
+extension SidePanelContent {
+  var isFileExplorer: Bool {
+    if case .fileExplorer = self { return true }
+    return false
   }
 }
 
@@ -225,6 +232,11 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
   @State private var sidePanelContent: SidePanelContent?
+  // Persistent FileExplorer state – the view is never destroyed, only shown/hidden
+  @State private var persistedFESession: CLISession? = nil
+  @State private var persistedFEProjectPath: String = ""
+  @State private var persistedFENavId: UUID = UUID()
+  @State private var persistedFEInitPath: String? = nil
   @Binding var filterMode: HubFilterMode
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
@@ -287,6 +299,15 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .background(monitorContainerBackgroundColor)
     .cornerRadius(8)
+    .onChange(of: sidePanelContent) { _, newContent in
+      // Sync persistent FileExplorer state when the panel switches to/from fileExplorer
+      if case .fileExplorer(_, let session, let projectPath, let initPath, let navId) = newContent {
+        persistedFESession = session
+        persistedFEProjectPath = projectPath
+        persistedFEInitPath = initPath
+        persistedFENavId = navId
+      }
+    }
     .overlay {
       // Hidden Cmd+Shift+P trigger for QuickFilePicker
       Button("") { showQuickFilePicker = true }
@@ -306,7 +327,8 @@ public struct MultiProviderMonitoringPanelView: View {
                 sessionId: session.id,
                 session: session,
                 projectPath: primaryItem.projectPath,
-                initialFilePath: path
+                initialFilePath: path,
+                navigationId: UUID()
               )
             }
           }
@@ -336,8 +358,25 @@ public struct MultiProviderMonitoringPanelView: View {
     .onChange(of: allItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
     }
-    .onChange(of: effectivePrimarySessionId) { _, _ in
-      sidePanelContent = nil
+    .onChange(of: effectivePrimarySessionId) { _, newId in
+      // When switching sessions, update file explorer to new session's project path
+      // instead of closing it
+      if sidePanelContent?.isFileExplorer == true, let newId {
+        if let item = allItems.first(where: { $0.id == newId }),
+           case .monitored(_, _, let session, _) = item {
+          sidePanelContent = .fileExplorer(
+            sessionId: session.id,
+            session: session,
+            projectPath: session.projectPath,
+            initialFilePath: nil,
+            navigationId: UUID()
+          )
+        } else {
+          sidePanelContent = nil
+        }
+      } else {
+        sidePanelContent = nil
+      }
     }
     .onChange(of: primarySessionId) { _, newId in
       guard let newId else { return }
@@ -557,7 +596,7 @@ public struct MultiProviderMonitoringPanelView: View {
         let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
         let initialPrompt = viewModel.pendingPrompt(for: session.id)
 
-        HSplitView {
+        HStack(spacing: 0) {
           MonitoringCardView(
             session: session,
             state: state,
@@ -595,27 +634,47 @@ public struct MultiProviderMonitoringPanelView: View {
               viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
             },
             onShowDiff: canShowSidePanel ? { session, projectPath in
-              sidePanelContent = .diff(sessionId: session.id, session: session, projectPath: projectPath)
+              if case .diff(let sid, _, _) = sidePanelContent, sid == session.id {
+                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+              } else {
+                sidePanelContent = .diff(sessionId: session.id, session: session, projectPath: projectPath)
+              }
             } : nil,
             onShowPlan: canShowSidePanel ? { session, planState in
-              sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
+              if case .plan(let sid, _, _) = sidePanelContent, sid == session.id {
+                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+              } else {
+                sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
+              }
             } : nil,
             onShowWebPreview: canShowSidePanel ? { session, projectPath in
-              sidePanelContent = .webPreview(sessionId: session.id, session: session, projectPath: projectPath)
+              if case .webPreview(let sid, _, _) = sidePanelContent, sid == session.id {
+                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+              } else {
+                sidePanelContent = .webPreview(sessionId: session.id, session: session, projectPath: projectPath)
+              }
             } : nil,
             onShowMermaid: canShowSidePanel ? { session in
-              sidePanelContent = .mermaid(sessionId: session.id, session: session)
+              if case .mermaid(let sid, _) = sidePanelContent, sid == session.id {
+                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+              } else {
+                sidePanelContent = .mermaid(sessionId: session.id, session: session)
+              }
             } : nil,
             onShowSimulator: canShowSidePanel ? { session in
               sidePanelContent = .simulator(sessionId: session.id, session: session)
             } : nil,
             onShowFiles: (canShowSidePanel && !fileExplorerAlwaysModal) ? { session, projectPath in
-              sidePanelContent = .fileExplorer(
-                sessionId: session.id,
-                session: session,
-                projectPath: projectPath,
-                initialFilePath: nil
-              )
+              if case .fileExplorer(let sid, _, _, _, _) = sidePanelContent, sid == session.id {
+                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+              } else {
+                sidePanelContent = .fileExplorer(
+                  sessionId: session.id,
+                  session: session,
+                  projectPath: projectPath,
+                  initialFilePath: nil
+                )
+              }
             } : nil,
             onPromptConsumed: {
               viewModel.clearPendingPrompt(for: session.id)
@@ -630,11 +689,25 @@ public struct MultiProviderMonitoringPanelView: View {
           .id(session.id)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-          if let panelContent = sidePanelContent {
+          if let panelContent = sidePanelContent, !panelContent.isFileExplorer {
             sidePanelView(for: panelContent, viewModel: viewModel)
               .frame(minWidth: 700)
           }
+
+          // FileExplorer side panel
+          if sidePanelContent?.isFileExplorer == true, let feSession = persistedFESession {
+            FileExplorerView(
+              session: feSession,
+              projectPath: persistedFEProjectPath,
+              onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+              isEmbedded: true,
+              initialFilePath: persistedFEInitPath
+            )
+            .id(persistedFENavId)
+            .frame(minWidth: 700)
+          }
         }
+        .animation(.easeInOut(duration: 0.25), value: sidePanelContent != nil)
         .padding(12)
       }
     }
@@ -684,7 +757,7 @@ public struct MultiProviderMonitoringPanelView: View {
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
         isEmbedded: true
       )
-    case .fileExplorer(_, let session, let projectPath, let initialFilePath):
+    case .fileExplorer(_, let session, let projectPath, let initialFilePath, let navId):
       FileExplorerView(
         session: session,
         projectPath: projectPath,
@@ -692,6 +765,7 @@ public struct MultiProviderMonitoringPanelView: View {
         isEmbedded: true,
         initialFilePath: initialFilePath
       )
+      .id(navId)
     }
   }
 

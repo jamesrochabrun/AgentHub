@@ -9,6 +9,7 @@
 import SwiftUI
 import AppKit
 import CodeEditTextView
+import HighlightSwift
 
 // MARK: - FileExplorerView
 
@@ -37,9 +38,11 @@ public struct FileExplorerView: View {
   @State private var fileError: String?
   @State private var hasUnsavedChanges = false
   @State private var isSaving = false
+  @State private var saveError: String?
   @State private var showSidebar = true
   @State private var showDiscardAlert = false
   @State private var expandedPaths: Set<String> = []
+  @State private var scrollToPath: String?
 
   // MARK: - Init
 
@@ -95,8 +98,11 @@ public struct FileExplorerView: View {
     .task {
       await loadFileTree()
       if let initial = initialFilePath {
-        await openFile(at: initial)
         expandToFile(initial)
+        await openFile(at: initial)
+        // Delay scroll to let the expanded tree render
+        try? await Task.sleep(for: .milliseconds(100))
+        scrollToPath = initial
       }
     }
     .onKeyPress(.escape) {
@@ -154,9 +160,15 @@ public struct FileExplorerView: View {
             .lineLimit(1)
             .truncationMode(.middle)
           if hasUnsavedChanges {
-            Circle()
-              .fill(Color.orange)
-              .frame(width: 6, height: 6)
+            Text("Modified")
+              .font(.system(size: 10, weight: .medium))
+              .foregroundColor(.orange)
+              .padding(.horizontal, 5)
+              .padding(.vertical, 1)
+              .background(
+                Capsule()
+                  .fill(Color.orange.opacity(0.15))
+              )
           }
         }
       } else {
@@ -166,6 +178,15 @@ public struct FileExplorerView: View {
       }
 
       Spacer()
+
+      // Save error indicator
+      if let saveError {
+        Text(saveError)
+          .font(.system(size: 10))
+          .foregroundColor(.red)
+          .lineLimit(1)
+          .transition(.opacity)
+      }
 
       // Save button
       if selectedFilePath != nil && hasUnsavedChanges {
@@ -178,21 +199,22 @@ public struct FileExplorerView: View {
         .disabled(isSaving)
       }
 
-      // Close button
-      if !isEmbedded {
-        Button {
-          if hasUnsavedChanges {
-            showDiscardAlert = true
-          } else {
-            onDismiss()
-          }
-        } label: {
-          Image(systemName: "xmark")
-            .font(.system(size: 12, weight: .medium))
+      // Close button (always visible)
+      Button {
+        if hasUnsavedChanges {
+          showDiscardAlert = true
+        } else {
+          onDismiss()
         }
-        .buttonStyle(.plain)
-        .help("Close")
+      } label: {
+        Image(systemName: "xmark")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundColor(.secondary)
+          .frame(width: 24, height: 24)
+          .contentShape(Rectangle())
       }
+      .buttonStyle(.plain)
+      .help("Close")
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
@@ -213,21 +235,30 @@ public struct FileExplorerView: View {
 
       Divider()
 
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 0) {
-          ForEach(treeNodes) { node in
-            FileTreeNodeView(
-              node: node,
-              depth: 0,
-              selectedFilePath: $selectedFilePath,
-              expandedPaths: $expandedPaths,
-              onSelectFile: { path in
-                Task { await openFile(at: path) }
-              }
-            )
+      ScrollViewReader { proxy in
+        ScrollView {
+          VStack(alignment: .leading, spacing: 0) {
+            ForEach(treeNodes) { node in
+              FileTreeNodeView(
+                node: node,
+                depth: 0,
+                selectedFilePath: $selectedFilePath,
+                expandedPaths: $expandedPaths,
+                onSelectFile: { path in
+                  Task { await openFile(at: path) }
+                }
+              )
+            }
           }
+          .padding(8)
         }
-        .padding(8)
+        .onChange(of: scrollToPath) { _, target in
+          guard let target else { return }
+          withAnimation(.easeInOut(duration: 0.2)) {
+            proxy.scrollTo(target, anchor: .center)
+          }
+          scrollToPath = nil
+        }
       }
     }
   }
@@ -260,18 +291,22 @@ public struct FileExplorerView: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if selectedFilePath == nil {
-      VStack(spacing: 8) {
+      VStack(spacing: 12) {
         Image(systemName: "doc.text.magnifyingglass")
           .font(.system(size: 40))
-          .foregroundColor(.secondary.opacity(0.4))
+          .foregroundColor(.secondary.opacity(0.6))
         Text("Select a file to view")
           .font(.callout)
           .foregroundColor(.secondary)
+        Text("Browse the file tree or use \(Image(systemName: "command"))  \(Image(systemName: "shift"))  P")
+          .font(.caption)
+          .foregroundColor(.secondary.opacity(0.6))
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else {
       CETextViewRepresentable(
         text: $fileContent,
+        fileName: selectedFilePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
         onTextChange: { hasUnsavedChanges = true }
       )
     }
@@ -299,12 +334,14 @@ public struct FileExplorerView: View {
 
     isLoadingFile = true
     fileError = nil
+    saveError = nil
     selectedFilePath = path
     hasUnsavedChanges = false
 
     do {
       let content = try await FileIndexService.shared.readFile(at: path)
       fileContent = content
+      await FileIndexService.shared.addToRecent(path)
     } catch {
       fileError = "Could not read file: \(error.localizedDescription)"
     }
@@ -314,6 +351,7 @@ public struct FileExplorerView: View {
   private func saveCurrentFile() {
     guard let path = selectedFilePath else { return }
     isSaving = true
+    saveError = nil
     let content = fileContent
     Task {
       do {
@@ -324,6 +362,7 @@ public struct FileExplorerView: View {
         }
       } catch {
         await MainActor.run {
+          saveError = "Save failed: \(error.localizedDescription)"
           isSaving = false
         }
       }
@@ -351,12 +390,20 @@ private struct FileTreeNodeView: View {
   @Binding var expandedPaths: Set<String>
   let onSelectFile: (String) -> Void
 
+  @State private var isHovered = false
+
   private var isExpanded: Bool {
     expandedPaths.contains(node.path)
   }
 
   private var isSelected: Bool {
     !node.isDirectory && selectedFilePath == node.path
+  }
+
+  private var rowBackground: Color {
+    if isSelected { return Color.accentColor }
+    if isHovered { return Color.primary.opacity(0.08) }
+    return Color.clear
   }
 
   var body: some View {
@@ -383,7 +430,7 @@ private struct FileTreeNodeView: View {
           // Icon
           Image(systemName: node.isDirectory ? "folder.fill" : fileIcon(for: node.name))
             .font(.caption)
-            .foregroundColor(node.isDirectory ? .secondary : fileIconColor(for: node.name))
+            .foregroundColor(node.isDirectory ? .accentColor.opacity(0.7) : fileIconColor(for: node.name))
             .frame(width: 16)
 
           // Name
@@ -399,11 +446,13 @@ private struct FileTreeNodeView: View {
         .padding(.vertical, 4)
         .background(
           RoundedRectangle(cornerRadius: 5)
-            .fill(isSelected ? Color.accentColor : Color.clear)
+            .fill(rowBackground)
         )
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .onHover { isHovered = $0 }
+      .id(node.path)
 
       // Children
       if node.isDirectory && isExpanded, let children = node.children {
@@ -475,14 +524,13 @@ private struct FileTreeNodeView: View {
 
 // MARK: - CETextViewRepresentable
 
-/// SwiftUI wrapper around ``CodeEditTextView/TextView`` (an NSView subclass).
-///
-/// Embeds the text view inside an ``NSScrollView`` so it behaves like a proper editor.
-/// Changes to `text` from outside are reflected in the view; edits inside invoke `onTextChange`.
+/// SwiftUI wrapper around ``CodeEditTextView/TextView`` with syntax highlighting via HighlightSwift.
 public struct CETextViewRepresentable: NSViewRepresentable {
 
   @Binding var text: String
+  let fileName: String
   let onTextChange: () -> Void
+  @Environment(\.colorScheme) private var colorScheme
 
   public func makeCoordinator() -> Coordinator {
     Coordinator(parent: self)
@@ -511,17 +559,28 @@ public struct CETextViewRepresentable: NSViewRepresentable {
 
     scrollView.documentView = textView
     context.coordinator.textView = textView
+    context.coordinator.applySyntaxHighlighting(
+      text: text, fileName: fileName, colorScheme: colorScheme
+    )
     return scrollView
   }
 
   public func updateNSView(_ scrollView: NSScrollView, context: Context) {
     guard let textView = context.coordinator.textView else { return }
-    // Only update the underlying storage when the binding value actually differs
-    // to avoid clobbering the cursor position on every keystroke.
     if textView.string != text {
       context.coordinator.isUpdatingFromBinding = true
       textView.string = text
       context.coordinator.isUpdatingFromBinding = false
+      context.coordinator.applySyntaxHighlighting(
+        text: text, fileName: fileName, colorScheme: colorScheme
+      )
+    }
+    // Update highlighting if colorScheme changed
+    if context.coordinator.lastColorScheme != colorScheme {
+      context.coordinator.lastColorScheme = colorScheme
+      context.coordinator.applySyntaxHighlighting(
+        text: text, fileName: fileName, colorScheme: colorScheme
+      )
     }
   }
 
@@ -531,6 +590,9 @@ public struct CETextViewRepresentable: NSViewRepresentable {
     var parent: CETextViewRepresentable
     weak var textView: TextView?
     var isUpdatingFromBinding = false
+    var lastColorScheme: ColorScheme = .dark
+    private var highlightTask: Task<Void, Never>?
+    private let highlighter = Highlight()
 
     init(parent: CETextViewRepresentable) {
       self.parent = parent
@@ -547,6 +609,123 @@ public struct CETextViewRepresentable: NSViewRepresentable {
         guard let self else { return }
         self.parent.text = newText
         self.parent.onTextChange()
+      }
+      // Re-highlight after edit with debounce
+      scheduleRehighlight(text: textView.string)
+    }
+
+    func applySyntaxHighlighting(text: String, fileName: String, colorScheme: ColorScheme) {
+      highlightTask?.cancel()
+      guard !text.isEmpty else { return }
+      guard text.utf8.count < 500_000 else { return }
+
+      let lang = Self.languageForFile(fileName)
+      let colors: HighlightColors = colorScheme == .dark ? .dark(.github) : .light(.github)
+
+      highlightTask = Task { [weak self, highlighter] in
+        guard let self else { return }
+        do {
+          let attributed: AttributedString
+          if let lang {
+            attributed = try await highlighter.attributedText(text, language: lang, colors: colors)
+          } else {
+            attributed = try await highlighter.attributedText(text, colors: colors)
+          }
+          guard !Task.isCancelled else { return }
+
+          // HighlightSwift trims whitespace/newlines, so calculate the leading offset
+          let leadingWS = text.prefix(while: { $0.isWhitespace || $0.isNewline })
+          let leadingOffset = (leadingWS as Substring).utf16.count
+
+          // Extract color ranges from the AttributedString
+          let nsHighlighted = NSAttributedString(attributed)
+          var colorRanges: [(NSRange, NSColor)] = []
+          nsHighlighted.enumerateAttribute(
+            .foregroundColor,
+            in: NSRange(location: 0, length: nsHighlighted.length),
+            options: []
+          ) { value, range, _ in
+            if let color = value as? NSColor {
+              colorRanges.append((range, color))
+            }
+          }
+
+          guard !Task.isCancelled, !colorRanges.isEmpty else { return }
+          await MainActor.run { [weak self] in
+            self?.applyHighlightColors(colorRanges, leadingOffset: leadingOffset)
+          }
+        } catch {
+          // Silently fail — file displays without highlighting
+        }
+      }
+    }
+
+    private func scheduleRehighlight(text: String) {
+      highlightTask?.cancel()
+      guard text.utf8.count < 500_000 else { return }
+      let fileName = parent.fileName
+      let colorScheme = lastColorScheme
+      highlightTask = Task { [weak self] in
+        try? await Task.sleep(for: .milliseconds(500))
+        guard !Task.isCancelled else { return }
+        self?.applySyntaxHighlighting(text: text, fileName: fileName, colorScheme: colorScheme)
+      }
+    }
+
+    private func applyHighlightColors(_ colorRanges: [(NSRange, NSColor)], leadingOffset: Int) {
+      guard let textView, let storage = textView.textStorage else { return }
+      let storageLen = storage.length
+      guard storageLen > 0 else { return }
+
+      storage.beginEditing()
+      for (range, color) in colorRanges {
+        let adjusted = NSRange(location: range.location + leadingOffset, length: range.length)
+        if adjusted.location >= 0, adjusted.location + adjusted.length <= storageLen {
+          storage.addAttribute(.foregroundColor, value: color, range: adjusted)
+        }
+      }
+      storage.endEditing()
+
+      // Force CodeEditTextView to re-layout with new attributes
+      textView.layoutManager?.setNeedsLayout()
+      textView.needsLayout = true
+      textView.needsDisplay = true
+    }
+
+    static func languageForFile(_ name: String) -> HighlightLanguage? {
+      let ext = (name as NSString).pathExtension.lowercased()
+      switch ext {
+      case "swift":                    return .swift
+      case "js", "jsx":                return .javaScript
+      case "ts", "tsx":                return .typeScript
+      case "py":                       return .python
+      case "rb":                       return .ruby
+      case "go":                       return .go
+      case "rs":                       return .rust
+      case "java":                     return .java
+      case "kt":                       return .kotlin
+      case "c", "h":                   return .c
+      case "cpp", "cxx", "cc", "hpp":  return .cPlusPlus
+      case "cs":                       return .cSharp
+      case "php":                      return .php
+      case "html", "htm":              return .html
+      case "css":                      return .css
+      case "scss":                     return .scss
+      case "json":                     return .json
+      case "yaml", "yml":              return .yaml
+      case "toml":                     return .toml
+      case "xml":                      return .html
+      case "sql":                      return .sql
+      case "sh", "bash", "zsh":        return .bash
+      case "md", "markdown":           return .markdown
+      case "dockerfile":               return .dockerfile
+      case "makefile":                 return .makefile
+      case "lua":                      return .lua
+      case "r":                        return .r
+      case "dart":                     return .dart
+      case "scala":                    return .scala
+      case "diff", "patch":            return .diff
+      default:                         return nil
       }
     }
   }
