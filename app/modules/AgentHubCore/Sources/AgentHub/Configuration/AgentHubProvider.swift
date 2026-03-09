@@ -5,6 +5,7 @@
 //  Central service provider for AgentHub
 //
 
+import AppKit
 import Foundation
 import ClaudeCodeSDK
 import os
@@ -128,6 +129,50 @@ public final class AgentHubProvider {
   /// Intelligence view model - created lazily and cached
   public private(set) lazy var intelligenceViewModel: IntelligenceViewModel = {
     IntelligenceViewModel(claudeClient: claudeClient)
+  }()
+
+  /// Embedded HTTP + WebSocket server for web terminal client
+  public private(set) lazy var webServer: AgentHubWebServer = {
+    let storedPort = UserDefaults.standard.integer(forKey: AgentHubDefaults.webServerPort)
+    #if DEBUG
+    let defaultPort: UInt16 = 8081
+    #else
+    let defaultPort: UInt16 = 8080
+    #endif
+    let port = (1024...65535).contains(storedPort) ? UInt16(storedPort) : defaultPort
+    return AgentHubWebServer(
+      port: port,
+      sessionProvider: { [weak self] in
+        guard let self else { return [] }
+        return await MainActor.run {
+          let vm = self.sessionsViewModel
+          return vm.monitoredSessions.map { pair in
+            WebSessionInfo(
+              session: pair.session,
+              state: pair.state,
+              hasTerminal: vm.sessionsWithTerminalView.contains(pair.session.id),
+              customName: vm.sessionCustomNames[pair.session.id]
+            )
+          }
+        }
+      },
+      sessionFocusHandler: { [weak self] sessionId in
+        guard let self else { return }
+        await MainActor.run {
+          // Find which VM owns this session and update webFocusedSessionId
+          let claudeVM = self.claudeSessionsViewModel
+          let codexVM = self.codexSessionsViewModel
+          // ProviderMonitoringItem.id format: "{provider.rawValue.lowercased()}-{sessionId}"
+          if claudeVM.isMonitoring(sessionId: sessionId) {
+            claudeVM.webFocusedSessionId = "claude-\(sessionId)"
+          } else if codexVM.isMonitoring(sessionId: sessionId) {
+            codexVM.webFocusedSessionId = "codex-\(sessionId)"
+          }
+          // Bring the Mac app to foreground
+          NSApp.activate(ignoringOtherApps: true)
+        }
+      }
+    )
   }()
 
   // MARK: - Initialization

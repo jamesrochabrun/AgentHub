@@ -128,6 +128,14 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let flatSessionLayout = "\(keyPrefix)hub.flatSessionLayout"
 
+  // MARK: - Web Server Settings
+
+  /// Whether the built-in web server is enabled. Type: Bool (default: false)
+  public static let webServerEnabled = "\(keyPrefix)webServer.enabled"
+
+  /// Web server listen port. Type: Int (default: 8080)
+  public static let webServerPort = "\(keyPrefix)webServer.port"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

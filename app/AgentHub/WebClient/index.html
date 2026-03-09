@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>AgentHub Web</title>
+  <link rel="stylesheet" href="/xterm.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Themes ─────────────────────────────────────────────────────────── */
+    :root {
+      --bg: #0F172A; --panel: #1E293B; --border: #2D3F55;
+      --accent: #22C55E; --accent-dim: rgba(34,197,94,.15);
+      --text: #F1F5F9; --muted: #64748B; --muted2: #94A3B8;
+      --overlay: rgba(0,0,0,.6); --shadow: 0 16px 48px rgba(0,0,0,.6);
+      --term-bg: #090E1A;
+    }
+    [data-theme="light"] {
+      --bg: #F1F5F9; --panel: #FFFFFF; --border: #E2E8F0;
+      --accent: #16A34A; --accent-dim: rgba(22,163,74,.1);
+      --text: #0F172A; --muted: #64748B; --muted2: #94A3B8;
+      --overlay: rgba(0,0,0,.3); --shadow: 0 8px 32px rgba(0,0,0,.12);
+      --term-bg: #F8FAFC;
+    }
+
+    html, body {
+      height: 100%; background: var(--bg); color: var(--text);
+      font-family: 'IBM Plex Sans', system-ui, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none; /* blocks pull-to-refresh */
+      overflow: hidden;
+    }
+
+    /* ── App shell ───────────────────────────────────────────────────────── */
+    .app {
+      position: fixed;
+      top: env(safe-area-inset-top, 0px);
+      left: 0; right: 0;
+      bottom: env(safe-area-inset-bottom, 0px);
+      display: flex; flex-direction: column;
+    }
+
+    /* ── Topbar ──────────────────────────────────────────────────────────── */
+    .topbar {
+      display: flex; align-items: center; gap: 10px; padding: 0 16px;
+      height: 52px; border-bottom: 1px solid var(--border);
+      background: var(--panel); flex-shrink: 0;
+    }
+    .topbar-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
+      transition: background 400ms; flex-shrink: 0;
+    }
+    .topbar-dot.connected { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); }
+    .topbar-title {
+      font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 600;
+      letter-spacing: -.01em;
+    }
+    .topbar-status { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+
+    /* ── Icon buttons ────────────────────────────────────────────────────── */
+    .icon-btn {
+      display: flex; align-items: center; justify-content: center;
+      width: 44px; height: 44px; border-radius: 8px; border: none;
+      background: transparent; color: var(--muted); cursor: pointer;
+      transition: background 150ms, color 150ms; flex-shrink: 0;
+      touch-action: manipulation;
+    }
+    .icon-btn:hover { background: rgba(128,128,128,.1); color: var(--text); }
+    .icon-btn:active { background: rgba(128,128,128,.2); }
+    .sessions-btn { display: none; }
+
+    /* ── Main layout ─────────────────────────────────────────────────────── */
+    .main { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+
+    /* ── Sidebar ─────────────────────────────────────────────────────────── */
+    .sidebar {
+      width: 220px; flex-shrink: 0; border-right: 1px solid var(--border);
+      overflow-y: auto; background: var(--panel);
+      display: flex; flex-direction: column;
+      overscroll-behavior: contain;
+    }
+    .sidebar-header {
+      padding: 14px 14px 6px; font-size: 10px; font-weight: 600;
+      letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    /* ── Session items ───────────────────────────────────────────────────── */
+    .session-item {
+      display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px;
+      cursor: pointer; border-left: 2px solid transparent;
+      transition: background 150ms, border-color 150ms;
+      min-height: 48px; touch-action: manipulation;
+    }
+    .session-item:hover { background: rgba(128,128,128,.06); }
+    .session-item.active { background: var(--accent-dim); border-left-color: var(--accent); }
+    [data-theme="light"] .session-item:hover { background: rgba(0,0,0,.04); }
+    .session-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0; margin-top: 5px;
+    }
+    .session-dot.active {
+      background: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-dim);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: .6; }
+    }
+    .session-info { min-width: 0; flex: 1; }
+    .session-name {
+      font-size: 13px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      color: var(--text); line-height: 1.4;
+    }
+    .session-folder {
+      font-size: 11px; color: var(--muted); margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .session-branch {
+      font-size: 10px; color: var(--muted2); margin-top: 1px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .session-status { font-size: 10px; color: var(--accent); margin-top: 2px; font-weight: 500; }
+    .sidebar-empty {
+      padding: 24px 14px; font-size: 13px; color: var(--muted); line-height: 1.7;
+      text-align: center;
+    }
+
+    /* ── Mobile drawer ───────────────────────────────────────────────────── */
+    .drawer-overlay {
+      position: fixed; inset: 0;
+      background: var(--overlay); z-index: 40;
+      opacity: 0; transition: opacity 200ms;
+      pointer-events: none; display: none;
+    }
+    .drawer-overlay.open { opacity: 1; pointer-events: auto; display: block; }
+    .drawer {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+      background: var(--panel); border-radius: 0 0 18px 18px;
+      border-bottom: 1px solid var(--border);
+      max-height: 75dvh; display: flex; flex-direction: column;
+      padding-top: env(safe-area-inset-top, 0px);
+      transform: translateY(-100%);
+      transition: transform 280ms cubic-bezier(.32,.72,0,1);
+      box-shadow: var(--shadow);
+    }
+    .drawer.open { transform: translateY(0); }
+    .drawer-handle {
+      width: 40px; height: 4px; border-radius: 2px;
+      background: var(--border); margin: 8px auto 8px; flex-shrink: 0;
+      order: 1;
+    }
+    .drawer-header {
+      padding: 0 16px 8px; font-size: 10px; font-weight: 600;
+      letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+      flex-shrink: 0;
+    }
+    .drawer-list {
+      overflow-y: auto; flex: 1; overscroll-behavior: contain;
+      padding-bottom: 8px;
+    }
+
+    /* ── Terminal area ───────────────────────────────────────────────────── */
+    .terminal-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0; }
+    .terminal-titlebar {
+      display: flex; align-items: center; gap: 6px;
+      padding: 0 8px 0 14px; height: 36px;
+      border-bottom: 1px solid var(--border);
+      font-family: 'JetBrains Mono', monospace; font-size: 11px;
+      background: var(--panel); flex-shrink: 0;
+    }
+    .terminal-titlebar b { color: var(--text); font-weight: 500; white-space: nowrap; }
+    .title-sep { color: var(--border); flex-shrink: 0; }
+    #titlebar-content { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow: hidden; }
+    .title-folder { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #term-wrap {
+      flex: 1; overflow: hidden; padding: 6px;
+      background: var(--term-bg); min-height: 0;
+      -webkit-overflow-scrolling: touch;
+      /* Anchor content to bottom so input line is always visible */
+      display: flex; flex-direction: column; justify-content: flex-end;
+    }
+    /* Clips to scaled dimensions — prevents dead scroll space when scale < 1 */
+    #term-scale-outer { overflow: hidden; flex-shrink: 0; }
+    /* Terminal scale wrapper */
+    #term-scale-wrapper { transform-origin: top left; display: inline-block; }
+
+    /* ── Bottom toolbar (mobile only) ─────────────────────────────────────── */
+    .term-toolbar {
+      display: none; align-items: center; gap: 4px;
+      padding: 4px 8px; height: 40px;
+      border-top: 1px solid var(--border);
+      background: var(--panel); flex-shrink: 0;
+      overflow-x: auto; overflow-y: hidden;
+    }
+    .tb-sep {
+      width: 1px; height: 18px; background: var(--border);
+      flex-shrink: 0; margin: 0 2px;
+    }
+    .tb-btn {
+      height: 30px; min-width: 30px; padding: 0 8px;
+      border-radius: 6px; border: 1px solid var(--border);
+      background: transparent; color: var(--muted);
+      font-family: 'JetBrains Mono', monospace; font-size: 11px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      touch-action: manipulation; user-select: none; flex-shrink: 0;
+      transition: background 120ms, color 120ms;
+      white-space: nowrap;
+    }
+    .tb-btn:hover { background: rgba(128,128,128,.12); color: var(--text); }
+    .tb-btn:active { background: rgba(128,128,128,.22); }
+    .tb-btn.zoom { font-size: 16px; font-family: system-ui, sans-serif; padding: 0; width: 30px; }
+
+    /* Zoom level badge */
+    #zoom-level {
+      font-family: 'JetBrains Mono', monospace; font-size: 10px;
+      color: var(--muted); padding: 0 2px; flex-shrink: 0;
+      min-width: 28px; text-align: center; user-select: none;
+    }
+
+    .placeholder {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; flex-direction: column; gap: 12px;
+    }
+    .placeholder svg { opacity: .08; color: var(--text); }
+    .placeholder p { color: var(--muted); font-size: 14px; letter-spacing: .01em; }
+
+    /* ── Mobile overrides ────────────────────────────────────────────────── */
+    @media (max-width: 767px) {
+      .sidebar { display: none; }
+      .sessions-btn { display: flex; }
+      .topbar-title { font-size: 13px; }
+      .term-toolbar { display: flex; }
+    }
+
+    /* Scrollable lists */
+    .sidebar, .drawer-list { touch-action: pan-y; }
+
+    /* ── Reduced motion ──────────────────────────────────────────────────── */
+    @media (prefers-reduced-motion: reduce) {
+      .session-dot.active { animation: none; }
+      .drawer, .drawer-overlay { transition: none; }
+    }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="topbar-dot" id="dot"></div>
+    <span class="topbar-title">AgentHub</span>
+    <span class="topbar-status" id="status">Connecting…</span>
+    <div class="topbar-right">
+      <!-- Theme toggle -->
+      <button class="icon-btn" id="theme-btn" aria-label="Toggle theme" title="Toggle theme">
+        <svg id="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <circle cx="12" cy="12" r="4"/>
+          <line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/>
+          <line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/>
+          <line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/>
+          <line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/>
+        </svg>
+        <svg id="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" style="display:none">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+        </svg>
+      </button>
+      <!-- Sessions button (mobile only) -->
+      <button class="icon-btn sessions-btn" id="sessions-btn" aria-label="Open sessions">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <rect x="3" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="14" y="3" width="7" height="7" rx="1.5"/>
+          <rect x="3" y="14" width="7" height="7" rx="1.5"/>
+          <rect x="14" y="14" width="7" height="7" rx="1.5"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="main">
+    <nav class="sidebar" aria-label="Sessions">
+      <div class="sidebar-header">Focused Sessions</div>
+      <div id="session-list"></div>
+    </nav>
+
+    <div class="terminal-area">
+      <div class="terminal-titlebar">
+        <div id="titlebar-content"><span style="color:var(--muted)">Select a session</span></div>
+      </div>
+      <div id="term-wrap">
+        <div id="term-scale-outer">
+          <div id="term-scale-wrapper"><div id="terminal"></div></div>
+        </div>
+        <div class="placeholder" id="placeholder">
+          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+            <rect x="2" y="4" width="20" height="16" rx="2.5"/>
+            <path d="M8 9l3 3-3 3M13 15h3"/>
+          </svg>
+          <p>Select a session</p>
+        </div>
+      </div>
+      <div class="term-toolbar" id="term-toolbar">
+        <button class="tb-btn" id="key-esc">Esc</button>
+        <button class="tb-btn" id="key-tab">Tab</button>
+        <button class="tb-btn" id="key-ctrl-c">Ctrl+C</button>
+        <div class="tb-sep"></div>
+        <button class="tb-btn zoom" id="zoom-out" aria-label="Zoom out">−</button>
+        <span id="zoom-level">100%</span>
+        <button class="tb-btn zoom" id="zoom-in" aria-label="Zoom in">+</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mobile drawer -->
+<div class="drawer-overlay" id="drawer-overlay"></div>
+<div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-label="Sessions">
+  <div class="drawer-handle"></div>
+  <div class="drawer-header">Focused Sessions</div>
+  <div class="drawer-list" id="drawer-list"></div>
+</div>
+
+<script src="/xterm.js"></script>
+<script>
+'use strict';
+let sessions = [], activeId = null, term = null, ws = null;
+const $ = id => document.getElementById(id);
+
+// ── Mobile autocorrect fix ─────────────────────────────────────────────────
+// iOS autocorrect fires compositionend which causes xterm.js to re-send the
+// full replacement word even though individual chars were already sent.
+// We track chars since the last word boundary so we can prepend the right
+// number of backspaces before the composed replacement arrives via onData.
+let mobileWordLen = 0;   // printable chars since last word boundary
+let mobilePendingBS = 0; // backspaces to prepend on next onData call
+
+function onMobileCompositionEnd(e) {
+  // Composition ended (autocorrect replacement). xterm.js will immediately
+  // call onData() with the replacement word. We must erase what was already sent.
+  if (mobileWordLen > 0 && e.data) {
+    mobilePendingBS = mobileWordLen;
+    mobileWordLen = 0;
+  }
+}
+
+// ── Theme ─────────────────────────────────────────────────────────────────
+
+const storedTheme = localStorage.getItem('ah-theme') ||
+  (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+applyTheme(storedTheme, false);
+
+function applyTheme(t, updateTerm = true) {
+  document.documentElement.setAttribute('data-theme', t);
+  $('icon-sun').style.display  = t === 'dark'  ? 'block' : 'none';
+  $('icon-moon').style.display = t === 'light' ? 'block' : 'none';
+  localStorage.setItem('ah-theme', t);
+  if (updateTerm && term) {
+    term.options.theme = xtermTheme(t);
+    $('term-wrap').style.background = t === 'dark' ? '#090E1A' : '#F8FAFC';
+  }
+}
+
+function xtermTheme(t) {
+  return t === 'dark' ? {
+    background: '#090E1A', foreground: '#F1F5F9', cursor: '#22C55E',
+    cursorAccent: '#090E1A', selectionBackground: '#2D3F55',
+    black: '#1E293B', brightBlack: '#475569',
+    red: '#F87171',    brightRed: '#FCA5A5',
+    green: '#22C55E',  brightGreen: '#4ADE80',
+    yellow: '#FACC15', brightYellow: '#FDE047',
+    blue: '#60A5FA',   brightBlue: '#93C5FD',
+    magenta: '#C084FC',brightMagenta: '#D8B4FE',
+    cyan: '#22D3EE',   brightCyan: '#67E8F9',
+    white: '#CBD5E1',  brightWhite: '#F1F5F9',
+  } : {
+    background: '#F8FAFC', foreground: '#0F172A', cursor: '#16A34A',
+    cursorAccent: '#FFFFFF', selectionBackground: '#CBD5E1',
+    black: '#334155', brightBlack: '#64748B',
+    red: '#DC2626',    brightRed: '#EF4444',
+    green: '#16A34A',  brightGreen: '#22C55E',
+    yellow: '#B45309', brightYellow: '#D97706',
+    blue: '#2563EB',   brightBlue: '#3B82F6',
+    magenta: '#7C3AED',brightMagenta: '#8B5CF6',
+    cyan: '#0E7490',   brightCyan: '#06B6D4',
+    white: '#475569',  brightWhite: '#0F172A',
+  };
+}
+
+$('theme-btn').addEventListener('click', () => {
+  const cur = document.documentElement.getAttribute('data-theme');
+  applyTheme(cur === 'dark' ? 'light' : 'dark');
+});
+
+// ── Mobile drawer ─────────────────────────────────────────────────────────
+
+function openDrawer() {
+  $('drawer-overlay').classList.add('open');
+  $('drawer').classList.add('open');
+}
+function closeDrawer() {
+  $('drawer-overlay').classList.remove('open');
+  $('drawer').classList.remove('open');
+}
+$('sessions-btn').addEventListener('click', openDrawer);
+$('drawer-overlay').addEventListener('click', closeDrawer);
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function shortPath(p) {
+  if (!p) return '';
+  const parts = String(p).replace(/\/$/, '').split('/').filter(Boolean);
+  if (parts.length === 0) return p;
+  return parts.length > 2 ? '…/' + parts.slice(-2).join('/') : parts.join('/');
+}
+
+// ── Session polling ───────────────────────────────────────────────────────
+
+let initialConnectDone = false;
+
+async function poll() {
+  try {
+    const r = await fetch('/api/sessions');
+    if (!r.ok) throw new Error(r.status);
+    sessions = await r.json();
+    renderSidebar();
+    syncTitlebar();
+    $('dot').classList.add('connected');
+    $('status').textContent = `${sessions.length} session${sessions.length !== 1 ? 's' : ''} · :${location.port}`;
+    if (!initialConnectDone) {
+      initialConnectDone = true;
+      const hashId = location.hash.slice(1);
+      if (hashId && sessions.find(s => s.id === hashId)) connect(hashId);
+    }
+  } catch {
+    $('dot').classList.remove('connected');
+    $('status').textContent = 'Disconnected';
+  }
+}
+
+// ── Sidebar rendering ─────────────────────────────────────────────────────
+
+function sessionItemHTML(s) {
+  const isActive = s.id === activeId;
+  return `
+    <div class="session-item${isActive ? ' active' : ''}"
+         onclick="connectAndClose('${esc(s.id)}')"
+         title="${esc(s.projectPath)}">
+      <div class="session-dot${isActive ? ' active' : ''}"></div>
+      <div class="session-info">
+        <div class="session-name">${esc(s.slug)}</div>
+        <div class="session-folder">${esc(shortPath(s.projectPath))}</div>
+        ${s.branchName ? `<div class="session-branch">${esc(s.branchName)}</div>` : ''}
+        <div class="session-status">${esc(s.statusLabel)}</div>
+      </div>
+    </div>`;
+}
+
+function renderSidebar() {
+  const empty = '<div class="sidebar-empty">No focused sessions.<br>Add sessions in AgentHub first.</div>';
+  const html = sessions.length ? sessions.map(sessionItemHTML).join('') : empty;
+  $('session-list').innerHTML = html;
+  $('drawer-list').innerHTML = html;
+}
+
+function connectAndClose(id) {
+  closeDrawer();
+  connect(id);
+}
+
+// ── Titlebar sync ─────────────────────────────────────────────────────────
+
+function syncTitlebar() {
+  if (!activeId) return;
+  const s = sessions.find(x => x.id === activeId);
+  if (!s) return;
+  setTitlebar(s);
+}
+
+function setTitlebar(s) {
+  const folder = shortPath(s.projectPath);
+  const branch = s.branchName ? ` [${esc(s.branchName)}]` : '';
+  $('titlebar-content').innerHTML =
+    `<b>${esc(s.slug)}</b><span class="title-sep">·</span><span class="title-folder">${esc(folder)}${branch}</span>`;
+}
+
+// ── Terminal ──────────────────────────────────────────────────────────────
+
+function connect(id) {
+  if (ws) { ws.close(); ws = null; }
+  activeId = id;
+  history.replaceState(null, '', '#' + id);
+  renderSidebar();
+  // Notify the Mac app to focus this session in the Hub UI
+  fetch('/api/sessions/' + encodeURIComponent(id) + '/focus', { method: 'POST' }).catch(() => {});
+
+  const s = sessions.find(x => x.id === id);
+  if (s) setTitlebar(s);
+  else $('titlebar-content').innerHTML = `<b>${esc(id)}</b>`;
+
+  const placeholder = $('placeholder');
+  if (placeholder) placeholder.style.display = 'none';
+
+  if (term) { term.dispose(); }
+  $('terminal').innerHTML = '';
+
+  const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+  term = new Terminal({
+    fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+    fontSize: 14, lineHeight: 1.25, cursorBlink: true, scrollback: 5000,
+    theme: xtermTheme(theme),
+  });
+  term.open($('terminal'));
+  setTimeout(applyScale, 100); // initial scale after xterm.js renders
+
+  // Reset mobile input state for each new connection
+  mobileWordLen = 0;
+  mobilePendingBS = 0;
+  // Register composition fix on mobile: capture phase runs before xterm's own handler
+  if (isMobile()) {
+    setTimeout(() => {
+      term._core?.textarea?.addEventListener('compositionend', onMobileCompositionEnd, true);
+    }, 0);
+  }
+
+  term.onData(d => {
+    let out = d;
+
+    // Mobile autocorrect fix: prepend backspaces to erase the partial word
+    // that was already sent char-by-char before the composition replacement.
+    if (mobilePendingBS > 0) {
+      out = '\x7f'.repeat(mobilePendingBS) + d;
+      mobilePendingBS = 0;
+    }
+
+    // Track chars in current word (resets at spaces / control chars / backspace).
+    // Used by onMobileCompositionEnd to know how many backspaces to send.
+    for (const ch of d) {
+      if (ch === '\x7f' || ch === '\x08') {
+        mobileWordLen = Math.max(0, mobileWordLen - 1);
+      } else if (ch.charCodeAt(0) < 32 || ch === ' ') {
+        mobileWordLen = 0;
+      } else {
+        mobileWordLen++;
+      }
+    }
+
+    if (ws?.readyState === 1) ws.send(new TextEncoder().encode(out));
+  });
+  term.writeln('\x1b[32mConnecting…\x1b[0m');
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws/terminal/${id}`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => {};
+  ws.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'resize') {
+          term.resize(msg.cols, msg.rows);
+          term.scrollToBottom();
+          setTimeout(applyScale, 50);
+        }
+      } catch (_) {}
+    } else {
+      term?.write(new Uint8Array(e.data), () => {
+        // Scroll cursor into view after each chunk of PTY data
+        term?.scrollToBottom();
+      });
+    }
+  };
+  ws.onclose = () => term?.writeln('\r\n\x1b[33m[Disconnected]\x1b[0m');
+  ws.onerror = () => term?.writeln('\r\n\x1b[31m[Connection error]\x1b[0m');
+}
+
+// ── Scale terminal to fit container ───────────────────────────────────────
+
+const MIN_ZOOM = 30, MAX_ZOOM = 250, ZOOM_STEP = 10; // integer percentages
+const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
+let userZoomPct = parseInt(localStorage.getItem('ah-zoom-pct') || '180', 10);
+
+function applyScale() {
+  if (!term) return;
+  const wrap = $('term-wrap');
+  const outer = $('term-scale-outer');
+  const scaleEl = $('term-scale-wrapper');
+  if (!wrap || !outer || !scaleEl) return;
+
+  // Try multiple xterm.js internal API paths for cell dimensions
+  const dims = term._core?._renderService?.dimensions;
+  const cellW = dims?.css?.cell?.width || dims?.actualCellWidth || dims?.width;
+  const cellH = dims?.css?.cell?.height || dims?.actualCellHeight || dims?.height;
+  if (!cellW || !cellH) {
+    // Fallback: measure from the DOM element directly
+    const el = $('terminal');
+    if (!el || !el.clientWidth || !term.cols) { requestAnimationFrame(applyScale); return; }
+    const fallbackW = el.clientWidth / term.cols;
+    const fallbackH = el.clientHeight / term.rows;
+    doScale(wrap, outer, scaleEl, fallbackW, fallbackH);
+    return;
+  }
+  doScale(wrap, outer, scaleEl, cellW, cellH);
+}
+
+function doScale(wrap, outer, scaleEl, cellW, cellH) {
+
+  const pad = 12;
+  const containerW = wrap.clientWidth - pad;
+  const containerH = wrap.clientHeight - pad;
+  const termW = term.cols * cellW;
+  const termH = term.rows * cellH;
+
+  // Desktop: always 1:1. Mobile: auto-fit width + user zoom multiplier.
+  const mobile = isMobile();
+  const autoFit = mobile && termW > 0 ? Math.min(1.0, containerW / termW) : 1.0;
+  const scale = mobile ? autoFit * (userZoomPct / 100) : 1.0;
+
+  scaleEl.style.transform = `scale(${scale})`;
+  scaleEl.style.width  = termW + 'px';
+  scaleEl.style.height = termH + 'px';
+
+  // Clip outer to scaled size — eliminates dead scroll space when scale < 1
+  const scaledW = Math.ceil(termW * scale);
+  const scaledH = Math.ceil(termH * scale);
+  outer.style.width  = scaledW + 'px';
+  outer.style.height = scaledH + 'px';
+
+  // Only enable parent scroll when terminal visually overflows container
+  wrap.style.overflow = (scaledW > containerW || scaledH > containerH) ? 'auto' : 'hidden';
+
+  // Badge always shows clean userZoom percentage
+  $('zoom-level').textContent = userZoomPct + '%';
+}
+
+function updateZoomBadge() {
+  $('zoom-level').textContent = userZoomPct + '%';
+}
+updateZoomBadge();
+
+function doZoom(dir) {
+  userZoomPct = dir > 0
+    ? Math.min(MAX_ZOOM, userZoomPct + ZOOM_STEP)
+    : Math.max(MIN_ZOOM, userZoomPct - ZOOM_STEP);
+  localStorage.setItem('ah-zoom-pct', userZoomPct);
+  updateZoomBadge();
+  applyScale();
+}
+$('zoom-in').addEventListener('touchend',  () => doZoom(1));
+$('zoom-in').addEventListener('click',     () => doZoom(1));
+$('zoom-out').addEventListener('touchend', () => doZoom(-1));
+$('zoom-out').addEventListener('click',    () => doZoom(-1));
+
+// ── Special key buttons (mobile) ──────────────────────────────────────────
+function sendKey(seq) {
+  if (ws?.readyState === 1) ws.send(new TextEncoder().encode(seq));
+}
+// Toolbar: freeze focus state on touch, send key on release
+$('term-toolbar').addEventListener('touchstart', e => {
+  if (e.target.closest('.tb-btn')) e.preventDefault();
+}, { passive: false });
+
+function tbTap(id, seq) {
+  const el = $(id);
+  el.addEventListener('touchend', () => sendKey(seq));
+  el.addEventListener('click', () => sendKey(seq)); // desktop
+}
+tbTap('key-esc',    '\x1b');
+tbTap('key-tab',    '\t');
+tbTap('key-ctrl-c', '\x03');
+
+// Keyboard on mobile: shrink app shell so keyboard doesn't cover terminal
+if (window.visualViewport) {
+  const appEl = document.querySelector('.app');
+  window.visualViewport.addEventListener('resize', () => {
+    // visualViewport.height shrinks when keyboard appears
+    const kbOffset = window.innerHeight - window.visualViewport.height;
+    appEl.style.bottom = kbOffset > 0
+      ? kbOffset + 'px'
+      : 'env(safe-area-inset-bottom, 0px)';
+    applyScale();
+    term?.scrollToBottom();
+  });
+}
+window.addEventListener('resize', applyScale);
+
+// ── Touch scroll for terminal (CSS scale breaks xterm.js internal scroll) ──
+// Attach to #term-wrap with capture:true so we intercept before xterm's handlers
+{
+  const wrap = $('term-wrap');
+  let startY = null, accum = 0, isSwiping = false;
+  const LINE_PX = 18;
+
+  wrap.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      startY = e.touches[0].clientY;
+      accum = 0;
+      isSwiping = false;
+    }
+  }, { passive: true, capture: true });
+
+  wrap.addEventListener('touchmove', e => {
+    if (startY === null || !term) return;
+    const dy = startY - e.touches[0].clientY;
+    accum += dy;
+    startY = e.touches[0].clientY;
+    const lines = Math.trunc(accum / LINE_PX);
+    if (lines !== 0) {
+      isSwiping = true;
+      term.scrollLines(lines);
+      accum -= lines * LINE_PX;
+    }
+    if (isSwiping) e.preventDefault();
+  }, { passive: false, capture: true });
+
+  wrap.addEventListener('touchend', () => { startY = null; }, { passive: true, capture: true });
+}
+
+poll();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>

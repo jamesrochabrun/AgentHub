@@ -299,6 +299,9 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pendingId.uuidString)"
     if let terminal = activeTerminals.removeValue(forKey: pendingKey) {
       activeTerminals[sessionId] = terminal
+      // Register with TerminalStreamProxy now that we have the real session ID.
+      // Pending sessions are configured with sessionId: nil, so they're not registered yet.
+      terminal.registerWithProxy(sessionId: sessionId)
     }
   }
 
@@ -338,6 +341,10 @@ public final class CLISessionsViewModel {
   /// Set when a new pending session is created; observed by the sidebar to auto-select it.
   /// The sidebar nils this out after reading it.
   public var lastCreatedPendingId: UUID?
+
+  /// Set when the web client selects a session; observed by the sidebar to focus it in the UI.
+  /// The sidebar nils this out after reading it.
+  public var webFocusedSessionId: String?
 
   /// Active terminal views keyed by worktree path
   /// Preserves terminal PTY across pending → real session transition

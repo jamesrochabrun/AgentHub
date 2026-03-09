@@ -138,6 +138,16 @@ public struct MultiProviderSessionsListView: View {
       primarySessionId = "pending-codex-\(newId.uuidString)"
       codexViewModel.lastCreatedPendingId = nil
     }
+    .onChange(of: claudeViewModel.webFocusedSessionId) { _, sessionId in
+      guard let sessionId else { return }
+      primarySessionId = sessionId
+      claudeViewModel.webFocusedSessionId = nil
+    }
+    .onChange(of: codexViewModel.webFocusedSessionId) { _, sessionId in
+      guard let sessionId else { return }
+      primarySessionId = sessionId
+      codexViewModel.webFocusedSessionId = nil
+    }
     .onChange(of: selectedSessionItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
     }

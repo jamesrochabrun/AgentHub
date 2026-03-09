@@ -25,6 +25,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // Note: We intentionally do NOT clean up orphaned processes here
     // because we can't distinguish between processes spawned by AgentHub
     // vs processes the user started directly in Terminal.app
+    let webEnabled = UserDefaults.standard.object(forKey: AgentHubDefaults.webServerEnabled) as? Bool ?? false
+    if webEnabled {
+      Task {
+        try? await provider.webServer.start()
+      }
+    }
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -32,6 +38,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     provider.terminateAllTerminals()
     // Stop all dev servers spawned for web preview
     DevServerManager.shared.stopAllServers()
+    // Stop the embedded web terminal server
+    Task {
+      await provider.webServer.stop()
+    }
   }
 
   // MARK: - UNUserNotificationCenterDelegate

@@ -136,6 +136,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
 public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDelegate {
   var terminalView: SafeLocalProcessTerminalView?
   private var isConfigured = false
+  private var registeredSessionId: String?
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
   private var lastAppliedFontSize: CGFloat?
@@ -163,6 +164,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// Call this before removing the terminal from activeTerminals to ensure cleanup.
   /// Safe to call multiple times - subsequent calls are no-ops.
   public func terminateProcess() {
+    // Unregister from web streaming proxy
+    if let sid = registeredSessionId {
+      registeredSessionId = nil
+      Task { @MainActor in
+        TerminalStreamProxy.shared.unregister(sessionId: sid)
+      }
+    }
     // Stop data reception FIRST to prevent DispatchIO race condition crash
     terminalView?.stopReceivingData()
     terminalView?.terminateProcessTree()
@@ -231,10 +239,39 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
     registerProcessIfNeeded(for: terminal)
 
+    // Register with web streaming proxy
+    if let sid = sessionId {
+      registeredSessionId = sid
+      Task { @MainActor in
+        TerminalStreamProxy.shared.register(sessionId: sid, terminal: terminal)
+        // Broadcast initial PTY size so any pending listeners receive it
+        let cols = terminal.terminal.cols
+        let rows = terminal.terminal.rows
+        if cols > 0 && rows > 0 {
+          TerminalStreamProxy.shared.broadcastResize(sessionId: sid, cols: cols, rows: rows)
+        }
+      }
+    }
+
     if let initialInputText, !initialInputText.isEmpty {
       Task { @MainActor [weak self] in
         try? await Task.sleep(for: .milliseconds(300))
         self?.typeInitialTextIfNeeded(initialInputText)
+      }
+    }
+  }
+
+  /// Registers this terminal with TerminalStreamProxy under a new session ID.
+  /// Called when a pending session (sessionId: nil) transitions to a real session.
+  public func registerWithProxy(sessionId: String) {
+    guard let tv = terminalView else { return }
+    registeredSessionId = sessionId
+    let cols = tv.terminal.cols
+    let rows = tv.terminal.rows
+    Task { @MainActor in
+      TerminalStreamProxy.shared.register(sessionId: sessionId, terminal: tv)
+      if cols > 0 && rows > 0 {
+        TerminalStreamProxy.shared.broadcastResize(sessionId: sessionId, cols: cols, rows: rows)
       }
     }
   }
@@ -506,7 +543,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   // MARK: - ManagedLocalProcessTerminalViewDelegate
 
-  public func sizeChanged(source: ManagedLocalProcessTerminalView, newCols: Int, newRows: Int) {}
+  public func sizeChanged(source: ManagedLocalProcessTerminalView, newCols: Int, newRows: Int) {
+    guard let sid = registeredSessionId else { return }
+    Task { @MainActor in
+      TerminalStreamProxy.shared.broadcastResize(sessionId: sid, cols: newCols, rows: newRows)
+    }
+  }
 
   public func setTerminalTitle(source: ManagedLocalProcessTerminalView, title: String) {}
 

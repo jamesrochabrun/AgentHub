@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		7B03D9422F14D66700C36AA3 /* AgentHubCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03D9412F14D66700C36AA3 /* AgentHubCore */; };
 		7B03D9502F18A00000C36AA3 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03D94F2F18A00000C36AA3 /* Sparkle */; };
+		D2D6634548A441879BBFA54E /* WebClient in Resources */ = {isa = PBXBuildFile; fileRef = B79101C4594B4FB3AB0AAD92 /* WebClient */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,6 +33,7 @@
 		7B03D90A2F14D4E200C36AA3 /* AgentHub.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AgentHub.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B03D9172F14D4E400C36AA3 /* AgentHubTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentHubTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7B03D9212F14D4E400C36AA3 /* AgentHubUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgentHubUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B79101C4594B4FB3AB0AAD92 /* WebClient */ = {isa = PBXFileReference; lastKnownFileType = folder; name = WebClient; path = AgentHub/WebClient; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -86,6 +88,7 @@
 				7B03D91A2F14D4E400C36AA3 /* AgentHubTests */,
 				7B03D9242F14D4E400C36AA3 /* AgentHubUITests */,
 				7B03D90B2F14D4E200C36AA3 /* Products */,
+				B79101C4594B4FB3AB0AAD92 /* WebClient */,
 			);
 			sourceTree = "<group>";
 		};
@@ -225,6 +228,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D2D6634548A441879BBFA54E /* WebClient in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

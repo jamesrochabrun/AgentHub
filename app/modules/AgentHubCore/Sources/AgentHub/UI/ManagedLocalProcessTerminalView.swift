@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Combine
 import Darwin
 import SwiftTerm
 
@@ -23,6 +24,10 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
 
   /// Delegate for process-related events.
   public weak var processDelegate: ManagedLocalProcessTerminalViewDelegate?
+
+  /// Publishes raw PTY bytes as they arrive from the child process.
+  /// Subscribe to this to stream terminal output to external clients (e.g. web server).
+  public let dataPublisher = PassthroughSubject<Data, Never>()
 
   public override init(frame: CGRect) {
     super.init(frame: frame)
@@ -123,6 +128,21 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
 
   open func dataReceived(slice: ArraySlice<UInt8>) {
     feed(byteArray: slice)
+    dataPublisher.send(Data(slice))  // tee for web streaming
+  }
+
+  /// Write raw bytes to the PTY process (simulates keyboard input).
+  /// Called by the web server to forward browser input to the terminal.
+  public func writeToProcess(_ data: Data) {
+    process.send(data: ArraySlice(data))
+  }
+
+  /// Resize the PTY to the given dimensions and send SIGWINCH to the child process.
+  /// Called by web clients so the running app (e.g. Claude Code) redraws at the correct size.
+  public func resizePTY(cols: Int, rows: Int) {
+    guard process.running, process.childfd >= 0 else { return }
+    var size = winsize(ws_row: UInt16(rows), ws_col: UInt16(cols), ws_xpixel: 0, ws_ypixel: 0)
+    _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: process.childfd, windowSize: &size)
   }
 
   open func getWindowSize() -> winsize {
