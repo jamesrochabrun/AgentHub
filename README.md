@@ -22,6 +22,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Real-time session monitoring** — Watch all sessions update live via file-system watchers (no polling)
 - **Embedded terminal** — Full PTY terminal (SwiftTerm) inside each monitoring card; resume or start sessions without leaving the app
 - **Hub panel** — Unified view of all sessions across providers with single, list, 2-column, and 3-column grid layouts
+- **Resizable list cards** — In list mode, monitoring cards can be resized with a preview guide for a smoother, less distracting resize experience
 - **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
 - **Git worktree management** — Create and delete worktrees from the UI; launch sessions on new branches
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
@@ -116,6 +117,7 @@ The monitoring panel supports multiple layout modes:
 | **3-Column** | Three-column grid |
 
 Any card can be maximized to full panel with a click (Escape to restore).
+In list mode, cards can be resized with a drag preview that commits on release.
 
 ## Session States
 

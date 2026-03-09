@@ -161,6 +161,22 @@ public struct MonitoringCardView: View {
     self.isSidePanelOpen = isSidePanelOpen
   }
 
+  static func listHeightMetrics(
+    providerKind: SessionProviderKind,
+    state: SessionMonitorState?,
+    showTerminal: Bool
+  ) -> ResizableCardMetrics {
+    if showTerminal {
+      return ResizableCardMetrics(defaultHeight: 520, minHeight: 400)
+    }
+
+    let showsContextBar = providerKind == .claude && (state?.inputTokens ?? 0) > 0
+    return ResizableCardMetrics(
+      defaultHeight: showsContextBar ? 340 : 300,
+      minHeight: showsContextBar ? 240 : 210
+    )
+  }
+
   public var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions

@@ -117,10 +117,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   }
 
   public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
-    // Update colors when color scheme changes
-    nsView.updateColors(isDark: colorScheme == .dark)
     nsView.onUserInteraction = onUserInteraction
-    nsView.updateFont(size: CGFloat(terminalFontSize))
+    nsView.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize))
 
     // If there's a pending prompt in the viewModel, send it (and clear it)
     // Use terminalKey (not sessionId) since it works for both pending and real sessions
@@ -140,6 +138,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
+  private var lastAppliedFontSize: CGFloat?
+  private var lastAppliedIsDark: Bool?
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
@@ -297,19 +297,29 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     typeText(text)
   }
 
+  public func syncAppearance(isDark: Bool, fontSize: CGFloat) {
+    updateColors(isDark: isDark)
+    updateFont(size: fontSize)
+  }
+
   /// Updates terminal font size.
   public func updateFont(size: CGFloat) {
     guard let terminal = terminalView else { return }
-    let font = NSFont(name: "SF Mono", size: size)
-      ?? NSFont(name: "Menlo", size: size)
-      ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    let resolvedSize = max(size, 8)
+    guard lastAppliedFontSize != resolvedSize else { return }
+
+    let font = NSFont(name: "SF Mono", size: resolvedSize)
+      ?? NSFont(name: "Menlo", size: resolvedSize)
+      ?? NSFont.monospacedSystemFont(ofSize: resolvedSize, weight: .regular)
     terminal.font = font
+    lastAppliedFontSize = resolvedSize
   }
 
   /// Updates terminal colors based on color scheme.
   /// Called when the app's color scheme changes.
   public func updateColors(isDark: Bool) {
     guard let terminal = terminalView else { return }
+    guard lastAppliedIsDark != isDark else { return }
 
     if isDark {
       terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
@@ -319,8 +329,27 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
     }
 
-    // Force redraw
+    lastAppliedIsDark = isDark
     terminal.needsDisplay = true
+  }
+
+  private func applyInitialAppearance(to terminal: TerminalView, isDark: Bool) {
+    let fontSize: CGFloat = 12
+    lastAppliedFontSize = fontSize
+    let font = NSFont(name: "SF Mono", size: fontSize)
+      ?? NSFont(name: "Menlo", size: fontSize)
+      ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    terminal.font = font
+
+    if isDark {
+      terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
+    } else {
+      terminal.nativeBackgroundColor = NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
+      terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+    }
+
+    lastAppliedIsDark = isDark
   }
 
   private func installInteractionMonitorIfNeeded() {
@@ -336,6 +365,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
           self.onUserInteraction?()
         }
       case .leftMouseUp:
+        guard !ResizeInteractionSuppression.shared.shouldSuppressSelection else {
+          return event
+        }
         guard let window = terminal.window, event.window === window else { return event }
         let locationInTerminal = terminal.convert(event.locationInWindow, from: nil)
         if terminal.bounds.contains(locationInTerminal) {
@@ -362,21 +394,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   private func configureTerminalAppearance(_ terminal: TerminalView, isDark: Bool) {
-    // Use a monospace font that looks good in terminals
-    let fontSize: CGFloat = 12
-    let font = NSFont(name: "SF Mono", size: fontSize)
-      ?? NSFont(name: "Menlo", size: fontSize)
-      ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-    terminal.font = font
-
-    // Configure colors based on color scheme
-    if isDark {
-      terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
-      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
-    } else {
-      terminal.nativeBackgroundColor = NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
-      terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
-    }
+    applyInitialAppearance(to: terminal, isDark: isDark)
 
     // Set cursor color to match brand (bookCloth color)
     terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
