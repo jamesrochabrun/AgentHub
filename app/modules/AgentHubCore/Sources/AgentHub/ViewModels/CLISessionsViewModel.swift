@@ -515,6 +515,10 @@ public final class CLISessionsViewModel {
             current: self.selectedRepositories,
             updated: repositories
           )
+          let allPaths = repositories.flatMap { repo in
+            [repo.path] + repo.worktrees.map(\.path)
+          }
+          self.agentHubProvider?.reconcileInstructionFileBridges(for: allPaths, providerKind: self.providerKind)
 
           // Persist after state is updated to ensure consistency
           self.persistSelectedRepositories()
@@ -589,6 +593,10 @@ public final class CLISessionsViewModel {
       // Add repositories (triggers refreshSessions → setupSubscriptions)
       loadingState = .restoringRepositories
       await monitorService.addRepositories(paths)
+      // Bridge instruction files for all restored repos and their worktrees
+      let repos = await monitorService.getSelectedRepositories()
+      let allPaths = repos.flatMap { repo in [repo.path] + repo.worktrees.map(\.path) }
+      agentHubProvider?.reconcileInstructionFileBridges(for: allPaths, providerKind: providerKind)
       restoreExpansionState()
       loadingState = .idle
 
@@ -826,7 +834,11 @@ public final class CLISessionsViewModel {
       // [CLISessionsVM] loadingState = .addingRepository(\(repoName))")
       loadingState = .addingRepository(name: repoName)
       // [CLISessionsVM] Calling monitorService.addRepository...")
-      await monitorService.addRepository(path)
+      if await monitorService.addRepository(path) != nil {
+        let repos = await monitorService.getSelectedRepositories()
+        let allPaths = repos.flatMap { repo in [repo.path] + repo.worktrees.map(\.path) }
+        agentHubProvider?.reconcileInstructionFileBridges(for: allPaths, providerKind: providerKind)
+      }
       // [CLISessionsVM] monitorService.addRepository completed")
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
@@ -849,6 +861,11 @@ public final class CLISessionsViewModel {
         }
       }
     }
+
+    let remainingPaths = selectedRepositories
+      .filter { $0.path != repository.path }
+      .flatMap { repo in [repo.path] + repo.worktrees.map(\.path) }
+    agentHubProvider?.reconcileInstructionFileBridges(for: remainingPaths, providerKind: providerKind)
 
     Task {
       await monitorService.removeRepository(repository.path)

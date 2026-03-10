@@ -32,6 +32,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     provider.terminateAllTerminals()
     // Stop all dev servers spawned for web preview
     DevServerManager.shared.stopAllServers()
+    // Remove AGENTS.md / CLAUDE.md symlinks created by the instruction file bridge
+    provider.cleanupInstructionFileBridgesSync()
   }
 
   // MARK: - UNUserNotificationCenterDelegate

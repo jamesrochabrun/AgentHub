@@ -184,6 +184,36 @@ colors:
 
 AgentHub runs entirely on your machine. It does not collect, transmit, or store any data externally. The app simply reads your local CLI session files to display their status.
 
+## Instruction File Bridge
+
+AgentHub automatically bridges `CLAUDE.md` and `AGENTS.md` in every project directory it monitors. When only one of the two files exists, AgentHub creates a symlink pointing the missing one at the real file — so both Claude Code and Codex can read the same project instructions without duplicating content.
+
+| Scenario | Result |
+|---|---|
+| Only `CLAUDE.md` exists | `AGENTS.md` symlink → `CLAUDE.md` |
+| Only `AGENTS.md` exists | `CLAUDE.md` symlink → `AGENTS.md` |
+| Both exist | No action taken |
+| Neither exists | No action taken |
+
+### Lifecycle
+
+The bridge is fully ephemeral:
+
+- **On launch / repo added** — symlink is created and its name is written to `.git/info/exclude` so git never tracks it.
+- **On quit / repo removed** — symlink is deleted and the exclude entry is removed, leaving `.git/info/exclude` exactly as it was before.
+
+Git is never permanently affected. If AgentHub is not running, both the symlink and its exclude entry are gone.
+
+### Safety guarantees
+
+- **Real files are never deleted or overwritten.** If you create a real `CLAUDE.md` or `AGENTS.md` while AgentHub is running (replacing the symlink), AgentHub detects it is no longer a symlink and leaves your file untouched.
+- **Exclude entries always track symlink lifetime.** Even if a symlink disappears externally (e.g. after a crash), the exclude entry is cleaned up on the next quit or repo removal.
+- **Idempotent.** Each directory is scanned at most once per session; re-adding the same repo never creates duplicate symlinks or duplicate exclude entries.
+
+### Extensibility
+
+The bridge pattern is designed to be reused for other file pairs in future releases. Each bridge follows the same register-on-create / unregister-on-remove contract against `.git/info/exclude`.
+
 ## License
 
 MIT

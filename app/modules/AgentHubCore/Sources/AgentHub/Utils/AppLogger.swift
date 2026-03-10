@@ -39,6 +39,9 @@ enum AppLogger {
   /// File watching and monitoring
   static let watcher = Logger(subsystem: subsystem, category: "Watcher")
 
+  /// Instruction file bridge (CLAUDE.md ↔ AGENTS.md symlinks)
+  static let bridge = Logger(subsystem: subsystem, category: "Bridge")
+
   /// UI-related logging
   static let ui = Logger(subsystem: subsystem, category: "UI")
 
