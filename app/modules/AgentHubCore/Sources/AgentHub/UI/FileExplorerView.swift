@@ -34,6 +34,7 @@ public struct FileExplorerView: View {
   @State private var isLoading = true
   @State private var selectedFilePath: String?
   @State private var fileContent: String = ""
+  @State private var savedFileContent: String = ""
   @State private var isLoadingFile = false
   @State private var fileError: String?
   @State private var hasUnsavedChanges = false
@@ -313,8 +314,11 @@ public struct FileExplorerView: View {
       CETextViewRepresentable(
         text: $fileContent,
         fileName: selectedFilePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
-        onTextChange: { hasUnsavedChanges = true }
+        onTextChange: { updatedText in
+          hasUnsavedChanges = updatedText != savedFileContent
+        }
       )
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 
@@ -332,9 +336,16 @@ public struct FileExplorerView: View {
       "png", "jpg", "jpeg", "gif", "pdf", "zip", "tar", "gz",
       "exe", "dylib", "a", "o", "mp3", "mp4", "mov", "woff", "ttf"
     ]
+    selectedFilePath = path
+    fileError = nil
+    saveError = nil
+    isLoadingFile = false
+    fileContent = ""
+    savedFileContent = ""
+    hasUnsavedChanges = false
+
     guard !binaryExts.contains(ext) else {
       fileError = "Binary files cannot be displayed."
-      selectedFilePath = path
       return
     }
 
@@ -343,21 +354,21 @@ public struct FileExplorerView: View {
     if let attrs = try? fm.attributesOfItem(atPath: path),
        let fileSize = attrs[.size] as? UInt64, fileSize > 10_000_000 {
       fileError = "File is too large to display (>10 MB)."
-      selectedFilePath = path
       return
     }
 
     isLoadingFile = true
-    fileError = nil
-    saveError = nil
-    selectedFilePath = path
-    hasUnsavedChanges = false
 
     do {
       let content = try await FileIndexService.shared.readFile(at: path, projectPath: projectPath)
       fileContent = content
+      savedFileContent = content
+      hasUnsavedChanges = false
       await FileIndexService.shared.addToRecent(path)
     } catch {
+      fileContent = ""
+      savedFileContent = ""
+      hasUnsavedChanges = false
       fileError = "Could not read file: \(error.localizedDescription)"
     }
     isLoadingFile = false
@@ -372,6 +383,7 @@ public struct FileExplorerView: View {
       do {
         try await FileIndexService.shared.writeFile(at: path, content: content, projectPath: projectPath)
         await MainActor.run {
+          savedFileContent = content
           hasUnsavedChanges = false
           isSaving = false
         }
@@ -544,7 +556,7 @@ public struct CETextViewRepresentable: NSViewRepresentable {
 
   @Binding var text: String
   let fileName: String
-  let onTextChange: () -> Void
+  let onTextChange: (String) -> Void
   @Environment(\.colorScheme) private var colorScheme
 
   public func makeCoordinator() -> Coordinator {
@@ -554,16 +566,18 @@ public struct CETextViewRepresentable: NSViewRepresentable {
   public func makeNSView(context: Context) -> NSScrollView {
     let scrollView = NSScrollView()
     scrollView.hasVerticalScroller = true
-    scrollView.hasHorizontalScroller = true
+    scrollView.hasHorizontalScroller = false
     scrollView.autohidesScrollers = true
     scrollView.borderType = .noBorder
+    scrollView.contentView.postsFrameChangedNotifications = true
+    scrollView.contentView.postsBoundsChangedNotifications = true
 
     let textView = TextView(
       string: text,
       font: .monospacedSystemFont(ofSize: 12, weight: .regular),
       textColor: .labelColor,
       lineHeightMultiplier: 1.3,
-      wrapLines: false,
+      wrapLines: true,
       isEditable: true,
       isSelectable: true,
       letterSpacing: 1.0,
@@ -573,6 +587,7 @@ public struct CETextViewRepresentable: NSViewRepresentable {
     textView.edgeInsets = HorizontalEdgeInsets(left: 8, right: 8)
 
     scrollView.documentView = textView
+    textView.updateFrameIfNeeded()
     context.coordinator.textView = textView
     context.coordinator.applySyntaxHighlighting(
       text: text, fileName: fileName, colorScheme: colorScheme
@@ -585,6 +600,7 @@ public struct CETextViewRepresentable: NSViewRepresentable {
     if textView.string != text {
       context.coordinator.isUpdatingFromBinding = true
       textView.string = text
+      textView.updateFrameIfNeeded()
       context.coordinator.isUpdatingFromBinding = false
       context.coordinator.applySyntaxHighlighting(
         text: text, fileName: fileName, colorScheme: colorScheme
@@ -623,7 +639,7 @@ public struct CETextViewRepresentable: NSViewRepresentable {
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.parent.text = newText
-        self.parent.onTextChange()
+        self.parent.onTextChange(newText)
       }
       // Re-highlight after edit with debounce
       scheduleRehighlight(text: textView.string)
