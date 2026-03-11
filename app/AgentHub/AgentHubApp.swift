@@ -42,9 +42,36 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
     Task { @MainActor in
-      NSApp.activate(ignoringOtherApps: true)
+      Self.activateExistingWindow()
     }
     completionHandler()
+  }
+
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    if !flag {
+      Self.activateExistingWindow()
+      return false
+    }
+    return true
+  }
+
+  /// Finds and surfaces the existing app window instead of allowing a new one to be created.
+  private static func activateExistingWindow() {
+    // Look for the main app window (exclude panels, status bar windows, etc.)
+    let appWindow = NSApp.windows.first(where: { window in
+      !(window is NSPanel)
+        && window.className != "NSStatusBarWindow"
+        && window.className != "_NSAlertPanel"
+    })
+
+    if let window = appWindow {
+      if window.isMiniaturized {
+        window.deminiaturize(nil)
+      }
+      window.makeKeyAndOrderFront(nil)
+    }
+
+    NSApp.activate(ignoringOtherApps: true)
   }
 
   nonisolated func userNotificationCenter(
