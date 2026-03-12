@@ -98,6 +98,11 @@ public enum AgentHubDefaults {
   /// Type: Double (default: 12.0)
   public static let terminalFontSize = "\(keyPrefix)terminal.fontSize"
 
+  /// Preferred newline shortcut in the embedded terminal
+  /// Type: Int (default: 0 = system/default)
+  /// See: NewlineShortcut enum in EmbeddedTerminalView.swift
+  public static let terminalNewlineShortcut = "\(keyPrefix)terminal.newlineShortcut"
+
   /// Monitoring panel layout mode (list, 2-column, 3-column grid)
   /// Type: Int (default: 0 = list)
   public static let monitoringPanelLayoutMode = "\(keyPrefix)ui.monitoringPanelLayoutMode"

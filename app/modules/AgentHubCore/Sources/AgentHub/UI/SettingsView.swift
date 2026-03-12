@@ -20,6 +20,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
+  @AppStorage(AgentHubDefaults.terminalNewlineShortcut)
+  private var newlineShortcutRawValue: Int = NewlineShortcut.system.rawValue
+
   @AppStorage(AgentHubDefaults.notificationSoundsEnabled)
   private var notificationSoundsEnabled: Bool = true
 
@@ -167,6 +170,11 @@ public struct SettingsView: View {
             Text("\(Int(terminalFontSize)) pt")
               .foregroundColor(.secondary)
               .monospacedDigit()
+          }
+        }
+        Picker("Newline shortcut", selection: $newlineShortcutRawValue) {
+          ForEach(NewlineShortcut.allCases, id: \.rawValue) { shortcut in
+            Text(shortcut.label).tag(shortcut.rawValue)
           }
         }
       }

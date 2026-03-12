@@ -9,6 +9,26 @@ import AppKit
 import SwiftTerm
 import SwiftUI
 
+// MARK: - NewlineShortcut
+
+/// Controls which key combination inserts a newline in the embedded Claude Code terminal.
+public enum NewlineShortcut: Int, CaseIterable {
+  /// System default: option+return inserts newline (SwiftTerm native behavior, no interception)
+  case system = 0
+  /// cmd+return inserts newline; option+return submits like plain Enter
+  case cmdReturn = 1
+  /// shift+return inserts newline; option+return submits like plain Enter
+  case shiftReturn = 2
+
+  public var label: String {
+    switch self {
+    case .system: return "Default (⌥↩)"
+    case .cmdReturn: return "⌘↩ Newline"
+    case .shiftReturn: return "⇧↩ Newline"
+    }
+  }
+}
+
 // MARK: - SafeLocalProcessTerminalView
 
 /// A ManagedLocalProcessTerminalView subclass that safely handles cleanup by stopping
@@ -371,9 +391,43 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
       switch event.type {
       case .keyDown:
-        if let window = terminal.window,
-           event.window === window,
-           isTerminalResponderActive(window: window, terminal: terminal) {
+        guard let window = terminal.window,
+              event.window === window,
+              isTerminalResponderActive(window: window, terminal: terminal) else { break }
+
+        let shortcut = NewlineShortcut(
+          rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalNewlineShortcut)
+        ) ?? .system
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isReturn = event.keyCode == 36
+
+        switch shortcut {
+        case .system:
+          self.onUserInteraction?()
+
+        case .cmdReturn:
+          if isReturn && flags == .command {
+            terminal.send([0x1B, 0x0D])  // newline
+            self.onUserInteraction?()
+            return nil
+          } else if isReturn && flags == .option {
+            terminal.send([0x0D])  // suppress ESC+CR, submit instead
+            self.onUserInteraction?()
+            return nil
+          }
+          self.onUserInteraction?()
+
+        case .shiftReturn:
+          if isReturn && flags == .shift {
+            terminal.send([0x1B, 0x0D])  // newline
+            self.onUserInteraction?()
+            return nil
+          } else if isReturn && (flags == .option || flags == .command) {
+            terminal.send([0x0D])  // submit
+            self.onUserInteraction?()
+            return nil
+          }
           self.onUserInteraction?()
         }
       case .leftMouseUp:

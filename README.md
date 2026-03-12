@@ -114,6 +114,7 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 | **Cmd+C** | Copy selected text |
 | **Cmd+V** | Paste |
 | **Cmd+A** | Select all |
+| **⌥↩ / ⌘↩ / ⇧↩** | Insert newline (configurable in Settings → Terminal) |
 
 ### Command Palette
 
