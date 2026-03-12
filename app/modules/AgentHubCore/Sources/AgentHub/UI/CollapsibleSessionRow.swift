@@ -15,6 +15,7 @@ struct CollapsibleSessionRow: View {
   let onDeleteWorktree: (() -> Void)?
   var isDeletingWorktree: Bool = false
   let onSelect: () -> Void
+  var dragProvider: (() -> NSItemProvider)? = nil
 
   @State private var gradientProgress: CGFloat = 0
   @State private var showArchiveConfirm = false
@@ -76,55 +77,26 @@ struct CollapsibleSessionRow: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       // Path + branch header bar
-      HStack(spacing: 5) {
-        Image(systemName: "folder")
-          .font(.system(size: 9))
-          .foregroundColor(.secondary.opacity(0.6))
-
-        Text(tildeProjectPath)
-          .font(.system(size: 10, design: .monospaced))
-          .foregroundColor(.secondary.opacity(0.9))
-          .lineLimit(1)
-          .truncationMode(.middle)
-
-        if let branch = session.branchName {
-          Spacer(minLength: 4)
-
-          Image(systemName: "arrow.triangle.branch")
-            .font(.system(size: 9))
-            .foregroundColor(.secondary.opacity(0.6))
-
-          Text(branch)
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundColor(.secondary.opacity(0.9))
-            .lineLimit(1)
+      Group {
+        if let provider = dragProvider {
+          headerBar
+            .onDrag {
+              provider()
+            } preview: {
+              Text(customName ?? session.slug ?? session.shortId)
+                .font(.caption.monospaced())
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.2))
+                .clipShape(Capsule())
+            }
+            .onHover { hovering in
+              if hovering { NSCursor.openHand.push() } else { NSCursor.pop() }
+            }
+        } else {
+          headerBar
         }
       }
-      .padding(.horizontal, 8)
-      .padding(.vertical, 4)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(
-        ZStack {
-          UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 2, bottomTrailingRadius: 2, topTrailingRadius: 6)
-            .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06))
-          UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 2, bottomTrailingRadius: 2, topTrailingRadius: 6)
-            .fill(LinearGradient(
-              colors: [
-                Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.45 : 0.35),
-                colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
-              ],
-              startPoint: .trailing,
-              endPoint: .leading
-            ))
-            .mask(
-              GeometryReader { geo in
-                Rectangle()
-                  .frame(width: geo.size.width * gradientProgress)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-            )
-        }
-      )
 
       // Content area
       VStack(alignment: .leading, spacing: 8) {
@@ -301,6 +273,62 @@ struct CollapsibleSessionRow: View {
       // Restart pulse animation if status changed
       startPulseAnimation()
     }
+  }
+
+  // MARK: - Header Bar
+
+  @ViewBuilder
+  private var headerBar: some View {
+    HStack(spacing: 5) {
+      Image(systemName: "folder")
+        .font(.system(size: 9))
+        .foregroundColor(.secondary.opacity(0.6))
+
+      Text(tildeProjectPath)
+        .font(.system(size: 10, design: .monospaced))
+        .foregroundColor(.secondary.opacity(0.9))
+        .lineLimit(1)
+        .truncationMode(.middle)
+
+      if let branch = session.branchName {
+        Spacer(minLength: 4)
+
+        Image(systemName: "arrow.triangle.branch")
+          .font(.system(size: 9))
+          .foregroundColor(.secondary.opacity(0.6))
+
+        Text(branch)
+          .font(.system(size: 10, design: .monospaced))
+          .foregroundColor(.secondary.opacity(0.9))
+          .lineLimit(1)
+      }
+    }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 4)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .contentShape(Rectangle())
+    .background(
+      ZStack {
+        UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 2, bottomTrailingRadius: 2, topTrailingRadius: 6)
+          .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06))
+        UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 2, bottomTrailingRadius: 2, topTrailingRadius: 6)
+          .fill(LinearGradient(
+            colors: [
+              Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.45 : 0.35),
+              colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+            ],
+            startPoint: .trailing,
+            endPoint: .leading
+          ))
+          .mask(
+            GeometryReader { geo in
+              Rectangle()
+                .frame(width: geo.size.width * gradientProgress)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+          )
+      }
+    )
   }
 
   // MARK: - Animations

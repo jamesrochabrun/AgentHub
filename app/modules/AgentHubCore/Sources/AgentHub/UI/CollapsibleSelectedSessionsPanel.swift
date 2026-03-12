@@ -21,6 +21,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
 
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
+  @State private var draggedItemId: String?
+  @State private var dropTargetId: String?
 
   private let headerHeight: CGFloat = 40
 
@@ -141,35 +143,56 @@ public struct CollapsibleSelectedSessionsPanel: View {
     ScrollView(showsIndicators: false) {
       LazyVStack(spacing: 6) {
         ForEach(items) { item in
-          CollapsibleSessionRow(
-            session: item.session,
-            providerKind: item.providerKind,
-            timestamp: item.timestamp,
-            isPending: item.isPending,
-            isPrimary: item.id == primarySessionId,
-            customName: customName(for: item),
-            sessionStatus: item.sessionStatus,
-            colorScheme: colorScheme,
-            onArchive: item.isPending ? nil : {
-              switch item.providerKind {
-              case .claude: claudeViewModel.stopMonitoring(session: item.session)
-              case .codex: codexViewModel.stopMonitoring(session: item.session)
-              }
-            },
-            onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-              sessionToDeleteWorktree = item.session
-              showDeleteWorktreeAlert = true
-            } : nil,
-            isDeletingWorktree: item.session.isWorktree && {
-              switch item.providerKind {
-              case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-              case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-              }
-            }(),
-            onSelect: {
-              primarySessionId = item.id
+          VStack(spacing: 0) {
+            if dropTargetId == item.id {
+              Rectangle()
+                .fill(Color.accentColor)
+                .frame(height: 2)
+                .padding(.horizontal, 4)
             }
-          )
+
+            CollapsibleSessionRow(
+              session: item.session,
+              providerKind: item.providerKind,
+              timestamp: item.timestamp,
+              isPending: item.isPending,
+              isPrimary: item.id == primarySessionId,
+              customName: customName(for: item),
+              sessionStatus: item.sessionStatus,
+              colorScheme: colorScheme,
+              onArchive: item.isPending ? nil : {
+                switch item.providerKind {
+                case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                case .codex: codexViewModel.stopMonitoring(session: item.session)
+                }
+              },
+              onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+                sessionToDeleteWorktree = item.session
+                showDeleteWorktreeAlert = true
+              } : nil,
+              isDeletingWorktree: item.session.isWorktree && {
+                switch item.providerKind {
+                case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+                case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+                }
+              }(),
+              onSelect: { primarySessionId = item.id },
+              dragProvider: item.isPending ? nil : {
+                draggedItemId = item.id
+                return NSItemProvider(object: NSString(string: item.id))
+              }
+            )
+          }
+          .opacity(draggedItemId == item.id ? 0.4 : 1.0)
+          .contentShape(Rectangle())
+          .onDrop(of: [.utf8PlainText], isTargeted: Binding(
+            get: { dropTargetId == item.id },
+            set: { isTargeted in dropTargetId = isTargeted ? item.id : nil }
+          )) { _ in
+            guard let dragId = draggedItemId else { return false }
+            handleDrop(itemId: dragId, targetItemId: item.id)
+            return true
+          }
         }
       }
       .padding(.horizontal, 4)
@@ -189,53 +212,53 @@ public struct CollapsibleSelectedSessionsPanel: View {
   }
 
   private var items: [SelectedSessionItem] {
-    var results: [SelectedSessionItem] = []
-
-    for pending in claudeViewModel.pendingHubSessions {
-      results.append(SelectedSessionItem(
+    let pendingClaude: [SelectedSessionItem] = claudeViewModel.pendingHubSessions.map { pending in
+      SelectedSessionItem(
         id: "pending-claude-\(pending.id.uuidString)",
         session: pending.placeholderSession,
         providerKind: .claude,
         timestamp: pending.startedAt,
         isPending: true,
         sessionStatus: nil
-      ))
+      )
     }
 
-    for pending in codexViewModel.pendingHubSessions {
-      results.append(SelectedSessionItem(
+    let pendingCodex: [SelectedSessionItem] = codexViewModel.pendingHubSessions.map { pending in
+      SelectedSessionItem(
         id: "pending-codex-\(pending.id.uuidString)",
         session: pending.placeholderSession,
         providerKind: .codex,
         timestamp: pending.startedAt,
         isPending: true,
         sessionStatus: nil
-      ))
+      )
     }
 
-    for item in claudeViewModel.monitoredSessions {
-      results.append(SelectedSessionItem(
+    let monitoredClaude: [SelectedSessionItem] = claudeViewModel.monitoredSessions.map { item in
+      SelectedSessionItem(
         id: "claude-\(item.session.id)",
         session: item.session,
         providerKind: .claude,
         timestamp: item.session.lastActivityAt,
         isPending: false,
         sessionStatus: item.state?.status
-      ))
+      )
     }
 
-    for item in codexViewModel.monitoredSessions {
-      results.append(SelectedSessionItem(
+    let monitoredCodex: [SelectedSessionItem] = codexViewModel.monitoredSessions.map { item in
+      SelectedSessionItem(
         id: "codex-\(item.session.id)",
         session: item.session,
         providerKind: .codex,
         timestamp: item.session.lastActivityAt,
         isPending: false,
         sessionStatus: item.state?.status
-      ))
+      )
     }
 
-    return results.sorted { $0.timestamp > $1.timestamp }
+    let pending = (pendingClaude + pendingCodex).sorted { $0.timestamp > $1.timestamp }
+    let monitored = monitoredClaude + monitoredCodex
+    return pending + monitored
   }
 
   private func customName(for item: SelectedSessionItem) -> String? {
@@ -244,6 +267,41 @@ public struct CollapsibleSelectedSessionsPanel: View {
       return claudeViewModel.sessionCustomNames[item.session.id]
     case .codex:
       return codexViewModel.sessionCustomNames[item.session.id]
+    }
+  }
+
+  private func handleDrop(itemId: String, targetItemId: String) {
+    draggedItemId = nil
+    dropTargetId = nil
+    guard itemId != targetItemId, !itemId.hasPrefix("pending-") else { return }
+
+    // If dropping onto a pending item, move the session to front of its provider list
+    if targetItemId.hasPrefix("pending-") {
+      if itemId.hasPrefix("claude-") {
+        let sessionId = String(itemId.dropFirst(7))
+        claudeViewModel.reorderMonitoredSession(id: sessionId, toAfter: nil)
+      } else if itemId.hasPrefix("codex-") {
+        let sessionId = String(itemId.dropFirst(6))
+        codexViewModel.reorderMonitoredSession(id: sessionId, toAfter: nil)
+      }
+      return
+    }
+
+    // Reject cross-provider drops
+    let isClaude = itemId.hasPrefix("claude-")
+    let isCodex = itemId.hasPrefix("codex-")
+    let targetIsClaude = targetItemId.hasPrefix("claude-")
+    let targetIsCodex = targetItemId.hasPrefix("codex-")
+    guard (isClaude && targetIsClaude) || (isCodex && targetIsCodex) else { return }
+
+    if isClaude {
+      let sessionId = String(itemId.dropFirst(7))
+      let targetSessionId = String(targetItemId.dropFirst(7))
+      claudeViewModel.reorderMonitoredSession(id: sessionId, toAfter: targetSessionId)
+    } else if isCodex {
+      let sessionId = String(itemId.dropFirst(6))
+      let targetSessionId = String(targetItemId.dropFirst(6))
+      codexViewModel.reorderMonitoredSession(id: sessionId, toAfter: targetSessionId)
     }
   }
 
@@ -274,6 +332,8 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
 
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
+  @State private var draggedItemId: String?
+  @State private var dropTargetId: String?
 
   private let headerHeight: CGFloat = 40
 
@@ -381,28 +441,49 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     ScrollView(showsIndicators: false) {
       LazyVStack(spacing: 6) {
         ForEach(items) { item in
-          CollapsibleSessionRow(
-            session: item.session,
-            providerKind: viewModel.providerKind,
-            timestamp: item.timestamp,
-            isPending: item.isPending,
-            isPrimary: item.id == primarySessionId,
-            customName: viewModel.sessionCustomNames[item.session.id],
-            sessionStatus: item.sessionStatus,
-            colorScheme: colorScheme,
-            onArchive: item.isPending ? nil : {
-              viewModel.stopMonitoring(session: item.session)
-            },
-            onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-              sessionToDeleteWorktree = item.session
-              showDeleteWorktreeAlert = true
-            } : nil,
-            isDeletingWorktree: item.session.isWorktree
-              && viewModel.deletingWorktreePath == item.session.projectPath,
-            onSelect: {
-              primarySessionId = item.id
+          VStack(spacing: 0) {
+            if dropTargetId == item.id {
+              Rectangle()
+                .fill(Color.accentColor)
+                .frame(height: 2)
+                .padding(.horizontal, 4)
             }
-          )
+
+            CollapsibleSessionRow(
+              session: item.session,
+              providerKind: viewModel.providerKind,
+              timestamp: item.timestamp,
+              isPending: item.isPending,
+              isPrimary: item.id == primarySessionId,
+              customName: viewModel.sessionCustomNames[item.session.id],
+              sessionStatus: item.sessionStatus,
+              colorScheme: colorScheme,
+              onArchive: item.isPending ? nil : {
+                viewModel.stopMonitoring(session: item.session)
+              },
+              onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+                sessionToDeleteWorktree = item.session
+                showDeleteWorktreeAlert = true
+              } : nil,
+              isDeletingWorktree: item.session.isWorktree
+                && viewModel.deletingWorktreePath == item.session.projectPath,
+              onSelect: { primarySessionId = item.id },
+              dragProvider: item.isPending ? nil : {
+                draggedItemId = item.id
+                return NSItemProvider(object: NSString(string: item.id))
+              }
+            )
+          }
+          .opacity(draggedItemId == item.id ? 0.4 : 1.0)
+          .contentShape(Rectangle())
+          .onDrop(of: [.utf8PlainText], isTargeted: Binding(
+            get: { dropTargetId == item.id },
+            set: { isTargeted in dropTargetId = isTargeted ? item.id : nil }
+          )) { _ in
+            guard let dragId = draggedItemId else { return false }
+            handleDrop(itemId: dragId, targetItemId: item.id)
+            return true
+          }
         }
       }
       .padding(.horizontal, 4)
@@ -421,29 +502,27 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
   }
 
   private var items: [SelectedSessionItem] {
-    var results: [SelectedSessionItem] = []
-
-    for pending in viewModel.pendingHubSessions {
-      results.append(SelectedSessionItem(
+    let pending: [SelectedSessionItem] = viewModel.pendingHubSessions.map { pending in
+      SelectedSessionItem(
         id: "pending-\(pending.id.uuidString)",
         session: pending.placeholderSession,
         timestamp: pending.startedAt,
         isPending: true,
         sessionStatus: nil
-      ))
-    }
+      )
+    }.sorted { $0.timestamp > $1.timestamp }
 
-    for item in viewModel.monitoredSessions {
-      results.append(SelectedSessionItem(
+    let monitored: [SelectedSessionItem] = viewModel.monitoredSessions.map { item in
+      SelectedSessionItem(
         id: item.session.id,
         session: item.session,
         timestamp: item.session.lastActivityAt,
         isPending: false,
         sessionStatus: item.state?.status
-      ))
+      )
     }
 
-    return results.sorted { $0.timestamp > $1.timestamp }
+    return pending + monitored
   }
 
   private func ensurePrimarySelection() {
@@ -457,6 +536,14 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     }
 
     primarySessionId = items.first?.id
+  }
+
+  private func handleDrop(itemId: String, targetItemId: String) {
+    draggedItemId = nil
+    dropTargetId = nil
+    guard itemId != targetItemId, !itemId.hasPrefix("pending-") else { return }
+    let targetId: String? = targetItemId.hasPrefix("pending-") ? nil : targetItemId
+    viewModel.reorderMonitoredSession(id: itemId, toAfter: targetId)
   }
 }
 

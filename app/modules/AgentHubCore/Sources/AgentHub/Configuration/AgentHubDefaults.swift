@@ -53,6 +53,11 @@ public enum AgentHubDefaults {
   /// Type: Data (JSON-encoded [String])
   public static let monitoredSessionIds = "\(keyPrefix)sessions.monitoredSessionIds"
 
+  /// Persisted manual ordering of monitored session IDs (JSON-encoded array of session IDs)
+  /// Type: Data (JSON-encoded [String])
+  /// Note: Provider-suffixed at runtime (e.g., `.claude` or `.codex`)
+  public static let monitoredSessionOrder = "\(keyPrefix)sessions.monitoredSessionOrder"
+
   /// Persisted session IDs that have terminal view enabled
   /// Type: Data (JSON-encoded [String])
   public static let sessionsWithTerminalView = "\(keyPrefix)sessions.sessionsWithTerminalView"
