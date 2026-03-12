@@ -541,6 +541,7 @@ public struct SessionJSONLParser {
       while let last = urlString.last, [".", ",", ";", ":"].contains(String(last)) {
         urlString.removeLast()
       }
+      guard URL(string: urlString) != nil else { continue }
       links.append(ResourceLink(url: urlString, timestamp: timestamp ?? Date()))
     }
     return links
