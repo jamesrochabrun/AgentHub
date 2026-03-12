@@ -259,6 +259,17 @@ public struct SessionJSONLParser {
             codeChangeInput: codeChangeInput,
             to: &result
           )
+
+          // Extract URL from tool_use input (e.g., WebFetch url parameter)
+          if let dict = block.input?.value as? [String: Any],
+             let urlString = dict["url"] as? String {
+            let links = extractResourceLinks(from: urlString, timestamp: timestamp)
+            for link in links {
+              if !result.detectedResourceLinks.contains(where: { $0.url == link.url }) {
+                result.detectedResourceLinks.append(link)
+              }
+            }
+          }
         }
 
       case "tool_result":
@@ -276,6 +287,24 @@ public struct SessionJSONLParser {
             timestamp: timestamp,
             to: &result
           )
+
+          // Extract URLs from tool result content
+          if let content = block.content {
+            var textToScan = ""
+            if let str = content.value as? String {
+              textToScan = str
+            } else if let arr = content.value as? [[String: Any]] {
+              textToScan = arr.compactMap { $0["text"] as? String }.joined(separator: " ")
+            }
+            if !textToScan.isEmpty {
+              let links = extractResourceLinks(from: textToScan, timestamp: timestamp)
+              for link in links {
+                if !result.detectedResourceLinks.contains(where: { $0.url == link.url }) {
+                  result.detectedResourceLinks.append(link)
+                }
+              }
+            }
+          }
         }
 
       case "thinking":

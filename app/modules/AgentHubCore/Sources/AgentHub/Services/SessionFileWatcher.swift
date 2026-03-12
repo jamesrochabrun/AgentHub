@@ -125,6 +125,9 @@ public actor SessionFileWatcher {
         // Parse new lines
         SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
 
+        // Keep watchedSessions in sync with the mutated parseResult
+        Task { await self.updateStoredParseResult(sessionId: sessionId, parseResult: parseResult) }
+
         // Keep lastEmittedStatus in sync to prevent redundant emissions from status timer
         lastEmittedStatus = parseResult.currentStatus
 
@@ -168,6 +171,9 @@ public actor SessionFileWatcher {
 
           if !newLines.isEmpty {
             SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
+
+            // Keep watchedSessions in sync with the mutated parseResult
+            Task { await self.updateStoredParseResult(sessionId: sessionId, parseResult: parseResult) }
 
             // Update tracking
             lastKnownFileSize = tempPosition
@@ -262,6 +268,10 @@ public actor SessionFileWatcher {
   }
 
   // MARK: - Private Helpers
+
+  private func updateStoredParseResult(sessionId: String, parseResult: SessionJSONLParser.ParseResult) {
+    watchedSessions[sessionId]?.parseResult = parseResult
+  }
 
   private func findSessionFile(sessionId: String, projectPath: String) -> String? {
     // Session files are in: ~/.claude/projects/{encoded-path}/{sessionId}.jsonl
