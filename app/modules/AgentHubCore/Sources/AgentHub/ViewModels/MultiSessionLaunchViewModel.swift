@@ -142,6 +142,18 @@ public final class MultiSessionLaunchViewModel {
   public var smartPlanText: String = ""
   public var smartOrchestrationPlan: OrchestrationPlan?
 
+  // MARK: - Skills State
+
+  /// All loaded skills from Claude and Codex data directories
+  public var skills: [HubSkill] = []
+
+  /// Active slash-command query, non-nil while the picker is open
+  /// Set to the string after "/" when the prompt begins with "/"
+  public var skillQuery: String? = nil
+
+  /// Highlighted row index inside the skill picker
+  public var skillSelectedIndex: Int = 0
+
   // MARK: - Callbacks
 
   public var onLaunchCompleted: (() -> Void)?
@@ -199,6 +211,56 @@ public final class MultiSessionLaunchViewModel {
     self.codexViewModel = codexViewModel
     self.worktreeService = worktreeService
     self.intelligenceViewModel = intelligenceViewModel
+  }
+
+  // MARK: - Skills
+
+  /// Loads skills from Claude and Codex directories for the given project path.
+  public func loadSkills(service: SkillsService, projectPath: String?) async {
+    let home = NSHomeDirectory()
+    let loaded = await service.load(
+      claudeDataPath: home + "/.claude",
+      codexDataPath: home + "/.codex",
+      projectPath: projectPath
+    )
+    skills = loaded
+  }
+
+  /// Updates `skillQuery` based on the current prompt text.
+  /// Call this from the view's `onChange(of: viewModel.sharedPrompt)`.
+  public func updateSkillQuery() {
+    guard sharedPrompt.hasPrefix("/") else {
+      if skillQuery != nil { skillQuery = nil }
+      return
+    }
+    let afterSlash = String(sharedPrompt.dropFirst())
+    // Once the user adds a space the skill name is committed — dismiss picker
+    if afterSlash.contains(" ") || afterSlash.contains("\n") {
+      if skillQuery != nil { skillQuery = nil }
+    } else {
+      skillQuery = afterSlash
+      // Reset selection when query changes
+      skillSelectedIndex = 0
+    }
+  }
+
+  /// Replaces the current "/query" prefix with "/skill-name " and dismisses the picker.
+  public func applySkill(_ skill: HubSkill) {
+    let rest: String
+    if sharedPrompt.hasPrefix("/") {
+      let afterSlash = String(sharedPrompt.dropFirst())
+      if let idx = afterSlash.firstIndex(where: { $0 == " " || $0 == "\n" }) {
+        rest = String(afterSlash[idx...])
+      } else {
+        rest = ""
+      }
+    } else {
+      rest = ""
+    }
+    sharedPrompt = "/\(skill.name) \(rest)".trimmingCharacters(in: .init(charactersIn: " "))
+    sharedPrompt += " "
+    skillQuery = nil
+    skillSelectedIndex = 0
   }
 
   // MARK: - Attachments

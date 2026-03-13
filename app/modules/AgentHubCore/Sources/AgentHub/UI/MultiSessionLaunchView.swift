@@ -20,7 +20,9 @@ public struct MultiSessionLaunchView: View {
   var expandRequestID: Int = 0
 
   @AppStorage(AgentHubDefaults.smartModeEnabled) private var smartModeEnabled: Bool = false
+  @AppStorage(AgentHubDefaults.skillsPickerEnabled) private var skillsPickerEnabled: Bool = false
 
+  @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
   @State private var isExpanded = false
   @State private var isDragging = false
@@ -42,6 +44,19 @@ public struct MultiSessionLaunchView: View {
         repositorySection
 
         promptEditor
+
+        if skillsPickerEnabled, let query = viewModel.skillQuery {
+          SkillPickerView(
+            query: query,
+            skills: viewModel.skills,
+            selectedIndex: viewModel.skillSelectedIndex,
+            onSelect: { viewModel.applySkill($0) },
+            onDismiss: { viewModel.skillQuery = nil }
+          )
+          .padding(.top, -6)
+          .zIndex(10)
+          .transition(.opacity.combined(with: .move(edge: .top)))
+        }
 
         if viewModel.isPlanModeEnabled {
           planModeHint
@@ -145,6 +160,17 @@ public struct MultiSessionLaunchView: View {
     .onChange(of: expandRequestID) { _, _ in
       withAnimation(.easeInOut(duration: 0.2)) {
         isExpanded = true
+      }
+    }
+    .task(id: viewModel.selectedRepository?.path) {
+      guard skillsPickerEnabled, let service = agentHub?.skillsService else { return }
+      await viewModel.loadSkills(service: service, projectPath: viewModel.selectedRepository?.path)
+    }
+    .onChange(of: skillsPickerEnabled) { _, enabled in
+      if enabled, let service = agentHub?.skillsService {
+        Task { await viewModel.loadSkills(service: service, projectPath: viewModel.selectedRepository?.path) }
+      } else if !enabled {
+        viewModel.skillQuery = nil
       }
     }
   }
@@ -337,7 +363,34 @@ public struct MultiSessionLaunchView: View {
             viewModel.isPlanModeEnabled.toggle()
             return .handled
           }
+          // Skill picker keyboard navigation
+          if skillsPickerEnabled, viewModel.skillQuery != nil {
+            let filtered = filteredSkills
+            switch press.key {
+            case .upArrow:
+              viewModel.skillSelectedIndex = max(0, viewModel.skillSelectedIndex - 1)
+              return .handled
+            case .downArrow:
+              viewModel.skillSelectedIndex = min(filtered.count - 1, viewModel.skillSelectedIndex + 1)
+              return .handled
+            case .return, .tab:
+              if viewModel.skillSelectedIndex < filtered.count {
+                viewModel.applySkill(filtered[viewModel.skillSelectedIndex])
+              }
+              return .handled
+            case .escape:
+              viewModel.skillQuery = nil
+              return .handled
+            default:
+              break
+            }
+          }
           return .ignored
+        }
+        .onChange(of: viewModel.sharedPrompt) { _, _ in
+          if skillsPickerEnabled {
+            viewModel.updateSkillQuery()
+          }
         }
     }
     .frame(minHeight: 60, maxHeight: 120)
@@ -350,6 +403,17 @@ public struct MultiSessionLaunchView: View {
       RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
         .stroke(Color.borderSubtle, lineWidth: 1)
     )
+  }
+
+  private var filteredSkills: [HubSkill] {
+    let query = viewModel.skillQuery ?? ""
+    let trimmed = query.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else { return Array(viewModel.skills.prefix(6)) }
+    let lower = trimmed.lowercased()
+    return Array(viewModel.skills.filter {
+      $0.name.lowercased().contains(lower) ||
+      $0.description.lowercased().contains(lower)
+    }.prefix(6))
   }
 
   private var promptPlaceholder: String {

@@ -17,6 +17,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.fileExplorerAlwaysModal)
   private var fileExplorerAlwaysModal: Bool = false
 
+  @AppStorage(AgentHubDefaults.skillsPickerEnabled)
+  private var skillsPickerEnabled: Bool = false
+
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
@@ -156,6 +159,14 @@ public struct SettingsView: View {
           VStack(alignment: .leading, spacing: 2) {
             Text("File explorer always modal")
             Text("Open file explorer as a floating window instead of a side panel")
+              .font(.caption)
+              .foregroundColor(.secondary)
+          }
+        }
+        Toggle(isOn: $skillsPickerEnabled) {
+          VStack(alignment: .leading, spacing: 2) {
+            Text("Skills picker")
+            Text("Type / in the prompt to browse and insert Claude and Codex skills")
               .font(.caption)
               .foregroundColor(.secondary)
           }

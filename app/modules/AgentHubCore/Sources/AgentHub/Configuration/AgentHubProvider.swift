@@ -101,6 +101,13 @@ public final class AgentHubProvider {
     }
   }()
 
+  // MARK: - Skills
+
+  /// Skills service for discovering and merging Claude and Codex skills/commands
+  public private(set) lazy var skillsService: SkillsService = {
+    SkillsService()
+  }()
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes
