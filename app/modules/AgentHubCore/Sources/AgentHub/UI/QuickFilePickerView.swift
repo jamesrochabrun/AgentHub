@@ -18,6 +18,7 @@ public struct QuickFilePickerView: View {
   @State private var results: [FileSearchResult] = []
   @State private var selectedIndex = 0
   @State private var showingRecent = true
+  @State private var isIndexing = false
   @FocusState private var isSearchFocused: Bool
 
   public init(
@@ -98,6 +99,21 @@ public struct QuickFilePickerView: View {
             withAnimation { proxy.scrollTo(newIndex, anchor: .center) }
           }
         }
+      } else if isIndexing && !searchQuery.isEmpty {
+        Divider()
+        VStack(spacing: 8) {
+          ProgressView()
+            .controlSize(.small)
+          Text("Indexing files…")
+            .font(.caption)
+            .foregroundColor(.secondary)
+          Text("Large repositories are indexed in the background the first time you search.")
+            .font(.caption2)
+            .foregroundColor(.secondary.opacity(0.7))
+            .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
       } else if !searchQuery.isEmpty {
         Divider()
         VStack(spacing: 6) {
@@ -161,6 +177,7 @@ public struct QuickFilePickerView: View {
     .task(id: searchQuery) {
       // Automatically cancels previous task when searchQuery changes
       if searchQuery.isEmpty {
+        isIndexing = false
         let recent = await FileIndexService.shared.recentFiles(in: projectPath)
         results = recent
         showingRecent = true
@@ -171,10 +188,17 @@ public struct QuickFilePickerView: View {
       // Debounce — but clear results immediately to avoid showing stale data
       results = []
       selectedIndex = 0
+      isIndexing = false
       try? await Task.sleep(for: .milliseconds(150))
       guard !Task.isCancelled else { return }
+      let status = await FileIndexService.shared.searchIndexStatus(projectPath: projectPath)
+      if status != .ready {
+        isIndexing = true
+        await FileIndexService.shared.prepareSearchIndex(projectPath: projectPath)
+      }
       let found = await FileIndexService.shared.search(query: searchQuery, in: projectPath)
       guard !Task.isCancelled else { return }
+      isIndexing = false
       results = found
       selectedIndex = 0
     }

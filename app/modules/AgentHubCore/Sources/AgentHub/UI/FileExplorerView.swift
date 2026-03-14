@@ -13,6 +13,24 @@ import HighlightSwift
 
 // MARK: - FileExplorerView
 
+enum EditorDisplayMode: Equatable {
+  case highlighted
+  case plainText
+
+  var badgeLabel: String? {
+    switch self {
+    case .highlighted:
+      nil
+    case .plainText:
+      "Fast Mode"
+    }
+  }
+
+  var highlightsSyntax: Bool {
+    self == .highlighted
+  }
+}
+
 /// A panel that lets the user browse and edit files in a project directory.
 ///
 /// - Shows a hierarchical file tree in a collapsible sidebar (240 pt wide).
@@ -43,7 +61,11 @@ public struct FileExplorerView: View {
   @State private var showSidebar = true
   @State private var showDiscardAlert = false
   @State private var expandedPaths: Set<String> = []
+  @State private var loadingDirectories: Set<String> = []
   @State private var scrollToPath: String?
+  @State private var hasLoadedTreeRoot = false
+  @State private var editorDisplayMode: EditorDisplayMode = .highlighted
+  @State private var editorDocumentID = UUID()
 
 
   // MARK: - Init
@@ -60,6 +82,14 @@ public struct FileExplorerView: View {
     self.onDismiss = onDismiss
     self.isEmbedded = isEmbedded
     self.initialFilePath = initialFilePath
+  }
+
+  private var normalizedProjectPath: String {
+    URL(fileURLWithPath: projectPath).standardizedFileURL.resolvingSymlinksInPath().path
+  }
+
+  private var loadTaskID: String {
+    normalizedProjectPath + "::" + (initialFilePath ?? "")
   }
 
   // MARK: - Body
@@ -102,14 +132,18 @@ public struct FileExplorerView: View {
       minHeight: isEmbedded ? 400 : nil,
       maxHeight: .infinity
     )
-    .task {
+    .task(id: loadTaskID) {
       await loadFileTree()
       if let initial = initialFilePath {
-        expandToFile(initial)
+        let resolvedInitialPath = URL(fileURLWithPath: initial)
+          .standardizedFileURL
+          .resolvingSymlinksInPath()
+          .path
+        await expandToFile(initial)
         await openFile(at: initial)
         // Delay scroll to let the expanded tree render
         try? await Task.sleep(for: .milliseconds(100))
-        scrollToPath = initial
+        scrollToPath = resolvedInitialPath
       }
     }
     .onKeyPress(.escape) {
@@ -157,8 +191,8 @@ public struct FileExplorerView: View {
 
       // File path breadcrumb or project name
       if let path = selectedFilePath {
-        let relPath = path.hasPrefix(projectPath + "/")
-          ? String(path.dropFirst(projectPath.count + 1))
+        let relPath = path.hasPrefix(normalizedProjectPath + "/")
+          ? String(path.dropFirst(normalizedProjectPath.count + 1))
           : (path as NSString).lastPathComponent
         HStack(spacing: 4) {
           Text(relPath)
@@ -166,6 +200,17 @@ public struct FileExplorerView: View {
             .foregroundColor(.secondary)
             .lineLimit(1)
             .truncationMode(.middle)
+          if let badgeLabel = editorDisplayMode.badgeLabel, fileError == nil {
+            Text(badgeLabel)
+              .font(.system(size: 10, weight: .medium))
+              .foregroundColor(.secondary)
+              .padding(.horizontal, 5)
+              .padding(.vertical, 1)
+              .background(
+                Capsule()
+                  .fill(Color.secondary.opacity(0.12))
+              )
+          }
           if hasUnsavedChanges {
             Text("Modified")
               .font(.system(size: 10, weight: .medium))
@@ -251,8 +296,12 @@ public struct FileExplorerView: View {
                 depth: 0,
                 selectedFilePath: $selectedFilePath,
                 expandedPaths: $expandedPaths,
+                loadingPaths: loadingDirectories,
                 onSelectFile: { path in
                   Task { await openFile(at: path) }
+                },
+                onToggleDirectory: { directory in
+                  Task { await toggleDirectory(directory) }
                 }
               )
             }
@@ -314,8 +363,16 @@ public struct FileExplorerView: View {
       CETextViewRepresentable(
         text: $fileContent,
         fileName: selectedFilePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
+        documentID: editorDocumentID,
+        displayMode: editorDisplayMode,
         onTextChange: { updatedText in
-          hasUnsavedChanges = updatedText != savedFileContent
+          if updatedText != savedFileContent {
+            hasUnsavedChanges = true
+          }
+        },
+        onIdleTextSnapshot: { idleText in
+          guard editorDisplayMode == .highlighted else { return }
+          hasUnsavedChanges = idleText != savedFileContent
         }
       )
       .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -326,23 +383,29 @@ public struct FileExplorerView: View {
 
   private func loadFileTree() async {
     isLoading = true
-    treeNodes = await FileIndexService.shared.index(projectPath: projectPath)
+    loadingDirectories.removeAll()
+    expandedPaths.removeAll()
+    treeNodes = await FileIndexService.shared.rootNodes(projectPath: normalizedProjectPath)
+    hasLoadedTreeRoot = true
     isLoading = false
   }
 
   private func openFile(at path: String) async {
+    let resolvedPath = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
     let binaryExts: Set<String> = [
       "png", "jpg", "jpeg", "gif", "pdf", "zip", "tar", "gz",
       "exe", "dylib", "a", "o", "mp3", "mp4", "mov", "woff", "ttf"
     ]
-    selectedFilePath = path
+    selectedFilePath = resolvedPath
     fileError = nil
     saveError = nil
     isLoadingFile = false
     fileContent = ""
     savedFileContent = ""
     hasUnsavedChanges = false
+    editorDisplayMode = .highlighted
+    editorDocumentID = UUID()
 
     guard !binaryExts.contains(ext) else {
       fileError = "Binary files cannot be displayed."
@@ -351,7 +414,7 @@ public struct FileExplorerView: View {
 
     // Guard against loading very large files that would exhaust memory
     let fm = FileManager.default
-    if let attrs = try? fm.attributesOfItem(atPath: path),
+    if let attrs = try? fm.attributesOfItem(atPath: resolvedPath),
        let fileSize = attrs[.size] as? UInt64, fileSize > 10_000_000 {
       fileError = "File is too large to display (>10 MB)."
       return
@@ -360,11 +423,13 @@ public struct FileExplorerView: View {
     isLoadingFile = true
 
     do {
-      let content = try await FileIndexService.shared.readFile(at: path, projectPath: projectPath)
+      let content = try await FileIndexService.shared.readFile(at: resolvedPath, projectPath: normalizedProjectPath)
       fileContent = content
       savedFileContent = content
       hasUnsavedChanges = false
-      await FileIndexService.shared.addToRecent(path)
+      editorDisplayMode = Self.displayMode(for: content)
+      editorDocumentID = UUID()
+      await FileIndexService.shared.addToRecent(resolvedPath)
     } catch {
       fileContent = ""
       savedFileContent = ""
@@ -381,7 +446,7 @@ public struct FileExplorerView: View {
     let content = fileContent
     Task {
       do {
-        try await FileIndexService.shared.writeFile(at: path, content: content, projectPath: projectPath)
+        try await FileIndexService.shared.writeFile(at: path, content: content, projectPath: normalizedProjectPath)
         await MainActor.run {
           savedFileContent = content
           hasUnsavedChanges = false
@@ -396,13 +461,109 @@ public struct FileExplorerView: View {
     }
   }
 
-  private func expandToFile(_ filePath: String) {
-    let relative = filePath.replacingOccurrences(of: projectPath + "/", with: "")
+  private func toggleDirectory(_ directory: FileTreeNode) async {
+    if expandedPaths.contains(directory.path) {
+      expandedPaths.remove(directory.path)
+      return
+    }
+
+    expandedPaths.insert(directory.path)
+    guard directory.isDirectory,
+          directory.children == nil,
+          !loadingDirectories.contains(directory.path) else {
+      return
+    }
+
+    await loadChildren(for: directory.path)
+  }
+
+  private func loadChildren(for directoryPath: String) async {
+    guard !loadingDirectories.contains(directoryPath) else { return }
+    loadingDirectories.insert(directoryPath)
+    let children = await FileIndexService.shared.children(of: directoryPath, in: normalizedProjectPath)
+    treeNodes = updatingChildren(
+      in: treeNodes,
+      for: directoryPath,
+      children: children
+    )
+    loadingDirectories.remove(directoryPath)
+  }
+
+  private func expandToFile(_ filePath: String) async {
+    let resolvedPath = URL(fileURLWithPath: filePath).standardizedFileURL.resolvingSymlinksInPath().path
+    let relative = resolvedPath.replacingOccurrences(of: normalizedProjectPath + "/", with: "")
     let parts = relative.components(separatedBy: "/")
-    var accumulated = projectPath
+    var accumulated = normalizedProjectPath
     for part in parts.dropLast() {
       accumulated += "/" + part
       expandedPaths.insert(accumulated)
+      await ensureDirectoryLoaded(accumulated)
+    }
+  }
+
+  private func ensureDirectoryLoaded(_ directoryPath: String) async {
+    if directoryPath == normalizedProjectPath {
+      if !hasLoadedTreeRoot {
+        await loadFileTree()
+      }
+      return
+    }
+
+    guard let node = findNode(at: directoryPath, in: treeNodes), node.children == nil else {
+      return
+    }
+    await loadChildren(for: directoryPath)
+  }
+
+  private func findNode(at path: String, in nodes: [FileTreeNode]) -> FileTreeNode? {
+    for node in nodes {
+      if node.path == path {
+        return node
+      }
+      if let children = node.children, let found = findNode(at: path, in: children) {
+        return found
+      }
+    }
+    return nil
+  }
+
+  private func updatingChildren(
+    in nodes: [FileTreeNode],
+    for targetPath: String,
+    children: [FileTreeNode]
+  ) -> [FileTreeNode] {
+    nodes.map { node in
+      var updated = node
+      if node.path == targetPath {
+        updated.children = children
+        return updated
+      }
+      if let existingChildren = node.children {
+        updated.children = updatingChildren(
+          in: existingChildren,
+          for: targetPath,
+          children: children
+        )
+      }
+      return updated
+    }
+  }
+
+  private static func displayMode(for content: String) -> EditorDisplayMode {
+    let byteCount = content.utf8.count
+    let lineCount = Self.lineCount(for: content)
+    if byteCount <= 300_000 && lineCount <= 5_000 {
+      return .highlighted
+    }
+    return .plainText
+  }
+
+  private static func lineCount(for content: String) -> Int {
+    guard !content.isEmpty else { return 0 }
+    return content.utf8.reduce(into: 1) { count, byte in
+      if byte == 0x0A {
+        count += 1
+      }
     }
   }
 }
@@ -415,7 +576,9 @@ private struct FileTreeNodeView: View {
   let depth: Int
   @Binding var selectedFilePath: String?
   @Binding var expandedPaths: Set<String>
+  let loadingPaths: Set<String>
   let onSelectFile: (String) -> Void
+  let onToggleDirectory: (FileTreeNode) -> Void
 
   @State private var isHovered = false
 
@@ -482,15 +645,30 @@ private struct FileTreeNodeView: View {
       .id(node.path)
 
       // Children
-      if node.isDirectory && isExpanded, let children = node.children {
-        ForEach(children) { child in
-          FileTreeNodeView(
-            node: child,
-            depth: depth + 1,
-            selectedFilePath: $selectedFilePath,
-            expandedPaths: $expandedPaths,
-            onSelectFile: onSelectFile
-          )
+      if node.isDirectory && isExpanded {
+        if loadingPaths.contains(node.path) {
+          HStack(spacing: 8) {
+            Spacer()
+              .frame(width: CGFloat(depth + 1) * 12 + 28)
+            ProgressView()
+              .controlSize(.small)
+            Text("Loading…")
+              .font(.system(size: 11))
+              .foregroundColor(.secondary)
+          }
+          .padding(.vertical, 4)
+        } else if let children = node.children {
+          ForEach(children) { child in
+            FileTreeNodeView(
+              node: child,
+              depth: depth + 1,
+              selectedFilePath: $selectedFilePath,
+              expandedPaths: $expandedPaths,
+              loadingPaths: loadingPaths,
+              onSelectFile: onSelectFile,
+              onToggleDirectory: onToggleDirectory
+            )
+          }
         }
       }
     }
@@ -498,11 +676,7 @@ private struct FileTreeNodeView: View {
 
   private func handleTap() {
     if node.isDirectory {
-      if isExpanded {
-        expandedPaths.remove(node.path)
-      } else {
-        expandedPaths.insert(node.path)
-      }
+      onToggleDirectory(node)
     } else {
       onSelectFile(node.path)
     }
@@ -556,7 +730,10 @@ public struct CETextViewRepresentable: NSViewRepresentable {
 
   @Binding var text: String
   let fileName: String
+  let documentID: UUID
+  let displayMode: EditorDisplayMode
   let onTextChange: (String) -> Void
+  let onIdleTextSnapshot: (String) -> Void
   @Environment(\.colorScheme) private var colorScheme
 
   public func makeCoordinator() -> Coordinator {
@@ -566,7 +743,7 @@ public struct CETextViewRepresentable: NSViewRepresentable {
   public func makeNSView(context: Context) -> NSScrollView {
     let scrollView = NSScrollView()
     scrollView.hasVerticalScroller = true
-    scrollView.hasHorizontalScroller = false
+    scrollView.hasHorizontalScroller = true
     scrollView.autohidesScrollers = true
     scrollView.borderType = .noBorder
     scrollView.contentView.postsFrameChangedNotifications = true
@@ -577,7 +754,7 @@ public struct CETextViewRepresentable: NSViewRepresentable {
       font: .monospacedSystemFont(ofSize: 12, weight: .regular),
       textColor: .labelColor,
       lineHeightMultiplier: 1.3,
-      wrapLines: true,
+      wrapLines: false,
       isEditable: true,
       isSelectable: true,
       letterSpacing: 1.0,
@@ -589,29 +766,55 @@ public struct CETextViewRepresentable: NSViewRepresentable {
     scrollView.documentView = textView
     textView.updateFrameIfNeeded()
     context.coordinator.textView = textView
-    context.coordinator.applySyntaxHighlighting(
-      text: text, fileName: fileName, colorScheme: colorScheme
+    context.coordinator.loadDocument(
+      text: text,
+      fileName: fileName,
+      documentID: documentID,
+      displayMode: displayMode,
+      colorScheme: colorScheme
     )
     return scrollView
   }
 
   public func updateNSView(_ scrollView: NSScrollView, context: Context) {
-    guard let textView = context.coordinator.textView else { return }
-    if textView.string != text {
-      context.coordinator.isUpdatingFromBinding = true
-      textView.string = text
-      textView.updateFrameIfNeeded()
-      context.coordinator.isUpdatingFromBinding = false
-      context.coordinator.applySyntaxHighlighting(
-        text: text, fileName: fileName, colorScheme: colorScheme
+    context.coordinator.parent = self
+    guard context.coordinator.textView != nil else { return }
+
+    if context.coordinator.currentDocumentID != documentID {
+      context.coordinator.loadDocument(
+        text: text,
+        fileName: fileName,
+        documentID: documentID,
+        displayMode: displayMode,
+        colorScheme: colorScheme
       )
+      return
     }
-    // Update highlighting if colorScheme changed
+
+    if context.coordinator.currentDisplayMode != displayMode {
+      context.coordinator.currentDisplayMode = displayMode
+      if displayMode.highlightsSyntax {
+        context.coordinator.applySyntaxHighlighting(
+          text: text,
+          fileName: fileName,
+          colorScheme: colorScheme
+        )
+      } else {
+        context.coordinator.applyPlainTextAppearance()
+      }
+    }
+
     if context.coordinator.lastColorScheme != colorScheme {
       context.coordinator.lastColorScheme = colorScheme
-      context.coordinator.applySyntaxHighlighting(
-        text: text, fileName: fileName, colorScheme: colorScheme
-      )
+      if displayMode.highlightsSyntax {
+        context.coordinator.applySyntaxHighlighting(
+          text: text,
+          fileName: fileName,
+          colorScheme: colorScheme
+        )
+      } else {
+        context.coordinator.applyPlainTextAppearance()
+      }
     }
   }
 
@@ -621,12 +824,43 @@ public struct CETextViewRepresentable: NSViewRepresentable {
     var parent: CETextViewRepresentable
     weak var textView: TextView?
     var isUpdatingFromBinding = false
-    var lastColorScheme: ColorScheme = .dark
+    var currentDocumentID: UUID?
+    var currentDisplayMode: EditorDisplayMode = .highlighted
+    var lastColorScheme: ColorScheme?
     private var highlightTask: Task<Void, Never>?
+    private var idleTask: Task<Void, Never>?
     private let highlighter = Highlight()
 
     init(parent: CETextViewRepresentable) {
       self.parent = parent
+    }
+
+    func loadDocument(
+      text: String,
+      fileName: String,
+      documentID: UUID,
+      displayMode: EditorDisplayMode,
+      colorScheme: ColorScheme
+    ) {
+      guard let textView else { return }
+      highlightTask?.cancel()
+      idleTask?.cancel()
+      currentDocumentID = documentID
+      currentDisplayMode = displayMode
+      lastColorScheme = colorScheme
+
+      isUpdatingFromBinding = true
+      textView.string = text
+      textView.textColor = .labelColor
+      textView.wrapLines = false
+      textView.updateFrameIfNeeded()
+      isUpdatingFromBinding = false
+
+      if displayMode.highlightsSyntax {
+        applySyntaxHighlighting(text: text, fileName: fileName, colorScheme: colorScheme)
+      } else {
+        applyPlainTextAppearance()
+      }
     }
 
     public func textView(
@@ -641,14 +875,16 @@ public struct CETextViewRepresentable: NSViewRepresentable {
         self.parent.text = newText
         self.parent.onTextChange(newText)
       }
-      // Re-highlight after edit with debounce
-      scheduleRehighlight(text: textView.string)
+      schedulePostEditWork(text: newText)
     }
 
     func applySyntaxHighlighting(text: String, fileName: String, colorScheme: ColorScheme) {
       highlightTask?.cancel()
+      guard currentDisplayMode.highlightsSyntax else {
+        applyPlainTextAppearance()
+        return
+      }
       guard !text.isEmpty else { return }
-      guard text.utf8.count < 500_000 else { return }
 
       let lang = Self.languageForFile(fileName)
       let colors: HighlightColors = colorScheme == .dark ? .dark(.github) : .light(.github)
@@ -691,14 +927,18 @@ public struct CETextViewRepresentable: NSViewRepresentable {
       }
     }
 
-    private func scheduleRehighlight(text: String) {
-      highlightTask?.cancel()
-      guard text.utf8.count < 500_000 else { return }
+    private func schedulePostEditWork(text: String) {
+      idleTask?.cancel()
       let fileName = parent.fileName
-      let colorScheme = lastColorScheme
-      highlightTask = Task { [weak self] in
-        try? await Task.sleep(for: .milliseconds(500))
+      let colorScheme = lastColorScheme ?? .light
+      let displayMode = currentDisplayMode
+      idleTask = Task { [weak self] in
+        try? await Task.sleep(for: .milliseconds(650))
         guard !Task.isCancelled else { return }
+        await MainActor.run { [weak self] in
+          self?.parent.onIdleTextSnapshot(text)
+        }
+        guard !Task.isCancelled, displayMode.highlightsSyntax else { return }
         self?.applySyntaxHighlighting(text: text, fileName: fileName, colorScheme: colorScheme)
       }
     }
@@ -709,6 +949,9 @@ public struct CETextViewRepresentable: NSViewRepresentable {
       guard storageLen > 0 else { return }
 
       storage.beginEditing()
+      let fullRange = NSRange(location: 0, length: storageLen)
+      storage.removeAttribute(.foregroundColor, range: fullRange)
+      storage.addAttribute(.foregroundColor, value: textView.textColor, range: fullRange)
       for (range, color) in colorRanges {
         let adjusted = NSRange(location: range.location + leadingOffset, length: range.length)
         if adjusted.location >= 0, adjusted.location + adjusted.length <= storageLen {
@@ -718,6 +961,22 @@ public struct CETextViewRepresentable: NSViewRepresentable {
       storage.endEditing()
 
       // Force CodeEditTextView to re-layout with new attributes
+      textView.layoutManager?.setNeedsLayout()
+      textView.needsLayout = true
+      textView.needsDisplay = true
+    }
+
+    func applyPlainTextAppearance() {
+      highlightTask?.cancel()
+      guard let textView, let storage = textView.textStorage else { return }
+      let storageLen = storage.length
+      guard storageLen > 0 else { return }
+
+      let fullRange = NSRange(location: 0, length: storageLen)
+      storage.beginEditing()
+      storage.removeAttribute(.foregroundColor, range: fullRange)
+      storage.addAttribute(.foregroundColor, value: textView.textColor, range: fullRange)
+      storage.endEditing()
       textView.layoutManager?.setNeedsLayout()
       textView.needsLayout = true
       textView.needsDisplay = true
