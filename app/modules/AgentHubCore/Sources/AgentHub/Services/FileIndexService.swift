@@ -9,6 +9,12 @@ import Foundation
 
 // MARK: - FileIndexService
 
+public enum FileSearchIndexStatus: Sendable {
+  case idle
+  case building
+  case ready
+}
+
 /// Scans project directories, respects .gitignore, caches the index, and provides fuzzy search.
 public actor FileIndexService {
 
@@ -57,7 +63,27 @@ public actor FileIndexService {
     let date: Date
   }
 
-  private var cache: [String: CacheEntry] = [:]
+  private struct IndexedFile: Sendable {
+    let name: String
+    let relativePath: String
+    let absolutePath: String
+  }
+
+  private struct SearchCacheEntry: Sendable {
+    let files: [IndexedFile]
+    let date: Date
+  }
+
+  private struct DirectoryEntry: Sendable {
+    let name: String
+    let path: String
+    let isDirectory: Bool
+  }
+
+  private var directoryCache: [String: CacheEntry] = [:]
+  private var directoryLoadTasks: [String: Task<[FileTreeNode], Never>] = [:]
+  private var searchCache: [String: SearchCacheEntry] = [:]
+  private var searchBuildTasks: [String: Task<SearchCacheEntry, Never>] = [:]
   private var recentPaths: [String] = []
   private static let maxRecentFiles = 20
 
@@ -94,14 +120,42 @@ public actor FileIndexService {
       }
   }
 
-  /// Returns the cached file tree for `projectPath`, or scans it fresh if the cache is stale.
+  /// Legacy entry point kept for compatibility. Returns the lazily loaded root nodes.
   public func index(projectPath: String) async -> [FileTreeNode] {
-    if let entry = cache[projectPath], !isCacheStale(entry.date) {
-      return entry.nodes
+    await rootNodes(projectPath: projectPath)
+  }
+
+  public func rootNodes(projectPath: String) async -> [FileTreeNode] {
+    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    return await cachedDirectoryNodes(at: resolvedProjectPath, rootPath: resolvedProjectPath)
+  }
+
+  public func children(of directoryPath: String, in projectPath: String) async -> [FileTreeNode] {
+    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    let resolvedDirectoryPath = Self.resolvedURL(for: directoryPath).path
+    guard Self.isPath(resolvedDirectoryPath, within: resolvedProjectPath) else {
+      return []
     }
-    let nodes = await scanDirectory(at: projectPath)
-    cache[projectPath] = CacheEntry(nodes: nodes, date: Date())
-    return nodes
+    return await cachedDirectoryNodes(at: resolvedDirectoryPath, rootPath: resolvedProjectPath)
+  }
+
+  public func prepareSearchIndex(projectPath: String) async {
+    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    guard searchCache[resolvedProjectPath].map({ !isCacheStale($0.date) }) != true else { return }
+    if searchBuildTasks[resolvedProjectPath] == nil {
+      searchBuildTasks[resolvedProjectPath] = makeSearchBuildTask(projectPath: resolvedProjectPath)
+    }
+  }
+
+  public func searchIndexStatus(projectPath: String) async -> FileSearchIndexStatus {
+    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    if let entry = searchCache[resolvedProjectPath], !isCacheStale(entry.date) {
+      return .ready
+    }
+    if searchBuildTasks[resolvedProjectPath] != nil {
+      return .building
+    }
+    return .idle
   }
 
   /// Searches files using a strict 3-tier approach:
@@ -111,8 +165,8 @@ public actor FileIndexService {
   /// All matching is case-insensitive substring, no fuzzy.
   public func search(query: String, in projectPath: String) async -> [FileSearchResult] {
     guard !query.isEmpty, query.count < 200 else { return [] }
-    let nodes = await index(projectPath: projectPath)
-    let allFiles = flattenFiles(nodes, projectPath: projectPath)
+    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    let allFiles = await searchIndex(projectPath: resolvedProjectPath)
     let q = query.lowercased()
 
     var scored: [FileSearchResult] = []
@@ -143,7 +197,7 @@ public actor FileIndexService {
 
       guard score > 0 else { continue }
       scored.append(FileSearchResult(
-        id: file.id, name: file.name, relativePath: file.relativePath,
+        id: file.absolutePath, name: file.name, relativePath: file.relativePath,
         absolutePath: file.absolutePath, score: score
       ))
     }
@@ -157,7 +211,19 @@ public actor FileIndexService {
 
   /// Removes the cache entry for `projectPath`.
   public func invalidate(projectPath: String) {
-    cache.removeValue(forKey: projectPath)
+    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    directoryCache.keys
+      .filter { Self.isPath($0, within: resolvedProjectPath) }
+      .forEach { directoryCache.removeValue(forKey: $0) }
+    directoryLoadTasks.keys
+      .filter { Self.isPath($0, within: resolvedProjectPath) }
+      .forEach { path in
+        directoryLoadTasks[path]?.cancel()
+        directoryLoadTasks.removeValue(forKey: path)
+      }
+    searchCache.removeValue(forKey: resolvedProjectPath)
+    searchBuildTasks[resolvedProjectPath]?.cancel()
+    searchBuildTasks.removeValue(forKey: resolvedProjectPath)
   }
 
   /// Reads a file at `path` as a UTF-8 string.
@@ -171,10 +237,10 @@ public actor FileIndexService {
   /// `projectPath` is required so the write is validated to stay within the project root.
   public func writeFile(at path: String, content: String, projectPath: String) throws {
     let validatedURL = try validatePath(path, within: projectPath, forWrite: true)
+    let didExist = FileManager.default.fileExists(atPath: validatedURL.path)
     try content.write(to: validatedURL, atomically: true, encoding: .utf8)
-    // Invalidate the cache for any project whose path is a prefix of the written file
-    for key in cache.keys where Self.isPath(validatedURL.path, within: key) {
-      cache.removeValue(forKey: key)
+    if !didExist {
+      invalidate(projectPath: projectPath)
     }
   }
 
@@ -212,96 +278,192 @@ public actor FileIndexService {
 
   // MARK: - Scanning
 
-  private func scanDirectory(at path: String) async -> [FileTreeNode] {
-    await Task.detached(priority: .utility) {
-      let rootPatterns = FileIndexService.parseGitignore(at: path, relativeTo: path)
-      return FileIndexService.scanDirectorySync(
-        at: path, relativeTo: path, depth: 0, inheritedRules: rootPatterns
+  private func cachedDirectoryNodes(at directoryPath: String, rootPath: String) async -> [FileTreeNode] {
+    if let entry = directoryCache[directoryPath], !isCacheStale(entry.date) {
+      return entry.nodes
+    }
+    if let task = directoryLoadTasks[directoryPath] {
+      return await task.value
+    }
+
+    let task = Task.detached(priority: .utility) {
+      let rules = FileIndexService.ignoreRules(forDirectoryAt: directoryPath, rootPath: rootPath)
+      return FileIndexService.scanDirectoryContentsSync(
+        at: directoryPath,
+        rootPath: rootPath,
+        rules: rules
       )
-    }.value
+    }
+    directoryLoadTasks[directoryPath] = task
+
+    let nodes = await task.value
+    directoryLoadTasks.removeValue(forKey: directoryPath)
+    directoryCache[directoryPath] = CacheEntry(nodes: nodes, date: Date())
+    return nodes
   }
 
-  private static func scanDirectorySync(
+  private func searchIndex(projectPath: String) async -> [IndexedFile] {
+    if let entry = searchCache[projectPath], !isCacheStale(entry.date) {
+      return entry.files
+    }
+
+    let task: Task<SearchCacheEntry, Never>
+    if let existingTask = searchBuildTasks[projectPath] {
+      task = existingTask
+    } else {
+      let newTask = makeSearchBuildTask(projectPath: projectPath)
+      searchBuildTasks[projectPath] = newTask
+      task = newTask
+    }
+
+    let entry = await task.value
+    searchBuildTasks.removeValue(forKey: projectPath)
+    searchCache[projectPath] = entry
+    return entry.files
+  }
+
+  private func makeSearchBuildTask(projectPath: String) -> Task<SearchCacheEntry, Never> {
+    Task.detached(priority: .utility) {
+      let files = FileIndexService.buildSearchIndexSync(projectPath: projectPath)
+      return SearchCacheEntry(files: files, date: Date())
+    }
+  }
+
+  private static func scanDirectoryContentsSync(
     at path: String,
-    relativeTo rootPath: String,
-    depth: Int,
-    inheritedRules: [IgnoreRule]
+    rootPath: String,
+    rules: [IgnoreRule]
   ) -> [FileTreeNode] {
-    guard depth < maxDepth else { return [] }
+    filteredDirectoryEntries(at: path, rootPath: rootPath, rules: rules).map { entry in
+      FileTreeNode(
+        id: entry.path,
+        name: entry.name,
+        path: entry.path,
+        isDirectory: entry.isDirectory
+      )
+    }
+  }
 
-    let fm = FileManager.default
+  private static func buildSearchIndexSync(projectPath: String) -> [IndexedFile] {
+    var files: [IndexedFile] = []
+    collectSearchEntriesSync(
+      at: projectPath,
+      rootPath: projectPath,
+      depth: 0,
+      inheritedRules: [],
+      into: &files
+    )
+    return files
+  }
 
-    guard let rawEntries = try? fm.contentsOfDirectory(atPath: path) else {
+  private static func collectSearchEntriesSync(
+    at path: String,
+    rootPath: String,
+    depth: Int,
+    inheritedRules: [IgnoreRule],
+    into results: inout [IndexedFile]
+  ) {
+    guard depth < maxDepth else { return }
+
+    let allRules = inheritedRules + parseGitignore(at: path, relativeTo: rootPath)
+    let entries = filteredDirectoryEntries(at: path, rootPath: rootPath, rules: allRules)
+
+    for entry in entries {
+      if entry.isDirectory {
+        collectSearchEntriesSync(
+          at: entry.path,
+          rootPath: rootPath,
+          depth: depth + 1,
+          inheritedRules: allRules,
+          into: &results
+        )
+      } else {
+        let relativePath = projectRelativePath(for: entry.path, relativeTo: rootPath)
+        results.append(IndexedFile(
+          name: entry.name,
+          relativePath: relativePath,
+          absolutePath: entry.path
+        ))
+      }
+    }
+  }
+
+  private static func ignoreRules(forDirectoryAt directoryPath: String, rootPath: String) -> [IgnoreRule] {
+    let resolvedRootPath = resolvedURL(for: rootPath).path
+    let resolvedDirectoryPath = resolvedURL(for: directoryPath).path
+    guard isPath(resolvedDirectoryPath, within: resolvedRootPath) else { return [] }
+
+    var rules: [IgnoreRule] = []
+    var currentPath = resolvedRootPath
+    rules += parseGitignore(at: currentPath, relativeTo: resolvedRootPath)
+
+    guard resolvedDirectoryPath != resolvedRootPath else { return rules }
+
+    let relativePath = String(resolvedDirectoryPath.dropFirst(resolvedRootPath.count + 1))
+    for component in relativePath.split(separator: "/") {
+      currentPath = (currentPath as NSString).appendingPathComponent(String(component))
+      rules += parseGitignore(at: currentPath, relativeTo: resolvedRootPath)
+    }
+
+    return rules
+  }
+
+  private static func filteredDirectoryEntries(
+    at path: String,
+    rootPath: String,
+    rules: [IgnoreRule]
+  ) -> [DirectoryEntry] {
+    rawDirectoryEntries(at: path)
+      .filter { entry in
+        shouldIncludeEntry(entry, rootPath: rootPath, rules: rules)
+      }
+      .sorted { lhs, rhs in
+        if lhs.isDirectory != rhs.isDirectory {
+          return lhs.isDirectory
+        }
+        return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+      }
+  }
+
+  private static func rawDirectoryEntries(at path: String) -> [DirectoryEntry] {
+    let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+    let directoryURL = URL(fileURLWithPath: path)
+
+    guard let rawURLs = try? FileManager.default.contentsOfDirectory(
+      at: directoryURL,
+      includingPropertiesForKeys: Array(resourceKeys),
+      options: [.skipsPackageDescendants]
+    ) else {
       return []
     }
 
-    // Merge inherited rules with this directory's own .gitignore rules.
-    let localRules = depth == 0 ? [] : parseGitignore(at: path, relativeTo: rootPath)
-    let allRules = inheritedRules + localRules
-
-    var nodes: [FileTreeNode] = []
-
-    for name in rawEntries {
-      // Hard-exclude check
-      if hardExcludedNames.contains(name) { continue }
-
-      // Hidden file filtering
-      if name.hasPrefix(".") {
-        guard allowedHiddenNames.contains(name) else { continue }
+    return rawURLs.compactMap { url in
+      guard let values = try? url.resourceValues(forKeys: resourceKeys),
+            values.isSymbolicLink != true else {
+        return nil
       }
 
-      let fullPath = (path as NSString).appendingPathComponent(name)
-      let relativePath = fullPath.hasPrefix(rootPath + "/")
-        ? String(fullPath.dropFirst(rootPath.count + 1))
-        : name
+      return DirectoryEntry(
+        name: url.lastPathComponent,
+        path: url.path,
+        isDirectory: values.isDirectory == true
+      )
+    }
+  }
 
-      // Skip symlinks to prevent traversal outside the project root
-      if let attrs = try? fm.attributesOfItem(atPath: fullPath),
-         attrs[.type] as? FileAttributeType == .typeSymbolicLink {
-        continue
-      }
+  private static func shouldIncludeEntry(
+    _ entry: DirectoryEntry,
+    rootPath: String,
+    rules: [IgnoreRule]
+  ) -> Bool {
+    if hardExcludedNames.contains(entry.name) { return false }
 
-      // Gitignore check
-      var isDirectory: ObjCBool = false
-      fm.fileExists(atPath: fullPath, isDirectory: &isDirectory)
-
-      if isIgnored(relativePath: relativePath, isDirectory: isDirectory.boolValue, rules: allRules) {
-        continue
-      }
-
-      if isDirectory.boolValue {
-        let children = scanDirectorySync(
-          at: fullPath, relativeTo: rootPath, depth: depth + 1,
-          inheritedRules: allRules
-        )
-        let node = FileTreeNode(
-          id: fullPath,
-          name: name,
-          path: fullPath,
-          isDirectory: true,
-          children: children
-        )
-        nodes.append(node)
-      } else {
-        let node = FileTreeNode(
-          id: fullPath,
-          name: name,
-          path: fullPath,
-          isDirectory: false
-        )
-        nodes.append(node)
-      }
+    if entry.name.hasPrefix(".") && !allowedHiddenNames.contains(entry.name) {
+      return false
     }
 
-    // Sort: directories first (alphabetical), then files (alphabetical)
-    nodes.sort { lhs, rhs in
-      if lhs.isDirectory != rhs.isDirectory {
-        return lhs.isDirectory
-      }
-      return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-    }
-
-    return nodes
+    let relativePath = projectRelativePath(for: entry.path, relativeTo: rootPath)
+    return !isIgnored(relativePath: relativePath, isDirectory: entry.isDirectory, rules: rules)
   }
 
   // MARK: - Gitignore Parsing
@@ -467,35 +629,4 @@ public actor FileIndexService {
 
   // MARK: - Search Helpers
 
-  /// Recursively flattens all leaf file nodes into `FileSearchResult` objects.
-  private func flattenFiles(_ nodes: [FileTreeNode], projectPath: String) -> [FileSearchResult] {
-    var results: [FileSearchResult] = []
-    flattenFilesInto(&results, nodes: nodes, projectPath: projectPath)
-    return results
-  }
-
-  private func flattenFilesInto(
-    _ results: inout [FileSearchResult],
-    nodes: [FileTreeNode],
-    projectPath: String
-  ) {
-    for node in nodes {
-      if node.isDirectory {
-        if let children = node.children {
-          flattenFilesInto(&results, nodes: children, projectPath: projectPath)
-        }
-      } else {
-        let relativePath = node.path.hasPrefix(projectPath + "/")
-          ? String(node.path.dropFirst(projectPath.count + 1))
-          : node.name
-        results.append(FileSearchResult(
-          id: node.path,
-          name: node.name,
-          relativePath: relativePath,
-          absolutePath: node.path,
-          score: 0
-        ))
-      }
-    }
-  }
 }

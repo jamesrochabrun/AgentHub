@@ -158,4 +158,99 @@ struct FileIndexServicePrivacyTests {
     #expect(secretsResults.isEmpty)
     #expect(swiftlintResults.contains { $0.relativePath == ".swiftlint.yml" })
   }
+
+  @Test("Loads only root nodes until a directory is expanded")
+  func loadsRootNodesLazily() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+    try fixture.writeProjectFile("Sources/Feature/Detail.swift", content: "struct Detail {}")
+    try fixture.writeProjectFile("README.md", content: "# AgentHub")
+
+    let service = FileIndexService()
+    let rootNodes = await service.rootNodes(projectPath: fixture.projectPath)
+
+    #expect(rootNodes.map(\.name) == ["Sources", "README.md"])
+    #expect(rootNodes.first(where: { $0.name == "Sources" })?.children == nil)
+
+    let sourceChildren = await service.children(
+      of: fixture.projectPath + "/Sources",
+      in: fixture.projectPath
+    )
+
+    #expect(sourceChildren.map(\.name) == ["Feature", "App.swift"])
+    #expect(sourceChildren.first(where: { $0.name == "Feature" })?.children == nil)
+  }
+
+  @Test("Keeps tree loading and search indexing aligned with ignore rules")
+  func keepsTreeAndSearchRulesInSync() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile(".gitignore", content: "Generated/\n")
+    try fixture.writeProjectFile("Generated/tmp.swift", content: "let generated = true")
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+
+    let service = FileIndexService()
+    let rootNodes = await service.rootNodes(projectPath: fixture.projectPath)
+    let searchResults = await service.search(query: "tmp", in: fixture.projectPath)
+
+    #expect(rootNodes.contains { $0.name == "Sources" })
+    #expect(!rootNodes.contains { $0.name == "Generated" })
+    #expect(searchResults.isEmpty)
+  }
+
+  @Test("Content-only writes keep the search index warm")
+  func contentOnlyWritesKeepSearchIndexReady() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+
+    let service = FileIndexService()
+    let initialResults = await service.search(query: "app", in: fixture.projectPath)
+    let initialStatus = await service.searchIndexStatus(projectPath: fixture.projectPath)
+
+    try await service.writeFile(
+      at: fixture.projectPath + "/Sources/App.swift",
+      content: "struct App { let version = 2 }",
+      projectPath: fixture.projectPath
+    )
+
+    let statusAfterWrite = await service.searchIndexStatus(projectPath: fixture.projectPath)
+    let resultsAfterWrite = await service.search(query: "app", in: fixture.projectPath)
+
+    #expect(initialResults.map(\.absolutePath) == resultsAfterWrite.map(\.absolutePath))
+    #expect(initialStatus == .ready)
+    #expect(statusAfterWrite == .ready)
+  }
+
+  @Test("Creating a new file invalidates cached directory listings")
+  func creatingNewFileInvalidatesDirectoryCache() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+
+    let service = FileIndexService()
+    let initialChildren = await service.children(
+      of: fixture.projectPath + "/Sources",
+      in: fixture.projectPath
+    )
+
+    try await service.writeFile(
+      at: fixture.projectPath + "/Sources/NewFile.swift",
+      content: "struct NewFile {}",
+      projectPath: fixture.projectPath
+    )
+
+    let refreshedChildren = await service.children(
+      of: fixture.projectPath + "/Sources",
+      in: fixture.projectPath
+    )
+
+    #expect(initialChildren.map(\.name) == ["App.swift"])
+    #expect(refreshedChildren.map(\.name) == ["App.swift", "NewFile.swift"])
+  }
 }
