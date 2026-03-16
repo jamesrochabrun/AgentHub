@@ -1,5 +1,8 @@
 # AgentHub
 
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-048754?logo=buymeacoffee&style=for-the-badge)](https://buymeacoffee.com/jamesrochabrun)
+
+
 A native macOS app for managing Claude Code and Codex CLI sessions. Monitor sessions in real-time, run multiple terminals in parallel, preview diffs, create worktrees, launch multi-provider sessions, and more — all from a single hub.
 
 <img width="1913" height="1079" alt="Hub" src="https://github.com/user-attachments/assets/99518d02-8ca6-458a-900c-bfd1f4e57419" />
