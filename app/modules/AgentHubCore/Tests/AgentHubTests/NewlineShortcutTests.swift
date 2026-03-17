@@ -1,5 +1,5 @@
 import Testing
-@testable import AgentHub
+@testable import AgentHubCore
 
 @Suite("NewlineShortcut")
 struct NewlineShortcutTests {
