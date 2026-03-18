@@ -12,6 +12,10 @@ import Foundation
 /// Parser for session JSONL files that extracts monitoring data
 public struct SessionJSONLParser {
 
+  private static let maxRecentActivities = 100
+  private static let maxDetailedCodeChangeActivities = 5
+  private static let maxDetectedResourceLinks = 50
+
   // MARK: - Entry Types
 
   /// Raw entry from session JSONL file
@@ -263,12 +267,7 @@ public struct SessionJSONLParser {
           // Extract URL from tool_use input (e.g., WebFetch url parameter)
           if let dict = block.input?.value as? [String: Any],
              let urlString = dict["url"] as? String {
-            let links = extractResourceLinks(from: urlString, timestamp: timestamp)
-            for link in links {
-              if !result.detectedResourceLinks.contains(where: { $0.url == link.url }) {
-                result.detectedResourceLinks.append(link)
-              }
-            }
+            appendResourceLinks(extractResourceLinks(from: urlString, timestamp: timestamp), to: &result)
           }
         }
 
@@ -297,12 +296,7 @@ public struct SessionJSONLParser {
               textToScan = arr.compactMap { $0["text"] as? String }.joined(separator: " ")
             }
             if !textToScan.isEmpty {
-              let links = extractResourceLinks(from: textToScan, timestamp: timestamp)
-              for link in links {
-                if !result.detectedResourceLinks.contains(where: { $0.url == link.url }) {
-                  result.detectedResourceLinks.append(link)
-                }
-              }
+              appendResourceLinks(extractResourceLinks(from: textToScan, timestamp: timestamp), to: &result)
             }
           }
         }
@@ -320,12 +314,7 @@ public struct SessionJSONLParser {
           if text.contains("```mermaid") {
             result.hasMermaidContent = true
           }
-          let links = extractResourceLinks(from: text, timestamp: timestamp)
-          for link in links {
-            if !result.detectedResourceLinks.contains(where: { $0.url == link.url }) {
-              result.detectedResourceLinks.append(link)
-            }
-          }
+          appendResourceLinks(extractResourceLinks(from: text, timestamp: timestamp), to: &result)
         }
         addActivity(
           type: .assistantMessage,
@@ -418,9 +407,11 @@ public struct SessionJSONLParser {
     result.recentActivities.append(entry)
 
     // Keep more activities for code change tracking (was 20, now 100)
-    if result.recentActivities.count > 100 {
-      result.recentActivities.removeFirst(result.recentActivities.count - 100)
+    if result.recentActivities.count > maxRecentActivities {
+      result.recentActivities.removeFirst(result.recentActivities.count - maxRecentActivities)
     }
+
+    compactRecentCodeChangeActivities(in: &result)
   }
 
   /// Extract full input parameters for code-changing tools (Edit, Write, MultiEdit)
@@ -520,6 +511,45 @@ public struct SessionJSONLParser {
     }
 
     return nil
+  }
+
+  private static func compactRecentCodeChangeActivities(in result: inout ParseResult) {
+    var retainedDetailedActivities = 0
+
+    for index in result.recentActivities.indices.reversed() {
+      guard let toolInput = result.recentActivities[index].toolInput else { continue }
+
+      if retainedDetailedActivities < maxDetailedCodeChangeActivities {
+        retainedDetailedActivities += 1
+        continue
+      }
+
+      let compactedInput = CodeChangeInput(
+        toolType: toolInput.toolType,
+        filePath: toolInput.filePath
+      )
+
+      if result.recentActivities[index].toolInput != compactedInput {
+        let existing = result.recentActivities[index]
+        result.recentActivities[index] = ActivityEntry(
+          id: existing.id,
+          timestamp: existing.timestamp,
+          type: existing.type,
+          description: existing.description,
+          toolInput: compactedInput
+        )
+      }
+    }
+  }
+
+  private static func appendResourceLinks(_ links: [ResourceLink], to result: inout ParseResult) {
+    for link in links where !result.detectedResourceLinks.contains(where: { $0.url == link.url }) {
+      result.detectedResourceLinks.append(link)
+    }
+
+    if result.detectedResourceLinks.count > maxDetectedResourceLinks {
+      result.detectedResourceLinks.removeFirst(result.detectedResourceLinks.count - maxDetectedResourceLinks)
+    }
   }
 
   /// Extract URLs from text content and return as ResourceLink instances
