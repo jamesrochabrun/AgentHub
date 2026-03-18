@@ -16,7 +16,7 @@ public struct CodexSessionJSONLParser {
 
   /// Minimal parsing result containing only fields needed for global stats aggregation.
   /// Significantly reduces memory overhead by skipping activities, tool calls, timestamps, and status.
-  public struct GlobalStatsParseResult {
+  public struct GlobalStatsParseResult: Sendable {
     public var model: String?
     public var totalInputTokens: Int = 0
     public var totalOutputTokens: Int = 0
@@ -28,7 +28,7 @@ public struct CodexSessionJSONLParser {
 
   // MARK: - Parsing Results
 
-  public struct ParseResult {
+  public struct ParseResult: Sendable {
     public var model: String?
     public var lastInputTokens: Int = 0
     public var lastOutputTokens: Int = 0
@@ -49,7 +49,7 @@ public struct CodexSessionJSONLParser {
     public init() {}
   }
 
-  public struct PendingToolInfo {
+  public struct PendingToolInfo: Sendable {
     public let toolName: String
     public let toolUseId: String
     public let timestamp: Date

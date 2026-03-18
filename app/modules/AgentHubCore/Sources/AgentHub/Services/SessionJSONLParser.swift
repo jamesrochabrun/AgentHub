@@ -71,7 +71,7 @@ public struct SessionJSONLParser {
   // MARK: - Parsing Results
 
   /// Result of parsing a session file
-  public struct ParseResult {
+  public struct ParseResult: Sendable {
     public var model: String?
     // Context window tracking: use LAST inputTokens (each API call sends full conversation)
     public var lastInputTokens: Int = 0
@@ -95,7 +95,7 @@ public struct SessionJSONLParser {
   }
 
   /// Info about a pending tool use
-  public struct PendingToolInfo {
+  public struct PendingToolInfo: Sendable {
     public let toolName: String
     public let toolUseId: String
     public let timestamp: Date
