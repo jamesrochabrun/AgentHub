@@ -39,8 +39,8 @@ public actor CLISessionMonitorService {
 
   /// Byte offset into history.jsonl up to which we've already parsed.
   private var lastHistoryOffset: UInt64 = 0
-  /// Accumulated history entries from previous incremental parses.
-  private var cachedHistoryEntries: [HistoryEntry] = []
+  /// Accumulated per-session history summaries from previous incremental parses.
+  private var cachedHistorySummaries: [String: HistorySessionSummary] = [:]
 
   /// Cache of worktree detection results keyed by repository path.
   private var worktreeCache: [String: [WorktreeBranch]] = [:]
@@ -74,6 +74,7 @@ public actor CLISessionMonitorService {
     )
 
     selectedRepositories.append(repository)
+    invalidateHistoryCache()
 
     // Scan for sessions in the new repository
     // Skip worktree re-detection since we just detected worktrees for this repo
@@ -104,6 +105,8 @@ public actor CLISessionMonitorService {
       selectedRepositories.append(repository)
     }
 
+    invalidateHistoryCache()
+
     // Single refreshSessions call for all repos
     await refreshSessions(skipWorktreeRedetection: true)
   }
@@ -112,6 +115,7 @@ public actor CLISessionMonitorService {
   /// - Parameter path: Path to the repository to remove
   public func removeRepository(_ path: String) async {
     selectedRepositories.removeAll { $0.path == path }
+    invalidateHistoryCache()
     repositoriesSubject.send(selectedRepositories)
   }
 
@@ -123,6 +127,7 @@ public actor CLISessionMonitorService {
   /// Sets the list of selected repositories (for persistence restoration)
   public func setSelectedRepositories(_ repositories: [SelectedRepository]) async {
     selectedRepositories = repositories
+    invalidateHistoryCache()
     await refreshSessions()
   }
 
@@ -173,30 +178,20 @@ public actor CLISessionMonitorService {
     let allPaths = getAllMonitoredPaths()
 
     // Parse history for selected paths only
-    let historyEntries = await parseHistoryForPaths(allPaths)
-
-    // Group entries by session ID
-    let sessionEntries = Dictionary(grouping: historyEntries) { $0.sessionId }
+    let sessionSummaries = await parseHistoryForPaths(allPaths)
 
     // Build a map of session ID -> (gitBranch, slug) (read from session files in parallel)
-    let sessionMetadata = await readSessionMetadataBatch(sessionEntries: sessionEntries)
+    let sessionMetadata = await readSessionMetadataBatch(sessionSummaries: sessionSummaries)
 
     // Build sessions and assign to worktrees
     var updatedRepositories = selectedRepositories
-
-    // Collect all worktree branch names for this repository set
-    var worktreeBranchNames: Set<String> = []
-    for repo in updatedRepositories {
-      for worktree in repo.worktrees {
-        worktreeBranchNames.insert(worktree.name)
-      }
-    }
 
     // Track which sessions have been assigned to prevent duplicates
     var assignedSessionIds: Set<String> = []
 
     // Fetch all existing repo mappings for sessions we're processing
-    let allSessionIds = Array(sessionEntries.keys)
+    let allSessionIds = Array(sessionSummaries.keys)
+    pruneSessionMetadataCache(retaining: Set(allSessionIds))
     let existingMappings = try? await metadataStore?.getRepoMappings(for: allSessionIds)
 
     for repoIndex in updatedRepositories.indices {
@@ -211,15 +206,13 @@ public actor CLISessionMonitorService {
         // Find sessions for this worktree
         var sessions: [CLISession] = []
 
-        for (sessionId, entries) in sessionEntries {
-          guard let firstEntry = entries.first else { continue }
-
+        for (sessionId, summary) in sessionSummaries {
           // Skip if already assigned to another worktree
           guard !assignedSessionIds.contains(sessionId) else { continue }
 
           // PRIMARY: Exact path match - session's project directory matches this worktree
-          // This is the most reliable criterion because firstEntry.project IS where the session runs
-          let pathMatchesWorktree = firstEntry.project == worktreePath
+          // This is the most reliable criterion because summary.project IS where the session runs
+          let pathMatchesWorktree = summary.project == worktreePath
 
           if pathMatchesWorktree {
             // This is definitively the correct worktree - use this session
@@ -258,7 +251,7 @@ public actor CLISessionMonitorService {
             }
 
             // Check if session is active
-            let encodedPath = firstEntry.project.claudeProjectPathEncoded
+            let encodedPath = summary.project.claudeProjectPathEncoded
             let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
             var isActive = false
             if let attrs = try? FileManager.default.attributesOfItem(atPath: sessionFilePath),
@@ -267,20 +260,16 @@ public actor CLISessionMonitorService {
               isActive = secondsAgo < 60
             }
 
-            let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
-            let firstMessage = sortedEntries.first?.display
-            let lastMessage = sortedEntries.last?.display
-
             let session = CLISession(
               id: sessionId,
-              projectPath: firstEntry.project,
+              projectPath: summary.project,
               branchName: metadata?.branch ?? worktreeBranch,
               isWorktree: isWorktreeEntry,
-              lastActivityAt: entries.map { $0.date }.max() ?? Date(),
-              messageCount: entries.count,
+              lastActivityAt: summary.lastActivityDate,
+              messageCount: summary.messageCount,
               isActive: isActive,
-              firstMessage: firstMessage,
-              lastMessage: lastMessage,
+              firstMessage: summary.firstDisplay,
+              lastMessage: summary.lastDisplay,
               slug: metadata?.slug
             )
 
@@ -293,7 +282,7 @@ public actor CLISessionMonitorService {
           // (e.g., session in /repo/subfolder should match worktree at /repo)
           // This must check the CURRENT worktree path, not all repo paths,
           // otherwise sessions from other worktrees would be incorrectly assigned
-          let pathIsSubdirectory = firstEntry.project.hasPrefix(worktreePath + "/")
+          let pathIsSubdirectory = summary.project.hasPrefix(worktreePath + "/")
           guard pathIsSubdirectory else { continue }
 
           // Get session's metadata from session file
@@ -333,7 +322,7 @@ public actor CLISessionMonitorService {
 
           // Check if session is active by looking at session file modification time
           // A session is active if its .jsonl file was modified in the last 60 seconds
-          let encodedPath = firstEntry.project.claudeProjectPathEncoded
+          let encodedPath = summary.project.claudeProjectPathEncoded
           let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
           var isActive = false
           if let attrs = try? FileManager.default.attributesOfItem(atPath: sessionFilePath),
@@ -342,21 +331,16 @@ public actor CLISessionMonitorService {
             isActive = secondsAgo < 60
           }
 
-          // Get the first and last message (sorted by timestamp)
-          let sortedEntries = entries.sorted { $0.timestamp < $1.timestamp }
-          let firstMessage = sortedEntries.first?.display
-          let lastMessage = sortedEntries.last?.display
-
           let session = CLISession(
             id: sessionId,
-            projectPath: firstEntry.project,
+            projectPath: summary.project,
             branchName: metadata?.branch ?? worktreeBranch,
             isWorktree: isWorktreeEntry,
-            lastActivityAt: entries.map { $0.date }.max() ?? Date(),
-            messageCount: entries.count,
+            lastActivityAt: summary.lastActivityDate,
+            messageCount: summary.messageCount,
             isActive: isActive,
-            firstMessage: firstMessage,
-            lastMessage: lastMessage,
+            firstMessage: summary.firstDisplay,
+            lastMessage: summary.lastDisplay,
             slug: metadata?.slug
           )
 
@@ -489,23 +473,35 @@ public actor CLISessionMonitorService {
     let slug: String?
   }
 
+  struct HistorySessionSummary: Sendable, Equatable {
+    var project: String
+    var firstDisplay: String
+    var lastDisplay: String
+    var firstTimestamp: Int64
+    var lastTimestamp: Int64
+    var messageCount: Int
+
+    var lastActivityDate: Date {
+      Date(timeIntervalSince1970: TimeInterval(lastTimestamp) / 1000.0)
+    }
+  }
+
   /// Reads gitBranch and slug from multiple session files in parallel using Task.detached.
   /// Uses `sessionMetadataCache` to skip re-reading files for known sessions.
-  /// - Parameter sessionEntries: Dictionary of session IDs to their history entries
+  /// - Parameter sessionSummaries: Dictionary of session IDs to their history summaries
   /// - Returns: Dictionary mapping session IDs to their metadata (branch and slug)
-  private func readSessionMetadataBatch(sessionEntries: [String: [HistoryEntry]]) async -> [String: SessionMetadata] {
+  private func readSessionMetadataBatch(sessionSummaries: [String: HistorySessionSummary]) async -> [String: SessionMetadata] {
     let claudePath = claudeDataPath  // Capture for sendable closure
 
     // Separate cached from uncached sessions
     var results: [String: SessionMetadata] = [:]
     var uncachedEntries: [(sessionId: String, filePath: String)] = []
 
-    for (sessionId, entries) in sessionEntries {
+    for (sessionId, summary) in sessionSummaries {
       if let cached = sessionMetadataCache[sessionId] {
         results[sessionId] = cached
       } else {
-        guard let firstEntry = entries.first else { continue }
-        let encodedPath = firstEntry.project.claudeProjectPathEncoded
+        let encodedPath = summary.project.claudeProjectPathEncoded
         let filePath = "\(claudePath)/projects/\(encodedPath)/\(sessionId).jsonl"
         uncachedEntries.append((sessionId, filePath))
       }
@@ -587,53 +583,50 @@ public actor CLISessionMonitorService {
   /// Parses history.jsonl incrementally — only reads new bytes since last parse.
   /// On first call or if the file was truncated, does a full parse.
   /// Uses Task.detached to run heavy I/O and parsing off the actor's isolation context.
-  private func parseHistoryForPaths(_ paths: Set<String>) async -> [HistoryEntry] {
+  private func parseHistoryForPaths(_ paths: Set<String>) async -> [String: HistorySessionSummary] {
     let historyPath = claudeDataPath + "/history.jsonl"
     let previousOffset = lastHistoryOffset
-    let previousEntries = cachedHistoryEntries
+    let previousSummaries = cachedHistorySummaries
 
-    let (newEntries, newOffset) = await Task.detached(priority: .userInitiated) {
+    let (newSummaries, newOffset) = await Task.detached(priority: .userInitiated) {
       // Check file size
       guard let attrs = try? FileManager.default.attributesOfItem(atPath: historyPath),
             let fileSize = attrs[.size] as? UInt64 else {
-        return ([HistoryEntry](), UInt64(0))
+        return ([String: HistorySessionSummary](), UInt64(0))
       }
 
       // If file was truncated or this is the first parse, do full parse
       let needsFullParse = fileSize < previousOffset || previousOffset == 0
 
       let data: Data
-      let baseOffset: UInt64
 
       if needsFullParse {
         guard let fullData = FileManager.default.contents(atPath: historyPath) else {
-          return ([HistoryEntry](), UInt64(0))
+          return ([String: HistorySessionSummary](), UInt64(0))
         }
         data = fullData
-        baseOffset = 0
       } else if fileSize > previousOffset {
         // Incremental: read only new bytes
         guard let handle = FileHandle(forReadingAtPath: historyPath) else {
-          return (previousEntries, previousOffset)
+          return (previousSummaries, previousOffset)
         }
         defer { try? handle.close() }
         do {
           try handle.seek(toOffset: previousOffset)
           guard let newData = try handle.read(upToCount: Int(fileSize - previousOffset)) else {
-            return (previousEntries, previousOffset)
+            return (previousSummaries, previousOffset)
           }
           data = newData
-          baseOffset = previousOffset
         } catch {
-          return (previousEntries, previousOffset)
+          return (previousSummaries, previousOffset)
         }
       } else {
         // No new data
-        return (previousEntries, previousOffset)
+        return (previousSummaries, previousOffset)
       }
 
       guard let content = String(data: data, encoding: .utf8) else {
-        return (needsFullParse ? [HistoryEntry]() : previousEntries, needsFullParse ? UInt64(0) : previousOffset)
+        return (needsFullParse ? [String: HistorySessionSummary]() : previousSummaries, needsFullParse ? UInt64(0) : previousOffset)
       }
 
       let decoder = JSONDecoder()
@@ -647,24 +640,68 @@ public actor CLISessionMonitorService {
           }
           return entry
         }
-
-      if needsFullParse {
-        return (parsed, fileSize)
-      } else {
-        return (previousEntries + parsed, fileSize)
-      }
+      var summaries = needsFullParse ? [String: HistorySessionSummary]() : previousSummaries
+      CLISessionMonitorService.accumulateHistoryEntries(parsed, filteredBy: paths, into: &summaries)
+      return (summaries, fileSize)
     }.value
 
     // Update cached state
-    cachedHistoryEntries = newEntries
+    cachedHistorySummaries = newSummaries
     lastHistoryOffset = newOffset
 
-    // Filter by paths (always needed since monitored paths may change)
-    return newEntries.filter { entry in
-      paths.contains { path in
-        entry.project.hasPrefix(path) || entry.project == path
-      }
+    return newSummaries
+  }
+
+  static func accumulateHistoryEntries(
+    _ entries: [HistoryEntry],
+    filteredBy paths: Set<String>,
+    into summaries: inout [String: HistorySessionSummary]
+  ) {
+    for entry in entries where matchesMonitoredPath(entry.project, monitoredPaths: paths) {
+      mergeHistoryEntry(entry, into: &summaries)
     }
+  }
+
+  static func matchesMonitoredPath(_ project: String, monitoredPaths: Set<String>) -> Bool {
+    monitoredPaths.contains { path in
+      project == path || project.hasPrefix(path + "/")
+    }
+  }
+
+  static func mergeHistoryEntry(_ entry: HistoryEntry, into summaries: inout [String: HistorySessionSummary]) {
+    if var existing = summaries[entry.sessionId] {
+      if entry.timestamp < existing.firstTimestamp {
+        existing.firstTimestamp = entry.timestamp
+        existing.firstDisplay = entry.display
+      }
+
+      if entry.timestamp >= existing.lastTimestamp {
+        existing.lastTimestamp = entry.timestamp
+        existing.lastDisplay = entry.display
+        existing.project = entry.project
+      }
+
+      existing.messageCount += 1
+      summaries[entry.sessionId] = existing
+    } else {
+      summaries[entry.sessionId] = HistorySessionSummary(
+        project: entry.project,
+        firstDisplay: entry.display,
+        lastDisplay: entry.display,
+        firstTimestamp: entry.timestamp,
+        lastTimestamp: entry.timestamp,
+        messageCount: 1
+      )
+    }
+  }
+
+  private func invalidateHistoryCache() {
+    cachedHistorySummaries = [:]
+    lastHistoryOffset = 0
+  }
+
+  private func pruneSessionMetadataCache(retaining sessionIds: Set<String>) {
+    sessionMetadataCache = sessionMetadataCache.filter { sessionIds.contains($0.key) }
   }
 
 }
