@@ -67,6 +67,15 @@ public struct FileExplorerView: View {
   @State private var editorDisplayMode: EditorDisplayMode = .highlighted
   @State private var editorDocumentID = UUID()
 
+  // Find bar
+  @State private var showFindBar = false
+  @State private var findQuery = ""
+  @State private var findMatchRanges: [NSRange] = []
+  @State private var findCurrentIndex = 0
+  @State private var findCaseSensitive = false
+  @State private var coordinatorRef = CoordinatorRef()
+  @State private var findDebounceTask: Task<Void, Never>?
+
 
   // MARK: - Init
 
@@ -147,6 +156,10 @@ public struct FileExplorerView: View {
       }
     }
     .onKeyPress(.escape) {
+      if showFindBar {
+        dismissFindBar()
+        return .handled
+      }
       if hasUnsavedChanges {
         showDiscardAlert = true
         return .handled
@@ -360,22 +373,47 @@ public struct FileExplorerView: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     } else {
-      CETextViewRepresentable(
-        text: $fileContent,
-        fileName: selectedFilePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
-        documentID: editorDocumentID,
-        displayMode: editorDisplayMode,
-        onTextChange: { updatedText in
-          if updatedText != savedFileContent {
-            hasUnsavedChanges = true
-          }
-        },
-        onIdleTextSnapshot: { idleText in
-          guard editorDisplayMode == .highlighted else { return }
-          hasUnsavedChanges = idleText != savedFileContent
+      VStack(spacing: 0) {
+        if showFindBar {
+          FindBarView(
+            query: $findQuery,
+            currentIndex: findCurrentIndex,
+            totalMatches: findMatchRanges.count,
+            caseSensitive: $findCaseSensitive,
+            onNext: { navigateFind(delta: 1) },
+            onPrevious: { navigateFind(delta: -1) },
+            onDismiss: { dismissFindBar() },
+            onQueryChanged: { debouncedFind() },
+            onCaseSensitiveChanged: { performFind() }
+          )
+          Divider()
         }
-      )
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
+        CETextViewRepresentable(
+          text: $fileContent,
+          fileName: selectedFilePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
+          documentID: editorDocumentID,
+          displayMode: editorDisplayMode,
+          coordinatorRef: coordinatorRef,
+          onTextChange: { updatedText in
+            if updatedText != savedFileContent {
+              hasUnsavedChanges = true
+            }
+          },
+          onIdleTextSnapshot: { idleText in
+            guard editorDisplayMode == .highlighted else { return }
+            hasUnsavedChanges = idleText != savedFileContent
+          },
+          onTextEditedWhileSearching: showFindBar ? { performFind() } : nil
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+      }
+      .background {
+        // Hidden button to capture Cmd+F
+        Button("") { toggleFindBar() }
+          .keyboardShortcut("f", modifiers: .command)
+          .opacity(0)
+          .frame(width: 0, height: 0)
+      }
     }
   }
 
@@ -390,6 +428,55 @@ public struct FileExplorerView: View {
     isLoading = false
   }
 
+  // MARK: - Find Bar Actions
+
+  private func toggleFindBar() {
+    if showFindBar {
+      dismissFindBar()
+    } else {
+      showFindBar = true
+    }
+  }
+
+  private func dismissFindBar() {
+    showFindBar = false
+    findQuery = ""
+    findMatchRanges = []
+    findCurrentIndex = 0
+    coordinatorRef.coordinator?.clearSearchHighlights()
+  }
+
+  private func debouncedFind() {
+    findDebounceTask?.cancel()
+    findDebounceTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(150))
+      guard !Task.isCancelled else { return }
+      performFind()
+    }
+  }
+
+  private func performFind() {
+    guard let coordinator = coordinatorRef.coordinator else { return }
+    let ranges = coordinator.performSearch(query: findQuery, caseSensitive: findCaseSensitive)
+    findMatchRanges = ranges
+    if ranges.isEmpty {
+      findCurrentIndex = 0
+    } else {
+      findCurrentIndex = 1
+      coordinator.navigateToMatch(at: 0, allRanges: ranges)
+    }
+  }
+
+  private func navigateFind(delta: Int) {
+    guard !findMatchRanges.isEmpty, let coordinator = coordinatorRef.coordinator else { return }
+    let count = findMatchRanges.count
+    // findCurrentIndex is 1-based for display
+    let zeroBasedIndex = findCurrentIndex - 1
+    let newIndex = ((zeroBasedIndex + delta) % count + count) % count
+    findCurrentIndex = newIndex + 1
+    coordinator.navigateToMatch(at: newIndex, allRanges: findMatchRanges)
+  }
+
   private func openFile(at path: String) async {
     let resolvedPath = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
     let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
@@ -397,6 +484,12 @@ public struct FileExplorerView: View {
       "png", "jpg", "jpeg", "gif", "pdf", "zip", "tar", "gz",
       "exe", "dylib", "a", "o", "mp3", "mp4", "mov", "woff", "ttf"
     ]
+    // Reset find bar on file switch
+    showFindBar = false
+    findQuery = ""
+    findMatchRanges = []
+    findCurrentIndex = 0
+
     selectedFilePath = resolvedPath
     fileError = nil
     saveError = nil
@@ -723,6 +816,123 @@ private struct FileTreeNodeView: View {
   }
 }
 
+// MARK: - CoordinatorRef
+
+/// Simple reference holder so FileExplorerView can call Coordinator methods from SwiftUI callbacks.
+final class CoordinatorRef {
+  weak var coordinator: CETextViewRepresentable.Coordinator?
+}
+
+// MARK: - FindBarView
+
+/// Compact find bar matching Xcode style: [TextField] [matchCount] [< prev] [> next] [Aa] [X close]
+private struct FindBarView: View {
+  @Binding var query: String
+  let currentIndex: Int
+  let totalMatches: Int
+  @Binding var caseSensitive: Bool
+  let onNext: () -> Void
+  let onPrevious: () -> Void
+  let onDismiss: () -> Void
+  let onQueryChanged: () -> Void
+  let onCaseSensitiveChanged: () -> Void
+
+  @FocusState private var isFieldFocused: Bool
+
+  var body: some View {
+    HStack(spacing: 6) {
+      HStack(spacing: 4) {
+        Image(systemName: "magnifyingglass")
+          .font(.system(size: 11))
+          .foregroundColor(.secondary)
+        TextField("Find…", text: $query)
+          .textFieldStyle(.plain)
+          .font(.system(size: 12, design: .monospaced))
+          .focused($isFieldFocused)
+          .onSubmit { onNext() }
+          .onChange(of: query) { _, _ in
+            onQueryChanged()
+          }
+      }
+      .padding(.horizontal, 6)
+      .padding(.vertical, 4)
+      .background(
+        RoundedRectangle(cornerRadius: 5)
+          .fill(Color.primary.opacity(0.06))
+      )
+      .frame(minWidth: 140, maxWidth: 260)
+
+      // Match count
+      if !query.isEmpty {
+        Text(totalMatches == 0 ? "No results" : "\(currentIndex) of \(totalMatches)")
+          .font(.system(size: 11, design: .monospaced))
+          .foregroundColor(totalMatches == 0 ? .red.opacity(0.8) : .secondary)
+          .frame(minWidth: 60)
+      }
+
+      // Previous / Next
+      Button(action: onPrevious) {
+        Image(systemName: "chevron.up")
+          .font(.system(size: 11, weight: .medium))
+      }
+      .buttonStyle(.plain)
+      .disabled(totalMatches == 0)
+      .help("Previous match (Shift+Enter)")
+
+      Button(action: onNext) {
+        Image(systemName: "chevron.down")
+          .font(.system(size: 11, weight: .medium))
+      }
+      .buttonStyle(.plain)
+      .disabled(totalMatches == 0)
+      .help("Next match (Enter)")
+
+      // Case sensitivity toggle
+      Button {
+        caseSensitive.toggle()
+        onCaseSensitiveChanged()
+      } label: {
+        Text("Aa")
+          .font(.system(size: 11, weight: caseSensitive ? .bold : .regular))
+          .foregroundColor(caseSensitive ? .accentColor : .secondary)
+          .frame(width: 22, height: 22)
+          .background(
+            RoundedRectangle(cornerRadius: 4)
+              .fill(caseSensitive ? Color.accentColor.opacity(0.15) : Color.clear)
+          )
+      }
+      .buttonStyle(.plain)
+      .help("Match case")
+
+      Spacer()
+
+      // Close
+      Button(action: onDismiss) {
+        Image(systemName: "xmark")
+          .font(.system(size: 10, weight: .medium))
+          .foregroundColor(.secondary)
+      }
+      .buttonStyle(.plain)
+      .help("Close find bar (Esc)")
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 6)
+    .background(Color.surfaceElevated)
+    .onAppear { isFieldFocused = true }
+    .onKeyPress(.escape) {
+      onDismiss()
+      return .handled
+    }
+    .onKeyPress(.return, phases: .down) { event in
+      if event.modifiers.contains(.shift) {
+        onPrevious()
+        return .handled
+      }
+      return .ignored
+    }
+  }
+}
+
 // MARK: - CETextViewRepresentable
 
 /// SwiftUI wrapper around ``CodeEditTextView/TextView`` with syntax highlighting via HighlightSwift.
@@ -732,8 +942,10 @@ public struct CETextViewRepresentable: NSViewRepresentable {
   let fileName: String
   let documentID: UUID
   let displayMode: EditorDisplayMode
+  var coordinatorRef: CoordinatorRef?
   let onTextChange: (String) -> Void
   let onIdleTextSnapshot: (String) -> Void
+  var onTextEditedWhileSearching: (() -> Void)?
   @Environment(\.colorScheme) private var colorScheme
 
   public func makeCoordinator() -> Coordinator {
@@ -766,6 +978,7 @@ public struct CETextViewRepresentable: NSViewRepresentable {
     scrollView.documentView = textView
     textView.updateFrameIfNeeded()
     context.coordinator.textView = textView
+    coordinatorRef?.coordinator = context.coordinator
     context.coordinator.loadDocument(
       text: text,
       fileName: fileName,
@@ -876,6 +1089,10 @@ public struct CETextViewRepresentable: NSViewRepresentable {
         self.parent.onTextChange(newText)
       }
       schedulePostEditWork(text: newText)
+      // Re-run search if find bar is active
+      if let callback = parent.onTextEditedWhileSearching {
+        scheduleSearchRefresh(callback: callback)
+      }
     }
 
     func applySyntaxHighlighting(text: String, fileName: String, colorScheme: ColorScheme) {
@@ -980,6 +1197,110 @@ public struct CETextViewRepresentable: NSViewRepresentable {
       textView.layoutManager?.setNeedsLayout()
       textView.needsLayout = true
       textView.needsDisplay = true
+    }
+
+    // MARK: - Find / Search
+
+    private static let findGroupID = "find"
+    /// Cap rendered emphasis layers to avoid performance issues on large files.
+    private static let maxRenderedEmphases = 500
+    private var searchDebounceTask: Task<Void, Never>?
+    private var lastActiveIndex: Int = 0
+
+    /// Searches the text view content for all occurrences of `query`.
+    /// Returns the collected `NSRange` array and updates emphasis highlights.
+    @discardableResult
+    func performSearch(query: String, caseSensitive: Bool) -> [NSRange] {
+      guard let textView, !query.isEmpty else {
+        clearSearchHighlights()
+        return []
+      }
+
+      let nsString = textView.string as NSString
+      let textLength = nsString.length
+      guard textLength > 0 else { return [] }
+
+      let options: NSString.CompareOptions = caseSensitive ? [] : [.caseInsensitive]
+      var searchRange = NSRange(location: 0, length: textLength)
+      var ranges: [NSRange] = []
+
+      while searchRange.location < textLength {
+        let foundRange = nsString.range(of: query, options: options, range: searchRange)
+        guard foundRange.location != NSNotFound else { break }
+        ranges.append(foundRange)
+        searchRange.location = foundRange.location + foundRange.length
+        searchRange.length = textLength - searchRange.location
+      }
+
+      guard !ranges.isEmpty else {
+        clearSearchHighlights()
+        return []
+      }
+
+      // Build emphases — cap rendered layers for performance, but report all matches
+      let renderCount = min(ranges.count, Self.maxRenderedEmphases)
+      let emphases = (0..<renderCount).map { idx in
+        Emphasis(range: ranges[idx], style: .standard, inactive: idx != 0)
+      }
+      textView.emphasisManager?.replaceEmphases(emphases, for: Self.findGroupID)
+
+      // Scroll to first match
+      textView.scrollToRange(ranges[0], center: true)
+
+      return ranges
+    }
+
+    /// Navigates to match at `index`, updating only the two changed emphases (old active → inactive,
+    /// new active → active) instead of rebuilding all layers.
+    func navigateToMatch(at index: Int, allRanges: [NSRange]) {
+      guard let textView, !allRanges.isEmpty else { return }
+      let renderCount = min(allRanges.count, Self.maxRenderedEmphases)
+      let previousIndex = lastActiveIndex
+      lastActiveIndex = index
+
+      // If both indices are within rendered range, do a surgical update
+      if previousIndex < renderCount, index < renderCount {
+        textView.emphasisManager?.updateEmphases(for: Self.findGroupID) { existing in
+          var updated = existing
+          // Deactivate old match
+          if previousIndex < updated.count {
+            let old = updated[previousIndex]
+            updated[previousIndex] = Emphasis(
+              range: old.range, style: .standard, inactive: true
+            )
+          }
+          // Activate new match
+          if index < updated.count {
+            let current = updated[index]
+            updated[index] = Emphasis(
+              range: current.range, style: .standard, inactive: false
+            )
+          }
+          return updated
+        }
+      } else {
+        // Fallback: full rebuild when navigating beyond rendered range
+        let emphases = (0..<renderCount).map { idx in
+          Emphasis(range: allRanges[idx], style: .standard, inactive: idx != index)
+        }
+        textView.emphasisManager?.replaceEmphases(emphases, for: Self.findGroupID)
+      }
+      textView.scrollToRange(allRanges[index], center: true)
+    }
+
+    /// Clears all find-related emphasis highlights.
+    func clearSearchHighlights() {
+      textView?.emphasisManager?.removeEmphases(for: Self.findGroupID)
+    }
+
+    /// Called when text is edited while find bar is visible — debounces re-search.
+    func scheduleSearchRefresh(callback: @escaping () -> Void) {
+      searchDebounceTask?.cancel()
+      searchDebounceTask = Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled else { return }
+        callback()
+      }
     }
 
     static func languageForFile(_ name: String) -> HighlightLanguage? {
