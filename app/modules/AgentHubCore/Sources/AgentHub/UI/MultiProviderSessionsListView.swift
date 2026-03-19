@@ -128,6 +128,12 @@ public struct MultiProviderSessionsListView: View {
     .onChange(of: codexViewModel.resolvedPendingSessions) { _, newResolutions in
       handleResolvedSessions(newResolutions, provider: .codex, viewModel: codexViewModel)
     }
+    .onChange(of: claudeViewModel.resolvedContinuations) { _, newContinuations in
+      handleContinuationResolutions(newContinuations, provider: .claude, viewModel: claudeViewModel)
+    }
+    .onChange(of: codexViewModel.resolvedContinuations) { _, newContinuations in
+      handleContinuationResolutions(newContinuations, provider: .codex, viewModel: codexViewModel)
+    }
     .onChange(of: claudeViewModel.lastCreatedPendingId) { _, newId in
       guard let newId else { return }
       primarySessionId = "pending-claude-\(newId.uuidString)"
@@ -954,6 +960,25 @@ public struct MultiProviderSessionsListView: View {
     AppLogger.session.info("[PrimarySelection] Resolved: \(currentPrimary.prefix(20), privacy: .public) -> \(newPrimaryId.prefix(20), privacy: .public)")
     primarySessionId = newPrimaryId
     viewModel.resolvedPendingSessions.removeValue(forKey: pendingUUID)
+  }
+
+  /// Handles session continuation resolutions (e.g., "clear context and accept plan").
+  /// Updates primarySessionId when the currently selected session has been continued by a new one.
+  private func handleContinuationResolutions(
+    _ continuations: [String: String],
+    provider: SessionProviderKind,
+    viewModel: CLISessionsViewModel
+  ) {
+    let providerPrefix = "\(provider.rawValue.lowercased())-"
+    for (oldSessionId, newSessionId) in continuations {
+      let oldPrimaryId = "\(providerPrefix)\(oldSessionId)"
+      if primarySessionId == oldPrimaryId {
+        let newPrimaryId = "\(providerPrefix)\(newSessionId)"
+        AppLogger.session.info("[PrimarySelection] Continuation: \(oldPrimaryId.prefix(20), privacy: .public) -> \(newPrimaryId.prefix(20), privacy: .public)")
+        primarySessionId = newPrimaryId
+      }
+      viewModel.resolvedContinuations.removeValue(forKey: oldSessionId)
+    }
   }
 
   private func ensurePrimarySelection() {

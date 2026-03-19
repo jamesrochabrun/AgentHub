@@ -105,7 +105,7 @@ public final class CLISessionsViewModel {
   public var pendingHubSessionWithTerminal: Bool = false
 
   /// Session IDs awaiting progressive restoration on app launch
-  private var pendingRestorationSessionIds: Set<String> = []
+  var pendingRestorationSessionIds: Set<String> = []
 
   /// Terminal view IDs loaded from persistence, used during progressive restoration
   private var restoringTerminalViewIds: Set<String> = []
@@ -161,7 +161,19 @@ public final class CLISessionsViewModel {
       .filter { $0.sessionId == session.id }
       .receive(on: DispatchQueue.main)
       .sink { [weak self] update in
-        self?.monitorStates[session.id] = update.state
+        guard let self else { return }
+        if let continuationId = update.continuationSessionId {
+          // Session has been continued (e.g., "clear context and accept plan")
+          // Refresh to discover the new session, then transfer monitoring
+          Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.monitorService.refreshSessions()
+            try? await Task.sleep(for: .milliseconds(300))
+            self.transferMonitoring(fromSessionId: session.id, toSessionId: continuationId)
+          }
+        } else {
+          self.monitorStates[session.id] = update.state
+        }
       }
 
     monitoringCancellables[session.id] = cancellable
@@ -348,6 +360,11 @@ public final class CLISessionsViewModel {
   /// Preserves terminal PTY across pending → real session transition
   public var activeTerminals: [String: TerminalContainerView] = [:]
 
+  /// Maps old session IDs to their continuation session IDs.
+  /// Used by the sidebar to update `primarySessionId` when a session continues
+  /// (e.g., "clear context and accept plan" in Claude Code).
+  public var resolvedContinuations: [String: String] = [:]
+
   // MARK: - Monitoring State
 
   /// Set of session IDs currently being monitored
@@ -361,7 +378,7 @@ public final class CLISessionsViewModel {
 
   /// Backup store for monitored session objects.
   /// Ensures sessions persist across refreshes even if not yet in history.jsonl.
-  private var monitoredSessionBackup: [String: CLISession] = [:]
+  var monitoredSessionBackup: [String: CLISession] = [:]
 
   /// Whether to show the last message instead of the first message in session rows
   public var showLastMessage: Bool {
@@ -398,6 +415,9 @@ public final class CLISessionsViewModel {
   }
   private var terminalViewKey: String {
     AgentHubDefaults.sessionsWithTerminalView + "." + providerDefaultsSuffix
+  }
+  private var monitoredSessionBackupKey: String {
+    AgentHubDefaults.monitoredSessionIds + ".backup." + providerDefaultsSuffix
   }
 
   // MARK: - Initialization
@@ -584,6 +604,8 @@ public final class CLISessionsViewModel {
       let persistedSessionIds = loadPersistedSessionIds()
       if !persistedSessionIds.isEmpty {
         pendingRestorationSessionIds = persistedSessionIds
+        // Load session backup for continuation sessions not yet in history.jsonl
+        monitoredSessionBackup = loadPersistedSessionBackup()
         // Load terminal view state for restoration decisions
         if let tvData = UserDefaults.standard.data(forKey: terminalViewKey),
            let tvIds = try? JSONDecoder().decode([String].self, from: tvData) {
@@ -623,8 +645,19 @@ public final class CLISessionsViewModel {
     var restoredIds: Set<String> = []
 
     for sessionId in pendingRestorationSessionIds {
-      if let session = findSession(byId: sessionId),
-         sessionFileExists(session: session) {
+      // Try authoritative source first
+      var session = findSession(byId: sessionId)
+
+      // Fallback: use persisted backup (handles continuation sessions not yet in history.jsonl)
+      if session == nil, let backupSession = monitoredSessionBackup[sessionId] {
+        session = backupSession
+      }
+
+      if let session, sessionFileExists(session: session) {
+        // Insert backup session into sidebar only after confirming file exists
+        if findSession(byId: session.id) == nil {
+          insertSessionIntoRepository(session)
+        }
         // Populate monitoring state directly (skip persistence — persisted state is already correct)
         monitoredSessionIds.insert(session.id)
         monitoredSessionBackup[session.id] = session
@@ -703,10 +736,49 @@ public final class CLISessionsViewModel {
     }
   }
 
+  /// Persists the monitored session backup to UserDefaults.
+  /// Ensures continuation sessions survive app relaunch even before history.jsonl is updated.
+  private func persistMonitoredSessionBackup() {
+    if let data = try? JSONEncoder().encode(monitoredSessionBackup) {
+      UserDefaults.standard.set(data, forKey: monitoredSessionBackupKey)
+    }
+  }
+
+  /// Loads the persisted session backup from UserDefaults.
+  private func loadPersistedSessionBackup() -> [String: CLISession] {
+    guard let data = UserDefaults.standard.data(forKey: monitoredSessionBackupKey),
+          let backup = try? JSONDecoder().decode([String: CLISession].self, from: data) else {
+      return [:]
+    }
+    return backup
+  }
+
+  /// Inserts a session into the appropriate worktree in selectedRepositories.
+  /// Used for continuation sessions that aren't yet discovered by refreshSessions().
+  func insertSessionIntoRepository(_ session: CLISession) {
+    for repoIndex in selectedRepositories.indices {
+      if let wtIndex = selectedRepositories[repoIndex].worktrees.firstIndex(where: {
+        $0.path == session.projectPath
+      }) {
+        // Avoid duplicates
+        if !selectedRepositories[repoIndex].worktrees[wtIndex].sessions.contains(where: { $0.id == session.id }) {
+          selectedRepositories[repoIndex].worktrees[wtIndex].sessions.insert(session, at: 0)
+        }
+        return
+      }
+    }
+  }
+
   /// Syncs the backup store with latest session data from allSessions.
   /// Called after repositories are updated to keep backup fresh for monitored sessions.
   /// Also cleans up any orphaned entries not in monitoredSessionIds.
-  private func syncMonitoredSessionBackup() {
+  func syncMonitoredSessionBackup() {
+    // Don't clean backup while restorations are pending — processPendingSessionRestorations
+    // needs the backup as a fallback for continuation sessions not yet in history.jsonl.
+    // On first repositoriesPublisher emission after relaunch, monitoredSessionIds is still empty,
+    // so cleaning would destroy the backup before it can be used.
+    guard pendingRestorationSessionIds.isEmpty else { return }
+
     // Update backup with latest data for monitored sessions
     for sessionId in monitoredSessionIds {
       if let session = allSessions.first(where: { $0.id == sessionId }) {
@@ -718,6 +790,7 @@ public final class CLISessionsViewModel {
     for sessionId in orphanedIds {
       monitoredSessionBackup.removeValue(forKey: sessionId)
     }
+    persistMonitoredSessionBackup()
   }
 
   /// Restores monitored sessions from a provided set of session IDs.
@@ -1880,6 +1953,7 @@ public final class CLISessionsViewModel {
 
     persistMonitoredSessions()
     persistSessionsWithTerminalView()
+    persistMonitoredSessionBackup()
 
     // Start polling for Preview/Plan buttons (works in both terminal and monitor modes)
     startPolling(session: session)
@@ -1903,6 +1977,7 @@ public final class CLISessionsViewModel {
 
     persistMonitoredSessions()
     persistSessionsWithTerminalView()
+    persistMonitoredSessionBackup()
 
     Task {
       await fileWatcher.stopMonitoring(sessionId: sessionId)
@@ -1912,6 +1987,82 @@ public final class CLISessionsViewModel {
   /// Check if a session is being monitored
   public func isMonitoring(sessionId: String) -> Bool {
     monitoredSessionIds.contains(sessionId)
+  }
+
+  /// Transfers monitoring from an old session to its continuation session.
+  /// Preserves the terminal PTY (same Claude process) and all UI state.
+  /// Called when Claude Code creates a new session (e.g., "clear context and accept plan").
+  public func transferMonitoring(fromSessionId oldSessionId: String, toSessionId newSessionId: String) {
+    guard monitoredSessionIds.contains(oldSessionId) else { return }
+
+    // Find or create the new session object
+    let newSession: CLISession
+    if let found = allSessions.first(where: { $0.id == newSessionId }) {
+      newSession = found
+    } else if let oldSession = monitoredSessionBackup[oldSessionId] {
+      // Session may not be in history.jsonl yet — create from old session metadata
+      newSession = CLISession(
+        id: newSessionId,
+        projectPath: oldSession.projectPath,
+        branchName: oldSession.branchName,
+        isWorktree: oldSession.isWorktree,
+        lastActivityAt: Date(),
+        messageCount: 0,
+        isActive: true
+      )
+      // Insert into the worktree's session list
+      insertSessionIntoRepository(newSession)
+    } else {
+      AppLogger.session.warning("[Continuation] Cannot transfer: old session \(oldSessionId.prefix(8), privacy: .public) not found in backup")
+      return
+    }
+
+    // Transfer terminal PTY (re-key from old session ID to new)
+    if let terminal = activeTerminals.removeValue(forKey: oldSessionId) {
+      activeTerminals[newSessionId] = terminal
+    }
+
+    // Transfer monitoring IDs
+    monitoredSessionIds.remove(oldSessionId)
+    monitoredSessionIds.insert(newSessionId)
+
+    // Transfer backup
+    monitoredSessionBackup.removeValue(forKey: oldSessionId)
+    monitoredSessionBackup[newSessionId] = newSession
+
+    // Transfer terminal view state
+    if sessionsWithTerminalView.remove(oldSessionId) != nil {
+      sessionsWithTerminalView.insert(newSessionId)
+    }
+
+    // Transfer custom name
+    if let customName = sessionCustomNames.removeValue(forKey: oldSessionId) {
+      sessionCustomNames[newSessionId] = customName
+    }
+
+    // Transfer pending prompts
+    if let prompt = pendingTerminalPrompts.removeValue(forKey: oldSessionId) {
+      pendingTerminalPrompts[newSessionId] = prompt
+    }
+
+    // Clean up old monitoring subscription and state
+    monitoringCancellables.removeValue(forKey: oldSessionId)
+    monitorStates.removeValue(forKey: oldSessionId)
+
+    // Start polling the new session
+    startPolling(session: newSession)
+
+    // Notify sidebar of the ID change
+    resolvedContinuations[oldSessionId] = newSessionId
+
+    // Persist
+    persistMonitoredSessions()
+    persistSessionsWithTerminalView()
+    persistMonitoredSessionBackup()
+
+    AppLogger.session.info(
+      "[Continuation] Transferred monitoring: \(oldSessionId.prefix(8), privacy: .public) -> \(newSessionId.prefix(8), privacy: .public)"
+    )
   }
 
   /// Get all currently monitored sessions with their states.
