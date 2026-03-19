@@ -20,6 +20,14 @@ public actor SessionFileWatcher {
   public struct StateUpdate: Sendable {
     public let sessionId: String
     public let state: SessionMonitorState
+    /// When non-nil, indicates this session has been continued by a new session (e.g., "clear context and accept plan")
+    public let continuationSessionId: String?
+
+    public init(sessionId: String, state: SessionMonitorState, continuationSessionId: String? = nil) {
+      self.sessionId = sessionId
+      self.state = state
+      self.continuationSessionId = continuationSessionId
+    }
   }
 
   // MARK: - Properties
@@ -33,6 +41,9 @@ public actor SessionFileWatcher {
 
   /// Seconds to wait before considering a tool as awaiting approval
   private var approvalTimeoutSeconds: Int = 0
+
+  /// Tracks continuation session IDs already claimed to prevent double-claiming
+  private var claimedContinuationIds: Set<String> = []
 
   /// Publisher for state updates
   public nonisolated var statePublisher: AnyPublisher<StateUpdate, Never> {
@@ -155,7 +166,7 @@ public actor SessionFileWatcher {
       guard let self = self else { return }
 
       self.processingQueue.async {
-        AppLogger.watcher.debug("[Polling] TICK (1.5s) for session: \(sessionId.prefix(8), privacy: .public)")
+        //AppLogger.watcher.debug("[Polling] TICK (1.5s) for session: \(sessionId.prefix(8), privacy: .public)")
 
         // Health check: detect stale file watcher
         let timeSinceLastEvent = Date().timeIntervalSince(lastFileEventTime)
@@ -215,10 +226,69 @@ public actor SessionFileWatcher {
             self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
           }
         }
+
       }
     }
 
     statusTimer.resume()
+
+    // Set up directory watch for continuation detection (e.g., "clear context and accept plan").
+    // Runs alongside the file watcher and shares lastFileEventTime to detect when
+    // the old session goes quiet and a new session file appears.
+    let encodedPath = projectPath.claudeProjectPathEncoded
+    let projectDir = "\(claudePath)/projects/\(encodedPath)"
+    let existingJsonlFiles = Set(
+      (try? FileManager.default.contentsOfDirectory(atPath: projectDir)) ?? []
+    ).filter { $0.hasSuffix(".jsonl") }
+
+    var directorySource: DispatchSourceFileSystemObject?
+    var directoryFd: Int32?
+    var continuationFired = false
+
+    let dirFd = open(projectDir, O_EVTONLY)
+    if dirFd >= 0 {
+      let dirSource = DispatchSource.makeFileSystemObjectSource(
+        fileDescriptor: dirFd,
+        eventMask: [.write, .link],
+        queue: DispatchQueue.global(qos: .utility)
+      )
+
+      dirSource.setEventHandler { [weak self] in
+        guard let self else { return }
+        self.processingQueue.async {
+          // Only fire once per monitored session
+          guard !continuationFired else { return }
+          // Only trigger if old session has been quiet for 3+ seconds and had activity
+          let timeSinceLastEvent = Date().timeIntervalSince(lastFileEventTime)
+          guard timeSinceLastEvent >= 3, parseResult.messageCount > 0 else { return }
+
+          guard let currentFiles = try? FileManager.default.contentsOfDirectory(atPath: projectDir) else { return }
+          let newJsonlFiles = Set(currentFiles)
+            .subtracting(existingJsonlFiles)
+            .filter { $0.hasSuffix(".jsonl") }
+
+          guard let newFile = newJsonlFiles.first else { return }
+          let newSessionId = String(newFile.dropLast(6)) // Remove ".jsonl"
+          continuationFired = true
+
+          Task {
+            await self.emitContinuation(oldSessionId: sessionId, newSessionId: newSessionId)
+          }
+        }
+      }
+
+      dirSource.setCancelHandler {
+        close(dirFd)
+      }
+
+      dirSource.resume()
+      directorySource = dirSource
+      directoryFd = dirFd
+
+      AppLogger.watcher.info(
+        "[Continuation] Directory watch started for session: \(sessionId.prefix(8), privacy: .public)"
+      )
+    }
 
     // Store watcher info
     watchedSessions[sessionId] = FileWatcherInfo(
@@ -226,8 +296,12 @@ public actor SessionFileWatcher {
       source: source,
       statusTimer: statusTimer,
       parseResult: parseResult,
+      projectPath: projectPath,
       lastFileEventTime: lastFileEventTime,
-      lastKnownFileSize: lastKnownFileSize
+      lastKnownFileSize: lastKnownFileSize,
+      directorySource: directorySource,
+      directoryFd: directoryFd,
+      existingJsonlFiles: existingJsonlFiles
     )
   }
 
@@ -242,6 +316,10 @@ public actor SessionFileWatcher {
 
     info.source.cancel()
     info.statusTimer.cancel()
+    // Clean up directory watcher for continuation detection
+    if let dirSource = info.directorySource {
+      dirSource.cancel()
+    }
     AppLogger.watcher.info("[Polling] Cancelled file watcher and timer for: \(sessionId.prefix(8), privacy: .public)")
   }
 
@@ -385,6 +463,33 @@ public actor SessionFileWatcher {
     if case .awaitingApproval = status { return true }
     return false
   }
+
+  // MARK: - Continuation Detection
+
+  /// Emit a continuation event and clean up the old session's watchers
+  private func emitContinuation(oldSessionId: String, newSessionId: String) {
+    // Prevent double-claiming the same continuation
+    guard !claimedContinuationIds.contains(newSessionId) else { return }
+    claimedContinuationIds.insert(newSessionId)
+
+    guard let info = watchedSessions[oldSessionId] else { return }
+    let state = buildMonitorState(from: info.parseResult)
+
+    AppLogger.watcher.info(
+      "[Continuation] Detected: \(oldSessionId.prefix(8), privacy: .public) -> \(newSessionId.prefix(8), privacy: .public)"
+    )
+
+    stateSubject.send(StateUpdate(
+      sessionId: oldSessionId,
+      state: state,
+      continuationSessionId: newSessionId
+    ))
+
+    // Stop monitoring the old session (cleans up file + directory watchers)
+    Task {
+      await self.stopMonitoring(sessionId: oldSessionId)
+    }
+  }
 }
 
 // MARK: - FileWatcherInfo
@@ -394,10 +499,16 @@ private struct FileWatcherInfo {
   let source: DispatchSourceFileSystemObject
   let statusTimer: DispatchSourceTimer
   var parseResult: SessionJSONLParser.ParseResult
+  let projectPath: String
 
   // Health check tracking
   var lastFileEventTime: Date
   var lastKnownFileSize: UInt64
+
+  // Continuation detection (directory watching for new session files)
+  var directorySource: DispatchSourceFileSystemObject?
+  var directoryFd: Int32?
+  var existingJsonlFiles: Set<String>
 }
 
 // MARK: - Protocol Conformance
