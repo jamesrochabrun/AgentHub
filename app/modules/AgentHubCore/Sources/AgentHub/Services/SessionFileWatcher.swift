@@ -107,6 +107,22 @@ public actor SessionFileWatcher {
     var lastKnownFileSize = filePosition
     var lastEmittedStatus: SessionStatus = parseResult.currentStatus
 
+    let statusTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+
+    func rescheduleStatusTimer() {
+      guard let nextInterval = SessionWatcherTimerPolicy.nextInterval(
+        lastActivity: parseResult.recentActivities.last,
+        currentStatus: parseResult.currentStatus,
+        lastFileEventTime: lastFileEventTime,
+        approvalTimeoutSeconds: timeout
+      ) else {
+        statusTimer.schedule(deadline: .distantFuture, leeway: SessionWatcherTimerPolicy.timerLeeway)
+        return
+      }
+
+      statusTimer.schedule(deadline: .now() + nextInterval, leeway: SessionWatcherTimerPolicy.timerLeeway)
+    }
+
     source.setEventHandler { [weak self] in
       guard let self = self else { return }
 
@@ -120,13 +136,13 @@ public actor SessionFileWatcher {
         // Update known file size
         lastKnownFileSize = filePosition
 
-        guard !newLines.isEmpty else { return }
+        guard !newLines.isEmpty else {
+          rescheduleStatusTimer()
+          return
+        }
 
         // Parse new lines
         SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
-
-        // Keep watchedSessions in sync with the mutated parseResult
-        Task { await self.updateStoredParseResult(sessionId: sessionId, parseResult: parseResult) }
 
         // Keep lastEmittedStatus in sync to prevent redundant emissions from status timer
         lastEmittedStatus = parseResult.currentStatus
@@ -137,6 +153,20 @@ public actor SessionFileWatcher {
         Task { @MainActor in
           self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
         }
+
+        let parseResultSnapshot = parseResult
+        let lastFileEventSnapshot = lastFileEventTime
+        let lastKnownFileSizeSnapshot = lastKnownFileSize
+        Task {
+          await self.updateStoredWatcherInfo(
+            sessionId: sessionId,
+            parseResult: parseResultSnapshot,
+            lastFileEventTime: lastFileEventSnapshot,
+            lastKnownFileSize: lastKnownFileSizeSnapshot
+          )
+        }
+
+        rescheduleStatusTimer()
       }
     }
 
@@ -146,17 +176,10 @@ public actor SessionFileWatcher {
 
     source.resume()
 
-    // Set up status timer to re-evaluate timeout-based status every 1.5 seconds
-    // Only emits updates when status actually changes
-    let statusTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-    statusTimer.schedule(deadline: .now() + 1.5, repeating: 1.5)
-
     statusTimer.setEventHandler { [weak self] in
       guard let self = self else { return }
 
       self.processingQueue.async {
-        AppLogger.watcher.debug("[Polling] TICK (1.5s) for session: \(sessionId.prefix(8), privacy: .public)")
-
         // Health check: detect stale file watcher
         let timeSinceLastEvent = Date().timeIntervalSince(lastFileEventTime)
         let currentFileSize = self.getFileSize(filePath)
@@ -171,9 +194,6 @@ public actor SessionFileWatcher {
 
           if !newLines.isEmpty {
             SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
-
-            // Keep watchedSessions in sync with the mutated parseResult
-            Task { await self.updateStoredParseResult(sessionId: sessionId, parseResult: parseResult) }
 
             // Update tracking
             lastKnownFileSize = tempPosition
@@ -215,9 +235,24 @@ public actor SessionFileWatcher {
             self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
           }
         }
+
+        let parseResultSnapshot = parseResult
+        let lastFileEventSnapshot = lastFileEventTime
+        let lastKnownFileSizeSnapshot = lastKnownFileSize
+        Task {
+          await self.updateStoredWatcherInfo(
+            sessionId: sessionId,
+            parseResult: parseResultSnapshot,
+            lastFileEventTime: lastFileEventSnapshot,
+            lastKnownFileSize: lastKnownFileSizeSnapshot
+          )
+        }
+
+        rescheduleStatusTimer()
       }
     }
 
+    rescheduleStatusTimer()
     statusTimer.resume()
 
     // Store watcher info
@@ -258,10 +293,22 @@ public actor SessionFileWatcher {
 
   /// Force refresh a session's state
   public func refreshState(sessionId: String) async {
-    guard let info = watchedSessions[sessionId] else { return }
+    guard var info = watchedSessions[sessionId] else { return }
 
-    let parseResult = SessionJSONLParser.parseSessionFile(at: info.filePath, approvalTimeoutSeconds: approvalTimeoutSeconds)
-    watchedSessions[sessionId]?.parseResult = parseResult
+    var filePosition = info.lastKnownFileSize
+    var parseResult = info.parseResult
+    let newLines = readNewLines(from: info.filePath, startingAt: &filePosition)
+
+    if !newLines.isEmpty {
+      SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: approvalTimeoutSeconds)
+      info.lastKnownFileSize = filePosition
+      info.lastFileEventTime = Date()
+    } else {
+      SessionJSONLParser.updateCurrentStatus(&parseResult, approvalTimeoutSeconds: approvalTimeoutSeconds)
+    }
+
+    info.parseResult = parseResult
+    watchedSessions[sessionId] = info
 
     let state = buildMonitorState(from: parseResult)
     stateSubject.send(StateUpdate(sessionId: sessionId, state: state))
@@ -269,8 +316,17 @@ public actor SessionFileWatcher {
 
   // MARK: - Private Helpers
 
-  private func updateStoredParseResult(sessionId: String, parseResult: SessionJSONLParser.ParseResult) {
-    watchedSessions[sessionId]?.parseResult = parseResult
+  private func updateStoredWatcherInfo(
+    sessionId: String,
+    parseResult: SessionJSONLParser.ParseResult,
+    lastFileEventTime: Date,
+    lastKnownFileSize: UInt64
+  ) {
+    guard var info = watchedSessions[sessionId] else { return }
+    info.parseResult = parseResult
+    info.lastFileEventTime = lastFileEventTime
+    info.lastKnownFileSize = lastKnownFileSize
+    watchedSessions[sessionId] = info
   }
 
   private func findSessionFile(sessionId: String, projectPath: String) -> String? {

@@ -68,6 +68,21 @@ public actor CodexSessionFileWatcher {
     var lastFileEventTime = Date()
     var lastKnownFileSize = filePosition
     var lastEmittedStatus: SessionStatus = parseResult.currentStatus
+    let statusTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+
+    func rescheduleStatusTimer() {
+      guard let nextInterval = SessionWatcherTimerPolicy.nextInterval(
+        lastActivity: parseResult.recentActivities.last,
+        currentStatus: parseResult.currentStatus,
+        lastFileEventTime: lastFileEventTime,
+        approvalTimeoutSeconds: timeout
+      ) else {
+        statusTimer.schedule(deadline: .distantFuture, leeway: SessionWatcherTimerPolicy.timerLeeway)
+        return
+      }
+
+      statusTimer.schedule(deadline: .now() + nextInterval, leeway: SessionWatcherTimerPolicy.timerLeeway)
+    }
 
     source.setEventHandler { [weak self] in
       guard let self else { return }
@@ -75,7 +90,10 @@ public actor CodexSessionFileWatcher {
         lastFileEventTime = Date()
         let newLines = self.readNewLines(from: filePath, startingAt: &filePosition)
         lastKnownFileSize = filePosition
-        guard !newLines.isEmpty else { return }
+        guard !newLines.isEmpty else {
+          rescheduleStatusTimer()
+          return
+        }
         CodexSessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
         lastEmittedStatus = parseResult.currentStatus
 
@@ -83,6 +101,20 @@ public actor CodexSessionFileWatcher {
         Task { @MainActor in
           self.stateSubject.send(SessionFileWatcher.StateUpdate(sessionId: sessionId, state: updatedState))
         }
+
+        let parseResultSnapshot = parseResult
+        let lastFileEventSnapshot = lastFileEventTime
+        let lastKnownFileSizeSnapshot = lastKnownFileSize
+        Task {
+          await self.updateStoredWatcherInfo(
+            sessionId: sessionId,
+            parseResult: parseResultSnapshot,
+            lastFileEventTime: lastFileEventSnapshot,
+            lastKnownFileSize: lastKnownFileSizeSnapshot
+          )
+        }
+
+        rescheduleStatusTimer()
       }
     }
 
@@ -92,8 +124,6 @@ public actor CodexSessionFileWatcher {
 
     source.resume()
 
-    let statusTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-    statusTimer.schedule(deadline: .now() + 1.5, repeating: 1.5)
     statusTimer.setEventHandler { [weak self] in
       guard let self else { return }
       self.processingQueue.async {
@@ -125,8 +155,23 @@ public actor CodexSessionFileWatcher {
         } else if previousStatus != parseResult.currentStatus {
           lastEmittedStatus = parseResult.currentStatus
         }
+
+        let parseResultSnapshot = parseResult
+        let lastFileEventSnapshot = lastFileEventTime
+        let lastKnownFileSizeSnapshot = lastKnownFileSize
+        Task {
+          await self.updateStoredWatcherInfo(
+            sessionId: sessionId,
+            parseResult: parseResultSnapshot,
+            lastFileEventTime: lastFileEventSnapshot,
+            lastKnownFileSize: lastKnownFileSizeSnapshot
+          )
+        }
+
+        rescheduleStatusTimer()
       }
     }
+    rescheduleStatusTimer()
     statusTimer.resume()
 
     watchedSessions[sessionId] = FileWatcherInfo(
@@ -151,12 +196,23 @@ public actor CodexSessionFileWatcher {
   }
 
   public func refreshState(sessionId: String) async {
-    guard let info = watchedSessions[sessionId] else { return }
-    let parseResult = CodexSessionJSONLParser.parseSessionFile(
-      at: info.filePath,
-      approvalTimeoutSeconds: approvalTimeoutSeconds
-    )
-    watchedSessions[sessionId]?.parseResult = parseResult
+    guard var info = watchedSessions[sessionId] else { return }
+
+    var filePosition = info.lastKnownFileSize
+    var parseResult = info.parseResult
+    let newLines = readNewLines(from: info.filePath, startingAt: &filePosition)
+
+    if !newLines.isEmpty {
+      CodexSessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: approvalTimeoutSeconds)
+      info.lastKnownFileSize = filePosition
+      info.lastFileEventTime = Date()
+    } else {
+      CodexSessionJSONLParser.updateCurrentStatus(&parseResult, approvalTimeoutSeconds: approvalTimeoutSeconds)
+    }
+
+    info.parseResult = parseResult
+    watchedSessions[sessionId] = info
+
     let state = buildMonitorState(from: parseResult)
     stateSubject.send(SessionFileWatcher.StateUpdate(sessionId: sessionId, state: state))
   }
@@ -222,6 +278,19 @@ public actor CodexSessionFileWatcher {
       hasMermaidContent: result.hasMermaidContent,
       detectedResourceLinks: result.detectedResourceLinks
     )
+  }
+
+  private func updateStoredWatcherInfo(
+    sessionId: String,
+    parseResult: CodexSessionJSONLParser.ParseResult,
+    lastFileEventTime: Date,
+    lastKnownFileSize: UInt64
+  ) {
+    guard var info = watchedSessions[sessionId] else { return }
+    info.parseResult = parseResult
+    info.lastFileEventTime = lastFileEventTime
+    info.lastKnownFileSize = lastKnownFileSize
+    watchedSessions[sessionId] = info
   }
 }
 

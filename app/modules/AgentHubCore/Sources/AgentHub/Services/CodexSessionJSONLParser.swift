@@ -9,11 +9,14 @@ import Foundation
 
 public struct CodexSessionJSONLParser {
 
+  private static let maxRecentActivities = 100
+  private static let maxDetectedResourceLinks = 50
+
   // MARK: - Lightweight Parse Result for Global Stats
 
   /// Minimal parsing result containing only fields needed for global stats aggregation.
   /// Significantly reduces memory overhead by skipping activities, tool calls, timestamps, and status.
-  public struct GlobalStatsParseResult {
+  public struct GlobalStatsParseResult: Sendable {
     public var model: String?
     public var totalInputTokens: Int = 0
     public var totalOutputTokens: Int = 0
@@ -25,7 +28,7 @@ public struct CodexSessionJSONLParser {
 
   // MARK: - Parsing Results
 
-  public struct ParseResult {
+  public struct ParseResult: Sendable {
     public var model: String?
     public var lastInputTokens: Int = 0
     public var lastOutputTokens: Int = 0
@@ -46,7 +49,7 @@ public struct CodexSessionJSONLParser {
     public init() {}
   }
 
-  public struct PendingToolInfo {
+  public struct PendingToolInfo: Sendable {
     public let toolName: String
     public let toolUseId: String
     public let timestamp: Date
@@ -199,12 +202,7 @@ public struct CodexSessionJSONLParser {
       result.messageCount += 1
       if let message = payload["message"] as? String, !message.isEmpty {
         if message.contains("```mermaid") { result.hasMermaidContent = true }
-        let links = extractResourceLinks(from: message, timestamp: timestamp)
-        for link in links {
-          if !result.detectedResourceLinks.contains(where: { $0.url == link.url }) {
-            result.detectedResourceLinks.append(link)
-          }
-        }
+        appendResourceLinks(extractResourceLinks(from: message, timestamp: timestamp), to: &result)
         addActivity(type: .assistantMessage, description: String(message.prefix(80)), timestamp: timestamp, to: &result)
       }
 
@@ -317,8 +315,18 @@ public struct CodexSessionJSONLParser {
     )
     result.recentActivities.append(entry)
 
-    if result.recentActivities.count > 100 {
-      result.recentActivities.removeFirst(result.recentActivities.count - 100)
+    if result.recentActivities.count > maxRecentActivities {
+      result.recentActivities.removeFirst(result.recentActivities.count - maxRecentActivities)
+    }
+  }
+
+  private static func appendResourceLinks(_ links: [ResourceLink], to result: inout ParseResult) {
+    for link in links where !result.detectedResourceLinks.contains(where: { $0.url == link.url }) {
+      result.detectedResourceLinks.append(link)
+    }
+
+    if result.detectedResourceLinks.count > maxDetectedResourceLinks {
+      result.detectedResourceLinks.removeFirst(result.detectedResourceLinks.count - maxDetectedResourceLinks)
     }
   }
 
@@ -354,4 +362,3 @@ public struct CodexSessionJSONLParser {
     return formatter.date(from: string)
   }
 }
-
