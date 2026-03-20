@@ -37,7 +37,7 @@ struct DiffCommentRow: View {
       Text(comment.lineContent)
         .font(.system(.caption, design: .monospaced))
         .foregroundColor(.secondary)
-        .lineLimit(1)
+        .lineLimit(comment.endLineNumber != nil ? 3 : 1)
         .truncationMode(.middle)
 
       // Comment text or edit field
@@ -110,8 +110,8 @@ struct DiffCommentRow: View {
         .font(.caption2)
         .foregroundColor(.primary)
 
-      // Line number
-      Text("Line \(comment.lineNumber)")
+      // Line number or range
+      Text(comment.lineLabel)
         .font(.system(.caption, design: .monospaced, weight: .semibold))
         .foregroundColor(.primary)
 

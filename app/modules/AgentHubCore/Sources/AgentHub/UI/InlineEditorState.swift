@@ -16,8 +16,11 @@ final class InlineEditorState {
   /// The anchor point in window coordinates where the editor should appear
   var anchorPoint: CGPoint = .zero
 
-  /// The line number that was clicked
+  /// The start line number that was clicked or selected
   var lineNumber: Int = 0
+
+  /// The end line number when a multi-line range is selected (nil for single line)
+  var endLineNumber: Int?
 
   /// Which side of the diff was clicked ("left", "right", or "unified")
   var side: String = ""
@@ -42,6 +45,7 @@ final class InlineEditorState {
   func show(
     at point: CGPoint,
     lineNumber: Int,
+    endLineNumber: Int? = nil,
     side: String,
     fileName: String,
     lineContent: String? = nil,
@@ -49,6 +53,7 @@ final class InlineEditorState {
   ) {
     self.anchorPoint = point
     self.lineNumber = lineNumber
+    self.endLineNumber = endLineNumber
     self.side = side
     self.fileName = fileName
     self.lineContent = lineContent

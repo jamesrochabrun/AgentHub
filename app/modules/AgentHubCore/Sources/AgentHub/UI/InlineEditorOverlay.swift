@@ -20,10 +20,10 @@ struct InlineEditorOverlay: View {
   let providerKind: SessionProviderKind
 
   /// Called when user presses Enter - sends immediately to the provider
-  let onSubmit: (String, Int, String, String) -> Void
+  let onSubmit: (String, DiffLineContext) -> Void
 
   /// Called when user presses Cmd+Enter - adds to comment collection (optional)
-  let onAddComment: ((String, Int, String, String, String) -> Void)?
+  let onAddComment: ((String, DiffLineContext) -> Void)?
 
   /// Comments state for checking existing comments (optional)
   let commentsState: DiffCommentsState?
@@ -36,23 +36,12 @@ struct InlineEditorOverlay: View {
 
   // MARK: - Initializer
 
-  /// Creates an inline editor overlay for diff line interactions.
-  ///
-  /// - Parameters:
-  ///   - state: The shared state controlling editor visibility and position.
-  ///   - containerSize: The size of the container view for position calculations.
-  ///   - providerKind: The provider (Claude or Codex) to style and label the editor for.
-  ///   - onSubmit: Called when user presses Enter to send immediately to the provider.
-  ///     Parameters: (message, lineNumber, side, fileName)
-  ///   - onAddComment: Called when user presses Cmd+Enter to add to review collection.
-  ///     Parameters: (message, lineNumber, side, fileName, lineContent). Optional.
-  ///   - commentsState: State manager for existing comments, used for edit mode detection. Optional.
   init(
     state: InlineEditorState,
     containerSize: CGSize,
     providerKind: SessionProviderKind = .claude,
-    onSubmit: @escaping (String, Int, String, String) -> Void,
-    onAddComment: ((String, Int, String, String, String) -> Void)? = nil,
+    onSubmit: @escaping (String, DiffLineContext) -> Void,
+    onAddComment: ((String, DiffLineContext) -> Void)? = nil,
     commentsState: DiffCommentsState? = nil
   ) {
     self.state = state
@@ -65,11 +54,23 @@ struct InlineEditorOverlay: View {
 
   // MARK: - Computed Properties
 
+  /// Build the current context from editor state
+  private var currentContext: DiffLineContext {
+    DiffLineContext(
+      lineNumber: state.lineNumber,
+      endLineNumber: state.endLineNumber,
+      side: state.side,
+      fileName: state.fileName,
+      lineContent: state.lineContent ?? ""
+    )
+  }
+
   /// Check if there's an existing comment at the current location
   private var existingComment: DiffComment? {
     commentsState?.getComment(
       filePath: state.fileName,
       lineNumber: state.lineNumber,
+      endLineNumber: state.endLineNumber,
       side: state.side
     )
   }
@@ -100,23 +101,16 @@ struct InlineEditorOverlay: View {
 
         InlineEditorView(
           lineNumber: state.lineNumber,
+          endLineNumber: state.endLineNumber,
           side: state.side,
           fileName: state.fileName,
           errorMessage: state.errorMessage,
           providerKind: providerKind,
           onSubmit: { message in
-            // Submit will open Terminal with resumed session
-            onSubmit(message, state.lineNumber, state.side, state.fileName)
+            onSubmit(message, currentContext)
           },
           onAddComment: onAddComment != nil ? { message in
-            // Add to comment collection
-            onAddComment?(
-              message,
-              state.lineNumber,
-              state.side,
-              state.fileName,
-              state.lineContent ?? ""
-            )
+            onAddComment?(message, currentContext)
             withAnimation(.easeOut(duration: 0.15)) {
               state.dismiss()
             }
@@ -206,7 +200,7 @@ struct InlineEditorOverlay: View {
         InlineEditorOverlay(
           state: state,
           containerSize: CGSize(width: 600, height: 600),
-          onSubmit: { _, _, _, _ in }
+          onSubmit: { _, _ in }
         )
       }
       .frame(width: 600, height: 600)

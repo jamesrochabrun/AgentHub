@@ -950,7 +950,6 @@ private struct GitDiffContentView: View {
               diffStyle: $diffStyle,
               overflowMode: $overflowMode,
               onLineClickWithPosition: isInlineEditorEnabled ? { position, localPoint in
-                print("[GitDiffContentView] Line clicked! lineNumber=\(position.lineNumber), side=\(position.side)")
                 let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
 
                 // Determine which content to use based on the side (left=old, right=new)
@@ -964,6 +963,26 @@ private struct GitDiffContentView: View {
                     side: position.side,
                     fileName: filePath,
                     lineContent: lineContent,
+                    fullFileContent: fileContent
+                  )
+                }
+              } : nil,
+              onLineSelectionChange: isInlineEditorEnabled ? { selection in
+                let anchorY = geometry.size.height / 2
+                let anchorPoint = CGPoint(x: geometry.size.width / 2, y: anchorY)
+
+                // Determine which content to use based on the side (left=old, right=new)
+                let fileContent = selection.side == "left" ? oldContent : newContent
+                let linesContent = extractLines(from: fileContent, startLine: selection.startLine, endLine: selection.endLine)
+
+                withAnimation(.easeOut(duration: 0.2)) {
+                  inlineEditorState.show(
+                    at: anchorPoint,
+                    lineNumber: selection.startLine,
+                    endLineNumber: selection.endLine,
+                    side: selection.side,
+                    fileName: filePath,
+                    lineContent: linesContent,
                     fullFileContent: fileContent
                   )
                 }
@@ -995,14 +1014,15 @@ private struct GitDiffContentView: View {
               state: inlineEditorState,
               containerSize: geometry.size,
               providerKind: providerKind,
-              onSubmit: { message, lineNumber, side, file in
+              onSubmit: { message, context in
                 // Build contextual prompt with line context
                 let prompt = buildInlinePrompt(
                   question: message,
-                  lineNumber: lineNumber,
-                  side: side,
-                  lineContent: inlineEditorState.lineContent ?? "",
-                  fileName: file
+                  lineNumber: context.lineNumber,
+                  endLineNumber: context.endLineNumber,
+                  side: context.side,
+                  lineContent: context.lineContent,
+                  fileName: context.fileName
                 )
 
                 // Use callback if provided (redirects to built-in terminal)
@@ -1036,13 +1056,14 @@ private struct GitDiffContentView: View {
                   }
                 }
               },
-              onAddComment: { message, lineNumber, side, file, lineContent in
+              onAddComment: { message, context in
                 // Add comment to the collection
                 commentsState.addComment(
-                  filePath: file,
-                  lineNumber: lineNumber,
-                  side: side,
-                  lineContent: lineContent,
+                  filePath: context.fileName,
+                  lineNumber: context.lineNumber,
+                  endLineNumber: context.endLineNumber,
+                  side: context.side,
+                  lineContent: context.lineContent,
                   text: message
                 )
                 // Auto-expand panel when first comment is added
@@ -1184,21 +1205,39 @@ private struct GitDiffContentView: View {
     return lines[index]
   }
 
+  /// Extracts a range of lines from file content
+  private func extractLines(from content: String, startLine: Int, endLine: Int) -> String {
+    let lines = content.components(separatedBy: .newlines)
+    let startIndex = max(startLine - 1, 0) // Convert 1-indexed to 0-indexed
+    let endIndex = min(endLine - 1, lines.count - 1)
+    guard startIndex <= endIndex, startIndex < lines.count else {
+      return ""
+    }
+    return lines[startIndex...endIndex].joined(separator: "\n")
+  }
+
   /// Builds a contextual prompt for the inline question
   private func buildInlinePrompt(
     question: String,
     lineNumber: Int,
+    endLineNumber: Int? = nil,
     side: String,
     lineContent: String,
     fileName: String
   ) -> String {
     let sideLabel = side == "left" ? "old" : "new"
+    let lineLabel: String
+    if let end = endLineNumber {
+      lineLabel = "Lines \(lineNumber)-\(end)"
+    } else {
+      lineLabel = "Line \(lineNumber)"
+    }
     return """
       I have the following review comment on the code changes:
 
       ## \(fileName)
 
-      **Line \(lineNumber)** (\(sideLabel)):
+      **\(lineLabel)** (\(sideLabel)):
       ```
       \(lineContent)
       ```
