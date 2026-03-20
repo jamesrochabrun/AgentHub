@@ -1,5 +1,5 @@
 {
-  "originHash" : "4800bec6523f9aedbbc32deba544c7215945c6a6980635ce1e406a47d37a3c5d",
+  "originHash" : "341bc1bf9f5e3eef8a8740e205f37b9678e124b17c60790d87b3c51d44e5adc3",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/PierreDiffsSwift",
       "state" : {
-        "revision" : "9ec98852df405ba5eedce4f55d1d31d8bde4cc26",
-        "version" : "1.1.4"
+        "revision" : "3bd094d3041e0dc2c601d2cd609a7ef946e77c82",
+        "version" : "1.1.5"
       }
     },
     {

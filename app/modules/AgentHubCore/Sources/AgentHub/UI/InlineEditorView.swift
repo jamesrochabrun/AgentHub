@@ -19,6 +19,7 @@ struct InlineEditorView: View {
   // MARK: - Properties
 
   let lineNumber: Int
+  let endLineNumber: Int?
   let side: String
   let fileName: String
   let errorMessage: String?
@@ -44,14 +45,22 @@ struct InlineEditorView: View {
   @State private var text: String = ""
   @FocusState private var isFocused: Bool
 
+  private var lineLabel: String {
+    if let end = endLineNumber {
+      return "lines \(lineNumber)-\(end)"
+    }
+    return "line \(lineNumber)"
+  }
+
   private var placeholder: String {
-    isEditMode ? "Update comment on line \(lineNumber)" : "Add suggestion to line \(lineNumber)"
+    isEditMode ? "Update comment on \(lineLabel)" : "Add suggestion to \(lineLabel)"
   }
 
   // MARK: - Initializers
 
   init(
     lineNumber: Int,
+    endLineNumber: Int? = nil,
     side: String,
     fileName: String,
     errorMessage: String?,
@@ -64,6 +73,7 @@ struct InlineEditorView: View {
     isEditMode: Bool = false
   ) {
     self.lineNumber = lineNumber
+    self.endLineNumber = endLineNumber
     self.side = side
     self.fileName = fileName
     self.errorMessage = errorMessage

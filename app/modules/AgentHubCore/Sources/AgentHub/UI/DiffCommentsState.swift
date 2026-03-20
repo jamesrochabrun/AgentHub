@@ -51,20 +51,27 @@ final class DiffCommentsState {
   ///
   /// - Parameters:
   ///   - filePath: The file path where the comment is made
-  ///   - lineNumber: The line number of the comment
+  ///   - lineNumber: The start line number of the comment
+  ///   - endLineNumber: The end line number for multi-line selections (nil for single line)
   ///   - side: Which side of the diff ("left", "right", or "unified")
-  ///   - lineContent: The content of the line being commented on
+  ///   - lineContent: The content of the line(s) being commented on
   ///   - text: The comment text
   /// - Returns: The created or updated comment
   @discardableResult
   func addComment(
     filePath: String,
     lineNumber: Int,
+    endLineNumber: Int? = nil,
     side: String,
     lineContent: String,
     text: String
   ) -> DiffComment {
-    let locationKey = "\(filePath):\(lineNumber):\(side)"
+    let locationKey: String
+    if let end = endLineNumber {
+      locationKey = "\(filePath):\(lineNumber)-\(end):\(side)"
+    } else {
+      locationKey = "\(filePath):\(lineNumber):\(side)"
+    }
 
     if var existingComment = comments[locationKey] {
       // Update existing comment
@@ -76,6 +83,7 @@ final class DiffCommentsState {
       let comment = DiffComment(
         filePath: filePath,
         lineNumber: lineNumber,
+        endLineNumber: endLineNumber,
         side: side,
         lineContent: lineContent,
         text: text
@@ -111,22 +119,34 @@ final class DiffCommentsState {
   ///
   /// - Parameters:
   ///   - filePath: The file path of the comment
-  ///   - lineNumber: The line number of the comment
+  ///   - lineNumber: The start line number of the comment
+  ///   - endLineNumber: The end line number for multi-line selections
   ///   - side: The side of the diff
-  func removeComment(filePath: String, lineNumber: Int, side: String) {
-    let locationKey = "\(filePath):\(lineNumber):\(side)"
+  func removeComment(filePath: String, lineNumber: Int, endLineNumber: Int? = nil, side: String) {
+    let locationKey: String
+    if let end = endLineNumber {
+      locationKey = "\(filePath):\(lineNumber)-\(end):\(side)"
+    } else {
+      locationKey = "\(filePath):\(lineNumber):\(side)"
+    }
     comments.removeValue(forKey: locationKey)
   }
 
-  /// Checks if a line already has a comment.
+  /// Checks if a location already has a comment.
   ///
   /// - Parameters:
   ///   - filePath: The file path to check
-  ///   - lineNumber: The line number to check
+  ///   - lineNumber: The start line number to check
+  ///   - endLineNumber: The end line number for multi-line selections
   ///   - side: The side of the diff
   /// - Returns: True if a comment exists at this location
-  func hasComment(filePath: String, lineNumber: Int, side: String) -> Bool {
-    let locationKey = "\(filePath):\(lineNumber):\(side)"
+  func hasComment(filePath: String, lineNumber: Int, endLineNumber: Int? = nil, side: String) -> Bool {
+    let locationKey: String
+    if let end = endLineNumber {
+      locationKey = "\(filePath):\(lineNumber)-\(end):\(side)"
+    } else {
+      locationKey = "\(filePath):\(lineNumber):\(side)"
+    }
     return comments[locationKey] != nil
   }
 
@@ -134,11 +154,17 @@ final class DiffCommentsState {
   ///
   /// - Parameters:
   ///   - filePath: The file path
-  ///   - lineNumber: The line number
+  ///   - lineNumber: The start line number
+  ///   - endLineNumber: The end line number for multi-line selections
   ///   - side: The side of the diff
   /// - Returns: The comment at this location, or nil if none exists
-  func getComment(filePath: String, lineNumber: Int, side: String) -> DiffComment? {
-    let locationKey = "\(filePath):\(lineNumber):\(side)"
+  func getComment(filePath: String, lineNumber: Int, endLineNumber: Int? = nil, side: String) -> DiffComment? {
+    let locationKey: String
+    if let end = endLineNumber {
+      locationKey = "\(filePath):\(lineNumber)-\(end):\(side)"
+    } else {
+      locationKey = "\(filePath):\(lineNumber):\(side)"
+    }
     return comments[locationKey]
   }
 
@@ -173,7 +199,7 @@ final class DiffCommentsState {
 
       for comment in fileComments {
         let sideLabel = comment.side == "left" ? "old" : "new"
-        prompt += "\n**Line \(comment.lineNumber)** (\(sideLabel)):\n"
+        prompt += "\n**\(comment.lineLabel)** (\(sideLabel)):\n"
         prompt += "```\n\(comment.lineContent)\n```\n"
         prompt += "Comment: \(comment.text)\n"
       }
