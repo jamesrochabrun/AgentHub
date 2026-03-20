@@ -12,13 +12,21 @@ import Foundation
 /// Supports PR-style code review where users can leave multiple comments
 /// on different lines across files, then batch-send them to Claude.
 struct DiffComment: Identifiable, Equatable, Sendable {
+  /// Unique identifier for this comment
   let id: UUID
+  /// When the comment was created
   let timestamp: Date
+  /// Absolute path of the file being commented on
   let filePath: String
+  /// The start (or only) line number of the comment
   let lineNumber: Int
-  let endLineNumber: Int?  // Non-nil when comment spans a multi-line selection
-  let side: String  // "left", "right", "unified"
+  /// The end line number when the comment spans a multi-line drag selection
+  let endLineNumber: Int?
+  /// Which side of the diff this comment belongs to (`"left"`, `"right"`, or `"unified"`)
+  let side: String
+  /// Source code content of the selected line(s)
   let lineContent: String
+  /// The user's review comment text (mutable so it can be edited in-place)
   var text: String
 
   /// Unique key for identifying a comment's location.
