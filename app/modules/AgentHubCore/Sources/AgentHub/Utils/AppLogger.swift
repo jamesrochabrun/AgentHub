@@ -47,4 +47,7 @@ enum AppLogger {
 
   /// iOS Simulator management
   static let simulator = Logger(subsystem: subsystem, category: "Simulator")
+
+  /// GitHub CLI operations (PRs, issues, reviews, checks)
+  static let github = Logger(subsystem: subsystem, category: "GitHub")
 }

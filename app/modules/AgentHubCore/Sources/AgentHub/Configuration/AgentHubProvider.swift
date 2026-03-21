@@ -101,6 +101,13 @@ public final class AgentHubProvider {
     }
   }()
 
+  // MARK: - GitHub Integration
+
+  /// GitHub CLI service for PR/issue operations
+  public private(set) lazy var gitHubService: GitHubCLIService = {
+    GitHubCLIService()
+  }()
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes
