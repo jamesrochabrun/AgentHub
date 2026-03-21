@@ -51,6 +51,13 @@ private struct FileExplorerSheetItem: Identifiable {
   let initialFilePath: String?
 }
 
+/// Identifiable wrapper for GitHub panel sheet
+private struct GitHubSheetItem: Identifiable {
+  let id = UUID()
+  let session: CLISession
+  let projectPath: String
+}
+
 // MARK: - MonitoringCardView
 
 /// Card view for displaying a monitored session in the monitoring panel
@@ -97,6 +104,7 @@ public struct MonitoringCardView: View {
   @State private var mermaidSheetSession: CLISession?
   @State private var simulatorSheetSession: CLISession?
   @State private var fileExplorerSheetItem: FileExplorerSheetItem?
+  @State private var gitHubSheetItem: GitHubSheetItem?
   @State private var isDragging = false
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
@@ -327,6 +335,22 @@ public struct MonitoringCardView: View {
         onDismiss: { fileExplorerSheetItem = nil },
         isEmbedded: false,
         initialFilePath: item.initialFilePath
+      )
+    }
+    .modalPanel(
+      item: $gitHubSheetItem,
+      title: "GitHub",
+      autosaveName: "com.agenthub.panel.github"
+    ) { item in
+      GitHubPanelView(
+        projectPath: item.projectPath,
+        onDismiss: { gitHubSheetItem = nil },
+        isEmbedded: false,
+        session: item.session,
+        onSendToSession: { prompt, session in
+          viewModel?.showTerminalWithPrompt(for: session, prompt: prompt)
+          gitHubSheetItem = nil
+        }
       )
     }
     .sheet(isPresented: $showingNameSheet) {
@@ -725,6 +749,28 @@ public struct MonitoringCardView: View {
         }
         .buttonStyle(.plain)
         .help("View git unstaged changes")
+
+        // GitHub button
+        Button(action: {
+          gitHubSheetItem = GitHubSheetItem(
+            session: session,
+            projectPath: session.projectPath
+          )
+        }) {
+          HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.pull")
+              .font(.caption2)
+            Text("GitHub")
+              .font(.caption2)
+          }
+          .foregroundColor(.secondary)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .buttonStyle(.plain)
+        .help("View GitHub PRs, issues, and CI status")
 
         // Files button
         Button(action: {
