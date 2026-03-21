@@ -264,11 +264,8 @@ public struct SessionJSONLParser {
             to: &result
           )
 
-          // Extract URL from tool_use input (e.g., WebFetch url parameter)
-          if let dict = block.input?.value as? [String: Any],
-             let urlString = dict["url"] as? String {
-            appendResourceLinks(extractResourceLinks(from: urlString, timestamp: timestamp), to: &result)
-          }
+          // Note: URL extraction from tool_use inputs is intentionally skipped
+          // to reduce noise — only user/assistant text links are shown
         }
 
       case "tool_result":
@@ -287,18 +284,8 @@ public struct SessionJSONLParser {
             to: &result
           )
 
-          // Extract URLs from tool result content
-          if let content = block.content {
-            var textToScan = ""
-            if let str = content.value as? String {
-              textToScan = str
-            } else if let arr = content.value as? [[String: Any]] {
-              textToScan = arr.compactMap { $0["text"] as? String }.joined(separator: " ")
-            }
-            if !textToScan.isEmpty {
-              appendResourceLinks(extractResourceLinks(from: textToScan, timestamp: timestamp), to: &result)
-            }
-          }
+          // Note: URL extraction from tool results is intentionally skipped
+          // to reduce noise — only user/assistant text links are shown
         }
 
       case "thinking":
