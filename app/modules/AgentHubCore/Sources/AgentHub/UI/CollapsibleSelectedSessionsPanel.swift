@@ -77,11 +77,24 @@ public struct CollapsibleSelectedSessionsPanel: View {
       .onChange(of: items.map(\.id)) { _, _ in
         ensurePrimarySelection()
       }
-      .alert("Delete Worktree?", isPresented: $showDeleteWorktreeAlert) {
-        Button("Cancel", role: .cancel) {
-          sessionToDeleteWorktree = nil
+      .confirmationDialog("Delete Worktree?", isPresented: $showDeleteWorktreeAlert, titleVisibility: .visible) {
+        Button("Delete Worktree & Branch", role: .destructive) {
+          if let session = sessionToDeleteWorktree {
+            let providerKind = items.first(where: { $0.session.id == session.id })?.providerKind
+            Task {
+              switch providerKind {
+              case .claude:
+                await claudeViewModel.deleteWorktreeForSession(session, deleteBranch: true)
+              case .codex:
+                await codexViewModel.deleteWorktreeForSession(session, deleteBranch: true)
+              case .none:
+                break
+              }
+            }
+            sessionToDeleteWorktree = nil
+          }
         }
-        Button("Delete", role: .destructive) {
+        Button("Delete Worktree Only", role: .destructive) {
           if let session = sessionToDeleteWorktree {
             let providerKind = items.first(where: { $0.session.id == session.id })?.providerKind
             Task {
@@ -97,8 +110,11 @@ public struct CollapsibleSelectedSessionsPanel: View {
             sessionToDeleteWorktree = nil
           }
         }
+        Button("Cancel", role: .cancel) {
+          sessionToDeleteWorktree = nil
+        }
       } message: {
-        Text("You are about to delete this worktree. This cannot be recovered.")
+        Text("This will permanently delete the worktree directory. Choose whether to also delete the associated git branch.")
       }
     }
   }
@@ -325,11 +341,16 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
       .onChange(of: items.map(\.id)) { _, _ in
         ensurePrimarySelection()
       }
-      .alert("Delete Worktree?", isPresented: $showDeleteWorktreeAlert) {
-        Button("Cancel", role: .cancel) {
-          sessionToDeleteWorktree = nil
+      .confirmationDialog("Delete Worktree?", isPresented: $showDeleteWorktreeAlert, titleVisibility: .visible) {
+        Button("Delete Worktree & Branch", role: .destructive) {
+          if let session = sessionToDeleteWorktree {
+            Task {
+              await viewModel.deleteWorktreeForSession(session, deleteBranch: true)
+            }
+            sessionToDeleteWorktree = nil
+          }
         }
-        Button("Delete", role: .destructive) {
+        Button("Delete Worktree Only", role: .destructive) {
           if let session = sessionToDeleteWorktree {
             Task {
               await viewModel.deleteWorktreeForSession(session)
@@ -337,8 +358,11 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
             sessionToDeleteWorktree = nil
           }
         }
+        Button("Cancel", role: .cancel) {
+          sessionToDeleteWorktree = nil
+        }
       } message: {
-        Text("You are about to delete this worktree. This cannot be recovered.")
+        Text("This will permanently delete the worktree directory. Choose whether to also delete the associated git branch.")
       }
     }
   }

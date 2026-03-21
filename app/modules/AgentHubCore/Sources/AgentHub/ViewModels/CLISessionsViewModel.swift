@@ -63,6 +63,9 @@ public final class CLISessionsViewModel {
     }
   }
 
+  /// Whether to also delete the branch when deleting a worktree (user preference per deletion)
+  public var deleteBranchOnWorktreeRemoval: Bool = true
+
   // MARK: - Search State
 
   public var searchQuery: String = ""
@@ -892,15 +895,15 @@ public final class CLISessionsViewModel {
   /// - Parameters:
   ///   - worktree: The worktree to delete
   ///   - force: When true, uses double `--force` to remove worktrees with untracked files
-  public func deleteWorktree(_ worktree: WorktreeBranch, force: Bool = false) async {
-    // [CLISessionsVM] deleteWorktree: \(worktree.path)")
+  ///   - deleteBranch: When true, also deletes the associated branch
+  public func deleteWorktree(_ worktree: WorktreeBranch, force: Bool = false, deleteBranch: Bool = false) async {
     deletingWorktreePath = worktree.path
 
     do {
       if FileManager.default.fileExists(atPath: worktree.path) {
-        try await worktreeService.removeWorktree(at: worktree.path, force: force)
+        try await worktreeService.removeWorktree(at: worktree.path, force: force, deleteBranch: deleteBranch)
       } else if let parentRepoPath = findParentRepoPath(for: worktree) {
-        try await worktreeService.removeWorktree(at: worktree.path, relativeTo: parentRepoPath, force: force)
+        try await worktreeService.removeWorktree(at: worktree.path, relativeTo: parentRepoPath, force: force, deleteBranch: deleteBranch)
       } else {
         throw NSError(domain: "AgentHub", code: 1, userInfo: [
           NSLocalizedDescriptionKey: "Cannot find parent repository for worktree at \(worktree.path)"
@@ -910,7 +913,6 @@ public final class CLISessionsViewModel {
       clearWorktreeDeletionError()
       refresh()
     } catch {
-      // [CLISessionsVM] Failed to delete worktree: \(error.localizedDescription)")
       // Check if this is an orphaned worktree
       if let orphanInfo = worktreeService.checkIfOrphaned(at: worktree.path),
          orphanInfo.isOrphaned {
@@ -934,11 +936,12 @@ public final class CLISessionsViewModel {
   /// - Parameters:
   ///   - worktree: The orphaned worktree to delete
   ///   - parentRepoPath: Path to the parent git repository
-  public func deleteOrphanedWorktree(_ worktree: WorktreeBranch, parentRepoPath: String) async {
+  ///   - deleteBranch: When true, also deletes the associated branch
+  public func deleteOrphanedWorktree(_ worktree: WorktreeBranch, parentRepoPath: String, deleteBranch: Bool = false) async {
     deletingWorktreePath = worktree.path
 
     do {
-      try await worktreeService.removeOrphanedWorktree(at: worktree.path, parentRepoPath: parentRepoPath)
+      try await worktreeService.removeOrphanedWorktree(at: worktree.path, parentRepoPath: parentRepoPath, deleteBranch: deleteBranch)
       deletingWorktreePath = nil
       clearWorktreeDeletionError()
       refresh()
@@ -954,20 +957,20 @@ public final class CLISessionsViewModel {
   /// Synchronous kickoff for force-deleting a worktree from an error alert.
   /// Sets loading state and clears the error before starting the async operation,
   /// ensuring the spinner is visible immediately when the alert dismisses.
-  public func forceDeleteWorktree(_ worktree: WorktreeBranch) {
+  public func forceDeleteWorktree(_ worktree: WorktreeBranch, deleteBranch: Bool = false) {
     deletingWorktreePath = worktree.path
     clearWorktreeDeletionError()
     Task {
-      await deleteWorktree(worktree, force: true)
+      await deleteWorktree(worktree, force: true, deleteBranch: deleteBranch)
     }
   }
 
   /// Synchronous kickoff for deleting an orphaned worktree from an error alert.
-  public func forceDeleteOrphanedWorktree(_ worktree: WorktreeBranch, parentRepoPath: String) {
+  public func forceDeleteOrphanedWorktree(_ worktree: WorktreeBranch, parentRepoPath: String, deleteBranch: Bool = false) {
     deletingWorktreePath = worktree.path
     clearWorktreeDeletionError()
     Task {
-      await deleteOrphanedWorktree(worktree, parentRepoPath: parentRepoPath)
+      await deleteOrphanedWorktree(worktree, parentRepoPath: parentRepoPath, deleteBranch: deleteBranch)
     }
   }
 
@@ -975,10 +978,11 @@ public final class CLISessionsViewModel {
   /// - Parameters:
   ///   - session: The session whose worktree to delete
   ///   - force: When true, uses double `--force` to remove worktrees with untracked files
-  public func deleteWorktreeForSession(_ session: CLISession, force: Bool = false) async {
+  ///   - deleteBranch: When true, also deletes the associated branch
+  public func deleteWorktreeForSession(_ session: CLISession, force: Bool = false, deleteBranch: Bool = false) async {
     deletingWorktreePath = session.projectPath
     do {
-      try await worktreeService.removeWorktree(at: session.projectPath, force: force)
+      try await worktreeService.removeWorktree(at: session.projectPath, force: force, deleteBranch: deleteBranch)
       deletingWorktreePath = nil
       stopMonitoring(session: session)
       refresh()

@@ -39,6 +39,9 @@ public struct MultiProviderSessionsListView: View {
   @State private var primarySessionId: String?
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
+  @State private var worktreeToDelete: WorktreeBranch?
+  @State private var worktreeToDeleteViewModel: CLISessionsViewModel?
+  @State private var showDeleteWorktreeConfirmation = false
   @State private var showCommandPalette = false
   @State private var hubFilterMode: HubFilterMode = .all
   @State private var scrollToSessionId: String?
@@ -160,16 +163,13 @@ public struct MultiProviderSessionsListView: View {
       )
     ) {
       let error = claudeViewModel.worktreeDeletionError ?? codexViewModel.worktreeDeletionError
+      let isClaudeError = claudeViewModel.worktreeDeletionError != nil
+      let activeViewModel = isClaudeError ? claudeViewModel : codexViewModel
       if let error, error.isOrphaned, let parentRepoPath = error.parentRepoPath {
         Button("Prune & Delete") {
-          let isClaudeError = claudeViewModel.worktreeDeletionError != nil
-          if isClaudeError {
-            codexViewModel.clearWorktreeDeletionError()
-            claudeViewModel.forceDeleteOrphanedWorktree(error.worktree, parentRepoPath: parentRepoPath)
-          } else {
-            claudeViewModel.clearWorktreeDeletionError()
-            codexViewModel.forceDeleteOrphanedWorktree(error.worktree, parentRepoPath: parentRepoPath)
-          }
+          claudeViewModel.clearWorktreeDeletionError()
+          codexViewModel.clearWorktreeDeletionError()
+          activeViewModel.forceDeleteOrphanedWorktree(error.worktree, parentRepoPath: parentRepoPath, deleteBranch: activeViewModel.deleteBranchOnWorktreeRemoval)
         }
         Button("Cancel", role: .cancel) {
           claudeViewModel.clearWorktreeDeletionError()
@@ -177,14 +177,9 @@ public struct MultiProviderSessionsListView: View {
         }
       } else if let error {
         Button("Force Delete", role: .destructive) {
-          let isClaudeError = claudeViewModel.worktreeDeletionError != nil
-          if isClaudeError {
-            codexViewModel.clearWorktreeDeletionError()
-            claudeViewModel.forceDeleteWorktree(error.worktree)
-          } else {
-            claudeViewModel.clearWorktreeDeletionError()
-            codexViewModel.forceDeleteWorktree(error.worktree)
-          }
+          claudeViewModel.clearWorktreeDeletionError()
+          codexViewModel.clearWorktreeDeletionError()
+          activeViewModel.forceDeleteWorktree(error.worktree, deleteBranch: activeViewModel.deleteBranchOnWorktreeRemoval)
         }
         Button("Cancel", role: .cancel) {
           claudeViewModel.clearWorktreeDeletionError()
@@ -201,11 +196,24 @@ public struct MultiProviderSessionsListView: View {
         }
       }
     }
-    .alert("Delete Worktree?", isPresented: $showDeleteWorktreeAlert) {
-      Button("Cancel", role: .cancel) {
-        sessionToDeleteWorktree = nil
+    .confirmationDialog("Delete Worktree?", isPresented: $showDeleteWorktreeAlert, titleVisibility: .visible) {
+      Button("Delete Worktree & Branch", role: .destructive) {
+        if let session = sessionToDeleteWorktree {
+          let providerKind = selectedSessionItems.first(where: { $0.session.id == session.id })?.providerKind
+          Task {
+            switch providerKind {
+            case .claude:
+              await claudeViewModel.deleteWorktreeForSession(session, deleteBranch: true)
+            case .codex:
+              await codexViewModel.deleteWorktreeForSession(session, deleteBranch: true)
+            case .none:
+              break
+            }
+          }
+          sessionToDeleteWorktree = nil
+        }
       }
-      Button("Delete", role: .destructive) {
+      Button("Delete Worktree Only", role: .destructive) {
         if let session = sessionToDeleteWorktree {
           let providerKind = selectedSessionItems.first(where: { $0.session.id == session.id })?.providerKind
           Task {
@@ -221,8 +229,33 @@ public struct MultiProviderSessionsListView: View {
           sessionToDeleteWorktree = nil
         }
       }
+      Button("Cancel", role: .cancel) {
+        sessionToDeleteWorktree = nil
+      }
     } message: {
-      Text("You are about to delete this worktree. This cannot be recovered.")
+      Text("This will permanently delete the worktree directory. Choose whether to also delete the associated git branch.")
+    }
+    .confirmationDialog("Delete Worktree?", isPresented: $showDeleteWorktreeConfirmation, titleVisibility: .visible) {
+      Button("Delete Worktree & Branch", role: .destructive) {
+        if let worktree = worktreeToDelete, let vm = worktreeToDeleteViewModel {
+          Task { await vm.deleteWorktree(worktree, deleteBranch: true) }
+          worktreeToDelete = nil
+          worktreeToDeleteViewModel = nil
+        }
+      }
+      Button("Delete Worktree Only", role: .destructive) {
+        if let worktree = worktreeToDelete, let vm = worktreeToDeleteViewModel {
+          Task { await vm.deleteWorktree(worktree) }
+          worktreeToDelete = nil
+          worktreeToDeleteViewModel = nil
+        }
+      }
+      Button("Cancel", role: .cancel) {
+        worktreeToDelete = nil
+        worktreeToDeleteViewModel = nil
+      }
+    } message: {
+      Text("This will permanently delete the worktree directory. Choose whether to also delete the associated git branch.")
     }
     .sheet(item: $createWorktreeContext) { context in
       CreateWorktreeSheet(
@@ -1144,7 +1177,9 @@ private struct ProviderSectionView: View {
             viewModel.toggleMonitoring(for: session)
           },
           onDeleteWorktree: { worktree in
-            Task { await viewModel.deleteWorktree(worktree) }
+            worktreeToDelete = worktree
+            worktreeToDeleteViewModel = viewModel
+            showDeleteWorktreeConfirmation = true
           },
           getCustomName: { sessionId in
             viewModel.sessionCustomNames[sessionId]

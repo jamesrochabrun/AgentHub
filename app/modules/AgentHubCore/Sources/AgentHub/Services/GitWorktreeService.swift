@@ -659,17 +659,14 @@ public actor GitWorktreeService {
 
   // MARK: - Worktree Removal
 
-  /// Removes a worktree and its associated branch
+  /// Removes a worktree, unlocking it first if necessary.
   /// - Parameters:
   ///   - worktreePath: Path to the worktree to remove
   ///   - force: When true, uses double `--force` to remove worktrees with untracked files
-  public func removeWorktree(at worktreePath: String, force: Bool = false) async throws {
+  ///   - deleteBranch: When true, also deletes the branch associated with the worktree
+  public func removeWorktree(at worktreePath: String, force: Bool = false, deleteBranch: Bool = false) async throws {
     let gitRoot = try await findGitRoot(at: worktreePath)
-    var args = ["worktree", "remove", worktreePath, "--force"]
-    if force {
-      args.append("--force")
-    }
-    try await runGitCommand(args, at: gitRoot)
+    try await performWorktreeRemoval(at: worktreePath, gitRoot: gitRoot, force: force, deleteBranch: deleteBranch)
   }
 
   /// Removes a worktree using a known parent repo path (avoids resolving git root from the worktree itself).
@@ -678,18 +675,79 @@ public actor GitWorktreeService {
   ///   - worktreePath: Path to the worktree to remove
   ///   - parentRepoPath: Path to the parent git repository
   ///   - force: When true, uses double `--force` to remove worktrees with untracked files
-  public func removeWorktree(at worktreePath: String, relativeTo parentRepoPath: String, force: Bool = false) async throws {
+  ///   - deleteBranch: When true, also deletes the branch associated with the worktree
+  public func removeWorktree(at worktreePath: String, relativeTo parentRepoPath: String, force: Bool = false, deleteBranch: Bool = false) async throws {
     // If the directory doesn't exist, just prune stale references
     guard FileManager.default.fileExists(atPath: worktreePath) else {
       try await runGitCommand(["worktree", "prune"], at: parentRepoPath)
       return
     }
-    // Directory exists — use standard git worktree remove
-    var args = ["worktree", "remove", worktreePath, "--force"]
-    if force {
-      args.append("--force")
+    try await performWorktreeRemoval(at: worktreePath, gitRoot: parentRepoPath, force: force, deleteBranch: deleteBranch)
+  }
+
+  /// Shared worktree removal logic: unlocks if locked, then removes, optionally deletes the branch.
+  private func performWorktreeRemoval(at worktreePath: String, gitRoot: String, force: Bool, deleteBranch: Bool) async throws {
+    // Resolve the branch name before removal (needed if deleteBranch is requested)
+    let branchName: String? = deleteBranch ? worktreeBranchName(at: worktreePath) : nil
+
+    // Unlock the worktree first — a locked worktree will cause removal to fail
+    // even with --force. We ignore errors here since it may not be locked.
+    try? await runGitCommand(["worktree", "unlock", worktreePath], at: gitRoot)
+
+    do {
+      var args = ["worktree", "remove", worktreePath, "--force"]
+      if force {
+        args.append("--force")
+      }
+      try await runGitCommand(args, at: gitRoot)
+    } catch {
+      // If standard removal fails, try pruning stale references then force-deleting the directory
+      if force {
+        try? await runGitCommand(["worktree", "prune"], at: gitRoot)
+        if FileManager.default.fileExists(atPath: worktreePath) {
+          try FileManager.default.removeItem(atPath: worktreePath)
+        }
+        // Prune again to clean up the now-stale worktree entry
+        try? await runGitCommand(["worktree", "prune"], at: gitRoot)
+      } else {
+        throw error
+      }
     }
-    try await runGitCommand(args, at: parentRepoPath)
+
+    // Delete the associated branch if requested
+    if let branchName, !branchName.isEmpty {
+      try? await runGitCommand(["branch", "-D", branchName], at: gitRoot)
+    }
+  }
+
+  /// Reads the branch name checked out in a worktree by parsing its HEAD.
+  /// - Parameter worktreePath: Path to the worktree directory
+  /// - Returns: The branch name, or nil if detached or unreadable
+  public nonisolated func worktreeBranchName(at worktreePath: String) -> String? {
+    let gitFile = (worktreePath as NSString).appendingPathComponent(".git")
+
+    // Worktrees have a .git *file* pointing to the parent repo's worktree metadata
+    guard let contents = try? String(contentsOfFile: gitFile, encoding: .utf8),
+          let gitdirLine = contents.components(separatedBy: .newlines).first(where: { $0.hasPrefix("gitdir:") }) else {
+      return nil
+    }
+
+    let gitdirPath = gitdirLine
+      .replacingOccurrences(of: "gitdir:", with: "")
+      .trimmingCharacters(in: .whitespaces)
+
+    // Read HEAD from the worktree metadata directory
+    let headFile = (gitdirPath as NSString).appendingPathComponent("HEAD")
+    guard let headContents = try? String(contentsOfFile: headFile, encoding: .utf8) else {
+      return nil
+    }
+
+    let head = headContents.trimmingCharacters(in: .whitespacesAndNewlines)
+    let refPrefix = "ref: refs/heads/"
+    guard head.hasPrefix(refPrefix) else {
+      return nil // Detached HEAD
+    }
+    return String(head.dropFirst(refPrefix.count))
   }
 
   // MARK: - Orphaned Worktree Handling
@@ -734,14 +792,25 @@ public actor GitWorktreeService {
   /// - Parameters:
   ///   - worktreePath: Path to the orphaned worktree directory
   ///   - parentRepoPath: Path to the parent git repository
-  public func removeOrphanedWorktree(at worktreePath: String, parentRepoPath: String) async throws {
+  ///   - deleteBranch: When true, also deletes the branch associated with the worktree
+  public func removeOrphanedWorktree(at worktreePath: String, parentRepoPath: String, deleteBranch: Bool = false) async throws {
+    // Resolve the branch name before removal if requested
+    let branchName: String? = deleteBranch ? worktreeBranchName(at: worktreePath) : nil
+
     // First, prune stale worktree references in the parent repo
     try await runGitCommand(["worktree", "prune"], at: parentRepoPath)
 
     // Then delete the orphaned directory
-    guard FileManager.default.fileExists(atPath: worktreePath) else {
-      return // Already deleted
+    if FileManager.default.fileExists(atPath: worktreePath) {
+      try FileManager.default.removeItem(atPath: worktreePath)
     }
-    try FileManager.default.removeItem(atPath: worktreePath)
+
+    // Prune again after directory deletion to clean up references
+    try? await runGitCommand(["worktree", "prune"], at: parentRepoPath)
+
+    // Delete the associated branch if requested
+    if let branchName, !branchName.isEmpty {
+      try? await runGitCommand(["branch", "-D", branchName], at: parentRepoPath)
+    }
   }
 }

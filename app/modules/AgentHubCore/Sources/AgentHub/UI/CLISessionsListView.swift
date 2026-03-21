@@ -29,6 +29,8 @@ public struct CLISessionsListView: View {
   @State private var isSearchSheetVisible: Bool = false
   @State private var primarySessionId: String?
   @State private var createWorktreeRepository: SelectedRepository?
+  @State private var worktreeToDelete: WorktreeBranch?
+  @State private var showDeleteWorktreeConfirmation: Bool = false
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @FocusState private var isSearchFieldFocused: Bool
@@ -94,7 +96,7 @@ public struct CLISessionsListView: View {
         if error.isOrphaned, let parentRepoPath = error.parentRepoPath {
           // Orphaned worktree - offer to prune & delete
           Button("Prune & Delete") {
-            viewModel.forceDeleteOrphanedWorktree(error.worktree, parentRepoPath: parentRepoPath)
+            viewModel.forceDeleteOrphanedWorktree(error.worktree, parentRepoPath: parentRepoPath, deleteBranch: viewModel.deleteBranchOnWorktreeRemoval)
           }
           Button("Cancel", role: .cancel) {
             viewModel.clearWorktreeDeletionError()
@@ -102,7 +104,7 @@ public struct CLISessionsListView: View {
         } else {
           // Regular error - offer force delete (double --force for untracked files)
           Button("Force Delete", role: .destructive) {
-            viewModel.forceDeleteWorktree(error.worktree)
+            viewModel.forceDeleteWorktree(error.worktree, deleteBranch: viewModel.deleteBranchOnWorktreeRemoval)
           }
           Button("Cancel", role: .cancel) {
             viewModel.clearWorktreeDeletionError()
@@ -125,6 +127,25 @@ public struct CLISessionsListView: View {
           Text("Could not delete worktree at:\n\(error.worktree.path)\n\nError: \(error.message)\n\n\"Force Delete\" will remove the worktree even if it contains untracked files.")
         }
       }
+    }
+    .confirmationDialog("Delete Worktree?", isPresented: $showDeleteWorktreeConfirmation, titleVisibility: .visible) {
+      Button("Delete Worktree & Branch", role: .destructive) {
+        if let worktree = worktreeToDelete {
+          Task { await viewModel.deleteWorktree(worktree, deleteBranch: true) }
+          worktreeToDelete = nil
+        }
+      }
+      Button("Delete Worktree Only", role: .destructive) {
+        if let worktree = worktreeToDelete {
+          Task { await viewModel.deleteWorktree(worktree) }
+          worktreeToDelete = nil
+        }
+      }
+      Button("Cancel", role: .cancel) {
+        worktreeToDelete = nil
+      }
+    } message: {
+      Text("This will permanently delete the worktree directory. Choose whether to also delete the associated git branch.")
     }
     .sheet(item: $createWorktreeRepository) { repository in
       CreateWorktreeSheet(
@@ -533,9 +554,8 @@ public struct CLISessionsListView: View {
               viewModel.toggleMonitoring(for: session)
             },
             onDeleteWorktree: { worktree in
-              Task {
-                await viewModel.deleteWorktree(worktree)
-              }
+              worktreeToDelete = worktree
+              showDeleteWorktreeConfirmation = true
             },
             getCustomName: { sessionId in
               viewModel.sessionCustomNames[sessionId]
