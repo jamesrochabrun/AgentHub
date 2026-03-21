@@ -77,6 +77,73 @@ Concrete implementations: `CLISessionMonitorService` / `CodexSessionMonitorServi
 - `MultiSessionLaunchViewModel` — Parallel session launcher (manual + smart mode)
 - `IntelligenceViewModel` — Calls Claude Code SDK to generate orchestration plans
 
+## Services & Testability
+
+### Protocol-Driven Services
+
+All services must be defined as **protocols (interfaces)** first, with concrete implementations separate. This enables easy mocking and unit testing.
+
+```swift
+// Define the interface
+protocol SessionMonitorServiceProtocol {
+  func discoverSessions(in directory: URL) async throws -> [CLISession]
+  func startMonitoring(session: CLISession) async
+}
+
+// Concrete implementation
+actor CLISessionMonitorService: SessionMonitorServiceProtocol { ... }
+
+// Test mock
+final class MockSessionMonitorService: SessionMonitorServiceProtocol { ... }
+```
+
+- Every service must have a corresponding protocol — never depend on concrete types directly
+- ViewModels and other consumers receive services via protocol types, not implementations
+- Use `AgentHubProvider` to wire concrete implementations; tests substitute mocks
+- Actors implement protocols for thread-safe I/O services; mocks can be simple classes
+
+### Testing Requirements
+
+- All services and ViewModels **must have unit tests** — code must be well tested
+- Use protocol-based mocks to isolate units under test
+- Test files live in `AgentHubTests/` and mirror the source structure
+- Cover critical paths: session discovery, JSONL parsing, state transitions, file watching lifecycle
+- Use `async` test methods for testing actor-based services
+- Prefer deterministic tests — inject controlled data rather than relying on file system state
+
+## SwiftUI View Guidelines
+
+### Composability
+
+- Views should be **small, focused, and composable** — each view does one thing well
+- When a view body exceeds ~40–50 lines, break it into smaller **extracted subviews**
+- Prefer creating dedicated component views over using large inline closures
+
+```swift
+// Prefer this:
+struct MonitoringCardView: View {
+  var body: some View {
+    VStack {
+      StatusHeaderView(status: status)
+      ContextWindowBar(usage: usage)
+      ToolActivityFeed(tools: tools)
+    }
+  }
+}
+
+// Avoid this: one massive body with hundreds of lines
+```
+
+### View Patterns
+
+- Extract repeated UI patterns into reusable components (e.g., `StatusBadge`, `SectionHeader`)
+- Use `ViewModifier` for shared styling and behavior (e.g., card backgrounds, hover effects)
+- Keep view logic minimal — delegate business logic to ViewModels
+- Use `@Environment` for injecting shared dependencies, not init parameters passed through many layers
+- Prefer value types (`struct`) for views — never use classes for SwiftUI views
+- Use `@Binding` for two-way data flow between parent and child views
+- Use descriptive view names that reflect their purpose (e.g., `SessionStatusIndicator`, not `StatusView`)
+
 ## Code Style
 
 - **Indentation:** 2 spaces (not tabs)
