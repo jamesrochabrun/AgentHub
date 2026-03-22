@@ -181,22 +181,20 @@ public struct MonitoringCardView: View {
     VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions
       header
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
 
       Divider()
 
       // Path row with folder, branch, and diff button
       pathRow
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
 
       // Terminal content
       Divider()
 
       monitorContent
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
 
       // Resource links panel (shown when URLs are detected in session responses)
       if let links = state?.detectedResourceLinks, !links.isEmpty {
@@ -204,9 +202,9 @@ public struct MonitoringCardView: View {
       }
     }
     .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
-    .clipShape(RoundedRectangle(cornerRadius: 8))
+    .clipShape(Rectangle())
     .overlay(
-      RoundedRectangle(cornerRadius: 8)
+      Rectangle()
         .stroke(
           showPrimaryIndicator && isPrimarySession
            ? Color.brandPrimary(for: providerKind)
@@ -457,36 +455,32 @@ public struct MonitoringCardView: View {
       // Session label - show custom name, slug, or default ID
       if let customName = viewModel?.sessionCustomNames[session.id] {
         Text(customName)
-          .font(.subheadline)
-          .fontWeight(.medium)
+          .font(.primaryDefault)
           .lineLimit(1)
       } else if let slug = session.slug {
         // Show slug (truncates first) and short ID (always shown)
         Text(slug)
-          .font(.system(.subheadline, design: .monospaced))
-          .fontWeight(.semibold)
+          .font(.primaryDefault)
           .lineLimit(1)
         Text("•")
-          .font(.caption)
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
           .fixedSize()
           .layoutPriority(1)
         Text(session.shortId)
-          .font(.system(.subheadline, design: .monospaced))
-          .fontWeight(.semibold)
+          .font(.primaryDefault)
           .fixedSize()
           .layoutPriority(1)
       } else {
         Text(session.shortId)
-          .font(.system(.subheadline, design: .monospaced))
-          .fontWeight(.bold)
+          .font(.primaryDefault)
           .fixedSize()
           .layoutPriority(1)
       }
 
       // Provider name with brand color
       Text(providerKind.rawValue)
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.brandPrimary(for: providerKind))
         .fixedSize()
         .layoutPriority(1)
@@ -563,7 +557,7 @@ public struct MonitoringCardView: View {
           .foregroundColor(.secondary)
 
         Text(session.projectPath)
-          .font(.caption)
+          .font(.primaryCaption)
           .foregroundColor(.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -573,8 +567,7 @@ public struct MonitoringCardView: View {
       // Branch name in brand color
       if let branch = session.branchName {
         Text(branch)
-          .font(.caption)
-          .fontWeight(.medium)
+          .font(.primaryCaption)
           .foregroundColor(.brandPrimary(for: providerKind))
           .lineLimit(1)
           .layoutPriority(1)
@@ -597,7 +590,7 @@ public struct MonitoringCardView: View {
               Image(systemName: "eye")
                 .font(.caption2)
               Text("Edits")
-                .font(.caption2)
+                .font(.secondaryCaption)
             }
             .foregroundColor(.orange)
             .padding(.horizontal, 8)
@@ -625,7 +618,7 @@ public struct MonitoringCardView: View {
               Image(systemName: "list.bullet.clipboard")
                 .font(.caption2)
               Text("Plan")
-                .font(.caption2)
+                .font(.secondaryCaption)
             }
             .foregroundColor(.orange)
             .padding(.horizontal, 8)
@@ -652,7 +645,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "arrow.left.arrow.right")
               .font(.caption2)
             Text("Diff")
-              .font(.caption2)
+              .font(.secondaryCaption)
           }
           .foregroundColor(.secondary)
           .padding(.horizontal, 8)
@@ -679,7 +672,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "folder")
               .font(.caption2)
             Text("Files")
-              .font(.caption2)
+              .font(.secondaryCaption)
           }
           .foregroundColor(.secondary)
           .padding(.horizontal, 8)
@@ -709,7 +702,7 @@ public struct MonitoringCardView: View {
               Image(systemName: "globe")
                 .font(.caption2)
               Text("Preview")
-                .font(.caption2)
+                .font(.secondaryCaption)
             }
             .foregroundColor(.secondary)
             .padding(.horizontal, 8)
@@ -734,7 +727,7 @@ public struct MonitoringCardView: View {
               Image(systemName: "chart.xyaxis.line")
                 .font(.caption2)
               Text("Diagram")
-                .font(.caption2)
+                .font(.secondaryCaption)
             }
             .foregroundColor(.secondary)
             .padding(.horizontal, 8)
@@ -759,7 +752,7 @@ public struct MonitoringCardView: View {
               Image(systemName: "iphone")
                 .font(.caption2)
               Text("Simulator")
-                .font(.caption2)
+                .font(.secondaryCaption)
             }
             .foregroundColor(.secondary)
             .padding(.horizontal, 8)
@@ -776,7 +769,7 @@ public struct MonitoringCardView: View {
             Image(systemName: "arrow.clockwise")
               .font(.caption2)
             Text("Refresh terminal")
-              .font(.caption2)
+              .font(.secondaryCaption)
           }
           .foregroundColor(.secondary)
           .padding(.horizontal, 8)

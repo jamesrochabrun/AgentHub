@@ -69,7 +69,7 @@ public struct CLISessionRow: View {
       if let message = showLastMessage ? session.lastMessage : session.firstMessage,
          !message.isEmpty {
         Text(message.prefix(80) + (message.count > 80 ? "..." : ""))
-          .font(.caption)
+          .font(.secondarySmall)
           .foregroundColor(.primary.opacity(0.8))
           .lineLimit(1)
       }
@@ -101,34 +101,32 @@ public struct CLISessionRow: View {
       if let customName = customName {
         // Show user-provided custom name
         Text(customName)
-          .font(.system(.subheadline, weight: .semibold))
+          .font(.primaryDefault)
           .foregroundColor(.primary)
           .lineLimit(1)
       } else if let slug = session.slug {
         // Show slug (truncates first) and short ID (always shown)
         Text(slug)
-          .font(.system(.subheadline, design: .monospaced, weight: .semibold))
+          .font(.primaryDefault)
           .foregroundColor(.primary)
           .lineLimit(1)
 
         Text("•")
-          .font(.caption)
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
           .fixedSize()
           .layoutPriority(1)
 
         Text(session.shortId)
-          .font(.system(.subheadline, design: .monospaced))
+          .font(.primaryDefault)
           .foregroundColor(.primary)
-          .fontWeight(.semibold)
           .fixedSize()
           .layoutPriority(1)
       } else {
         // No slug - show "Session:" label with ID
         Text("Session: \(session.shortId)")
-          .font(.system(.subheadline, design: .monospaced))
+          .font(.primaryDefault)
           .foregroundColor(.primary)
-          .fontWeight(.semibold)
           .fixedSize()
           .layoutPriority(1)
       }
@@ -167,42 +165,42 @@ public struct CLISessionRow: View {
     HStack(spacing: 6) {
       // Provider label
       Text(providerKind.rawValue)
-        .font(.system(size: 10, weight: .medium, design: .monospaced))
+        .font(.primaryCaption)
         .foregroundColor(.brandPrimary(for: providerKind))
 
       Text("\u{2022}")
-        .font(.caption)
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
 
       // Branch info
       if let branch = session.branchName {
         HStack(spacing: 2) {
           Image(systemName: "arrow.triangle.branch")
-            .font(.caption)
+            .font(.secondarySmall)
           Text(branch)
-            .font(.caption)
+            .font(.secondarySmall)
             .lineLimit(1)
         }
         .foregroundColor(.secondary)
 
         Text("\u{2022}")
-          .font(.caption)
+          .font(.secondarySmall)
           .foregroundColor(.secondary)
       }
 
       // Message count
       Text("\(session.messageCount) msgs")
-        .font(.caption)
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
         .fixedSize()
 
       Text("\u{2022}")
-        .font(.caption)
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
 
       // Last activity
       Text(session.lastActivityAt.timeAgoDisplay())
-        .font(.caption)
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
         .fixedSize()
     }

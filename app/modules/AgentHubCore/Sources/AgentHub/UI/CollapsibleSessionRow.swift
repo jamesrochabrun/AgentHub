@@ -82,7 +82,7 @@ struct CollapsibleSessionRow: View {
           .foregroundColor(.secondary.opacity(0.6))
 
         Text(tildeProjectPath)
-          .font(.system(size: 10, design: .monospaced))
+          .font(.primaryCaption)
           .foregroundColor(.secondary.opacity(0.9))
           .lineLimit(1)
           .truncationMode(.middle)
@@ -95,7 +95,7 @@ struct CollapsibleSessionRow: View {
             .foregroundColor(.secondary.opacity(0.6))
 
           Text(branch)
-            .font(.system(size: 10, design: .monospaced))
+            .font(.primaryCaption)
             .foregroundColor(.secondary.opacity(0.9))
             .lineLimit(1)
         }
@@ -131,12 +131,12 @@ struct CollapsibleSessionRow: View {
         // Session name + provider
         HStack {
         Text(customName ?? session.slug  ?? "Session: \(session.shortId)")
-            .font(.system(size: 12, weight: .medium))
+            .font(.primaryDefault)
             .lineLimit(1)
 
           if isPending {
             Text("Starting")
-              .font(.system(size: 9))
+              .font(.secondaryCaption)
               .foregroundColor(.secondary)
               .padding(.horizontal, 4)
               .padding(.vertical, 1)
@@ -147,7 +147,7 @@ struct CollapsibleSessionRow: View {
           Spacer()
 
           Text(providerKind.rawValue)
-            .font(.system(size: 12, weight: .medium))
+            .font(.secondaryDefault)
             .foregroundColor(.brandPrimary(for: providerKind))
         }
 
@@ -171,12 +171,12 @@ struct CollapsibleSessionRow: View {
           .frame(width: 10, height: 10)
 
           Text(timestamp.timeAgoDisplay())
-            .font(.system(size: 11))
+            .font(.secondarySmall)
             .foregroundColor(.secondary)
 
           if let sessionStatus, sessionStatus != .idle {
             Text("· \(statusDisplayText(sessionStatus))")
-              .font(.system(size: 11))
+              .font(.secondarySmall)
               .foregroundColor(statusColor)
               .lineLimit(1)
           }
@@ -186,7 +186,7 @@ struct CollapsibleSessionRow: View {
         // First message preview
         if let message = session.firstMessage, !message.isEmpty {
           Text(message.prefix(80) + (message.count > 80 ? "..." : ""))
-            .font(.system(size: 11))
+            .font(.secondarySmall)
             .foregroundColor(.primary.opacity(0.7))
             .lineLimit(1)
             .padding(.trailing, 56)

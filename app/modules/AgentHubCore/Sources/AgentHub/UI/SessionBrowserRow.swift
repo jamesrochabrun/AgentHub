@@ -33,13 +33,13 @@ struct SessionBrowserRow: View {
         VStack(alignment: .leading, spacing: 2) {
           HStack(spacing: 6) {
             Text(displayName)
-              .font(.system(.subheadline, weight: .medium))
+              .font(.primaryDefault)
               .foregroundColor(.primary)
               .lineLimit(1)
 
             if let branchName = session.branchName {
               Text(branchName)
-                .font(.caption2)
+                .font(.primaryCaption)
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1)
@@ -57,7 +57,7 @@ struct SessionBrowserRow: View {
 
             // Last activity
             Text(timeAgo)
-              .font(.caption2)
+              .font(.secondarySmall)
               .foregroundColor(.secondary)
           }
         }

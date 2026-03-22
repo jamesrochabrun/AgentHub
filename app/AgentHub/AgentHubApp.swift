@@ -8,6 +8,7 @@
 import SwiftUI
 import AgentHubCore
 import UserNotifications
+import CoreText
 
 // MARK: - App Delegate
 
@@ -22,9 +23,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     UNUserNotificationCenter.current().delegate = self
-    // Note: We intentionally do NOT clean up orphaned processes here
-    // because we can't distinguish between processes spawned by AgentHub
-    // vs processes the user started directly in Terminal.app
+    registerBundledFonts()
+  }
+
+  /// Register all bundled fonts (Geist, GeistMono, JetBrains Mono)
+  private func registerBundledFonts() {
+    let otfFonts = [
+      "Geist-Regular", "Geist-Medium", "Geist-SemiBold", "Geist-Bold",
+      "GeistMono-Regular", "GeistMono-Medium", "GeistMono-SemiBold", "GeistMono-Bold"
+    ]
+    let ttfFonts = [
+      "JetBrainsMono-Regular", "JetBrainsMono-Medium",
+      "JetBrainsMono-SemiBold", "JetBrainsMono-Bold"
+    ]
+    for name in otfFonts {
+      if let url = Bundle.main.url(forResource: name, withExtension: "otf") {
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+      }
+    }
+    for name in ttfFonts {
+      if let url = Bundle.main.url(forResource: name, withExtension: "ttf") {
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+      }
+    }
   }
 
   func applicationWillTerminate(_ notification: Notification) {

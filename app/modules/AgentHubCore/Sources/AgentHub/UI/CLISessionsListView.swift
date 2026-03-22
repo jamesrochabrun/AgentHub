@@ -254,7 +254,7 @@ public struct CLISessionsListView: View {
       if let filterName = viewModel.searchFilterName {
         HStack(spacing: 4) {
           Text(filterName)
-            .font(.system(.caption, weight: .medium))
+            .font(.secondaryCaption)
             .foregroundColor(.brandPrimary)
           Button(action: { viewModel.clearSearchFilter() }) {
             Image(systemName: "xmark")
@@ -276,7 +276,7 @@ public struct CLISessionsListView: View {
         text: $viewModel.searchQuery
       )
         .textFieldStyle(.plain)
-        .font(.system(size: 13))
+        .font(.secondaryDefault)
         .focused($isSearchFieldFocused)
         .onSubmit { viewModel.performSearch() }
 
@@ -336,7 +336,7 @@ public struct CLISessionsListView: View {
           .foregroundColor(.primary)
 
         Text("Search all sessions...")
-          .font(.system(size: 13))
+          .font(.secondaryDefault)
           .foregroundColor(.primary)
 
         Spacer()
@@ -430,7 +430,7 @@ public struct CLISessionsListView: View {
         .font(.system(size: 12))
         .foregroundColor(.secondary.opacity(0.5))
       Text("No sessions found")
-        .font(.system(.caption, weight: .medium))
+        .font(.secondaryCaption)
         .foregroundColor(.secondary.opacity(0.7))
     }
     .frame(maxWidth: .infinity)
@@ -463,10 +463,10 @@ public struct CLISessionsListView: View {
         .font(.system(size: 32))
         .foregroundColor(.secondary.opacity(0.6))
       Text("No sessions found")
-        .font(.system(.headline, weight: .medium))
+        .font(.secondaryLarge)
         .foregroundColor(.secondary)
       Text("Try a different search term")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary.opacity(0.8))
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -480,7 +480,7 @@ public struct CLISessionsListView: View {
       ProgressView()
         .progressViewStyle(CircularProgressViewStyle())
       Text(viewModel.loadingState.message)
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -569,7 +569,7 @@ public struct CLISessionsListView: View {
           ProgressView()
             .scaleEffect(0.7)
           Text(viewModel.loadingState.message)
-            .font(.caption)
+            .font(.secondaryCaption)
             .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -582,7 +582,7 @@ public struct CLISessionsListView: View {
 
       HStack {
         Text("\(viewModel.selectedRepositories.count) \(viewModel.selectedRepositories.count == 1 ? "module" : "modules") selected · \(viewModel.totalSessionCount) sessions")
-          .font(.caption)
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
 
         Spacer()
@@ -604,7 +604,7 @@ public struct CLISessionsListView: View {
             Image(systemName: "bell")
               .font(.system(size: DesignTokens.IconSize.sm))
             Text("\(viewModel.approvalTimeoutSeconds)s")
-              .font(.system(.caption, weight: .medium))
+              .font(.secondaryCaption)
           }
           .foregroundColor(.secondary)
           .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -627,7 +627,7 @@ public struct CLISessionsListView: View {
             Image(systemName: viewModel.showLastMessage ? "arrow.down.to.line" : "arrow.up.to.line")
               .font(.system(size: DesignTokens.IconSize.sm))
             Text(viewModel.showLastMessage ? "Last message" : "First message")
-              .font(.system(.caption, weight: .medium))
+              .font(.secondaryCaption)
           }
           .foregroundColor(.secondary)
           .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -798,18 +798,18 @@ private struct SessionFileSheetView: View {
           Image(systemName: "doc.text.fill")
             .foregroundColor(.brandPrimary)
           Text(fileName)
-            .font(.system(.headline, design: .monospaced))
+            .font(.primaryDefault)
         }
 
         Spacer()
 
         Text(session.shortId)
-          .font(.system(.caption, design: .monospaced))
+          .font(.primaryCaption)
           .foregroundColor(.secondary)
 
         if let branch = session.branchName {
           Text("[\(branch)]")
-            .font(.caption)
+            .font(.primaryCaption)
             .foregroundColor(.secondary)
         }
 
