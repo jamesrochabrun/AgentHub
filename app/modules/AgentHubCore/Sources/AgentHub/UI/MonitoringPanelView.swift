@@ -343,7 +343,7 @@ public struct MonitoringPanelView: View {
         claudeClient: claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
-        showTerminal: true,
+
         initialPrompt: pending.initialPrompt,
         initialInputText: pending.initialInputText,
         terminalKey: "pending-\(pending.id.uuidString)",
@@ -351,7 +351,7 @@ public struct MonitoringPanelView: View {
         dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
         permissionModePlan: pending.permissionModePlan,
         worktreeName: pending.worktreeName,
-        onToggleTerminal: { _ in },
+
         onStopMonitoring: {
           viewModel.cancelPendingSession(pending)
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -385,13 +385,9 @@ public struct MonitoringPanelView: View {
         claudeClient: claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
-        showTerminal: viewModel.sessionsWithTerminalView.contains(item.session.id),
         initialPrompt: initialPrompt,
         terminalKey: item.session.id,
         viewModel: viewModel,
-        onToggleTerminal: { show in
-          viewModel.setTerminalView(for: item.session.id, show: show)
-        },
         onStopMonitoring: {
           viewModel.stopMonitoring(session: item.session)
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -496,7 +492,7 @@ public struct MonitoringPanelView: View {
           claudeClient: claudeClient,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: viewModel.providerKind,
-          showTerminal: true,
+  
           initialPrompt: pending.initialPrompt,
           initialInputText: pending.initialInputText,
           terminalKey: pendingId,
@@ -504,7 +500,7 @@ public struct MonitoringPanelView: View {
           dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
           permissionModePlan: pending.permissionModePlan,
           worktreeName: pending.worktreeName,
-          onToggleTerminal: { _ in },
+  
           onStopMonitoring: {
             viewModel.cancelPendingSession(pending)
           },
@@ -533,13 +529,9 @@ public struct MonitoringPanelView: View {
           claudeClient: claudeClient,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: viewModel.providerKind,
-          showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
           initialPrompt: initialPrompt,
           terminalKey: session.id,
           viewModel: viewModel,
-          onToggleTerminal: { show in
-            viewModel.setTerminalView(for: session.id, show: show)
-          },
           onStopMonitoring: {
             viewModel.stopMonitoring(session: session)
           },
@@ -592,7 +584,7 @@ public struct MonitoringPanelView: View {
         claudeClient: claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
-        showTerminal: true,
+
         initialPrompt: pending.initialPrompt,
         initialInputText: pending.initialInputText,
         terminalKey: pendingId,
@@ -600,7 +592,7 @@ public struct MonitoringPanelView: View {
         dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
         permissionModePlan: pending.permissionModePlan,
         worktreeName: pending.worktreeName,
-        onToggleTerminal: { _ in },
+
         onStopMonitoring: {
           viewModel.cancelPendingSession(pending)
         },
@@ -634,13 +626,9 @@ public struct MonitoringPanelView: View {
         claudeClient: claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
-        showTerminal: viewModel.sessionsWithTerminalView.contains(session.id),
         initialPrompt: initialPrompt,
         terminalKey: session.id,
         viewModel: viewModel,
-        onToggleTerminal: { show in
-          viewModel.setTerminalView(for: session.id, show: show)
-        },
         onStopMonitoring: {
           viewModel.stopMonitoring(session: session)
         },
@@ -773,14 +761,12 @@ public struct MonitoringPanelView: View {
     case .pending:
       return MonitoringCardView.listHeightMetrics(
         providerKind: viewModel.providerKind,
-        state: nil,
-        showTerminal: true
+        state: nil
       )
-    case .monitored(let session, let state):
+    case .monitored(_, let state):
       return MonitoringCardView.listHeightMetrics(
         providerKind: viewModel.providerKind,
-        state: state,
-        showTerminal: viewModel.sessionsWithTerminalView.contains(session.id)
+        state: state
       )
     }
   }

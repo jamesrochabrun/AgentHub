@@ -101,16 +101,8 @@ public final class CLISessionsViewModel {
   private var pendingAutoObserveWorktreePath: String? = nil
   /// Session IDs that existed before we opened the terminal (to detect new ones)
   private var existingSessionIdsBeforeTerminal: Set<String> = []
-  /// Whether the next auto-observed session should show terminal view (from "Start in Hub")
-  public var pendingHubSessionWithTerminal: Bool = false
-
   /// Session IDs awaiting progressive restoration on app launch
   private var pendingRestorationSessionIds: Set<String> = []
-
-  /// Terminal view IDs loaded from persistence, used during progressive restoration
-  private var restoringTerminalViewIds: Set<String> = []
-  /// Session IDs that should show terminal view (tracks current state for each row)
-  public var sessionsWithTerminalView: Set<String> = []
 
   /// Maps session IDs to prompts that should be sent to the terminal when it becomes ready.
   ///
@@ -124,30 +116,7 @@ public final class CLISessionsViewModel {
   ///   with the terminal's input buffer (see `EmbeddedTerminalView.sendPromptIfNeeded`).
   public var pendingTerminalPrompts: [String: String] = [:]
 
-  /// Updates the terminal view state for a session.
-  /// Polling continues in both modes to enable Preview/Plan buttons in terminal mode.
-  public func setTerminalView(for sessionId: String, show: Bool) {
-    let mode = show ? "TERMINAL" : "MONITOR"
-    AppLogger.session.info("[Polling] setTerminalView -> \(mode, privacy: .public) for session: \(sessionId.prefix(8), privacy: .public)")
-
-    if show {
-      // Switching TO terminal mode - keep polling for Preview/Plan buttons
-      sessionsWithTerminalView.insert(sessionId)
-      // Ensure polling is running (may not be if session just started)
-      if let session = monitoredSessionBackup[sessionId] {
-        startPolling(session: session)
-      }
-    } else {
-      // Switching TO monitor/list mode - polling already running
-      sessionsWithTerminalView.remove(sessionId)
-      if let session = monitoredSessionBackup[sessionId] {
-        startPolling(session: session)
-      }
-    }
-    persistSessionsWithTerminalView()
-  }
-
-  /// Start polling for a session (when switching to monitor mode)
+  /// Start polling for a session
   private func startPolling(session: CLISession) {
     AppLogger.session.info("[Polling] startPolling called for session: \(session.id.prefix(8), privacy: .public)")
 
@@ -200,8 +169,6 @@ public final class CLISessionsViewModel {
     }
     // Store the pending prompt
     pendingTerminalPrompts[session.id] = prompt
-    // Show terminal view
-    sessionsWithTerminalView.insert(session.id)
   }
 
   /// Returns the pending prompt for a session (read-only, safe during view body)
@@ -396,10 +363,6 @@ public final class CLISessionsViewModel {
   private var monitoredSessionsKey: String {
     AgentHubDefaults.monitoredSessionIds + "." + providerDefaultsSuffix
   }
-  private var terminalViewKey: String {
-    AgentHubDefaults.sessionsWithTerminalView + "." + providerDefaultsSuffix
-  }
-
   // MARK: - Initialization
 
   public init(
@@ -584,11 +547,6 @@ public final class CLISessionsViewModel {
       let persistedSessionIds = loadPersistedSessionIds()
       if !persistedSessionIds.isEmpty {
         pendingRestorationSessionIds = persistedSessionIds
-        // Load terminal view state for restoration decisions
-        if let tvData = UserDefaults.standard.data(forKey: terminalViewKey),
-           let tvIds = try? JSONDecoder().decode([String].self, from: tvData) {
-          restoringTerminalViewIds = Set(tvIds)
-        }
       }
 
       // Add repositories (triggers refreshSessions → setupSubscriptions)
@@ -600,7 +558,6 @@ public final class CLISessionsViewModel {
       // Safety timeout: stop trying to restore after 10 seconds
       try? await Task.sleep(for: .seconds(10))
       pendingRestorationSessionIds.removeAll()
-      restoringTerminalViewIds.removeAll()
     }
   }
 
@@ -628,11 +585,6 @@ public final class CLISessionsViewModel {
         // Populate monitoring state directly (skip persistence — persisted state is already correct)
         monitoredSessionIds.insert(session.id)
         monitoredSessionBackup[session.id] = session
-
-        // Restore terminal view mode from persisted state
-        if restoringTerminalViewIds.contains(session.id) {
-          sessionsWithTerminalView.insert(session.id)
-        }
 
         // Start polling for file changes
         startPolling(session: session)
@@ -692,14 +644,6 @@ public final class CLISessionsViewModel {
     let sessionIds = Array(monitoredSessionIds)
     if let data = try? JSONEncoder().encode(sessionIds) {
       UserDefaults.standard.set(data, forKey: monitoredSessionsKey)
-    }
-  }
-
-  /// Persists which sessions have terminal view enabled
-  private func persistSessionsWithTerminalView() {
-    let sessionIds = Array(sessionsWithTerminalView)
-    if let data = try? JSONEncoder().encode(sessionIds) {
-      UserDefaults.standard.set(data, forKey: terminalViewKey)
     }
   }
 
@@ -1476,8 +1420,6 @@ public final class CLISessionsViewModel {
             AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(session.id.prefix(8), privacy: .public)")
             // Transfer terminal from pending key to real session ID
             transferTerminal(fromPendingId: pending.id, toSessionId: session.id)
-            // Keep terminal view visible during transition
-            sessionsWithTerminalView.insert(session.id)
             startMonitoring(session: session)
             found = true
             break
@@ -1495,8 +1437,6 @@ public final class CLISessionsViewModel {
               AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(session.id.prefix(8), privacy: .public)")
               // Transfer terminal from pending key to real session ID
               transferTerminal(fromPendingId: pending.id, toSessionId: session.id)
-              // Keep terminal view visible during transition
-              sessionsWithTerminalView.insert(session.id)
               startMonitoring(session: session)
               return
             }
@@ -1543,7 +1483,6 @@ public final class CLISessionsViewModel {
           resolvedPendingSessions[pending.id] = sessionId
           AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(sessionId.prefix(8), privacy: .public)")
           transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
-          sessionsWithTerminalView.insert(sessionId)
           startMonitoring(session: newSession)
 #if DEBUG
           AppLogger.session.info(
@@ -1586,7 +1525,6 @@ public final class CLISessionsViewModel {
           resolvedPendingSessions[pending.id] = sessionId
           AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(sessionId.prefix(8), privacy: .public)")
           transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
-          sessionsWithTerminalView.insert(sessionId)
           startMonitoring(session: newSession)
 #if DEBUG
           AppLogger.session.info(
@@ -1876,12 +1814,10 @@ public final class CLISessionsViewModel {
 
     monitoredSessionIds.insert(session.id)
     monitoredSessionBackup[session.id] = session
-    sessionsWithTerminalView.insert(session.id)  // Default to terminal view
 
     persistMonitoredSessions()
-    persistSessionsWithTerminalView()
 
-    // Start polling for Preview/Plan buttons (works in both terminal and monitor modes)
+    // Start polling for Preview/Plan buttons
     startPolling(session: session)
   }
 
@@ -1894,7 +1830,6 @@ public final class CLISessionsViewModel {
   public func stopMonitoring(sessionId: String) {
     monitoredSessionIds.remove(sessionId)
     monitoredSessionBackup.removeValue(forKey: sessionId)
-    sessionsWithTerminalView.remove(sessionId)
     monitorStates.removeValue(forKey: sessionId)
     monitoringCancellables.removeValue(forKey: sessionId)
 
@@ -1902,7 +1837,6 @@ public final class CLISessionsViewModel {
     removeTerminal(forKey: sessionId)
 
     persistMonitoredSessions()
-    persistSessionsWithTerminalView()
 
     Task {
       await fileWatcher.stopMonitoring(sessionId: sessionId)
@@ -2061,12 +1995,6 @@ public final class CLISessionsViewModel {
               if let wtIndex = selectedRepositories[repoIndex].worktrees.firstIndex(where: { $0.id == worktree.id }) {
                 selectedRepositories[repoIndex].worktrees[wtIndex].isExpanded = true
               }
-            }
-
-            // If started via "Start in Hub", mark session to show terminal view
-            if pendingHubSessionWithTerminal {
-              sessionsWithTerminalView.insert(session.id)
-              pendingHubSessionWithTerminal = false
             }
 
             startMonitoring(session: session)

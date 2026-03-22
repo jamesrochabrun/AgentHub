@@ -53,10 +53,6 @@ public enum AgentHubDefaults {
   /// Type: Data (JSON-encoded [String])
   public static let monitoredSessionIds = "\(keyPrefix)sessions.monitoredSessionIds"
 
-  /// Persisted session IDs that have terminal view enabled
-  /// Type: Data (JSON-encoded [String])
-  public static let sessionsWithTerminalView = "\(keyPrefix)sessions.sessionsWithTerminalView"
-
   // MARK: - Provider Settings
 
   /// Base key for enabled providers
