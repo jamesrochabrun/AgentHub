@@ -198,7 +198,7 @@ public struct CommandPaletteView: View {
 
           TextField("Find focused sessions...", text: $searchQuery)
             .textFieldStyle(.plain)
-            .font(.system(size: 14))
+            .font(.secondaryLarge)
             .focused($isSearchFocused)
 
           if !searchQuery.isEmpty {
@@ -212,7 +212,7 @@ public struct CommandPaletteView: View {
           Spacer()
 
           Text("esc")
-            .font(.system(size: 11, design: .monospaced))
+            .font(.primarySmall)
             .foregroundColor(.secondary.opacity(0.6))
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
@@ -344,11 +344,11 @@ public struct CommandPaletteView: View {
         .foregroundColor(.secondary.opacity(0.5))
 
       Text("No Focused Sessions")
-        .font(.headline)
+        .font(.heading)
         .foregroundColor(.secondary)
 
       Text("Start or focus a session to show it here")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary.opacity(0.8))
     }
     .frame(maxWidth: .infinity)
@@ -396,12 +396,12 @@ private struct CommandPaletteRow: View {
 
       VStack(alignment: .leading, spacing: 2) {
         Text(action.title)
-          .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+          .font(.geist(size: 13, weight: isSelected ? .semibold : .regular))
           .foregroundColor(.primary)
 
         if let subtitle = action.subtitle {
           Text(subtitle)
-            .font(.system(size: 11))
+            .font(.secondarySmall)
             .foregroundColor(.secondary)
             .lineLimit(1)
         }
@@ -411,7 +411,7 @@ private struct CommandPaletteRow: View {
 
       if let shortcut = action.shortcut {
         Text(shortcut)
-          .font(.system(size: 11, design: .monospaced))
+          .font(.primarySmall)
           .foregroundColor(.secondary.opacity(0.7))
           .padding(.horizontal, 6)
           .padding(.vertical, 3)

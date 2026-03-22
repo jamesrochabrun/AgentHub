@@ -387,7 +387,7 @@ public struct MultiProviderSessionsListView: View {
           .font(.system(size: DesignTokens.IconSize.md))
           .foregroundColor(.secondary)
         Text("Search all sessions...")
-          .font(.system(size: 13))
+          .font(.secondaryDefault)
           .foregroundColor(.secondary)
         Spacer()
       }
@@ -446,7 +446,7 @@ public struct MultiProviderSessionsListView: View {
       if let filterName = currentViewModel.searchFilterName {
         HStack(spacing: 4) {
           Text(filterName)
-            .font(.system(.caption, weight: .medium))
+            .font(.secondaryCaption)
             .foregroundColor(.brandPrimary(for: currentViewModel.providerKind))
           Button(action: { currentViewModel.clearSearchFilter() }) {
             Image(systemName: "xmark")
@@ -471,7 +471,7 @@ public struct MultiProviderSessionsListView: View {
         )
       )
       .textFieldStyle(.plain)
-      .font(.system(size: 13))
+      .font(.secondaryDefault)
       .focused($isSearchFieldFocused)
       .onSubmit { currentViewModel.performSearch() }
 
@@ -518,10 +518,10 @@ public struct MultiProviderSessionsListView: View {
             .font(.system(size: 28))
             .foregroundColor(.secondary.opacity(0.6))
           Text("No sessions found")
-            .font(.system(.headline, weight: .medium))
+            .font(.secondaryLarge)
             .foregroundColor(.secondary)
           Text("Try a different search term")
-            .font(.caption)
+            .font(.secondaryCaption)
             .foregroundColor(.secondary.opacity(0.8))
         }
         .frame(maxWidth: .infinity)
@@ -639,9 +639,9 @@ public struct MultiProviderSessionsListView: View {
       VStack(alignment: .leading, spacing: 0) {
         HStack {
           Text("Focused Sessions")
-            .font(.system(size: 14, weight: .bold))
+            .font(.heading)
           Text("(\(items.count))")
-            .font(.caption)
+            .font(.secondaryCaption)
             .foregroundColor(.secondary)
           Spacer()
         }
@@ -731,7 +731,7 @@ public struct MultiProviderSessionsListView: View {
             .rotationEffect(.degrees(isBrowseExpanded ? 90 : 0))
             .font(.system(size: 10))
           Text("Browse all Sessions")
-            .font(.system(size: 14, weight: .bold, design: .monospaced))
+            .font(.heading)
           Spacer()
         }
         .padding(.vertical, 8)
@@ -778,7 +778,7 @@ public struct MultiProviderSessionsListView: View {
         HStack(spacing: 8) {
           ProgressView().scaleEffect(0.7)
           Text("Refreshing sessions...")
-            .font(.caption)
+            .font(.secondaryCaption)
             .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -791,7 +791,7 @@ public struct MultiProviderSessionsListView: View {
 
       HStack {
         Text("\(currentViewModel.selectedRepositories.count) \(currentViewModel.selectedRepositories.count == 1 ? "module" : "modules") · \(currentViewModel.allSessions.count) \(currentViewModel.allSessions.count == 1 ? "session" : "sessions")")
-          .font(.caption)
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
 
         Spacer()
@@ -802,7 +802,7 @@ public struct MultiProviderSessionsListView: View {
             Image(systemName: currentViewModel.showLastMessage ? "arrow.down.to.line" : "arrow.up.to.line")
               .font(.system(size: DesignTokens.IconSize.sm))
             Text(currentViewModel.showLastMessage ? "Last" : "First")
-              .font(.system(.caption, weight: .medium))
+              .font(.secondaryCaption)
           }
           .foregroundColor(.secondary)
           .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -1295,18 +1295,18 @@ private struct SessionFileSheetView: View {
           Image(systemName: "doc.text.fill")
             .foregroundColor(.brandPrimary)
           Text(fileName)
-            .font(.system(.headline, design: .monospaced))
+            .font(.primaryDefault)
         }
 
         Spacer()
 
         Text(session.shortId)
-          .font(.system(.caption, design: .monospaced))
+          .font(.primaryCaption)
           .foregroundColor(.secondary)
 
         if let branch = session.branchName {
           Text("[\(branch)]")
-            .font(.caption)
+            .font(.primaryCaption)
             .foregroundColor(.secondary)
         }
 

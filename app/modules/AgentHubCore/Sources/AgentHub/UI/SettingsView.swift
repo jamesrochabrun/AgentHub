@@ -42,8 +42,8 @@ public struct SettingsView: View {
   private var codexCommandLocked: Bool = false
 
   @Environment(ThemeManager.self) private var themeManager
-  @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "claude"
-  private let defaultThemeId = "claude"
+  @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "neutral"
+  private let defaultThemeId = "neutral"
   private let sentryThemeFileId = "sentry.yaml"
 
   public init() {}
@@ -181,7 +181,9 @@ public struct SettingsView: View {
 
       Section {
         Picker("Theme", selection: themeSelectionBinding) {
-          Text("Default").tag(defaultThemeId)
+          Text("Default").tag(AppTheme.neutral.rawValue)
+          Text("Claude").tag(AppTheme.claude.rawValue)
+          Text("Codex").tag(AppTheme.codex.rawValue)
           Text("Sentry").tag(sentryThemeFileId)
         }
 
@@ -212,7 +214,13 @@ public struct SettingsView: View {
   private var themeSelectionBinding: Binding<String> {
     Binding(
       get: {
-        isSentryThemeId(selectedThemeId) ? sentryThemeFileId : defaultThemeId
+        if isSentryThemeId(selectedThemeId) {
+          return sentryThemeFileId
+        }
+        if let appTheme = AppTheme(rawValue: selectedThemeId) {
+          return appTheme.rawValue
+        }
+        return defaultThemeId
       },
       set: { newValue in
         Task {
@@ -228,19 +236,23 @@ public struct SettingsView: View {
       return
     }
 
-    if selectedThemeId != defaultThemeId {
-      selectedThemeId = defaultThemeId
-      themeManager.loadBuiltInTheme(.claude)
-    }
-  }
-
-  private func applyThemeSelection(_ selection: String) async {
-    if selection == defaultThemeId {
-      selectedThemeId = defaultThemeId
-      themeManager.loadBuiltInTheme(.claude)
+    if AppTheme(rawValue: selectedThemeId) != nil {
       return
     }
 
+    selectedThemeId = defaultThemeId
+    themeManager.loadBuiltInTheme(.neutral)
+  }
+
+  private func applyThemeSelection(_ selection: String) async {
+    // Handle built-in themes
+    if let appTheme = AppTheme(rawValue: selection) {
+      selectedThemeId = appTheme.rawValue
+      themeManager.loadBuiltInTheme(appTheme)
+      return
+    }
+
+    // Handle Sentry YAML theme
     await themeManager.discoverThemes()
 
     if let sentryTheme = themeManager.availableYAMLThemes.first(where: isSentryTheme),
@@ -258,7 +270,7 @@ public struct SettingsView: View {
     }
 
     selectedThemeId = defaultThemeId
-    themeManager.loadBuiltInTheme(.claude)
+    themeManager.loadBuiltInTheme(.neutral)
   }
 
   private func isSentryTheme(_ metadata: ThemeManager.ThemeMetadata) -> Bool {

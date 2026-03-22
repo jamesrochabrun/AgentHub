@@ -144,7 +144,7 @@ public enum AgentHubDefaults {
   // MARK: - Theme Settings
 
   /// Selected color theme name
-  /// Type: String (default: "claude")
+  /// Type: String (default: "neutral")
   public static let selectedTheme = "\(keyPrefix)theme.selected"
 
   /// Custom primary color hex value
@@ -217,5 +217,15 @@ public enum AgentHubDefaults {
     }
 
     defaults.set(true, forKey: migrationKey)
+
+    // Migrate old "claude" default theme to "neutral"
+    let themeMigrationKey = "\(keyPrefix)migration.themeDefaultMigrated"
+    if !defaults.bool(forKey: themeMigrationKey) {
+      let current = defaults.string(forKey: selectedTheme)
+      if current == "claude" || current == nil {
+        defaults.set("neutral", forKey: selectedTheme)
+      }
+      defaults.set(true, forKey: themeMigrationKey)
+    }
   }
 }

@@ -57,11 +57,11 @@ private struct ModuleSectionHeader: View {
   var body: some View {
     HStack {
       Text(name)
-        .font(.subheadline.weight(.semibold))
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
       Spacer()
       Text("\(sessionCount)")
-        .font(.caption)
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
     }
     .padding(.horizontal, 4)
@@ -264,7 +264,7 @@ public struct MonitoringPanelView: View {
   private var header: some View {
     HStack {
       Text("Hub")
-        .font(.system(size: 13, weight: .bold, design: .monospaced))
+        .font(.heading)
 
       Spacer()
 
@@ -293,7 +293,7 @@ public struct MonitoringPanelView: View {
       let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
       if totalSessions > 0 {
         Text("\(totalSessions)")
-          .font(.system(.caption, design: .rounded).weight(.semibold))
+          .font(.secondaryCaption)
           .monospacedDigit()
           .padding(.horizontal, DesignTokens.Spacing.sm)
           .padding(.vertical, DesignTokens.Spacing.xs)
@@ -442,18 +442,18 @@ public struct MonitoringPanelView: View {
         } else {
           let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
           if flatSessionLayout {
-            LazyVGrid(columns: columns, spacing: 12) {
+            LazyVGrid(columns: columns, spacing: 1) {
               ForEach(flatSortedItems) { item in
                 itemCardView(for: item)
               }
             }
-            .padding(12)
+            .padding(0)
             .transition(.opacity)
           } else {
-            LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
+            LazyVGrid(columns: columns, spacing: 1, pinnedViews: [.sectionHeaders]) {
               monitoredSessionsGroupedContent
             }
-            .padding(12)
+            .padding(0)
             .transition(.opacity)
           }
         }
@@ -465,7 +465,7 @@ public struct MonitoringPanelView: View {
 
   @ViewBuilder
   private var listModeContent: some View {
-    VStack(spacing: 12) {
+    VStack(spacing: 1) {
       if flatSessionLayout {
         ForEach(flatSortedItems) { item in
           listModeCard(for: item)
@@ -474,7 +474,7 @@ public struct MonitoringPanelView: View {
         listModeGroupedContent
       }
     }
-    .padding(12)
+    .padding(0)
     .transition(.opacity)
   }
 
@@ -516,7 +516,6 @@ public struct MonitoringPanelView: View {
         )
         .id(pendingId)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(12)
 
       case .monitored(let session, let state):
         let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
@@ -565,7 +564,6 @@ public struct MonitoringPanelView: View {
         )
         .id(session.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(12)
       }
     }
   }
@@ -672,9 +670,9 @@ public struct MonitoringPanelView: View {
 
   @ViewBuilder
   private var listModeGroupedContent: some View {
-    VStack(alignment: .leading, spacing: 18) {
+    VStack(alignment: .leading, spacing: 1) {
       ForEach(groupedMonitoredSessions, id: \.modulePath) { group in
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 1) {
           ModuleSectionHeader(
             name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
             sessionCount: group.items.count

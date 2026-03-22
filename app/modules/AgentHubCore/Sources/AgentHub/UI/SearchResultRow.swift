@@ -25,7 +25,7 @@ public struct SearchResultRow: View {
         VStack(alignment: .leading, spacing: 4) {
           // Slug (session name)
           Text(result.slug)
-            .font(.system(.subheadline, design: .monospaced, weight: .semibold))
+            .font(.primaryDefault)
             .foregroundColor(.brandPrimary)
             .lineLimit(1)
 
@@ -34,7 +34,7 @@ public struct SearchResultRow: View {
             Image(systemName: "folder")
               .font(.system(size: 10))
             Text(result.repositoryName)
-              .font(.caption)
+              .font(.secondarySmall)
               .lineLimit(1)
           }
           .foregroundColor(.secondary)
@@ -48,7 +48,7 @@ public struct SearchResultRow: View {
               Image(systemName: "arrow.triangle.branch")
                 .font(.caption)
               Text(branch)
-                .font(.caption)
+                .font(.secondarySmall)
                 .lineLimit(1)
             }
             .foregroundColor(.secondary.opacity(0.8))
@@ -59,12 +59,12 @@ public struct SearchResultRow: View {
         // Date
         VStack(alignment: .trailing, spacing: 4) {
           Text(preciseDateString(from: result.lastActivityAt))
-            .font(.caption)
+            .font(.secondarySmall)
             .foregroundColor(.secondary)
 
           // Add indicator
           Text("Add")
-            .font(.system(.caption2, weight: .medium))
+            .font(.secondaryCaption)
             .foregroundColor(.brandPrimary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -97,7 +97,7 @@ public struct SearchResultRow: View {
         .foregroundColor(.brandSecondary)
 
       Text(result.matchedText)
-        .font(.caption)
+        .font(.secondarySmall)
         .foregroundColor(.primary.opacity(0.8))
         .lineLimit(1)
     }

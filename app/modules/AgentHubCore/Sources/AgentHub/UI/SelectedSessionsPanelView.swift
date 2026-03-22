@@ -68,10 +68,10 @@ public struct SelectedSessionsPanelView: View {
   private var header: some View {
     HStack(spacing: 8) {
       Text("Selected Sessions")
-        .font(.headline)
+        .font(.heading)
 
       Text("\(items.count)")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
 
       Spacer()
@@ -88,10 +88,10 @@ public struct SelectedSessionsPanelView: View {
         .font(.title2)
         .foregroundColor(.secondary.opacity(0.6))
       Text("No Selected Sessions")
-        .font(.headline)
+        .font(.heading)
         .foregroundColor(.secondary)
       Text("Monitor a session to see it here.")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -227,10 +227,10 @@ public struct MultiProviderSelectedSessionsPanelView: View {
   private var header: some View {
     HStack(spacing: 8) {
       Text("Selected Sessions")
-        .font(.headline)
+        .font(.heading)
 
       Text("\(items.count)")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
 
       Spacer()
@@ -247,10 +247,10 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         .font(.title2)
         .foregroundColor(.secondary.opacity(0.6))
       Text("No Selected Sessions")
-        .font(.headline)
+        .font(.heading)
         .foregroundColor(.secondary)
       Text("Monitor a session to see it here.")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -387,36 +387,36 @@ private struct SelectedSessionRow: View {
 
         if let customName {
           Text(customName)
-            .font(.system(.subheadline, design: .monospaced))
+            .font(.primaryDefault)
             .fontWeight(.semibold)
             .lineLimit(1)
         } else if let slug = session.slug {
           Text(slug)
-            .font(.system(.subheadline, design: .monospaced))
+            .font(.primaryDefault)
             .fontWeight(.semibold)
             .lineLimit(1)
 
           Text("•")
-            .font(.caption)
+            .font(.secondaryCaption)
             .foregroundColor(.secondary)
 
           Text(session.shortId)
-            .font(.system(.subheadline, design: .monospaced))
+            .font(.primaryDefault)
             .fontWeight(.semibold)
         } else {
           Text("Session: \(session.shortId)")
-            .font(.system(.subheadline, design: .monospaced))
+            .font(.primaryDefault)
             .fontWeight(.semibold)
             .lineLimit(1)
         }
 
         Text(providerKind.rawValue)
-          .font(.caption)
+          .font(.secondaryCaption)
           .foregroundColor(.brandPrimary(for: providerKind))
 
         if isPending {
           Text("Starting")
-            .font(.caption2)
+            .font(.secondaryCaption)
             .foregroundColor(.secondary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -439,26 +439,26 @@ private struct SelectedSessionRow: View {
             Image(systemName: "arrow.triangle.branch")
               .font(.caption)
             Text(branch)
-              .font(.caption)
+              .font(.primaryCaption)
               .lineLimit(1)
           }
           .foregroundColor(.secondary)
 
           Text("\u{2022}")
-            .font(.caption)
+            .font(.secondaryCaption)
             .foregroundColor(.secondary)
         }
 
         Text("\(session.messageCount) msgs")
-          .font(.caption)
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
 
         Text("\u{2022}")
-          .font(.caption)
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
 
         Text(timestamp.timeAgoDisplay())
-          .font(.caption)
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
       }
       .lineLimit(1)
@@ -481,11 +481,11 @@ private struct ModuleSectionHeader: View {
   var body: some View {
     HStack {
       Text(name)
-        .font(.subheadline.weight(.semibold))
+        .font(.heading)
         .foregroundColor(.secondary)
       Spacer()
       Text("\(sessionCount)")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
     }
     .padding(.horizontal, 4)

@@ -74,151 +74,112 @@ struct CollapsibleSessionRow: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      // Path + branch header bar
-      HStack(spacing: 5) {
-        Image(systemName: "folder")
-          .font(.system(size: 9))
-          .foregroundColor(.secondary.opacity(0.6))
+    VStack(alignment: .leading, spacing: 2) {
+      // Top row: icon + session ID + status badge
+      HStack(alignment: .top, spacing: 6) {
+        // Terminal prompt icon
+        Text(">_")
+          .font(.jetBrainsMono(size: 13, weight: .bold))
+          .foregroundColor(statusColor.opacity(isActiveStatus ? 1.0 : 0.5))
 
-        Text(tildeProjectPath)
-          .font(.system(size: 10, design: .monospaced))
-          .foregroundColor(.secondary.opacity(0.9))
-          .lineLimit(1)
-          .truncationMode(.middle)
+        // Session ID
+        HStack(spacing: 4) {
+          Text("session:")
+            .font(.primaryCaption)
+            .foregroundColor(.secondary)
+          Text(customName ?? session.slug ?? session.shortId)
+            .font(.jetBrainsMono(size: 13, weight: .bold))
+            .lineLimit(1)
+        }
 
-        if let branch = session.branchName {
-          Spacer(minLength: 4)
+        Spacer(minLength: 4)
 
+        // Status badge
+        VStack(alignment: .trailing, spacing: 4) {
+        // Status badge
+        if let sessionStatus {
+          HStack(spacing: 4) {
+            Circle()
+              .fill(statusColor)
+              .frame(width: 6, height: 6)
+              .scaleEffect(shouldPulse ? pulseScale : 1.0)
+            Text(statusDisplayText(sessionStatus).lowercased())
+              .font(.primaryCaption)
+              .foregroundColor(statusColor)
+          }
+          .padding(.horizontal, 8)
+          .padding(.vertical, 3)
+          .background(statusColor.opacity(0.12))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
+        } else if isPending {
+          Text("starting")
+            .font(.primaryCaption)
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.secondary.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+
+          // Timestamp
+          Text(timestamp.timeAgoDisplay())
+            .font(.secondaryCaption)
+            .foregroundColor(.secondary)
+        }
+      }
+
+      // Branch line (aligned to leading edge)
+      if let branch = session.branchName {
+        HStack(spacing: 4) {
           Image(systemName: "arrow.triangle.branch")
             .font(.system(size: 9))
             .foregroundColor(.secondary.opacity(0.6))
-
           Text(branch)
-            .font(.system(size: 10, design: .monospaced))
+            .font(.primaryCaption)
             .foregroundColor(.secondary.opacity(0.9))
             .lineLimit(1)
         }
       }
-      .padding(.horizontal, 8)
-      .padding(.vertical, 4)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(
-        ZStack {
-          UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 2, bottomTrailingRadius: 2, topTrailingRadius: 6)
-            .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06))
-          UnevenRoundedRectangle(topLeadingRadius: 6, bottomLeadingRadius: 2, bottomTrailingRadius: 2, topTrailingRadius: 6)
-            .fill(LinearGradient(
-              colors: [
-                Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.45 : 0.35),
-                colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
-              ],
-              startPoint: .trailing,
-              endPoint: .leading
-            ))
-            .mask(
-              GeometryReader { geo in
-                Rectangle()
-                  .frame(width: geo.size.width * gradientProgress)
-                  .frame(maxWidth: .infinity, alignment: .leading)
-              }
-            )
-        }
-      )
 
-      // Content area
-      VStack(alignment: .leading, spacing: 8) {
-        // Session name + provider
-        HStack {
-        Text(customName ?? session.slug  ?? "Session: \(session.shortId)")
-            .font(.system(size: 12, weight: .medium))
-            .lineLimit(1)
-
-          if isPending {
-            Text("Starting")
-              .font(.system(size: 9))
-              .foregroundColor(.secondary)
-              .padding(.horizontal, 4)
-              .padding(.vertical, 1)
-              .background(Color.secondary.opacity(0.12))
-              .clipShape(RoundedRectangle(cornerRadius: 3))
-          }
-
-          Spacer()
-
-          Text(providerKind.rawValue)
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(.brandPrimary(for: providerKind))
-        }
-
-        // Status indicator + timestamp + status
-        HStack(spacing: 5) {
-          // Status indicator (icon or pulsing dot)
-          ZStack {
-            if let icon = statusIcon {
-              Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundColor(statusColor)
-            } else {
-              // Pulsing dot for active states
-              Circle()
-                .fill(statusColor)
-                .frame(width: 6, height: 6)
-                .scaleEffect(shouldPulse ? pulseScale : 1.0)
-                .opacity(isActiveStatus ? 1.0 : 0.6)
-            }
-          }
-          .frame(width: 10, height: 10)
-
-          Text(timestamp.timeAgoDisplay())
-            .font(.system(size: 11))
-            .foregroundColor(.secondary)
-
-          if let sessionStatus, sessionStatus != .idle {
-            Text("· \(statusDisplayText(sessionStatus))")
-              .font(.system(size: 11))
-              .foregroundColor(statusColor)
-              .lineLimit(1)
-          }
-        }
-        .animation(.easeInOut(duration: 0.3), value: sessionStatus)
-
-        // First message preview
-        if let message = session.firstMessage, !message.isEmpty {
-          Text(message.prefix(80) + (message.count > 80 ? "..." : ""))
-            .font(.system(size: 11))
-            .foregroundColor(.primary.opacity(0.7))
-            .lineLimit(1)
-            .padding(.trailing, 56)
-        }
+      // Message preview with $ prompt (aligned to leading edge)
+      if let message = session.firstMessage, !message.isEmpty {
+        Text("$ " + (message.count > 60 ? String(message.prefix(60)) + "..." : message))
+          .font(.primarySmall)
+          .foregroundColor(.primary.opacity(0.5))
+          .lineLimit(1)
+          .padding(.top, 2)
+          .padding(.trailing, 36)
       }
-      .padding(.horizontal, 8)
-      .padding(.vertical, 10)
     }
+    .padding(.horizontal, 8)
+    .padding(.vertical, 8)
     .foregroundColor(.primary)
     .contentShape(Rectangle())
     .onTapGesture { onSelect() }
     .background(
       ZStack {
-        RoundedRectangle(cornerRadius: 8)
-          .fill(colorScheme == .dark ? Color.secondary.opacity(0.12) : Color.black.opacity(0.03))
-        RoundedRectangle(cornerRadius: 8)
+        RoundedRectangle(cornerRadius: 6)
+          .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.94))
+        RoundedRectangle(cornerRadius: 6)
           .fill(LinearGradient(
             colors: [
-              Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.25 : 0.15),
-              colorScheme == .dark ? Color.secondary.opacity(0.12) : Color.black.opacity(0.03)
+              Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.2 : 0.1),
+              Color.clear
             ],
-            startPoint: .trailing,
-            endPoint: .leading
+            startPoint: .leading,
+            endPoint: .trailing
           ))
-          .mask(
-            GeometryReader { geo in
-              Rectangle()
-                .frame(width: geo.size.width * gradientProgress)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-          )
+          .opacity(gradientProgress)
       }
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 6)
+        .stroke(
+          isPrimary
+            ? statusColor.opacity(0.3)
+            : Color.clear,
+          lineWidth: 1
+        )
     )
     .overlay(alignment: .bottomTrailing) {
       if !isPending, (onArchive != nil || onDeleteWorktree != nil) {
@@ -231,7 +192,7 @@ struct CollapsibleSessionRow: View {
                   onArchive()
                 } label: {
                   Text("Confirm")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.secondaryCaption)
                     .foregroundColor(.white)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
@@ -280,7 +241,7 @@ struct CollapsibleSessionRow: View {
         .padding(.bottom, 8)
       }
     }
-    .padding(.vertical, 8)
+    .padding(.vertical, 2)
     .onHover { hovering in
       if !hovering && showArchiveConfirm {
         withAnimation(.easeInOut(duration: 0.15)) {
@@ -298,7 +259,6 @@ struct CollapsibleSessionRow: View {
       }
     }
     .onChange(of: sessionStatus) { _, _ in
-      // Restart pulse animation if status changed
       startPulseAnimation()
     }
   }

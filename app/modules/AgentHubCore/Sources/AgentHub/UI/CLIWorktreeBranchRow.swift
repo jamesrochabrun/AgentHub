@@ -125,13 +125,13 @@ public struct CLIWorktreeBranchRow: View {
 
           // Path
           Text(worktree.path)
-            .font(.system(.subheadline, design: .monospaced))
+            .font(.primaryCaption)
             .foregroundColor(.secondary)
             .lineLimit(1)
 
           // Branch name
           Text(worktree.name)
-            .font(.system(.caption, design: .monospaced))
+            .font(.primaryCaption)
             .foregroundColor(.primary)
             .lineLimit(1)
 
@@ -141,7 +141,7 @@ public struct CLIWorktreeBranchRow: View {
           if !worktree.sessions.isEmpty {
             HStack(spacing: 4) {
               Text("\(worktree.sessions.count)")
-                .font(.caption)
+                .font(.secondarySmall)
                 .foregroundColor(.secondary)
 
               if worktree.activeSessionCount > 0 {
@@ -234,7 +234,7 @@ public struct CLIWorktreeBranchRow: View {
       if isExpanded {
         if worktree.sessions.isEmpty {
           Text("No sessions")
-            .font(.caption)
+            .font(.secondarySmall)
             .foregroundColor(.secondary)
             .padding(.leading, 32)
             .padding(.vertical, 4)
@@ -264,7 +264,7 @@ public struct CLIWorktreeBranchRow: View {
                     Image(systemName: "ellipsis")
                       .font(.caption2)
                     Text("\(remainingSessions) more")
-                      .font(.caption2)
+                      .font(.secondarySmall)
                   }
                   .foregroundColor(.secondary)
                 }

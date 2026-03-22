@@ -49,12 +49,12 @@ public final class ThemeManager {
 
   public init() {
     // Load the correct built-in theme synchronously to avoid flash on launch
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "claude"
+    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
     if let appTheme = AppTheme(rawValue: saved) {
       self.currentTheme = Self.loadBuiltInTheme(appTheme)
     } else {
-      // YAML theme — start with Claude, async load will replace it
-      self.currentTheme = Self.loadBuiltInTheme(.claude)
+      // YAML theme — start with neutral, async load will replace it
+      self.currentTheme = Self.loadBuiltInTheme(.neutral)
     }
     self.fileWatcher = ThemeFileWatcher()
     self.installBundledThemesIfNeeded()
@@ -150,6 +150,12 @@ public final class ThemeManager {
   /// Single source of truth for built-in theme colors
   nonisolated static func getThemeColors(for theme: AppTheme) -> ThemeColors {
     switch theme {
+    case .neutral:
+      return ThemeColors(
+        brandPrimary: Color.primary,
+        brandSecondary: Color.secondary,
+        brandTertiary: Color(nsColor: .tertiaryLabelColor)
+      )
     case .claude:
       return ThemeColors(
         brandPrimary: Color(hex: "#CC785C"),
@@ -215,7 +221,7 @@ public final class ThemeManager {
   }
 
   public func loadSavedTheme() async {
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "claude"
+    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
 
     // Check if it's a built-in theme
     if let appTheme = AppTheme(rawValue: saved) {
@@ -231,7 +237,7 @@ public final class ThemeManager {
       try? await loadTheme(fileURL: fileURL)
     } else {
       // Fallback to default
-      loadBuiltInTheme(.claude)
+      loadBuiltInTheme(.neutral)
     }
   }
 
