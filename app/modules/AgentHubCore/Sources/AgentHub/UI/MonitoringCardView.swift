@@ -487,18 +487,165 @@ public struct MonitoringCardView: View {
 
       Spacer()
 
-      // TODO: Consider removing later
-      // Maximize/Minimize button
-//      Button(action: onToggleMaximize) {
-//        Image(systemName: isMaximized ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-//          .font(.caption)
-//          .foregroundColor(.secondary)
-//          .frame(width: 24, height: 24)
-//          .background(Color.secondary.opacity(0.1))
-//          .clipShape(RoundedRectangle(cornerRadius: 4))
-//      }
-//      .buttonStyle(.plain)
-//      .help(isMaximized ? "Minimize" : "Maximize")
+      // Action buttons — fixed size, never shrink
+      HStack(spacing: 6) {
+        // Pending changes preview button - show immediately when code change tool is detected
+        if let pendingToolUse = state?.pendingToolUse,
+           pendingToolUse.isCodeChangeTool {
+          Button(action: {
+            pendingChangesSheetItem = PendingChangesSheetItem(
+              session: session,
+              pendingToolUse: pendingToolUse
+            )
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "eye")
+                .font(.caption2)
+              Text("Edits")
+            }
+          }
+          .buttonStyle(.agentHubOutlined(tint: .orange))
+          .help("Preview pending \(pendingToolUse.toolName) change")
+        }
+
+        // Plan button
+        if let planState = planState {
+          Button(action: {
+            if let onShowPlan = onShowPlan {
+              onShowPlan(session, planState)
+            } else {
+              planSheetItem = PlanSheetItem(
+                session: session,
+                planState: planState
+              )
+            }
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "list.bullet.clipboard")
+                .font(.caption2)
+              Text("Plan")
+            }
+          }
+          .buttonStyle(.agentHubOutlined(tint: .orange))
+          .help("View session plan")
+        }
+
+        // Diff button
+        Button(action: {
+          if let onShowDiff = onShowDiff {
+            onShowDiff(session, session.projectPath)
+          } else {
+            gitDiffSheetItem = GitDiffSheetItem(
+              session: session,
+              projectPath: session.projectPath
+            )
+          }
+        }) {
+          HStack(spacing: 4) {
+            Image(systemName: "arrow.left.arrow.right")
+              .font(.caption2)
+            Text("Diff")
+          }
+        }
+        .buttonStyle(.agentHubOutlined)
+        .help("View git unstaged changes")
+
+        // Files button
+        Button(action: {
+          if let onShowFiles {
+            onShowFiles(session, session.projectPath)
+          } else {
+            fileExplorerSheetItem = FileExplorerSheetItem(
+              session: session,
+              projectPath: session.projectPath,
+              initialFilePath: nil
+            )
+          }
+        }) {
+          HStack(spacing: 4) {
+            Image(systemName: "folder")
+              .font(.caption2)
+            Text("Files")
+          }
+        }
+        .buttonStyle(.agentHubOutlined)
+        .help("Browse Files (⇧⌘P to search)")
+
+        // Web preview button (only visible for web projects)
+        let framework = ProjectFramework.detect(at: session.projectPath)
+        if framework.requiresDevServer
+            || framework == .unknown
+            || FileManager.default.fileExists(atPath: "\(session.projectPath)/index.html") {
+          Button(action: {
+            if let onShowWebPreview = onShowWebPreview {
+              onShowWebPreview(session, session.projectPath)
+            } else {
+              webPreviewSheetItem = WebPreviewSheetItem(
+                session: session,
+                projectPath: session.projectPath
+              )
+            }
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "globe")
+                .font(.caption2)
+              Text("Preview")
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("Preview localhost web app")
+        }
+
+        // Mermaid diagram button (only visible when mermaid content is detected)
+        if state?.hasMermaidContent == true {
+          Button(action: {
+            if let onShowMermaid {
+              onShowMermaid(session)
+            } else {
+              mermaidSheetSession = session
+            }
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "chart.xyaxis.line")
+                .font(.caption2)
+              Text("Diagram")
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("View Mermaid diagrams")
+        }
+
+        // Simulator button (only visible for Xcode projects)
+        if XcodeProjectDetector.isXcodeProject(at: session.projectPath) {
+          Button(action: {
+            if let onShowSimulator {
+              onShowSimulator(session)
+            } else {
+              simulatorSheetSession = session
+            }
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "iphone")
+                .font(.caption2)
+              Text("Simulator")
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("Manage iOS Simulators")
+        }
+
+        Button(action: onRefreshTerminal) {
+          HStack(spacing: 4) {
+            Image(systemName: "arrow.clockwise")
+              .font(.caption2)
+            Text("Refresh")
+          }
+        }
+        .buttonStyle(.agentHubOutlined)
+        .help("Refresh terminal (reload session history)")
+      }
+      .fixedSize()
+      .layoutPriority(2)
 
     }
   }
@@ -573,215 +720,6 @@ public struct MonitoringCardView: View {
           .layoutPriority(1)
       }
 
-      Spacer()
-
-      // Action buttons — fixed size, never shrink
-      HStack(spacing: 6) {
-        // Pending changes preview button - show immediately when code change tool is detected
-        if let pendingToolUse = state?.pendingToolUse,
-           pendingToolUse.isCodeChangeTool {
-          Button(action: {
-            pendingChangesSheetItem = PendingChangesSheetItem(
-              session: session,
-              pendingToolUse: pendingToolUse
-            )
-          }) {
-            HStack(spacing: 4) {
-              Image(systemName: "eye")
-                .font(.caption2)
-              Text("Edits")
-                .font(.secondaryCaption)
-            }
-            .foregroundColor(.orange)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.orange.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-          }
-          .buttonStyle(.plain)
-          .help("Preview pending \(pendingToolUse.toolName) change")
-        }
-
-        // Plan button
-        if let planState = planState {
-          Button(action: {
-            if let onShowPlan = onShowPlan {
-              onShowPlan(session, planState)
-            } else {
-              planSheetItem = PlanSheetItem(
-                session: session,
-                planState: planState
-              )
-            }
-          }) {
-            HStack(spacing: 4) {
-              Image(systemName: "list.bullet.clipboard")
-                .font(.caption2)
-              Text("Plan")
-                .font(.secondaryCaption)
-            }
-            .foregroundColor(.orange)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.orange.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-          }
-          .buttonStyle(.plain)
-          .help("View session plan")
-        }
-
-        // Diff button
-        Button(action: {
-          if let onShowDiff = onShowDiff {
-            onShowDiff(session, session.projectPath)
-          } else {
-            gitDiffSheetItem = GitDiffSheetItem(
-              session: session,
-              projectPath: session.projectPath
-            )
-          }
-        }) {
-          HStack(spacing: 4) {
-            Image(systemName: "arrow.left.arrow.right")
-              .font(.caption2)
-            Text("Diff")
-              .font(.secondaryCaption)
-          }
-          .foregroundColor(.secondary)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.secondary.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
-        .help("View git unstaged changes")
-
-        // Files button
-        Button(action: {
-          if let onShowFiles {
-            onShowFiles(session, session.projectPath)
-          } else {
-            fileExplorerSheetItem = FileExplorerSheetItem(
-              session: session,
-              projectPath: session.projectPath,
-              initialFilePath: nil
-            )
-          }
-        }) {
-          HStack(spacing: 4) {
-            Image(systemName: "folder")
-              .font(.caption2)
-            Text("Files")
-              .font(.secondaryCaption)
-          }
-          .foregroundColor(.secondary)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.secondary.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
-        .help("Browse Files (⇧⌘P to search)")
-
-        // Web preview button (only visible for web projects)
-        let framework = ProjectFramework.detect(at: session.projectPath)
-        if framework.requiresDevServer
-            || framework == .unknown
-            || FileManager.default.fileExists(atPath: "\(session.projectPath)/index.html") {
-          Button(action: {
-            if let onShowWebPreview = onShowWebPreview {
-              onShowWebPreview(session, session.projectPath)
-            } else {
-              webPreviewSheetItem = WebPreviewSheetItem(
-                session: session,
-                projectPath: session.projectPath
-              )
-            }
-          }) {
-            HStack(spacing: 4) {
-              Image(systemName: "globe")
-                .font(.caption2)
-              Text("Preview")
-                .font(.secondaryCaption)
-            }
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-          }
-          .buttonStyle(.plain)
-          .help("Preview localhost web app")
-        }
-
-        // Mermaid diagram button (only visible when mermaid content is detected)
-        if state?.hasMermaidContent == true {
-          Button(action: {
-            if let onShowMermaid {
-              onShowMermaid(session)
-            } else {
-              mermaidSheetSession = session
-            }
-          }) {
-            HStack(spacing: 4) {
-              Image(systemName: "chart.xyaxis.line")
-                .font(.caption2)
-              Text("Diagram")
-                .font(.secondaryCaption)
-            }
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-          }
-          .buttonStyle(.plain)
-          .help("View Mermaid diagrams")
-        }
-
-        // Simulator button (only visible for Xcode projects)
-        if XcodeProjectDetector.isXcodeProject(at: session.projectPath) {
-          Button(action: {
-            if let onShowSimulator {
-              onShowSimulator(session)
-            } else {
-              simulatorSheetSession = session
-            }
-          }) {
-            HStack(spacing: 4) {
-              Image(systemName: "iphone")
-                .font(.caption2)
-              Text("Simulator")
-                .font(.secondaryCaption)
-            }
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-          }
-          .buttonStyle(.plain)
-          .help("Manage iOS Simulators")
-        }
-
-        Button(action: onRefreshTerminal) {
-          HStack(spacing: 4) {
-            Image(systemName: "arrow.clockwise")
-              .font(.caption2)
-            Text("Refresh terminal")
-              .font(.secondaryCaption)
-          }
-          .foregroundColor(.secondary)
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.secondary.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-        .buttonStyle(.plain)
-        .help("Refresh terminal (reload session history)")
-      }
-      .fixedSize()
-      .layoutPriority(2)
     }
   }
 

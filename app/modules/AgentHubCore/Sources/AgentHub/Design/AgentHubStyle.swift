@@ -12,6 +12,7 @@ public enum AgentHubLayout {
   public static let cardCornerRadius: CGFloat = 12
   public static let rowCornerRadius: CGFloat = 10
   public static let chipCornerRadius: CGFloat = 8
+  public static let buttonCornerRadius: CGFloat = 4
 }
 
 private struct AgentHubPanelModifier: ViewModifier {
