@@ -37,6 +37,7 @@ public enum DesignTokens {
 
 /// Available app themes
 public enum AppTheme: String, CaseIterable, Identifiable {
+  case neutral = "neutral"
   case claude = "claude"
   case codex = "codex"
   case bat = "bat"
@@ -47,6 +48,7 @@ public enum AppTheme: String, CaseIterable, Identifiable {
 
   public var displayName: String {
     switch self {
+    case .neutral: return "Default"
     case .claude: return "Claude"
     case .codex: return "Codex"
     case .bat: return "Bat"
@@ -57,6 +59,7 @@ public enum AppTheme: String, CaseIterable, Identifiable {
 
   public var description: String {
     switch self {
+    case .neutral: return "Clean, system-adaptive colors"
     case .claude: return "Warm earth tones"
     case .codex: return "Teal and purple"
     case .bat: return "Purple with mustard accents"
@@ -152,36 +155,65 @@ extension Color {
       return yamlProviderColor
     }
 
-    switch provider {
+    let selectedTheme = currentAppTheme
+    switch selectedTheme {
+    case .neutral:
+      return Color.primary
     case .claude:
-      return Color(hex: "#CC785C")  // bookCloth
+      switch provider {
+      case .claude: return Color(hex: "#CC785C")
+      case .codex: return Color(hex: "#00A5B2")
+      }
     case .codex:
-      return Color(hex: "#00A5B2")  // teal
+      return Color(hex: "#00A5B2")
+    case .bat, .xcode, .custom, .none:
+      return getCurrentThemeColors().brandPrimary
     }
   }
 
   public static func brandSecondary(for provider: SessionProviderKind) -> Color {
-    switch provider {
+    let selectedTheme = currentAppTheme
+    switch selectedTheme {
+    case .neutral:
+      return Color.secondary
     case .claude:
-      return Color(hex: "#D4A27F")  // kraft
+      switch provider {
+      case .claude: return Color(hex: "#D4A27F")
+      case .codex: return Color(hex: "#00A5B2")
+      }
     case .codex:
-      return Color(hex: "#00A5B2")  // teal (same as primary)
+      return Color(hex: "#00A5B2")
+    case .bat, .xcode, .custom, .none:
+      return getCurrentThemeColors().brandSecondary
     }
   }
 
   public static func brandTertiary(for provider: SessionProviderKind) -> Color {
-    switch provider {
+    let selectedTheme = currentAppTheme
+    switch selectedTheme {
+    case .neutral:
+      return Color(nsColor: .tertiaryLabelColor)
     case .claude:
-      return Color(hex: "#EBDBBC")  // manilla
+      switch provider {
+      case .claude: return Color(hex: "#EBDBBC")
+      case .codex: return Color(hex: "#00A5B2")
+      }
     case .codex:
-      return Color(hex: "#00A5B2")  // teal (same as primary)
+      return Color(hex: "#00A5B2")
+    case .bat, .xcode, .custom, .none:
+      return getCurrentThemeColors().brandTertiary
     }
+  }
+
+  private static var currentAppTheme: AppTheme? {
+    let selected = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    return AppTheme(rawValue: selected)
   }
 
   // MARK: - Theme Colors Helper
 
   private static func getCurrentThemeColors() -> ThemeColors {
-    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "claude"
+    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
     guard let theme = AppTheme(rawValue: selectedTheme) else {
       // YAML theme — read cached hex values
       let yamlPrimary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlPrimaryHex) ?? "#CC785C"
@@ -229,7 +261,7 @@ extension Color {
   }
 
   private static var isYAMLThemeSelected: Bool {
-    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "claude"
+    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
     return AppTheme(rawValue: selectedTheme) == nil
   }
 
