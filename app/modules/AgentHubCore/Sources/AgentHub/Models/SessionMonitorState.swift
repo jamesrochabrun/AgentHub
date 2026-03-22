@@ -26,7 +26,6 @@ public struct SessionMonitorState: Equatable, Sendable {
 
   // Metrics
   public var messageCount: Int
-  public var toolCalls: [String: Int]  // Tool name -> count
   public var sessionStartedAt: Date?
   public var model: String?
   public var gitBranch: String?
@@ -53,7 +52,6 @@ public struct SessionMonitorState: Equatable, Sendable {
     cacheReadTokens: Int = 0,
     cacheCreationTokens: Int = 0,
     messageCount: Int = 0,
-    toolCalls: [String: Int] = [:],
     sessionStartedAt: Date? = nil,
     model: String? = nil,
     gitBranch: String? = nil,
@@ -71,7 +69,6 @@ public struct SessionMonitorState: Equatable, Sendable {
     self.cacheReadTokens = cacheReadTokens
     self.cacheCreationTokens = cacheCreationTokens
     self.messageCount = messageCount
-    self.toolCalls = toolCalls
     self.sessionStartedAt = sessionStartedAt
     self.model = model
     self.gitBranch = gitBranch

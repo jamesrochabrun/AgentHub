@@ -61,7 +61,6 @@ public struct MonitoringCardView: View {
   let claudeClient: (any ClaudeCode)?
   let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
-  let showTerminal: Bool
   let initialPrompt: String?
   let initialInputText: String?
   let terminalKey: String?  // Key for terminal storage (session ID or "pending-{pendingId}")
@@ -69,7 +68,6 @@ public struct MonitoringCardView: View {
   var dangerouslySkipPermissions: Bool = false
   var permissionModePlan: Bool = false
   let worktreeName: String?
-  let onToggleTerminal: (Bool) -> Void
   let onStopMonitoring: () -> Void
   let onConnect: () -> Void
   let onCopySessionId: () -> Void
@@ -111,7 +109,6 @@ public struct MonitoringCardView: View {
     claudeClient: (any ClaudeCode)? = nil,
     cliConfiguration: CLICommandConfiguration? = nil,
     providerKind: SessionProviderKind = .claude,
-    showTerminal: Bool = false,
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
     terminalKey: String? = nil,
@@ -119,7 +116,6 @@ public struct MonitoringCardView: View {
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil,
-    onToggleTerminal: @escaping (Bool) -> Void,
     onStopMonitoring: @escaping () -> Void,
     onConnect: @escaping () -> Void,
     onCopySessionId: @escaping () -> Void,
@@ -146,7 +142,6 @@ public struct MonitoringCardView: View {
     self.claudeClient = claudeClient
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
-    self.showTerminal = showTerminal
     self.initialPrompt = initialPrompt
     self.initialInputText = initialInputText
     self.terminalKey = terminalKey
@@ -154,7 +149,6 @@ public struct MonitoringCardView: View {
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
     self.permissionModePlan = permissionModePlan
     self.worktreeName = worktreeName
-    self.onToggleTerminal = onToggleTerminal
     self.onStopMonitoring = onStopMonitoring
     self.onConnect = onConnect
     self.onCopySessionId = onCopySessionId
@@ -178,18 +172,9 @@ public struct MonitoringCardView: View {
 
   static func listHeightMetrics(
     providerKind: SessionProviderKind,
-    state: SessionMonitorState?,
-    showTerminal: Bool
+    state: SessionMonitorState?
   ) -> ResizableCardMetrics {
-    if showTerminal {
-      return ResizableCardMetrics(defaultHeight: 520, minHeight: 400)
-    }
-
-    let showsContextBar = providerKind == .claude && (state?.inputTokens ?? 0) > 0
-    return ResizableCardMetrics(
-      defaultHeight: showsContextBar ? 340 : 300,
-      minHeight: showsContextBar ? 240 : 210
-    )
+    return ResizableCardMetrics(defaultHeight: 520, minHeight: 400)
   }
 
   public var body: some View {
@@ -206,20 +191,7 @@ public struct MonitoringCardView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
 
-      // Context bar (only in monitor/list mode, not terminal mode, Claude only)
-      if !showTerminal, providerKind == .claude, let state = state, state.inputTokens > 0 {
-        Divider()
-
-        ContextWindowBar(
-          percentage: state.contextWindowUsagePercentage,
-          formattedUsage: state.formattedContextUsage,
-          model: state.model
-        )
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-      }
-
-      // Recent activity (with status) or terminal
+      // Terminal content
       Divider()
 
       monitorContent
@@ -249,9 +221,8 @@ public struct MonitoringCardView: View {
     .animation(.easeInOut(duration: 0.2), value: isDragging)
     .onDrop(
       of: [.fileURL, .png, .tiff, .image, .pdf],
-      isTargeted: showTerminal ? $isDragging : .constant(false)
+      isTargeted: $isDragging
     ) { providers in
-      guard showTerminal else { return false }
       handleDroppedFiles(providers)
       return true
     }
@@ -365,7 +336,7 @@ public struct MonitoringCardView: View {
 
   /// Handles dropped file providers by extracting paths and typing them into terminal
   private func handleDroppedFiles(_ providers: [NSItemProvider]) {
-    guard showTerminal, let key = terminalKey, let viewModel = viewModel else { return }
+    guard let key = terminalKey, let viewModel = viewModel else { return }
 
     for provider in providers {
       // Handle file URLs (files dragged from Finder)
@@ -459,7 +430,7 @@ public struct MonitoringCardView: View {
 
   /// Handles files selected from the file picker by typing their paths into terminal
   private func handlePickedFiles(_ result: Result<[URL], Error>) {
-    guard showTerminal, let key = terminalKey, let viewModel = viewModel else { return }
+    guard let key = terminalKey, let viewModel = viewModel else { return }
 
     switch result {
     case .success(let urls):
@@ -522,37 +493,6 @@ public struct MonitoringCardView: View {
 
       Spacer()
 
-      // Terminal/List segmented control (hidden when maximized)
-      if !isMaximized {
-        HStack(spacing: 4) {
-          // Terminal button (left - default)
-          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(true) } }) {
-            Image(systemName: "terminal")
-              .font(.caption)
-              .frame(width: 28, height: 22)
-              .foregroundColor(showTerminal ? .primary : .secondary)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-
-          // Monitor button (right)
-          Button(action: { withAnimation(.easeInOut(duration: 0.2)) { onToggleTerminal(false) } }) {
-            Image(systemName: "waveform.circle")
-              .font(.caption)
-              .frame(width: 28, height: 22)
-              .foregroundColor(!showTerminal ? .primary : .secondary)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-        }
-        .padding(4)
-        .background(Color.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .animation(.easeInOut(duration: 0.2), value: showTerminal)
-        .fixedSize()
-        .layoutPriority(2)
-      }
-
       // TODO: Consider removing later
       // Maximize/Minimize button
 //      Button(action: onToggleMaximize) {
@@ -599,16 +539,13 @@ public struct MonitoringCardView: View {
         showingRemixProviderPicker = true
       }
 
-      // Media actions (only in terminal mode)
-      if showTerminal {
-        Divider()
-          .padding(.vertical, 4)
+      Divider()
+        .padding(.vertical, 4)
 
-        PopoverButton(icon: "plus.rectangle.on.folder", title: "Add Files") {
-          showingActionsPopover = false
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            showingFilePicker = true
-          }
+      PopoverButton(icon: "plus.rectangle.on.folder", title: "Add Files") {
+        showingActionsPopover = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+          showingFilePicker = true
         }
       }
     }
@@ -834,24 +771,21 @@ public struct MonitoringCardView: View {
           .help("Manage iOS Simulators")
         }
 
-        // Terminal refresh button (only visible when terminal is shown)
-        if showTerminal {
-          Button(action: onRefreshTerminal) {
-            HStack(spacing: 4) {
-              Image(systemName: "arrow.clockwise")
-                .font(.caption2)
-              Text("Refresh terminal")
-                .font(.caption2)
-            }
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
+        Button(action: onRefreshTerminal) {
+          HStack(spacing: 4) {
+            Image(systemName: "arrow.clockwise")
+              .font(.caption2)
+            Text("Refresh terminal")
+              .font(.caption2)
           }
-          .buttonStyle(.plain)
-          .help("Refresh terminal (reload session history)")
+          .foregroundColor(.secondary)
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(Color.secondary.opacity(0.1))
+          .clipShape(RoundedRectangle(cornerRadius: 4))
         }
+        .buttonStyle(.plain)
+        .help("Refresh terminal (reload session history)")
       }
       .fixedSize()
       .layoutPriority(2)
@@ -863,46 +797,22 @@ public struct MonitoringCardView: View {
   @ViewBuilder
   private var monitorContent: some View {
     ZStack(alignment: .bottomTrailing) {
-      if showTerminal {
-        EmbeddedTerminalView(
-          terminalKey: terminalKey ?? session.id,
-          sessionId: session.id,
-          projectPath: session.projectPath,
-          cliConfiguration: viewModel?.cliConfiguration ?? .claudeDefault,
-          initialPrompt: initialPrompt,
-          initialInputText: initialInputText,
-          viewModel: viewModel,
-          dangerouslySkipPermissions: dangerouslySkipPermissions,
-          permissionModePlan: permissionModePlan,
-          worktreeName: worktreeName,
-          onUserInteraction: onTerminalInteraction
-        )
-        .frame(minHeight: 300)
-      } else {
-        VStack(alignment: .leading, spacing: 12) {
-          Text("Recent Activity")
-            .font(.system(.subheadline, design: .monospaced))
-            .foregroundColor(.secondary)
+      EmbeddedTerminalView(
+        terminalKey: terminalKey ?? session.id,
+        sessionId: session.id,
+        projectPath: session.projectPath,
+        cliConfiguration: viewModel?.cliConfiguration ?? .claudeDefault,
+        initialPrompt: initialPrompt,
+        initialInputText: initialInputText,
+        viewModel: viewModel,
+        dangerouslySkipPermissions: dangerouslySkipPermissions,
+        permissionModePlan: permissionModePlan,
+        worktreeName: worktreeName,
+        onUserInteraction: onTerminalInteraction
+      )
+      .frame(minHeight: 300)
 
-          VStack(alignment: .leading, spacing: 16) {
-            // Show recent activities (older first)
-            if let state = state {
-              ForEach(state.recentActivities.suffix(2).reversed()) { activity in
-                FlatActivityRow(activity: activity)
-              }
-            }
-
-            // Current status as the most recent item
-            StatusActivityRow(
-              status: state?.status ?? .idle,
-              timestamp: state?.lastActivityAt ?? Date()
-            )
-          }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-      }
-
-      // Plus button for actions popover - visible in both modes
+      // Plus button for actions popover
       Button {
         showingActionsPopover = true
       } label: {
@@ -918,109 +828,6 @@ public struct MonitoringCardView: View {
       }
       .help("Session actions")
     }
-  }
-}
-
-// MARK: - Flat Activity Row
-
-private struct FlatActivityRow: View {
-  let activity: ActivityEntry
-
-  private var iconColor: Color {
-    switch activity.type {
-    case .toolUse:
-      return .orange
-    case .toolResult(_, let success):
-      return success ? .green : .red
-    case .userMessage:
-      return .blue
-    case .assistantMessage:
-      return .purple
-    case .thinking:
-      return .gray
-    }
-  }
-
-  var body: some View {
-    HStack(spacing: 12) {
-      Text(formatTime(activity.timestamp))
-        .font(.system(.subheadline, design: .monospaced))
-        .foregroundColor(.secondary)
-        .monospacedDigit()
-
-      Image(systemName: activity.type.icon)
-        .font(.subheadline)
-        .foregroundColor(iconColor)
-        .frame(width: 18)
-
-      Text(activity.description)
-        .font(.subheadline)
-        .lineLimit(1)
-        .foregroundColor(.primary)
-    }
-  }
-
-  private func formatTime(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "HH:mm:ss"
-    return formatter.string(from: date)
-  }
-}
-
-// MARK: - Status Activity Row
-
-/// Shows the current session status as an activity row
-private struct StatusActivityRow: View {
-  let status: SessionStatus
-  let timestamp: Date
-
-  private var statusColor: Color {
-    switch status.color {
-    case "blue": return .blue
-    case "orange": return .orange
-    case "yellow": return .yellow
-    case "red": return .red
-    default: return .gray
-    }
-  }
-
-  private var statusIcon: String {
-    switch status {
-    case .idle:
-      return "circle.fill"
-    case .thinking:
-      return "sparkles"
-    case .executingTool:
-      return "gearshape.fill"
-    case .awaitingApproval:
-      return "exclamationmark.circle.fill"
-    case .waitingForUser:
-      return "circle.fill"
-    }
-  }
-
-  var body: some View {
-    HStack(spacing: 12) {
-      Text(formatTime(timestamp))
-        .font(.system(.subheadline, design: .monospaced))
-        .foregroundColor(.secondary)
-        .monospacedDigit()
-
-      Image(systemName: statusIcon)
-        .font(.subheadline)
-        .foregroundColor(statusColor)
-        .frame(width: 18)
-
-      Text(status.displayName)
-        .font(.subheadline)
-        .foregroundColor(.primary)
-    }
-  }
-
-  private func formatTime(_ date: Date) -> String {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "HH:mm:ss"
-    return formatter.string(from: date)
   }
 }
 
@@ -1110,7 +917,6 @@ struct AnimatedCopyButton: View {
           ActivityEntry(timestamp: Date(), type: .toolUse(name: "Bash"), description: "swift build")
         ]
       ),
-      onToggleTerminal: { _ in },
       onStopMonitoring: {},
       onConnect: {},
       onCopySessionId: {},
@@ -1136,7 +942,6 @@ struct AnimatedCopyButton: View {
         model: "claude-sonnet-4-20250514",
         recentActivities: []
       ),
-      onToggleTerminal: { _ in },
       onStopMonitoring: {},
       onConnect: {},
       onCopySessionId: {},
@@ -1156,7 +961,6 @@ struct AnimatedCopyButton: View {
         isActive: false
       ),
       state: nil,
-      onToggleTerminal: { _ in },
       onStopMonitoring: {},
       onConnect: {},
       onCopySessionId: {},

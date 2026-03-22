@@ -37,7 +37,6 @@ public struct CodexSessionJSONLParser {
     public var cacheReadTokens: Int = 0
     public var cacheCreationTokens: Int = 0
     public var messageCount: Int = 0
-    public var toolCalls: [String: Int] = [:]
     public var pendingToolUses: [String: PendingToolInfo] = [:]
     public var recentActivities: [ActivityEntry] = []
     public var lastActivityAt: Date?
@@ -245,7 +244,6 @@ public struct CodexSessionJSONLParser {
     case "function_call":
       guard let name = payload["name"] as? String,
             let callId = payload["call_id"] as? String else { return }
-      result.toolCalls[name, default: 0] += 1
       result.pendingToolUses[callId] = PendingToolInfo(toolName: name, toolUseId: callId, timestamp: timestamp ?? Date())
       addActivity(type: .toolUse(name: name), description: name, timestamp: timestamp, to: &result)
 
@@ -259,7 +257,6 @@ public struct CodexSessionJSONLParser {
     case "custom_tool_call":
       guard let name = payload["name"] as? String else { return }
       let status = payload["status"] as? String
-      result.toolCalls[name, default: 0] += 1
       addActivity(type: .toolUse(name: name), description: name, timestamp: timestamp, to: &result)
       if status == "completed" {
         addActivity(type: .toolResult(name: name, success: true), description: "Completed", timestamp: timestamp, to: &result)

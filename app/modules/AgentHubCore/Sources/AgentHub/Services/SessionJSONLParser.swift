@@ -81,7 +81,6 @@ public struct SessionJSONLParser {
     public var cacheReadTokens: Int = 0
     public var cacheCreationTokens: Int = 0
     public var messageCount: Int = 0
-    public var toolCalls: [String: Int] = [:]
     public var pendingToolUses: [String: PendingToolInfo] = [:]  // toolUseId -> info
     public var recentActivities: [ActivityEntry] = []
     public var lastActivityAt: Date?
@@ -239,9 +238,6 @@ public struct SessionJSONLParser {
       switch block.type {
       case "tool_use":
         if let name = block.name, let id = block.id {
-          // Track tool call count
-          result.toolCalls[name, default: 0] += 1
-
           // Add to pending (will be removed when we see tool_result)
           let inputPreview = extractInputPreview(block.input)
 

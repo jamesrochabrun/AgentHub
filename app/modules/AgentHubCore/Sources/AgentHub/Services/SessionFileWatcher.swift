@@ -418,7 +418,6 @@ public actor SessionFileWatcher {
       cacheReadTokens: result.cacheReadTokens,
       cacheCreationTokens: result.cacheCreationTokens,
       messageCount: result.messageCount,
-      toolCalls: result.toolCalls,
       sessionStartedAt: result.sessionStartedAt,
       model: result.model,
       gitBranch: result.gitBranch,
