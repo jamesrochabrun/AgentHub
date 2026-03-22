@@ -52,7 +52,7 @@ public struct StatsProviderSegmentedControl: View {
     } label: {
       HStack(spacing: 6) {
         Text("\(provider.rawValue) (\(count))")
-          .font(.system(.subheadline, weight: .medium))
+          .font(.geist(size: 13, weight: .medium))
           .foregroundColor(
             selectedProvider == provider
               ? Color.brandPrimary(for: provider)
@@ -61,7 +61,7 @@ public struct StatsProviderSegmentedControl: View {
 
         if provider == .codex {
           Text("Beta")
-            .font(.system(size: 9, weight: .medium))
+            .font(.secondaryCaption)
             .foregroundStyle(selectedProvider == .codex ? .secondary : .tertiary)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)

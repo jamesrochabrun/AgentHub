@@ -116,11 +116,11 @@ private struct ModuleSectionHeader: View {
   var body: some View {
     HStack {
       Text(name)
-        .font(.subheadline.weight(.semibold))
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
       Spacer()
       Text("\(sessionCount)")
-        .font(.caption)
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
     }
     .padding(.horizontal, 4)
@@ -156,7 +156,7 @@ struct HubFilterControl: View {
           Text("\(count)")
             .foregroundColor(.secondary)
         }
-        .font(.caption)
+        .font(.secondarySmall)
         .foregroundColor(isSelected ? .primary : .secondary)
 
         // Underline indicator
@@ -445,7 +445,7 @@ public struct MultiProviderMonitoringPanelView: View {
   private var header: some View {
     HStack(spacing: 12) {
       Text("Hub")
-        .font(.system(size: 13, weight: .bold, design: .monospaced))
+        .font(.heading)
 
       Spacer()
 
@@ -484,7 +484,7 @@ public struct MultiProviderMonitoringPanelView: View {
       ProgressView()
         .scaleEffect(0.8)
       Text("Restoring sessions...")
-        .font(.system(size: 12, weight: .regular, design: .monospaced))
+        .font(.primaryDefault)
         .foregroundColor(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -508,7 +508,7 @@ public struct MultiProviderMonitoringPanelView: View {
         .foregroundColor(.secondary.opacity(0.5))
 
       Text("No \(filterMode.displayName) Sessions")
-        .font(.headline)
+        .font(.heading)
         .foregroundColor(.secondary)
 
       Button("Show All") {
@@ -1336,18 +1336,18 @@ private struct MonitoringSessionFileSheetView: View {
           Image(systemName: "doc.text.fill")
             .foregroundColor(.brandPrimary)
           Text(fileName)
-            .font(.system(.headline, design: .monospaced))
+            .font(.primaryDefault)
         }
 
         Spacer()
 
         Text(session.shortId)
-          .font(.system(.caption, design: .monospaced))
+          .font(.primaryCaption)
           .foregroundColor(.secondary)
 
         if let branch = session.branchName {
           Text("[\(branch)]")
-            .font(.caption)
+            .font(.primaryCaption)
             .foregroundColor(.secondary)
         }
 

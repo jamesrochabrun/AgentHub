@@ -154,7 +154,7 @@ public struct MultiSessionLaunchView: View {
   private var formHeader: some View {
     HStack {
       Text("Start Session")
-        .font(.system(size: 14, weight: .bold, design: .monospaced))
+        .font(.heading)
       Spacer()
       Button(action: {
         withAnimation(.easeInOut(duration: 0.2)) {
@@ -205,10 +205,10 @@ public struct MultiSessionLaunchView: View {
             .font(.system(size: 10))
         }
         Text(label)
-          .font(.system(size: 11, weight: viewModel.launchMode == mode ? .bold : .regular))
+          .font(viewModel.launchMode == mode ? .geist(size: 11, weight: .bold) : .secondarySmall)
         if showsBetaBadge {
           Text("Beta")
-            .font(.system(size: 8, weight: .semibold))
+            .font(.geist(size: 8, weight: .semibold))
             .foregroundColor(viewModel.launchMode == mode ? .brandPrimary : .secondary)
             .padding(.horizontal, 5)
             .padding(.vertical, 1)
@@ -236,7 +236,7 @@ public struct MultiSessionLaunchView: View {
                 Image(systemName: "folder")
                   .font(.system(size: 11))
                 Text(viewModel.selectedRepository?.name ?? "Select repository")
-                  .font(.system(size: 12, weight: .medium))
+                  .font(.secondaryDefault)
               }
             }
             .buttonStyle(.plain)
@@ -270,7 +270,7 @@ public struct MultiSessionLaunchView: View {
               Image(systemName: "folder")
                 .font(.system(size: 11))
               Text("Select repository")
-                .font(.system(size: 12, weight: .medium))
+                .font(.secondaryDefault)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
@@ -291,7 +291,7 @@ public struct MultiSessionLaunchView: View {
             Image(systemName: "paperclip")
               .font(.system(size: 11))
             Text("Attach files")
-              .font(.system(size: 12, weight: .medium))
+              .font(.secondaryDefault)
           }
           .padding(.horizontal, 12)
           .padding(.vertical, 6)
@@ -309,7 +309,7 @@ public struct MultiSessionLaunchView: View {
 
       if let repo = viewModel.selectedRepository {
         Text(repo.path)
-          .font(.system(size: 10, design: .monospaced))
+          .font(.primaryCaption)
           .foregroundColor(.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
@@ -323,7 +323,7 @@ public struct MultiSessionLaunchView: View {
     ZStack(alignment: .topLeading) {
       if viewModel.sharedPrompt.isEmpty {
         Text(promptPlaceholder)
-          .font(.system(size: 12))
+          .font(.secondaryDefault)
           .foregroundColor(.secondary.opacity(0.6))
           .padding(.leading, 7)
           .padding(.top, 4)
@@ -378,7 +378,7 @@ public struct MultiSessionLaunchView: View {
             Image(systemName: file.icon)
               .font(.system(size: 9))
             Text(file.displayName)
-              .font(.system(size: 10))
+              .font(.secondaryCaption)
               .lineLimit(1)
             Button(action: {
               withAnimation(.easeInOut(duration: 0.2)) {
@@ -536,7 +536,7 @@ public struct MultiSessionLaunchView: View {
       }
     }) {
       Text(label)
-        .font(.system(size: 11, weight: viewModel.workMode == mode ? .bold : .regular))
+        .font(viewModel.workMode == mode ? .geist(size: 11, weight: .bold) : .secondarySmall)
         .foregroundColor(viewModel.workMode == mode ? .primary : .secondary.opacity(0.6))
         .fixedSize()
     }
@@ -557,7 +557,7 @@ public struct MultiSessionLaunchView: View {
             .frame(width: 12, height: 12)
         } else {
           Text(viewModel.currentBranchName.isEmpty ? "—" : viewModel.currentBranchName)
-            .font(.system(size: 11, design: .monospaced))
+            .font(.primarySmall)
             .foregroundColor(.secondary)
             .lineLimit(1)
         }
@@ -569,7 +569,7 @@ public struct MultiSessionLaunchView: View {
             .scaleEffect(0.5)
             .frame(width: 12, height: 12)
           Text("Loading...")
-            .font(.caption)
+            .font(.secondaryCaption)
             .foregroundColor(.secondary)
         }
       } else {
@@ -591,7 +591,7 @@ public struct MultiSessionLaunchView: View {
   private var providerPills: some View {
     HStack(spacing: 8) {
       Text("Select agent")
-        .font(.system(size: 11))
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
       claudePill
       providerPill(
@@ -609,10 +609,10 @@ public struct MultiSessionLaunchView: View {
         .font(.system(size: 8))
         .foregroundStyle(Color(nsColor: .systemTeal))
       Text("plan mode on")
-        .font(.system(size: 11, weight: .medium))
+        .font(.geist(size: 11, weight: .medium))
         .foregroundStyle(Color(nsColor: .systemTeal))
       Text("(shift+tab to cycle)")
-        .font(.system(size: 11))
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
       Spacer()
     }
@@ -625,7 +625,7 @@ public struct MultiSessionLaunchView: View {
       }
     }) {
       Text(viewModel.claudeMode.label)
-        .font(.system(size: 11, weight: .medium))
+        .font(.geist(size: 11, weight: .medium))
         .foregroundColor(claudePillForeground)
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
@@ -678,7 +678,7 @@ public struct MultiSessionLaunchView: View {
             Image(systemName: "arrow.triangle.branch")
               .font(.system(size: 9))
             Text("--worktree")
-              .font(.system(size: 11, weight: .medium))
+              .font(.jetBrainsMono(size: 11, weight: .medium))
           }
           .foregroundColor(viewModel.claudeUseWorktree ? (colorScheme == .dark ? .black : .white) : .secondary)
           .padding(.horizontal, 10)
@@ -713,7 +713,7 @@ public struct MultiSessionLaunchView: View {
 
       if viewModel.claudeUseWorktree {
         Text(worktreeCommandCaption)
-          .font(.system(size: 10, design: .monospaced))
+          .font(.primaryCaption)
           .foregroundColor(.secondary.opacity(0.6))
           .transition(.opacity)
       }
@@ -735,7 +735,7 @@ public struct MultiSessionLaunchView: View {
       isSelected.wrappedValue.toggle()
     }) {
       Text(label)
-        .font(.system(size: 11, weight: .medium))
+        .font(.geist(size: 11, weight: .medium))
         .foregroundColor(
           disabled ? .secondary.opacity(0.4)
             : isSelected.wrappedValue ? (colorScheme == .dark ? .black : .white)
@@ -777,7 +777,7 @@ public struct MultiSessionLaunchView: View {
   private func progressRow(label: String, progress: WorktreeCreationProgress) -> some View {
     HStack(spacing: 8) {
       Text(label)
-        .font(.system(size: 10, weight: .medium))
+        .font(.geist(size: 10, weight: .medium))
         .foregroundColor(.secondary)
         .frame(width: 40, alignment: .trailing)
 
@@ -791,7 +791,7 @@ public struct MultiSessionLaunchView: View {
       }
 
       Text(progress.statusMessage)
-        .font(.caption2)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
         .lineLimit(1)
 
@@ -799,7 +799,7 @@ public struct MultiSessionLaunchView: View {
 
       if progress.isInProgress {
         Text("\(Int(progress.progressValue * 100))%")
-          .font(.caption2)
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
           .monospacedDigit()
       }
@@ -822,7 +822,7 @@ public struct MultiSessionLaunchView: View {
   private var smartProviderPills: some View {
     HStack(spacing: 8) {
       Text("Select agent")
-        .font(.system(size: 11))
+        .font(.secondarySmall)
         .foregroundColor(.secondary)
       ForEach(SmartProvider.allCases, id: \.self) { provider in
         smartProviderPill(provider: provider)
@@ -839,7 +839,7 @@ public struct MultiSessionLaunchView: View {
       }
     }) {
       Text(provider.rawValue)
-        .font(.system(size: 11, weight: .medium))
+        .font(.geist(size: 11, weight: .medium))
         .foregroundColor(isSelected ? (colorScheme == .dark ? .black : .white) : .secondary)
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
@@ -871,17 +871,17 @@ public struct MultiSessionLaunchView: View {
 
         VStack(alignment: .leading, spacing: 2) {
           Text("Building launch plan")
-            .font(.system(size: 12, weight: .semibold))
+            .font(.geist(size: 12, weight: .semibold))
             .foregroundColor(.primary)
           Text("Exploring the repository and preparing execution steps")
-            .font(.system(size: 11))
+            .font(.secondarySmall)
             .foregroundColor(.secondary)
         }
 
         Spacer(minLength: 8)
 
         Text("Live")
-          .font(.system(size: 10, weight: .semibold))
+          .font(.geist(size: 10, weight: .semibold))
           .foregroundColor(.brandPrimary)
           .padding(.horizontal, 8)
           .padding(.vertical, 3)
@@ -894,7 +894,7 @@ public struct MultiSessionLaunchView: View {
           viewModel.cancelSmartLaunch()
         }) {
           Text("Cancel")
-            .font(.system(size: 11, weight: .medium))
+            .font(.geist(size: 11, weight: .medium))
             .foregroundColor(.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -911,7 +911,7 @@ public struct MultiSessionLaunchView: View {
         VStack(alignment: .leading, spacing: 6) {
           HStack {
             Label("Latest agent update", systemImage: "text.bubble")
-              .font(.system(size: 10, weight: .semibold))
+              .font(.geist(size: 10, weight: .semibold))
               .foregroundColor(.secondary)
             Spacer()
             if hasOlderUpdates {
@@ -921,7 +921,7 @@ public struct MultiSessionLaunchView: View {
                 }
               }
               .buttonStyle(.plain)
-              .font(.system(size: 10, weight: .medium))
+              .font(.geist(size: 10, weight: .medium))
               .foregroundColor(.brandPrimary)
             }
           }
@@ -929,7 +929,7 @@ public struct MultiSessionLaunchView: View {
           Text(showFullSmartPlanningResponse
             ? intelligence.lastResponse
             : recentPlanningResponse(intelligence.lastResponse))
-            .font(.system(size: 11))
+            .font(.secondarySmall)
             .foregroundColor(.secondary)
             .textSelection(.enabled)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -946,18 +946,18 @@ public struct MultiSessionLaunchView: View {
       VStack(alignment: .leading, spacing: 6) {
         HStack {
           Label("Activity", systemImage: "list.bullet.rectangle.portrait")
-            .font(.system(size: 10, weight: .semibold))
+            .font(.geist(size: 10, weight: .semibold))
             .foregroundColor(.secondary)
           Spacer()
           Text("\(completedCount)/\(toolSteps.count) complete")
-            .font(.system(size: 10, weight: .medium))
+            .font(.geist(size: 10, weight: .medium))
             .foregroundColor(.secondary)
             .monospacedDigit()
         }
 
         if toolSteps.isEmpty {
           Text("Waiting for the first exploration step...")
-            .font(.system(size: 11))
+            .font(.secondarySmall)
             .foregroundColor(.secondary.opacity(0.8))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.vertical, 8)
@@ -1072,12 +1072,12 @@ public struct MultiSessionLaunchView: View {
       VStack(alignment: .leading, spacing: 4) {
         HStack(alignment: .firstTextBaseline) {
           Text(step.toolName)
-            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            .font(.jetBrainsMono(size: 10, weight: .semibold))
             .foregroundColor(.primary.opacity(0.85))
             .lineLimit(1)
           Spacer(minLength: 8)
           Text(toolStepStatusText(step))
-            .font(.system(size: 9, weight: .semibold))
+            .font(.geist(size: 9, weight: .semibold))
             .foregroundColor(toolStepStatusColor(step))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
@@ -1088,7 +1088,7 @@ public struct MultiSessionLaunchView: View {
         }
 
         Text(step.summary)
-          .font(.system(size: 10))
+          .font(.secondaryCaption)
           .foregroundColor(.secondary)
           .lineLimit(2)
           .truncationMode(.tail)
@@ -1121,16 +1121,16 @@ public struct MultiSessionLaunchView: View {
 
         VStack(alignment: .leading, spacing: 2) {
           Text("Plan ready")
-            .font(.system(size: 12, weight: .semibold))
+            .font(.geist(size: 12, weight: .semibold))
             .foregroundColor(.primary)
 
           if let plan = viewModel.smartOrchestrationPlan {
             Text("\(plan.sessions.count) sessions prepared. Review before launching.")
-              .font(.system(size: 11))
+              .font(.secondarySmall)
               .foregroundColor(.secondary)
           } else {
             Text("Plan generated. Open details before launching.")
-              .font(.system(size: 11))
+              .font(.secondarySmall)
               .foregroundColor(.secondary)
           }
         }
@@ -1142,7 +1142,7 @@ public struct MultiSessionLaunchView: View {
             Image(systemName: "list.bullet.clipboard")
               .font(.system(size: 10))
             Text("View Plan")
-              .font(.system(size: 11, weight: .medium))
+              .font(.geist(size: 11, weight: .medium))
           }
         }
         .buttonStyle(.bordered)
@@ -1155,7 +1155,7 @@ public struct MultiSessionLaunchView: View {
             .font(.system(size: 10))
             .foregroundColor(.secondary)
           Text("Base branch")
-            .font(.system(size: 11))
+            .font(.secondarySmall)
             .foregroundColor(.secondary)
         }
 
@@ -1181,7 +1181,7 @@ public struct MultiSessionLaunchView: View {
           viewModel.rejectSmartPlan()
         }) {
           Text("Reject")
-            .font(.system(size: 11, weight: .medium))
+            .font(.geist(size: 11, weight: .medium))
         }
         .buttonStyle(.plain)
         .foregroundColor(.secondary)
@@ -1197,7 +1197,7 @@ public struct MultiSessionLaunchView: View {
             Image(systemName: "checkmark.circle.fill")
               .font(.system(size: 11))
             Text("Approve & Launch")
-              .font(.system(size: 11, weight: .medium))
+              .font(.geist(size: 11, weight: .medium))
           }
         }
         .buttonStyle(.borderedProminent)
@@ -1231,10 +1231,10 @@ public struct MultiSessionLaunchView: View {
 
         VStack(alignment: .leading, spacing: 2) {
           Text("Launching sessions")
-            .font(.system(size: 12, weight: .semibold))
+            .font(.geist(size: 12, weight: .semibold))
             .foregroundColor(.primary)
           Text("Creating worktrees and starting selected agents")
-            .font(.system(size: 11))
+            .font(.secondarySmall)
             .foregroundColor(.secondary)
         }
 
@@ -1244,7 +1244,7 @@ public struct MultiSessionLaunchView: View {
           viewModel.cancelSmartLaunch()
         }) {
           Text("Cancel")
-            .font(.system(size: 11, weight: .medium))
+            .font(.geist(size: 11, weight: .medium))
             .foregroundColor(.secondary)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -1275,7 +1275,7 @@ public struct MultiSessionLaunchView: View {
         .font(.caption)
         .foregroundColor(.orange)
       Text(error)
-        .font(.caption2)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
         .lineLimit(3)
     }
@@ -1312,7 +1312,7 @@ public struct MultiSessionLaunchView: View {
             Text(launchButtonTitle)
             if !viewModel.isLaunching {
               Text("⌘↵")
-                .font(.system(size: 11, weight: .regular))
+                .font(.secondarySmall)
                 .opacity(0.7)
             }
           }
@@ -1378,7 +1378,7 @@ private struct SmartPlanDetailView: View {
               // Sessions
               VStack(alignment: .leading, spacing: 8) {
                 Text("Sessions")
-                  .font(.system(size: 12, weight: .semibold))
+                  .font(.geist(size: 12, weight: .semibold))
                   .foregroundColor(.primary)
 
                 ForEach(plan.sessions) { session in
@@ -1388,10 +1388,10 @@ private struct SmartPlanDetailView: View {
             } else {
               VStack(alignment: .leading, spacing: 6) {
                 Text("Sessions")
-                  .font(.system(size: 12, weight: .semibold))
+                  .font(.geist(size: 12, weight: .semibold))
                   .foregroundColor(.primary)
                 Text("Structured session details were not parsed for this response.")
-                  .font(.system(size: 11))
+                  .font(.secondarySmall)
                   .foregroundColor(.secondary)
               }
               .frame(maxWidth: .infinity, alignment: .leading)
@@ -1431,7 +1431,7 @@ private struct SmartPlanDetailView: View {
           .font(.title3)
           .foregroundColor(.brandPrimary)
         Text("Orchestration Plan")
-          .font(.title3.weight(.semibold))
+          .font(.heading)
       }
 
       Spacer()
@@ -1456,16 +1456,16 @@ private struct SmartPlanDetailView: View {
 
         VStack(alignment: .leading, spacing: 2) {
           Text(session.description)
-            .font(.system(size: 11, weight: .medium))
+            .font(.geist(size: 11, weight: .medium))
             .foregroundColor(.primary)
 
           HStack(spacing: 6) {
             Text(session.branchName)
-              .font(.system(size: 10, design: .monospaced))
+              .font(.primaryCaption)
               .foregroundColor(.secondary)
 
             Text(session.sessionType.rawValue)
-              .font(.system(size: 9, weight: .medium))
+              .font(.geist(size: 9, weight: .medium))
               .foregroundColor(.secondary)
               .padding(.horizontal, 6)
               .padding(.vertical, 1)
@@ -1483,7 +1483,7 @@ private struct SmartPlanDetailView: View {
         Divider()
 
         Text("Agent Prompt")
-          .font(.system(size: 10, weight: .semibold))
+          .font(.geist(size: 10, weight: .semibold))
           .foregroundColor(.secondary)
           .textCase(.uppercase)
 

@@ -45,14 +45,14 @@ public struct ProviderSegmentedControl: View {
     } label: {
       HStack(spacing: 4) {
         Text(provider.rawValue)
-          .font(.system(.subheadline, weight: .semibold))
+          .font(.geist(size: 13, weight: .semibold))
         if count > 0 {
           Text("(\(count))")
-            .font(.system(.subheadline, weight: .regular))
+            .font(.secondaryDefault)
         }
         if provider == .codex {
           Text("Beta")
-            .font(.system(size: 9, weight: .medium))
+            .font(.secondaryCaption)
             .foregroundColor(selectedProvider == .codex ? .white : .secondary)
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
