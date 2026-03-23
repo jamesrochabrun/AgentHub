@@ -26,16 +26,16 @@ enum WebPreviewResolution: Equatable {
 ///
 /// Resolution order (cheap checks first):
 /// 1. Check if the project uses a framework requiring a dev server
-/// 2. Check for index.html in project root (instant)
-/// 3. Search git diffs (unstaged + staged only) for modified web-renderable files
-/// 4. Search file tree for any .html file
+/// 2. Fall back to static HTML (root index.html first, then discovered HTML)
 enum WebPreviewResolver {
 
   static func resolve(projectPath: String) async -> WebPreviewResolution {
+    print("[WebPreview] WebPreviewResolver.resolve — projectPath: \(projectPath)")
     // 1. Detect framework (fast, synchronous package.json check)
     let framework = await Task.detached {
       ProjectFramework.detect(at: projectPath)
     }.value
+    print("[WebPreview] WebPreviewResolver detected framework: \(framework.rawValue), requiresDevServer: \(framework.requiresDevServer)")
 
     // 2. Known framework requiring dev server → use dev server
     if framework.requiresDevServer {
@@ -47,24 +47,37 @@ enum WebPreviewResolver {
       return .devServer(projectPath: projectPath)
     }
 
-    // 4. Quick check: index.html in project root (instant, no git needed)
-    let indexPath = "\(projectPath)/index.html"
-    if FileManager.default.fileExists(atPath: indexPath) {
+    return await resolveStaticPreview(projectPath: projectPath)
+  }
+
+  /// Resolves the best static preview candidate without considering framework/dev-server preference.
+  /// Used as a fallback when an external localhost preview cannot be loaded.
+  static func resolveStaticPreview(projectPath: String) async -> WebPreviewResolution {
+    // 1. Quick check: index.html in project root (instant, no git needed)
+    if let indexPath = findRootIndexHTML(at: projectPath) {
       return .directFile(filePath: indexPath, projectPath: projectPath)
     }
 
-    // 5. Search unstaged + staged diffs for web-renderable files (skip branch — slow, less relevant)
+    // 2. Search unstaged + staged diffs for web-renderable files (skip branch — slow, less relevant)
     let diffFiles = await findWebRenderableFiles(at: projectPath)
     if let bestFile = pickBestFile(from: diffFiles) {
       return .directFile(filePath: bestFile.filePath, projectPath: projectPath)
     }
 
-    // 6. Fallback: search for any .html file (breadth-first, prefer shallow)
+    // 3. Fallback: search for any .html file (breadth-first, prefer shallow)
     if let htmlFile = await findAnyHTMLFile(at: projectPath) {
       return .directFile(filePath: htmlFile, projectPath: projectPath)
     }
 
     return .noContent(reason: "No web-renderable files found in this project.")
+  }
+
+  private static func findRootIndexHTML(at projectPath: String) -> String? {
+    let indexPath = "\(projectPath)/index.html"
+    if FileManager.default.fileExists(atPath: indexPath) {
+      return indexPath
+    }
+    return nil
   }
 
   // MARK: - Git Diff Search

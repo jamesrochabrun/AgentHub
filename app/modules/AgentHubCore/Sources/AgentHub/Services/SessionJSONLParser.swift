@@ -89,6 +89,7 @@ public struct SessionJSONLParser {
     public var gitBranch: String?
     public var hasMermaidContent: Bool = false
     public var detectedResourceLinks: [ResourceLink] = []
+    public var detectedLocalhostURL: URL?
 
     public init() {}
   }
@@ -280,8 +281,11 @@ public struct SessionJSONLParser {
             to: &result
           )
 
-          // Note: URL extraction from tool results is intentionally skipped
-          // to reduce noise — only user/assistant text links are shown
+          // Extract localhost URLs from tool results (e.g. dev server output)
+          if let localhostURL = extractLocalhostURL(from: block.content) {
+            AppLogger.devServer.info("[SessionJSONLParser] Detected localhost URL from tool_result: \(localhostURL.absoluteString)")
+            result.detectedLocalhostURL = localhostURL
+          }
         }
 
       case "thinking":
@@ -298,6 +302,11 @@ public struct SessionJSONLParser {
             result.hasMermaidContent = true
           }
           appendResourceLinks(extractResourceLinks(from: text, timestamp: timestamp), to: &result)
+          // Extract localhost URLs from assistant text (e.g. "Your app is running at http://localhost:5173")
+          if let localhostURL = extractLocalhostURLFromText(text) {
+            AppLogger.devServer.info("[SessionJSONLParser] Detected localhost URL from assistant text: \(localhostURL.absoluteString)")
+            result.detectedLocalhostURL = localhostURL
+          }
         }
         addActivity(
           type: .assistantMessage,
@@ -558,6 +567,33 @@ public struct SessionJSONLParser {
       links.append(ResourceLink(url: urlString, timestamp: timestamp ?? Date()))
     }
     return links
+  }
+
+  // MARK: - Localhost URL Extraction
+
+  /// Extracts a localhost URL from tool_result content (AnyCodable: string or [{type, text}])
+  private static func extractLocalhostURL(from content: AnyCodable?) -> URL? {
+    guard let content = content else { return nil }
+
+    if let str = content.value as? String {
+      return extractLocalhostURLFromText(str)
+    }
+
+    if let arr = content.value as? [[String: Any]] {
+      for item in arr {
+        if let text = item["text"] as? String,
+           let url = extractLocalhostURLFromText(text) {
+          return url
+        }
+      }
+    }
+
+    return nil
+  }
+
+  /// Extracts the first localhost URL from a plain text string
+  private static func extractLocalhostURLFromText(_ text: String) -> URL? {
+    LocalhostURLNormalizer.extractFirstURL(from: text)
   }
 
   private static func isErrorResult(_ content: AnyCodable?) -> Bool {

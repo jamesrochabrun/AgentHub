@@ -35,26 +35,49 @@ public final class DevServerManager {
   private var outputPipes: [String: (stdout: Pipe, stderr: Pipe)] = [:]
   private var readinessTasks: [String: Task<Void, Never>] = [:]
   private var assignedPorts: [String: Int] = [:]
+  private var externalServers: Set<String> = []
 
   // MARK: - Public API
 
-  /// Returns the current state for a project, or `.idle` if none
-  public func state(for projectPath: String) -> DevServerState {
-    servers[projectPath] ?? .idle
+  /// Returns the current state for a key (session ID or project path), or `.idle` if none
+  public func state(for key: String) -> DevServerState {
+    servers[key] ?? .idle
   }
 
-  /// Starts a dev server for the given project path.
+  /// Connects the preview to an existing dev server (e.g. one started by the agent).
+  /// Does not spawn a process — just points the preview at the given URL.
+  public func connectToExistingServer(for key: String, url: URL) {
+    guard let normalizedURL = LocalhostURLNormalizer.sanitize(url) else {
+      AppLogger.devServer.warning("[DevServerManager] Ignoring invalid agent server URL for key=\(key): \(url.absoluteString)")
+      return
+    }
+
+    // Don't reconnect if already connected to the same URL
+    if case .ready(let existingURL) = servers[key], existingURL == normalizedURL {
+      return
+    }
+    AppLogger.devServer.info("[DevServerManager] Connecting key=\(key) to agent's server at \(normalizedURL.absoluteString)")
+    externalServers.insert(key)
+    servers[key] = .ready(url: normalizedURL)
+  }
+
+  /// Whether the server for this key is an external one (started by the agent, not us)
+  public func isExternalServer(for key: String) -> Bool {
+    externalServers.contains(key)
+  }
+
+  /// Starts a dev server for the given key (typically session ID) at the specified project path.
   /// Idempotent: if already running or ready, returns immediately.
-  public func startServer(for projectPath: String) async {
+  public func startServer(for key: String, projectPath: String) async {
     // Guard: already in an active state
-    switch servers[projectPath] {
+    switch servers[key] {
     case .ready, .starting, .waitingForReady, .detecting:
       return
     default:
       break
     }
 
-    servers[projectPath] = .detecting
+    servers[key] = .detecting
 
     // 1. Detect project type (off main thread for file I/O)
     let detected = await Task.detached { [projectPath] in
@@ -68,7 +91,7 @@ public final class DevServerManager {
     }.value
 
     guard let executablePath else {
-      servers[projectPath] = .failed(
+      servers[key] = .failed(
         error: "Could not find '\(detected.command)'. Make sure it's installed and in your PATH."
       )
       return
@@ -79,65 +102,74 @@ public final class DevServerManager {
       DevServerManager.findAvailablePort(preferring: detected.defaultPort)
     }.value
 
-    assignedPorts[projectPath] = port
+    assignedPorts[key] = port
 
     AppLogger.devServer.info(
-      "Starting \(detected.framework.rawValue) server at \(projectPath) on port \(port)"
+      "[DevServerManager] Starting \(detected.framework.rawValue) server for key=\(key) at \(projectPath) on port \(port)"
     )
 
-    servers[projectPath] = .starting(
+    servers[key] = .starting(
       message: "Starting \(detected.framework.rawValue) dev server..."
     )
 
     // 4. Spawn process
     do {
       let process = try spawnServerProcess(
+        key: key,
         executablePath: executablePath,
         detected: detected,
         projectPath: projectPath,
         port: port
       )
 
-      processes[projectPath] = process
+      processes[key] = process
       TerminalProcessRegistry.shared.register(pid: process.processIdentifier)
 
-      servers[projectPath] = .waitingForReady
+      servers[key] = .waitingForReady
 
       // 5. Monitor for readiness
-      readinessTasks[projectPath] = Task { [weak self] in
+      readinessTasks[key] = Task { [weak self] in
         await self?.monitorForReadiness(
-          projectPath: projectPath,
+          key: key,
           process: process,
           port: port,
           patterns: detected.readinessPatterns
         )
       }
     } catch {
-      servers[projectPath] = .failed(error: error.localizedDescription)
+      servers[key] = .failed(error: error.localizedDescription)
     }
   }
 
-  /// Stops the server for a given project path.
-  public func stopServer(for projectPath: String) {
-    readinessTasks[projectPath]?.cancel()
-    readinessTasks.removeValue(forKey: projectPath)
-
-    // Clean up pipe handlers
-    if let pipes = outputPipes[projectPath] {
-      pipes.stdout.fileHandleForReading.readabilityHandler = nil
-      pipes.stderr.fileHandleForReading.readabilityHandler = nil
-    }
-    outputPipes.removeValue(forKey: projectPath)
-
-    guard let process = processes[projectPath] else {
-      servers[projectPath] = .idle
+  /// Stops the server for a given key (session ID or project path).
+  public func stopServer(for key: String) {
+    // External servers (started by agent) — just reset state, no process to kill
+    if externalServers.contains(key) {
+      AppLogger.devServer.info("[DevServerManager] Disconnecting from external server for key=\(key)")
+      externalServers.remove(key)
+      servers[key] = .idle
       return
     }
 
-    servers[projectPath] = .stopping
+    readinessTasks[key]?.cancel()
+    readinessTasks.removeValue(forKey: key)
+
+    // Clean up pipe handlers
+    if let pipes = outputPipes[key] {
+      pipes.stdout.fileHandleForReading.readabilityHandler = nil
+      pipes.stderr.fileHandleForReading.readabilityHandler = nil
+    }
+    outputPipes.removeValue(forKey: key)
+
+    guard let process = processes[key] else {
+      servers[key] = .idle
+      return
+    }
+
+    servers[key] = .stopping
     let pid = process.processIdentifier
 
-    AppLogger.devServer.info("Stopping server for \(projectPath) (PID: \(pid))")
+    AppLogger.devServer.info("[DevServerManager] Stopping server for key=\(key) (PID: \(pid))")
 
     // SIGTERM to process group, then escalate
     if killpg(pid, SIGTERM) != 0 {
@@ -154,15 +186,15 @@ public final class DevServerManager {
     }
 
     TerminalProcessRegistry.shared.unregister(pid: pid)
-    processes.removeValue(forKey: projectPath)
-    assignedPorts.removeValue(forKey: projectPath)
-    servers[projectPath] = .idle
+    processes.removeValue(forKey: key)
+    assignedPorts.removeValue(forKey: key)
+    servers[key] = .idle
   }
 
   /// Stops all running servers. Called on app quit.
   public func stopAllServers() {
-    for projectPath in Array(processes.keys) {
-      stopServer(for: projectPath)
+    for key in Array(servers.keys) {
+      stopServer(for: key)
     }
   }
 
@@ -298,6 +330,7 @@ public final class DevServerManager {
   // MARK: - Process Spawning
 
   private func spawnServerProcess(
+    key: String,
     executablePath: String,
     detected: DetectedProject,
     projectPath: String,
@@ -319,6 +352,7 @@ public final class DevServerManager {
       }
     }
     process.arguments = args
+    AppLogger.devServer.info("[DevServerManager] Spawning: \(executablePath) \(args.joined(separator: " ")) in \(projectPath)")
     process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
 
     // Environment: PATH with NVM/homebrew paths + framework-specific vars
@@ -353,12 +387,12 @@ public final class DevServerManager {
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
 
-    outputPipes[projectPath] = (stdoutPipe, stderrPipe)
+    outputPipes[key] = (stdoutPipe, stderrPipe)
 
     // Set up readiness handlers BEFORE starting the process
     // to avoid race conditions with fast-starting servers (e.g. python http.server)
     setupReadinessHandlers(
-      projectPath: projectPath,
+      key: key,
       port: port,
       patterns: detected.readinessPatterns
     )
@@ -370,17 +404,17 @@ public final class DevServerManager {
   // MARK: - Readiness Monitoring
 
   private func setupReadinessHandlers(
-    projectPath: String,
+    key: String,
     port: Int,
     patterns: [String]
   ) {
-    guard let pipes = outputPipes[projectPath] else { return }
+    guard let pipes = outputPipes[key] else { return }
 
     let handler: @Sendable (FileHandle) -> Void = { [weak self] handle in
       let data = handle.availableData
       guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
       Task { @MainActor [weak self] in
-        self?.handleServerOutput(text, projectPath: projectPath, port: port, patterns: patterns)
+        self?.handleServerOutput(text, key: key, port: port, patterns: patterns)
       }
     }
 
@@ -389,7 +423,7 @@ public final class DevServerManager {
   }
 
   private func monitorForReadiness(
-    projectPath: String,
+    key: String,
     process: Process,
     port: Int,
     patterns: [String]
@@ -399,9 +433,9 @@ public final class DevServerManager {
       Task { @MainActor [weak self] in
         guard let self else { return }
         // Only handle if we're still waiting
-        switch self.servers[projectPath] {
+        switch self.servers[key] {
         case .waitingForReady, .starting:
-          self.servers[projectPath] = .failed(
+          self.servers[key] = .failed(
             error: "Server process exited with code \(proc.terminationStatus) before becoming ready."
           )
         default:
@@ -413,34 +447,34 @@ public final class DevServerManager {
     // Timeout: if not ready after 30 seconds, assume ready on expected port
     try? await Task.sleep(for: .seconds(30))
 
-    if case .waitingForReady = servers[projectPath] {
+    if case .waitingForReady = servers[key] {
       if process.isRunning {
-        AppLogger.devServer.info("Timeout reached, assuming server is ready on port \(port)")
+        AppLogger.devServer.info("[DevServerManager] Timeout reached for key=\(key), assuming server is ready on port \(port)")
         let url = URL(string: "http://localhost:\(port)")!
-        servers[projectPath] = .ready(url: url)
-        cleanupPipeHandlers(for: projectPath)
+        servers[key] = .ready(url: url)
+        cleanupPipeHandlers(for: key)
       }
     }
   }
 
   private func handleServerOutput(
     _ text: String,
-    projectPath: String,
+    key: String,
     port: Int,
     patterns: [String]
   ) {
     // Only process if still waiting
-    guard case .waitingForReady = servers[projectPath] else { return }
+    guard case .waitingForReady = servers[key] else { return }
 
-    AppLogger.devServer.debug("[\(projectPath)] \(text)")
+    AppLogger.devServer.debug("[DevServerManager] [\(key)] \(text)")
 
     let lowered = text.lowercased()
     for pattern in patterns {
       if lowered.contains(pattern.lowercased()) {
         let url = extractURL(from: text) ?? URL(string: "http://localhost:\(port)")!
-        AppLogger.devServer.info("Server ready at \(url.absoluteString)")
-        servers[projectPath] = .ready(url: url)
-        cleanupPipeHandlers(for: projectPath)
+        AppLogger.devServer.info("[DevServerManager] Server ready for key=\(key) at \(url.absoluteString)")
+        servers[key] = .ready(url: url)
+        cleanupPipeHandlers(for: key)
         return
       }
     }
@@ -448,17 +482,11 @@ public final class DevServerManager {
 
   /// Extracts a localhost URL from server output text
   private func extractURL(from text: String) -> URL? {
-    let pattern = #"https?://(?:localhost|127\.0\.0\.1):\d+"#
-    guard let regex = try? NSRegularExpression(pattern: pattern),
-          let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-          let range = Range(match.range, in: text) else {
-      return nil
-    }
-    return URL(string: String(text[range]))
+    LocalhostURLNormalizer.extractFirstURL(from: text)
   }
 
-  private func cleanupPipeHandlers(for projectPath: String) {
-    if let pipes = outputPipes[projectPath] {
+  private func cleanupPipeHandlers(for key: String) {
+    if let pipes = outputPipes[key] {
       pipes.stdout.fileHandleForReading.readabilityHandler = nil
       pipes.stderr.fileHandleForReading.readabilityHandler = nil
     }

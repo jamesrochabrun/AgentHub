@@ -42,6 +42,9 @@ public struct SessionMonitorState: Equatable, Sendable {
   // Resource links detected in session responses
   public var detectedResourceLinks: [ResourceLink]
 
+  // Localhost URL detected from agent's dev server output
+  public var detectedLocalhostURL: URL?
+
   public init(
     status: SessionStatus = .idle,
     currentTool: String? = nil,
@@ -58,7 +61,8 @@ public struct SessionMonitorState: Equatable, Sendable {
     pendingToolUse: PendingToolUse? = nil,
     recentActivities: [ActivityEntry] = [],
     hasMermaidContent: Bool = false,
-    detectedResourceLinks: [ResourceLink] = []
+    detectedResourceLinks: [ResourceLink] = [],
+    detectedLocalhostURL: URL? = nil
   ) {
     self.status = status
     self.currentTool = currentTool
@@ -76,6 +80,7 @@ public struct SessionMonitorState: Equatable, Sendable {
     self.recentActivities = recentActivities
     self.hasMermaidContent = hasMermaidContent
     self.detectedResourceLinks = detectedResourceLinks
+    self.detectedLocalhostURL = detectedLocalhostURL
   }
 
   // MARK: - Computed Properties

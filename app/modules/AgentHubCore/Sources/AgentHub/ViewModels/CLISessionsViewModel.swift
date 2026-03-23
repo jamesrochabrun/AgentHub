@@ -1467,7 +1467,8 @@ public final class CLISessionsViewModel {
             messageCount: 0,
             isActive: true,
             firstMessage: nil,
-            lastMessage: nil
+            lastMessage: nil,
+            sessionFilePath: fallbackSessionFilePath
           )
 
           for repoIndex in selectedRepositories.indices {

@@ -275,7 +275,8 @@ public actor CodexSessionFileWatcher {
       pendingToolUse: nil,
       recentActivities: result.recentActivities,
       hasMermaidContent: result.hasMermaidContent,
-      detectedResourceLinks: result.detectedResourceLinks
+      detectedResourceLinks: result.detectedResourceLinks,
+      detectedLocalhostURL: result.detectedLocalhostURL
     )
   }
 
