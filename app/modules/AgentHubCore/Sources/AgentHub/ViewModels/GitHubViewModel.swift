@@ -132,12 +132,12 @@ public final class GitHubViewModel {
 
   // MARK: - Dependencies
 
-  private let service: GitHubCLIService
+  private let service: any GitHubCLIServiceProtocol
   private var currentRepoPath: String?
 
   // MARK: - Init
 
-  public init(service: GitHubCLIService = GitHubCLIService()) {
+  public init(service: any GitHubCLIServiceProtocol = GitHubCLIService()) {
     self.service = service
   }
 
@@ -168,7 +168,7 @@ public final class GitHubViewModel {
     prLoadingState = .loading
 
     do {
-      pullRequests = try await service.listPullRequests(at: repoPath, state: prFilter.ghState)
+      pullRequests = try await service.listPullRequests(at: repoPath, state: prFilter.ghState, limit: 30)
       prLoadingState = .loaded
     } catch {
       prLoadingState = .error(error.localizedDescription)
@@ -270,7 +270,7 @@ public final class GitHubViewModel {
     issueLoadingState = .loading
 
     do {
-      issues = try await service.listIssues(at: repoPath, state: issueFilter.ghState)
+      issues = try await service.listIssues(at: repoPath, state: issueFilter.ghState, limit: 30)
       issueLoadingState = .loaded
     } catch {
       issueLoadingState = .error(error.localizedDescription)

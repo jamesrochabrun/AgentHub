@@ -714,3 +714,7 @@ public actor GitHubCLIService {
     }
   }
 }
+
+// MARK: - Protocol Conformance
+
+extension GitHubCLIService: GitHubCLIServiceProtocol {}
