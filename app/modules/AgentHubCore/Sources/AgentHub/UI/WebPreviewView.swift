@@ -27,6 +27,7 @@ public struct WebPreviewView: View {
   var onInspectSubmit: ((String, CLISession) -> Void)?
   /// Reactive localhost URL from the agent's session. When this changes, the preview updates.
   var agentLocalhostURL: URL?
+  var monitorState: SessionMonitorState?
 
   @State private var isLoading: Bool = false
   @State private var currentURL: URL?
@@ -35,6 +36,11 @@ public struct WebPreviewView: View {
   @State private var webRenderableFiles: [GitDiffFileEntry] = []
   @State private var fileWatcher = WebPreviewFileWatcher()
   @State private var inspectState = ElementInspectState()
+  @State private var hasLoadedExternalContent = false
+  @State private var localhostReloadToken: UUID?
+  @State private var handledCodeChangeActivityID: UUID?
+  @State private var localhostPreviewStartedAt = Date()
+  @State private var localhostReloadTask: Task<Void, Never>?
 
   /// Uses session ID as key for DevServerManager to support multiple sessions
   private var serverKey: String { session.id }
@@ -53,7 +59,8 @@ public struct WebPreviewView: View {
     onDismiss: @escaping () -> Void,
     isEmbedded: Bool = false,
     onInspectSubmit: ((String, CLISession) -> Void)? = nil,
-    agentLocalhostURL: URL? = nil
+    agentLocalhostURL: URL? = nil,
+    monitorState: SessionMonitorState? = nil
   ) {
     self.session = session
     self.projectPath = projectPath
@@ -61,6 +68,11 @@ public struct WebPreviewView: View {
     self.isEmbedded = isEmbedded
     self.onInspectSubmit = onInspectSubmit
     self.agentLocalhostURL = agentLocalhostURL
+    self.monitorState = monitorState
+  }
+
+  private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
+    WebPreviewLocalhostReloadSignal.latest(from: monitorState)
   }
 
   public var body: some View {
@@ -84,6 +96,9 @@ public struct WebPreviewView: View {
         await connectToAgentServer(newURL, logChange: true)
       }
     }
+    .onChange(of: latestLocalhostReloadSignal) { _, newSignal in
+      handleLocalhostReloadSignal(newSignal)
+    }
     .onChange(of: selectedFilePath) { _, newPath in
       if let path = newPath {
         let dir = URL(fileURLWithPath: path).deletingLastPathComponent().path
@@ -99,6 +114,7 @@ public struct WebPreviewView: View {
       return .handled
     }
     .onDisappear {
+      localhostReloadTask?.cancel()
       fileWatcher.stop()
       if case .devServer = resolution {
         DevServerManager.shared.stopServer(for: serverKey)
@@ -356,10 +372,16 @@ public struct WebPreviewView: View {
         isFileURL: false,
         allowingReadAccessTo: nil,
         onLoadingChange: { isLoading = $0 },
-        onURLChange: { currentURL = $0 },
+        onURLChange: { loadedURL in
+          currentURL = loadedURL
+          if isExternalServer, loadedURL != nil {
+            hasLoadedExternalContent = true
+          }
+        },
         onError: isExternalServer ? { error in
           handleExternalServerLoadFailure(error: error, failedURL: url)
         } : nil,
+        reloadToken: localhostReloadToken,
         onElementSelected: { data in inspectState.selectElement(data) },
         isInspectModeActive: $inspectState.isActive,
         selectedElementId: inspectState.selectedElement?.id
@@ -516,13 +538,29 @@ public struct WebPreviewView: View {
     AppLogger.devServer.info("[WebPreview] Session \(session.id): \(logPrefix) \(url.absoluteString), connecting directly")
 
     DevServerManager.shared.stopServer(for: serverKey)
+    hasLoadedExternalContent = false
     await applyResolution(WebPreviewExternalRecovery.initial(projectPath: projectPath).resolution)
     DevServerManager.shared.connectToExistingServer(for: serverKey, url: url)
   }
 
   private func handleExternalServerLoadFailure(error: String, failedURL: URL) {
     Task {
-      let shouldRecover = await MainActor.run { isCurrentExternalServerURL(failedURL) }
+      let shouldRecover = await MainActor.run {
+        guard isCurrentExternalServerURL(failedURL) else {
+          return false
+        }
+
+        let shouldFallback = WebPreviewExternalLoadFailurePolicy.shouldFallback(
+          hasLoadedExternalContent: hasLoadedExternalContent,
+          error: error
+        )
+        if !shouldFallback {
+          AppLogger.devServer.info(
+            "[WebPreview] Session \(session.id): ignoring external server load error during live preview: \(error)"
+          )
+        }
+        return shouldFallback
+      }
       guard shouldRecover else { return }
 
       AppLogger.devServer.error(
@@ -544,16 +582,72 @@ public struct WebPreviewView: View {
   }
 
   @MainActor
+  private func handleLocalhostReloadSignal(_ latestSignal: WebPreviewLocalhostReloadSignal?) {
+    guard case .devServer = resolution else { return }
+
+    let decision = WebPreviewLocalhostReloadSignal.decision(
+      handledActivityID: handledCodeChangeActivityID,
+      latestSignal: latestSignal,
+      previewStartedAt: localhostPreviewStartedAt
+    )
+
+    switch decision {
+    case .none:
+      return
+    case .captureBaseline(let activityID):
+      handledCodeChangeActivityID = activityID
+    case .reload(let activityID):
+      handledCodeChangeActivityID = activityID
+      scheduleLocalhostReload()
+    }
+  }
+
+  @MainActor
+  private func resetLocalhostReloadTracking() {
+    localhostReloadTask?.cancel()
+    localhostReloadTask = nil
+    localhostPreviewStartedAt = Date()
+    handledCodeChangeActivityID = latestLocalhostReloadSignal?.activityID
+  }
+
+  @MainActor
+  private func scheduleLocalhostReload() {
+    localhostReloadTask?.cancel()
+    localhostReloadTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(300))
+      guard !Task.isCancelled,
+            case .devServer = resolution else {
+        return
+      }
+
+      localhostReloadToken = UUID()
+    }
+  }
+
+  @MainActor
   private func applyResolution(_ newResolution: WebPreviewResolution) async {
     resolution = newResolution
 
     switch newResolution {
     case .directFile(let filePath, _):
+      hasLoadedExternalContent = false
+      localhostReloadTask?.cancel()
+      localhostReloadTask = nil
+      handledCodeChangeActivityID = nil
       selectedFilePath = filePath
       let directory = URL(fileURLWithPath: filePath).deletingLastPathComponent().path
       fileWatcher.watch(directory: directory)
       await loadWebFileList()
-    case .devServer, .noContent:
+    case .devServer:
+      resetLocalhostReloadTracking()
+      selectedFilePath = nil
+      webRenderableFiles = []
+      fileWatcher.stop()
+    case .noContent:
+      hasLoadedExternalContent = false
+      localhostReloadTask?.cancel()
+      localhostReloadTask = nil
+      handledCodeChangeActivityID = nil
       selectedFilePath = nil
       webRenderableFiles = []
       fileWatcher.stop()

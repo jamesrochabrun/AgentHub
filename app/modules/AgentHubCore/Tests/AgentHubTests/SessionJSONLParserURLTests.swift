@@ -124,4 +124,5 @@ struct SessionJSONLParserURLTests {
     #expect(result.detectedResourceLinks.count == 1)
     #expect(result.detectedResourceLinks[0].url == "https://example.com")
   }
+
 }

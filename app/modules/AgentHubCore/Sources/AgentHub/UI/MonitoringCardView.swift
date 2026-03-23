@@ -42,6 +42,7 @@ private struct WebPreviewSheetItem: Identifiable {
   let session: CLISession
   let projectPath: String
   var agentLocalhostURL: URL?
+  var monitorState: SessionMonitorState?
 }
 
 /// Identifiable wrapper for file explorer sheet
@@ -267,7 +268,8 @@ public struct MonitoringCardView: View {
         session: item.session,
         projectPath: item.projectPath,
         onDismiss: { webPreviewSheetItem = nil },
-        agentLocalhostURL: viewModel?.monitorStates[item.session.id]?.detectedLocalhostURL ?? item.agentLocalhostURL
+        agentLocalhostURL: viewModel?.monitorStates[item.session.id]?.detectedLocalhostURL ?? item.agentLocalhostURL,
+        monitorState: viewModel?.monitorStates[item.session.id] ?? item.monitorState
       )
     }
     .sheet(item: $mermaidSheetSession) { session in
@@ -585,7 +587,8 @@ public struct MonitoringCardView: View {
               webPreviewSheetItem = WebPreviewSheetItem(
                 session: session,
                 projectPath: session.projectPath,
-                agentLocalhostURL: state?.detectedLocalhostURL
+                agentLocalhostURL: state?.detectedLocalhostURL,
+                monitorState: state
               )
             }
           }) {

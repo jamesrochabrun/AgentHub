@@ -808,7 +808,8 @@ public struct MultiProviderMonitoringPanelView: View {
         onInspectSubmit: { prompt, sess in
           viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
         },
-        agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL
+        agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL,
+        monitorState: viewModel.monitorStates[sessionId]
       )
     case .mermaid(_, let session):
       MermaidDiagramView(
