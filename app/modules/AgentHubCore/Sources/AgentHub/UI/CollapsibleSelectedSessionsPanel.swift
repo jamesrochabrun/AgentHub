@@ -113,11 +113,11 @@ public struct CollapsibleSelectedSessionsPanel: View {
         .frame(width: 12)
 
       Text("Selected")
-        .font(.system(.subheadline, weight: .medium))
+        .font(.secondaryDefault)
         .foregroundColor(headerTextColor)
 
       Text("(\(monitoredCount))")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(headerTextColor.opacity(0.7))
 
       Spacer()
@@ -353,11 +353,11 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
         .frame(width: 12)
 
       Text("Selected")
-        .font(.system(.subheadline, weight: .medium))
+        .font(.secondaryDefault)
         .foregroundColor(headerTextColor)
 
       Text("(\(monitoredCount))")
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(headerTextColor.opacity(0.7))
 
       Spacer()

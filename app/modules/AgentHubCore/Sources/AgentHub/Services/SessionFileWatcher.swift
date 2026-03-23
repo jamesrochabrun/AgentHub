@@ -424,7 +424,8 @@ public actor SessionFileWatcher {
       pendingToolUse: pendingToolUse,
       recentActivities: result.recentActivities,
       hasMermaidContent: result.hasMermaidContent,
-      detectedResourceLinks: result.detectedResourceLinks
+      detectedResourceLinks: result.detectedResourceLinks,
+      detectedLocalhostURL: result.detectedLocalhostURL
     )
   }
 

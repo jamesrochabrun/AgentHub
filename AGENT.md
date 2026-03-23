@@ -109,6 +109,13 @@ Each `MonitoringCardView` shows:
 
 In Single layout, a side panel can show: `GitDiffView` (split-pane diff), `PlanView` (markdown), `WebPreviewView` (WKWebView), `PendingChangesView`.
 
+### Web Preview Precedence
+
+- Prefer agent-provided localhost URLs when a session exposes one
+- If monitor state is still catching up, recover the latest localhost URL from the session JSONL file before choosing a static preview
+- If that external localhost preview fails to load, fall back to static HTML: root `index.html` first, then other discovered HTML files
+- Changes to this behavior require unit tests
+
 ### Command Palette
 
 `CommandPaletteView` — Cmd+K for quick session/repository/action access.

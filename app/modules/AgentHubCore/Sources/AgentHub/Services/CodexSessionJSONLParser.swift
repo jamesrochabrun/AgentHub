@@ -44,6 +44,7 @@ public struct CodexSessionJSONLParser {
     public var currentStatus: SessionStatus = .idle
     public var hasMermaidContent: Bool = false
     public var detectedResourceLinks: [ResourceLink] = []
+    public var detectedLocalhostURL: URL?
 
     public init() {}
   }
@@ -202,6 +203,9 @@ public struct CodexSessionJSONLParser {
       if let message = payload["message"] as? String, !message.isEmpty {
         if message.contains("```mermaid") { result.hasMermaidContent = true }
         appendResourceLinks(extractResourceLinks(from: message, timestamp: timestamp), to: &result)
+        if let localhostURL = extractLocalhostURLFromText(message) {
+          result.detectedLocalhostURL = localhostURL
+        }
         addActivity(type: .assistantMessage, description: String(message.prefix(80)), timestamp: timestamp, to: &result)
       }
 
@@ -252,6 +256,11 @@ public struct CodexSessionJSONLParser {
         let toolName = result.pendingToolUses[callId]?.toolName ?? "tool"
         result.pendingToolUses.removeValue(forKey: callId)
         addActivity(type: .toolResult(name: toolName, success: true), description: "Completed", timestamp: timestamp, to: &result)
+        // Extract localhost URLs from tool output
+        if let output = payload["output"] as? String,
+           let localhostURL = extractLocalhostURLFromText(output) {
+          result.detectedLocalhostURL = localhostURL
+        }
       }
 
     case "custom_tool_call":
@@ -346,6 +355,12 @@ public struct CodexSessionJSONLParser {
       links.append(ResourceLink(url: urlString, timestamp: timestamp ?? Date()))
     }
     return links
+  }
+
+  // MARK: - Localhost URL Extraction
+
+  private static func extractLocalhostURLFromText(_ text: String) -> URL? {
+    LocalhostURLNormalizer.extractFirstURL(from: text)
   }
 
   private static func parseTimestamp(_ string: String?) -> Date? {

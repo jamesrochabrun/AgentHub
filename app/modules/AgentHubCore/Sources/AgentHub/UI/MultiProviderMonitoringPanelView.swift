@@ -593,41 +593,46 @@ public struct MultiProviderMonitoringPanelView: View {
       switch item {
       case .pending(_, let viewModel, let pending):
         let pendingId = "pending-\(pending.id.uuidString)"
-        MonitoringCardView(
-          session: pending.placeholderSession,
-          state: nil,
-          claudeClient: viewModel.claudeClient,
-          cliConfiguration: viewModel.cliConfiguration,
-          providerKind: item.providerKind,
+        singleModeCardContainer(viewModel: viewModel) {
+          MonitoringCardView(
+            session: pending.placeholderSession,
+            state: nil,
+            claudeClient: viewModel.claudeClient,
+            cliConfiguration: viewModel.cliConfiguration,
+            providerKind: item.providerKind,
 
-          initialPrompt: pending.initialPrompt,
-          initialInputText: pending.initialInputText,
-          terminalKey: pendingId,
-          viewModel: viewModel,
-          dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
-          permissionModePlan: pending.permissionModePlan,
-          worktreeName: pending.worktreeName,
+            initialPrompt: pending.initialPrompt,
+            initialInputText: pending.initialInputText,
+            terminalKey: pendingId,
+            viewModel: viewModel,
+            dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
+            permissionModePlan: pending.permissionModePlan,
+            worktreeName: pending.worktreeName,
 
-          onStopMonitoring: { viewModel.cancelPendingSession(pending) },
-          onConnect: { },
-          onCopySessionId: { },
-          onOpenSessionFile: { },
-          onRefreshTerminal: { },
-          onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
-          isMaximized: false,
-          onToggleMaximize: { },
-          isPrimarySession: true,
-          showPrimaryIndicator: false
-        )
-        .id(pendingId)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(12)
+            onStopMonitoring: { viewModel.cancelPendingSession(pending) },
+            onConnect: { },
+            onCopySessionId: { },
+            onOpenSessionFile: { },
+            onRefreshTerminal: { },
+            onShowWebPreview: canShowSidePanel ? { session, projectPath in
+              toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
+            } : nil,
+            onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+            isMaximized: false,
+            onToggleMaximize: { },
+            isPrimarySession: true,
+            showPrimaryIndicator: false,
+            isSidePanelOpen: sidePanelContent != nil
+          )
+          .id(pendingId)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
 
       case .monitored(_, let viewModel, let session, let state):
         let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
         let initialPrompt = viewModel.pendingPrompt(for: session.id)
 
-        HStack(spacing: 0) {
+        singleModeCardContainer(viewModel: viewModel) {
           MonitoringCardView(
             session: session,
             state: state,
@@ -675,11 +680,7 @@ public struct MultiProviderMonitoringPanelView: View {
               }
             } : nil,
             onShowWebPreview: canShowSidePanel ? { session, projectPath in
-              if case .webPreview(let sid, _, _) = sidePanelContent, sid == session.id {
-                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
-              } else {
-                sidePanelContent = .webPreview(sessionId: session.id, session: session, projectPath: projectPath)
-              }
+              toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
             } : nil,
             onShowMermaid: canShowSidePanel ? { session in
               if case .mermaid(let sid, _) = sidePanelContent, sid == session.id {
@@ -715,42 +716,61 @@ public struct MultiProviderMonitoringPanelView: View {
           )
           .id(session.id)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-          if let panelContent = sidePanelContent, !panelContent.isFileExplorer {
-            ResizablePanelContainer(
-              side: .trailing,
-              minWidth: 400,
-              maxWidth: 1200,
-              defaultWidth: 700,
-              userDefaultsKey: AgentHubDefaults.sidePanelWidth
-            ) {
-              sidePanelView(for: panelContent, viewModel: viewModel)
-            }
-          }
-
-          // FileExplorer side panel
-          if sidePanelContent?.isFileExplorer == true, let feSession = persistedFESession {
-            ResizablePanelContainer(
-              side: .trailing,
-              minWidth: 400,
-              maxWidth: 1200,
-              defaultWidth: 700,
-              userDefaultsKey: AgentHubDefaults.sidePanelWidth
-            ) {
-              FileExplorerView(
-                session: feSession,
-                projectPath: persistedFEProjectPath,
-                onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-                isEmbedded: true,
-                initialFilePath: persistedFEInitPath
-              )
-              .id(persistedFENavId)
-            }
-          }
         }
-        .animation(.easeInOut(duration: 0.25), value: sidePanelContent != nil)
-        .padding(12)
       }
+    }
+  }
+
+  @ViewBuilder
+  private func singleModeCardContainer<Content: View>(
+    viewModel: CLISessionsViewModel,
+    @ViewBuilder content: () -> Content
+  ) -> some View {
+    HStack(spacing: 0) {
+      content()
+
+      if let panelContent = sidePanelContent, !panelContent.isFileExplorer {
+        ResizablePanelContainer(
+          side: .trailing,
+          minWidth: 400,
+          maxWidth: 1200,
+          defaultWidth: 700,
+          userDefaultsKey: AgentHubDefaults.sidePanelWidth
+        ) {
+          sidePanelView(for: panelContent, viewModel: viewModel)
+        }
+      }
+
+      if sidePanelContent?.isFileExplorer == true, let feSession = persistedFESession {
+        ResizablePanelContainer(
+          side: .trailing,
+          minWidth: 400,
+          maxWidth: 1200,
+          defaultWidth: 700,
+          userDefaultsKey: AgentHubDefaults.sidePanelWidth
+        ) {
+          FileExplorerView(
+            session: feSession,
+            projectPath: persistedFEProjectPath,
+            onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+            isEmbedded: true,
+            initialFilePath: persistedFEInitPath
+          )
+          .id(persistedFENavId)
+        }
+      }
+    }
+    .animation(.easeInOut(duration: 0.25), value: sidePanelContent != nil)
+    .padding(12)
+  }
+
+  private func toggleWebPreviewSidePanel(for session: CLISession, projectPath: String) {
+    if case .webPreview(let sessionId, _, _) = sidePanelContent, sessionId == session.id {
+      withAnimation(.easeInOut(duration: 0.25)) {
+        sidePanelContent = nil
+      }
+    } else {
+      sidePanelContent = .webPreview(sessionId: session.id, session: session, projectPath: projectPath)
     }
   }
 
@@ -779,12 +799,17 @@ public struct MultiProviderMonitoringPanelView: View {
           viewModel.showTerminalWithPrompt(for: sess, prompt: feedback)
         }
       )
-    case .webPreview(_, let session, let projectPath):
+    case .webPreview(let sessionId, let session, let projectPath):
       WebPreviewView(
         session: session,
         projectPath: projectPath,
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-        isEmbedded: true
+        isEmbedded: true,
+        onInspectSubmit: { prompt, sess in
+          viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+        },
+        agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL,
+        monitorState: viewModel.monitorStates[sessionId]
       )
     case .mermaid(_, let session):
       MermaidDiagramView(

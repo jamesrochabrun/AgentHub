@@ -1,5 +1,5 @@
 {
-  "originHash" : "0afb813550be2419f8bc052f75549add27e6f06138796be24e78410150c8b488",
+  "originHash" : "0902c7a92d5daddf48b1355b43dd3d941d9c296fc8885595c4e2aa07c311d27d",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "c6a63655285c5e479d6641c774acb0a8739f8ad7",
         "version" : "0.1.1"
+      }
+    },
+    {
+      "identity" : "canvas",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jamesrochabrun/Canvas.git",
+      "state" : {
+        "revision" : "2553acc5c9a60154c2ab082653ddd18fbaf5cad2",
+        "version" : "1.0.1"
       }
     },
     {
@@ -301,7 +310,7 @@
     {
       "identity" : "swift-system",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-system.git",
+      "location" : "https://github.com/apple/swift-system",
       "state" : {
         "revision" : "7c6ad0fc39d0763e0b699210e4124afd5041c5df",
         "version" : "1.6.4"

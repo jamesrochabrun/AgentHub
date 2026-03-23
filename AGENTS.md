@@ -55,6 +55,13 @@ protocol SessionSearchServiceProtocol {
 - Prefer deterministic tests — inject controlled data, don't depend on filesystem state
 - Cover critical paths: session discovery, JSONL parsing, state transitions, file watcher lifecycle
 
+## Web Preview Behavior
+
+- Prefer agent-provided localhost URLs for web preview when available
+- If monitor state has not populated yet, recover the latest localhost URL directly from the session JSONL file before falling back to static preview
+- If an agent-provided localhost preview fails to load, fall back to static HTML in this order: root `index.html`, then other discovered HTML files
+- Changes to web preview precedence or fallback behavior must include unit tests
+
 ## SwiftUI View Guidelines
 
 - Views must be **small, focused, and composable** — one responsibility per view

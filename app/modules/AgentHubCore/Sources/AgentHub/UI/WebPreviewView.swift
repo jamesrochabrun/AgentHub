@@ -9,16 +9,25 @@
 
 import ClaudeCodeSDK
 import SwiftUI
+import Canvas
 
 // MARK: - WebPreviewView
 
 /// Displays a web preview with smart resolution: loads static HTML files instantly
 /// via `file://` URLs, or starts a dev server for framework projects.
+///
+/// When the agent's session has a detected localhost URL, the preview connects
+/// to that URL directly (no server spawned). The URL is observed reactively —
+/// if the agent switches ports, the preview follows automatically.
 public struct WebPreviewView: View {
   let session: CLISession
   let projectPath: String
   let onDismiss: () -> Void
   var isEmbedded: Bool = false
+  var onInspectSubmit: ((String, CLISession) -> Void)?
+  /// Reactive localhost URL from the agent's session. When this changes, the preview updates.
+  var agentLocalhostURL: URL?
+  var monitorState: SessionMonitorState?
 
   @State private var isLoading: Bool = false
   @State private var currentURL: URL?
@@ -26,21 +35,44 @@ public struct WebPreviewView: View {
   @State private var selectedFilePath: String?
   @State private var webRenderableFiles: [GitDiffFileEntry] = []
   @State private var fileWatcher = WebPreviewFileWatcher()
+  @State private var inspectState = ElementInspectState()
+  @State private var hasLoadedExternalContent = false
+  @State private var localhostReloadToken: UUID?
+  @State private var handledCodeChangeActivityID: UUID?
+  @State private var localhostPreviewStartedAt = Date()
+  @State private var localhostReloadTask: Task<Void, Never>?
+
+  /// Uses session ID as key for DevServerManager to support multiple sessions
+  private var serverKey: String { session.id }
 
   private var serverState: DevServerState {
-    DevServerManager.shared.state(for: projectPath)
+    DevServerManager.shared.state(for: serverKey)
+  }
+
+  private var isExternalServer: Bool {
+    DevServerManager.shared.isExternalServer(for: serverKey)
   }
 
   public init(
     session: CLISession,
     projectPath: String,
     onDismiss: @escaping () -> Void,
-    isEmbedded: Bool = false
+    isEmbedded: Bool = false,
+    onInspectSubmit: ((String, CLISession) -> Void)? = nil,
+    agentLocalhostURL: URL? = nil,
+    monitorState: SessionMonitorState? = nil
   ) {
     self.session = session
     self.projectPath = projectPath
     self.onDismiss = onDismiss
     self.isEmbedded = isEmbedded
+    self.onInspectSubmit = onInspectSubmit
+    self.agentLocalhostURL = agentLocalhostURL
+    self.monitorState = monitorState
+  }
+
+  private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
+    WebPreviewLocalhostReloadSignal.latest(from: monitorState)
   }
 
   public var body: some View {
@@ -56,17 +88,16 @@ public struct WebPreviewView: View {
       minHeight: isEmbedded ? 400 : 600, idealHeight: isEmbedded ? .infinity : 800, maxHeight: .infinity
     )
     .task {
-      let result = await WebPreviewResolver.resolve(projectPath: projectPath)
-      resolution = result
-      if case .devServer = result {
-        await DevServerManager.shared.startServer(for: projectPath)
+      await loadPreview()
+    }
+    .onChange(of: agentLocalhostURL) { _, newURL in
+      guard let newURL else { return }
+      Task {
+        await connectToAgentServer(newURL, logChange: true)
       }
-      if case .directFile(let filePath, _) = result {
-        selectedFilePath = filePath
-        let dir = URL(fileURLWithPath: filePath).deletingLastPathComponent().path
-        fileWatcher.watch(directory: dir)
-        await loadWebFileList()
-      }
+    }
+    .onChange(of: latestLocalhostReloadSignal) { _, newSignal in
+      handleLocalhostReloadSignal(newSignal)
     }
     .onChange(of: selectedFilePath) { _, newPath in
       if let path = newPath {
@@ -75,13 +106,18 @@ public struct WebPreviewView: View {
       }
     }
     .onKeyPress(.escape) {
+      if inspectState.isActive {
+        inspectState.deactivate()
+        return .handled
+      }
       onDismiss()
       return .handled
     }
     .onDisappear {
+      localhostReloadTask?.cancel()
       fileWatcher.stop()
       if case .devServer = resolution {
-        DevServerManager.shared.stopServer(for: projectPath)
+        DevServerManager.shared.stopServer(for: serverKey)
       }
     }
   }
@@ -212,42 +248,72 @@ public struct WebPreviewView: View {
         .help("Reload file")
 
       case .devServer:
-        if case .ready = serverState {
-          Button(action: {
-            DevServerManager.shared.stopServer(for: projectPath)
-            Task { await DevServerManager.shared.startServer(for: projectPath) }
-          }) {
-            Image(systemName: "arrow.clockwise")
-              .font(.system(size: 12, weight: .medium))
-          }
-          .buttonStyle(.plain)
-          .help("Restart server")
+        // Only show server control buttons for servers we manage (not the agent's)
+        if !isExternalServer {
+          if case .ready = serverState {
+            Button(action: {
+              DevServerManager.shared.stopServer(for: serverKey)
+              Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
+            }) {
+              Image(systemName: "arrow.clockwise")
+                .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .help("Restart server")
 
-          Button(action: {
-            DevServerManager.shared.stopServer(for: projectPath)
-          }) {
-            Image(systemName: "stop.circle")
-              .font(.system(size: 12, weight: .medium))
-              .foregroundColor(.secondary)
+            Button(action: {
+              DevServerManager.shared.stopServer(for: serverKey)
+            }) {
+              Image(systemName: "stop.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Stop server")
           }
-          .buttonStyle(.plain)
-          .help("Stop server")
-        }
 
-        if case .failed = serverState {
-          Button(action: {
-            Task { await DevServerManager.shared.startServer(for: projectPath) }
-          }) {
-            Image(systemName: "arrow.clockwise")
-              .font(.system(size: 12, weight: .medium))
+          if case .failed = serverState {
+            Button(action: {
+              Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
+            }) {
+              Image(systemName: "arrow.clockwise")
+                .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .help("Retry")
           }
-          .buttonStyle(.plain)
-          .help("Retry")
         }
 
       default:
         EmptyView()
       }
+
+      // Inspect toggle
+      Button {
+        if inspectState.isActive {
+          inspectState.deactivate()
+        } else {
+          inspectState.activate()
+        }
+      } label: {
+        Image(systemName: "cursorarrow.click.2")
+          .font(.system(size: 12, weight: .medium))
+          .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
+      }
+      .buttonStyle(.plain)
+      .help("Inspect Element (Cmd+Shift+I)")
+
+      // Hidden keyboard shortcut
+      Button("") {
+        if inspectState.isActive {
+          inspectState.deactivate()
+        } else {
+          inspectState.activate()
+        }
+      }
+      .keyboardShortcut("i", modifiers: [.command, .shift])
+      .hidden()
+      .frame(width: 0, height: 0)
 
       Button("Close") {
         onDismiss()
@@ -262,15 +328,24 @@ public struct WebPreviewView: View {
     switch resolution {
     case .directFile(_, let projPath):
       if let filePath = selectedFilePath {
-        WebPreviewWebView(
+        InspectableWebView(
           url: URL(fileURLWithPath: filePath),
           isFileURL: true,
           allowingReadAccessTo: URL(fileURLWithPath: projPath),
-          isLoading: $isLoading,
-          currentURL: $currentURL,
+          onLoadingChange: { isLoading = $0 },
+          onURLChange: { currentURL = $0 },
           onError: nil,
-          reloadToken: fileWatcher.reloadToken
+          reloadToken: fileWatcher.reloadToken,
+          onElementSelected: { data in inspectState.selectElement(data) },
+          isInspectModeActive: $inspectState.isActive,
+          selectedElementId: inspectState.selectedElement?.id
         )
+        .webInspectorOverlay(state: inspectState) { element, instruction in
+          let prompt = ElementInspectorPromptBuilder.buildPrompt(
+            element: element, instruction: instruction
+          )
+          onInspectSubmit?(prompt, session)
+        }
       }
 
     case .devServer:
@@ -292,14 +367,31 @@ public struct WebPreviewView: View {
     case .idle, .detecting, .starting, .waitingForReady:
       loadingContent
     case .ready(let url):
-      WebPreviewWebView(
+      InspectableWebView(
         url: url,
         isFileURL: false,
         allowingReadAccessTo: nil,
-        isLoading: $isLoading,
-        currentURL: $currentURL,
-        onError: nil
+        onLoadingChange: { isLoading = $0 },
+        onURLChange: { loadedURL in
+          currentURL = loadedURL
+          if isExternalServer, loadedURL != nil {
+            hasLoadedExternalContent = true
+          }
+        },
+        onError: isExternalServer ? { error in
+          handleExternalServerLoadFailure(error: error, failedURL: url)
+        } : nil,
+        reloadToken: localhostReloadToken,
+        onElementSelected: { data in inspectState.selectElement(data) },
+        isInspectModeActive: $inspectState.isActive,
+        selectedElementId: inspectState.selectedElement?.id
       )
+      .webInspectorOverlay(state: inspectState) { element, instruction in
+        let prompt = ElementInspectorPromptBuilder.buildPrompt(
+          element: element, instruction: instruction
+        )
+        onInspectSubmit?(prompt, session)
+      }
     case .failed(let error):
       failedContent(error)
     case .stopping:
@@ -372,7 +464,7 @@ public struct WebPreviewView: View {
         .padding(.horizontal, 40)
 
       Button("Retry") {
-        Task { await DevServerManager.shared.startServer(for: projectPath) }
+        Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
       }
       .buttonStyle(.borderedProminent)
 
@@ -414,6 +506,163 @@ public struct WebPreviewView: View {
   }
 
   // MARK: - Helpers
+
+  @MainActor
+  private func loadPreview() async {
+    if let agentURL = await WebPreviewAgentURLResolver.resolve(
+      for: session,
+      detectedLocalhostURL: agentLocalhostURL
+    ) {
+      if agentLocalhostURL == nil {
+        AppLogger.devServer.info(
+          "[WebPreview] Session \(session.id): recovered localhost URL from session file: \(agentURL.absoluteString)"
+        )
+      }
+      await connectToAgentServer(agentURL)
+      return
+    }
+
+    AppLogger.devServer.info("[WebPreview] Session \(session.id): no agent URL detected, resolving project at \(projectPath)")
+    let result = await WebPreviewResolver.resolve(projectPath: projectPath)
+    await applyResolution(result)
+
+    if case .devServer = result {
+      AppLogger.devServer.info("[WebPreview] Session \(session.id): starting own dev server")
+      await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath)
+    }
+  }
+
+  @MainActor
+  private func connectToAgentServer(_ url: URL, logChange: Bool = false) async {
+    let logPrefix = logChange ? "agent URL changed to" : "agent has localhost URL"
+    AppLogger.devServer.info("[WebPreview] Session \(session.id): \(logPrefix) \(url.absoluteString), connecting directly")
+
+    DevServerManager.shared.stopServer(for: serverKey)
+    hasLoadedExternalContent = false
+    await applyResolution(WebPreviewExternalRecovery.initial(projectPath: projectPath).resolution)
+    DevServerManager.shared.connectToExistingServer(for: serverKey, url: url)
+  }
+
+  private func handleExternalServerLoadFailure(error: String, failedURL: URL) {
+    Task {
+      let shouldRecover = await MainActor.run {
+        guard isCurrentExternalServerURL(failedURL) else {
+          return false
+        }
+
+        let shouldFallback = WebPreviewExternalLoadFailurePolicy.shouldFallback(
+          hasLoadedExternalContent: hasLoadedExternalContent,
+          error: error
+        )
+        if !shouldFallback {
+          AppLogger.devServer.info(
+            "[WebPreview] Session \(session.id): ignoring external server load error during live preview: \(error)"
+          )
+        }
+        return shouldFallback
+      }
+      guard shouldRecover else { return }
+
+      AppLogger.devServer.error(
+        "[WebPreview] Session \(session.id): failed to load external server \(failedURL.absoluteString): \(error)"
+      )
+
+      let staticPreviewResolution = await WebPreviewResolver.resolveStaticPreview(projectPath: projectPath)
+      await MainActor.run {
+        guard isCurrentExternalServerURL(failedURL) else { return }
+        DevServerManager.shared.stopServer(for: serverKey)
+      }
+      let recovery = WebPreviewExternalRecovery.recovered(
+        agentURL: failedURL,
+        error: error,
+        staticPreviewResolution: staticPreviewResolution
+      )
+      await applyResolution(recovery.resolution)
+    }
+  }
+
+  @MainActor
+  private func handleLocalhostReloadSignal(_ latestSignal: WebPreviewLocalhostReloadSignal?) {
+    guard case .devServer = resolution else { return }
+
+    let decision = WebPreviewLocalhostReloadSignal.decision(
+      handledActivityID: handledCodeChangeActivityID,
+      latestSignal: latestSignal,
+      previewStartedAt: localhostPreviewStartedAt
+    )
+
+    switch decision {
+    case .none:
+      return
+    case .captureBaseline(let activityID):
+      handledCodeChangeActivityID = activityID
+    case .reload(let activityID):
+      handledCodeChangeActivityID = activityID
+      scheduleLocalhostReload()
+    }
+  }
+
+  @MainActor
+  private func resetLocalhostReloadTracking() {
+    localhostReloadTask?.cancel()
+    localhostReloadTask = nil
+    localhostPreviewStartedAt = Date()
+    handledCodeChangeActivityID = latestLocalhostReloadSignal?.activityID
+  }
+
+  @MainActor
+  private func scheduleLocalhostReload() {
+    localhostReloadTask?.cancel()
+    localhostReloadTask = Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(300))
+      guard !Task.isCancelled,
+            case .devServer = resolution else {
+        return
+      }
+
+      localhostReloadToken = UUID()
+    }
+  }
+
+  @MainActor
+  private func applyResolution(_ newResolution: WebPreviewResolution) async {
+    resolution = newResolution
+
+    switch newResolution {
+    case .directFile(let filePath, _):
+      hasLoadedExternalContent = false
+      localhostReloadTask?.cancel()
+      localhostReloadTask = nil
+      handledCodeChangeActivityID = nil
+      selectedFilePath = filePath
+      let directory = URL(fileURLWithPath: filePath).deletingLastPathComponent().path
+      fileWatcher.watch(directory: directory)
+      await loadWebFileList()
+    case .devServer:
+      resetLocalhostReloadTracking()
+      selectedFilePath = nil
+      webRenderableFiles = []
+      fileWatcher.stop()
+    case .noContent:
+      hasLoadedExternalContent = false
+      localhostReloadTask?.cancel()
+      localhostReloadTask = nil
+      handledCodeChangeActivityID = nil
+      selectedFilePath = nil
+      webRenderableFiles = []
+      fileWatcher.stop()
+    }
+  }
+
+  @MainActor
+  private func isCurrentExternalServerURL(_ url: URL) -> Bool {
+    guard isExternalServer,
+          case .ready(let currentURL) = serverState else {
+      return false
+    }
+
+    return currentURL == url
+  }
 
   private func loadWebFileList() async {
     let files = await WebPreviewResolver.findWebRenderableFiles(at: projectPath)

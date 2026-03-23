@@ -317,11 +317,11 @@ public struct MonitoringPanelView: View {
         .foregroundColor(.secondary.opacity(0.5))
 
       Text("No Session Selected")
-        .font(.headline)
+        .font(.heading)
         .foregroundColor(.secondary)
 
       (Text("Select a session from the sidebar or ") + Text("start a new one").bold() + Text(" to get started."))
-        .font(.caption)
+        .font(.secondaryCaption)
         .foregroundColor(.secondary)
         .multilineTextAlignment(.center)
         .padding(.horizontal, 24)
@@ -904,18 +904,18 @@ private struct MonitoringSessionFileSheetView: View {
           Image(systemName: "doc.text.fill")
             .foregroundColor(.brandPrimary)
           Text(fileName)
-            .font(.system(.headline, design: .monospaced))
+            .font(.primaryLarge)
         }
 
         Spacer()
 
         Text(session.shortId)
-          .font(.system(.caption, design: .monospaced))
+          .font(.primaryCaption)
           .foregroundColor(.secondary)
 
         if let branch = session.branchName {
           Text("[\(branch)]")
-            .font(.caption)
+            .font(.primaryCaption)
             .foregroundColor(.secondary)
         }
 

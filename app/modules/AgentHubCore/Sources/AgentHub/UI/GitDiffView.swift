@@ -8,6 +8,7 @@
 import SwiftUI
 import PierreDiffsSwift
 import ClaudeCodeSDK
+import Canvas
 import os
 
 // MARK: - GitDiffView
@@ -926,12 +927,12 @@ private struct GitDiffContentView: View {
 
       // Web preview or diff view
       if showPreview {
-        WebPreviewWebView(
+        InspectableWebView(
           url: URL(fileURLWithPath: filePath),
           isFileURL: true,
           allowingReadAccessTo: URL(fileURLWithPath: projectPath),
-          isLoading: $previewLoading,
-          currentURL: $previewCurrentURL,
+          onLoadingChange: { previewLoading = $0 },
+          onURLChange: { previewCurrentURL = $0 },
           onError: nil
         )
       } else {
