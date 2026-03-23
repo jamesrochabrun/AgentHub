@@ -30,12 +30,10 @@ enum WebPreviewResolution: Equatable {
 enum WebPreviewResolver {
 
   static func resolve(projectPath: String) async -> WebPreviewResolution {
-    print("[WebPreview] WebPreviewResolver.resolve — projectPath: \(projectPath)")
     // 1. Detect framework (fast, synchronous package.json check)
     let framework = await Task.detached {
       ProjectFramework.detect(at: projectPath)
     }.value
-    print("[WebPreview] WebPreviewResolver detected framework: \(framework.rawValue), requiresDevServer: \(framework.requiresDevServer)")
 
     // 2. Known framework requiring dev server → use dev server
     if framework.requiresDevServer {
