@@ -435,7 +435,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
           return nil
         case .appendContextAndSubmit(let queuedContextPrompt):
           terminal.send(txt: "\n\n\(queuedContextPrompt)")
-          terminal.send([0x0D])
+          Task { @MainActor [weak terminal] in
+            try? await Task.sleep(for: .milliseconds(100))
+            terminal?.send([0x0D])
+          }
           self.onUserInteraction?()
           return nil
         }
