@@ -4,9 +4,11 @@ A native macOS app for managing Claude Code and Codex CLI sessions. Monitor sess
 
 ## Demo
 
-<img width="1913" alt="Web Preview Context Mode" src="https://github.com/user-attachments/assets/19834758-ab42-4952-9842-54c733f581ae" />
-
 <img width="1913" height="1079" alt="Hub" src="https://github.com/user-attachments/assets/99518d02-8ca6-458a-900c-bfd1f4e57419" />
+
+[Point to code](https://x.com/jamesrochabrun/status/2036492646039036003?s=20)
+
+<img width="1911" height="1077" alt="Image" src="https://github.com/user-attachments/assets/f9e15c46-b907-4d7b-9b8e-f9dbcad06da4" />
 
 Full screen mode
 
