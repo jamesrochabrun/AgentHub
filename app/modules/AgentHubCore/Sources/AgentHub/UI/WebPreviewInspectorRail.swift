@@ -11,8 +11,6 @@ struct WebPreviewInspectorRail: View {
   @Bindable var viewModel: WebPreviewInspectorViewModel
   let onClose: () -> Void
 
-  private let codeDockHeight: CGFloat = 240
-
   var body: some View {
     VStack(spacing: 0) {
       header
@@ -41,6 +39,8 @@ struct WebPreviewInspectorRail: View {
         ProgressView("Mapping source…")
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
+        tabBar
+        Divider()
         inspectorContent
       }
     }
@@ -97,22 +97,53 @@ struct WebPreviewInspectorRail: View {
   }
 
   private var inspectorContent: some View {
-    VStack(spacing: 0) {
-      ScrollView {
-        VStack(alignment: .leading, spacing: 14) {
-          propertiesSection
-          contentSection
-          typographySection
-          stylesSection
-        }
-        .padding(12)
+    Group {
+      switch viewModel.selectedTab {
+      case .design:
+        designTabContent
+      case .code:
+        codeTabContent
       }
+    }
+  }
 
-      Divider()
+  private var tabBar: some View {
+    HStack(spacing: 8) {
+      ForEach(WebPreviewInspectorTab.allCases, id: \.self) { tab in
+        Button {
+          viewModel.selectTab(tab)
+        } label: {
+          Text(tab.title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(viewModel.selectedTab == tab ? Color.primary : Color.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(
+              RoundedRectangle(cornerRadius: 8)
+                .fill(viewModel.selectedTab == tab ? Color.primary.opacity(0.08) : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+      }
+    }
+    .padding(.horizontal, 12)
+    .padding(.top, 10)
+    .padding(.bottom, 8)
+  }
 
-      codeDock
-        .frame(height: codeDockHeight)
-        .background(Color.surfaceElevated.opacity(0.75))
+  private var designTabContent: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 14) {
+        if let message = viewModel.designTabMessage {
+          statusBanner(message, color: .secondary)
+        }
+
+        propertiesSection
+        contentSection
+        typographySection
+        stylesSection
+      }
+      .padding(12)
     }
   }
 
@@ -227,7 +258,7 @@ struct WebPreviewInspectorRail: View {
     }
   }
 
-  private var codeDock: some View {
+  private var codeTabContent: some View {
     VStack(spacing: 0) {
       HStack {
         Text("Code")
@@ -246,6 +277,7 @@ struct WebPreviewInspectorRail: View {
       }
       .padding(.horizontal, 12)
       .padding(.vertical, 10)
+      .background(Color.surfaceElevated.opacity(0.75))
 
       if viewModel.shouldShowLowConfidenceFallback, !viewModel.candidateFilePaths.isEmpty {
         Picker(

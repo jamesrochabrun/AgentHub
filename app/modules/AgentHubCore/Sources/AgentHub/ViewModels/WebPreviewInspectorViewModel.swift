@@ -31,6 +31,7 @@ final class WebPreviewInspectorViewModel {
   var isWriting = false
   var errorMessage: String?
   var writeErrorMessage: String?
+  var selectedTab: WebPreviewInspectorTab = .design
 
   var currentFilePath: String?
   var fileContent = ""
@@ -81,6 +82,20 @@ final class WebPreviewInspectorViewModel {
 
   var editableStyleProperties: [WebPreviewStyleProperty] {
     WebPreviewStyleProperty.allCases.filter { activeCapabilities.contains($0.capability) }
+  }
+
+  var hasEditableDesignControls: Bool {
+    canEditContent || isDesignValueEditingEnabled
+  }
+
+  var designTabMessage: String? {
+    if needsSourceConfirmation {
+      return "Choose a source file in Code mode to enable design edits."
+    }
+    if !hasEditableDesignControls {
+      return "This element does not have a safe design mapping. Edit it in Code mode."
+    }
+    return nil
   }
 
   var selectedTagName: String? {
@@ -182,6 +197,14 @@ final class WebPreviewInspectorViewModel {
     activeCapabilities.contains(property.capability) && isDesignValueEditingEnabled
   }
 
+  func selectTab(_ tab: WebPreviewInspectorTab) {
+    selectedTab = tab
+  }
+
+  func resetTabSelection() {
+    selectedTab = .design
+  }
+
   func inspect(
     element: ElementInspectorData,
     previewFilePath: String?,
@@ -251,6 +274,7 @@ final class WebPreviewInspectorViewModel {
     matchedSelector = nil
     styleValues = [:]
     userConfirmedLowConfidenceFile = false
+    resetTabSelection()
   }
 
   func selectCandidateFile(_ path: String) async {

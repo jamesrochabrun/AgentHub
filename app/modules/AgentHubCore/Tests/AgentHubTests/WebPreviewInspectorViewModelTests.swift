@@ -284,6 +284,7 @@ struct WebPreviewInspectorViewModelTests {
 
     await viewModel.inspect(element: makeElement(), previewFilePath: filePath, recentActivities: [])
     await MainActor.run {
+      viewModel.selectTab(.code)
       viewModel.updateEditorContent("<button>Saved on close</button>")
     }
 
@@ -291,9 +292,11 @@ struct WebPreviewInspectorViewModelTests {
 
     let writes = await fileService.recordedWrites()
     let isPanelVisible = await MainActor.run { viewModel.isPanelVisible }
+    let selectedTab = await MainActor.run { viewModel.selectedTab }
 
     #expect(writes == [.init(path: filePath, content: "<button>Saved on close</button>")])
     #expect(!isPanelVisible)
+    #expect(selectedTab == .design)
   }
 
   @Test("Stylesheet-backed selections expose inline style controls and write CSS changes")
@@ -406,5 +409,90 @@ struct WebPreviewInspectorViewModelTests {
     #expect(canEditContent)
     #expect(writes.count == 1)
     #expect(writes[0].content == "<button>Buy now</button>")
+  }
+
+  @Test("Selected tab persists across element reselection while the rail stays open")
+  func selectedTabPersistsAcrossInspectCalls() async throws {
+    let firstFilePath = "/project/index.html"
+    let secondFilePath = "/project/about.html"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: firstFilePath,
+        candidateFilePaths: [firstFilePath],
+        confidence: .high
+      ),
+      makeResolution(
+        primaryFilePath: secondFilePath,
+        candidateFilePaths: [secondFilePath],
+        confidence: .high
+      ),
+    ])
+    let fileService = MockProjectFileService(files: [
+      firstFilePath: "<button>Launch</button>",
+      secondFilePath: "<button>Learn more</button>",
+    ])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-7",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(
+      element: makeElement(selector: "button", className: "", textContent: "Launch"),
+      previewFilePath: firstFilePath,
+      recentActivities: []
+    )
+    await MainActor.run {
+      viewModel.selectTab(.code)
+    }
+
+    await viewModel.inspect(
+      element: makeElement(selector: "button", className: "", textContent: "Learn more"),
+      previewFilePath: secondFilePath,
+      recentActivities: []
+    )
+
+    let selectedTab = await MainActor.run { viewModel.selectedTab }
+    #expect(selectedTab == .code)
+  }
+
+  @Test("Unsupported elements keep the design tab visible with a code fallback message")
+  func unsupportedElementsExposeDesignFallbackMessage() async throws {
+    let filePath = "/project/index.html"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: "<div><span>Launch</span><span>Launch</span></div>"])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-8",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(
+      element: makeElement(selector: "span", className: "", textContent: "Launch"),
+      previewFilePath: filePath,
+      recentActivities: []
+    )
+
+    let selectedTab = await MainActor.run { viewModel.selectedTab }
+    let hasEditableDesignControls = await MainActor.run { viewModel.hasEditableDesignControls }
+    let designTabMessage = await MainActor.run { viewModel.designTabMessage }
+
+    #expect(selectedTab == .design)
+    #expect(!hasEditableDesignControls)
+    #expect(designTabMessage == "This element does not have a safe design mapping. Edit it in Code mode.")
   }
 }
