@@ -808,6 +808,7 @@ public struct MultiProviderMonitoringPanelView: View {
         onInspectSubmit: { prompt, sess in
           viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
         },
+        viewModel: viewModel,
         agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL,
         monitorState: viewModel.monitorStates[sessionId]
       )

@@ -76,6 +76,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   let permissionModePlan: Bool  // One-shot flag: start session in plan mode
   let worktreeName: String?  // nil = no --worktree; "" = auto-name; non-empty = named
   let onUserInteraction: (() -> Void)?
+  let consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
 
   public init(
     terminalKey: String,
@@ -88,7 +89,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil,
-    onUserInteraction: (() -> Void)? = nil
+    onUserInteraction: (() -> Void)? = nil,
+    consumeQueuedWebPreviewContextOnSubmit: (() -> String?)? = nil
   ) {
     self.terminalKey = terminalKey
     self.sessionId = sessionId
@@ -101,6 +103,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     self.permissionModePlan = permissionModePlan
     self.worktreeName = worktreeName
     self.onUserInteraction = onUserInteraction
+    self.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
   }
 
   public func makeNSView(context: Context) -> TerminalContainerView {
@@ -121,6 +124,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         worktreeName: worktreeName
       )
       terminalContainer.onUserInteraction = onUserInteraction
+      terminalContainer.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
       return terminalContainer
     }
 
@@ -138,11 +142,13 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       worktreeName: worktreeName
     )
     containerView.onUserInteraction = onUserInteraction
+    containerView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
     return containerView
   }
 
   public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
     nsView.onUserInteraction = onUserInteraction
+    nsView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
     nsView.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize))
 
     // If there's a pending prompt in the viewModel, send it (and clear it)
@@ -168,6 +174,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
+  public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
 
   /// The PID of the current terminal process, if running
   public var currentProcessPID: Int32? {
@@ -402,33 +409,35 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isReturn = event.keyCode == 36
 
-        switch shortcut {
-        case .system:
-          self.onUserInteraction?()
+        let action = TerminalSubmitInterception.keyAction(
+          shortcut: shortcut,
+          isReturn: isReturn,
+          flags: flags
+        )
+        let queuedContextPrompt: String?
+        switch action {
+        case .submit, .systemSubmit:
+          queuedContextPrompt = self.consumeQueuedWebPreviewContextOnSubmit?()
+        case .passthrough, .newline:
+          queuedContextPrompt = nil
+        }
 
-        case .cmdReturn:
-          if isReturn && flags == .command {
-            terminal.send([0x1B, 0x0D])  // newline
-            self.onUserInteraction?()
-            return nil
-          } else if isReturn && flags == .option {
-            terminal.send([0x0D])  // suppress ESC+CR, submit instead
-            self.onUserInteraction?()
-            return nil
-          }
+        switch TerminalSubmitInterception.dispatch(for: action, queuedContextPrompt: queuedContextPrompt) {
+        case .passthrough:
           self.onUserInteraction?()
-
-        case .shiftReturn:
-          if isReturn && flags == .shift {
-            terminal.send([0x1B, 0x0D])  // newline
-            self.onUserInteraction?()
-            return nil
-          } else if isReturn && (flags == .option || flags == .command) {
-            terminal.send([0x0D])  // submit
-            self.onUserInteraction?()
-            return nil
-          }
+        case .newline:
+          terminal.send([0x1B, 0x0D])  // newline
           self.onUserInteraction?()
+          return nil
+        case .submit:
+          terminal.send([0x0D])
+          self.onUserInteraction?()
+          return nil
+        case .appendContextAndSubmit(let queuedContextPrompt):
+          terminal.send(txt: "\n\n\(queuedContextPrompt)")
+          terminal.send([0x0D])
+          self.onUserInteraction?()
+          return nil
         }
       case .leftMouseUp:
         guard !ResizeInteractionSuppression.shared.shouldSuppressSelection else {

@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import ClaudeCodeSDK
+import Canvas
 
 #if canImport(AppKit)
 import AppKit
@@ -115,6 +116,7 @@ public final class CLISessionsViewModel {
   /// - Note: Prompts are sent with a 100ms delay before pressing Enter to avoid race conditions
   ///   with the terminal's input buffer (see `EmbeddedTerminalView.sendPromptIfNeeded`).
   public var pendingTerminalPrompts: [String: String] = [:]
+  private(set) var queuedWebPreviewContextStore = QueuedWebPreviewContextStore()
 
   /// Start polling for a session
   private func startPolling(session: CLISession) {
@@ -179,6 +181,31 @@ public final class CLISessionsViewModel {
   /// Clears the pending prompt after terminal has started (call from onAppear)
   public func clearPendingPrompt(for sessionId: String) {
     pendingTerminalPrompts.removeValue(forKey: sessionId)
+  }
+
+  public func queueWebPreviewContext(_ element: ElementInspectorData, for sessionID: String) {
+    var store = queuedWebPreviewContextStore
+    store.append(element, for: sessionID)
+    queuedWebPreviewContextStore = store
+  }
+
+  public func removeQueuedWebPreviewContextElement(_ elementID: UUID, for sessionID: String) {
+    var store = queuedWebPreviewContextStore
+    store.remove(elementID: elementID, for: sessionID)
+    queuedWebPreviewContextStore = store
+  }
+
+  public func clearQueuedWebPreviewContext(for sessionID: String) {
+    var store = queuedWebPreviewContextStore
+    store.clear(for: sessionID)
+    queuedWebPreviewContextStore = store
+  }
+
+  public func consumeQueuedWebPreviewContextPrompt(for sessionID: String) -> String? {
+    var store = queuedWebPreviewContextStore
+    let prompt = store.consumeContextPrompt(for: sessionID)
+    queuedWebPreviewContextStore = store
+    return prompt
   }
 
   // MARK: - Terminal Management
