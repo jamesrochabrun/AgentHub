@@ -2,6 +2,10 @@
 
 A native macOS app for managing Claude Code and Codex CLI sessions. Monitor sessions in real-time, run multiple terminals in parallel, preview diffs, create worktrees, launch multi-provider sessions, and more — all from a single hub.
 
+## Demo
+
+<img width="1913" alt="Web Preview Context Mode" src="https://github.com/user-attachments/assets/19834758-ab42-4952-9842-54c733f581ae" />
+
 <img width="1913" height="1079" alt="Hub" src="https://github.com/user-attachments/assets/99518d02-8ca6-458a-900c-bfd1f4e57419" />
 
 Full screen mode
@@ -30,6 +34,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
 - **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
 - **Web preview** — Prefers agent-started localhost servers, recovers recent localhost URLs from session files when needed, and falls back to static HTML (`index.html` first) when no live preview is available
+- **Web preview context mode** — Inspect and select elements in the live web preview, queue multiple selections, and attach them as structured context (HTML, CSS selectors, computed styles) to your next terminal message — no copy-paste needed
 - **iOS Simulator run destination** — Build, install, and launch your app on any booted iOS Simulator directly from a session card; cancel at any phase (Building / Installing / Launching) via a stop button; boot-readiness check times out after 90 seconds to prevent hangs
 - **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting; switch to Review mode to annotate individual lines and send batch feedback directly to Claude's interactive plan prompt
 - **Global search** — Search across all session files with ranked results
