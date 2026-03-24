@@ -348,6 +348,7 @@ final class WebPreviewInspectorViewModel {
     }
 
     styleValues[property] = value
+    liveProperties = liveProperties?.applyingStyleValue(value, for: property)
     fileContent = updatedContent
     scheduleWrite()
   }

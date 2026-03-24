@@ -9,6 +9,9 @@ import SwiftUI
 
 struct WebPreviewInspectorRail: View {
   @Bindable var viewModel: WebPreviewInspectorViewModel
+  let updateState: WebPreviewUpdateState
+  let onUpdate: () -> Void
+  let onColorChange: () -> Void
   let onClose: () -> Void
 
   var body: some View {
@@ -45,6 +48,14 @@ struct WebPreviewInspectorRail: View {
       }
     }
     .background(Color(NSColor.windowBackgroundColor))
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if updateState.isVisible {
+        WebPreviewUpdateBar(
+          state: updateState,
+          onUpdate: onUpdate
+        )
+      }
+    }
   }
 
   private var header: some View {
@@ -392,7 +403,12 @@ struct WebPreviewInspectorRail: View {
   private func styleBinding(for property: WebPreviewStyleProperty) -> Binding<String> {
     Binding(
       get: { viewModel.editorValue(for: property) },
-      set: { viewModel.updateStyleEditorValue(property, value: $0) }
+      set: { newValue in
+        viewModel.updateStyleEditorValue(property, value: newValue)
+        if property.supportsColorPicking {
+          onColorChange()
+        }
+      }
     )
   }
 
@@ -426,7 +442,10 @@ struct WebPreviewInspectorRail: View {
   private func colorBinding(for property: WebPreviewStyleProperty) -> Binding<Color> {
     Binding(
       get: { viewModel.colorValue(for: property) },
-      set: { viewModel.updateColorValue(property, color: $0) }
+      set: { newColor in
+        viewModel.updateColorValue(property, color: newColor)
+        onColorChange()
+      }
     )
   }
 
