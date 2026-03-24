@@ -161,6 +161,13 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   }
 }
 
+// MARK: - PassthroughOverlayView
+
+/// An overlay view that paints its background but does not intercept any events.
+private final class PassthroughOverlayView: NSView {
+  override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 // MARK: - TerminalContainerView
 
 /// Container view that manages the terminal lifecycle
@@ -173,6 +180,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var lastAppliedIsDark: Bool?
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
   private var localEventMonitor: Any?
+  private weak var contextOverlay: PassthroughOverlayView?
   public var onUserInteraction: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
 
@@ -391,6 +399,40 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     lastAppliedIsDark = isDark
   }
 
+  /// Places an opaque overlay matching the terminal background to mask context injection.
+  /// The overlay fades out after a short delay, preventing the user from seeing the context
+  /// text being written into the terminal input area.
+  private func showContextInjectionOverlay() {
+    contextOverlay?.removeFromSuperview()
+
+    guard let terminal = terminalView else { return }
+
+    let overlay = PassthroughOverlayView()
+    overlay.wantsLayer = true
+    overlay.layer?.backgroundColor = terminal.nativeBackgroundColor.cgColor
+    overlay.translatesAutoresizingMaskIntoConstraints = false
+
+    addSubview(overlay)
+    NSLayoutConstraint.activate([
+      overlay.leadingAnchor.constraint(equalTo: leadingAnchor),
+      overlay.trailingAnchor.constraint(equalTo: trailingAnchor),
+      overlay.topAnchor.constraint(equalTo: topAnchor),
+      overlay.bottomAnchor.constraint(equalTo: bottomAnchor),
+    ])
+
+    contextOverlay = overlay
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak overlay] in
+      guard let overlay else { return }
+      NSAnimationContext.runAnimationGroup { context in
+        context.duration = 0.2
+        overlay.animator().alphaValue = 0
+      } completionHandler: { [weak overlay] in
+        overlay?.removeFromSuperview()
+      }
+    }
+  }
+
   private func installInteractionMonitorIfNeeded() {
     guard localEventMonitor == nil else { return }
     localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseUp]) { [weak self] event in
@@ -434,8 +476,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
           self.onUserInteraction?()
           return nil
         case .appendContextAndSubmit(let queuedContextPrompt):
+          self.showContextInjectionOverlay()
           terminal.send(txt: "\n\n\(queuedContextPrompt)")
-          terminal.send([0x0D])
+          Task { @MainActor [weak terminal] in
+            try? await Task.sleep(for: .milliseconds(100))
+            terminal?.send([0x0D])
+          }
           self.onUserInteraction?()
           return nil
         }
