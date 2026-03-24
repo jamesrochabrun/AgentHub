@@ -179,6 +179,10 @@ public struct MonitoringCardView: View {
     return ResizableCardMetrics(defaultHeight: 520, minHeight: 400)
   }
 
+  private var queuedPreviewContextCount: Int {
+    viewModel?.queuedWebPreviewContextStore.count(for: session.id) ?? 0
+  }
+
   public var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions
@@ -268,6 +272,10 @@ public struct MonitoringCardView: View {
         session: item.session,
         projectPath: item.projectPath,
         onDismiss: { webPreviewSheetItem = nil },
+        onInspectSubmit: { prompt, sess in
+          viewModel?.showTerminalWithPrompt(for: sess, prompt: prompt)
+        },
+        viewModel: viewModel,
         agentLocalhostURL: viewModel?.monitorStates[item.session.id]?.detectedLocalhostURL ?? item.agentLocalhostURL,
         monitorState: viewModel?.monitorStates[item.session.id] ?? item.monitorState
       )
@@ -446,6 +454,19 @@ public struct MonitoringCardView: View {
     }
   }
 
+  private func presentWebPreview() {
+    if let onShowWebPreview {
+      onShowWebPreview(session, session.projectPath)
+    } else {
+      webPreviewSheetItem = WebPreviewSheetItem(
+        session: session,
+        projectPath: session.projectPath,
+        agentLocalhostURL: state?.detectedLocalhostURL,
+        monitorState: state
+      )
+    }
+  }
+
   // MARK: - Header
 
   private var header: some View {
@@ -580,26 +601,20 @@ public struct MonitoringCardView: View {
         if framework.requiresDevServer
             || framework == .unknown
             || FileManager.default.fileExists(atPath: "\(session.projectPath)/index.html") {
-          Button(action: {
-            if let onShowWebPreview = onShowWebPreview {
-              onShowWebPreview(session, session.projectPath)
-            } else {
-              webPreviewSheetItem = WebPreviewSheetItem(
-                session: session,
-                projectPath: session.projectPath,
-                agentLocalhostURL: state?.detectedLocalhostURL,
-                monitorState: state
-              )
-            }
-          }) {
+          Button(action: presentWebPreview) {
             HStack(spacing: 4) {
               Image(systemName: "globe")
                 .font(.caption2)
               Text("Preview")
+              if queuedPreviewContextCount > 0 {
+                previewContextBadge
+              }
             }
           }
           .buttonStyle(.agentHubOutlined)
-          .help("Preview localhost web app")
+          .help(queuedPreviewContextCount > 0
+            ? "Preview localhost web app (\(queuedPreviewContextCount) queued selections pending next send)"
+            : "Preview localhost web app")
         }
 
         // Mermaid diagram button (only visible when mermaid content is detected)
@@ -745,7 +760,10 @@ public struct MonitoringCardView: View {
         dangerouslySkipPermissions: dangerouslySkipPermissions,
         permissionModePlan: permissionModePlan,
         worktreeName: worktreeName,
-        onUserInteraction: onTerminalInteraction
+        onUserInteraction: onTerminalInteraction,
+        consumeQueuedWebPreviewContextOnSubmit: {
+          viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
+        }
       )
       .frame(minHeight: 300)
 
@@ -765,6 +783,18 @@ public struct MonitoringCardView: View {
       }
       .help("Session actions")
     }
+  }
+
+  private var previewContextBadge: some View {
+    Text("\(queuedPreviewContextCount)")
+      .font(.system(.caption2, design: .monospaced))
+      .foregroundStyle(.secondary)
+      .padding(.horizontal, 5)
+      .padding(.vertical, 1)
+      .background(
+        Capsule()
+          .fill(Color.secondary.opacity(0.15))
+      )
   }
 }
 

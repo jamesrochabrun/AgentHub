@@ -11,6 +11,43 @@ import ClaudeCodeSDK
 import SwiftUI
 import Canvas
 
+private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
+  case input
+  case context
+
+  var id: String { rawValue }
+
+  var icon: String {
+    switch self {
+    case .input: return "square.and.pencil"
+    case .context: return "square.and.arrow.up"
+    }
+  }
+
+  var helpText: String {
+    switch self {
+    case .input:
+      return "Select an element, then type an instruction before sending it to the agent."
+    case .context:
+      return "Queue selected elements in the preview to attach them to the next terminal message."
+    }
+  }
+
+  var accessibilityLabel: String {
+    switch self {
+    case .input: return "Instruction mode"
+    case .context: return "Queued context mode"
+    }
+  }
+
+  var inspectMode: InspectMode {
+    switch self {
+    case .input: return .input
+    case .context: return .context
+    }
+  }
+}
+
 // MARK: - WebPreviewView
 
 /// Displays a web preview with smart resolution: loads static HTML files instantly
@@ -25,6 +62,7 @@ public struct WebPreviewView: View {
   let onDismiss: () -> Void
   var isEmbedded: Bool = false
   var onInspectSubmit: ((String, CLISession) -> Void)?
+  let viewModel: CLISessionsViewModel?
   /// Reactive localhost URL from the agent's session. When this changes, the preview updates.
   var agentLocalhostURL: URL?
   var monitorState: SessionMonitorState?
@@ -36,6 +74,8 @@ public struct WebPreviewView: View {
   @State private var webRenderableFiles: [GitDiffFileEntry] = []
   @State private var fileWatcher = WebPreviewFileWatcher()
   @State private var inspectState = ElementInspectState()
+  @State private var inspectBehavior: WebPreviewInspectBehavior = .input
+  @State private var localContextQueue = WebPreviewContextQueue()
   @State private var hasLoadedExternalContent = false
   @State private var localhostReloadToken: UUID?
   @State private var handledCodeChangeActivityID: UUID?
@@ -59,6 +99,7 @@ public struct WebPreviewView: View {
     onDismiss: @escaping () -> Void,
     isEmbedded: Bool = false,
     onInspectSubmit: ((String, CLISession) -> Void)? = nil,
+    viewModel: CLISessionsViewModel? = nil,
     agentLocalhostURL: URL? = nil,
     monitorState: SessionMonitorState? = nil
   ) {
@@ -67,12 +108,17 @@ public struct WebPreviewView: View {
     self.onDismiss = onDismiss
     self.isEmbedded = isEmbedded
     self.onInspectSubmit = onInspectSubmit
+    self.viewModel = viewModel
     self.agentLocalhostURL = agentLocalhostURL
     self.monitorState = monitorState
   }
 
   private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
     WebPreviewLocalhostReloadSignal.latest(from: monitorState)
+  }
+
+  private var queuedContext: WebPreviewContextQueue {
+    viewModel?.queuedWebPreviewContextStore.queue(for: session.id) ?? localContextQueue
   }
 
   public var body: some View {
@@ -99,6 +145,10 @@ public struct WebPreviewView: View {
     .onChange(of: latestLocalhostReloadSignal) { _, newSignal in
       handleLocalhostReloadSignal(newSignal)
     }
+    .onChange(of: inspectBehavior) { _, newBehavior in
+      guard inspectState.isActive else { return }
+      inspectState.activate(mode: newBehavior.inspectMode)
+    }
     .onChange(of: selectedFilePath) { _, newPath in
       if let path = newPath {
         let dir = URL(fileURLWithPath: path).deletingLastPathComponent().path
@@ -107,13 +157,14 @@ public struct WebPreviewView: View {
     }
     .onKeyPress(.escape) {
       if inspectState.isActive {
-        inspectState.deactivate()
+        deactivateInspector()
         return .handled
       }
       onDismiss()
       return .handled
     }
     .onDisappear {
+      deactivateInspector()
       localhostReloadTask?.cancel()
       fileWatcher.stop()
       if case .devServer = resolution {
@@ -288,28 +339,42 @@ public struct WebPreviewView: View {
         EmptyView()
       }
 
+      if inspectState.isActive {
+        HStack(spacing: 6) {
+          ForEach(WebPreviewInspectBehavior.allCases) { behavior in
+            Button {
+              inspectBehavior = behavior
+            } label: {
+              Image(systemName: behavior.icon)
+                .font(.caption)
+                .frame(width: 26, height: 20)
+                .foregroundColor(inspectBehavior == behavior ? .accentColor : .secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(behavior.accessibilityLabel)
+            .help(behavior.helpText)
+          }
+        }
+        .padding(4)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+      }
+
       // Inspect toggle
       Button {
-        if inspectState.isActive {
-          inspectState.deactivate()
-        } else {
-          inspectState.activate()
-        }
+        toggleInspector()
       } label: {
         Image(systemName: "cursorarrow.click.2")
           .font(.system(size: 12, weight: .medium))
           .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
       }
       .buttonStyle(.plain)
-      .help("Inspect Element (Cmd+Shift+I)")
+      .help("\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior == .input ? "inspect" : "context") mode (Cmd+Shift+I)")
 
       // Hidden keyboard shortcut
       Button("") {
-        if inspectState.isActive {
-          inspectState.deactivate()
-        } else {
-          inspectState.activate()
-        }
+        toggleInspector()
       }
       .keyboardShortcut("i", modifiers: [.command, .shift])
       .hidden()
@@ -319,6 +384,7 @@ public struct WebPreviewView: View {
         onDismiss()
       }
     }
+    .animation(.easeInOut(duration: 0.2), value: inspectBehavior)
   }
 
   // MARK: - Content
@@ -328,24 +394,12 @@ public struct WebPreviewView: View {
     switch resolution {
     case .directFile(_, let projPath):
       if let filePath = selectedFilePath {
-        InspectableWebView(
+        inspectablePreview(
           url: URL(fileURLWithPath: filePath),
           isFileURL: true,
           allowingReadAccessTo: URL(fileURLWithPath: projPath),
-          onLoadingChange: { isLoading = $0 },
-          onURLChange: { currentURL = $0 },
-          onError: nil,
-          reloadToken: fileWatcher.reloadToken,
-          onElementSelected: { data in inspectState.selectElement(data) },
-          isInspectModeActive: $inspectState.isActive,
-          selectedElementId: inspectState.selectedElement?.id
+          reloadToken: fileWatcher.reloadToken
         )
-        .webInspectorOverlay(state: inspectState) { element, instruction in
-          let prompt = ElementInspectorPromptBuilder.buildPrompt(
-            element: element, instruction: instruction
-          )
-          onInspectSubmit?(prompt, session)
-        }
       }
 
     case .devServer:
@@ -367,31 +421,14 @@ public struct WebPreviewView: View {
     case .idle, .detecting, .starting, .waitingForReady:
       loadingContent
     case .ready(let url):
-      InspectableWebView(
+      inspectablePreview(
         url: url,
         isFileURL: false,
-        allowingReadAccessTo: nil,
-        onLoadingChange: { isLoading = $0 },
-        onURLChange: { loadedURL in
-          currentURL = loadedURL
-          if isExternalServer, loadedURL != nil {
-            hasLoadedExternalContent = true
-          }
-        },
+        reloadToken: localhostReloadToken,
         onError: isExternalServer ? { error in
           handleExternalServerLoadFailure(error: error, failedURL: url)
-        } : nil,
-        reloadToken: localhostReloadToken,
-        onElementSelected: { data in inspectState.selectElement(data) },
-        isInspectModeActive: $inspectState.isActive,
-        selectedElementId: inspectState.selectedElement?.id
+        } : nil
       )
-      .webInspectorOverlay(state: inspectState) { element, instruction in
-        let prompt = ElementInspectorPromptBuilder.buildPrompt(
-          element: element, instruction: instruction
-        )
-        onInspectSubmit?(prompt, session)
-      }
     case .failed(let error):
       failedContent(error)
     case .stopping:
@@ -668,6 +705,96 @@ public struct WebPreviewView: View {
     let files = await WebPreviewResolver.findWebRenderableFiles(at: projectPath)
     webRenderableFiles = files.sorted {
       ($0.additions + $0.deletions) > ($1.additions + $1.deletions)
+    }
+  }
+
+  @ViewBuilder
+  private func inspectablePreview(
+    url: URL,
+    isFileURL: Bool,
+    allowingReadAccessTo: URL? = nil,
+    reloadToken: UUID? = nil,
+    onError: ((String) -> Void)? = nil
+  ) -> some View {
+    InspectableWebView(
+      url: url,
+      isFileURL: isFileURL,
+      allowingReadAccessTo: allowingReadAccessTo,
+      onLoadingChange: { isLoading = $0 },
+      onURLChange: { loadedURL in
+        currentURL = loadedURL
+        if isExternalServer, loadedURL != nil {
+          hasLoadedExternalContent = true
+        }
+      },
+      onError: onError,
+      reloadToken: reloadToken,
+      onElementSelected: { data in inspectState.selectElement(data) },
+      isInspectModeActive: $inspectState.isActive,
+      selectedElementId: inspectState.selectedElement?.id
+    )
+    .webInspectorOverlay(
+      state: inspectState,
+      onSubmit: { element, instruction in
+        let prompt = ElementInspectorPromptBuilder.buildPrompt(
+          element: element,
+          instruction: instruction
+        )
+        onInspectSubmit?(prompt, session)
+      },
+      onContextSelection: { element in
+        handleContextSelection(element)
+      }
+    )
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if !queuedContext.isEmpty {
+        WebPreviewQueuedContextView(
+          queuedElements: queuedContext.elements,
+          isSelectingContext: inspectState.isActive && inspectBehavior == .context,
+          onRemoveElement: removeQueuedContextElement,
+          onClearAll: clearQueuedContext
+        )
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+      }
+    }
+    .animation(.easeInOut(duration: 0.2), value: queuedContext.isEmpty)
+  }
+
+  private func toggleInspector() {
+    if inspectState.isActive {
+      deactivateInspector()
+    } else {
+      inspectState.activate(mode: inspectBehavior.inspectMode)
+    }
+  }
+
+  private func deactivateInspector() {
+    inspectState.deactivate()
+  }
+
+  private func handleContextSelection(_ element: ElementInspectorData) {
+    if let viewModel {
+      viewModel.queueWebPreviewContext(element, for: session.id)
+    } else {
+      localContextQueue.append(element)
+    }
+  }
+
+  private func clearQueuedContext() {
+    if let viewModel {
+      viewModel.clearQueuedWebPreviewContext(for: session.id)
+    } else {
+      localContextQueue.clear()
+    }
+  }
+
+  private func removeQueuedContextElement(_ elementID: UUID) {
+    if let viewModel {
+      viewModel.removeQueuedWebPreviewContextElement(elementID, for: session.id)
+    } else {
+      localContextQueue.remove(id: elementID)
     }
   }
 }
