@@ -34,6 +34,47 @@ struct WebPreviewContextQueue: Equatable, Sendable {
 
   func composedContextPrompt() -> String? {
     guard !elements.isEmpty else { return nil }
-    return ElementInspectorPromptBuilder.buildContextPrompt(elements: elements)
+    if elements.count == 1, let element = elements.first {
+      return ElementInspectorPromptBuilder.buildContextPrompt(element: element)
+    }
+
+    var lines = [
+      "Selected web element context:",
+      "",
+    ]
+
+    for (index, element) in elements.enumerated() {
+      lines.append("### Element \(index + 1)")
+      lines.append(contentsOf: Self.elementLines(for: element))
+      if index < elements.count - 1 {
+        lines.append("")
+      }
+    }
+
+    return lines.joined(separator: "\n")
+  }
+
+  private static let relevantStyles = [
+    "background-color", "backgroundColor", "color", "font-size", "fontSize",
+    "padding", "border-radius", "borderRadius", "width", "height", "display",
+  ]
+
+  // Mirrors Canvas 1.0.2 single-element prompt formatting while supporting queued multi-select locally.
+  private static func elementLines(for element: ElementInspectorData) -> [String] {
+    var lines = [
+      "**Element**: \(element.outerHTML.isEmpty ? element.tagName.lowercased() : element.outerHTML)",
+      "**CSS Selector**: \(element.cssSelector)",
+    ]
+
+    let presentStyles = relevantStyles.compactMap { key -> String? in
+      guard let value = element.computedStyles[key], !value.isEmpty else { return nil }
+      return "  \(key): \(value)"
+    }
+    if !presentStyles.isEmpty {
+      lines.append("**Computed Styles**:")
+      lines.append(contentsOf: presentStyles)
+    }
+
+    return lines
   }
 }

@@ -195,6 +195,7 @@ Cmd+K (palette), Cmd+N (new session), Cmd+B (sidebar), Cmd+[/] (navigate session
 
 | Package | Purpose |
 |---|---|
+| Canvas | Web preview element inspection and prompt/context capture |
 | ClaudeCodeSDK | Claude Code CLI integration |
 | PierreDiffsSwift | Split-pane diff rendering |
 | SwiftTerm (local fork) | PTY terminal emulation |
