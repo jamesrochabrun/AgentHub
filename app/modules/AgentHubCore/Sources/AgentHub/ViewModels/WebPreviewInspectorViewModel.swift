@@ -5,8 +5,10 @@
 //  Source-backed inspector rail state for web preview editing.
 //
 
+import AppKit
 import Canvas
 import Foundation
+import SwiftUI
 
 @MainActor
 @Observable
@@ -177,7 +179,7 @@ final class WebPreviewInspectorViewModel {
 
   func editorValue(for property: WebPreviewStyleProperty) -> String {
     let value = displayedStyleValue(for: property)
-    guard let unit = detachedUnit(for: property),
+    guard let unit = Self.numericComponents(from: value)?.unit,
           let stripped = Self.stripUnit(unit, from: value) else {
       return value
     }
@@ -185,12 +187,24 @@ final class WebPreviewInspectorViewModel {
   }
 
   func detachedUnit(for property: WebPreviewStyleProperty) -> String? {
-    switch property {
-    case .width, .height, .top, .left, .fontSize, .lineHeight, .borderRadius:
-      return "px"
-    default:
-      return nil
+    if let detectedUnit = Self.numericComponents(from: displayedStyleValue(for: property))?.unit {
+      return detectedUnit
     }
+
+    let value = displayedStyleValue(for: property).trimmingCharacters(in: .whitespacesAndNewlines)
+    return value.isEmpty ? property.fallbackUnit : nil
+  }
+
+  func colorValue(for property: WebPreviewStyleProperty) -> Color {
+    if let parsedColor = Self.parseColor(from: resolvedColorValue(for: property)) {
+      return Color(nsColor: parsedColor)
+    }
+    return .clear
+  }
+
+  func updateColorValue(_ property: WebPreviewStyleProperty, color: Color) {
+    guard property.supportsColorPicking else { return }
+    updateStyleValue(property, value: Self.serializedColor(from: NSColor(color)))
   }
 
   func isEditable(_ property: WebPreviewStyleProperty) -> Bool {
@@ -340,7 +354,7 @@ final class WebPreviewInspectorViewModel {
 
   func updateStyleEditorValue(_ property: WebPreviewStyleProperty, value: String) {
     let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard let unit = detachedUnit(for: property) else {
+    guard let unit = preferredUnit(for: property) else {
       updateStyleValue(property, value: trimmedValue)
       return
     }
@@ -350,7 +364,7 @@ final class WebPreviewInspectorViewModel {
       return
     }
 
-    if trimmedValue.hasSuffix(unit) {
+    if Self.numericComponents(from: trimmedValue) != nil || !Self.isPlainNumericValue(trimmedValue) {
       updateStyleValue(property, value: trimmedValue)
       return
     }
@@ -515,15 +529,150 @@ final class WebPreviewInspectorViewModel {
     return nil
   }
 
-  private static func stripUnit(_ unit: String, from value: String) -> String? {
+  private func preferredUnit(for property: WebPreviewStyleProperty) -> String? {
+    Self.numericComponents(from: displayedStyleValue(for: property))?.unit ?? property.fallbackUnit
+  }
+
+  private func resolvedColorValue(for property: WebPreviewStyleProperty) -> String {
+    let currentValue = displayedStyleValue(for: property).trimmingCharacters(in: .whitespacesAndNewlines)
+    if !currentValue.isEmpty {
+      return currentValue
+    }
+
+    return liveProperties?.value(for: property)?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  }
+
+  private static func numericComponents(from value: String) -> (number: String, unit: String)? {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.lowercased().hasSuffix(unit.lowercased()) else { return nil }
-    let withoutUnit = trimmed.dropLast(unit.count).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !withoutUnit.isEmpty,
-          withoutUnit.range(of: #"^-?\d+(\.\d+)?$"#, options: .regularExpression) != nil else {
+    guard let unitStart = trimmed.firstIndex(where: { $0.isLetter || $0 == "%" }) else {
       return nil
     }
-    return withoutUnit
+
+    let number = trimmed[..<unitStart].trimmingCharacters(in: .whitespacesAndNewlines)
+    let unit = trimmed[unitStart...].trimmingCharacters(in: .whitespacesAndNewlines)
+    guard isPlainNumericValue(number),
+          !unit.isEmpty,
+          unit.allSatisfy({ $0.isLetter || $0 == "%" }) else {
+      return nil
+    }
+
+    return (number: number, unit: String(unit))
+  }
+
+  private static func isPlainNumericValue(_ value: String) -> Bool {
+    value.range(of: #"^-?\d+(\.\d+)?$"#, options: .regularExpression) != nil
+  }
+
+  private static func stripUnit(_ unit: String, from value: String) -> String? {
+    guard let components = numericComponents(from: value),
+          components.unit.compare(unit, options: .caseInsensitive) == .orderedSame else {
+      return nil
+    }
+    return components.number
+  }
+
+  private static func parseColor(from value: String) -> NSColor? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return nil }
+
+    if trimmed.caseInsensitiveCompare("transparent") == .orderedSame {
+      return .clear
+    }
+
+    if let hexColor = parseHexColor(from: trimmed) {
+      return hexColor
+    }
+
+    return parseRGBColor(from: trimmed)
+  }
+
+  private static func parseHexColor(from value: String) -> NSColor? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("#") else { return nil }
+
+    let rawHex = String(trimmed.dropFirst())
+    let expandedHex: String
+    switch rawHex.count {
+    case 3, 4:
+      expandedHex = rawHex.map { "\($0)\($0)" }.joined()
+    case 6, 8:
+      expandedHex = rawHex
+    default:
+      return nil
+    }
+
+    guard let hexValue = UInt64(expandedHex, radix: 16) else { return nil }
+
+    let r, g, b, a: UInt64
+    switch expandedHex.count {
+    case 6:
+      (r, g, b, a) = (
+        (hexValue >> 16) & 0xFF,
+        (hexValue >> 8) & 0xFF,
+        hexValue & 0xFF,
+        0xFF
+      )
+    case 8:
+      (r, g, b, a) = (
+        (hexValue >> 24) & 0xFF,
+        (hexValue >> 16) & 0xFF,
+        (hexValue >> 8) & 0xFF,
+        hexValue & 0xFF
+      )
+    default:
+      return nil
+    }
+
+    return NSColor(
+      srgbRed: CGFloat(r) / 255.0,
+      green: CGFloat(g) / 255.0,
+      blue: CGFloat(b) / 255.0,
+      alpha: CGFloat(a) / 255.0
+    )
+  }
+
+  private static func parseRGBColor(from value: String) -> NSColor? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    let lowercased = trimmed.lowercased()
+    guard lowercased.hasPrefix("rgb(") || lowercased.hasPrefix("rgba("),
+          let openParen = trimmed.firstIndex(of: "("),
+          let closeParen = trimmed.lastIndex(of: ")"),
+          openParen < closeParen else {
+      return nil
+    }
+
+    let rawComponents = trimmed[trimmed.index(after: openParen)..<closeParen]
+      .split(separator: ",")
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    guard rawComponents.count == 3 || rawComponents.count == 4,
+          let red = Double(rawComponents[0]),
+          let green = Double(rawComponents[1]),
+          let blue = Double(rawComponents[2]) else {
+      return nil
+    }
+
+    let alpha = rawComponents.count == 4 ? Double(rawComponents[3]) ?? 1.0 : 1.0
+    return NSColor(
+      srgbRed: CGFloat(max(0, min(255, red))) / 255.0,
+      green: CGFloat(max(0, min(255, green))) / 255.0,
+      blue: CGFloat(max(0, min(255, blue))) / 255.0,
+      alpha: CGFloat(max(0, min(1, alpha)))
+    )
+  }
+
+  private static func serializedColor(from color: NSColor) -> String {
+    let resolvedColor = color.usingColorSpace(.sRGB) ?? color
+    let red = Int(round(resolvedColor.redComponent * 255))
+    let green = Int(round(resolvedColor.greenComponent * 255))
+    let blue = Int(round(resolvedColor.blueComponent * 255))
+    let alpha = resolvedColor.alphaComponent
+
+    if alpha < 0.999 {
+      return String(format: "rgba(%d, %d, %d, %.2f)", red, green, blue, alpha)
+    }
+
+    return Color.hexString(from: resolvedColor)
   }
 
   private static func currentCSSDeclaration(

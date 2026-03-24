@@ -1,5 +1,6 @@
 import Canvas
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import AgentHubCore
@@ -409,6 +410,69 @@ struct WebPreviewInspectorViewModelTests {
     #expect(canEditContent)
     #expect(writes.count == 1)
     #expect(writes[0].content == "<button>Buy now</button>")
+  }
+
+  @Test("Font-size units stay detached and color picker writes CSS color values")
+  func fontSizeUnitsAndColorPickerWriteNormalizedStyles() async throws {
+    let filePath = "/project/styles/site.css"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: """
+      .cta {
+        font-size: 1.05rem;
+        background-color: rgb(12, 34, 56);
+      }
+      """
+    ])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-9",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(
+      element: makeElement(
+        selector: ".cta",
+        className: "cta",
+        textContent: "Launch",
+        computedStyles: [
+          "font-size": "1.05rem",
+          "background-color": "rgb(12, 34, 56)",
+        ]
+      ),
+      previewFilePath: filePath,
+      recentActivities: []
+    )
+
+    let fontSizeEditorValue = await MainActor.run { viewModel.editorValue(for: .fontSize) }
+    let fontSizeUnit = await MainActor.run { viewModel.detachedUnit(for: .fontSize) }
+
+    await MainActor.run {
+      viewModel.updateStyleEditorValue(.fontSize, value: "2")
+      viewModel.updateColorValue(.backgroundColor, color: Color(hex: "#224466"))
+    }
+    try await Task.sleep(for: .milliseconds(40))
+
+    let writes = await fileService.recordedWrites()
+
+    #expect(fontSizeEditorValue == "1.05")
+    #expect(fontSizeUnit == "rem")
+    #expect(writes.count == 1)
+    #expect(writes[0].content.contains("font-size: 2rem;"))
+    #expect(writes[0].content.contains("background-color: #224466;"))
   }
 
   @Test("Selected tab persists across element reselection while the rail stays open")
