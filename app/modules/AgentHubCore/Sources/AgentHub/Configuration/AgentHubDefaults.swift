@@ -141,6 +141,10 @@ public enum AgentHubDefaults {
   /// Type: Double (default: 240)
   public static let fileExplorerSidebarWidth = "\(keyPrefix)ui.fileExplorerSidebarWidth"
 
+  /// Width of the inner inspector rail inside WebPreviewView
+  /// Type: Double (default: 360)
+  public static let webPreviewInspectorWidth = "\(keyPrefix)ui.webPreviewInspectorWidth"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

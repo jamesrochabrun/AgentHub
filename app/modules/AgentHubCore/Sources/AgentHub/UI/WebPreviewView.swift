@@ -14,6 +14,7 @@ import Canvas
 private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   case input
   case context
+  case edit
 
   var id: String { rawValue }
 
@@ -21,6 +22,7 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
     switch self {
     case .input: return "square.and.pencil"
     case .context: return "square.and.arrow.up"
+    case .edit: return "slider.horizontal.3"
     }
   }
 
@@ -30,6 +32,8 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
       return "Select an element, then type an instruction before sending it to the agent."
     case .context:
       return "Queue selected elements in the preview to attach them to the next terminal message."
+    case .edit:
+      return "Select an element and edit its backing source file without sending anything to the terminal."
     }
   }
 
@@ -37,13 +41,23 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
     switch self {
     case .input: return "Instruction mode"
     case .context: return "Queued context mode"
+    case .edit: return "Source edit mode"
     }
   }
 
-  var inspectMode: InspectMode {
+  var modeName: String {
+    switch self {
+    case .input: return "inspect"
+    case .context: return "context"
+    case .edit: return "edit"
+    }
+  }
+
+  var canvasMode: InspectMode {
     switch self {
     case .input: return .input
     case .context: return .context
+    case .edit: return .input
     }
   }
 }
@@ -81,6 +95,7 @@ public struct WebPreviewView: View {
   @State private var handledCodeChangeActivityID: UUID?
   @State private var localhostPreviewStartedAt = Date()
   @State private var localhostReloadTask: Task<Void, Never>?
+  @State private var inspectorViewModel: WebPreviewInspectorViewModel
 
   /// Uses session ID as key for DevServerManager to support multiple sessions
   private var serverKey: String { session.id }
@@ -111,6 +126,12 @@ public struct WebPreviewView: View {
     self.viewModel = viewModel
     self.agentLocalhostURL = agentLocalhostURL
     self.monitorState = monitorState
+    self._inspectorViewModel = State(
+      initialValue: WebPreviewInspectorViewModel(
+        sessionID: session.id,
+        projectPath: projectPath
+      )
+    )
   }
 
   private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
@@ -119,6 +140,10 @@ public struct WebPreviewView: View {
 
   private var queuedContext: WebPreviewContextQueue {
     viewModel?.queuedWebPreviewContextStore.queue(for: session.id) ?? localContextQueue
+  }
+
+  private var showsInspectorRail: Bool {
+    inspectBehavior == .edit && inspectorViewModel.isPanelVisible
   }
 
   public var body: some View {
@@ -147,12 +172,20 @@ public struct WebPreviewView: View {
     }
     .onChange(of: inspectBehavior) { _, newBehavior in
       guard inspectState.isActive else { return }
-      inspectState.activate(mode: newBehavior.inspectMode)
+      inspectState.activate(mode: newBehavior.canvasMode)
+      Task {
+        await inspectorViewModel.flushPendingWriteIfNeeded()
+        if newBehavior != .edit {
+          await inspectorViewModel.closePanel()
+        }
+      }
     }
     .onChange(of: selectedFilePath) { _, newPath in
       if let path = newPath {
         let dir = URL(fileURLWithPath: path).deletingLastPathComponent().path
         fileWatcher.watch(directory: dir)
+      } else {
+        fileWatcher.stop()
       }
     }
     .onKeyPress(.escape) {
@@ -165,6 +198,9 @@ public struct WebPreviewView: View {
     }
     .onDisappear {
       deactivateInspector()
+      Task {
+        await inspectorViewModel.flushPendingWriteIfNeeded()
+      }
       localhostReloadTask?.cancel()
       fileWatcher.stop()
       if case .devServer = resolution {
@@ -370,7 +406,7 @@ public struct WebPreviewView: View {
           .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
       }
       .buttonStyle(.plain)
-      .help("\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior == .input ? "inspect" : "context") mode (Cmd+Shift+I)")
+      .help("\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior.modeName) mode (Cmd+Shift+I)")
 
       // Hidden keyboard shortcut
       Button("") {
@@ -391,6 +427,30 @@ public struct WebPreviewView: View {
 
   @ViewBuilder
   private var content: some View {
+    HStack(spacing: 0) {
+      previewContent
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+      if showsInspectorRail {
+        ResizablePanelContainer(
+          side: .trailing,
+          minWidth: 320,
+          maxWidth: 680,
+          defaultWidth: 360,
+          userDefaultsKey: AgentHubDefaults.webPreviewInspectorWidth
+        ) {
+          WebPreviewInspectorRail(
+            viewModel: inspectorViewModel,
+            onClose: closeEditRail
+          )
+        }
+      }
+    }
+    .animation(.easeInOut(duration: 0.25), value: showsInspectorRail)
+  }
+
+  @ViewBuilder
+  private var previewContent: some View {
     switch resolution {
     case .directFile(_, let projPath):
       if let filePath = selectedFilePath {
@@ -716,36 +776,67 @@ public struct WebPreviewView: View {
     reloadToken: UUID? = nil,
     onError: ((String) -> Void)? = nil
   ) -> some View {
-    InspectableWebView(
-      url: url,
-      isFileURL: isFileURL,
-      allowingReadAccessTo: allowingReadAccessTo,
-      onLoadingChange: { isLoading = $0 },
-      onURLChange: { loadedURL in
-        currentURL = loadedURL
-        if isExternalServer, loadedURL != nil {
-          hasLoadedExternalContent = true
-        }
-      },
-      onError: onError,
-      reloadToken: reloadToken,
-      onElementSelected: { data in inspectState.selectElement(data) },
-      isInspectModeActive: $inspectState.isActive,
-      selectedElementId: inspectState.selectedElement?.id
-    )
-    .webInspectorOverlay(
-      state: inspectState,
-      onSubmit: { element, instruction in
-        let prompt = ElementInspectorPromptBuilder.buildPrompt(
-          element: element,
-          instruction: instruction
+    Group {
+      if inspectBehavior == .edit {
+        InspectableWebView(
+          url: url,
+          isFileURL: isFileURL,
+          allowingReadAccessTo: allowingReadAccessTo,
+          onLoadingChange: { isLoading = $0 },
+          onURLChange: { loadedURL in
+            currentURL = loadedURL
+            if isExternalServer, loadedURL != nil {
+              hasLoadedExternalContent = true
+            }
+          },
+          onError: onError,
+          reloadToken: reloadToken,
+          onElementSelected: { data in
+            handleElementSelection(data)
+          },
+          isInspectModeActive: $inspectState.isActive,
+          selectedElementId: inspectState.selectedElement?.id
         )
-        onInspectSubmit?(prompt, session)
-      },
-      onContextSelection: { element in
-        handleContextSelection(element)
+        .overlay(alignment: .top) {
+          if inspectState.isActive {
+            editModeBanner
+          }
+        }
+      } else {
+        InspectableWebView(
+          url: url,
+          isFileURL: isFileURL,
+          allowingReadAccessTo: allowingReadAccessTo,
+          onLoadingChange: { isLoading = $0 },
+          onURLChange: { loadedURL in
+            currentURL = loadedURL
+            if isExternalServer, loadedURL != nil {
+              hasLoadedExternalContent = true
+            }
+          },
+          onError: onError,
+          reloadToken: reloadToken,
+          onElementSelected: { data in
+            handleElementSelection(data)
+          },
+          isInspectModeActive: $inspectState.isActive,
+          selectedElementId: inspectState.selectedElement?.id
+        )
+        .webInspectorOverlay(
+          state: inspectState,
+          onSubmit: { element, instruction in
+            let prompt = ElementInspectorPromptBuilder.buildPrompt(
+              element: element,
+              instruction: instruction
+            )
+            onInspectSubmit?(prompt, session)
+          },
+          onContextSelection: { element in
+            handleContextSelection(element)
+          }
+        )
       }
-    )
+    }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       if !queuedContext.isEmpty {
         WebPreviewQueuedContextView(
@@ -766,12 +857,36 @@ public struct WebPreviewView: View {
     if inspectState.isActive {
       deactivateInspector()
     } else {
-      inspectState.activate(mode: inspectBehavior.inspectMode)
+      inspectState.activate(mode: inspectBehavior.canvasMode)
     }
   }
 
   private func deactivateInspector() {
     inspectState.deactivate()
+    Task {
+      await inspectorViewModel.closePanel()
+    }
+  }
+
+  private func closeEditRail() {
+    inspectState.dismissInput()
+    Task {
+      await inspectorViewModel.closePanel()
+    }
+  }
+
+  private func handleElementSelection(_ element: ElementInspectorData) {
+    inspectState.selectElement(element)
+
+    guard inspectBehavior == .edit else { return }
+
+    Task {
+      await inspectorViewModel.inspect(
+        element: element,
+        previewFilePath: selectedFilePath,
+        recentActivities: monitorState?.recentActivities ?? []
+      )
+    }
   }
 
   private func handleContextSelection(_ element: ElementInspectorData) {
@@ -796,6 +911,37 @@ public struct WebPreviewView: View {
     } else {
       localContextQueue.remove(id: elementID)
     }
+  }
+
+  private var editModeBanner: some View {
+    HStack(spacing: 6) {
+      Image(systemName: "slider.horizontal.3")
+        .font(.system(size: 12))
+        .foregroundColor(.white)
+
+      Text(inspectorViewModel.isResolving ? "Edit Mode — mapping source" : "Edit Mode — click any element to edit")
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundColor(.white)
+
+      Spacer()
+
+      Button {
+        inspectState.deactivate()
+        Task {
+          await inspectorViewModel.closePanel()
+        }
+      } label: {
+        Image(systemName: "xmark")
+          .font(.system(size: 10))
+          .foregroundColor(.white.opacity(0.8))
+      }
+      .buttonStyle(.plain)
+      .help("Exit inspect mode (Esc)")
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 6)
+    .background(Color.accentColor.opacity(0.9))
+    .padding(12)
   }
 }
 
