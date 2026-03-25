@@ -130,7 +130,7 @@ struct GitHubPRDetailView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Color.accentColor.opacity(0.15))
-            .foregroundStyle(.accentColor)
+            .foregroundStyle(Color.accentColor)
             .clipShape(RoundedRectangle(cornerRadius: 5))
           }
           .buttonStyle(.plain)
@@ -717,7 +717,7 @@ struct GitHubPRDetailView: View {
       } label: {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 20))
-          .foregroundStyle(viewModel.newCommentText.isEmpty ? .secondary : .accentColor)
+          .foregroundStyle(viewModel.newCommentText.isEmpty ? Color.secondary : Color.accentColor)
       }
       .buttonStyle(.plain)
       .disabled(viewModel.newCommentText.isEmpty || viewModel.isSubmittingComment)
