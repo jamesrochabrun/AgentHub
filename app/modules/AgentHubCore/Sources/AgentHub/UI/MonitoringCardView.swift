@@ -596,11 +596,13 @@ public struct MonitoringCardView: View {
         .buttonStyle(.agentHubOutlined)
         .help("Browse Files (⇧⌘P to search)")
 
-        // Web preview button (only visible for web projects)
+        // Web preview button — visible when the project looks like a web project
+        // or the agent has already detected a running localhost server
         let framework = ProjectFramework.detect(at: session.projectPath)
         if framework.requiresDevServer
             || framework == .unknown
-            || FileManager.default.fileExists(atPath: "\(session.projectPath)/index.html") {
+            || state?.detectedLocalhostURL != nil
+            || WebPreviewResolver.hasAnyHTMLFile(at: session.projectPath) {
           Button(action: presentWebPreview) {
             HStack(spacing: 4) {
               Image(systemName: "globe")
