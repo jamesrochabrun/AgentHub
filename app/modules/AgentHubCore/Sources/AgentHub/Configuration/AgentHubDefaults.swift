@@ -133,6 +133,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let fileExplorerAlwaysModal = "\(keyPrefix)features.fileExplorerAlwaysModal"
 
+  /// Whether the skills/slash-command picker is enabled in the prompt editor
+  /// Type: Bool (default: false)
+  public static let skillsPickerEnabled = "\(keyPrefix)features.skillsPickerEnabled"
+
   /// Width of the side panel (diff, plan, web preview, file explorer) in the single-session layout
   /// Type: Double (default: 700)
   public static let sidePanelWidth = "\(keyPrefix)ui.sidePanelWidth"
