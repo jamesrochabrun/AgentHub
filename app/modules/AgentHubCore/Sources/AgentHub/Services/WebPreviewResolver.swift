@@ -137,7 +137,7 @@ enum WebPreviewResolver {
 
       var candidates: [(path: String, depth: Int)] = []
 
-      for case let fileURL as URL in enumerator {
+      while let fileURL = enumerator.nextObject() as? URL {
         // Skip excluded directories
         let isDir = (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
         if isDir && skipDirs.contains(fileURL.lastPathComponent) {

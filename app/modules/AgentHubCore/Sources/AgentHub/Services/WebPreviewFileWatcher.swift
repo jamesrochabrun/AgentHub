@@ -14,10 +14,9 @@ final class WebPreviewFileWatcher {
 
   var reloadToken = UUID()
 
-  // nonisolated(unsafe) allows deinit to cancel/cleanup from a nonisolated context
-  private nonisolated(unsafe) var source: DispatchSourceFileSystemObject?
+  private var source: DispatchSourceFileSystemObject?
   private var fileDescriptor: Int32 = -1
-  private nonisolated(unsafe) var debounceWorkItem: DispatchWorkItem?
+  private var debounceWorkItem: DispatchWorkItem?
 
   func watch(directory: String) {
     stop()
@@ -57,9 +56,11 @@ final class WebPreviewFileWatcher {
   }
 
   deinit {
-    debounceWorkItem?.cancel()
-    source?.cancel()
-    // fd is closed by the cancel handler
+    MainActor.assumeIsolated {
+      debounceWorkItem?.cancel()
+      source?.cancel()
+      // fd is closed by the cancel handler
+    }
   }
 
   // MARK: - Private
