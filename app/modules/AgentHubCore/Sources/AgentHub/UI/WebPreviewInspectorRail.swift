@@ -9,6 +9,8 @@ import SwiftUI
 
 struct WebPreviewInspectorRail: View {
   @Bindable var viewModel: WebPreviewInspectorViewModel
+  let updateState: WebPreviewUpdateState
+  let onUpdate: () -> Void
   let onClose: () -> Void
 
   var body: some View {
@@ -45,6 +47,14 @@ struct WebPreviewInspectorRail: View {
       }
     }
     .background(Color(NSColor.windowBackgroundColor))
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if updateState.isVisible {
+        WebPreviewUpdateBar(
+          state: updateState,
+          onUpdate: onUpdate
+        )
+      }
+    }
   }
 
   private var header: some View {
@@ -122,6 +132,7 @@ struct WebPreviewInspectorRail: View {
               RoundedRectangle(cornerRadius: 8)
                 .fill(viewModel.selectedTab == tab ? Color.primary.opacity(0.08) : Color.clear)
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
       }
@@ -365,23 +376,7 @@ struct WebPreviewInspectorRail: View {
       Spacer()
 
       if viewModel.isEditable(property) {
-        HStack(spacing: 6) {
-          TextField(
-            title,
-            text: styleBinding(for: property)
-          )
-          .textFieldStyle(.roundedBorder)
-          .font(.system(size: 12, design: .monospaced))
-          .multilineTextAlignment(.trailing)
-          .frame(maxWidth: 92)
-
-          if let unit = viewModel.detachedUnit(for: property) {
-            Text(unit)
-              .font(.system(size: 12, design: .monospaced))
-              .foregroundStyle(.secondary)
-              .frame(width: 20, alignment: .leading)
-          }
-        }
+        editableControl(title: title, property: property)
       } else {
         Text(value.isEmpty ? "—" : value)
           .font(.system(size: 12, design: .monospaced))
@@ -408,6 +403,40 @@ struct WebPreviewInspectorRail: View {
     Binding(
       get: { viewModel.editorValue(for: property) },
       set: { viewModel.updateStyleEditorValue(property, value: $0) }
+    )
+  }
+
+  @ViewBuilder
+  private func editableControl(title: String, property: WebPreviewStyleProperty) -> some View {
+    HStack(spacing: 8) {
+      if property.supportsColorPicking {
+        ColorPicker("", selection: colorBinding(for: property), supportsOpacity: true)
+          .labelsHidden()
+          .frame(width: 28)
+      }
+
+      TextField(
+        title,
+        text: styleBinding(for: property)
+      )
+      .textFieldStyle(.roundedBorder)
+      .font(.system(size: 12, design: .monospaced))
+      .multilineTextAlignment(property.supportsColorPicking ? .leading : .trailing)
+      .frame(maxWidth: property.supportsColorPicking ? 132 : 92)
+
+      if let unit = viewModel.detachedUnit(for: property) {
+        Text(unit)
+          .font(.system(size: 12, design: .monospaced))
+          .foregroundStyle(.secondary)
+          .frame(minWidth: 24, alignment: .leading)
+      }
+    }
+  }
+
+  private func colorBinding(for property: WebPreviewStyleProperty) -> Binding<Color> {
+    Binding(
+      get: { viewModel.colorValue(for: property) },
+      set: { viewModel.updateColorValue(property, color: $0) }
     )
   }
 

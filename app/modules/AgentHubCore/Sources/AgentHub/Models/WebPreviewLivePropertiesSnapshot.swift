@@ -93,6 +93,153 @@ struct WebPreviewLivePropertiesSnapshot: Equatable, Sendable {
     }
   }
 
+  func applyingStyleValue(_ value: String, for property: WebPreviewStyleProperty) -> WebPreviewLivePropertiesSnapshot {
+    switch property {
+    case .textColor:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: height,
+        top: top,
+        left: left,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: fontWeight,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+        textColor: value,
+        backgroundColor: backgroundColor
+      )
+    case .backgroundColor:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: height,
+        top: top,
+        left: left,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: fontWeight,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+        textColor: textColor,
+        backgroundColor: value
+      )
+    case .fontFamily:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: height,
+        top: top,
+        left: left,
+        content: content,
+        fontFamily: value,
+        fontWeight: fontWeight,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+        textColor: textColor,
+        backgroundColor: backgroundColor
+      )
+    case .fontSize:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: height,
+        top: top,
+        left: left,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: fontWeight,
+        fontSize: value,
+        lineHeight: lineHeight,
+        textColor: textColor,
+        backgroundColor: backgroundColor
+      )
+    case .fontWeight:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: height,
+        top: top,
+        left: left,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: value,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+        textColor: textColor,
+        backgroundColor: backgroundColor
+      )
+    case .lineHeight:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: height,
+        top: top,
+        left: left,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: fontWeight,
+        fontSize: fontSize,
+        lineHeight: value,
+        textColor: textColor,
+        backgroundColor: backgroundColor
+      )
+    case .width:
+      return WebPreviewLivePropertiesSnapshot(
+        width: value,
+        height: height,
+        top: top,
+        left: left,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: fontWeight,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+        textColor: textColor,
+        backgroundColor: backgroundColor
+      )
+    case .height:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: value,
+        top: top,
+        left: left,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: fontWeight,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+        textColor: textColor,
+        backgroundColor: backgroundColor
+      )
+    case .top:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: height,
+        top: value,
+        left: left,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: fontWeight,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+        textColor: textColor,
+        backgroundColor: backgroundColor
+      )
+    case .left:
+      return WebPreviewLivePropertiesSnapshot(
+        width: width,
+        height: height,
+        top: top,
+        left: value,
+        content: content,
+        fontFamily: fontFamily,
+        fontWeight: fontWeight,
+        fontSize: fontSize,
+        lineHeight: lineHeight,
+        textColor: textColor,
+        backgroundColor: backgroundColor
+      )
+    case .padding, .borderRadius:
+      return self
+    }
+  }
+
   private static func styleValue(in styles: [String: String], keys: [String]) -> String? {
     for key in keys {
       if let value = styles[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {

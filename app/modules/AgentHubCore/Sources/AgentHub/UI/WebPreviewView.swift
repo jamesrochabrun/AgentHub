@@ -82,7 +82,6 @@ public struct WebPreviewView: View {
   var monitorState: SessionMonitorState?
 
   @State private var isLoading: Bool = false
-  @State private var currentURL: URL?
   @State private var resolution: WebPreviewResolution?
   @State private var selectedFilePath: String?
   @State private var webRenderableFiles: [GitDiffFileEntry] = []
@@ -91,6 +90,7 @@ public struct WebPreviewView: View {
   @State private var inspectBehavior: WebPreviewInspectBehavior = .input
   @State private var localContextQueue = WebPreviewContextQueue()
   @State private var hasLoadedExternalContent = false
+  @State private var manualReloadToken = UUID()
   @State private var localhostReloadToken: UUID?
   @State private var handledCodeChangeActivityID: UUID?
   @State private var localhostPreviewStartedAt = Date()
@@ -134,16 +134,35 @@ public struct WebPreviewView: View {
     )
   }
 
-  private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
-    WebPreviewLocalhostReloadSignal.latest(from: monitorState)
-  }
-
   private var queuedContext: WebPreviewContextQueue {
     viewModel?.queuedWebPreviewContextStore.queue(for: session.id) ?? localContextQueue
   }
 
   private var showsInspectorRail: Bool {
     inspectBehavior == .edit && inspectorViewModel.isPanelVisible
+  }
+
+  private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
+    WebPreviewLocalhostReloadSignal.latest(from: monitorState)
+  }
+
+  private var updateState: WebPreviewUpdateState {
+    WebPreviewUpdateState.resolve(
+      resolution: resolution,
+      serverState: serverState,
+      isEditMode: inspectBehavior == .edit
+    )
+  }
+
+  private var activeReloadToken: UUID? {
+    switch resolution {
+    case .directFile:
+      return inspectBehavior == .edit ? manualReloadToken : fileWatcher.reloadToken
+    case .devServer:
+      return inspectBehavior == .edit ? manualReloadToken : localhostReloadToken
+    case .noContent, nil:
+      return nil
+    }
   }
 
   public var body: some View {
@@ -323,17 +342,6 @@ public struct WebPreviewView: View {
   private var headerControls: some View {
     HStack(spacing: 12) {
       switch resolution {
-      case .directFile:
-        // Reload button for file:// preview
-        Button(action: {
-          fileWatcher.reloadToken = UUID()
-        }) {
-          Image(systemName: "arrow.clockwise")
-            .font(.system(size: 12, weight: .medium))
-        }
-        .buttonStyle(.plain)
-        .help("Reload file")
-
       case .devServer:
         // Only show server control buttons for servers we manage (not the agent's)
         if !isExternalServer {
@@ -416,6 +424,16 @@ public struct WebPreviewView: View {
       .hidden()
       .frame(width: 0, height: 0)
 
+      if showsInspectorRail {
+        Button("") {
+          handleManualUpdate()
+        }
+        .keyboardShortcut(.return, modifiers: .command)
+        .disabled(!updateState.isEnabled)
+        .hidden()
+        .frame(width: 0, height: 0)
+      }
+
       Button("Close") {
         onDismiss()
       }
@@ -441,12 +459,20 @@ public struct WebPreviewView: View {
         ) {
           WebPreviewInspectorRail(
             viewModel: inspectorViewModel,
+            updateState: updateState,
+            onUpdate: handleManualUpdate,
             onClose: closeEditRail
           )
         }
       }
     }
     .animation(.easeInOut(duration: 0.25), value: showsInspectorRail)
+    .safeAreaInset(edge: .bottom, spacing: 0) {
+      if !queuedContext.isEmpty {
+        bottomBarContent
+      }
+    }
+    .animation(.easeInOut(duration: 0.2), value: queuedContext.isEmpty)
   }
 
   @ViewBuilder
@@ -458,7 +484,7 @@ public struct WebPreviewView: View {
           url: URL(fileURLWithPath: filePath),
           isFileURL: true,
           allowingReadAccessTo: URL(fileURLWithPath: projPath),
-          reloadToken: fileWatcher.reloadToken
+          reloadToken: activeReloadToken
         )
       }
 
@@ -484,7 +510,7 @@ public struct WebPreviewView: View {
       inspectablePreview(
         url: url,
         isFileURL: false,
-        reloadToken: localhostReloadToken,
+        reloadToken: activeReloadToken,
         onError: isExternalServer ? { error in
           handleExternalServerLoadFailure(error: error, failedURL: url)
         } : nil
@@ -784,7 +810,6 @@ public struct WebPreviewView: View {
           allowingReadAccessTo: allowingReadAccessTo,
           onLoadingChange: { isLoading = $0 },
           onURLChange: { loadedURL in
-            currentURL = loadedURL
             if isExternalServer, loadedURL != nil {
               hasLoadedExternalContent = true
             }
@@ -809,7 +834,6 @@ public struct WebPreviewView: View {
           allowingReadAccessTo: allowingReadAccessTo,
           onLoadingChange: { isLoading = $0 },
           onURLChange: { loadedURL in
-            currentURL = loadedURL
             if isExternalServer, loadedURL != nil {
               hasLoadedExternalContent = true
             }
@@ -837,20 +861,31 @@ public struct WebPreviewView: View {
         )
       }
     }
-    .safeAreaInset(edge: .bottom, spacing: 0) {
-      if !queuedContext.isEmpty {
-        WebPreviewQueuedContextView(
-          queuedElements: queuedContext.elements,
-          isSelectingContext: inspectState.isActive && inspectBehavior == .context,
-          onRemoveElement: removeQueuedContextElement,
-          onClearAll: clearQueuedContext
-        )
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
-        .transition(.opacity.combined(with: .move(edge: .bottom)))
-      }
+  }
+
+  private var bottomBarContent: some View {
+    WebPreviewQueuedContextView(
+      queuedElements: queuedContext.elements,
+      isSelectingContext: inspectState.isActive && inspectBehavior == .context,
+      onRemoveElement: removeQueuedContextElement,
+      onClearAll: clearQueuedContext
+    )
+    .transition(.opacity.combined(with: .move(edge: .bottom)))
+    .padding(.horizontal, 12)
+    .padding(.vertical, 12)
+  }
+
+  private func handleManualUpdate() {
+    Task {
+      await updateState.performUpdate(
+        flushPendingWrites: {
+          await inspectorViewModel.flushPendingWriteIfNeeded()
+        },
+        reload: {
+          manualReloadToken = UUID()
+        }
+      )
     }
-    .animation(.easeInOut(duration: 0.2), value: queuedContext.isEmpty)
   }
 
   private func toggleInspector() {

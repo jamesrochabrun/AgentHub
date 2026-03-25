@@ -95,6 +95,24 @@ enum WebPreviewStyleProperty: String, CaseIterable, Hashable, Sendable {
     case .left: .left
     }
   }
+
+  var fallbackUnit: String? {
+    switch self {
+    case .fontSize, .lineHeight, .borderRadius, .width, .height, .top, .left:
+      "px"
+    default:
+      nil
+    }
+  }
+
+  var supportsColorPicking: Bool {
+    switch self {
+    case .textColor, .backgroundColor:
+      true
+    default:
+      false
+    }
+  }
 }
 
 // MARK: - WebPreviewSourceMatchRange
