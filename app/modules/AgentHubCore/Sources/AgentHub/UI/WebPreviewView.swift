@@ -91,7 +91,6 @@ public struct WebPreviewView: View {
   @State private var localContextQueue = WebPreviewContextQueue()
   @State private var hasLoadedExternalContent = false
   @State private var manualReloadToken = UUID()
-  @State private var colorReloadTask: Task<Void, Never>?
   @State private var localhostReloadToken: UUID?
   @State private var handledCodeChangeActivityID: UUID?
   @State private var localhostPreviewStartedAt = Date()
@@ -196,7 +195,6 @@ public struct WebPreviewView: View {
       Task {
         await inspectorViewModel.flushPendingWriteIfNeeded()
         if newBehavior != .edit {
-          colorReloadTask?.cancel()
           await inspectorViewModel.closePanel()
         }
       }
@@ -222,7 +220,6 @@ public struct WebPreviewView: View {
       Task {
         await inspectorViewModel.flushPendingWriteIfNeeded()
       }
-      colorReloadTask?.cancel()
       localhostReloadTask?.cancel()
       fileWatcher.stop()
       if case .devServer = resolution {
@@ -464,7 +461,6 @@ public struct WebPreviewView: View {
             viewModel: inspectorViewModel,
             updateState: updateState,
             onUpdate: handleManualUpdate,
-            onColorChange: scheduleColorReload,
             onClose: closeEditRail
           )
         }
@@ -880,24 +876,7 @@ public struct WebPreviewView: View {
   }
 
   private func handleManualUpdate() {
-    colorReloadTask?.cancel()
     Task {
-      await updateState.performUpdate(
-        flushPendingWrites: {
-          await inspectorViewModel.flushPendingWriteIfNeeded()
-        },
-        reload: {
-          manualReloadToken = UUID()
-        }
-      )
-    }
-  }
-
-  private func scheduleColorReload() {
-    colorReloadTask?.cancel()
-    colorReloadTask = Task { @MainActor in
-      try? await Task.sleep(for: .milliseconds(180))
-      guard !Task.isCancelled else { return }
       await updateState.performUpdate(
         flushPendingWrites: {
           await inspectorViewModel.flushPendingWriteIfNeeded()
