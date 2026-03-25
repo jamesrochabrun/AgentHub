@@ -70,6 +70,22 @@ enum WebPreviewResolver {
     return .noContent(reason: "No web-renderable files found in this project.")
   }
 
+  /// Quick synchronous check for common HTML entry points.
+  /// Uses only fileExists (stat syscall) — no directory listing — so it's safe to call from view bodies.
+  static func hasAnyHTMLFile(at projectPath: String) -> Bool {
+    let fm = FileManager.default
+    let candidates = [
+      "\(projectPath)/index.html",
+      "\(projectPath)/public/index.html",
+      "\(projectPath)/static/index.html",
+      "\(projectPath)/src/index.html",
+      "\(projectPath)/dist/index.html",
+      "\(projectPath)/build/index.html",
+      "\(projectPath)/www/index.html",
+    ]
+    return candidates.contains(where: { fm.fileExists(atPath: $0) })
+  }
+
   private static func findRootIndexHTML(at projectPath: String) -> String? {
     let indexPath = "\(projectPath)/index.html"
     if FileManager.default.fileExists(atPath: indexPath) {

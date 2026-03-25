@@ -86,3 +86,100 @@ struct WebPreviewResolverTests {
     #expect(staticResolution == .noContent(reason: "No web-renderable files found in this project."))
   }
 }
+
+// MARK: - hasAnyHTMLFile
+
+@Suite("WebPreviewResolver.hasAnyHTMLFile")
+struct WebPreviewResolverHasAnyHTMLFileTests {
+
+  @Test("Returns true for root index.html")
+  func rootIndexHTML() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("index.html", content: "<html></html>")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == true)
+  }
+
+  @Test("Returns true for public/index.html")
+  func publicIndexHTML() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("public/index.html", content: "<html></html>")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == true)
+  }
+
+  @Test("Returns true for static/index.html")
+  func staticIndexHTML() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("static/index.html", content: "<html></html>")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == true)
+  }
+
+  @Test("Returns true for dist/index.html")
+  func distIndexHTML() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("dist/index.html", content: "<html></html>")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == true)
+  }
+
+  @Test("Returns true for build/index.html")
+  func buildIndexHTML() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("build/index.html", content: "<html></html>")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == true)
+  }
+
+  @Test("Returns true for www/index.html")
+  func wwwIndexHTML() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("www/index.html", content: "<html></html>")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == true)
+  }
+
+  @Test("Returns true for src/index.html")
+  func srcIndexHTML() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("src/index.html", content: "<html></html>")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == true)
+  }
+
+  @Test("Returns false when no HTML files exist")
+  func noHTMLFiles() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("README.md", content: "# Hello")
+    try fixture.write("src/app.js", content: "console.log('hi')")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == false)
+  }
+
+  @Test("Returns false for HTML in unchecked subdirectory")
+  func htmlInDeepSubdirectory() throws {
+    let fixture = try WebPreviewFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("docs/guide/index.html", content: "<html></html>")
+
+    #expect(WebPreviewResolver.hasAnyHTMLFile(at: fixture.root.path) == false)
+  }
+}
