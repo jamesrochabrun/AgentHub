@@ -602,21 +602,21 @@ struct GitHubPRRow: View {
   }
 
   private var prStateColor: Color {
-    switch pr.state.uppercased() {
-    case "OPEN": return pr.isDraft ? .secondary : .green
-    case "CLOSED": return .red
-    case "MERGED": return .purple
-    default: return .secondary
+    switch pr.stateKind {
+    case .open: return pr.isDraft ? .secondary : .green
+    case .closed: return .red
+    case .merged: return .purple
+    case .unknown: return .secondary
     }
   }
 
   private func reviewBadge(_ decision: String) -> some View {
     let (icon, color): (String, Color) = {
-      switch decision.uppercased() {
-      case "APPROVED": return ("checkmark.circle.fill", .green)
-      case "CHANGES_REQUESTED": return ("exclamationmark.circle.fill", .orange)
-      case "REVIEW_REQUIRED": return ("eye.circle", .secondary)
-      default: return ("minus.circle", .secondary)
+      switch GitHubReviewDecisionState(rawValue: decision) {
+      case .approved: return ("checkmark.circle.fill", .green)
+      case .changesRequested: return ("exclamationmark.circle.fill", .orange)
+      case .reviewRequired: return ("eye.circle", .secondary)
+      case .unknown: return ("minus.circle", .secondary)
       }
     }()
 
@@ -659,7 +659,7 @@ struct GitHubIssueRow: View {
       HStack(spacing: 10) {
         Image(systemName: issue.stateIcon)
           .font(.system(size: 13))
-          .foregroundStyle(issue.state.uppercased() == "OPEN" ? .green : .purple)
+          .foregroundStyle(issueStateColor)
           .frame(width: 20)
 
         VStack(alignment: .leading, spacing: 2) {
@@ -724,6 +724,14 @@ struct GitHubIssueRow: View {
     }
     .buttonStyle(.plain)
   }
+
+  private var issueStateColor: Color {
+    switch issue.stateKind {
+    case .open: return .green
+    case .closed: return .purple
+    case .unknown: return .secondary
+    }
+  }
 }
 
 // MARK: - Helpers
@@ -738,4 +746,3 @@ func relativeTime(_ date: Date) -> String {
   formatter.dateStyle = .short
   return formatter.string(from: date)
 }
-

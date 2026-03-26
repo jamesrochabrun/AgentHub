@@ -31,13 +31,19 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
 
   var isInstalledResult = true
   var isAuthenticatedResult = true
+  var isInstalledCallCount = 0
+  var isAuthenticatedCallCount = 0
+  var lastAuthenticatedRepoPath: String?
 
   func isInstalled() async -> Bool {
-    isInstalledResult
+    isInstalledCallCount += 1
+    return isInstalledResult
   }
 
   func isAuthenticated(at repoPath: String) async -> Bool {
-    isAuthenticatedResult
+    isAuthenticatedCallCount += 1
+    lastAuthenticatedRepoPath = repoPath
+    return isAuthenticatedResult
   }
 
   // MARK: - Repository Info
@@ -85,9 +91,13 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
 
   var currentBranchPRResult: GitHubPullRequest?
   var getCurrentBranchPRCalled = false
+  var getCurrentBranchPRCallCount = 0
+  var getCurrentBranchPRRepoPath: String?
 
   func getCurrentBranchPR(at repoPath: String) async throws -> GitHubPullRequest? {
     getCurrentBranchPRCalled = true
+    getCurrentBranchPRCallCount += 1
+    getCurrentBranchPRRepoPath = repoPath
     if let error = errorToThrow { throw error }
     return currentBranchPRResult
   }
@@ -239,6 +249,9 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
 
   /// Resets all recorded call state (but keeps configured results)
   func resetCalls() {
+    isInstalledCallCount = 0
+    isAuthenticatedCallCount = 0
+    lastAuthenticatedRepoPath = nil
     getRepoInfoCalled = false
     listPullRequestsCalled = false
     listPullRequestsState = nil
@@ -246,6 +259,8 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     getPullRequestCalled = false
     getPullRequestNumber = nil
     getCurrentBranchPRCalled = false
+    getCurrentBranchPRCallCount = 0
+    getCurrentBranchPRRepoPath = nil
     getPullRequestDiffCalled = false
     getPullRequestFilesCalled = false
     getPullRequestReviewCommentsCalled = false

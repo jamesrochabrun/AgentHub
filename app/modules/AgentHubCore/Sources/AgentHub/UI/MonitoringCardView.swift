@@ -105,6 +105,7 @@ public struct MonitoringCardView: View {
   @State private var simulatorSheetSession: CLISession?
   @State private var fileExplorerSheetItem: FileExplorerSheetItem?
   @State private var gitHubSheetItem: GitHubSheetItem?
+  @State private var sessionGitHubQuickAccessViewModel = SessionGitHubQuickAccessViewModel()
   @State private var isDragging = false
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
@@ -191,6 +192,14 @@ public struct MonitoringCardView: View {
     viewModel?.queuedWebPreviewContextStore.count(for: session.id) ?? 0
   }
 
+  private var resourceLinks: [ResourceLink] {
+    state?.detectedResourceLinks ?? []
+  }
+
+  private var shouldShowResourcesPanel: Bool {
+    !resourceLinks.isEmpty || sessionGitHubQuickAccessViewModel.currentBranchPR != nil
+  }
+
   public var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions
@@ -200,19 +209,22 @@ public struct MonitoringCardView: View {
 
       Divider()
 
-      // Path row with folder, branch, and diff button
+      // Path row with repo path, branch, and GitHub button
       pathRow
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .padding(.vertical, 3)
 
       // Terminal content
       Divider()
 
       monitorContent
 
-      // Resource links panel (shown when URLs are detected in session responses)
-      if let links = state?.detectedResourceLinks, !links.isEmpty {
-        ResourceLinksPanel(links: links, providerKind: providerKind)
+      if shouldShowResourcesPanel {
+        ResourceLinksPanel(
+          links: resourceLinks,
+          providerKind: providerKind,
+          currentPullRequest: sessionGitHubQuickAccessViewModel.currentBranchPR
+        )
       }
     }
     .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
@@ -231,6 +243,12 @@ public struct MonitoringCardView: View {
       radius: isDragging ? 12 : 0
     )
     .animation(.easeInOut(duration: 0.2), value: isDragging)
+    .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
+      await sessionGitHubQuickAccessViewModel.load(
+        projectPath: session.projectPath,
+        branchName: session.branchName
+      )
+    }
     .onDrop(
       of: [.fileURL, .png, .tiff, .image, .pdf],
       isTargeted: $isDragging
@@ -491,6 +509,13 @@ public struct MonitoringCardView: View {
     }
   }
 
+  private func presentGitHubPanel() {
+    gitHubSheetItem = GitHubSheetItem(
+      session: session,
+      projectPath: session.projectPath
+    )
+  }
+
   // MARK: - Header
 
   private var header: some View {
@@ -598,21 +623,6 @@ public struct MonitoringCardView: View {
         }
         .buttonStyle(.agentHubOutlined)
         .help("View git unstaged changes")
-
-        Button(action: {
-          gitHubSheetItem = GitHubSheetItem(
-            session: session,
-            projectPath: session.projectPath
-          )
-        }) {
-          HStack(spacing: 4) {
-            Image(systemName: "arrow.triangle.pull")
-              .font(.caption2)
-            Text("GitHub")
-          }
-        }
-        .buttonStyle(.agentHubOutlined)
-        .help("View GitHub PRs, issues, and CI status")
 
         // Files button
         Button(action: {
@@ -730,7 +740,7 @@ public struct MonitoringCardView: View {
           onConnect()
           showingActionsPopover = false
         }
-      }
+      } 
       PopoverButton(icon: "pencil", title: "Name Session") {
         showingActionsPopover = false
         showingNameSheet = true
@@ -763,11 +773,11 @@ public struct MonitoringCardView: View {
       HStack(spacing: 4) {
         Image(systemName: "folder")
           .font(.caption)
-          .foregroundColor(.secondary)
+          .foregroundStyle(.secondary)
 
         Text(session.projectPath)
           .font(.primaryCaption)
-          .foregroundColor(.secondary)
+          .foregroundStyle(.secondary)
           .lineLimit(1)
           .truncationMode(.middle)
       }
@@ -777,11 +787,16 @@ public struct MonitoringCardView: View {
       if let branch = session.branchName {
         Text(branch)
           .font(.primaryCaption)
-          .foregroundColor(.brandPrimary(for: providerKind))
+          .foregroundStyle(Color.brandPrimary(for: providerKind))
           .lineLimit(1)
           .layoutPriority(1)
       }
+
+      Spacer(minLength: 8)
+
+      ProjectPathGitHubButton(action: presentGitHubPanel)
     }
+    .frame(minHeight: 24)
   }
 
   // MARK: - Monitor Content

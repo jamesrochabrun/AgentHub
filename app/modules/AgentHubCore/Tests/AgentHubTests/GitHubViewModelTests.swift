@@ -79,12 +79,14 @@ private func makeRepoInfo() -> GitHubRepoInfo {
 private func makeCheck(
   name: String = "CI",
   status: String = "COMPLETED",
-  conclusion: String? = "SUCCESS"
+  conclusion: String? = "SUCCESS",
+  bucket: String? = nil
 ) -> GitHubCheckRun {
   GitHubCheckRun(
     name: name,
     status: status,
     conclusion: conclusion,
+    bucket: bucket,
     detailsUrl: nil
   )
 }
@@ -402,6 +404,7 @@ struct GitHubViewModelChecksTests {
     await vm.loadChecks(prNumber: 5)
 
     #expect(vm.checks.count == 2)
+    #expect(vm.loadedChecksPRNumber == 5)
     #expect(vm.checksLoadingState == .loaded)
     #expect(mock.getChecksCalled == true)
     #expect(mock.getChecksPRNumber == 5)
@@ -419,6 +422,7 @@ struct GitHubViewModelChecksTests {
     await vm.loadChecks()
 
     #expect(vm.checks.isEmpty)
+    #expect(vm.loadedChecksPRNumber == nil)
     #expect(vm.checksLoadingState == .error("GitHub CLI command timed out"))
   }
 }
@@ -435,27 +439,35 @@ struct GitHubViewModelNavigationTests {
     mock.repoInfoResult = makeRepoInfo()
     mock.pullRequestResult = makePR(number: 1)
     mock.pullRequestDiffResult = ""
+    mock.checksResult = [makeCheck()]
     let vm = GitHubViewModel(service: mock)
     await vm.setup(repoPath: "/tmp/repo")
 
     let pr = makePR(number: 1, title: "Selected")
+    await vm.loadChecks(prNumber: 99)
     vm.selectPR(pr)
 
     #expect(vm.selectedPR?.number == 1)
     #expect(vm.selectedPRFiles.isEmpty)
     #expect(vm.selectedPRDiff == "")
     #expect(vm.selectedPRReviewComments.isEmpty)
+    #expect(vm.checks.isEmpty)
+    #expect(vm.loadedChecksPRNumber == nil)
   }
 
   @Test("deselectPR clears all PR detail state")
   @MainActor
   func deselectPR() async {
     let mock = MockGitHubCLIService()
+    mock.repoInfoResult = makeRepoInfo()
+    mock.checksResult = [makeCheck()]
     let vm = GitHubViewModel(service: mock)
+    await vm.setup(repoPath: "/tmp/repo")
 
     vm.selectedPR = makePR(number: 1)
     vm.selectedPRDiff = "some diff"
     vm.selectedPRFiles = [GitHubPRFile(filename: "a.swift", status: "modified", additions: 1, deletions: 0, patch: nil)]
+    await vm.loadChecks(prNumber: 1)
 
     vm.deselectPR()
 
@@ -463,6 +475,8 @@ struct GitHubViewModelNavigationTests {
     #expect(vm.selectedPRFiles.isEmpty)
     #expect(vm.selectedPRDiff == "")
     #expect(vm.selectedPRReviewComments.isEmpty)
+    #expect(vm.checks.isEmpty)
+    #expect(vm.loadedChecksPRNumber == nil)
     #expect(vm.prDetailLoadingState == .idle)
   }
 

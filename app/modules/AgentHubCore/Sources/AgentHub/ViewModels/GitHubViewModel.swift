@@ -118,6 +118,7 @@ public final class GitHubViewModel {
   /// CI checks
   public var checks: [GitHubCheckRun] = []
   public var checksLoadingState: GitHubLoadingState = .idle
+  public private(set) var loadedChecksPRNumber: Int?
 
   /// Comment input
   public var newCommentText: String = ""
@@ -134,6 +135,8 @@ public final class GitHubViewModel {
 
   private let service: any GitHubCLIServiceProtocol
   private var currentRepoPath: String?
+  private var prDetailTask: Task<Void, Never>?
+  private var issueDetailTask: Task<Void, Never>?
 
   // MARK: - Init
 
@@ -187,6 +190,7 @@ public final class GitHubViewModel {
       async let commentsTask = service.getPullRequestReviewComments(number: number, at: repoPath)
 
       let (pr, diff, comments) = try await (prTask, diffTask, commentsTask)
+      guard !Task.isCancelled, selectedPR == nil || selectedPR?.number == number else { return }
 
       selectedPR = pr
       selectedPRDiff = diff
@@ -195,11 +199,14 @@ public final class GitHubViewModel {
 
       // Load files separately (can be slower)
       do {
-        selectedPRFiles = try await service.getPullRequestFiles(number: number, at: repoPath)
+        let files = try await service.getPullRequestFiles(number: number, at: repoPath)
+        guard !Task.isCancelled, selectedPR == nil || selectedPR?.number == number else { return }
+        selectedPRFiles = files
       } catch {
         AppLogger.github.warning("Failed to load PR files: \(error.localizedDescription)")
       }
     } catch {
+      guard !Task.isCancelled, selectedPR == nil || selectedPR?.number == number else { return }
       prDetailLoadingState = .error(error.localizedDescription)
       AppLogger.github.error("Failed to load PR detail: \(error.localizedDescription)")
     }
@@ -284,9 +291,12 @@ public final class GitHubViewModel {
     issueDetailLoadingState = .loading
 
     do {
-      selectedIssue = try await service.getIssue(number: number, at: repoPath)
+      let issue = try await service.getIssue(number: number, at: repoPath)
+      guard !Task.isCancelled, selectedIssue == nil || selectedIssue?.number == number else { return }
+      selectedIssue = issue
       issueDetailLoadingState = .loaded
     } catch {
+      guard !Task.isCancelled, selectedIssue == nil || selectedIssue?.number == number else { return }
       issueDetailLoadingState = .error(error.localizedDescription)
       AppLogger.github.error("Failed to load issue: \(error.localizedDescription)")
     }
@@ -319,8 +329,10 @@ public final class GitHubViewModel {
 
     do {
       checks = try await service.getChecks(prNumber: prNumber, at: repoPath)
+      loadedChecksPRNumber = prNumber
       checksLoadingState = .loaded
     } catch {
+      loadedChecksPRNumber = nil
       checksLoadingState = .error(error.localizedDescription)
     }
   }
@@ -329,35 +341,45 @@ public final class GitHubViewModel {
 
   /// Selects a PR and loads its details
   public func selectPR(_ pr: GitHubPullRequest) {
+    prDetailTask?.cancel()
     selectedPR = pr
     selectedPRFiles = []
     selectedPRDiff = ""
     selectedPRReviewComments = []
+    checks = []
+    checksLoadingState = .idle
+    loadedChecksPRNumber = nil
 
-    Task {
-      await loadPRDetail(number: pr.number)
+    prDetailTask = Task { [number = pr.number] in
+      await loadPRDetail(number: number)
     }
   }
 
   /// Deselects the current PR (back to list)
   public func deselectPR() {
+    prDetailTask?.cancel()
     selectedPR = nil
     selectedPRFiles = []
     selectedPRDiff = ""
     selectedPRReviewComments = []
     prDetailLoadingState = .idle
+    checks = []
+    checksLoadingState = .idle
+    loadedChecksPRNumber = nil
   }
 
   /// Selects an issue and loads its details
   public func selectIssue(_ issue: GitHubIssue) {
+    issueDetailTask?.cancel()
     selectedIssue = issue
-    Task {
-      await loadIssueDetail(number: issue.number)
+    issueDetailTask = Task { [number = issue.number] in
+      await loadIssueDetail(number: number)
     }
   }
 
   /// Deselects the current issue
   public func deselectIssue() {
+    issueDetailTask?.cancel()
     selectedIssue = nil
     issueDetailLoadingState = .idle
   }

@@ -128,20 +128,20 @@ struct GitHubIssueDetailView: View {
       HStack(spacing: 8) {
         Image(systemName: issue.stateIcon)
           .font(.system(size: 14))
-          .foregroundStyle(issue.state.uppercased() == "OPEN" ? .green : .purple)
+          .foregroundStyle(issueStateColor)
 
         Text("#\(issue.number)")
           .font(.system(size: 13, weight: .bold, design: .monospaced))
 
-        Text(issue.state.capitalized)
+        Text(issue.stateKind.displayName)
           .font(.system(size: 10, weight: .medium))
           .padding(.horizontal, 6)
           .padding(.vertical, 2)
           .background(
-            (issue.state.uppercased() == "OPEN" ? Color.green : Color.purple)
+            issueStateColor
               .opacity(0.15)
           )
-          .foregroundStyle(issue.state.uppercased() == "OPEN" ? .green : .purple)
+          .foregroundStyle(issueStateColor)
           .clipShape(Capsule())
       }
 
@@ -192,6 +192,14 @@ struct GitHubIssueDetailView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
+  }
+
+  private var issueStateColor: Color {
+    switch issue.stateKind {
+    case .open: return .green
+    case .closed: return .purple
+    case .unknown: return .secondary
+    }
   }
 
   // MARK: - Comment Card

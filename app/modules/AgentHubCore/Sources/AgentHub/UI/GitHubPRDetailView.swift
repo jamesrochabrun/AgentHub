@@ -225,21 +225,21 @@ struct GitHubPRDetailView: View {
   }
 
   private var prStateColor: Color {
-    switch pr.state.uppercased() {
-    case "OPEN": return pr.isDraft ? .secondary : .green
-    case "CLOSED": return .red
-    case "MERGED": return .purple
-    default: return .secondary
+    switch pr.stateKind {
+    case .open: return pr.isDraft ? .secondary : .green
+    case .closed: return .red
+    case .merged: return .purple
+    case .unknown: return .secondary
     }
   }
 
   private func reviewDecisionBadge(_ decision: String) -> some View {
     let (label, color): (String, Color) = {
-      switch decision.uppercased() {
-      case "APPROVED": return ("Approved", .green)
-      case "CHANGES_REQUESTED": return ("Changes Requested", .orange)
-      case "REVIEW_REQUIRED": return ("Review Required", .secondary)
-      default: return (decision, .secondary)
+      switch GitHubReviewDecisionState(rawValue: decision) {
+      case .approved: return ("Approved", .green)
+      case .changesRequested: return ("Changes Requested", .orange)
+      case .reviewRequired: return ("Review Required", .secondary)
+      case .unknown(let rawValue): return (rawValue, .secondary)
       }
     }()
 
@@ -259,7 +259,7 @@ struct GitHubPRDetailView: View {
       ForEach(PRDetailTab.allCases) { tab in
         Button {
           selectedTab = tab
-          if tab == .checks && viewModel.checks.isEmpty {
+          if tab == .checks && viewModel.loadedChecksPRNumber != pr.number {
             Task { await viewModel.loadChecks(prNumber: pr.number) }
           }
         } label: {
@@ -348,7 +348,7 @@ struct GitHubPRDetailView: View {
           Text("Details")
             .font(.system(size: 12, weight: .semibold))
 
-          detailRow("Mergeable", value: pr.mergeable ?? "Unknown")
+          detailRow("Mergeable", value: pr.mergeabilityKind?.displayName ?? "Unknown")
           if let created = pr.createdAt {
             detailRow("Created", value: relativeTime(created))
           }
@@ -535,7 +535,7 @@ struct GitHubPRDetailView: View {
                       .font(.system(size: 12, weight: .medium))
 
                     HStack(spacing: 4) {
-                      Text(check.conclusion ?? check.status)
+                      Text(check.statusDisplayName)
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                     }
@@ -553,18 +553,18 @@ struct GitHubPRDetailView: View {
       }
     }
     .task {
-      if viewModel.checks.isEmpty {
+      if viewModel.loadedChecksPRNumber != pr.number {
         await viewModel.loadChecks(prNumber: pr.number)
       }
     }
   }
 
   private func checkColor(_ check: GitHubCheckRun) -> Color {
-    switch check.conclusion?.uppercased() {
-    case "SUCCESS": return .green
-    case "FAILURE", "ERROR", "TIMED_OUT": return .red
-    case "NEUTRAL", "SKIPPED": return .secondary
-    default: return .orange
+    switch check.ciStatus {
+    case .success: return .green
+    case .failure: return .red
+    case .pending: return .orange
+    case .none: return .secondary
     }
   }
 

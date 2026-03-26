@@ -45,6 +45,7 @@ public enum GitHubCLIError: LocalizedError, Sendable {
 public actor GitHubCLIService {
 
   private static let commandTimeout: TimeInterval = 30.0
+  static let checksJSONFields = "name,state,link,bucket"
 
   /// Cached gh executable path
   private var ghPath: String?
@@ -216,11 +217,11 @@ public actor GitHubCLIService {
 
     // Get detailed file info via the API
     let apiJson = try await runGH(
-      ["api", "repos/{owner}/{repo}/pulls/\(number)/files", "--paginate"],
+      ["api", "repos/{owner}/{repo}/pulls/\(number)/files", "--paginate", "--slurp"],
       at: repoPath
     )
 
-    return try parsePRFiles(apiJson, fallbackFilenames: filenames)
+    return try Self.parsePRFiles(apiJson, fallbackFilenames: filenames)
   }
 
   /// Gets review comments on a pull request
@@ -229,11 +230,11 @@ public actor GitHubCLIService {
     at repoPath: String
   ) async throws -> [GitHubComment] {
     let json = try await runGH(
-      ["api", "repos/{owner}/{repo}/pulls/\(number)/comments", "--paginate"],
+      ["api", "repos/{owner}/{repo}/pulls/\(number)/comments", "--paginate", "--slurp"],
       at: repoPath
     )
 
-    return try parseReviewComments(json)
+    return try Self.parseReviewComments(json)
   }
 
   /// Creates a new pull request
@@ -390,11 +391,10 @@ public actor GitHubCLIService {
     if let number = prNumber {
       args.append("\(number)")
     }
-    args.append(contentsOf: ["--json", "name,state,conclusion,detailsUrl"])
+    args.append(contentsOf: ["--json", Self.checksJSONFields])
 
-    // gh pr checks --json uses "state" instead of "status"
-    let json = try await runGH(args, at: repoPath)
-    return try decodeCheckRuns(json)
+    let json = try await runGH(args, at: repoPath, allowedExitCodes: [0, 8])
+    return try Self.decodeCheckRuns(json)
   }
 
   // MARK: - Notifications / Workflow Runs
@@ -416,13 +416,20 @@ public actor GitHubCLIService {
   private func runGH(
     _ arguments: [String],
     at path: String,
-    timeout: TimeInterval = commandTimeout
+    timeout: TimeInterval = commandTimeout,
+    allowedExitCodes: Set<Int> = [0]
   ) async throws -> String {
     guard let executable = await findGHExecutable() else {
       throw GitHubCLIError.cliNotInstalled
     }
 
-    return try await runCommand(executable, arguments: arguments, at: path, timeout: timeout)
+    return try await runCommand(
+      executable,
+      arguments: arguments,
+      at: path,
+      timeout: timeout,
+      allowedExitCodes: allowedExitCodes
+    )
   }
 
   /// Runs a command with arguments and returns stdout
@@ -430,7 +437,8 @@ public actor GitHubCLIService {
     _ executable: String,
     arguments: [String],
     at path: String? = nil,
-    timeout: TimeInterval = commandTimeout
+    timeout: TimeInterval = commandTimeout,
+    allowedExitCodes: Set<Int> = [0]
   ) async throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
@@ -514,7 +522,7 @@ public actor GitHubCLIService {
       throw GitHubCLIError.timeout
     }
 
-    if process.terminationStatus != 0 {
+    if !allowedExitCodes.contains(Int(process.terminationStatus)) {
       let errMsg = errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
 
       if errMsg.contains("not logged") || errMsg.contains("auth login") {
@@ -603,21 +611,17 @@ public actor GitHubCLIService {
     }
   }
 
-  private func decodeCheckRuns(_ json: String) throws -> [GitHubCheckRun] {
+  static func decodeCheckRuns(_ json: String) throws -> [GitHubCheckRun] {
     guard let data = json.data(using: .utf8) else {
       throw GitHubCLIError.parseError("Invalid encoding")
     }
 
     let decoder = JSONDecoder()
-    decoder.keyDecodingStrategy = .convertFromSnakeCase
-
-    // gh pr checks --json uses "state" for status
     struct RawCheck: Decodable {
       let name: String
-      let state: String?
-      let status: String?
-      let conclusion: String?
-      let detailsUrl: String?
+      let state: String
+      let bucket: String?
+      let link: String?
     }
 
     do {
@@ -625,9 +629,9 @@ public actor GitHubCLIService {
       return rawChecks.map { raw in
         GitHubCheckRun(
           name: raw.name,
-          status: raw.state ?? raw.status ?? "UNKNOWN",
-          conclusion: raw.conclusion,
-          detailsUrl: raw.detailsUrl
+          status: raw.state,
+          bucket: raw.bucket,
+          detailsUrl: raw.link
         )
       }
     } catch {
@@ -636,7 +640,7 @@ public actor GitHubCLIService {
     }
   }
 
-  private func parsePRFiles(_ json: String, fallbackFilenames: [String]) throws -> [GitHubPRFile] {
+  static func parsePRFiles(_ json: String, fallbackFilenames: [String]) throws -> [GitHubPRFile] {
     guard let data = json.data(using: .utf8) else {
       // Fallback to just filenames
       return fallbackFilenames.map { GitHubPRFile(filename: $0, status: "modified", additions: 0, deletions: 0, patch: nil) }
@@ -654,7 +658,7 @@ public actor GitHubCLIService {
     decoder.keyDecodingStrategy = .convertFromSnakeCase
 
     do {
-      let rawFiles = try decoder.decode([RawFile].self, from: data)
+      let rawFiles = try decodePaginatedArray(RawFile.self, from: data, using: decoder)
       return rawFiles.map { raw in
         GitHubPRFile(
           filename: raw.filename,
@@ -670,7 +674,7 @@ public actor GitHubCLIService {
     }
   }
 
-  private func parseReviewComments(_ json: String) throws -> [GitHubComment] {
+  static func parseReviewComments(_ json: String) throws -> [GitHubComment] {
     guard let data = json.data(using: .utf8) else {
       throw GitHubCLIError.parseError("Invalid encoding")
     }
@@ -691,7 +695,7 @@ public actor GitHubCLIService {
 
     let rawComments: [RawComment]
     do {
-      rawComments = try JSONDecoder().decode([RawComment].self, from: data)
+      rawComments = try decodePaginatedArray(RawComment.self, from: data, using: JSONDecoder())
     } catch {
       AppLogger.github.error("Failed to decode review comments: \(error.localizedDescription)")
       throw GitHubCLIError.parseError(error.localizedDescription)
@@ -712,6 +716,17 @@ public actor GitHubCLIService {
         diffHunk: raw.diff_hunk
       )
     }
+  }
+
+  private static func decodePaginatedArray<T: Decodable>(
+    _ type: T.Type,
+    from data: Data,
+    using decoder: JSONDecoder
+  ) throws -> [T] {
+    if let nested = try? decoder.decode([[T]].self, from: data) {
+      return nested.flatMap { $0 }
+    }
+    return try decoder.decode([T].self, from: data)
   }
 }
 

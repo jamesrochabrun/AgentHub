@@ -7,6 +7,219 @@
 
 import Foundation
 
+// MARK: - Shared GitHub Enums
+
+public enum GitHubPullRequestState: Equatable, Sendable {
+  case open
+  case closed
+  case merged
+  case unknown(String)
+
+  init(rawValue: String) {
+    switch rawValue.uppercased() {
+    case "OPEN": self = .open
+    case "CLOSED": self = .closed
+    case "MERGED": self = .merged
+    default: self = .unknown(rawValue)
+    }
+  }
+
+  public var displayName: String {
+    switch self {
+    case .open: "Open"
+    case .closed: "Closed"
+    case .merged: "Merged"
+    case .unknown(let value): value
+    }
+  }
+}
+
+public enum GitHubIssueState: Equatable, Sendable {
+  case open
+  case closed
+  case unknown(String)
+
+  init(rawValue: String) {
+    switch rawValue.uppercased() {
+    case "OPEN": self = .open
+    case "CLOSED": self = .closed
+    default: self = .unknown(rawValue)
+    }
+  }
+
+  public var displayName: String {
+    switch self {
+    case .open: "Open"
+    case .closed: "Closed"
+    case .unknown(let value): value
+    }
+  }
+}
+
+public enum GitHubMergeability: Equatable, Sendable {
+  case mergeable
+  case conflicting
+  case unknown(String)
+
+  init(rawValue: String) {
+    switch rawValue.uppercased() {
+    case "MERGEABLE": self = .mergeable
+    case "CONFLICTING": self = .conflicting
+    default: self = .unknown(rawValue)
+    }
+  }
+
+  public var displayName: String {
+    switch self {
+    case .mergeable: "Mergeable"
+    case .conflicting: "Conflicting"
+    case .unknown(let value): value.capitalized
+    }
+  }
+}
+
+public enum GitHubReviewDecisionState: Equatable, Sendable {
+  case approved
+  case changesRequested
+  case reviewRequired
+  case unknown(String)
+
+  init(rawValue: String) {
+    switch rawValue.uppercased() {
+    case "APPROVED": self = .approved
+    case "CHANGES_REQUESTED": self = .changesRequested
+    case "REVIEW_REQUIRED": self = .reviewRequired
+    default: self = .unknown(rawValue)
+    }
+  }
+
+  public var displayName: String {
+    switch self {
+    case .approved: "Approved"
+    case .changesRequested: "Changes Requested"
+    case .reviewRequired: "Review Required"
+    case .unknown(let value): value
+    }
+  }
+}
+
+public enum GitHubCheckStatus: Equatable, Sendable {
+  case completed
+  case inProgress
+  case queued
+  case pending
+  case pass
+  case fail
+  case skipping
+  case cancel
+  case unknown(String)
+
+  init(rawValue: String) {
+    switch rawValue.uppercased() {
+    case "COMPLETED": self = .completed
+    case "IN_PROGRESS": self = .inProgress
+    case "QUEUED": self = .queued
+    case "PENDING": self = .pending
+    case "PASS": self = .pass
+    case "FAIL": self = .fail
+    case "SKIPPING": self = .skipping
+    case "CANCEL", "CANCELLED": self = .cancel
+    default: self = .unknown(rawValue)
+    }
+  }
+
+  public var displayName: String {
+    switch self {
+    case .completed: "Completed"
+    case .inProgress: "In Progress"
+    case .queued: "Queued"
+    case .pending: "Pending"
+    case .pass: "Pass"
+    case .fail: "Fail"
+    case .skipping: "Skipping"
+    case .cancel: "Cancelled"
+    case .unknown(let value): value
+    }
+  }
+}
+
+public enum GitHubCheckConclusion: Equatable, Sendable {
+  case success
+  case failure
+  case error
+  case timedOut
+  case neutral
+  case skipped
+  case actionRequired
+  case cancelled
+  case startupFailure
+  case stale
+  case unknown(String)
+
+  init(rawValue: String) {
+    switch rawValue.uppercased() {
+    case "SUCCESS": self = .success
+    case "FAILURE": self = .failure
+    case "ERROR": self = .error
+    case "TIMED_OUT": self = .timedOut
+    case "NEUTRAL": self = .neutral
+    case "SKIPPED": self = .skipped
+    case "ACTION_REQUIRED": self = .actionRequired
+    case "CANCELLED": self = .cancelled
+    case "STARTUP_FAILURE": self = .startupFailure
+    case "STALE": self = .stale
+    default: self = .unknown(rawValue)
+    }
+  }
+
+  public var displayName: String {
+    switch self {
+    case .success: "Success"
+    case .failure: "Failure"
+    case .error: "Error"
+    case .timedOut: "Timed Out"
+    case .neutral: "Neutral"
+    case .skipped: "Skipped"
+    case .actionRequired: "Action Required"
+    case .cancelled: "Cancelled"
+    case .startupFailure: "Startup Failure"
+    case .stale: "Stale"
+    case .unknown(let value): value
+    }
+  }
+}
+
+public enum GitHubCheckBucket: Equatable, Sendable {
+  case pass
+  case fail
+  case pending
+  case skipping
+  case cancel
+  case unknown(String)
+
+  init(rawValue: String) {
+    switch rawValue.lowercased() {
+    case "pass": self = .pass
+    case "fail": self = .fail
+    case "pending": self = .pending
+    case "skipping": self = .skipping
+    case "cancel": self = .cancel
+    default: self = .unknown(rawValue)
+    }
+  }
+
+  public var displayName: String {
+    switch self {
+    case .pass: "Pass"
+    case .fail: "Fail"
+    case .pending: "Pending"
+    case .skipping: "Skipping"
+    case .cancel: "Cancelled"
+    case .unknown(let value): value
+    }
+  }
+}
+
 // MARK: - GitHub Pull Request
 
 /// Represents a GitHub pull request
@@ -34,30 +247,37 @@ public struct GitHubPullRequest: Identifiable, Equatable, Sendable, Decodable {
 
   public var id: Int { number }
 
+  public var stateKind: GitHubPullRequestState {
+    GitHubPullRequestState(rawValue: state)
+  }
+
+  public var reviewDecisionKind: GitHubReviewDecisionState? {
+    reviewDecision.map(GitHubReviewDecisionState.init(rawValue:))
+  }
+
+  public var mergeabilityKind: GitHubMergeability? {
+    mergeable.map(GitHubMergeability.init(rawValue:))
+  }
+
   public var stateDisplayName: String {
-    switch state.uppercased() {
-    case "OPEN": return "Open"
-    case "CLOSED": return "Closed"
-    case "MERGED": return "Merged"
-    default: return state
-    }
+    stateKind.displayName
   }
 
   public var stateIcon: String {
-    switch state.uppercased() {
-    case "OPEN": return isDraft ? "circle.dotted" : "arrow.triangle.pull"
-    case "CLOSED": return "xmark.circle"
-    case "MERGED": return "arrow.triangle.merge"
-    default: return "questionmark.circle"
+    switch stateKind {
+    case .open: return isDraft ? "circle.dotted" : "arrow.triangle.pull"
+    case .closed: return "xmark.circle"
+    case .merged: return "arrow.triangle.merge"
+    case .unknown: return "questionmark.circle"
     }
   }
 
   public var stateColor: String {
-    switch state.uppercased() {
-    case "OPEN": return isDraft ? "gray" : "green"
-    case "CLOSED": return "red"
-    case "MERGED": return "purple"
-    default: return "gray"
+    switch stateKind {
+    case .open: return isDraft ? "gray" : "green"
+    case .closed: return "red"
+    case .merged: return "purple"
+    case .unknown: return "gray"
     }
   }
 
@@ -66,16 +286,16 @@ public struct GitHubPullRequest: Identifiable, Equatable, Sendable, Decodable {
     guard let checks = statusCheckRollup, !checks.isEmpty else {
       return .none
     }
-    if checks.contains(where: { $0.status == "IN_PROGRESS" || $0.status == "QUEUED" }) {
+    if checks.contains(where: { $0.ciStatus == .pending }) {
       return .pending
     }
-    if checks.allSatisfy({ $0.conclusion == "SUCCESS" || $0.conclusion == "NEUTRAL" || $0.conclusion == "SKIPPED" }) {
-      return .success
-    }
-    if checks.contains(where: { $0.conclusion == "FAILURE" || $0.conclusion == "ERROR" || $0.conclusion == "TIMED_OUT" }) {
+    if checks.contains(where: { $0.ciStatus == .failure }) {
       return .failure
     }
-    return .pending
+    if checks.allSatisfy({ $0.ciStatus == .success || $0.ciStatus == .none }) {
+      return .success
+    }
+    return .none
   }
 
   enum CodingKeys: String, CodingKey {
@@ -128,11 +348,15 @@ public struct GitHubIssue: Identifiable, Equatable, Sendable, Decodable {
 
   public var id: Int { number }
 
+  public var stateKind: GitHubIssueState {
+    GitHubIssueState(rawValue: state)
+  }
+
   public var stateIcon: String {
-    switch state.uppercased() {
-    case "OPEN": return "circle.fill"
-    case "CLOSED": return "checkmark.circle.fill"
-    default: return "questionmark.circle"
+    switch stateKind {
+    case .open: return "circle.fill"
+    case .closed: return "checkmark.circle.fill"
+    case .unknown: return "questionmark.circle"
     }
   }
 }
@@ -156,21 +380,105 @@ public struct GitHubCheckRun: Identifiable, Equatable, Sendable, Decodable {
   public let name: String
   public let status: String
   public let conclusion: String?
+  public let bucket: String?
   public let detailsUrl: String?
 
   public var id: String { name }
 
-  public var statusIcon: String {
-    switch conclusion?.uppercased() {
-    case "SUCCESS": return "checkmark.circle.fill"
-    case "FAILURE", "ERROR", "TIMED_OUT": return "xmark.circle.fill"
-    case "NEUTRAL", "SKIPPED": return "minus.circle.fill"
-    default:
-      if status == "IN_PROGRESS" || status == "QUEUED" {
-        return "clock.fill"
+  public var statusKind: GitHubCheckStatus {
+    GitHubCheckStatus(rawValue: status)
+  }
+
+  public var conclusionKind: GitHubCheckConclusion? {
+    conclusion.map(GitHubCheckConclusion.init(rawValue:))
+  }
+
+  public var bucketKind: GitHubCheckBucket? {
+    bucket.map(GitHubCheckBucket.init(rawValue:))
+  }
+
+  public var ciStatus: CIStatus {
+    if let bucketKind {
+      switch bucketKind {
+      case .pass: return .success
+      case .fail, .cancel: return .failure
+      case .pending: return .pending
+      case .skipping, .unknown: return .none
       }
-      return "questionmark.circle"
     }
+
+    if let conclusionKind {
+      switch conclusionKind {
+      case .success, .neutral, .skipped: return .success
+      case .failure, .error, .timedOut, .actionRequired, .cancelled, .startupFailure, .stale:
+        return .failure
+      case .unknown:
+        break
+      }
+    }
+
+    switch statusKind {
+    case .inProgress, .queued, .pending: return .pending
+    case .pass: return .success
+    case .fail, .cancel: return .failure
+    case .skipping, .completed, .unknown: return .none
+    }
+  }
+
+  public var statusDisplayName: String {
+    if let conclusionKind {
+      return conclusionKind.displayName
+    }
+    if let bucketKind {
+      return bucketKind.displayName
+    }
+    return statusKind.displayName
+  }
+
+  public var statusIcon: String {
+    if let conclusionKind {
+      switch conclusionKind {
+      case .success: return "checkmark.circle.fill"
+      case .failure, .error, .timedOut, .actionRequired, .cancelled, .startupFailure, .stale:
+        return "xmark.circle.fill"
+      case .neutral, .skipped: return "minus.circle.fill"
+      case .unknown:
+        break
+      }
+    }
+
+    if let bucketKind {
+      switch bucketKind {
+      case .pass: return "checkmark.circle.fill"
+      case .fail, .cancel: return "xmark.circle.fill"
+      case .pending: return "clock.fill"
+      case .skipping: return "minus.circle.fill"
+      case .unknown:
+        break
+      }
+    }
+
+    switch statusKind {
+    case .inProgress, .queued, .pending: return "clock.fill"
+    case .pass: return "checkmark.circle.fill"
+    case .fail, .cancel: return "xmark.circle.fill"
+    case .skipping: return "minus.circle.fill"
+    case .completed, .unknown: return "questionmark.circle"
+    }
+  }
+
+  public init(
+    name: String,
+    status: String,
+    conclusion: String? = nil,
+    bucket: String? = nil,
+    detailsUrl: String? = nil
+  ) {
+    self.name = name
+    self.status = status
+    self.conclusion = conclusion
+    self.bucket = bucket
+    self.detailsUrl = detailsUrl
   }
 }
 
