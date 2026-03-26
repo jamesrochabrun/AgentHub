@@ -74,10 +74,12 @@ struct ResizablePanelContainer<Content: View>: View {
     HStack(spacing: 0) {
       if side == .trailing {
         handle
+          .zIndex(2)
         content.frame(width: resolvedWidth)
       } else {
         content.frame(width: resolvedWidth)
         handle
+          .zIndex(2)
       }
     }
   }
@@ -161,6 +163,7 @@ struct ResizableSplitHandle: View {
       onDragEnd?(resetWidth)
     }
     .help("Drag to resize. Double-click to reset.")
+    .zIndex(isDragging ? 20 : 10)
     .onDisappear {
       if isDragging { ResizeInteractionSuppression.shared.endResize() }
       isDragging = false

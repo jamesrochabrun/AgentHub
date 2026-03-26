@@ -44,6 +44,8 @@ public struct MultiProviderSessionsListView: View {
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
+  @State private var isEmbeddedTrailingPanelVisible = false
+  @State private var sidebarVisibilityBeforeAutoHide: NavigationSplitViewVisibility?
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -89,6 +91,7 @@ public struct MultiProviderSessionsListView: View {
           codexViewModel: codexViewModel,
           filterMode: $hubFilterMode,
           primarySessionId: $primarySessionId,
+          onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
           onRequestStartSession: { preferredRepositoryPath in
             triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
           }
@@ -1037,10 +1040,37 @@ public struct MultiProviderSessionsListView: View {
       openSettings()
 
     case .toggleSidebar:
+      sidebarVisibilityBeforeAutoHide = nil
       columnVisibility = columnVisibility == .all ? .detailOnly : .all
 
     case .toggleFocusMode:
       toggleFocusMode()
+    }
+  }
+
+  private func handleEmbeddedSidePanelVisibilityChange(_ isVisible: Bool) {
+    guard isEmbeddedTrailingPanelVisible != isVisible else { return }
+    isEmbeddedTrailingPanelVisible = isVisible
+
+    if isVisible {
+      guard columnVisibility != .detailOnly else {
+        sidebarVisibilityBeforeAutoHide = nil
+        return
+      }
+
+      sidebarVisibilityBeforeAutoHide = columnVisibility
+      withAnimation(.easeInOut(duration: 0.2)) {
+        columnVisibility = .detailOnly
+      }
+      return
+    }
+
+    guard let previousVisibility = sidebarVisibilityBeforeAutoHide else { return }
+    sidebarVisibilityBeforeAutoHide = nil
+
+    guard columnVisibility == .detailOnly else { return }
+    withAnimation(.easeInOut(duration: 0.2)) {
+      columnVisibility = previousVisibility
     }
   }
 
