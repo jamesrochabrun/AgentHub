@@ -236,6 +236,7 @@ enum ProviderMonitoringItem: Identifiable {
 public struct MultiProviderMonitoringPanelView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
+  let onEmbeddedSidePanelVisibilityChange: (Bool) -> Void
   let onRequestStartSession: (String?) -> Void
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
@@ -262,13 +263,49 @@ public struct MultiProviderMonitoringPanelView: View {
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @State private var cardHeights: [String: CGFloat] = [:]
+  private let embeddedPrimaryContentMinWidth: CGFloat = 470
+  private let embeddedSidePanelMinWidth: CGFloat = 400
+  private let embeddedSidePanelDefaultWidth: CGFloat = 700
+  private let embeddedSidePanelMaxWidth: CGFloat = 1200
+  private let embeddedSidePanelHandleWidth: CGFloat = 8
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
   }
 
   private var canShowSidePanel: Bool {
-    availableDetailWidth >= 900
+    availableDetailWidth >= minimumWidthForEmbeddedSidePanel
+  }
+
+  private var minimumWidthForEmbeddedSidePanel: CGFloat {
+    embeddedPrimaryContentMinWidth + embeddedSidePanelMinWidth + embeddedSidePanelHandleWidth
+  }
+
+  private var allowedEmbeddedSidePanelWidth: CGFloat {
+    let availablePanelWidth = availableDetailWidth - embeddedPrimaryContentMinWidth - embeddedSidePanelHandleWidth
+    return min(
+      embeddedSidePanelMaxWidth,
+      max(embeddedSidePanelMinWidth, availablePanelWidth)
+    )
+  }
+
+  private var wantsEmbeddedSidePanelPresentation: Bool {
+    layoutMode == .single
+      && maximizedSessionId == nil
+      && sidePanelContent != nil
+      && !visibleItems.isEmpty
+  }
+
+  private var embeddedSidePanelTransition: AnyTransition {
+    .asymmetric(
+      insertion: .move(edge: .trailing).combined(with: .opacity),
+      removal: .move(edge: .trailing).combined(with: .opacity)
+    )
+  }
+
+  private var isEmbeddedSidePanelVisible: Bool {
+    wantsEmbeddedSidePanelPresentation
+      && canShowSidePanel
   }
 
   public init(
@@ -276,12 +313,14 @@ public struct MultiProviderMonitoringPanelView: View {
     codexViewModel: CLISessionsViewModel,
     filterMode: Binding<HubFilterMode>,
     primarySessionId: Binding<String?>,
+    onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
     onRequestStartSession: @escaping (String?) -> Void
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self._filterMode = filterMode
     self._primarySessionId = primarySessionId
+    self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onRequestStartSession = onRequestStartSession
   }
 
@@ -309,6 +348,9 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .background(monitorContainerBackgroundColor)
     .cornerRadius(8)
+    .onAppear {
+      onEmbeddedSidePanelVisibilityChange(wantsEmbeddedSidePanelPresentation)
+    }
     .onChange(of: sidePanelContent) { _, newContent in
       // Sync persistent FileExplorer state when the panel switches to/from fileExplorer
       if case .fileExplorer(_, let session, let projectPath, let initPath, let navId) = newContent {
@@ -317,6 +359,9 @@ public struct MultiProviderMonitoringPanelView: View {
         persistedFEInitPath = initPath
         persistedFENavId = navId
       }
+    }
+    .onChange(of: wantsEmbeddedSidePanelPresentation) { _, wantsPresentation in
+      onEmbeddedSidePanelVisibilityChange(wantsPresentation)
     }
     .overlay {
       // Hidden Shift+P trigger for QuickFilePicker
@@ -614,9 +659,9 @@ public struct MultiProviderMonitoringPanelView: View {
             onCopySessionId: { },
             onOpenSessionFile: { },
             onRefreshTerminal: { },
-            onShowWebPreview: canShowSidePanel ? { session, projectPath in
-              toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
-            } : nil,
+            onShowWebPreview: { session, projectPath in
+              presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+            },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
             isMaximized: false,
             onToggleMaximize: { },
@@ -679,9 +724,9 @@ public struct MultiProviderMonitoringPanelView: View {
                 sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
               }
             } : nil,
-            onShowWebPreview: canShowSidePanel ? { session, projectPath in
-              toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
-            } : nil,
+            onShowWebPreview: { session, projectPath in
+              presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+            },
             onShowMermaid: canShowSidePanel ? { session in
               if case .mermaid(let sid, _) = sidePanelContent, sid == session.id {
                 withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
@@ -728,25 +773,27 @@ public struct MultiProviderMonitoringPanelView: View {
   ) -> some View {
     HStack(spacing: 0) {
       content()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
       if let panelContent = sidePanelContent, !panelContent.isFileExplorer {
         ResizablePanelContainer(
           side: .trailing,
-          minWidth: 400,
-          maxWidth: 1200,
-          defaultWidth: 700,
+          minWidth: embeddedSidePanelMinWidth,
+          maxWidth: allowedEmbeddedSidePanelWidth,
+          defaultWidth: min(embeddedSidePanelDefaultWidth, allowedEmbeddedSidePanelWidth),
           userDefaultsKey: AgentHubDefaults.sidePanelWidth
         ) {
           sidePanelView(for: panelContent, viewModel: viewModel)
         }
+        .transition(embeddedSidePanelTransition)
       }
 
       if sidePanelContent?.isFileExplorer == true, let feSession = persistedFESession {
         ResizablePanelContainer(
           side: .trailing,
-          minWidth: 400,
-          maxWidth: 1200,
-          defaultWidth: 700,
+          minWidth: embeddedSidePanelMinWidth,
+          maxWidth: allowedEmbeddedSidePanelWidth,
+          defaultWidth: min(embeddedSidePanelDefaultWidth, allowedEmbeddedSidePanelWidth),
           userDefaultsKey: AgentHubDefaults.sidePanelWidth
         ) {
           FileExplorerView(
@@ -758,19 +805,48 @@ public struct MultiProviderMonitoringPanelView: View {
           )
           .id(persistedFENavId)
         }
+        .transition(embeddedSidePanelTransition)
       }
     }
-    .animation(.easeInOut(duration: 0.25), value: sidePanelContent != nil)
+    .animation(.easeInOut(duration: 0.25), value: sidePanelContent)
+    .animation(.easeInOut(duration: 0.25), value: isEmbeddedSidePanelVisible)
     .padding(12)
+  }
+
+  private func presentWebPreviewInSidePanel(forItemID itemID: String, session: CLISession, projectPath: String) {
+    // TODO: Standardize this with the other auxiliary panel flows once web preview
+    // selections can route context back into the main terminal across all layouts.
+    withAnimation(.easeInOut(duration: 0.25)) {
+      if primarySessionId != itemID {
+        primarySessionId = itemID
+      }
+      if layoutMode != .single {
+        layoutModeRawValue = LayoutMode.single.rawValue
+      }
+      if maximizedSessionId != nil {
+        maximizedSessionId = nil
+      }
+    }
+    toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
   }
 
   private func toggleWebPreviewSidePanel(for session: CLISession, projectPath: String) {
     if case .webPreview(let sessionId, _, _) = sidePanelContent, sessionId == session.id {
-      withAnimation(.easeInOut(duration: 0.25)) {
-        sidePanelContent = nil
-      }
+      closeEmbeddedSidePanel()
     } else {
-      sidePanelContent = .webPreview(sessionId: session.id, session: session, projectPath: projectPath)
+      openEmbeddedSidePanel(.webPreview(sessionId: session.id, session: session, projectPath: projectPath))
+    }
+  }
+
+  private func openEmbeddedSidePanel(_ content: SidePanelContent) {
+    withAnimation(.easeInOut(duration: 0.25)) {
+      sidePanelContent = content
+    }
+  }
+
+  private func closeEmbeddedSidePanel() {
+    withAnimation(.easeInOut(duration: 0.25)) {
+      sidePanelContent = nil
     }
   }
 
@@ -861,6 +937,9 @@ public struct MultiProviderMonitoringPanelView: View {
         onCopySessionId: { },
         onOpenSessionFile: { },
         onRefreshTerminal: { },
+        onShowWebPreview: { session, projectPath in
+          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+        },
         onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
         isMaximized: maximizedSessionId == item.id,
         onToggleMaximize: {
@@ -908,6 +987,9 @@ public struct MultiProviderMonitoringPanelView: View {
         },
         onInlineRequestSubmit: { prompt, sess in
           viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+        },
+        onShowWebPreview: { session, projectPath in
+          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
         },
         onPromptConsumed: {
           viewModel.clearPendingPrompt(for: session.id)
@@ -1030,6 +1112,9 @@ public struct MultiProviderMonitoringPanelView: View {
           onCopySessionId: { },
           onOpenSessionFile: { },
           onRefreshTerminal: { },
+          onShowWebPreview: { session, projectPath in
+            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
+          },
           onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
           isMaximized: true,
           onToggleMaximize: {
@@ -1078,6 +1163,9 @@ public struct MultiProviderMonitoringPanelView: View {
           },
           onInlineRequestSubmit: { prompt, sess in
             viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          },
+          onShowWebPreview: { session, projectPath in
+            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
           },
           onPromptConsumed: {
             viewModel.clearPendingPrompt(for: session.id)
