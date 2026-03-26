@@ -308,7 +308,15 @@ struct CETextViewRepresentable: NSViewRepresentable {
 
     scrollView.documentView = textView
     textView.updateFrameIfNeeded()
+
+    // Line number gutter
+    let gutterView = LineNumberGutterView(textView: textView, scrollView: scrollView)
+    scrollView.hasVerticalRuler = true
+    scrollView.verticalRulerView = gutterView
+    scrollView.rulersVisible = true
+
     context.coordinator.textView = textView
+    context.coordinator.gutterView = gutterView
     coordinatorRef?.coordinator = context.coordinator
     context.coordinator.loadDocument(
       text: text,
@@ -373,6 +381,7 @@ struct CETextViewRepresentable: NSViewRepresentable {
     var currentDocumentID: UUID?
     var currentDisplayMode: EditorDisplayMode = .highlighted
     var lastColorScheme: ColorScheme?
+    weak var gutterView: LineNumberGutterView?
     private var highlightTask: Task<Void, Never>?
     private var idleTask: Task<Void, Never>?
     private let highlighter = Highlight()
@@ -407,6 +416,8 @@ struct CETextViewRepresentable: NSViewRepresentable {
       } else {
         applyPlainTextAppearance()
       }
+
+      gutterView?.updateGutterWidth()
     }
 
     func textView(_ textView: TextView, didReplaceContentsIn range: NSRange, with string: String) {
@@ -417,6 +428,7 @@ struct CETextViewRepresentable: NSViewRepresentable {
         self.parent.text = newText
         self.parent.onTextChange(newText)
       }
+      gutterView?.updateGutterWidth()
       schedulePostEditWork(text: newText)
       if let callback = parent.onTextEditedWhileSearching {
         scheduleSearchRefresh(callback: callback)
