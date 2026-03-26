@@ -8,6 +8,9 @@
 import SwiftUI
 
 public struct SettingsView: View {
+  @Environment(\.agentHub) private var agentHub
+  @State private var aiConfigViewModel = AIConfigSettingsViewModel()
+
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
 
@@ -114,6 +117,21 @@ public struct SettingsView: View {
         }
       }
 
+      Section("AI Configuration") {
+        DisclosureGroup {
+          ClaudeAIConfigView(viewModel: aiConfigViewModel)
+        } label: {
+          Text("Claude Defaults")
+            .foregroundColor(Color.brandPrimary(for: .claude))
+        }
+        DisclosureGroup {
+          CodexAIConfigView(viewModel: aiConfigViewModel)
+        } label: {
+          Text("Codex Defaults")
+            .foregroundColor(Color.brandPrimary(for: .codex))
+        }
+      }
+
       Section {
         Toggle(isOn: $notificationSoundsEnabled) {
           VStack(alignment: .leading, spacing: 2) {
@@ -205,9 +223,10 @@ public struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 300, height: 500)
+    .frame(width: 340, height: 600)
     .task {
       await ensureSupportedThemeSelection()
+      await aiConfigViewModel.load(service: agentHub?.aiConfigService)
     }
   }
 

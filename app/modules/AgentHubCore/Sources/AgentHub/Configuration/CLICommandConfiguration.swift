@@ -52,7 +52,12 @@ public struct CLICommandConfiguration: Codable, Sendable {
     prompt: String?,
     dangerouslySkipPermissions: Bool = false,
     worktreeName: String? = nil,
-    permissionModePlan: Bool = false
+    permissionModePlan: Bool = false,
+    model: String? = nil,
+    effortLevel: String? = nil,
+    allowedTools: [String]? = nil,
+    disallowedTools: [String]? = nil,
+    codexApprovalPolicy: String? = nil
   ) -> [String] {
     let prefix = subcommandArgs
 
@@ -77,6 +82,22 @@ public struct CLICommandConfiguration: Codable, Sendable {
             args += ["--worktree", name]
           }
         }
+
+        // AI configuration flags
+        if let model, !model.isEmpty {
+          args += ["--model", model]
+        }
+        if let effortLevel, !effortLevel.isEmpty {
+          args += ["--effort", effortLevel]
+        }
+        if let allowedTools, !allowedTools.isEmpty {
+          args.append("--allowedTools")
+          args.append(contentsOf: allowedTools)
+        }
+        if let disallowedTools, !disallowedTools.isEmpty {
+          args.append("--disallowedTools")
+          args.append(contentsOf: disallowedTools)
+        }
       }
 
       if let sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
@@ -95,13 +116,26 @@ public struct CLICommandConfiguration: Codable, Sendable {
         // Codex CLI resume: codex resume <SESSION_ID>
         return prefix + ["resume", sessionId]
       }
+
+      // AI configuration flags for new Codex sessions
+      var args: [String] = []
+      if let model, !model.isEmpty {
+        args += ["--model", model]
+      }
+      if let codexApprovalPolicy, !codexApprovalPolicy.isEmpty {
+        args += ["-c", "approval_policy=\(codexApprovalPolicy)"]
+      }
+      if let effortLevel, !effortLevel.isEmpty {
+        args += ["-c", "model_reasoning_effort=\(effortLevel)"]
+      }
+
       // Start a new Codex session.
       // NOTE: Codex plan mode (ModeKind::Plan) is TUI-only and cannot be activated
       // via CLI flags. The UI layer disables the Codex pill when plan mode is on.
       if let prompt, !prompt.isEmpty {
-        return prefix + [prompt]
+        return prefix + args + [prompt]
       }
-      return prefix
+      return prefix + args
     }
   }
 }

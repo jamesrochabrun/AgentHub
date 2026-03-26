@@ -67,6 +67,18 @@ public actor SessionMetadataStore {
       }
     }
 
+    migrator.registerMigration("v3_create_ai_config") { db in
+      try db.create(table: "ai_config") { t in
+        t.column("provider", .text).primaryKey()
+        t.column("defaultModel", .text).notNull().defaults(to: "")
+        t.column("effortLevel", .text).notNull().defaults(to: "")
+        t.column("allowedTools", .text).notNull().defaults(to: "")
+        t.column("disallowedTools", .text).notNull().defaults(to: "")
+        t.column("approvalPolicy", .text).notNull().defaults(to: "")
+        t.column("updatedAt", .datetime).notNull()
+      }
+    }
+
     return migrator
   }
 
@@ -159,6 +171,36 @@ public actor SessionMetadataStore {
   public func deleteRepoMapping(for sessionId: String) throws {
     try dbQueue.write { db in
       _ = try SessionRepoMapping.deleteOne(db, key: sessionId)
+    }
+  }
+
+  // MARK: - AI Configuration
+
+  /// Gets the AI config for a provider ("claude" or "codex")
+  public func getAIConfig(for provider: String) throws -> AIConfigRecord? {
+    try dbQueue.read { db in
+      try AIConfigRecord
+        .filter(Column("provider") == provider)
+        .fetchOne(db)
+    }
+  }
+
+  /// Synchronous read for AI config — safe to call from non-async contexts.
+  /// Returns nil if no config is saved or on error.
+  public nonisolated func getAIConfigSync(for provider: String) -> AIConfigRecord? {
+    try? dbQueue.read { db in
+      try AIConfigRecord
+        .filter(Column("provider") == provider)
+        .fetchOne(db)
+    }
+  }
+
+  /// Saves or updates the AI config for a provider
+  public func saveAIConfig(_ record: AIConfigRecord) throws {
+    try dbQueue.write { db in
+      var record = record
+      record.updatedAt = Date()
+      try record.save(db)
     }
   }
 }

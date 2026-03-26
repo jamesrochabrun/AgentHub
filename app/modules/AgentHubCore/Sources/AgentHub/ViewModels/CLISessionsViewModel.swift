@@ -279,7 +279,8 @@ public final class CLISessionsViewModel {
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
-      worktreeName: worktreeName
+      worktreeName: worktreeName,
+      metadataStore: metadataStore
     )
     activeTerminals[key] = terminal
     return terminal

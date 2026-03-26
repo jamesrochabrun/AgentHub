@@ -175,6 +175,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+  /// Metadata store for reading AI configuration at launch time
+  var metadataStore: SessionMetadataStore?
 
   /// The PID of the current terminal process, if running
   public var currentProcessPID: Int32? {
@@ -227,8 +229,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     isDark: Bool = true,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
-    worktreeName: String? = nil
+    worktreeName: String? = nil,
+    metadataStore: SessionMetadataStore? = nil
   ) {
+    if let metadataStore {
+      self.metadataStore = metadataStore
+    }
     guard !isConfigured else { return }
     isConfigured = true
 
@@ -555,13 +561,23 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
 #endif
 
+    // Read AI configuration defaults for this provider from SQLite
+    let aiConfig = metadataStore?.getAIConfigSync(for: cliConfiguration.mode.rawValue)
+    let allowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.allowedTools)
+    let disallowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.disallowedTools)
+
     // Build command: resume existing session or start new session
     let args = cliConfiguration.argumentsForSession(
       sessionId: sessionId,
       prompt: initialPrompt,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       worktreeName: worktreeName,
-      permissionModePlan: permissionModePlan
+      permissionModePlan: permissionModePlan,
+      model: aiConfig?.defaultModel,
+      effortLevel: aiConfig?.effortLevel,
+      allowedTools: allowedTools.isEmpty ? nil : allowedTools,
+      disallowedTools: disallowedTools.isEmpty ? nil : disallowedTools,
+      codexApprovalPolicy: aiConfig?.approvalPolicy
     )
     let escapedArgs = args.map { $0.replacingOccurrences(of: "'", with: "'\\''") }
     let joinedArgs = escapedArgs.map { "'\($0)'" }.joined(separator: " ")
