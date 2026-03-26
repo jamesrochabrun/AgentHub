@@ -138,7 +138,20 @@ struct CollapsibleSessionRow: View {
             .font(.primaryCaption)
             .foregroundColor(.secondary.opacity(0.9))
             .lineLimit(1)
+
+          Text("\u{2022}")
+            .font(.secondaryCaption)
+            .foregroundColor(.secondary.opacity(0.6))
+
+          Text(providerKind.rawValue)
+            .font(.secondaryCaption)
+            .foregroundColor(.brandPrimary(for: providerKind))
         }
+      }
+      else {
+        Text(providerKind.rawValue)
+          .font(.secondaryCaption)
+          .foregroundColor(.brandPrimary(for: providerKind))
       }
 
       // Message preview with $ prompt (aligned to leading edge)
@@ -148,7 +161,7 @@ struct CollapsibleSessionRow: View {
           .foregroundColor(.primary.opacity(0.5))
           .lineLimit(1)
           .padding(.top, 2)
-          .padding(.trailing, 36)
+          .padding(.trailing, 56)
       }
     }
     .padding(.horizontal, 8)

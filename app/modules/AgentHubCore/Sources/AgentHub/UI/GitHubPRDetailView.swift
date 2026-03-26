@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import PierreDiffsSwift
 
 // MARK: - PR Detail Tabs
 
@@ -38,6 +39,9 @@ struct GitHubPRDetailView: View {
   @State private var selectedTab: PRDetailTab = .overview
   @State private var selectedFile: GitHubPRFile?
   @State private var showingReviewSheet = false
+  @State private var diffStyle: DiffStyle = .unified
+  @State private var overflowMode: OverflowMode = .wrap
+  @State private var parsedPRDiffsByFile: [String: String] = [:]
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
@@ -60,6 +64,16 @@ struct GitHubPRDetailView: View {
       // Tab content
       tabContent
     }
+    .onAppear {
+      syncSelectedFile()
+      rebuildParsedPRDiffs()
+    }
+    .onChange(of: viewModel.selectedPRFiles) { _, _ in
+      syncSelectedFile()
+    }
+    .onChange(of: viewModel.selectedPRDiff) { _, _ in
+      rebuildParsedPRDiffs()
+    }
   }
 
   // MARK: - Navigation Header
@@ -73,7 +87,7 @@ struct GitHubPRDetailView: View {
           Image(systemName: "chevron.left")
             .font(.system(size: 10, weight: .semibold))
           Text("Back")
-            .font(.system(size: 12, weight: .medium))
+            .font(GitHubTypography.body)
         }
         .foregroundStyle(.secondary)
       }
@@ -90,7 +104,7 @@ struct GitHubPRDetailView: View {
             Image(systemName: "arrow.down.to.line")
               .font(.system(size: 10))
             Text("Checkout")
-              .font(.system(size: 11, weight: .medium))
+              .font(GitHubTypography.button)
           }
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
@@ -106,7 +120,7 @@ struct GitHubPRDetailView: View {
             Image(systemName: "eye")
               .font(.system(size: 10))
             Text("Review")
-              .font(.system(size: 11, weight: .medium))
+              .font(GitHubTypography.button)
           }
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
@@ -125,7 +139,7 @@ struct GitHubPRDetailView: View {
               Image(systemName: "arrow.right.circle")
                 .font(.system(size: 10))
               Text("Send to Session")
-                .font(.system(size: 11, weight: .medium))
+                .font(GitHubTypography.button)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -151,11 +165,11 @@ struct GitHubPRDetailView: View {
           .foregroundStyle(prStateColor)
 
         Text("#\(pr.number)")
-          .font(.system(size: 13, weight: .bold, design: .monospaced))
+          .font(GitHubTypography.monoTitle)
 
         if pr.isDraft {
           Text("Draft")
-            .font(.system(size: 10, weight: .medium))
+            .font(GitHubTypography.badge)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Color.secondary.opacity(0.2))
@@ -164,7 +178,7 @@ struct GitHubPRDetailView: View {
       }
 
       Text(pr.title)
-        .font(.system(size: 14, weight: .semibold))
+        .font(GitHubTypography.sectionTitle)
         .fixedSize(horizontal: false, vertical: true)
 
       HStack(spacing: 12) {
@@ -173,32 +187,32 @@ struct GitHubPRDetailView: View {
             Image(systemName: "person")
               .font(.system(size: 9))
             Text(author.login)
-              .font(.system(size: 11))
+              .font(GitHubTypography.bodySmall)
           }
           .foregroundStyle(.secondary)
         }
 
         HStack(spacing: 3) {
           Text(pr.headRefName)
-            .font(.system(size: 10, design: .monospaced))
+            .font(GitHubTypography.monoCaption)
             .foregroundStyle(.blue)
           Image(systemName: "arrow.right")
             .font(.system(size: 8))
             .foregroundStyle(.tertiary)
           Text(pr.baseRefName)
-            .font(.system(size: 10, design: .monospaced))
+            .font(GitHubTypography.monoCaption)
             .foregroundStyle(.secondary)
         }
 
         HStack(spacing: 6) {
           Text("+\(pr.additions)")
-            .font(.system(size: 11, design: .monospaced))
+            .font(GitHubTypography.monoBody)
             .foregroundStyle(.green)
           Text("-\(pr.deletions)")
-            .font(.system(size: 11, design: .monospaced))
+            .font(GitHubTypography.monoBody)
             .foregroundStyle(.red)
           Text("\(pr.changedFiles) files")
-            .font(.system(size: 11))
+            .font(GitHubTypography.bodySmall)
             .foregroundStyle(.secondary)
         }
 
@@ -211,7 +225,7 @@ struct GitHubPRDetailView: View {
         HStack(spacing: 4) {
           ForEach(labels) { label in
             Text(label.name)
-              .font(.system(size: 10, weight: .medium))
+              .font(GitHubTypography.badge)
               .padding(.horizontal, 6)
               .padding(.vertical, 2)
               .background(Color.secondary.opacity(0.12))
@@ -220,6 +234,7 @@ struct GitHubPRDetailView: View {
         }
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
   }
@@ -244,7 +259,7 @@ struct GitHubPRDetailView: View {
     }()
 
     return Text(label)
-      .font(.system(size: 10, weight: .medium))
+      .font(GitHubTypography.badge)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)
       .background(color.opacity(0.15))
@@ -267,12 +282,12 @@ struct GitHubPRDetailView: View {
             Image(systemName: tab.icon)
               .font(.system(size: 10))
             Text(tab.rawValue)
-              .font(.system(size: 11, weight: .medium))
+              .font(GitHubTypography.button)
 
             // Badge counts
             if tab == .comments, let comments = pr.comments, !comments.isEmpty {
               Text("\(comments.count)")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(GitHubTypography.monoCaption)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1)
                 .background(Color.secondary.opacity(0.2))
@@ -280,7 +295,7 @@ struct GitHubPRDetailView: View {
             }
             if tab == .files {
               Text("\(pr.changedFiles)")
-                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .font(GitHubTypography.monoCaption)
                 .padding(.horizontal, 4)
                 .padding(.vertical, 1)
                 .background(Color.secondary.opacity(0.2))
@@ -327,7 +342,7 @@ struct GitHubPRDetailView: View {
       VStack(alignment: .leading, spacing: 12) {
         if let body = pr.body, !body.isEmpty {
           Text(body)
-            .font(.system(size: 12))
+            .font(GitHubTypography.body)
             .foregroundStyle(.primary)
             .textSelection(.enabled)
             .padding(12)
@@ -338,7 +353,7 @@ struct GitHubPRDetailView: View {
             )
         } else {
           Text("No description provided.")
-            .font(.system(size: 12))
+            .font(GitHubTypography.body)
             .foregroundStyle(.tertiary)
             .italic()
         }
@@ -346,7 +361,7 @@ struct GitHubPRDetailView: View {
         // Quick stats
         VStack(alignment: .leading, spacing: 8) {
           Text("Details")
-            .font(.system(size: 12, weight: .semibold))
+            .font(GitHubTypography.sectionLabel)
 
           detailRow("Mergeable", value: pr.mergeabilityKind?.displayName ?? "Unknown")
           if let created = pr.createdAt {
@@ -372,11 +387,11 @@ struct GitHubPRDetailView: View {
   private func detailRow(_ label: String, value: String) -> some View {
     HStack {
       Text(label)
-        .font(.system(size: 11, weight: .medium))
+        .font(GitHubTypography.button)
         .foregroundStyle(.secondary)
         .frame(width: 100, alignment: .leading)
       Text(value)
-        .font(.system(size: 11))
+        .font(GitHubTypography.bodySmall)
         .foregroundStyle(.primary)
       Spacer()
     }
@@ -391,7 +406,7 @@ struct GitHubPRDetailView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if viewModel.selectedPRFiles.isEmpty {
         Text("No files changed")
-          .font(.system(size: 12))
+          .font(GitHubTypography.body)
           .foregroundStyle(.secondary)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
@@ -410,7 +425,7 @@ struct GitHubPRDetailView: View {
                       .frame(width: 16)
 
                     Text(file.filename)
-                      .font(.system(size: 11, design: .monospaced))
+                      .font(GitHubTypography.monoBody)
                       .lineLimit(1)
                       .truncationMode(.middle)
 
@@ -418,10 +433,10 @@ struct GitHubPRDetailView: View {
 
                     HStack(spacing: 4) {
                       Text("+\(file.additions)")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(GitHubTypography.monoCaption)
                         .foregroundStyle(.green)
                       Text("-\(file.deletions)")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(GitHubTypography.monoCaption)
                         .foregroundStyle(.red)
                     }
                   }
@@ -440,20 +455,24 @@ struct GitHubPRDetailView: View {
           .frame(minWidth: 200, idealWidth: 280, maxWidth: 350)
 
           // Diff content
-          if let file = selectedFile, let patch = file.patch {
-            ScrollView {
-              Text(patch)
-                .font(.system(size: 11, design: .monospaced))
-                .textSelection(.enabled)
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
+          if let file = selectedFile, let renderedDiff = renderedDiff(for: file) {
+            VStack(spacing: 0) {
+              diffHeader(for: file)
+              Divider()
+              PierreDiffView(
+                oldContent: renderedDiff.oldContent,
+                newContent: renderedDiff.newContent,
+                fileName: (file.filename as NSString).lastPathComponent,
+                diffStyle: $diffStyle,
+                overflowMode: $overflowMode
+              )
             }
             .background(colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.98))
           } else if let file = selectedFile {
             VStack {
               Spacer()
               Text("No diff available for \(file.filename)")
-                .font(.system(size: 12))
+                .font(GitHubTypography.body)
                 .foregroundStyle(.secondary)
               Spacer()
             }
@@ -462,7 +481,7 @@ struct GitHubPRDetailView: View {
             VStack {
               Spacer()
               Text("Select a file to view its diff")
-                .font(.system(size: 12))
+                .font(GitHubTypography.body)
                 .foregroundStyle(.secondary)
               Spacer()
             }
@@ -473,6 +492,56 @@ struct GitHubPRDetailView: View {
     }
   }
 
+  private func diffHeader(for file: GitHubPRFile) -> some View {
+    HStack(spacing: 10) {
+      HStack(spacing: 6) {
+        Image(systemName: file.statusIcon)
+          .font(.system(size: 11))
+          .foregroundStyle(fileStatusColor(file.status))
+
+        Text(file.filename)
+          .font(GitHubTypography.monoBody)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+
+      Spacer()
+
+      HStack(spacing: 6) {
+        Text("+\(file.additions)")
+          .font(GitHubTypography.monoCaption)
+          .foregroundStyle(.green)
+        Text("-\(file.deletions)")
+          .font(GitHubTypography.monoCaption)
+          .foregroundStyle(.red)
+      }
+
+      HStack(spacing: 8) {
+        Button {
+          diffStyle = diffStyle == .split ? .unified : .split
+        } label: {
+          Image(systemName: diffStyle == .split ? "rectangle.split.2x1" : "rectangle.stack")
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(diffStyle == .split ? "Switch to unified view" : "Switch to split view")
+
+        Button {
+          overflowMode = overflowMode == .wrap ? .scroll : .wrap
+        } label: {
+          Image(systemName: overflowMode == .wrap ? "text.alignleft" : "text.aligncenter")
+            .font(.system(size: 12))
+            .foregroundStyle(overflowMode == .wrap ? .primary : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(overflowMode == .wrap ? "Disable word wrap" : "Enable word wrap")
+      }
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+  }
+
   private func fileStatusColor(_ status: String) -> Color {
     switch status {
     case "added": return .green
@@ -481,6 +550,48 @@ struct GitHubPRDetailView: View {
     case "renamed": return .blue
     default: return .secondary
     }
+  }
+
+  private func syncSelectedFile() {
+    guard !viewModel.selectedPRFiles.isEmpty else {
+      selectedFile = nil
+      return
+    }
+
+    guard let selectedFile else {
+      self.selectedFile = viewModel.selectedPRFiles.first
+      return
+    }
+
+    if !viewModel.selectedPRFiles.contains(where: { $0.id == selectedFile.id }) {
+      self.selectedFile = viewModel.selectedPRFiles.first
+    }
+  }
+
+  private func rebuildParsedPRDiffs() {
+    guard !viewModel.selectedPRDiff.isEmpty else {
+      parsedPRDiffsByFile = [:]
+      return
+    }
+
+    let parsedDiffs = DiffParserUtils.parse(diffOutput: viewModel.selectedPRDiff)
+    parsedPRDiffsByFile = Dictionary(
+      parsedDiffs.map { ($0.filePath, $0.diffContent) },
+      uniquingKeysWith: { first, _ in first }
+    )
+  }
+
+  private func renderedDiff(for file: GitHubPRFile) -> GitHubRenderedDiff? {
+    if let patch = file.patch,
+       let rendered = GitHubDiffRenderAdapter.renderedDiff(from: patch) {
+      return rendered
+    }
+
+    if let fallbackPatch = parsedPRDiffsByFile[file.filename] {
+      return GitHubDiffRenderAdapter.renderedDiff(from: fallbackPatch)
+    }
+
+    return nil
   }
 
   // MARK: - Checks Tab
@@ -495,9 +606,9 @@ struct GitHubPRDetailView: View {
         VStack(spacing: 8) {
           Spacer()
           Text("Failed to load checks")
-            .font(.system(size: 13, weight: .medium))
+            .font(GitHubTypography.sectionTitle)
           Text(msg)
-            .font(.system(size: 11))
+            .font(GitHubTypography.bodySmall)
             .foregroundStyle(.secondary)
           Button("Retry") {
             Task { await viewModel.loadChecks(prNumber: pr.number) }
@@ -515,7 +626,7 @@ struct GitHubPRDetailView: View {
               .font(.system(size: 24))
               .foregroundStyle(.tertiary)
             Text("No CI checks configured")
-              .font(.system(size: 12))
+              .font(GitHubTypography.body)
               .foregroundStyle(.secondary)
             Spacer()
           }
@@ -532,11 +643,11 @@ struct GitHubPRDetailView: View {
 
                   VStack(alignment: .leading, spacing: 1) {
                     Text(check.name)
-                      .font(.system(size: 12, weight: .medium))
+                      .font(GitHubTypography.body)
 
                     HStack(spacing: 4) {
                       Text(check.statusDisplayName)
-                        .font(.system(size: 10))
+                        .font(GitHubTypography.caption)
                         .foregroundStyle(.secondary)
                     }
                   }
@@ -588,7 +699,7 @@ struct GitHubPRDetailView: View {
               .padding(.vertical, 4)
 
             Text("Review Comments")
-              .font(.system(size: 11, weight: .semibold))
+              .font(GitHubTypography.sectionLabel)
               .foregroundStyle(.secondary)
               .frame(maxWidth: .infinity, alignment: .leading)
               .padding(.horizontal, 12)
@@ -605,7 +716,7 @@ struct GitHubPRDetailView: View {
                 .font(.system(size: 24))
                 .foregroundStyle(.tertiary)
               Text("No comments yet")
-                .font(.system(size: 12))
+                .font(GitHubTypography.body)
                 .foregroundStyle(.secondary)
               Spacer()
             }
@@ -627,20 +738,21 @@ struct GitHubPRDetailView: View {
       HStack(spacing: 6) {
         if let author = comment.author {
           Text(author.login)
-            .font(.system(size: 11, weight: .semibold))
+            .font(GitHubTypography.sectionLabel)
         }
         if let created = comment.createdAt {
           Text(relativeTime(created))
-            .font(.system(size: 10))
+            .font(GitHubTypography.caption)
             .foregroundStyle(.tertiary)
         }
         Spacer()
       }
 
       Text(comment.body)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .textSelection(.enabled)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(10)
     .background(
       RoundedRectangle(cornerRadius: 8)
@@ -653,30 +765,30 @@ struct GitHubPRDetailView: View {
       HStack(spacing: 6) {
         if let author = comment.author {
           Text(author.login)
-            .font(.system(size: 11, weight: .semibold))
+            .font(GitHubTypography.sectionLabel)
         }
         if let path = comment.path {
           Text(path)
-            .font(.system(size: 10, design: .monospaced))
+            .font(GitHubTypography.monoCaption)
             .foregroundStyle(.blue)
             .lineLimit(1)
         }
         if let line = comment.line {
           Text("L\(line)")
-            .font(.system(size: 10, design: .monospaced))
+            .font(GitHubTypography.monoCaption)
             .foregroundStyle(.secondary)
         }
         Spacer()
         if let created = comment.createdAt {
           Text(relativeTime(created))
-            .font(.system(size: 10))
+            .font(GitHubTypography.caption)
             .foregroundStyle(.tertiary)
         }
       }
 
       if let hunk = comment.diffHunk {
         Text(hunk.components(separatedBy: "\n").suffix(3).joined(separator: "\n"))
-          .font(.system(size: 10, design: .monospaced))
+          .font(GitHubTypography.monoCaption)
           .foregroundStyle(.secondary)
           .padding(6)
           .background(
@@ -686,9 +798,10 @@ struct GitHubPRDetailView: View {
       }
 
       Text(comment.body)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .textSelection(.enabled)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(10)
     .background(
       RoundedRectangle(cornerRadius: 8)
@@ -699,7 +812,7 @@ struct GitHubPRDetailView: View {
   private var commentInput: some View {
     HStack(spacing: 8) {
       TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .textFieldStyle(.plain)
         .lineLimit(1...4)
         .padding(8)
@@ -740,7 +853,7 @@ struct GitHubReviewSheet: View {
   var body: some View {
     VStack(spacing: 16) {
       Text("Review PR #\(pr.number)")
-        .font(.system(size: 14, weight: .semibold))
+        .font(GitHubTypography.sectionTitle)
 
       Picker("Review Type", selection: $selectedEvent) {
         Text("Comment").tag(GitHubReviewInput.Event.comment)
@@ -750,7 +863,7 @@ struct GitHubReviewSheet: View {
       .pickerStyle(.segmented)
 
       TextEditor(text: $viewModel.reviewBody)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .frame(minHeight: 100)
         .padding(4)
         .overlay(

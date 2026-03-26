@@ -73,11 +73,11 @@ public struct GitHubPanelView: View {
         .foregroundStyle(.secondary)
 
       Text("GitHub")
-        .font(.system(size: 13, weight: .semibold))
+        .font(GitHubTypography.panelTitle)
 
       if let info = viewModel.repoInfo {
         Text(info.fullName)
-          .font(.system(size: 12, weight: .medium))
+          .font(GitHubTypography.body)
           .foregroundStyle(.secondary)
       }
 
@@ -148,7 +148,7 @@ public struct GitHubPanelView: View {
             Image(systemName: tab.icon)
               .font(.system(size: 11))
             Text(tab.rawValue)
-              .font(.system(size: 12, weight: .medium))
+              .font(GitHubTypography.body)
           }
           .padding(.horizontal, 12)
           .padding(.vertical, 6)
@@ -195,15 +195,15 @@ public struct GitHubPanelView: View {
           .foregroundStyle(.blue)
 
         Text("Current branch:")
-          .font(.system(size: 11))
+          .font(GitHubTypography.caption)
           .foregroundStyle(.secondary)
 
         Text("#\(pr.number)")
-          .font(.system(size: 11, weight: .semibold, design: .monospaced))
+          .font(GitHubTypography.monoStrong)
           .foregroundStyle(.blue)
 
         Text(pr.title)
-          .font(.system(size: 11, weight: .medium))
+          .font(GitHubTypography.button)
           .lineLimit(1)
 
         Spacer()
@@ -247,7 +247,7 @@ public struct GitHubPanelView: View {
             Task { await viewModel.loadPullRequests() }
           } label: {
             Text(filter.rawValue)
-              .font(.system(size: 11, weight: .medium))
+              .font(GitHubTypography.button)
               .padding(.horizontal, 8)
               .padding(.vertical, 3)
               .background(
@@ -317,7 +317,7 @@ public struct GitHubPanelView: View {
             Task { await viewModel.loadIssues() }
           } label: {
             Text(filter.rawValue)
-              .font(.system(size: 11, weight: .medium))
+              .font(GitHubTypography.button)
               .padding(.horizontal, 8)
               .padding(.vertical, 3)
               .background(
@@ -368,7 +368,7 @@ public struct GitHubPanelView: View {
       Image(systemName: status.icon)
         .font(.system(size: 9))
       Text(status.rawValue.capitalized)
-        .font(.system(size: 9, weight: .medium))
+        .font(GitHubTypography.badge)
     }
     .padding(.horizontal, 6)
     .padding(.vertical, 2)
@@ -392,7 +392,7 @@ public struct GitHubPanelView: View {
       ProgressView()
         .scaleEffect(0.8)
       Text(message)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .foregroundStyle(.secondary)
       Spacer()
     }
@@ -406,7 +406,7 @@ public struct GitHubPanelView: View {
         .font(.system(size: 24))
         .foregroundStyle(.orange)
       Text(message)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
       Button("Retry") { retry() }
@@ -425,9 +425,9 @@ public struct GitHubPanelView: View {
         .font(.system(size: 24))
         .foregroundStyle(.tertiary)
       Text(title)
-        .font(.system(size: 13, weight: .medium))
+        .font(GitHubTypography.sectionTitle)
       Text(message)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .foregroundStyle(.secondary)
       Spacer()
     }
@@ -444,16 +444,16 @@ public struct GitHubPanelView: View {
         .foregroundStyle(.tertiary)
 
       Text("GitHub CLI Not Installed")
-        .font(.system(size: 15, weight: .semibold))
+        .font(GitHubTypography.sectionTitle)
 
       Text("Install the GitHub CLI to use GitHub integration.\nRun: brew install gh")
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
 
       HStack(spacing: 8) {
         Text("brew install gh")
-          .font(.system(size: 12, design: .monospaced))
+          .font(GitHubTypography.monoBody)
           .padding(.horizontal, 12)
           .padding(.vertical, 6)
           .background(Color.secondary.opacity(0.1))
@@ -477,16 +477,16 @@ public struct GitHubPanelView: View {
         .foregroundStyle(.tertiary)
 
       Text("Not Authenticated")
-        .font(.system(size: 15, weight: .semibold))
+        .font(GitHubTypography.sectionTitle)
 
       Text("Authenticate with GitHub CLI to access your repositories.")
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
 
       HStack(spacing: 8) {
         Text("gh auth login")
-          .font(.system(size: 12, design: .monospaced))
+          .font(GitHubTypography.monoBody)
           .padding(.horizontal, 12)
           .padding(.vertical, 6)
           .background(Color.secondary.opacity(0.1))
@@ -521,30 +521,30 @@ struct GitHubPRRow: View {
         VStack(alignment: .leading, spacing: 2) {
           HStack(spacing: 6) {
             Text("#\(pr.number)")
-              .font(.system(size: 11, weight: .semibold, design: .monospaced))
+              .font(GitHubTypography.monoStrong)
               .foregroundStyle(.secondary)
 
             Text(pr.title)
-              .font(.system(size: 12, weight: .medium))
+              .font(GitHubTypography.body)
               .lineLimit(1)
           }
 
           HStack(spacing: 8) {
             if let author = pr.author {
               Text(author.login)
-                .font(.system(size: 10))
+                .font(GitHubTypography.caption)
                 .foregroundStyle(.tertiary)
             }
 
             Text(pr.headRefName)
-              .font(.system(size: 10, design: .monospaced))
+              .font(GitHubTypography.monoCaption)
               .foregroundStyle(.blue.opacity(0.8))
               .lineLimit(1)
 
             if let labels = pr.labels, !labels.isEmpty {
               ForEach(labels.prefix(2)) { label in
                 Text(label.name)
-                  .font(.system(size: 9, weight: .medium))
+                  .font(GitHubTypography.badge)
                   .padding(.horizontal, 5)
                   .padding(.vertical, 1)
                   .background(labelColor(label).opacity(0.2))
@@ -564,17 +564,17 @@ struct GitHubPRRow: View {
               Image(systemName: "doc")
                 .font(.system(size: 9))
               Text("\(pr.changedFiles)")
-                .font(.system(size: 10, design: .monospaced))
+                .font(GitHubTypography.monoCaption)
             }
             .foregroundStyle(.secondary)
           }
 
           HStack(spacing: 4) {
             Text("+\(pr.additions)")
-              .font(.system(size: 10, design: .monospaced))
+              .font(GitHubTypography.monoCaption)
               .foregroundStyle(.green)
             Text("-\(pr.deletions)")
-              .font(.system(size: 10, design: .monospaced))
+              .font(GitHubTypography.monoCaption)
               .foregroundStyle(.red)
           }
 
@@ -665,25 +665,25 @@ struct GitHubIssueRow: View {
         VStack(alignment: .leading, spacing: 2) {
           HStack(spacing: 6) {
             Text("#\(issue.number)")
-              .font(.system(size: 11, weight: .semibold, design: .monospaced))
+              .font(GitHubTypography.monoStrong)
               .foregroundStyle(.secondary)
 
             Text(issue.title)
-              .font(.system(size: 12, weight: .medium))
+              .font(GitHubTypography.body)
               .lineLimit(1)
           }
 
           HStack(spacing: 8) {
             if let author = issue.author {
               Text(author.login)
-                .font(.system(size: 10))
+                .font(GitHubTypography.caption)
                 .foregroundStyle(.tertiary)
             }
 
             if let labels = issue.labels, !labels.isEmpty {
               ForEach(labels.prefix(3)) { label in
                 Text(label.name)
-                  .font(.system(size: 9, weight: .medium))
+                  .font(GitHubTypography.badge)
                   .padding(.horizontal, 5)
                   .padding(.vertical, 1)
                   .background(Color.secondary.opacity(0.15))
@@ -693,7 +693,7 @@ struct GitHubIssueRow: View {
 
             if let timeAgo = issue.createdAt.map(relativeTime) {
               Text(timeAgo)
-                .font(.system(size: 10))
+                .font(GitHubTypography.caption)
                 .foregroundStyle(.tertiary)
             }
           }
@@ -706,7 +706,7 @@ struct GitHubIssueRow: View {
             Image(systemName: "bubble.right")
               .font(.system(size: 9))
             Text("\(comments.count)")
-              .font(.system(size: 10, design: .monospaced))
+              .font(GitHubTypography.monoCaption)
           }
           .foregroundStyle(.secondary)
         }

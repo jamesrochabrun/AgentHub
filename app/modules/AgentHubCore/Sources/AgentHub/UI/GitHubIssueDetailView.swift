@@ -36,11 +36,11 @@ struct GitHubIssueDetailView: View {
           if let body = issue.body, !body.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
               Text("Description")
-                .font(.system(size: 11, weight: .semibold))
+                .font(GitHubTypography.sectionLabel)
                 .foregroundStyle(.secondary)
 
               Text(body)
-                .font(.system(size: 12))
+                .font(GitHubTypography.body)
                 .textSelection(.enabled)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -49,22 +49,25 @@ struct GitHubIssueDetailView: View {
                     .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
                 )
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
           }
 
           // Comments
           if let comments = issue.comments, !comments.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
               Text("Comments (\(comments.count))")
-                .font(.system(size: 11, weight: .semibold))
+                .font(GitHubTypography.sectionLabel)
                 .foregroundStyle(.secondary)
 
               ForEach(comments) { comment in
                 issueCommentCard(comment)
               }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
           }
         }
         .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
 
       Divider()
@@ -85,7 +88,7 @@ struct GitHubIssueDetailView: View {
           Image(systemName: "chevron.left")
             .font(.system(size: 10, weight: .semibold))
           Text("Back")
-            .font(.system(size: 12, weight: .medium))
+            .font(GitHubTypography.body)
         }
         .foregroundStyle(.secondary)
       }
@@ -106,7 +109,7 @@ struct GitHubIssueDetailView: View {
             Image(systemName: "arrow.right.circle")
               .font(.system(size: 10))
             Text("Send to Session")
-              .font(.system(size: 11, weight: .medium))
+              .font(GitHubTypography.button)
           }
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
@@ -131,10 +134,10 @@ struct GitHubIssueDetailView: View {
           .foregroundStyle(issueStateColor)
 
         Text("#\(issue.number)")
-          .font(.system(size: 13, weight: .bold, design: .monospaced))
+          .font(GitHubTypography.monoTitle)
 
         Text(issue.stateKind.displayName)
-          .font(.system(size: 10, weight: .medium))
+          .font(GitHubTypography.badge)
           .padding(.horizontal, 6)
           .padding(.vertical, 2)
           .background(
@@ -146,7 +149,7 @@ struct GitHubIssueDetailView: View {
       }
 
       Text(issue.title)
-        .font(.system(size: 14, weight: .semibold))
+        .font(GitHubTypography.sectionTitle)
         .fixedSize(horizontal: false, vertical: true)
 
       HStack(spacing: 12) {
@@ -155,14 +158,14 @@ struct GitHubIssueDetailView: View {
             Image(systemName: "person")
               .font(.system(size: 9))
             Text(author.login)
-              .font(.system(size: 11))
+              .font(GitHubTypography.bodySmall)
           }
           .foregroundStyle(.secondary)
         }
 
         if let created = issue.createdAt {
           Text(relativeTime(created))
-            .font(.system(size: 11))
+            .font(GitHubTypography.bodySmall)
             .foregroundStyle(.tertiary)
         }
 
@@ -171,7 +174,7 @@ struct GitHubIssueDetailView: View {
             Image(systemName: "person.2")
               .font(.system(size: 9))
             Text(assignees.map(\.login).joined(separator: ", "))
-              .font(.system(size: 11))
+              .font(GitHubTypography.bodySmall)
           }
           .foregroundStyle(.secondary)
         }
@@ -181,7 +184,7 @@ struct GitHubIssueDetailView: View {
         HStack(spacing: 4) {
           ForEach(labels) { label in
             Text(label.name)
-              .font(.system(size: 10, weight: .medium))
+              .font(GitHubTypography.badge)
               .padding(.horizontal, 6)
               .padding(.vertical, 2)
               .background(Color.secondary.opacity(0.12))
@@ -190,6 +193,7 @@ struct GitHubIssueDetailView: View {
         }
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
   }
@@ -209,20 +213,21 @@ struct GitHubIssueDetailView: View {
       HStack(spacing: 6) {
         if let author = comment.author {
           Text(author.login)
-            .font(.system(size: 11, weight: .semibold))
+            .font(GitHubTypography.sectionLabel)
         }
         if let created = comment.createdAt {
           Text(relativeTime(created))
-            .font(.system(size: 10))
+            .font(GitHubTypography.caption)
             .foregroundStyle(.tertiary)
         }
         Spacer()
       }
 
       Text(comment.body)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .textSelection(.enabled)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(10)
     .background(
       RoundedRectangle(cornerRadius: 8)
@@ -235,7 +240,7 @@ struct GitHubIssueDetailView: View {
   private var commentInput: some View {
     HStack(spacing: 8) {
       TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
-        .font(.system(size: 12))
+        .font(GitHubTypography.body)
         .textFieldStyle(.plain)
         .lineLimit(1...4)
         .padding(8)
