@@ -341,16 +341,7 @@ struct GitHubPRDetailView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 12) {
         if let body = pr.body, !body.isEmpty {
-          Text(body)
-            .font(GitHubTypography.body)
-            .foregroundStyle(.primary)
-            .textSelection(.enabled)
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-              RoundedRectangle(cornerRadius: 8)
-                .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
-            )
+          MarkdownCardView(content: body)
         } else {
           Text("No description provided.")
             .font(GitHubTypography.body)
