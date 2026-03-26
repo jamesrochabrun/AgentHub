@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Hub panel** — Unified view of all sessions across providers with single, list, 2-column, and 3-column grid layouts
 - **Resizable list cards** — In list mode, monitoring cards can be resized with a preview guide for a smoother, less distracting resize experience
 - **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
-- **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, and send GitHub context back into a session
+- **GitHub support** — Browse pull requests and issues for the current repository, inspect rendered PR diffs and CI checks, checkout PR branches, leave reviews/comments, and send GitHub context back into a session
 - **File explorer and built-in editor** — Browse the project tree, jump to files with Cmd+P, edit files in-app with syntax highlighting, and save changes without leaving AgentHub
 - **Git worktree management** — Create and delete worktrees from the UI; launch sessions on new branches
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
@@ -64,21 +64,27 @@ https://github.com/user-attachments/assets/f6a304de-fc7c-4024-94c6-9e2222210dff
 
 ## GitHub Support
 
-AgentHub can surface repository GitHub data directly inside the app through the GitHub CLI.
+AgentHub surfaces repository GitHub data directly inside the app through the GitHub CLI (`gh`), so it uses the same authentication and repository context you already use in Terminal.
 
 - Browse pull requests and issues for the active repository
 - Open the current branch PR directly from the session card
-- Review PR overview content, changed files, CI checks, and comments
+- Review PR overview content, changed files, rendered diffs, CI checks, and comments
+- Checkout a PR branch locally from the PR detail view
+- Submit PR reviews (`Comment`, `Approve`, `Request Changes`) and comment on issues
 - Render PR file diffs with the same inline diff viewer used elsewhere in AgentHub
 - Send PR or issue context back into the active Claude Code or Codex session
 
 ### GitHub Setup
 
-GitHub features are optional and require the GitHub CLI:
+GitHub features are optional and require the GitHub CLI plus a local git repository with a GitHub remote:
 
-1. Install [`gh`](https://cli.github.com/).
+1. Install [`gh`](https://cli.github.com/) or run `brew install gh`.
 2. Authenticate with `gh auth login`.
-3. Open any GitHub repository in AgentHub and use the `GitHub` action from the session UI.
+3. Verify the CLI is ready with `gh auth status`.
+4. Open a local repository with a GitHub remote in AgentHub.
+5. Click `GitHub` next to the repository path on a session card to open the GitHub panel.
+
+Once GitHub is configured, AgentHub can also surface the pull request for your current branch directly in the session card for quick access.
 
 ## File Explorer
 
@@ -93,7 +99,7 @@ https://github.com/user-attachments/assets/6d263d11-6648-42e7-9335-04aa51a33296
 - macOS 14.0+
 - [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated
 - [Codex CLI](https://openai.com/index/introducing-codex/) installed (optional, for Codex features)
-- [GitHub CLI](https://cli.github.com/) installed and authenticated (optional, for GitHub features)
+- [GitHub CLI](https://cli.github.com/) installed and authenticated (optional, for GitHub PR, issue, review, and CI features)
 
 ## Installation & Updates
 
