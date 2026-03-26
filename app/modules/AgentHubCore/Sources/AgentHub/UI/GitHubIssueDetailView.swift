@@ -242,6 +242,8 @@ struct GitHubIssueDetailView: View {
       TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
         .font(GitHubTypography.body)
         .textFieldStyle(.plain)
+        .submitLabel(.send)
+        .onSubmit(submitComment)
         .lineLimit(1...4)
         .padding(8)
         .background(
@@ -254,7 +256,7 @@ struct GitHubIssueDetailView: View {
         )
 
       Button {
-        Task { await viewModel.submitIssueComment() }
+        submitComment()
       } label: {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 20))
@@ -264,5 +266,9 @@ struct GitHubIssueDetailView: View {
       .disabled(viewModel.newCommentText.isEmpty || viewModel.isSubmittingComment)
     }
     .padding(10)
+  }
+
+  private func submitComment() {
+    Task { await viewModel.submitIssueComment() }
   }
 }

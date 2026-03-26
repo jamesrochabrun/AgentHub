@@ -805,6 +805,8 @@ struct GitHubPRDetailView: View {
       TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
         .font(GitHubTypography.body)
         .textFieldStyle(.plain)
+        .submitLabel(.send)
+        .onSubmit(submitComment)
         .lineLimit(1...4)
         .padding(8)
         .background(
@@ -817,7 +819,7 @@ struct GitHubPRDetailView: View {
         )
 
       Button {
-        Task { await viewModel.submitPRComment() }
+        submitComment()
       } label: {
         Image(systemName: "arrow.up.circle.fill")
           .font(.system(size: 20))
@@ -830,6 +832,10 @@ struct GitHubPRDetailView: View {
     .sheet(isPresented: $showingReviewSheet) {
       GitHubReviewSheet(viewModel: viewModel, pr: pr)
     }
+  }
+
+  private func submitComment() {
+    Task { await viewModel.submitPRComment() }
   }
 }
 
