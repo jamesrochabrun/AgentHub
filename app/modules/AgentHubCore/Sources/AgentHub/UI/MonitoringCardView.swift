@@ -249,6 +249,9 @@ public struct MonitoringCardView: View {
         branchName: session.branchName
       )
     }
+    .onDisappear {
+      sessionGitHubQuickAccessViewModel.stopPolling()
+    }
     .onDrop(
       of: [.fileURL, .png, .tiff, .image, .pdf],
       isTargeted: $isDragging

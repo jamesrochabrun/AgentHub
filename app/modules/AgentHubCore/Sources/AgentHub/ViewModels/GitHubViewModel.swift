@@ -71,6 +71,15 @@ public enum GitHubLoadingState: Equatable, Sendable {
   case error(String)
 }
 
+// MARK: - Checkout State
+
+public enum CheckoutState: Equatable, Sendable {
+  case idle
+  case loading
+  case success
+  case error(String)
+}
+
 // MARK: - GitHubViewModel
 
 @MainActor
@@ -127,6 +136,9 @@ public final class GitHubViewModel {
   /// Review input
   public var reviewBody: String = ""
   public var isSubmittingReview: Bool = false
+
+  /// Checkout state
+  public var checkoutState: CheckoutState = .idle
 
   /// Error alert
   public var errorMessage: String?
@@ -262,9 +274,18 @@ public final class GitHubViewModel {
   /// Checks out the selected PR's branch
   public func checkoutPR() async {
     guard let repoPath = currentRepoPath, let pr = selectedPR else { return }
+    checkoutState = .loading
     do {
       try await service.checkoutPR(number: pr.number, at: repoPath)
+      checkoutState = .success
+      Task {
+        try? await Task.sleep(for: .seconds(2))
+        if checkoutState == .success {
+          checkoutState = .idle
+        }
+      }
     } catch {
+      checkoutState = .error(error.localizedDescription)
       errorMessage = error.localizedDescription
     }
   }
