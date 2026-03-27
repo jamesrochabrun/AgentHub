@@ -30,12 +30,12 @@ public final class SessionGitHubQuickAccessViewModel {
   public func load(projectPath: String, branchName: String?) async {
     let repositoryKey = Self.repositoryKey(projectPath: projectPath, branchName: branchName)
 
-    // Reset state when the branch/project changes
-    if loadedRepositoryKey != repositoryKey {
-      loadedRepositoryKey = repositoryKey
-      currentBranchPR = nil
-      stopPolling()
-    }
+    // Skip if already loaded for this repo+branch — polling handles re-checks
+    guard loadedRepositoryKey != repositoryKey else { return }
+
+    loadedRepositoryKey = repositoryKey
+    currentBranchPR = nil
+    stopPolling()
 
     currentProjectPath = projectPath
     currentBranchName = branchName
