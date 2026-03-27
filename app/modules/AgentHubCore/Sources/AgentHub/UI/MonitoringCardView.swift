@@ -252,6 +252,9 @@ public struct MonitoringCardView: View {
     .onDisappear {
       sessionGitHubQuickAccessViewModel.stopPolling()
     }
+    .onChange(of: state?.status) { _, _ in
+      sessionGitHubQuickAccessViewModel.notifySessionActivity()
+    }
     .onDrop(
       of: [.fileURL, .png, .tiff, .image, .pdf],
       isTargeted: $isDragging
