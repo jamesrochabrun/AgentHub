@@ -91,6 +91,7 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
 
   var currentBranchPRResult: GitHubPullRequest?
   var currentBranchPRResults: [Result<GitHubPullRequest?, Error>] = []
+  var currentBranchPRDelay: TimeInterval = 0
   var getCurrentBranchPRCalled = false
   var getCurrentBranchPRCallCount = 0
   var getCurrentBranchPRRepoPath: String?
@@ -99,6 +100,9 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     getCurrentBranchPRCalled = true
     getCurrentBranchPRCallCount += 1
     getCurrentBranchPRRepoPath = repoPath
+    if currentBranchPRDelay > 0 {
+      try? await Task.sleep(for: .milliseconds(Int(currentBranchPRDelay * 1_000)))
+    }
     if !currentBranchPRResults.isEmpty {
       let nextResult = currentBranchPRResults.removeFirst()
       switch nextResult {

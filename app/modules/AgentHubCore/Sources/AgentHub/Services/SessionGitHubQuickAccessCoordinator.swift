@@ -40,7 +40,9 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
     var lastActivityAt: Date?
     var consecutiveErrorCount = 0
     var isTerminallyPaused = false
-    var pollTask: Task<Void, Never>?
+    var isRefreshing = false
+    var pendingPostRefreshEvaluation = false
+    var scheduledRefreshTask: Task<Void, Never>?
     var subscribers: [UUID: AsyncStream<GitHubPullRequest?>.Continuation] = [:]
   }
 
@@ -85,6 +87,10 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
     entries[repositoryKey] = entry
     subscriptionKeys[subscriptionID] = repositoryKey
 
+    AppLogger.github.debug(
+      "[QuickAccess] subscribe key=\(repositoryKey, privacy: .public) subscribers=\(entry.subscribers.count)"
+    )
+
     continuation.yield(entry.currentBranchPR)
     scheduleRefreshIfNeeded(for: repositoryKey, forceImmediate: needsImmediateRefresh(entry, now: .now))
 
@@ -101,11 +107,14 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
     continuation?.finish()
 
     if entry.subscribers.isEmpty {
-      entry.pollTask?.cancel()
-      entry.pollTask = nil
+      entry.scheduledRefreshTask?.cancel()
+      entry.scheduledRefreshTask = nil
     }
 
     entries[repositoryKey] = entry
+    AppLogger.github.debug(
+      "[QuickAccess] unsubscribe key=\(repositoryKey, privacy: .public) subscribers=\(entry.subscribers.count)"
+    )
   }
 
   public func recordActivity(projectPath: String, branchName: String?, at: Date) async {
@@ -121,13 +130,26 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
     }
 
     entry.lastActivityAt = at
-    let shouldReactivate = !entry.subscribers.isEmpty && (entry.pollTask == nil || entry.isTerminallyPaused)
+    guard !entry.subscribers.isEmpty else {
+      entries[repositoryKey] = entry
+      return
+    }
+
+    let shouldReactivate = entry.isTerminallyPaused
+    if entry.isRefreshing {
+      entry.pendingPostRefreshEvaluation = true
+      entries[repositoryKey] = entry
+      AppLogger.github.debug(
+        "[QuickAccess] coalesced activity during refresh key=\(repositoryKey, privacy: .public)"
+      )
+      return
+    }
+
     entry.isTerminallyPaused = false
     entries[repositoryKey] = entry
 
-    if shouldReactivate {
-      scheduleRefreshIfNeeded(for: repositoryKey, forceImmediate: true)
-    }
+    let shouldForceImmediate = shouldReactivate || needsImmediateRefresh(entry, now: at)
+    scheduleRefreshIfNeeded(for: repositoryKey, forceImmediate: shouldForceImmediate)
   }
 
   // MARK: - Scheduling
@@ -135,7 +157,16 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
   private func scheduleRefreshIfNeeded(for repositoryKey: String, forceImmediate: Bool) {
     guard var entry = entries[repositoryKey], !entry.subscribers.isEmpty else { return }
 
-    if !forceImmediate, entry.pollTask != nil {
+    if entry.isRefreshing {
+      entry.pendingPostRefreshEvaluation = true
+      entries[repositoryKey] = entry
+      AppLogger.github.debug(
+        "[QuickAccess] deferred schedule while refresh in flight key=\(repositoryKey, privacy: .public)"
+      )
+      return
+    }
+
+    if !forceImmediate, entry.scheduledRefreshTask != nil {
       entries[repositoryKey] = entry
       return
     }
@@ -151,8 +182,8 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
       return
     }
 
-    entry.pollTask?.cancel()
-    entry.pollTask = Task {
+    entry.scheduledRefreshTask?.cancel()
+    entry.scheduledRefreshTask = Task {
       let delay = Self.duration(for: interval)
       if interval > 0 {
         try? await Task.sleep(for: delay)
@@ -161,23 +192,54 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
       await self.executeScheduledRefresh(for: repositoryKey)
     }
     entries[repositoryKey] = entry
+
+    AppLogger.github.debug(
+      "[QuickAccess] scheduled refresh key=\(repositoryKey, privacy: .public) immediate=\(forceImmediate) interval=\(interval, privacy: .public)s"
+    )
   }
 
   private func executeScheduledRefresh(for repositoryKey: String) async {
     guard var entry = entries[repositoryKey] else { return }
-    entry.pollTask = nil
-    entries[repositoryKey] = entry
 
-    guard !entry.subscribers.isEmpty else { return }
-
-    if entry.lastRefreshAt != nil, !canAutoRefresh(entry, now: .now) {
+    guard !entry.subscribers.isEmpty else {
+      entry.scheduledRefreshTask = nil
+      entry.isRefreshing = false
+      entry.pendingPostRefreshEvaluation = false
+      entries[repositoryKey] = entry
       return
     }
+
+    if entry.lastRefreshAt != nil, !canAutoRefresh(entry, now: .now) {
+      entry.scheduledRefreshTask = nil
+      entry.isRefreshing = false
+      entry.pendingPostRefreshEvaluation = false
+      entries[repositoryKey] = entry
+      AppLogger.github.debug(
+        "[QuickAccess] refresh skipped key=\(repositoryKey, privacy: .public) reason=inactive"
+      )
+      return
+    }
+
+    let clock = ContinuousClock()
+    let refreshStart = clock.now
+    entry.isRefreshing = true
+    entries[repositoryKey] = entry
+    AppLogger.github.debug("[QuickAccess] refresh start key=\(repositoryKey, privacy: .public)")
 
     let refreshResult = await refreshCurrentBranchPR(at: entry.projectPath)
 
     guard var refreshedEntry = entries[repositoryKey] else { return }
-    refreshedEntry.pollTask = nil
+    refreshedEntry.isRefreshing = false
+    refreshedEntry.scheduledRefreshTask = nil
+    let hadCoalescedActivity = refreshedEntry.pendingPostRefreshEvaluation
+    refreshedEntry.pendingPostRefreshEvaluation = false
+
+    if Task.isCancelled {
+      entries[repositoryKey] = refreshedEntry
+      AppLogger.github.debug("[QuickAccess] refresh cancelled key=\(repositoryKey, privacy: .public)")
+      return
+    }
+
     guard !refreshedEntry.subscribers.isEmpty else {
       entries[repositoryKey] = refreshedEntry
       return
@@ -191,6 +253,9 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
       refreshedEntry.isTerminallyPaused = false
       entries[repositoryKey] = refreshedEntry
       broadcast(currentBranchPR, for: repositoryKey)
+      AppLogger.github.info(
+        "[QuickAccess] refresh success key=\(repositoryKey, privacy: .public) elapsed=\(clock.now - refreshStart)"
+      )
 
       if canAutoRefresh(refreshedEntry, now: .now) {
         scheduleRefreshIfNeeded(for: repositoryKey, forceImmediate: false)
@@ -201,16 +266,28 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
         refreshedEntry.isTerminallyPaused = true
         refreshedEntry.consecutiveErrorCount = 0
         entries[repositoryKey] = refreshedEntry
+        AppLogger.github.info(
+          "[QuickAccess] terminal pause key=\(repositoryKey, privacy: .public) elapsed=\(clock.now - refreshStart)"
+        )
         return
       }
 
       refreshedEntry.consecutiveErrorCount += 1
       refreshedEntry.isTerminallyPaused = false
       entries[repositoryKey] = refreshedEntry
+      AppLogger.github.info(
+        "[QuickAccess] recoverable failure key=\(repositoryKey, privacy: .public) elapsed=\(clock.now - refreshStart) backoffCount=\(refreshedEntry.consecutiveErrorCount)"
+      )
 
       if canAutoRefresh(refreshedEntry, now: .now) {
         scheduleBackoffRefresh(for: repositoryKey, errorCount: refreshedEntry.consecutiveErrorCount)
       }
+    }
+
+    if hadCoalescedActivity {
+      AppLogger.github.debug(
+        "[QuickAccess] coalesced activity applied after refresh key=\(repositoryKey, privacy: .public)"
+      )
     }
   }
 
@@ -221,8 +298,14 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
     let index = min(max(0, errorCount - 1), max(0, intervals.count - 1))
     let interval = intervals[index]
 
-    entry.pollTask?.cancel()
-    entry.pollTask = Task {
+    if entry.isRefreshing {
+      entry.pendingPostRefreshEvaluation = true
+      entries[repositoryKey] = entry
+      return
+    }
+
+    entry.scheduledRefreshTask?.cancel()
+    entry.scheduledRefreshTask = Task {
       let delay = Self.duration(for: interval)
       if interval > 0 {
         try? await Task.sleep(for: delay)
@@ -231,6 +314,9 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
       await self.executeScheduledRefresh(for: repositoryKey)
     }
     entries[repositoryKey] = entry
+    AppLogger.github.debug(
+      "[QuickAccess] scheduled backoff key=\(repositoryKey, privacy: .public) interval=\(interval, privacy: .public)s"
+    )
   }
 
   private func broadcast(_ currentBranchPR: GitHubPullRequest?, for repositoryKey: String) {

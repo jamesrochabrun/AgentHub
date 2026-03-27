@@ -72,6 +72,37 @@ struct SessionGitHubQuickAccessCoordinatorTests {
     await coordinator.unsubscribe(subscriptionID: secondSubscription.id)
   }
 
+  @Test("activity during an in-flight refresh does not launch a duplicate GitHub fetch")
+  func coalescesActivityDuringRefresh() async {
+    let service = MockGitHubCLIService()
+    service.currentBranchPRDelay = 0.06
+    service.currentBranchPRResult = nil
+    let coordinator = SessionGitHubQuickAccessCoordinator(
+      service: service,
+      configuration: makeCoordinatorConfiguration(missingPRPollInterval: 0.2, idleTimeout: 1)
+    )
+
+    let subscription = await coordinator.subscribe(projectPath: "/tmp/repo", branchName: "main")
+    try? await Task.sleep(for: .milliseconds(10))
+    #expect(service.getCurrentBranchPRCallCount == 1)
+
+    let activityAt = Date.now
+    await coordinator.recordActivity(projectPath: "/tmp/repo", branchName: "main", at: activityAt)
+    await coordinator.recordActivity(
+      projectPath: "/tmp/repo",
+      branchName: "main",
+      at: activityAt.addingTimeInterval(0.01)
+    )
+
+    try? await Task.sleep(for: .milliseconds(30))
+    #expect(service.getCurrentBranchPRCallCount == 1)
+
+    try? await Task.sleep(for: .milliseconds(90))
+    #expect(service.getCurrentBranchPRCallCount == 1)
+
+    await coordinator.unsubscribe(subscriptionID: subscription.id)
+  }
+
   @Test("last visible subscriber disappearing cancels future refreshes")
   func unsubscribeCancelsPolling() async {
     let service = MockGitHubCLIService()
@@ -140,6 +171,32 @@ struct SessionGitHubQuickAccessCoordinatorTests {
     try? await Task.sleep(for: .milliseconds(20))
 
     #expect(service.getCurrentBranchPRCallCount == 2)
+    await coordinator.unsubscribe(subscriptionID: subscription.id)
+  }
+
+  @Test("fresh cached PR activity keeps the remaining cadence instead of forcing an immediate refresh")
+  func freshCacheActivityPreservesCadence() async {
+    let service = MockGitHubCLIService()
+    service.currentBranchPRResults = [
+      .success(makeCoordinatorPR(number: 1)),
+      .success(makeCoordinatorPR(number: 2)),
+    ]
+    let coordinator = SessionGitHubQuickAccessCoordinator(
+      service: service,
+      configuration: makeCoordinatorConfiguration(existingPRPollInterval: 0.15, idleTimeout: 1)
+    )
+
+    let subscription = await coordinator.subscribe(projectPath: "/tmp/repo", branchName: "main")
+    try? await Task.sleep(for: .milliseconds(20))
+    #expect(service.getCurrentBranchPRCallCount == 1)
+
+    await coordinator.recordActivity(projectPath: "/tmp/repo", branchName: "main", at: .now)
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(service.getCurrentBranchPRCallCount == 1)
+
+    try? await Task.sleep(for: .milliseconds(140))
+    #expect(service.getCurrentBranchPRCallCount == 2)
+
     await coordinator.unsubscribe(subscriptionID: subscription.id)
   }
 
