@@ -409,7 +409,7 @@ public struct WebPreviewView: View {
       Button {
         toggleInspector()
       } label: {
-        Image(systemName: "cursorarrow.click.2")
+        Image(systemName: "hand.rays")
           .font(.system(size: 12, weight: .medium))
           .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
       }
@@ -819,6 +819,9 @@ public struct WebPreviewView: View {
           onElementSelected: { data in
             handleElementSelection(data)
           },
+          onSelectedElementViewportRectChange: { rect in
+            inspectState.updateSelectedElementViewportRect(rect)
+          },
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id
         )
@@ -843,11 +846,15 @@ public struct WebPreviewView: View {
           onElementSelected: { data in
             handleElementSelection(data)
           },
+          onSelectedElementViewportRectChange: { rect in
+            inspectState.updateSelectedElementViewportRect(rect)
+          },
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id
         )
         .webInspectorOverlay(
           state: inspectState,
+          inputPlacement: .selectionAnchored,
           onSubmit: { element, instruction in
             let prompt = ElementInspectorPromptBuilder.buildPrompt(
               element: element,
