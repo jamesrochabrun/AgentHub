@@ -145,6 +145,19 @@ public enum AgentHubDefaults {
   /// Type: Double (default: 360)
   public static let webPreviewInspectorWidth = "\(keyPrefix)ui.webPreviewInspectorWidth"
 
+  // MARK: - Web Preview Auth Settings
+
+  /// Whether persistent login sessions are enabled for web previews (opt-in, default: false).
+  /// When disabled, all previews use ephemeral storage — no cookies persist across reloads.
+  /// Type: Bool (default: false)
+  public static let webPreviewPersistentAuthEnabled = "\(keyPrefix)webPreview.persistentAuthEnabled"
+
+  /// JSON-encoded mapping of project paths to WKWebsiteDataStore UUIDs.
+  /// Each project gets its own isolated data store — cookies, localStorage, and cache
+  /// are fully siloed per project. No data crosses project boundaries.
+  /// Type: Data (JSON-encoded [String: String])
+  public static let webPreviewDataStoreIdentifiers = "\(keyPrefix)webPreview.dataStoreIdentifiers"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

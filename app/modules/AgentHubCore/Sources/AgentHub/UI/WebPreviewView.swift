@@ -10,6 +10,7 @@
 import ClaudeCodeSDK
 import SwiftUI
 import Canvas
+import WebKit
 
 private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   case input
@@ -403,6 +404,21 @@ public struct WebPreviewView: View {
         .padding(4)
         .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+      }
+
+      // Auth status indicator — shows when persistent auth is active for this project
+      if case .devServer = resolution {
+        let authService = WebPreviewAuthService.shared
+        let hasAuth = authService.hasPersistedAuth(for: projectPath)
+        Button {
+          Task { await authService.clearSession(for: projectPath) }
+        } label: {
+          Image(systemName: hasAuth ? "lock.fill" : "lock.open")
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(hasAuth ? .green : .secondary)
+        }
+        .buttonStyle(.plain)
+        .help(hasAuth ? "Persistent session active — click to clear" : "No persistent session")
       }
 
       // Inspect toggle

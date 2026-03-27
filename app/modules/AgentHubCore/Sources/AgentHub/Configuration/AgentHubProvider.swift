@@ -108,6 +108,13 @@ public final class AgentHubProvider {
     GitHubCLIService()
   }()
 
+  // MARK: - Web Preview Auth
+
+  /// Auth service for persistent web preview cookie storage (per-project isolation)
+  public var webPreviewAuthService: WebPreviewAuthService {
+    WebPreviewAuthService.shared
+  }
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes

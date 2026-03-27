@@ -68,7 +68,8 @@ public final class DevServerManager {
 
   /// Starts a dev server for the given key (typically session ID) at the specified project path.
   /// Idempotent: if already running or ready, returns immediately.
-  public func startServer(for key: String, projectPath: String) async {
+  /// - Parameter forceFramework: If set, overrides auto-detection with this framework (used for Storybook).
+  public func startServer(for key: String, projectPath: String, forceFramework: ProjectFramework? = nil) async {
     // Guard: already in an active state
     switch servers[key] {
     case .ready, .starting, .waitingForReady, .detecting:
@@ -80,8 +81,11 @@ public final class DevServerManager {
     servers[key] = .detecting
 
     // 1. Detect project type (off main thread for file I/O)
-    let detected = await Task.detached { [projectPath] in
-      DevServerManager.detectProject(at: projectPath)
+    let detected = await Task.detached { [projectPath, forceFramework] in
+      if let framework = forceFramework {
+        return DevServerManager.detectProject(at: projectPath, framework: framework)
+      }
+      return DevServerManager.detectProject(at: projectPath)
     }.value
 
     // 2. Find executable
@@ -191,6 +195,23 @@ public final class DevServerManager {
     servers[key] = .idle
   }
 
+  /// Starts a Storybook server alongside the main dev server.
+  /// Uses a compound key `"{sessionId}:storybook"` to coexist with the primary server.
+  public func startStorybookServer(for sessionId: String, projectPath: String) async {
+    let key = "\(sessionId):storybook"
+    await startServer(for: key, projectPath: projectPath, forceFramework: .storybook)
+  }
+
+  /// Stops the Storybook server for a given session.
+  public func stopStorybookServer(for sessionId: String) {
+    stopServer(for: "\(sessionId):storybook")
+  }
+
+  /// Whether a Storybook server is running for the given session.
+  public func storybookState(for sessionId: String) -> DevServerState {
+    state(for: "\(sessionId):storybook")
+  }
+
   /// Stops all running servers. Called on app quit.
   public func stopAllServers() {
     for key in Array(servers.keys) {
@@ -200,12 +221,20 @@ public final class DevServerManager {
 
   // MARK: - Project Detection
 
+  /// Returns a `DetectedProject` for a specific framework, bypassing auto-detection.
+  private nonisolated static func detectProject(at projectPath: String, framework: ProjectFramework) -> DetectedProject {
+    return mapFrameworkToProject(framework, projectPath: projectPath)
+  }
+
   /// Detects the project framework from package.json and returns the appropriate server config.
   /// Uses shared `ProjectFramework.detect(at:)` for framework identification, then maps to
   /// the full `DetectedProject` with command, args, port, and readiness patterns.
   private nonisolated static func detectProject(at projectPath: String) -> DetectedProject {
     let framework = ProjectFramework.detect(at: projectPath)
+    return mapFrameworkToProject(framework, projectPath: projectPath)
+  }
 
+  private nonisolated static func mapFrameworkToProject(_ framework: ProjectFramework, projectPath: String) -> DetectedProject {
     switch framework {
     case .vite:
       return DetectedProject(
@@ -255,6 +284,29 @@ public final class DevServerManager {
         defaultPort: 4321,
         readinessPatterns: ["localhost:", "astro"]
       )
+    case .storybook:
+      // Storybook runs as a companion server, typically via "npm run storybook"
+      var scriptName = "storybook"
+      let fm = FileManager.default
+      let packageJsonPath = "\(projectPath)/package.json"
+      if let data = fm.contents(atPath: packageJsonPath),
+         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+         let scripts = json["scripts"] as? [String: String] {
+        // Use "storybook" script if available, otherwise try "storybook:dev"
+        if scripts["storybook"] != nil {
+          scriptName = "storybook"
+        } else if scripts["storybook:dev"] != nil {
+          scriptName = "storybook:dev"
+        }
+      }
+      return DetectedProject(
+        framework: .storybook,
+        command: "npm",
+        arguments: ["run", scriptName, "--", "-p"],
+        defaultPort: 6006,
+        readinessPatterns: ["Storybook", "localhost:", "started"]
+      )
+
     case .unknown:
       // Has package.json with scripts but no recognized framework
       let fm = FileManager.default

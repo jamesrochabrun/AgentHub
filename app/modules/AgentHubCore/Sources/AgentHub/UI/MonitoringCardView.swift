@@ -668,6 +668,27 @@ public struct MonitoringCardView: View {
             : "Preview localhost web app")
         }
 
+        // Storybook button — visible when project has a .storybook/ config
+        if ProjectFramework.hasStorybook(at: session.projectPath) {
+          Button(action: {
+            Task {
+              await DevServerManager.shared.startStorybookServer(
+                for: session.id,
+                projectPath: session.projectPath
+              )
+            }
+            presentWebPreview()
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "book.pages")
+                .font(.caption2)
+              Text("Storybook")
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("Browse Storybook components")
+        }
+
         // Mermaid diagram button (only visible when mermaid content is detected)
         if state?.hasMermaidContent == true {
           Button(action: {
