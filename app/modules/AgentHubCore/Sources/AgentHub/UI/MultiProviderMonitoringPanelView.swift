@@ -5,7 +5,6 @@
 //  Combines Claude + Codex monitored sessions into a single panel.
 //
 
-import ClaudeCodeSDK
 import Foundation
 import PierreDiffsSwift
 import SwiftUI
@@ -713,7 +712,6 @@ public struct MultiProviderMonitoringPanelView: View {
           MonitoringCardView(
             session: pending.placeholderSession,
             state: nil,
-            claudeClient: viewModel.claudeClient,
             cliConfiguration: viewModel.cliConfiguration,
             providerKind: item.providerKind,
 
@@ -753,7 +751,6 @@ public struct MultiProviderMonitoringPanelView: View {
             session: session,
             state: state,
             planState: planState,
-            claudeClient: viewModel.claudeClient,
             cliConfiguration: viewModel.cliConfiguration,
             providerKind: item.providerKind,
             initialPrompt: initialPrompt,
@@ -929,7 +926,6 @@ public struct MultiProviderMonitoringPanelView: View {
         session: session,
         projectPath: projectPath,
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-        claudeClient: viewModel.claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: visibleItems.first?.providerKind ?? .claude,
         onInlineRequestSubmit: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) },
@@ -993,7 +989,6 @@ public struct MultiProviderMonitoringPanelView: View {
       MonitoringCardView(
         session: pending.placeholderSession,
         state: nil,
-        claudeClient: viewModel.claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: item.providerKind,
         initialPrompt: pending.initialPrompt,
@@ -1031,7 +1026,6 @@ public struct MultiProviderMonitoringPanelView: View {
         session: session,
         state: state,
         planState: planState,
-        claudeClient: viewModel.claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: item.providerKind,
         initialPrompt: initialPrompt,
@@ -1161,7 +1155,6 @@ public struct MultiProviderMonitoringPanelView: View {
         MonitoringCardView(
           session: pending.placeholderSession,
           state: nil,
-          claudeClient: viewModel.claudeClient,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: item.providerKind,
 
@@ -1204,7 +1197,6 @@ public struct MultiProviderMonitoringPanelView: View {
           session: session,
           state: state,
           planState: planState,
-          claudeClient: viewModel.claudeClient,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: item.providerKind,
           initialPrompt: initialPrompt,

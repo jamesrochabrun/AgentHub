@@ -5,7 +5,6 @@
 //  Created by Assistant on 1/11/26.
 //
 
-import ClaudeCodeSDK
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -67,7 +66,6 @@ public struct MonitoringCardView: View {
   let session: CLISession
   let state: SessionMonitorState?
   let planState: PlanState?
-  let claudeClient: (any ClaudeCode)?
   let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
   let initialPrompt: String?
@@ -118,7 +116,6 @@ public struct MonitoringCardView: View {
     session: CLISession,
     state: SessionMonitorState?,
     planState: PlanState? = nil,
-    claudeClient: (any ClaudeCode)? = nil,
     cliConfiguration: CLICommandConfiguration? = nil,
     providerKind: SessionProviderKind = .claude,
     initialPrompt: String? = nil,
@@ -151,7 +148,6 @@ public struct MonitoringCardView: View {
     self.session = session
     self.state = state
     self.planState = planState
-    self.claudeClient = claudeClient
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.initialPrompt = initialPrompt
@@ -283,7 +279,6 @@ public struct MonitoringCardView: View {
         session: item.session,
         projectPath: item.projectPath,
         onDismiss: { gitDiffSheetItem = nil },
-        claudeClient: claudeClient,
         cliConfiguration: cliConfiguration,
         providerKind: providerKind,
         onInlineRequestSubmit: onInlineRequestSubmit
@@ -304,7 +299,6 @@ public struct MonitoringCardView: View {
       PendingChangesView(
         session: item.session,
         pendingToolUse: item.pendingToolUse,
-        claudeClient: claudeClient,
         onDismiss: { pendingChangesSheetItem = nil },
         onApprovalResponse: { response, session in
           viewModel?.showTerminalWithPrompt(for: session, prompt: response)

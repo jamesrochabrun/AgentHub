@@ -8,7 +8,6 @@
 #if canImport(AppKit)
 import AppKit
 #endif
-import ClaudeCodeSDK
 import SwiftUI
 
 // MARK: - PlanView

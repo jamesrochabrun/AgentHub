@@ -6,13 +6,12 @@
 //
 
 import Foundation
-import ClaudeCodeSDK
 import os
 
 /// Central service provider that manages all AgentHub services
 ///
 /// `AgentHubProvider` provides lazy initialization of services and a single
-/// factory for `ClaudeCodeClient` instances. Use this instead of manually
+/// factory for creating CLI process services. Use this instead of manually
 /// creating and wiring services.
 ///
 /// ## Example
@@ -86,11 +85,6 @@ public final class AgentHubProvider {
     StatsDisplaySettings(configuration.statsDisplayMode)
   }()
 
-  /// Claude Code client for SDK communication
-  public private(set) lazy var claudeClient: (any ClaudeCode)? = {
-    createClaudeClient()
-  }()
-
   /// Session metadata store for user-provided session names
   public private(set) lazy var metadataStore: SessionMetadataStore? = {
     do {
@@ -139,7 +133,7 @@ public final class AgentHubProvider {
 
   /// Intelligence view model - created lazily and cached
   public private(set) lazy var intelligenceViewModel: IntelligenceViewModel = {
-    IntelligenceViewModel(claudeClient: claudeClient)
+    IntelligenceViewModel(processService: createProcessService())
   }()
 
   // MARK: - Initialization
@@ -175,53 +169,49 @@ public final class AgentHubProvider {
     self.init(configuration: .default)
   }
 
-  // MARK: - Claude Client Factory
+  // MARK: - CLI Process Service Factory
 
-  /// Creates a configured ClaudeCodeClient instance
-  /// - Returns: A configured client, or nil if creation fails
-  private func createClaudeClient() -> (any ClaudeCode)? {
-    do {
-      var config = ClaudeCodeConfiguration.withNvmSupport()
-      config.command = configuration.cliCommand
-      config.enableDebugLogging = configuration.enableDebugLogging
+  /// Creates a CLIProcessService with paths resolved from configuration
+  private func createProcessService() -> CLIProcessServiceProtocol {
+    let homeDir = NSHomeDirectory()
+    var paths: [String] = []
 
-      let homeDir = NSHomeDirectory()
-
-      // Add local Claude installation path (highest priority)
-      let localClaudePath = "\(homeDir)/.claude/local"
-      if FileManager.default.fileExists(atPath: localClaudePath) {
-        config.additionalPaths.insert(localClaudePath, at: 0)
-      }
-
-      // Add configured additional paths
-      for path in configuration.additionalCLIPaths {
-        if !config.additionalPaths.contains(path) {
-          config.additionalPaths.append(path)
-        }
-      }
-
-      // Add common development tool paths
-      let defaultPaths = [
-        "/usr/local/bin",
-        "/opt/homebrew/bin",
-        "/usr/bin",
-        "\(homeDir)/.bun/bin",
-        "\(homeDir)/.deno/bin",
-        "\(homeDir)/.cargo/bin",
-        "\(homeDir)/.local/bin"
-      ]
-
-      for path in defaultPaths {
-        if !config.additionalPaths.contains(path) {
-          config.additionalPaths.append(path)
-        }
-      }
-
-      return try ClaudeCodeClient(configuration: config)
-    } catch {
-      AppLogger.session.error("Failed to create ClaudeCodeClient: \(error.localizedDescription)")
-      return nil
+    // Add local Claude installation path (highest priority)
+    let localClaudePath = "\(homeDir)/.claude/local"
+    if FileManager.default.fileExists(atPath: localClaudePath) {
+      paths.append(localClaudePath)
     }
+
+    // Add configured additional paths
+    for path in configuration.additionalCLIPaths {
+      if !paths.contains(path) {
+        paths.append(path)
+      }
+    }
+
+    // Add common development tool paths
+    let defaultPaths = [
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+      "/usr/bin",
+      "\(homeDir)/.nvm/current/bin",
+      "\(homeDir)/.bun/bin",
+      "\(homeDir)/.deno/bin",
+      "\(homeDir)/.cargo/bin",
+      "\(homeDir)/.local/bin"
+    ]
+
+    for path in defaultPaths {
+      if !paths.contains(path) {
+        paths.append(path)
+      }
+    }
+
+    return CLIProcessService(
+      command: configuration.cliCommand,
+      additionalPaths: paths,
+      debugLogging: configuration.enableDebugLogging
+    )
   }
 
   // MARK: - Sessions ViewModel Factory
@@ -232,10 +222,8 @@ public final class AgentHubProvider {
     switch providerKind {
     case .claude:
       let command = defaults.string(forKey: AgentHubDefaults.claudeCommand)
-        ?? claudeClient?.configuration.command
         ?? configuration.cliCommand
-      let paths = claudeClient?.configuration.additionalPaths ?? configuration.additionalCLIPaths
-      cliConfiguration = CLICommandConfiguration(command: command, additionalPaths: paths, mode: .claude)
+      cliConfiguration = CLICommandConfiguration(command: command, additionalPaths: configuration.additionalCLIPaths, mode: .claude)
     case .codex:
       let userCommand = defaults.string(forKey: AgentHubDefaults.codexCommand) ?? configuration.codexCommand
       // Store the user's configured command string as-is (e.g. "airchat codex")
@@ -270,21 +258,10 @@ public final class AgentHubProvider {
       searchService: selectedSearch,
       cliConfiguration: cliConfiguration,
       providerKind: providerKind,
-      claudeClient: providerKind == .claude ? claudeClient : nil,
       metadataStore: metadataStore
     )
     vm.agentHubProvider = self
     return vm
-  }
-
-  // MARK: - Public Factory Methods
-
-  /// Creates a new Claude client with the provider's configuration
-  /// - Returns: A new ClaudeCodeClient, or nil if creation fails
-  ///
-  /// Use this when you need a fresh client instance rather than the shared one.
-  public func makeClaudeClient() -> (any ClaudeCode)? {
-    createClaudeClient()
   }
 
   // MARK: - App Lifecycle

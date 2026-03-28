@@ -7,7 +7,6 @@
 
 import Foundation
 import Combine
-import ClaudeCodeSDK
 import Canvas
 
 #if canImport(AppKit)
@@ -25,7 +24,6 @@ public final class CLISessionsViewModel {
 
   private let monitorService: any SessionMonitorServiceProtocol
   private let searchService: (any SessionSearchServiceProtocol)?
-  public let claudeClient: (any ClaudeCode)?
   public let cliConfiguration: CLICommandConfiguration
   public let providerKind: SessionProviderKind
   private let worktreeService = GitWorktreeService()
@@ -461,13 +459,11 @@ public final class CLISessionsViewModel {
     searchService: (any SessionSearchServiceProtocol)?,
     cliConfiguration: CLICommandConfiguration,
     providerKind: SessionProviderKind,
-    claudeClient: ClaudeCode? = nil,
     metadataStore: SessionMetadataStore? = nil
   ) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
     self.searchService = searchService
-    self.claudeClient = claudeClient
     self.metadataStore = metadataStore
     self.fileWatcher = fileWatcher
     self.cliConfiguration = cliConfiguration
@@ -1087,17 +1083,9 @@ public final class CLISessionsViewModel {
         userInfo: [NSLocalizedDescriptionKey: "External terminal resume is only available for Claude sessions."]
       )
     }
-    guard let claudeClient = claudeClient else {
-      return NSError(
-        domain: "CLISessionsViewModel",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Claude client not configured"]
-      )
-    }
-
     return TerminalLauncher.launchTerminalWithSession(
       session.id,
-      claudeClient: claudeClient,
+      cliConfiguration: cliConfiguration,
       projectPath: session.projectPath
     )
   }
@@ -1116,20 +1104,12 @@ public final class CLISessionsViewModel {
         userInfo: [NSLocalizedDescriptionKey: "External terminal launch is only available for Claude sessions."]
       )
     }
-    guard let claudeClient = claudeClient else {
-      return NSError(
-        domain: "CLISessionsViewModel",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Claude client not configured"]
-      )
-    }
-
     return TerminalLauncher.launchTerminalInPath(
       worktree.path,
       branchName: worktree.name,
       isWorktree: worktree.isWorktree,
       skipCheckout: skipCheckout,
-      claudeClient: claudeClient,
+      cliConfiguration: cliConfiguration,
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
   }

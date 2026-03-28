@@ -7,7 +7,6 @@
 
 import SwiftUI
 import PierreDiffsSwift
-import ClaudeCodeSDK
 import Canvas
 import os
 
@@ -16,7 +15,7 @@ import os
 /// Full-screen sheet displaying git diffs (staged and unstaged) for a CLI session's repository.
 ///
 /// Provides a split-pane interface with a file list sidebar and diff viewer. Supports both
-/// unified and split diff styles with word wrap toggle. When `claudeClient` is provided,
+/// unified and split diff styles with word wrap toggle. When `cliConfiguration` is provided,
 /// enables an inline editor overlay that allows users to click on any diff line and ask
 /// questions about the code, which opens Terminal with a resumed session containing the
 /// contextual prompt.
@@ -26,15 +25,14 @@ public struct GitDiffView: View {
   let session: CLISession
   let projectPath: String
   let onDismiss: () -> Void
-  let claudeClient: (any ClaudeCode)?
   let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
   var isEmbedded: Bool = false
 
-  /// Inline editor is enabled when either claudeClient or cliConfiguration is available
+  /// Inline editor is enabled when cliConfiguration is available
   private var isInlineEditorEnabled: Bool {
-    claudeClient != nil || cliConfiguration != nil
+    cliConfiguration != nil
   }
 
   @State private var diffState: GitDiffState = .empty
@@ -61,7 +59,6 @@ public struct GitDiffView: View {
     session: CLISession,
     projectPath: String,
     onDismiss: @escaping () -> Void,
-    claudeClient: (any ClaudeCode)? = nil,
     cliConfiguration: CLICommandConfiguration? = nil,
     providerKind: SessionProviderKind = .claude,
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
@@ -70,7 +67,6 @@ public struct GitDiffView: View {
     self.session = session
     self.projectPath = projectPath
     self.onDismiss = onDismiss
-    self.claudeClient = claudeClient
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.onInlineRequestSubmit = onInlineRequestSubmit
@@ -508,7 +504,6 @@ public struct GitDiffView: View {
             overflowMode: $overflowMode,
             inlineEditorState: inlineEditorState,
             commentsState: commentsState,
-            claudeClient: claudeClient,
             cliConfiguration: cliConfiguration,
             providerKind: providerKind,
             session: session,
@@ -660,19 +655,6 @@ public struct GitDiffView: View {
       callback(prompt, session)
       commentsState.clearAll()
       onDismiss()
-    } else if let client = claudeClient {
-      // Fallback to external Terminal with claudeClient
-      if let error = TerminalLauncher.launchTerminalWithSession(
-        session.id,
-        claudeClient: client,
-        projectPath: session.projectPath,
-        initialPrompt: prompt
-      ) {
-        inlineEditorState.errorMessage = error.localizedDescription
-      } else {
-        commentsState.clearAll()
-        onDismiss()
-      }
     } else if let config = cliConfiguration {
       // Fallback to external Terminal with cliConfiguration
       if let error = TerminalLauncher.launchTerminalWithSession(
@@ -900,7 +882,6 @@ private struct GitDiffContentView: View {
   @Binding var overflowMode: OverflowMode
   @Bindable var inlineEditorState: InlineEditorState
   @Bindable var commentsState: DiffCommentsState
-  let claudeClient: (any ClaudeCode)?
   let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
   let session: CLISession
@@ -914,10 +895,9 @@ private struct GitDiffContentView: View {
   @State private var previewLoading: Bool = false
   @State private var previewCurrentURL: URL?
 
-  /// Inline editor is enabled when either claudeClient or cliConfiguration is available
+  /// Inline editor is enabled when cliConfiguration is available
   private var isInlineEditorEnabled: Bool {
-    let enabled = claudeClient != nil || cliConfiguration != nil
-    return enabled
+    cliConfiguration != nil
   }
 
   var body: some View {
@@ -1009,7 +989,7 @@ private struct GitDiffContentView: View {
             .transition(.opacity)
           }
 
-          // Inline editor overlay - shown when claudeClient or cliConfiguration is available
+          // Inline editor overlay - shown when cliConfiguration is available
           if isInlineEditorEnabled {
             InlineEditorOverlay(
               state: inlineEditorState,
@@ -1031,18 +1011,6 @@ private struct GitDiffContentView: View {
                   callback(prompt, session)
                   inlineEditorState.dismiss()
                   onDismissView()
-                } else if let client = claudeClient {
-                  // Fallback to external Terminal with claudeClient
-                  if let error = TerminalLauncher.launchTerminalWithSession(
-                    session.id,
-                    claudeClient: client,
-                    projectPath: session.projectPath,
-                    initialPrompt: prompt
-                  ) {
-                    inlineEditorState.errorMessage = error.localizedDescription
-                  } else {
-                    onDismissView()
-                  }
                 } else if let config = cliConfiguration {
                   // Fallback to external Terminal with cliConfiguration
                   if let error = TerminalLauncher.launchTerminalWithSession(

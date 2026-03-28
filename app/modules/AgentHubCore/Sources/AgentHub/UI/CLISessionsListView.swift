@@ -50,7 +50,6 @@ public struct CLISessionsListView: View {
       // Detail: Monitoring panel
       MonitoringPanelView(
         viewModel: viewModel,
-        claudeClient: viewModel.claudeClient,
         primarySessionId: $primarySessionId
       )
         .padding(12)
