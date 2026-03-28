@@ -231,11 +231,18 @@ enum ProviderMonitoringItem: Identifiable {
   }
 }
 
+private struct HubAuxiliaryShellTarget {
+  let context: HubAuxiliaryShellContext
+  let viewModel: CLISessionsViewModel
+  let displayName: String
+}
+
 // MARK: - MultiProviderMonitoringPanelView
 
 public struct MultiProviderMonitoringPanelView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
+  @Binding var isAuxiliaryShellVisible: Bool
   let onEmbeddedSidePanelVisibilityChange: (Bool) -> Void
   let onRequestStartSession: (String?) -> Void
 
@@ -260,14 +267,19 @@ public struct MultiProviderMonitoringPanelView: View {
   private var fileExplorerAlwaysModal: Bool = false
   @State private var showQuickFilePicker = false
   @State private var fileExplorerPanelItem: FileExplorerPanelItem?
+  @State private var auxiliaryShellHeight: CGFloat
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
+  @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
   @State private var cardHeights: [String: CGFloat] = [:]
   private let embeddedPrimaryContentMinWidth: CGFloat = 470
   private let embeddedSidePanelMinWidth: CGFloat = 400
   private let embeddedSidePanelDefaultWidth: CGFloat = 700
   private let embeddedSidePanelMaxWidth: CGFloat = 1200
   private let embeddedSidePanelHandleWidth: CGFloat = 8
+  private let auxiliaryShellDefaultHeight: CGFloat = 220
+  private let auxiliaryShellMinHeight: CGFloat = 140
+  private let auxiliaryShellMinMainContentHeight: CGFloat = 260
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
@@ -313,6 +325,7 @@ public struct MultiProviderMonitoringPanelView: View {
     codexViewModel: CLISessionsViewModel,
     filterMode: Binding<HubFilterMode>,
     primarySessionId: Binding<String?>,
+    isAuxiliaryShellVisible: Binding<Bool>,
     onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
     onRequestStartSession: @escaping (String?) -> Void
   ) {
@@ -320,36 +333,37 @@ public struct MultiProviderMonitoringPanelView: View {
     self.codexViewModel = codexViewModel
     self._filterMode = filterMode
     self._primarySessionId = primarySessionId
+    self._isAuxiliaryShellVisible = isAuxiliaryShellVisible
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onRequestStartSession = onRequestStartSession
+    let savedHeight = UserDefaults.standard.double(forKey: AgentHubDefaults.hubAuxiliaryTerminalHeight)
+    let initialHeight = savedHeight > 0 ? CGFloat(savedHeight) : auxiliaryShellDefaultHeight
+    self._auxiliaryShellHeight = State(initialValue: max(auxiliaryShellMinHeight, initialHeight))
   }
 
   public var body: some View {
-    VStack(spacing: 0) {
-      if let maximizedId = maximizedSessionId {
-        maximizedCardContent(for: maximizedId)
+    GeometryReader { geometry in
+      VStack(spacing: 0) {
+        mainContent
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .background(maximizedContainerBackgroundColor)
-      } else {
-        header
 
-        Divider()
-
-        if isLoading {
-          loadingState
-        } else if allItems.isEmpty {
-          emptyState
-        } else if visibleItems.isEmpty {
-          filteredEmptyState
-        } else {
-          monitoredSessionsList
+        if isAuxiliaryShellVisible, let target = auxiliaryShellTarget {
+          auxiliaryShellDock(
+            for: target,
+            availableHeight: geometry.size.height
+          )
+          .padding(.horizontal, 12)
+          .padding(.bottom, 12)
+          .transition(auxiliaryShellDockTransition)
         }
       }
+      .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
     }
     .background(monitorContainerBackgroundColor)
     .cornerRadius(8)
     .onAppear {
       onEmbeddedSidePanelVisibilityChange(wantsEmbeddedSidePanelPresentation)
+      syncAuxiliaryShellDockState()
     }
     .onChange(of: sidePanelContent) { _, newContent in
       // Sync persistent FileExplorer state when the panel switches to/from fileExplorer
@@ -362,6 +376,12 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: wantsEmbeddedSidePanelPresentation) { _, wantsPresentation in
       onEmbeddedSidePanelVisibilityChange(wantsPresentation)
+    }
+    .onChange(of: effectivePrimarySessionId) { _, _ in
+      syncAuxiliaryShellDockState()
+    }
+    .onChange(of: isAuxiliaryShellVisible) { _, _ in
+      syncAuxiliaryShellDockState()
     }
     .overlay {
       // Hidden Shift+P trigger for QuickFilePicker
@@ -485,6 +505,45 @@ public struct MultiProviderMonitoringPanelView: View {
     return defaultBackground
   }
 
+  private var auxiliaryShellToggleAnimation: Animation {
+    accessibilityReduceMotion ? .easeInOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.9)
+  }
+
+  private var auxiliaryShellDockTransition: AnyTransition {
+    accessibilityReduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+  }
+
+  @ViewBuilder
+  private var mainContent: some View {
+    if let maximizedId = maximizedSessionId {
+      maximizedCardContent(for: maximizedId)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(maximizedContainerBackgroundColor)
+    } else {
+      VStack(spacing: 0) {
+        header
+
+        Divider()
+
+        mainContentBody
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var mainContentBody: some View {
+    if isLoading {
+      loadingState
+    } else if allItems.isEmpty {
+      emptyState
+    } else if visibleItems.isEmpty {
+      filteredEmptyState
+    } else {
+      monitoredSessionsList
+    }
+  }
+
   // MARK: - Header
 
   private var header: some View {
@@ -493,6 +552,22 @@ public struct MultiProviderMonitoringPanelView: View {
         .font(.heading)
 
       Spacer()
+
+      HStack(spacing: 6) {
+        Button(action: toggleAuxiliaryShellDock) {
+          Image(systemName: "apple.terminal")
+            .font(.caption)
+            .foregroundColor(isAuxiliaryShellVisible ? .primary : .secondary)
+            .frame(width: 26, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(auxiliaryShellTarget == nil)
+        .help("Toggle terminal (⌘J)")
+      }
+      .padding(4)
+      .background(Color.secondary.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: 6))
 
       // Layout mode toggle (single / list / grid)
       HStack(spacing: 6) {
@@ -1218,6 +1293,30 @@ public struct MultiProviderMonitoringPanelView: View {
     groupedMonitoredSessions.flatMap { $0.items }
   }
 
+  private var effectivePrimaryItem: ProviderMonitoringItem? {
+    guard let selectedId = effectivePrimarySessionId else { return nil }
+    return filteredItems.first(where: { $0.id == selectedId })
+  }
+
+  private var auxiliaryShellTarget: HubAuxiliaryShellTarget? {
+    guard let item = effectivePrimaryItem else { return nil }
+
+    switch item {
+    case .pending(let provider, let viewModel, let pending):
+      return HubAuxiliaryShellTarget(
+        context: .pending(pending: pending, providerKind: provider),
+        viewModel: viewModel,
+        displayName: pending.worktree.name
+      )
+    case .monitored(let provider, let viewModel, let session, _):
+      return HubAuxiliaryShellTarget(
+        context: .monitored(session: session, providerKind: provider),
+        viewModel: viewModel,
+        displayName: viewModel.displayName(for: session)
+      )
+    }
+  }
+
   private var allSelectedRepositories: [SelectedRepository] {
     var map: [String: SelectedRepository] = [:]
     for repo in claudeViewModel.selectedRepositories {
@@ -1287,6 +1386,64 @@ public struct MultiProviderMonitoringPanelView: View {
   private func setPrimarySessionIfNeeded(_ sessionId: String) {
     guard primarySessionId != sessionId else { return }
     primarySessionId = sessionId
+  }
+
+  private func toggleAuxiliaryShellDock() {
+    guard auxiliaryShellTarget != nil else { return }
+    withAnimation(auxiliaryShellToggleAnimation) {
+      isAuxiliaryShellVisible.toggle()
+    }
+  }
+
+  private func syncAuxiliaryShellDockState() {
+    guard isAuxiliaryShellVisible else { return }
+    guard let target = auxiliaryShellTarget else {
+      withAnimation(auxiliaryShellToggleAnimation) {
+        isAuxiliaryShellVisible = false
+      }
+      return
+    }
+    guard target.context.isLaunchable else { return }
+    target.viewModel.focusAuxiliaryShellTerminal(forKey: target.context.terminalKey)
+  }
+
+  @ViewBuilder
+  private func auxiliaryShellDock(
+    for target: HubAuxiliaryShellTarget,
+    availableHeight: CGFloat
+  ) -> some View {
+    let maxHeight = max(auxiliaryShellMinHeight, availableHeight - auxiliaryShellMinMainContentHeight)
+    let resolvedHeight = max(auxiliaryShellMinHeight, min(auxiliaryShellHeight, maxHeight))
+
+    Group {
+      if target.context.isLaunchable, let projectPath = target.context.projectPath {
+        AuxiliaryShellTerminalView(
+          terminalKey: target.context.terminalKey,
+          projectPath: projectPath,
+          viewModel: target.viewModel
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: target.context.terminalKey) {
+          target.viewModel.focusAuxiliaryShellTerminal(forKey: target.context.terminalKey)
+        }
+      } else {
+        VStack(spacing: 10) {
+          Image(systemName: "clock.arrow.circlepath")
+            .font(.title2)
+            .foregroundStyle(.secondary)
+
+          Text(target.context.placeholderMessage ?? "Shell is waiting for a worktree path.")
+            .font(.primaryCaption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+      }
+    }
+    .frame(height: resolvedHeight, alignment: .top)
+    .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
+    .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 
   @ViewBuilder

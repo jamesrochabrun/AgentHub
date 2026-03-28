@@ -299,10 +299,8 @@ public final class AgentHubProvider {
   /// Terminates all active terminal processes.
   /// Call this on app termination to clean up all running Claude sessions.
   public func terminateAllTerminals() {
-    let allTerminals = claudeSessionsViewModel.activeTerminals.merging(
-      codexSessionsViewModel.activeTerminals,
-      uniquingKeysWith: { first, _ in first }
-    )
+    let allTerminals = claudeSessionsViewModel.managedTerminalEntries
+      + codexSessionsViewModel.managedTerminalEntries
 
     for (key, terminal) in allTerminals {
       AppLogger.session.info("Terminating terminal for key: \(key)")

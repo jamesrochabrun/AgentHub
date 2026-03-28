@@ -28,6 +28,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Real-time session monitoring** — Watch all sessions update live via file-system watchers (no polling)
 - **Embedded terminal** — Full PTY terminal (SwiftTerm) inside each monitoring card; resume or start sessions without leaving the app
 - **Hub panel** — Unified view of all sessions across providers with single, list, 2-column, and 3-column grid layouts
+- **Auxiliary Hub shell** — Toggle a session-scoped shell dock from the Hub with **Cmd+J**; it follows the selected session's worktree and preserves shell state per session
 - **Resizable list cards** — In list mode, monitoring cards can be resized with a preview guide for a smoother, less distracting resize experience
 - **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
 - **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, and send GitHub context back into a session
@@ -49,6 +50,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Session naming** — Rename any session with custom names (SQLite-backed)
 - **Notification sounds** — Configurable audio alert when a tool call awaits approval
 - **Privacy-first** — Runs entirely on your machine; no data is collected or transmitted
+- **Process cleanup** — When a monitored Hub card is removed, AgentHub terminates both the card terminal and the auxiliary Hub shell process tree so shell/CLI sessions are not left orphaned
 
 Parallel execution with Claude Code and Codex
 
@@ -109,6 +111,7 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 | **Cmd+P** | Quick open files |
 | **Cmd+N** | New session |
 | **Cmd+B** | Toggle sidebar |
+| **Cmd+J** | Toggle Hub auxiliary shell |
 | **Cmd+,** | Open settings |
 | **Cmd+[** | Navigate to previous session |
 | **Cmd+]** | Navigate to next session |
