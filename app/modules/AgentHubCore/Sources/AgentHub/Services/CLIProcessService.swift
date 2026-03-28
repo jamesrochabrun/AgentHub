@@ -74,7 +74,7 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
     }
 
     // Build arguments
-    var args = ["-p", "--output-format", "stream-json"]
+    var args = ["-p", "--output-format", "stream-json", "--verbose"]
 
     if let permissionMode, !permissionMode.isEmpty {
       args += ["--permission-mode", permissionMode]
