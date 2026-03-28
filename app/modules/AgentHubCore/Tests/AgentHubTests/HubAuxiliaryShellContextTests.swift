@@ -24,12 +24,35 @@ struct HubAuxiliaryShellContextTests {
     #expect(context.placeholderMessage == nil)
   }
 
-  @Test("Pending session with known worktree path is launchable")
-  func pendingKnownWorktreeContext() {
+  @Test("Pending session without generated worktree requirements is launchable")
+  func pendingImmediateWorktreeContext() {
     let pending = PendingHubSession(
       worktree: WorktreeBranch(
-        name: "feature-shell",
+        name: "feature-branch",
         path: "/tmp/worktree",
+        isWorktree: true
+      )
+    )
+
+    let context = HubAuxiliaryShellContext.pending(pending: pending, providerKind: .claude)
+
+    #expect(context.terminalKey == "pending-\(pending.id.uuidString)")
+    #expect(context.sessionId == nil)
+    #expect(context.projectPath == "/tmp/worktree")
+    #expect(context.isLaunchable)
+    #expect(context.placeholderMessage == nil)
+  }
+
+  @Test("Pending Claude named worktree waits until the derived worktree path exists")
+  func pendingNamedClaudeWorktreeWaitsForDirectory() throws {
+    let repoRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: repoRoot, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: repoRoot) }
+
+    let pending = PendingHubSession(
+      worktree: WorktreeBranch(
+        name: "main",
+        path: repoRoot.path,
         isWorktree: true
       ),
       worktreeName: "feature-shell"
@@ -38,8 +61,34 @@ struct HubAuxiliaryShellContextTests {
     let context = HubAuxiliaryShellContext.pending(pending: pending, providerKind: .claude)
 
     #expect(context.terminalKey == "pending-\(pending.id.uuidString)")
-    #expect(context.sessionId == nil)
-    #expect(context.projectPath == "/tmp/worktree")
+    #expect(context.projectPath == nil)
+    #expect(!context.isLaunchable)
+    #expect(context.placeholderMessage == "Shell will be available once Claude creates the worktree.")
+  }
+
+  @Test("Pending Claude named worktree becomes launchable once the derived path exists")
+  func pendingNamedClaudeWorktreeLaunchesWhenDirectoryExists() throws {
+    let repoRoot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let derivedWorktreePath = repoRoot
+      .appendingPathComponent(".claude")
+      .appendingPathComponent("worktrees")
+      .appendingPathComponent("feature-shell")
+
+    try FileManager.default.createDirectory(at: derivedWorktreePath, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: repoRoot) }
+
+    let pending = PendingHubSession(
+      worktree: WorktreeBranch(
+        name: "main",
+        path: repoRoot.path,
+        isWorktree: true
+      ),
+      worktreeName: "feature-shell"
+    )
+
+    let context = HubAuxiliaryShellContext.pending(pending: pending, providerKind: .claude)
+
+    #expect(context.projectPath == derivedWorktreePath.path)
     #expect(context.isLaunchable)
     #expect(context.placeholderMessage == nil)
   }
@@ -60,6 +109,6 @@ struct HubAuxiliaryShellContextTests {
     #expect(context.terminalKey == "pending-\(pending.id.uuidString)")
     #expect(context.projectPath == nil)
     #expect(!context.isLaunchable)
-    #expect(context.placeholderMessage == "Shell will be available once the worktree path is created.")
+    #expect(context.placeholderMessage == "Shell will be available once Claude creates the worktree.")
   }
 }
