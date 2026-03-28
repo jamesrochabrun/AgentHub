@@ -5,6 +5,7 @@
 //  Detailed view for a GitHub pull request with diff, comments, and actions
 //
 
+import AppKit
 import SwiftUI
 import PierreDiffsSwift
 
@@ -38,7 +39,6 @@ struct GitHubPRDetailView: View {
 
   @State private var selectedTab: PRDetailTab = .overview
   @State private var selectedFile: GitHubPRFile?
-  @State private var showingReviewSheet = false
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
   @State private var parsedPRDiffsByFile: [String: String] = [:]
@@ -98,12 +98,14 @@ struct GitHubPRDetailView: View {
       // Action buttons
       HStack(spacing: 6) {
         Button {
-          Task { await viewModel.checkoutPR() }
+          if let url = URL(string: pr.url) {
+            NSWorkspace.shared.open(url)
+          }
         } label: {
           HStack(spacing: 3) {
-            Image(systemName: "arrow.down.to.line")
+            Image(systemName: "safari")
               .font(.system(size: 10))
-            Text("Checkout")
+            Text("Open in Browser")
               .font(GitHubTypography.button)
           }
           .padding(.horizontal, 8)
@@ -114,22 +116,37 @@ struct GitHubPRDetailView: View {
         .buttonStyle(.plain)
 
         Button {
-          showingReviewSheet = true
+          Task { await viewModel.checkoutPR() }
         } label: {
           HStack(spacing: 3) {
-            Image(systemName: "eye")
-              .font(.system(size: 10))
-            Text("Review")
+            switch viewModel.checkoutState {
+            case .loading:
+              ProgressView()
+                .controlSize(.mini)
+                .frame(width: 10, height: 10)
+            case .success:
+              Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.green)
+            case .error:
+              Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.red)
+            case .idle:
+              Image(systemName: "arrow.down.to.line")
+                .font(.system(size: 10))
+            }
+            Text(checkoutButtonLabel)
               .font(GitHubTypography.button)
           }
           .padding(.horizontal, 8)
           .padding(.vertical, 4)
-          .background(Color.green.opacity(0.15))
-          .foregroundStyle(.green)
+          .background(checkoutButtonBackground)
           .clipShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(.plain)
-
+        .disabled(viewModel.checkoutState == .loading)
+        // TODO: Bring back automated code review via a custom review prompt/session flow.
         if let session, let onSendToSession {
           Button {
             let prompt = "Look at PR #\(pr.number) (\(pr.title)) on branch \(pr.headRefName). The PR has \(pr.additions) additions and \(pr.deletions) deletions across \(pr.changedFiles) files."
@@ -153,6 +170,23 @@ struct GitHubPRDetailView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
+  }
+
+  private var checkoutButtonLabel: String {
+    switch viewModel.checkoutState {
+    case .idle: return "Checkout"
+    case .loading: return "Checking out..."
+    case .success: return "Checked out"
+    case .error: return "Failed"
+    }
+  }
+
+  private var checkoutButtonBackground: Color {
+    switch viewModel.checkoutState {
+    case .success: return Color.green.opacity(0.15)
+    case .error: return Color.red.opacity(0.15)
+    default: return Color.secondary.opacity(0.1)
+    }
   }
 
   // MARK: - PR Info Header
@@ -829,66 +863,9 @@ struct GitHubPRDetailView: View {
       .disabled(viewModel.newCommentText.isEmpty || viewModel.isSubmittingComment)
     }
     .padding(10)
-    .sheet(isPresented: $showingReviewSheet) {
-      GitHubReviewSheet(viewModel: viewModel, pr: pr)
-    }
   }
 
   private func submitComment() {
     Task { await viewModel.submitPRComment() }
-  }
-}
-
-// MARK: - Review Sheet
-
-struct GitHubReviewSheet: View {
-  @Bindable var viewModel: GitHubViewModel
-  let pr: GitHubPullRequest
-  @Environment(\.dismiss) private var dismiss
-  @State private var selectedEvent: GitHubReviewInput.Event = .comment
-
-  var body: some View {
-    VStack(spacing: 16) {
-      Text("Review PR #\(pr.number)")
-        .font(GitHubTypography.sectionTitle)
-
-      Picker("Review Type", selection: $selectedEvent) {
-        Text("Comment").tag(GitHubReviewInput.Event.comment)
-        Text("Approve").tag(GitHubReviewInput.Event.approve)
-        Text("Request Changes").tag(GitHubReviewInput.Event.requestChanges)
-      }
-      .pickerStyle(.segmented)
-
-      TextEditor(text: $viewModel.reviewBody)
-        .font(GitHubTypography.body)
-        .frame(minHeight: 100)
-        .padding(4)
-        .overlay(
-          RoundedRectangle(cornerRadius: 6)
-            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-        )
-
-      HStack {
-        Button("Cancel") {
-          dismiss()
-        }
-        .buttonStyle(.bordered)
-
-        Spacer()
-
-        Button {
-          Task {
-            await viewModel.submitReview(event: selectedEvent)
-            dismiss()
-          }
-        } label: {
-          Text("Submit Review")
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(viewModel.isSubmittingReview)
-      }
-    }
-    .padding(20)
-    .frame(width: 450, height: 300)
   }
 }

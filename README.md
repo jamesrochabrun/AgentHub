@@ -64,7 +64,7 @@ https://github.com/user-attachments/assets/f6a304de-fc7c-4024-94c6-9e2222210dff
 
 ## GitHub Support
 
-AgentHub can surface repository GitHub data directly inside the app through the GitHub CLI.
+AgentHub can surface repository GitHub data directly inside the app through the GitHub CLI. GitHub access in AgentHub requires `gh` to be installed and authenticated.
 
 - Browse pull requests and issues for the active repository
 - Open the current branch PR directly from the session card
@@ -74,7 +74,7 @@ AgentHub can surface repository GitHub data directly inside the app through the 
 
 ### GitHub Setup
 
-GitHub features are optional and require the GitHub CLI:
+GitHub features are optional, but any GitHub access in AgentHub depends on the GitHub CLI:
 
 1. Install [`gh`](https://cli.github.com/).
 2. Authenticate with `gh auth login`.
@@ -93,7 +93,7 @@ https://github.com/user-attachments/assets/6d263d11-6648-42e7-9335-04aa51a33296
 - macOS 14.0+
 - [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated
 - [Codex CLI](https://openai.com/index/introducing-codex/) installed (optional, for Codex features)
-- [GitHub CLI](https://cli.github.com/) installed and authenticated (optional, for GitHub features)
+- [GitHub CLI](https://cli.github.com/) installed and authenticated (optional overall, required for GitHub access/features)
 
 ## Installation & Updates
 
