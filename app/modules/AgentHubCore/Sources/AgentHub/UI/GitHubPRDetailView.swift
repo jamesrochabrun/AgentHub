@@ -38,7 +38,6 @@ struct GitHubPRDetailView: View {
 
   @State private var selectedTab: PRDetailTab = .overview
   @State private var selectedFile: GitHubPRFile?
-  @State private var showingReviewSheet = false
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
   @State private var parsedPRDiffsByFile: [String: String] = [:]
@@ -113,23 +112,7 @@ struct GitHubPRDetailView: View {
         }
         .buttonStyle(.plain)
 
-        Button {
-          showingReviewSheet = true
-        } label: {
-          HStack(spacing: 3) {
-            Image(systemName: "eye")
-              .font(.system(size: 10))
-            Text("Review")
-              .font(GitHubTypography.button)
-          }
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.green.opacity(0.15))
-          .foregroundStyle(.green)
-          .clipShape(RoundedRectangle(cornerRadius: 5))
-        }
-        .buttonStyle(.plain)
-
+        // TODO: Bring back automated code review via a custom review prompt/session flow.
         if let session, let onSendToSession {
           Button {
             let prompt = "Look at PR #\(pr.number) (\(pr.title)) on branch \(pr.headRefName). The PR has \(pr.additions) additions and \(pr.deletions) deletions across \(pr.changedFiles) files."
@@ -829,66 +812,9 @@ struct GitHubPRDetailView: View {
       .disabled(viewModel.newCommentText.isEmpty || viewModel.isSubmittingComment)
     }
     .padding(10)
-    .sheet(isPresented: $showingReviewSheet) {
-      GitHubReviewSheet(viewModel: viewModel, pr: pr)
-    }
   }
 
   private func submitComment() {
     Task { await viewModel.submitPRComment() }
-  }
-}
-
-// MARK: - Review Sheet
-
-struct GitHubReviewSheet: View {
-  @Bindable var viewModel: GitHubViewModel
-  let pr: GitHubPullRequest
-  @Environment(\.dismiss) private var dismiss
-  @State private var selectedEvent: GitHubReviewInput.Event = .comment
-
-  var body: some View {
-    VStack(spacing: 16) {
-      Text("Review PR #\(pr.number)")
-        .font(GitHubTypography.sectionTitle)
-
-      Picker("Review Type", selection: $selectedEvent) {
-        Text("Comment").tag(GitHubReviewInput.Event.comment)
-        Text("Approve").tag(GitHubReviewInput.Event.approve)
-        Text("Request Changes").tag(GitHubReviewInput.Event.requestChanges)
-      }
-      .pickerStyle(.segmented)
-
-      TextEditor(text: $viewModel.reviewBody)
-        .font(GitHubTypography.body)
-        .frame(minHeight: 100)
-        .padding(4)
-        .overlay(
-          RoundedRectangle(cornerRadius: 6)
-            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-        )
-
-      HStack {
-        Button("Cancel") {
-          dismiss()
-        }
-        .buttonStyle(.bordered)
-
-        Spacer()
-
-        Button {
-          Task {
-            await viewModel.submitReview(event: selectedEvent)
-            dismiss()
-          }
-        } label: {
-          Text("Submit Review")
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(viewModel.isSubmittingReview)
-      }
-    }
-    .padding(20)
-    .frame(width: 450, height: 300)
   }
 }
