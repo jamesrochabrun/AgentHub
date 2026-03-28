@@ -5,6 +5,7 @@
 //  Main GitHub integration panel with PR list, issue list, and details
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - GitHubPanelView
@@ -599,6 +600,15 @@ struct GitHubPRRow: View {
       )
     }
     .buttonStyle(.plain)
+    .contextMenu {
+      Button {
+        if let url = URL(string: pr.url) {
+          NSWorkspace.shared.open(url)
+        }
+      } label: {
+        Label("Open in Browser", systemImage: "safari")
+      }
+    }
   }
 
   private var prStateColor: Color {

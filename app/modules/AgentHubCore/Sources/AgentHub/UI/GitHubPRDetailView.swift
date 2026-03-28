@@ -5,6 +5,7 @@
 //  Detailed view for a GitHub pull request with diff, comments, and actions
 //
 
+import AppKit
 import SwiftUI
 import PierreDiffsSwift
 
@@ -97,12 +98,14 @@ struct GitHubPRDetailView: View {
       // Action buttons
       HStack(spacing: 6) {
         Button {
-          Task { await viewModel.checkoutPR() }
+          if let url = URL(string: pr.url) {
+            NSWorkspace.shared.open(url)
+          }
         } label: {
           HStack(spacing: 3) {
-            Image(systemName: "arrow.down.to.line")
+            Image(systemName: "safari")
               .font(.system(size: 10))
-            Text("Checkout")
+            Text("Open in Browser")
               .font(GitHubTypography.button)
           }
           .padding(.horizontal, 8)
@@ -112,6 +115,37 @@ struct GitHubPRDetailView: View {
         }
         .buttonStyle(.plain)
 
+        Button {
+          Task { await viewModel.checkoutPR() }
+        } label: {
+          HStack(spacing: 3) {
+            switch viewModel.checkoutState {
+            case .loading:
+              ProgressView()
+                .controlSize(.mini)
+                .frame(width: 10, height: 10)
+            case .success:
+              Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.green)
+            case .error:
+              Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.red)
+            case .idle:
+              Image(systemName: "arrow.down.to.line")
+                .font(.system(size: 10))
+            }
+            Text(checkoutButtonLabel)
+              .font(GitHubTypography.button)
+          }
+          .padding(.horizontal, 8)
+          .padding(.vertical, 4)
+          .background(checkoutButtonBackground)
+          .clipShape(RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.checkoutState == .loading)
         // TODO: Bring back automated code review via a custom review prompt/session flow.
         if let session, let onSendToSession {
           Button {
@@ -136,6 +170,23 @@ struct GitHubPRDetailView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
+  }
+
+  private var checkoutButtonLabel: String {
+    switch viewModel.checkoutState {
+    case .idle: return "Checkout"
+    case .loading: return "Checking out..."
+    case .success: return "Checked out"
+    case .error: return "Failed"
+    }
+  }
+
+  private var checkoutButtonBackground: Color {
+    switch viewModel.checkoutState {
+    case .success: return Color.green.opacity(0.15)
+    case .error: return Color.red.opacity(0.15)
+    default: return Color.secondary.opacity(0.1)
+    }
   }
 
   // MARK: - PR Info Header

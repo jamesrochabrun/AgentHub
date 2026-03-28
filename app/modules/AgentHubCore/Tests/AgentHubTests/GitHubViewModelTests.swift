@@ -294,7 +294,7 @@ struct GitHubViewModelPRTests {
     #expect(vm.reviewBody == "")
   }
 
-  @Test("checkoutPR calls service")
+  @Test("checkoutPR calls service and sets success state")
   @MainActor
   func checkoutPR() async {
     let mock = MockGitHubCLIService()
@@ -303,10 +303,12 @@ struct GitHubViewModelPRTests {
     await vm.setup(repoPath: "/tmp/repo")
     vm.selectedPR = makePR(number: 3)
 
+    #expect(vm.checkoutState == .idle)
     await vm.checkoutPR()
 
     #expect(mock.checkoutPRCalled == true)
     #expect(mock.checkoutPRNumber == 3)
+    #expect(vm.checkoutState == .success)
   }
 }
 
@@ -573,7 +575,7 @@ struct GitHubViewModelErrorTests {
     #expect(vm.newCommentText == "Comment")
   }
 
-  @Test("checkoutPR sets errorMessage on failure")
+  @Test("checkoutPR sets error state on failure")
   @MainActor
   func checkoutPRError() async {
     let mock = MockGitHubCLIService()
@@ -585,7 +587,23 @@ struct GitHubViewModelErrorTests {
     mock.errorToThrow = GitHubCLIError.commandFailed("checkout failed")
     await vm.checkoutPR()
 
+    #expect(vm.checkoutState == .error("checkout failed"))
     #expect(vm.errorMessage?.contains("checkout failed") == true)
+  }
+
+  @Test("checkoutPR stays idle when no selected PR")
+  @MainActor
+  func checkoutPRNoSelection() async {
+    let mock = MockGitHubCLIService()
+    mock.repoInfoResult = makeRepoInfo()
+    let vm = GitHubViewModel(service: mock)
+    await vm.setup(repoPath: "/tmp/repo")
+    vm.selectedPR = nil
+
+    await vm.checkoutPR()
+
+    #expect(vm.checkoutState == .idle)
+    #expect(mock.checkoutPRCalled == false)
   }
 
   @Test("no repo path early returns without calling service")

@@ -108,6 +108,11 @@ public final class AgentHubProvider {
     GitHubCLIService()
   }()
 
+  /// Shared session-card GitHub quick access coordinator
+  public private(set) lazy var gitHubQuickAccessCoordinator: any SessionGitHubQuickAccessCoordinatorProtocol = {
+    SessionGitHubQuickAccessCoordinator(service: gitHubService)
+  }()
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes

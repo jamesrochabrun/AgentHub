@@ -111,6 +111,7 @@ public struct MonitoringCardView: View {
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
   @State private var showingRemixProviderPicker = false
+  @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
 
   public init(
@@ -200,6 +201,10 @@ public struct MonitoringCardView: View {
     !resourceLinks.isEmpty || sessionGitHubQuickAccessViewModel.currentBranchPR != nil
   }
 
+  private var gitHubQuickAccessCoordinator: (any SessionGitHubQuickAccessCoordinatorProtocol)? {
+    viewModel?.agentHubProvider?.gitHubQuickAccessCoordinator ?? agentHub?.gitHubQuickAccessCoordinator
+  }
+
   public var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions
@@ -246,8 +251,21 @@ public struct MonitoringCardView: View {
     .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
       await sessionGitHubQuickAccessViewModel.load(
         projectPath: session.projectPath,
-        branchName: session.branchName
+        branchName: session.branchName,
+        coordinator: gitHubQuickAccessCoordinator
       )
+      if let lastActivityAt = state?.lastActivityAt {
+        await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: lastActivityAt)
+      }
+    }
+    .onDisappear {
+      sessionGitHubQuickAccessViewModel.stopPolling()
+    }
+    .onChange(of: state?.lastActivityAt) { _, newValue in
+      guard let newValue else { return }
+      Task {
+        await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: newValue)
+      }
     }
     .onDrop(
       of: [.fileURL, .png, .tiff, .image, .pdf],
