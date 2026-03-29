@@ -267,7 +267,6 @@ public struct MultiProviderMonitoringPanelView: View {
   private var fileExplorerAlwaysModal: Bool = false
   @State private var showQuickFilePicker = false
   @State private var fileExplorerPanelItem: FileExplorerPanelItem?
-  @State private var auxiliaryShellHeight: CGFloat
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -336,9 +335,6 @@ public struct MultiProviderMonitoringPanelView: View {
     self._isAuxiliaryShellVisible = isAuxiliaryShellVisible
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onRequestStartSession = onRequestStartSession
-    let savedHeight = UserDefaults.standard.double(forKey: AgentHubDefaults.hubAuxiliaryTerminalHeight)
-    let initialHeight = savedHeight > 0 ? CGFloat(savedHeight) : auxiliaryShellDefaultHeight
-    self._auxiliaryShellHeight = State(initialValue: max(auxiliaryShellMinHeight, initialHeight))
   }
 
   public var body: some View {
@@ -1413,7 +1409,7 @@ public struct MultiProviderMonitoringPanelView: View {
     availableHeight: CGFloat
   ) -> some View {
     let maxHeight = max(auxiliaryShellMinHeight, availableHeight - auxiliaryShellMinMainContentHeight)
-    let resolvedHeight = max(auxiliaryShellMinHeight, min(auxiliaryShellHeight, maxHeight))
+    let resolvedHeight = max(auxiliaryShellMinHeight, min(auxiliaryShellDefaultHeight, maxHeight))
 
     Group {
       if target.context.isLaunchable, let projectPath = target.context.projectPath {

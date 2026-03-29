@@ -137,10 +137,6 @@ public enum AgentHubDefaults {
   /// Type: Double (default: 700)
   public static let sidePanelWidth = "\(keyPrefix)ui.sidePanelWidth"
 
-  /// Height of the Hub auxiliary shell dock
-  /// Type: Double (default: 220)
-  public static let hubAuxiliaryTerminalHeight = "\(keyPrefix)ui.hubAuxiliaryTerminalHeight"
-
   /// Width of the file tree sidebar inside FileExplorerView
   /// Type: Double (default: 240)
   public static let fileExplorerSidebarWidth = "\(keyPrefix)ui.fileExplorerSidebarWidth"
