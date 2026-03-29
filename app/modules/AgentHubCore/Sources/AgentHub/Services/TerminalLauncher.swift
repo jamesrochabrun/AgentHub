@@ -67,7 +67,10 @@ public struct TerminalLauncher {
     Task.detached {
       let process = Process()
       process.executableURL = URL(fileURLWithPath: claudeExecutablePath)
-      process.arguments = ["-r", sessionId, prompt]
+      process.arguments = cliConfiguration.argumentsForSession(
+        sessionId: sessionId,
+        prompt: prompt
+      )
 
       if !projectPath.isEmpty {
         process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
@@ -75,7 +78,8 @@ public struct TerminalLauncher {
 
       // Set up environment with PATH for child processes
       var environment = ProcessInfo.processInfo.environment
-      let additionalPaths = cliConfiguration.additionalPaths.joined(separator: ":")
+      let additionalPaths = CLIPathResolver.executableSearchPaths(additionalPaths: cliConfiguration.additionalPaths)
+        .joined(separator: ":")
       if !additionalPaths.isEmpty {
         if let existingPath = environment["PATH"] {
           environment["PATH"] = "\(additionalPaths):\(existingPath)"
@@ -238,39 +242,25 @@ public struct TerminalLauncher {
       )
     }
 
-    // Prompts may contain newlines (multiline content is legitimate)
-    let escapedPrompt = initialPrompt.map { shellEscapeSingleQuotedAllowingNewlines($0) }
-
-    // Build the dangerous flag if needed (hardcoded literal, safe to append)
-    let dangerousFlag = dangerouslySkipPermissions ? " --dangerously-skip-permissions" : ""
-
-    // Build the --worktree flag if needed (name is validated via shellEscapeSingleQuoted)
-    let worktreeFlag: String
-    if let name = worktreeName {
-      if name.isEmpty {
-        worktreeFlag = " --worktree"
-      } else if let escapedName = shellEscapeSingleQuoted(name) {
-        worktreeFlag = " --worktree \(escapedName)"
-      } else {
-        worktreeFlag = " --worktree"
-      }
-    } else {
-      worktreeFlag = ""
-    }
-
-    let flags = "\(dangerousFlag)\(worktreeFlag)"
+    let args = cliConfiguration.argumentsForSession(
+      sessionId: nil,
+      prompt: initialPrompt,
+      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      worktreeName: worktreeName
+    )
+    let joinedArgs = args.map { shellEscapeSingleQuotedAllowingNewlines($0) }.joined(separator: " ")
 
     // Build the command - for worktrees or when skipCheckout is true, just cd and run claude
     // Otherwise, checkout the branch first
     let command: String
     if isWorktree || skipCheckout {
-      if let prompt = escapedPrompt {
-        command = "cd \(escapedPath) && \(escapedClaudePath)\(flags) \(prompt)"
-      } else {
-        command = "cd \(escapedPath) && \(escapedClaudePath)\(flags)"
-      }
+      command = joinedArgs.isEmpty
+        ? "cd \(escapedPath) && \(escapedClaudePath)"
+        : "cd \(escapedPath) && \(escapedClaudePath) \(joinedArgs)"
     } else {
-      command = "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath)\(flags)"
+      command = joinedArgs.isEmpty
+        ? "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath)"
+        : "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath) \(joinedArgs)"
     }
 
     return launchTerminalScript(command: command, scriptPrefix: "claude_open")
@@ -389,25 +379,7 @@ public struct TerminalLauncher {
     additionalPaths: [String]?
   ) -> String? {
     let fileManager = FileManager.default
-    let homeDir = NSHomeDirectory()
-
-    // Default search paths
-    let defaultPaths = [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "\(homeDir)/.claude/local",
-      "\(homeDir)/.codex/local",
-      "\(homeDir)/.codex/bin",
-      "\(homeDir)/.local/bin",
-      "\(homeDir)/.nvm/current/bin",
-      "\(homeDir)/.nvm/versions/node/v22.16.0/bin",
-      "\(homeDir)/.nvm/versions/node/v20.11.1/bin",
-      "\(homeDir)/.nvm/versions/node/v18.19.0/bin"
-    ]
-
-    // Combine additional paths with default paths
-    let allPaths = (additionalPaths ?? []) + defaultPaths
+    let allPaths = CLIPathResolver.executableSearchPaths(additionalPaths: additionalPaths ?? [])
 
     // Search for the command in all paths
     for path in allPaths {

@@ -173,43 +173,9 @@ public final class AgentHubProvider {
 
   /// Creates a CLIProcessService with paths resolved from configuration
   private func createProcessService() -> CLIProcessServiceProtocol {
-    let homeDir = NSHomeDirectory()
-    var paths: [String] = []
-
-    // Add local Claude installation path (highest priority)
-    let localClaudePath = "\(homeDir)/.claude/local"
-    if FileManager.default.fileExists(atPath: localClaudePath) {
-      paths.append(localClaudePath)
-    }
-
-    // Add configured additional paths
-    for path in configuration.additionalCLIPaths {
-      if !paths.contains(path) {
-        paths.append(path)
-      }
-    }
-
-    // Add common development tool paths
-    let defaultPaths = [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "\(homeDir)/.nvm/current/bin",
-      "\(homeDir)/.bun/bin",
-      "\(homeDir)/.deno/bin",
-      "\(homeDir)/.cargo/bin",
-      "\(homeDir)/.local/bin"
-    ]
-
-    for path in defaultPaths {
-      if !paths.contains(path) {
-        paths.append(path)
-      }
-    }
-
     return CLIProcessService(
       command: configuration.cliCommand,
-      additionalPaths: paths,
+      additionalPaths: CLIPathResolver.claudePaths(additionalPaths: configuration.additionalCLIPaths),
       debugLogging: configuration.enableDebugLogging
     )
   }
@@ -223,12 +189,20 @@ public final class AgentHubProvider {
     case .claude:
       let command = defaults.string(forKey: AgentHubDefaults.claudeCommand)
         ?? configuration.cliCommand
-      cliConfiguration = CLICommandConfiguration(command: command, additionalPaths: configuration.additionalCLIPaths, mode: .claude)
+      cliConfiguration = CLICommandConfiguration(
+        command: command,
+        additionalPaths: CLIPathResolver.claudePaths(additionalPaths: configuration.additionalCLIPaths),
+        mode: .claude
+      )
     case .codex:
       let userCommand = defaults.string(forKey: AgentHubDefaults.codexCommand) ?? configuration.codexCommand
       // Store the user's configured command string as-is (e.g. "airchat codex")
       // Executable resolution happens at launch time using executableName
-      cliConfiguration = CLICommandConfiguration(command: userCommand, additionalPaths: configuration.additionalCLIPaths, mode: .codex)
+      cliConfiguration = CLICommandConfiguration(
+        command: userCommand,
+        additionalPaths: CLIPathResolver.codexPaths(additionalPaths: configuration.additionalCLIPaths),
+        mode: .codex
+      )
     }
 
     let selectedMonitor: any SessionMonitorServiceProtocol = {

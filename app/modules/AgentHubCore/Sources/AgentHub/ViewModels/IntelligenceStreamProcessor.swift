@@ -13,6 +13,7 @@ import Combine
 @MainActor
 final class IntelligenceStreamProcessor {
 
+  private let timeoutNanoseconds: UInt64
   private var cancellables = Set<AnyCancellable>()
   private var activeContinuation: CheckedContinuation<Void, Never>?
   private var continuationResumed = false
@@ -39,6 +40,10 @@ final class IntelligenceStreamProcessor {
 
   /// Callback fired when a ResultMessage is received (carries final assembled text + metadata)
   var onResultMessage: ((CLIResultMessage) -> Void)?
+
+  init(timeoutNanoseconds: UInt64 = 120_000_000_000) {
+    self.timeoutNanoseconds = timeoutNanoseconds
+  }
 
   /// Cancels the current stream processing
   func cancelStream() {
@@ -68,7 +73,7 @@ final class IntelligenceStreamProcessor {
 
       // Timeout task
       let timeoutTask = Task { [weak self] in
-        try? await Task.sleep(nanoseconds: 120_000_000_000) // 120 seconds
+        try? await Task.sleep(nanoseconds: self?.timeoutNanoseconds ?? 120_000_000_000)
         if !hasReceivedData && !Task.isCancelled {
           guard let self = self else { return }
           subscription?.cancel()
@@ -78,7 +83,7 @@ final class IntelligenceStreamProcessor {
           self.continuationResumed = true
           self.activeContinuation = nil
 
-          self.onError?(CLIProcessError.timeout(120.0))
+          self.onError?(CLIProcessError.timeout(Double(self.timeoutNanoseconds) / 1_000_000_000))
           continuation.resume()
         }
       }

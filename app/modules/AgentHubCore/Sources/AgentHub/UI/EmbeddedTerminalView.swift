@@ -597,19 +597,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     environment["COLORTERM"] = "truecolor"
     environment["LANG"] = "en_US.UTF-8"
 
-    let paths = additionalPaths + [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "\(NSHomeDirectory())/.claude/local",
-      "\(NSHomeDirectory())/.codex/local",
-      "\(NSHomeDirectory())/.codex/bin",
-      "\(NSHomeDirectory())/.local/bin",
-      "\(NSHomeDirectory())/.nvm/current/bin",
-      "\(NSHomeDirectory())/.nvm/versions/node/v22.16.0/bin",
-      "\(NSHomeDirectory())/.nvm/versions/node/v20.11.1/bin",
-      "\(NSHomeDirectory())/.nvm/versions/node/v18.19.0/bin"
-    ]
+    let paths = CLIPathResolver.executableSearchPaths(additionalPaths: additionalPaths)
     let pathString = paths.joined(separator: ":")
     if let existingPath = environment["PATH"] {
       environment["PATH"] = "\(pathString):\(existingPath)"

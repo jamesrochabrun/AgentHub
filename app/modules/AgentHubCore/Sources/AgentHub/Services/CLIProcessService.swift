@@ -55,6 +55,12 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
     )
   }
 
+  private func setRunningProcess(_ process: Process?) {
+    lock.lock()
+    runningProcess = process
+    lock.unlock()
+  }
+
   func runStreamingPrompt(
     prompt: String,
     workingDirectory: String,
@@ -62,16 +68,16 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
     permissionMode: String?,
     disallowedTools: [String]?
   ) -> AnyPublisher<StreamJSONChunk, Error> {
-    let subject = PassthroughSubject<StreamJSONChunk, Error>()
-
     // Find executable
     guard let executablePath = TerminalLauncher.findExecutable(
       command: command,
       additionalPaths: additionalPaths
     ) else {
-      subject.send(completion: .failure(CLIProcessError.notInstalled(command)))
-      return subject.eraseToAnyPublisher()
+      return Fail(error: CLIProcessError.notInstalled(command))
+        .eraseToAnyPublisher()
     }
+
+    let subject = PassthroughSubject<StreamJSONChunk, Error>()
 
     // Build arguments
     var args = ["-p", "--output-format", "stream-json", "--verbose"]
@@ -101,7 +107,7 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
 
       // Set up environment with PATH
       var environment = ProcessInfo.processInfo.environment
-      let allPaths = (self?.additionalPaths ?? [])
+      let allPaths = CLIPathResolver.executableSearchPaths(additionalPaths: self?.additionalPaths ?? [])
       if !allPaths.isEmpty {
         let joined = allPaths.joined(separator: ":")
         if let existing = environment["PATH"] {
@@ -121,9 +127,7 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
       process.standardError = stderrPipe
 
       // Track the process for cancellation
-      self?.lock.lock()
-      self?.runningProcess = process
-      self?.lock.unlock()
+      self?.setRunningProcess(process)
 
       // Line buffer for partial reads
       var lineBuffer = Data()
@@ -168,9 +172,7 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
 
-        self?.lock.lock()
-        self?.runningProcess = nil
-        self?.lock.unlock()
+        self?.setRunningProcess(nil)
 
         // Process any remaining data in the line buffer
         if !lineBuffer.isEmpty {
@@ -200,14 +202,18 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
         }
         stdinPipe.fileHandleForWriting.closeFile()
       } catch {
-        self?.lock.lock()
-        self?.runningProcess = nil
-        self?.lock.unlock()
+        self?.setRunningProcess(nil)
         subject.send(completion: .failure(CLIProcessError.executionFailed(error.localizedDescription)))
       }
     }
 
-    return subject.eraseToAnyPublisher()
+    return subject
+      .handleEvents(receiveCancel: { [weak self] in
+        Task { @MainActor in
+          self?.cancel()
+        }
+      })
+      .eraseToAnyPublisher()
   }
 
   @MainActor

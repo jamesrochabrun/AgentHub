@@ -61,30 +61,9 @@ public final class IntelligenceViewModel {
   }
 
   private static func createDefaultProcessService() -> CLIProcessServiceProtocol? {
-    let homeDir = NSHomeDirectory()
-    var paths: [String] = []
-
-    // Add local Claude installation path (highest priority)
-    let localClaudePath = "\(homeDir)/.claude/local"
-    if FileManager.default.fileExists(atPath: localClaudePath) {
-      paths.append(localClaudePath)
-    }
-
-    // Add common development tool paths
-    paths.append(contentsOf: [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "\(homeDir)/.nvm/current/bin",
-      "\(homeDir)/.bun/bin",
-      "\(homeDir)/.deno/bin",
-      "\(homeDir)/.cargo/bin",
-      "\(homeDir)/.local/bin"
-    ])
-
     return CLIProcessService(
       command: "claude",
-      additionalPaths: paths,
+      additionalPaths: CLIPathResolver.claudePaths(additionalPaths: []),
       debugLogging: {
         #if DEBUG
         return true
