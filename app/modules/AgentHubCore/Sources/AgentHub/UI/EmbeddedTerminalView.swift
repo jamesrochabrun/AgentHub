@@ -175,6 +175,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+  var terminateProcessCallCount = 0
 
   /// The PID of the current terminal process, if running
   public var currentProcessPID: Int32? {
@@ -195,6 +196,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// Call this before removing the terminal from activeTerminals to ensure cleanup.
   /// Safe to call multiple times - subsequent calls are no-ops.
   public func terminateProcess() {
+    terminateProcessCallCount += 1
     // Stop data reception FIRST to prevent DispatchIO race condition crash
     terminalView?.stopReceivingData()
     terminalView?.terminateProcessTree()
@@ -232,29 +234,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard !isConfigured else { return }
     isConfigured = true
 
-    // Create and configure terminal view.
-    // Use a sensible fallback frame when bounds is zero (view not yet laid out by SwiftUI).
-    // SwiftTerm calculates column/row count from the initial frame — a zero frame produces a
-    // ~2-column terminal that wraps every character. Auto Layout will correct the size on the
-    // next layout pass and SwiftTerm's setFrameSize override sends SIGWINCH to the process.
-    let initialFrame = bounds.isEmpty ? CGRect(x: 0, y: 0, width: 800, height: 600) : bounds
-    let terminal = SafeLocalProcessTerminalView(frame: initialFrame)
-    terminal.translatesAutoresizingMaskIntoConstraints = false
-    terminal.processDelegate = self
-
-    // Configure terminal appearance
-    configureTerminalAppearance(terminal, isDark: isDark)
-
-    // Add to view hierarchy
-    addSubview(terminal)
-    NSLayoutConstraint.activate([
-      terminal.leadingAnchor.constraint(equalTo: leadingAnchor),
-      terminal.trailingAnchor.constraint(equalTo: trailingAnchor),
-      terminal.topAnchor.constraint(equalTo: topAnchor),
-      terminal.bottomAnchor.constraint(equalTo: bottomAnchor)
-    ])
-
-    self.terminalView = terminal
+    let terminal = prepareTerminalView(isDark: isDark)
     installInteractionMonitorIfNeeded()
 
     // Start the CLI process
@@ -276,6 +256,25 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         self?.typeInitialTextIfNeeded(initialInputText)
       }
     }
+  }
+
+  func configureShell(
+    projectPath: String,
+    isDark: Bool = true,
+    shellPath: String? = nil
+  ) {
+    guard !isConfigured else { return }
+    isConfigured = true
+
+    let terminal = prepareTerminalView(isDark: isDark)
+    installInteractionMonitorIfNeeded()
+
+    startShellProcess(
+      terminal: terminal,
+      projectPath: projectPath,
+      shellPath: shellPath
+    )
+    registerProcessIfNeeded(for: terminal)
   }
 
   /// Resets the prompt delivery flag so a new prompt can be sent.
@@ -478,6 +477,30 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
   }
 
+  private func prepareTerminalView(isDark: Bool) -> SafeLocalProcessTerminalView {
+    // Use a sensible fallback frame when bounds is zero (view not yet laid out by SwiftUI).
+    // SwiftTerm calculates column/row count from the initial frame — a zero frame produces a
+    // ~2-column terminal that wraps every character. Auto Layout will correct the size on the
+    // next layout pass and SwiftTerm's setFrameSize override sends SIGWINCH to the process.
+    let initialFrame = bounds.isEmpty ? CGRect(x: 0, y: 0, width: 800, height: 600) : bounds
+    let terminal = SafeLocalProcessTerminalView(frame: initialFrame)
+    terminal.translatesAutoresizingMaskIntoConstraints = false
+    terminal.processDelegate = self
+
+    configureTerminalAppearance(terminal, isDark: isDark)
+
+    addSubview(terminal)
+    NSLayoutConstraint.activate([
+      terminal.leadingAnchor.constraint(equalTo: leadingAnchor),
+      terminal.trailingAnchor.constraint(equalTo: trailingAnchor),
+      terminal.topAnchor.constraint(equalTo: topAnchor),
+      terminal.bottomAnchor.constraint(equalTo: bottomAnchor)
+    ])
+
+    self.terminalView = terminal
+    return terminal
+  }
+
   private func startCLIProcess(
     terminal: ManagedLocalProcessTerminalView,
     sessionId: String?,
@@ -513,34 +536,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       return
     }
 
-    // Build environment with PATH
-    var environment = ProcessInfo.processInfo.environment
-
-    // Enable full color support for Claude Code CLI
-    // These tell the CLI that the terminal supports 256 colors and true color (24-bit RGB)
-    environment["TERM"] = "xterm-256color"
-    environment["COLORTERM"] = "truecolor"
-    environment["LANG"] = "en_US.UTF-8"
-
-    let paths = additionalPaths + [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "\(NSHomeDirectory())/.claude/local",
-      "\(NSHomeDirectory())/.codex/local",
-      "\(NSHomeDirectory())/.codex/bin",
-      "\(NSHomeDirectory())/.local/bin",
-      "\(NSHomeDirectory())/.nvm/current/bin",
-      "\(NSHomeDirectory())/.nvm/versions/node/v22.16.0/bin",
-      "\(NSHomeDirectory())/.nvm/versions/node/v20.11.1/bin",
-      "\(NSHomeDirectory())/.nvm/versions/node/v18.19.0/bin"
-    ]
-    let pathString = paths.joined(separator: ":")
-    if let existingPath = environment["PATH"] {
-      environment["PATH"] = "\(pathString):\(existingPath)"
-    } else {
-      environment["PATH"] = pathString
-    }
+    let environment = makeProcessEnvironment(additionalPaths: additionalPaths)
 
     // Build the shell command with working directory
     // Since SwiftTerm's Mac API doesn't support currentDirectory directly,
@@ -575,6 +571,64 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       args: ["-c", shellCommand],
       environment: environment.map { "\($0.key)=\($0.value)" }
     )
+  }
+
+  private func startShellProcess(
+    terminal: ManagedLocalProcessTerminalView,
+    projectPath: String,
+    shellPath: String? = nil
+  ) {
+    let environment = makeProcessEnvironment(additionalPaths: [])
+    let shellExecutable = resolveShellExecutablePath(shellPath)
+    let escapedPath = shellEscape(projectPath.isEmpty ? NSHomeDirectory() : projectPath)
+    let escapedShellPath = shellEscape(shellExecutable)
+    let shellCommand = "cd '\(escapedPath)' && exec '\(escapedShellPath)' -l"
+
+    terminal.startProcess(
+      executable: "/bin/bash",
+      args: ["-c", shellCommand],
+      environment: environment.map { "\($0.key)=\($0.value)" }
+    )
+  }
+
+  private func makeProcessEnvironment(additionalPaths: [String]) -> [String: String] {
+    var environment = ProcessInfo.processInfo.environment
+    environment["TERM"] = "xterm-256color"
+    environment["COLORTERM"] = "truecolor"
+    environment["LANG"] = "en_US.UTF-8"
+
+    let paths = additionalPaths + [
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+      "/usr/bin",
+      "\(NSHomeDirectory())/.claude/local",
+      "\(NSHomeDirectory())/.codex/local",
+      "\(NSHomeDirectory())/.codex/bin",
+      "\(NSHomeDirectory())/.local/bin",
+      "\(NSHomeDirectory())/.nvm/current/bin",
+      "\(NSHomeDirectory())/.nvm/versions/node/v22.16.0/bin",
+      "\(NSHomeDirectory())/.nvm/versions/node/v20.11.1/bin",
+      "\(NSHomeDirectory())/.nvm/versions/node/v18.19.0/bin"
+    ]
+    let pathString = paths.joined(separator: ":")
+    if let existingPath = environment["PATH"] {
+      environment["PATH"] = "\(pathString):\(existingPath)"
+    } else {
+      environment["PATH"] = pathString
+    }
+    return environment
+  }
+
+  private func resolveShellExecutablePath(_ shellPath: String?) -> String {
+    let candidate = shellPath ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+    if FileManager.default.isExecutableFile(atPath: candidate) {
+      return candidate
+    }
+    return "/bin/zsh"
+  }
+
+  private func shellEscape(_ value: String) -> String {
+    value.replacingOccurrences(of: "'", with: "'\\''")
   }
 
   private func registerProcessIfNeeded(for terminal: SafeLocalProcessTerminalView) {

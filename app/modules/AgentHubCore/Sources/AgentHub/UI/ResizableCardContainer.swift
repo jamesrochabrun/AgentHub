@@ -4,6 +4,27 @@ import SwiftUI
 struct ResizableCardMetrics {
   let defaultHeight: CGFloat
   let minHeight: CGFloat
+  let maxHeight: CGFloat
+
+  init(
+    defaultHeight: CGFloat,
+    minHeight: CGFloat,
+    maxHeight: CGFloat = .greatestFiniteMagnitude
+  ) {
+    self.defaultHeight = defaultHeight
+    self.minHeight = minHeight
+    self.maxHeight = maxHeight
+  }
+}
+
+enum ResizableCardHandlePlacement {
+  case top
+  case bottom
+}
+
+enum ResizableCardHandleStyle {
+  case line
+  case grip
 }
 
 final class ResizeInteractionSuppression {
@@ -36,6 +57,8 @@ final class ResizeInteractionSuppression {
 struct ResizableCardContainer<Content: View>: View {
   @Binding var height: CGFloat
   let metrics: ResizableCardMetrics
+  let handlePlacement: ResizableCardHandlePlacement
+  let handleStyle: ResizableCardHandleStyle
   let content: () -> Content
 
   @State private var isDragging = false
@@ -48,19 +71,23 @@ struct ResizableCardContainer<Content: View>: View {
   init(
     height: Binding<CGFloat>,
     metrics: ResizableCardMetrics,
+    handlePlacement: ResizableCardHandlePlacement = .bottom,
+    handleStyle: ResizableCardHandleStyle = .line,
     @ViewBuilder content: @escaping () -> Content
   ) {
     self._height = height
     self.metrics = metrics
+    self.handlePlacement = handlePlacement
+    self.handleStyle = handleStyle
     self.content = content
   }
 
   private var resolvedHeight: CGFloat {
-    max(height > 0 ? height : metrics.defaultHeight, metrics.minHeight)
+    clamp(height > 0 ? height : metrics.defaultHeight)
   }
 
   private var previewHeightValue: CGFloat {
-    max(previewHeight ?? resolvedHeight, metrics.minHeight)
+    clamp(previewHeight ?? resolvedHeight)
   }
 
   private var previewOffset: CGFloat {
@@ -69,6 +96,10 @@ struct ResizableCardContainer<Content: View>: View {
 
   var body: some View {
     VStack(spacing: 0) {
+      if handlePlacement == .top {
+        handle
+      }
+
       content()
         .frame(maxWidth: .infinity)
         .frame(height: resolvedHeight, alignment: .top)
@@ -78,12 +109,14 @@ struct ResizableCardContainer<Content: View>: View {
           y: isDragging ? 4 : 0
         )
 
-      handle
+      if handlePlacement == .bottom {
+        handle
+      }
     }
-    .overlay(alignment: .bottom) {
+    .overlay(alignment: handlePlacement == .top ? .top : .bottom) {
       if isDragging {
         previewGuide
-          .offset(y: previewOffset)
+          .offset(y: handlePlacement == .top ? -previewOffset : previewOffset)
           .allowsHitTesting(false)
       }
     }
@@ -104,10 +137,17 @@ struct ResizableCardContainer<Content: View>: View {
     ZStack {
       Color.clear
 
-      Capsule()
-        .fill(resizableDividerColor(isDragging: isDragging, isHovering: isHoveringHandle))
-        .frame(height: resizableDividerThickness(isDragging: isDragging, isHovering: isHoveringHandle))
-        .padding(.horizontal, 12)
+      switch handleStyle {
+      case .line:
+        Capsule()
+          .fill(resizableDividerColor(isDragging: isDragging, isHovering: isHoveringHandle))
+          .frame(height: resizableDividerThickness(isDragging: isDragging, isHovering: isHoveringHandle))
+          .padding(.horizontal, 12)
+      case .grip:
+        Capsule()
+          .fill(resizableDividerColor(isDragging: isDragging, isHovering: isHoveringHandle))
+          .frame(width: 42, height: max(3, resizableDividerThickness(isDragging: isDragging, isHovering: isHoveringHandle) + 2))
+      }
     }
     .frame(height: handleHeight)
     .contentShape(Rectangle())
@@ -153,7 +193,15 @@ struct ResizableCardContainer<Content: View>: View {
           ResizeInteractionSuppression.shared.beginResize()
         }
 
-        previewHeight = max(metrics.minHeight, heightAtDragStart + value.translation.height)
+        let proposedHeight: CGFloat
+        switch handlePlacement {
+        case .top:
+          proposedHeight = heightAtDragStart - value.translation.height
+        case .bottom:
+          proposedHeight = heightAtDragStart + value.translation.height
+        }
+
+        previewHeight = clamp(proposedHeight)
       }
       .onEnded { _ in
         height = previewHeightValue
@@ -173,6 +221,10 @@ struct ResizableCardContainer<Content: View>: View {
     } else {
       NSCursor.pop()
     }
+  }
+
+  private func clamp(_ value: CGFloat) -> CGFloat {
+    max(metrics.minHeight, min(metrics.maxHeight, value))
   }
 }
 

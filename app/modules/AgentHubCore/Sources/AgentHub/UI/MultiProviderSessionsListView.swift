@@ -44,12 +44,14 @@ public struct MultiProviderSessionsListView: View {
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
+  @State private var isAuxiliaryShellVisible = false
   @State private var isEmbeddedTrailingPanelVisible = false
   @State private var sidebarVisibilityBeforeAutoHide: NavigationSplitViewVisibility?
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @Environment(\.openSettings) private var openSettings
+  @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
@@ -91,6 +93,7 @@ public struct MultiProviderSessionsListView: View {
           codexViewModel: codexViewModel,
           filterMode: $hubFilterMode,
           primarySessionId: $primarySessionId,
+          isAuxiliaryShellVisible: $isAuxiliaryShellVisible,
           onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
           onRequestStartSession: { preferredRepositoryPath in
             triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
@@ -143,9 +146,15 @@ public struct MultiProviderSessionsListView: View {
     }
     .onChange(of: selectedSessionItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
+      if filteredSelectedSessionItems.isEmpty {
+        setAuxiliaryShellVisible(false)
+      }
     }
     .onChange(of: hubFilterMode) { _, _ in
       applyHubFilterToSidebar()
+      if filteredSelectedSessionItems.isEmpty {
+        setAuxiliaryShellVisible(false)
+      }
     }
     .sheet(item: $sessionFileSheetItem) { item in
       SessionFileSheetView(
@@ -260,6 +269,10 @@ public struct MultiProviderSessionsListView: View {
 
       Button("") { handleCommandPaletteAction(.toggleSidebar) }
         .keyboardShortcut("b", modifiers: .command)
+        .hidden()
+
+      Button("") { toggleAuxiliaryShellDock() }
+        .keyboardShortcut("j", modifiers: .command)
         .hidden()
 
       Button("") { navigateSessionHistory(direction: .backward) }
@@ -1111,6 +1124,25 @@ public struct MultiProviderSessionsListView: View {
         layoutModeRawValue = restoreTo
       }
     }
+  }
+
+  private func toggleAuxiliaryShellDock() {
+    ensurePrimarySelection()
+    guard !filteredSelectedSessionItems.isEmpty else { return }
+    withAnimation(auxiliaryShellToggleAnimation) {
+      isAuxiliaryShellVisible.toggle()
+    }
+  }
+
+  private func setAuxiliaryShellVisible(_ isVisible: Bool) {
+    guard isAuxiliaryShellVisible != isVisible else { return }
+    withAnimation(auxiliaryShellToggleAnimation) {
+      isAuxiliaryShellVisible = isVisible
+    }
+  }
+
+  private var auxiliaryShellToggleAnimation: Animation {
+    accessibilityReduceMotion ? .easeInOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.9)
   }
 
   private enum NavigationDirection {
