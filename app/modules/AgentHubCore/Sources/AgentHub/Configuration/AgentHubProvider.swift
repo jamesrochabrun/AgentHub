@@ -7,6 +7,7 @@
 
 import Foundation
 import os
+import ClaudeCodeClient
 
 /// Central service provider that manages all AgentHub services
 ///
@@ -171,12 +172,21 @@ public final class AgentHubProvider {
 
   // MARK: - CLI Process Service Factory
 
-  /// Creates a CLIProcessService with paths resolved from configuration
-  private func createProcessService() -> CLIProcessServiceProtocol {
-    return CLIProcessService(
+  /// Creates a Claude CLI client with paths resolved from configuration.
+  private func createProcessService() -> any ClaudeCLIClientProtocol {
+    let debugLogger: (@Sendable (String) -> Void)?
+    if configuration.enableDebugLogging {
+      debugLogger = { message in
+        AppLogger.intelligence.debug("\(message, privacy: .public)")
+      }
+    } else {
+      debugLogger = nil
+    }
+
+    return ClaudeCLIClient(
       command: configuration.cliCommand,
-      additionalPaths: CLIPathResolver.claudePaths(additionalPaths: configuration.additionalCLIPaths),
-      debugLogging: configuration.enableDebugLogging
+      additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths),
+      debugLogger: debugLogger
     )
   }
 
@@ -191,7 +201,7 @@ public final class AgentHubProvider {
         ?? configuration.cliCommand
       cliConfiguration = CLICommandConfiguration(
         command: command,
-        additionalPaths: CLIPathResolver.claudePaths(additionalPaths: configuration.additionalCLIPaths),
+        additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths),
         mode: .claude
       )
     case .codex:

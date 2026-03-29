@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import ClaudeCodeClient
 
 /// Simplified stream processor for the Intelligence feature.
 /// Processes Claude's streaming responses and triggers callbacks for tool calls/results.
@@ -83,7 +84,7 @@ final class IntelligenceStreamProcessor {
           self.continuationResumed = true
           self.activeContinuation = nil
 
-          self.onError?(CLIProcessError.timeout(Double(self.timeoutNanoseconds) / 1_000_000_000))
+          self.onError?(ClaudeCodeClientError.timeout(Double(self.timeoutNanoseconds) / 1_000_000_000))
           continuation.resume()
         }
       }
@@ -128,7 +129,7 @@ final class IntelligenceStreamProcessor {
 
   private func processChunk(_ chunk: StreamJSONChunk) {
     switch chunk {
-    case .system:
+    case .system(_):
       break
 
     case .assistant(let message):
@@ -139,6 +140,9 @@ final class IntelligenceStreamProcessor {
 
     case .result(let resultMessage):
       processResultMessage(resultMessage)
+
+    case .unknown(_):
+      break
     }
   }
 

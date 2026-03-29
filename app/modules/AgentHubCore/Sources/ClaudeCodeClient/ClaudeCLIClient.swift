@@ -1,18 +1,12 @@
 //
-//  CLIProcessService.swift
-//  AgentHub
-//
-//  Lightweight service that spawns `claude -p --output-format stream-json`
-//  and streams parsed JSON chunks. Replaces ClaudeCodeSDK dependency.
+//  ClaudeCLIClient.swift
+//  ClaudeCodeClient
 //
 
-import Foundation
 import Combine
+import Foundation
 
-// MARK: - Protocol
-
-public protocol CLIProcessServiceProtocol: Sendable {
-  /// Runs a streaming prompt and returns a publisher of parsed JSON chunks.
+public protocol ClaudeCLIClientProtocol: Sendable {
   func runStreamingPrompt(
     prompt: String,
     workingDirectory: String,
@@ -21,66 +15,50 @@ public protocol CLIProcessServiceProtocol: Sendable {
     disallowedTools: [String]?
   ) -> AnyPublisher<StreamJSONChunk, Error>
 
-  /// Cancels the currently running process.
   @MainActor func cancel()
 }
 
-// MARK: - Implementation
-
-/// Actor-based service that spawns the Claude CLI process and parses stream-json output.
-final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
+public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable {
 
   private let command: String
   private let additionalPaths: [String]
-  private let debugLogging: Bool
+  private let debugLogger: (@Sendable (String) -> Void)?
 
-  /// The running process (accessed only from detached tasks + cancellation).
   private var runningProcess: Process?
   private let lock = NSLock()
 
-  init(
+  public init(
     command: String = "claude",
     additionalPaths: [String] = [],
-    debugLogging: Bool = false
+    debugLogger: (@Sendable (String) -> Void)? = nil
   ) {
     self.command = command
     self.additionalPaths = additionalPaths
-    self.debugLogging = debugLogging
+    self.debugLogger = debugLogger
   }
 
-  convenience init(configuration: CLICommandConfiguration) {
-    self.init(
-      command: configuration.executableName,
-      additionalPaths: configuration.additionalPaths
-    )
-  }
-
-  private func setRunningProcess(_ process: Process?) {
-    lock.lock()
-    runningProcess = process
-    lock.unlock()
-  }
-
-  func runStreamingPrompt(
+  public func runStreamingPrompt(
     prompt: String,
     workingDirectory: String,
     systemPrompt: String?,
     permissionMode: String?,
     disallowedTools: [String]?
   ) -> AnyPublisher<StreamJSONChunk, Error> {
-    // Find executable
-    guard let executablePath = TerminalLauncher.findExecutable(
-      command: command,
+    let parsedCommand = ParsedCommand(command: command)
+
+    guard let executablePath = ClaudeCLIExecutableResolver.findExecutable(
+      command: parsedCommand.executableName,
       additionalPaths: additionalPaths
     ) else {
-      return Fail(error: CLIProcessError.notInstalled(command))
+      return Fail(error: ClaudeCodeClientError.notInstalled(parsedCommand.executableName))
         .eraseToAnyPublisher()
     }
 
     let subject = PassthroughSubject<StreamJSONChunk, Error>()
+    let decoder = JSONDecoder()
+    let allPaths = ClaudeCLIExecutableResolver.searchPaths(additionalPaths: additionalPaths)
 
-    // Build arguments
-    var args = ["-p", "--output-format", "stream-json", "--verbose"]
+    var args = parsedCommand.prefixArguments + ["-p", "--output-format", "stream-json", "--verbose"]
 
     if let permissionMode, !permissionMode.isEmpty {
       args += ["--permission-mode", permissionMode]
@@ -94,8 +72,6 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
       args += ["--disallowed-tools", disallowedTools.joined(separator: ",")]
     }
 
-    let decoder = JSONDecoder()
-
     Task.detached { [weak self] in
       let process = Process()
       process.executableURL = URL(fileURLWithPath: executablePath)
@@ -105,20 +81,17 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
       }
 
-      // Set up environment with PATH
       var environment = ProcessInfo.processInfo.environment
-      let allPaths = CLIPathResolver.executableSearchPaths(additionalPaths: self?.additionalPaths ?? [])
       if !allPaths.isEmpty {
-        let joined = allPaths.joined(separator: ":")
-        if let existing = environment["PATH"] {
-          environment["PATH"] = "\(joined):\(existing)"
+        let joinedPaths = allPaths.joined(separator: ":")
+        if let existingPath = environment["PATH"] {
+          environment["PATH"] = "\(joinedPaths):\(existingPath)"
         } else {
-          environment["PATH"] = joined
+          environment["PATH"] = joinedPaths
         }
       }
       process.environment = environment
 
-      // Pipes
       let stdinPipe = Pipe()
       let stdoutPipe = Pipe()
       let stderrPipe = Pipe()
@@ -126,20 +99,16 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
       process.standardOutput = stdoutPipe
       process.standardError = stderrPipe
 
-      // Track the process for cancellation
       self?.setRunningProcess(process)
 
-      // Line buffer for partial reads
       var lineBuffer = Data()
 
-      // Handle stdout — parse JSON lines
       stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
         let data = handle.availableData
         guard !data.isEmpty else { return }
 
         lineBuffer.append(data)
 
-        // Process complete lines
         while let newlineIndex = lineBuffer.firstIndex(of: UInt8(ascii: "\n")) {
           let lineData = lineBuffer[lineBuffer.startIndex..<newlineIndex]
           lineBuffer = Data(lineBuffer[lineBuffer.index(after: newlineIndex)...])
@@ -150,15 +119,12 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
             let chunk = try decoder.decode(StreamJSONChunk.self, from: Data(lineData))
             subject.send(chunk)
           } catch {
-            if self?.debugLogging == true {
-              let raw = String(data: Data(lineData), encoding: .utf8) ?? "<binary>"
-              AppLogger.intelligence.debug("Failed to parse stream-json line: \(raw) — \(error)")
-            }
+            let rawLine = String(data: Data(lineData), encoding: .utf8) ?? "<binary>"
+            self?.debugLogger?("Failed to parse stream-json line: \(rawLine) — \(error)")
           }
         }
       }
 
-      // Collect stderr for error reporting
       var stderrData = Data()
       stderrPipe.fileHandleForReading.readabilityHandler = { handle in
         let data = handle.availableData
@@ -167,27 +133,26 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
         }
       }
 
-      // Termination handler
       process.terminationHandler = { [weak self] proc in
         stdoutPipe.fileHandleForReading.readabilityHandler = nil
         stderrPipe.fileHandleForReading.readabilityHandler = nil
 
         self?.setRunningProcess(nil)
 
-        // Process any remaining data in the line buffer
         if !lineBuffer.isEmpty {
           do {
             let chunk = try decoder.decode(StreamJSONChunk.self, from: lineBuffer)
             subject.send(chunk)
           } catch {
-            // Ignore trailing partial data
+            self?.debugLogger?("Discarded trailing partial stream-json line: \(error)")
           }
         }
 
         if proc.terminationStatus != 0 && proc.terminationReason != .uncaughtSignal {
-          let stderr = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+          let stderr = String(data: stderrData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
           let message = stderr.isEmpty ? "Process exited with status \(proc.terminationStatus)" : stderr
-          subject.send(completion: .failure(CLIProcessError.executionFailed(message)))
+          subject.send(completion: .failure(ClaudeCodeClientError.executionFailed(message)))
         } else {
           subject.send(completion: .finished)
         }
@@ -195,15 +160,13 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
 
       do {
         try process.run()
-
-        // Send prompt via stdin and close
         if let promptData = prompt.data(using: .utf8) {
           stdinPipe.fileHandleForWriting.write(promptData)
         }
         stdinPipe.fileHandleForWriting.closeFile()
       } catch {
         self?.setRunningProcess(nil)
-        subject.send(completion: .failure(CLIProcessError.executionFailed(error.localizedDescription)))
+        subject.send(completion: .failure(ClaudeCodeClientError.executionFailed(error.localizedDescription)))
       }
     }
 
@@ -217,11 +180,79 @@ final class CLIProcessService: CLIProcessServiceProtocol, @unchecked Sendable {
   }
 
   @MainActor
-  func cancel() {
+  public func cancel() {
     lock.lock()
     let process = runningProcess
     runningProcess = nil
     lock.unlock()
     process?.terminate()
+  }
+
+  private func setRunningProcess(_ process: Process?) {
+    lock.lock()
+    runningProcess = process
+    lock.unlock()
+  }
+}
+
+private struct ParsedCommand: Sendable {
+  let executableName: String
+  let prefixArguments: [String]
+
+  init(command: String) {
+    let parts = command.split(separator: " ", omittingEmptySubsequences: true)
+    self.executableName = parts.first.map(String.init) ?? command
+    self.prefixArguments = parts.dropFirst().map(String.init)
+  }
+}
+
+private enum ClaudeCLIExecutableResolver {
+
+  static func searchPaths(
+    additionalPaths: [String],
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    homeDirectory: String = NSHomeDirectory()
+  ) -> [String] {
+    var combinedPaths = ClaudeCodePathResolver.searchPaths(
+      additionalPaths: additionalPaths,
+      homeDirectory: homeDirectory
+    )
+
+    if let environmentPath = environment["PATH"] {
+      combinedPaths.append(contentsOf: environmentPath.split(separator: ":").map(String.init))
+    }
+
+    return uniquePaths(combinedPaths)
+  }
+
+  static func findExecutable(
+    command: String,
+    additionalPaths: [String],
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    homeDirectory: String = NSHomeDirectory()
+  ) -> String? {
+    let fileManager = FileManager.default
+
+    if command.contains("/") && fileManager.isExecutableFile(atPath: command) {
+      return command
+    }
+
+    for path in searchPaths(
+      additionalPaths: additionalPaths,
+      environment: environment,
+      homeDirectory: homeDirectory
+    ) {
+      let fullPath = "\(path)/\(command)"
+      if fileManager.isExecutableFile(atPath: fullPath) {
+        return fullPath
+      }
+    }
+
+    return nil
+  }
+
+  private static func uniquePaths(_ paths: [String]) -> [String] {
+    var seen = Set<String>()
+    return paths.filter { seen.insert($0).inserted }
   }
 }

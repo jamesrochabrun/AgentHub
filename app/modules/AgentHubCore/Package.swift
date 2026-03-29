@@ -9,6 +9,10 @@ let package = Package(
   ],
   products: [
     .library(
+      name: "ClaudeCodeClient",
+      targets: ["ClaudeCodeClient"]
+    ),
+    .library(
       name: "AgentHubCore",
       targets: ["AgentHubCore"]
     ),
@@ -26,8 +30,16 @@ let package = Package(
   ],
   targets: [
     .target(
+      name: "ClaudeCodeClient",
+      path: "Sources/ClaudeCodeClient",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .target(
       name: "AgentHubCore",
       dependencies: [
+        "ClaudeCodeClient",
         .product(name: "Canvas", package: "Canvas"),
         .product(name: "PierreDiffsSwift", package: "PierreDiffsSwift"),
         .product(name: "SwiftTerm", package: "SwiftTerm"),
@@ -47,8 +59,16 @@ let package = Package(
       ]
     ),
     .testTarget(
+      name: "ClaudeCodeClientTests",
+      dependencies: ["ClaudeCodeClient"],
+      path: "Tests/ClaudeCodeClientTests",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .testTarget(
       name: "AgentHubTests",
-      dependencies: ["AgentHubCore"],
+      dependencies: ["AgentHubCore", "ClaudeCodeClient"],
       path: "Tests/AgentHubTests",
       swiftSettings: [
         .swiftLanguageMode(.v5)

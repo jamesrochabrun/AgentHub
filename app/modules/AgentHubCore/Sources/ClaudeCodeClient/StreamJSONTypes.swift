@@ -1,22 +1,160 @@
 //
 //  StreamJSONTypes.swift
-//  AgentHub
-//
-//  Lightweight Codable types for parsing `claude -p --output-format stream-json` output.
-//  Replaces ClaudeCodeSDK / SwiftAnthropic types with zero external dependencies.
+//  ClaudeCodeClient
 //
 
 import Foundation
 
-// MARK: - Top-Level Chunk
-
-/// A single JSON object from Claude CLI's stream-json output.
-/// Each line of stdout is one of these discriminated by the `"type"` field.
-public enum StreamJSONChunk {
-  case system(CLIInitSystemMessage)
+public enum StreamJSONChunk: Sendable {
+  case system(CLISystemMessage)
   case assistant(CLIAssistantMessage)
   case user(CLIUserMessage)
   case result(CLIResultMessage)
+  case unknown(CLIUnknownChunk)
+}
+
+public enum StreamJSONChunkType: Sendable, Equatable {
+  case system
+  case assistant
+  case user
+  case result
+  case unknown(String)
+}
+
+public enum CLIMessageRole: Sendable, Equatable {
+  case system
+  case user
+  case assistant
+  case unknown(String)
+}
+
+public enum CLIContentBlockType: Sendable, Equatable {
+  case text
+  case toolUse
+  case toolResult
+  case thinking
+  case unknown(String)
+}
+
+public enum CLIContentItemType: Sendable, Equatable {
+  case text
+  case unknown(String)
+}
+
+public enum CLISystemSubtype: Sendable, Equatable {
+  case initialization
+  case unknown(String)
+}
+
+public enum CLIResultSubtype: Sendable, Equatable {
+  case success
+  case errorMaxTurns
+  case unknown(String)
+}
+
+extension CLIResultSubtype: Decodable {
+  public init(from decoder: Decoder) throws {
+    let rawValue = try decoder.singleValueContainer().decode(String.self)
+    switch rawValue {
+    case "success":
+      self = .success
+    case "error_max_turns":
+      self = .errorMaxTurns
+    default:
+      self = .unknown(rawValue)
+    }
+  }
+}
+
+extension StreamJSONChunkType: Decodable {
+  public init(from decoder: Decoder) throws {
+    let rawValue = try decoder.singleValueContainer().decode(String.self)
+    switch rawValue {
+    case "system":
+      self = .system
+    case "assistant":
+      self = .assistant
+    case "user":
+      self = .user
+    case "result":
+      self = .result
+    default:
+      self = .unknown(rawValue)
+    }
+  }
+
+  public var rawValue: String {
+    switch self {
+    case .system:
+      return "system"
+    case .assistant:
+      return "assistant"
+    case .user:
+      return "user"
+    case .result:
+      return "result"
+    case .unknown(let rawValue):
+      return rawValue
+    }
+  }
+}
+
+extension CLIMessageRole: Decodable {
+  public init(from decoder: Decoder) throws {
+    let rawValue = try decoder.singleValueContainer().decode(String.self)
+    switch rawValue {
+    case "system":
+      self = .system
+    case "user":
+      self = .user
+    case "assistant":
+      self = .assistant
+    default:
+      self = .unknown(rawValue)
+    }
+  }
+}
+
+extension CLIContentBlockType: Decodable {
+  public init(from decoder: Decoder) throws {
+    let rawValue = try decoder.singleValueContainer().decode(String.self)
+    switch rawValue {
+    case "text":
+      self = .text
+    case "tool_use":
+      self = .toolUse
+    case "tool_result":
+      self = .toolResult
+    case "thinking":
+      self = .thinking
+    default:
+      self = .unknown(rawValue)
+    }
+  }
+}
+
+extension CLIContentItemType: Decodable {
+  public init(from decoder: Decoder) throws {
+    let rawValue = try decoder.singleValueContainer().decode(String.self)
+    switch rawValue {
+    case "text":
+      self = .text
+    default:
+      self = .unknown(rawValue)
+    }
+  }
+}
+
+extension CLISystemSubtype: Decodable {
+  public init(from decoder: Decoder) throws {
+    let rawValue = try decoder.singleValueContainer().decode(String.self)
+    switch rawValue {
+    case "init":
+      self = .initialization
+    default:
+      self = .unknown(rawValue)
+    }
+  }
 }
 
 extension StreamJSONChunk: Decodable {
@@ -26,37 +164,39 @@ extension StreamJSONChunk: Decodable {
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    let type = try container.decode(String.self, forKey: .type)
+    let type = try container.decode(StreamJSONChunkType.self, forKey: .type)
 
     switch type {
-    case "system":
-      self = .system(try CLIInitSystemMessage(from: decoder))
-    case "assistant":
+    case .system:
+      self = .system(try CLISystemMessage(from: decoder))
+    case .assistant:
       self = .assistant(try CLIAssistantMessage(from: decoder))
-    case "user":
+    case .user:
       self = .user(try CLIUserMessage(from: decoder))
-    case "result":
+    case .result:
       self = .result(try CLIResultMessage(from: decoder))
-    default:
-      throw DecodingError.dataCorruptedError(
-        forKey: .type,
-        in: container,
-        debugDescription: "Unknown chunk type: \(type)"
-      )
+    case .unknown(let rawValue):
+      self = .unknown(CLIUnknownChunk(type: rawValue))
     }
   }
 }
 
-// MARK: - System Message
-
-public struct CLIInitSystemMessage: Decodable {
+public struct CLIUnknownChunk: Sendable {
   public let type: String
-  public let subtype: String?
+
+  public init(type: String) {
+    self.type = type
+  }
+}
+
+public struct CLISystemMessage: Decodable, Sendable {
+  public let type: StreamJSONChunkType
+  public let subtype: CLISystemSubtype?
   public let sessionId: String?
   public let tools: [String]?
   public let mcpServers: [CLIMCPServer]?
 
-  public struct CLIMCPServer: Decodable {
+  public struct CLIMCPServer: Decodable, Sendable {
     public let name: String
     public let status: String?
   }
@@ -66,10 +206,8 @@ public struct CLIInitSystemMessage: Decodable {
   }
 }
 
-// MARK: - Assistant Message
-
-public struct CLIAssistantMessage: Decodable {
-  public let type: String
+public struct CLIAssistantMessage: Decodable, Sendable {
+  public let type: StreamJSONChunkType
   public let sessionId: String?
   public let message: CLIMessageContent
 
@@ -78,14 +216,12 @@ public struct CLIAssistantMessage: Decodable {
   }
 }
 
-public struct CLIMessageContent: Decodable {
-  public let role: String?
+public struct CLIMessageContent: Decodable, Sendable {
+  public let role: CLIMessageRole?
   public let content: [CLIContentBlock]
 }
 
-// MARK: - Content Block
-
-public enum CLIContentBlock {
+public enum CLIContentBlock: Sendable {
   case text(String)
   case toolUse(CLIToolUse)
   case toolResult(CLIToolResult)
@@ -102,67 +238,56 @@ extension CLIContentBlock: Decodable {
 
   public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    let type = try container.decode(String.self, forKey: .type)
+    let type = try container.decode(CLIContentBlockType.self, forKey: .type)
 
     switch type {
-    case "text":
-      let text = try container.decode(String.self, forKey: .text)
-      self = .text(text)
-
-    case "tool_use":
+    case .text:
+      self = .text(try container.decode(String.self, forKey: .text))
+    case .toolUse:
       let id = try container.decodeIfPresent(String.self, forKey: .id) ?? ""
       let name = try container.decode(String.self, forKey: .name)
       let input = try container.decodeIfPresent([String: DynamicJSONValue].self, forKey: .input) ?? [:]
       self = .toolUse(CLIToolUse(id: id, name: name, input: input))
-
-    case "tool_result":
+    case .toolResult:
       let toolUseId = try container.decodeIfPresent(String.self, forKey: .toolUseId)
       let isError = try container.decodeIfPresent(Bool.self, forKey: .isError)
       let content = try container.decode(CLIToolResultContent.self, forKey: .content)
       self = .toolResult(CLIToolResult(toolUseId: toolUseId, isError: isError, content: content))
-
-    case "thinking":
+    case .thinking:
       let thinking = try container.decodeIfPresent(String.self, forKey: .thinking) ?? ""
       let signature = try container.decodeIfPresent(String.self, forKey: .signature)
       self = .thinking(CLIThinking(thinking: thinking, signature: signature))
-
-    default:
+    case .unknown(_):
       self = .unknown
     }
   }
 }
 
-// MARK: - Tool Use
-
-public struct CLIToolUse {
+public struct CLIToolUse: Sendable {
   public let id: String
   public let name: String
   public let input: [String: DynamicJSONValue]
 }
 
-// MARK: - Tool Result
-
-public struct CLIToolResult {
+public struct CLIToolResult: Sendable {
   public let toolUseId: String?
   public let isError: Bool?
   public let content: CLIToolResultContent
 }
 
-public enum CLIToolResultContent {
+public enum CLIToolResultContent: Sendable {
   case string(String)
   case items([CLIContentItem])
 }
 
 extension CLIToolResultContent: Decodable {
   public init(from decoder: Decoder) throws {
-    // Try string first
     if let container = try? decoder.singleValueContainer(),
-       let str = try? container.decode(String.self) {
-      self = .string(str)
+       let stringValue = try? container.decode(String.self) {
+      self = .string(stringValue)
       return
     }
 
-    // Try array of items
     if let items = try? [CLIContentItem](from: decoder) {
       self = .items(items)
       return
@@ -172,22 +297,18 @@ extension CLIToolResultContent: Decodable {
   }
 }
 
-public struct CLIContentItem: Decodable {
-  public let type: String?
+public struct CLIContentItem: Decodable, Sendable {
+  public let type: CLIContentItemType?
   public let text: String?
 }
 
-// MARK: - Thinking
-
-public struct CLIThinking {
+public struct CLIThinking: Sendable {
   public let thinking: String
   public let signature: String?
 }
 
-// MARK: - User Message
-
-public struct CLIUserMessage: Decodable {
-  public let type: String
+public struct CLIUserMessage: Decodable, Sendable {
+  public let type: StreamJSONChunkType
   public let sessionId: String?
   public let message: CLIUserMessageContent
 
@@ -196,16 +317,14 @@ public struct CLIUserMessage: Decodable {
   }
 }
 
-public struct CLIUserMessageContent: Decodable {
-  public let role: String?
+public struct CLIUserMessageContent: Decodable, Sendable {
+  public let role: CLIMessageRole?
   public let content: [CLIContentBlock]
 }
 
-// MARK: - Result Message
-
-public struct CLIResultMessage: Decodable {
-  public let type: String
-  public let subtype: String?
+public struct CLIResultMessage: Decodable, Sendable {
+  public let type: StreamJSONChunkType
+  public let subtype: CLIResultSubtype?
   public let totalCostUsd: Double?
   public let durationMs: Int?
   public let durationApiMs: Int?
@@ -225,10 +344,6 @@ public struct CLIResultMessage: Decodable {
   }
 }
 
-// MARK: - Dynamic JSON Value
-
-/// A recursive type representing arbitrary JSON values.
-/// Replaces `MessageResponse.Content.DynamicContent` from SwiftAnthropic.
 public enum DynamicJSONValue: Sendable {
   case string(String)
   case integer(Int)
@@ -279,8 +394,7 @@ extension DynamicJSONValue: Encodable {
 }
 
 extension Dictionary where Key == String, Value == DynamicJSONValue {
-  /// Returns a human-readable summary of the dictionary contents.
-  func formattedDescription() -> String {
+  public func formattedDescription() -> String {
     self.compactMap { key, value -> String? in
       let formatted = value.stringValue
       guard !formatted.isEmpty else { return nil }
@@ -290,26 +404,22 @@ extension Dictionary where Key == String, Value == DynamicJSONValue {
 }
 
 extension DynamicJSONValue {
-  /// Compact string representation for display purposes.
   public var stringValue: String {
     switch self {
-    case .string(let s): return s
-    case .integer(let i): return String(i)
-    case .double(let d): return String(d)
-    case .bool(let b): return String(b)
+    case .string(let stringValue): return stringValue
+    case .integer(let integerValue): return String(integerValue)
+    case .double(let doubleValue): return String(doubleValue)
+    case .bool(let boolValue): return String(boolValue)
     case .null: return "null"
-    case .array(let arr):
-      return "[\(arr.map(\.stringValue).joined(separator: ", "))]"
-    case .dictionary(let dict):
-      return dict.formattedDescription()
+    case .array(let arrayValue):
+      return "[\(arrayValue.map(\.stringValue).joined(separator: ", "))]"
+    case .dictionary(let dictionaryValue):
+      return dictionaryValue.formattedDescription()
     }
   }
 }
 
-// MARK: - Process Error
-
-/// Errors from the CLI process service.
-public enum CLIProcessError: LocalizedError {
+public enum ClaudeCodeClientError: LocalizedError, Equatable {
   case notInstalled(String)
   case executionFailed(String)
   case timeout(TimeInterval)

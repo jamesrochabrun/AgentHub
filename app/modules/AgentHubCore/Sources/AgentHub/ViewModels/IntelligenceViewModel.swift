@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import ClaudeCodeClient
 
 /// View model for the Intelligence feature.
 /// Manages communication with Claude CLI process and handles streaming responses.
@@ -17,7 +18,7 @@ public final class IntelligenceViewModel {
   // MARK: - Properties
 
   /// The CLI process service for running Claude prompts (nil if CLI is unavailable)
-  private var processService: CLIProcessServiceProtocol?
+  private var processService: (any ClaudeCLIClientProtocol)?
 
   /// Stream processor for handling responses
   private let streamProcessor = IntelligenceStreamProcessor()
@@ -50,7 +51,7 @@ public final class IntelligenceViewModel {
   // MARK: - Initialization
 
   /// Creates a new IntelligenceViewModel with a CLI process service
-  public init(processService: CLIProcessServiceProtocol? = nil) {
+  public init(processService: (any ClaudeCLIClientProtocol)? = nil) {
     if let service = processService {
       self.processService = service
     } else {
@@ -60,17 +61,20 @@ public final class IntelligenceViewModel {
     setupStreamCallbacks()
   }
 
-  private static func createDefaultProcessService() -> CLIProcessServiceProtocol? {
-    return CLIProcessService(
+  private static func createDefaultProcessService() -> (any ClaudeCLIClientProtocol)? {
+    let debugLogger: (@Sendable (String) -> Void)?
+    #if DEBUG
+    debugLogger = { message in
+      AppLogger.intelligence.debug("\(message, privacy: .public)")
+    }
+    #else
+    debugLogger = nil
+    #endif
+
+    return ClaudeCLIClient(
       command: "claude",
-      additionalPaths: CLIPathResolver.claudePaths(additionalPaths: []),
-      debugLogging: {
-        #if DEBUG
-        return true
-        #else
-        return false
-        #endif
-      }()
+      additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: []),
+      debugLogger: debugLogger
     )
   }
 
@@ -208,7 +212,7 @@ public final class IntelligenceViewModel {
   }
 
   /// Update the process service
-  public func updateService(_ service: CLIProcessServiceProtocol) {
+  public func updateService(_ service: any ClaudeCLIClientProtocol) {
     self.processService = service
   }
 
