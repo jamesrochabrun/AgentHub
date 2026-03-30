@@ -122,11 +122,18 @@ public struct CLICommandConfiguration: Codable, Sendable {
       if let model, !model.isEmpty {
         args += ["--model", model]
       }
-      if let codexApprovalPolicy, !codexApprovalPolicy.isEmpty {
-        args += ["-c", "approval_policy=\(codexApprovalPolicy)"]
+      if let codexApprovalPolicy {
+        switch codexApprovalPolicy {
+        case "full-auto":
+          args.append("--full-auto")
+        case "untrusted", "on-request", "never":
+          args += ["-a", codexApprovalPolicy]
+        default:
+          break
+        }
       }
       if let effortLevel, !effortLevel.isEmpty {
-        args += ["-c", "model_reasoning_effort=\(effortLevel)"]
+        args += ["-c", "model_reasoning_effort=\"\(effortLevel)\""]
       }
 
       // Start a new Codex session.
@@ -139,4 +146,3 @@ public struct CLICommandConfiguration: Codable, Sendable {
     }
   }
 }
-

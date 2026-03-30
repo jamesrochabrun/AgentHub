@@ -28,6 +28,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Real-time session monitoring** — Watch all sessions update live via file-system watchers (no polling)
 - **Embedded terminal** — Full PTY terminal (SwiftTerm) inside each monitoring card; resume or start sessions without leaving the app
 - **Hub panel** — Unified view of all sessions across providers with single, list, 2-column, and 3-column grid layouts
+- **Auxiliary Hub shell** — Toggle a session-scoped shell dock from the Hub with **Cmd+J**; it follows the selected session's worktree and preserves shell state per session
 - **Resizable list cards** — In list mode, monitoring cards can be resized with a preview guide for a smoother, less distracting resize experience
 - **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
 - **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, and send GitHub context back into a session
@@ -49,6 +50,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Session naming** — Rename any session with custom names (SQLite-backed)
 - **Notification sounds** — Configurable audio alert when a tool call awaits approval
 - **Privacy-first** — Runs entirely on your machine; no data is collected or transmitted
+- **Process cleanup** — When a monitored Hub card is removed, AgentHub terminates both the card terminal and the auxiliary Hub shell process tree so shell/CLI sessions are not left orphaned
 
 Parallel execution with Claude Code and Codex
 
@@ -64,7 +66,7 @@ https://github.com/user-attachments/assets/f6a304de-fc7c-4024-94c6-9e2222210dff
 
 ## GitHub Support
 
-AgentHub can surface repository GitHub data directly inside the app through the GitHub CLI.
+AgentHub can surface repository GitHub data directly inside the app through the GitHub CLI. GitHub access in AgentHub requires `gh` to be installed and authenticated.
 
 - Browse pull requests and issues for the active repository
 - Open the current branch PR directly from the session card
@@ -74,7 +76,7 @@ AgentHub can surface repository GitHub data directly inside the app through the 
 
 ### GitHub Setup
 
-GitHub features are optional and require the GitHub CLI:
+GitHub features are optional, but any GitHub access in AgentHub depends on the GitHub CLI:
 
 1. Install [`gh`](https://cli.github.com/).
 2. Authenticate with `gh auth login`.
@@ -93,7 +95,7 @@ https://github.com/user-attachments/assets/6d263d11-6648-42e7-9335-04aa51a33296
 - macOS 14.0+
 - [Claude Code CLI](https://claude.ai/claude-code) installed and authenticated
 - [Codex CLI](https://openai.com/index/introducing-codex/) installed (optional, for Codex features)
-- [GitHub CLI](https://cli.github.com/) installed and authenticated (optional, for GitHub features)
+- [GitHub CLI](https://cli.github.com/) installed and authenticated (optional overall, required for GitHub access/features)
 
 ## Installation & Updates
 
@@ -109,6 +111,7 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 | **Cmd+P** | Quick open files |
 | **Cmd+N** | New session |
 | **Cmd+B** | Toggle sidebar |
+| **Cmd+J** | Toggle Hub auxiliary shell |
 | **Cmd+,** | Open settings |
 | **Cmd+[** | Navigate to previous session |
 | **Cmd+]** | Navigate to next session |
@@ -190,6 +193,12 @@ When active, a teal indicator appears below the prompt.
 
 ## Configuration
 
+AgentHub's settings window is organized into three tabs:
+
+- **General** — Notifications and app-wide behavior such as opening the file explorer in a modal window
+- **Configuration** — Claude and Codex CLI commands, provider-specific defaults, and Smart mode
+- **Appearance** — Flat session layout, terminal preferences, and theme selection
+
 ### Display Mode
 
 AgentHub supports two display modes:
@@ -198,6 +207,31 @@ AgentHub supports two display modes:
 - **Popover Mode** — Stats appear as a toolbar button in the app window
 
 Toggle between modes in the app settings.
+
+### Provider Defaults
+
+Provider defaults are applied only when AgentHub starts a new embedded CLI session. Resume flows keep the original session configuration and do not inject new model or approval flags.
+
+#### Claude
+
+AgentHub maps Claude defaults to the installed CLI flags:
+
+- `Model` → `--model <model>`
+- `Effort` → `--effort <low|medium|high>`
+- `Allowed Tools` → `--allowedTools <tool...>`
+- `Denied Tools` → `--disallowedTools <tool...>`
+
+The Claude tool lists in Settings accept either comma-separated values or one pattern per line. AgentHub normalizes both forms before launching the session.
+
+#### Codex
+
+AgentHub maps Codex defaults to the current interactive CLI flags:
+
+- `Model` → `--model <model>`
+- `Approval` → `-a untrusted|on-request|never` or `--full-auto`
+- `Effort` → `-c model_reasoning_effort="low|medium|high|xhigh"`
+
+These mappings are verified in unit tests against the current CLI surface exposed by `codex --help` and `claude --help`.
 
 ### Session Data
 

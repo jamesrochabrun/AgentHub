@@ -17,13 +17,13 @@ public struct AIConfigRecord: Codable, Sendable, FetchableRecord, PersistableRec
   public var provider: String
   /// Default model identifier (empty = use CLI default)
   public var defaultModel: String
-  /// Effort / reasoning level: "low", "medium", "high" (empty = CLI default)
+  /// Effort / reasoning level: "low", "medium", "high", or "xhigh" (empty = CLI default)
   public var effortLevel: String
   /// Comma-separated allowed tool patterns, Claude only (e.g. "Bash(npm *), Read, Edit")
   public var allowedTools: String
   /// Comma-separated disallowed tool patterns, Claude only
   public var disallowedTools: String
-  /// Codex approval policy: "suggest", "auto-edit", "full-auto" (empty = CLI default)
+  /// Codex approval policy: "untrusted", "on-request", "never", or "full-auto" (empty = CLI default)
   public var approvalPolicy: String
   /// Last update timestamp
   public var updatedAt: Date
@@ -46,12 +46,12 @@ public struct AIConfigRecord: Codable, Sendable, FetchableRecord, PersistableRec
     self.updatedAt = updatedAt
   }
 
-  /// Parses a comma-separated tool patterns string into an array, trimming whitespace.
+  /// Parses comma-separated or newline-separated tool patterns into an array, trimming whitespace.
   public static func parseToolPatterns(_ raw: String?) -> [String] {
     guard let raw, !raw.isEmpty else { return [] }
     return raw
-      .split(separator: ",")
-      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .split(whereSeparator: { $0 == "," || $0.isNewline })
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
   }
 }

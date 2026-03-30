@@ -7,7 +7,6 @@
 
 import Foundation
 import AppKit
-import ClaudeCodeSDK
 
 /// Helper object to handle launching Terminal with Claude sessions
 public struct TerminalLauncher {
@@ -38,7 +37,7 @@ public struct TerminalLauncher {
   /// Runs a Claude session in the background without opening Terminal
   /// - Parameters:
   ///   - sessionId: The session ID to resume
-  ///   - claudeClient: The Claude client with configuration
+  ///   - cliConfiguration: CLI command configuration
   ///   - projectPath: The project path to use as working directory
   ///   - prompt: The prompt to send to Claude
   ///   - onOutput: Called with each chunk of output text
@@ -46,22 +45,20 @@ public struct TerminalLauncher {
   @MainActor
   public static func runSessionInBackground(
     _ sessionId: String,
-    claudeClient: ClaudeCode,
+    cliConfiguration: CLICommandConfiguration,
     projectPath: String,
     prompt: String,
     onOutput: @escaping @MainActor (String) -> Void,
     onComplete: @escaping @MainActor (Error?) -> Void
   ) {
-    let claudeCommand = claudeClient.configuration.command
-
-    guard let claudeExecutablePath = findClaudeExecutable(
-      command: claudeCommand,
-      additionalPaths: claudeClient.configuration.additionalPaths
+    guard let claudeExecutablePath = findExecutable(
+      command: cliConfiguration.executableName,
+      additionalPaths: cliConfiguration.additionalPaths
     ) else {
       let error = NSError(
         domain: "TerminalLauncher",
         code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(claudeCommand)' command. Please ensure Claude Code CLI is installed."]
+        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(cliConfiguration.executableName)' command. Please ensure Claude Code CLI is installed."]
       )
       onComplete(error)
       return
@@ -70,7 +67,10 @@ public struct TerminalLauncher {
     Task.detached {
       let process = Process()
       process.executableURL = URL(fileURLWithPath: claudeExecutablePath)
-      process.arguments = ["-r", sessionId, prompt]
+      process.arguments = cliConfiguration.argumentsForSession(
+        sessionId: sessionId,
+        prompt: prompt
+      )
 
       if !projectPath.isEmpty {
         process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
@@ -78,11 +78,14 @@ public struct TerminalLauncher {
 
       // Set up environment with PATH for child processes
       var environment = ProcessInfo.processInfo.environment
-      let additionalPaths = claudeClient.configuration.additionalPaths.joined(separator: ":")
-      if let existingPath = environment["PATH"] {
-        environment["PATH"] = "\(additionalPaths):\(existingPath)"
-      } else {
-        environment["PATH"] = additionalPaths
+      let additionalPaths = CLIPathResolver.executableSearchPaths(additionalPaths: cliConfiguration.additionalPaths)
+        .joined(separator: ":")
+      if !additionalPaths.isEmpty {
+        if let existingPath = environment["PATH"] {
+          environment["PATH"] = "\(additionalPaths):\(existingPath)"
+        } else {
+          environment["PATH"] = additionalPaths
+        }
       }
       process.environment = environment
 
@@ -140,155 +143,6 @@ public struct TerminalLauncher {
     }
   }
 
-  /// Launches Terminal with a Claude session resume command
-  /// - Parameters:
-  ///   - sessionId: The session ID to resume
-  ///   - claudeClient: The Claude client with configuration
-  ///   - projectPath: The project path to change to before resuming
-  ///   - initialPrompt: Optional initial prompt to send to Claude
-  /// - Returns: An error if launching fails, nil on success
-  public static func launchTerminalWithSession(
-    _ sessionId: String,
-    claudeClient: ClaudeCode,
-    projectPath: String,
-    initialPrompt: String? = nil
-  ) -> Error? {
-    // Get the claude command from configuration
-    let claudeCommand = claudeClient.configuration.command
-
-    // Find the full path to the claude executable
-    guard let claudeExecutablePath = findClaudeExecutable(
-      command: claudeCommand,
-      additionalPaths: claudeClient.configuration.additionalPaths
-    ) else {
-      return NSError(
-        domain: "TerminalLauncher",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(claudeCommand)' command. Please ensure Claude Code CLI is installed."]
-      )
-    }
-
-    // Escape all values for safe shell interpolation (single-quoted)
-    guard let escapedClaudePath = shellEscapeSingleQuoted(claudeExecutablePath),
-          let escapedSessionId = shellEscapeSingleQuoted(sessionId) else {
-      return NSError(
-        domain: "TerminalLauncher",
-        code: 3,
-        userInfo: [NSLocalizedDescriptionKey: "Session ID or executable path contains invalid characters (newlines)."]
-      )
-    }
-
-    // Prompts may contain newlines (multiline content is legitimate)
-    let escapedPrompt = initialPrompt.map { shellEscapeSingleQuotedAllowingNewlines($0) }
-
-    // Construct the command using single-quoted arguments
-    let command: String
-    if !projectPath.isEmpty {
-      guard let escapedPath = shellEscapeSingleQuoted(projectPath) else {
-        return NSError(
-          domain: "TerminalLauncher",
-          code: 3,
-          userInfo: [NSLocalizedDescriptionKey: "Project path contains invalid characters (newlines)."]
-        )
-      }
-      if let prompt = escapedPrompt {
-        command = "cd \(escapedPath) && \(escapedClaudePath) -r \(escapedSessionId) \(prompt)"
-      } else {
-        command = "cd \(escapedPath) && \(escapedClaudePath) -r \(escapedSessionId)"
-      }
-    } else {
-      if let prompt = escapedPrompt {
-        command = "\(escapedClaudePath) -r \(escapedSessionId) \(prompt)"
-      } else {
-        command = "\(escapedClaudePath) -r \(escapedSessionId)"
-      }
-    }
-
-    return launchTerminalScript(command: command, scriptPrefix: "claude_resume")
-  }
-
-  /// Launches Terminal with a new Claude session in the specified path
-  /// - Parameters:
-  ///   - path: The directory path to open
-  ///   - branchName: The branch to checkout (for non-worktrees)
-  ///   - isWorktree: Whether this is a worktree (skips branch checkout)
-  ///   - skipCheckout: If true, skips checkout even for non-worktrees (already on correct branch)
-  ///   - claudeClient: The Claude client with configuration
-  ///   - initialPrompt: Optional initial prompt to send to Claude
-  ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
-  /// - Returns: An error if launching fails, nil on success
-  public static func launchTerminalInPath(
-    _ path: String,
-    branchName: String,
-    isWorktree: Bool,
-    skipCheckout: Bool = false,
-    claudeClient: ClaudeCode,
-    initialPrompt: String? = nil,
-    dangerouslySkipPermissions: Bool = false,
-    worktreeName: String? = nil
-  ) -> Error? {
-    let claudeCommand = claudeClient.configuration.command
-
-    guard let claudeExecutablePath = findClaudeExecutable(
-      command: claudeCommand,
-      additionalPaths: claudeClient.configuration.additionalPaths
-    ) else {
-      return NSError(
-        domain: "TerminalLauncher",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(claudeCommand)' command. Please ensure Claude Code CLI is installed."]
-      )
-    }
-
-    // Escape all values for safe shell interpolation (single-quoted)
-    guard let escapedPath = shellEscapeSingleQuoted(path),
-          let escapedClaudePath = shellEscapeSingleQuoted(claudeExecutablePath),
-          let escapedBranch = shellEscapeSingleQuoted(branchName) else {
-      return NSError(
-        domain: "TerminalLauncher",
-        code: 3,
-        userInfo: [NSLocalizedDescriptionKey: "Path, branch name, or executable path contains invalid characters (newlines)."]
-      )
-    }
-
-    // Prompts may contain newlines (multiline content is legitimate)
-    let escapedPrompt = initialPrompt.map { shellEscapeSingleQuotedAllowingNewlines($0) }
-
-    // Build the dangerous flag if needed (hardcoded literal, safe to append)
-    let dangerousFlag = dangerouslySkipPermissions ? " --dangerously-skip-permissions" : ""
-
-    // Build the --worktree flag if needed (name is validated via shellEscapeSingleQuoted)
-    let worktreeFlag: String
-    if let name = worktreeName {
-      if name.isEmpty {
-        worktreeFlag = " --worktree"
-      } else if let escapedName = shellEscapeSingleQuoted(name) {
-        worktreeFlag = " --worktree \(escapedName)"
-      } else {
-        worktreeFlag = " --worktree"
-      }
-    } else {
-      worktreeFlag = ""
-    }
-
-    let flags = "\(dangerousFlag)\(worktreeFlag)"
-
-    // Build the command - for worktrees or when skipCheckout is true, just cd and run claude
-    // Otherwise, checkout the branch first
-    let command: String
-    if isWorktree || skipCheckout {
-      if let prompt = escapedPrompt {
-        command = "cd \(escapedPath) && \(escapedClaudePath)\(flags) \(prompt)"
-      } else {
-        command = "cd \(escapedPath) && \(escapedClaudePath)\(flags)"
-      }
-    } else {
-      command = "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath)\(flags)"
-    }
-
-    return launchTerminalScript(command: command, scriptPrefix: "claude_open")
-  }
-
   /// Launches Terminal with a session resume command using CLICommandConfiguration
   /// - Parameters:
   ///   - sessionId: The session ID to resume
@@ -344,6 +198,72 @@ public struct TerminalLauncher {
     }
 
     return launchTerminalScript(command: command, scriptPrefix: "cli_resume")
+  }
+
+  /// Launches Terminal with a new Claude session in the specified path
+  /// - Parameters:
+  ///   - path: The directory path to open
+  ///   - branchName: The branch to checkout (for non-worktrees)
+  ///   - isWorktree: Whether this is a worktree (skips branch checkout)
+  ///   - skipCheckout: If true, skips checkout even for non-worktrees (already on correct branch)
+  ///   - cliConfiguration: CLI command configuration
+  ///   - initialPrompt: Optional initial prompt to send to Claude
+  ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
+  /// - Returns: An error if launching fails, nil on success
+  public static func launchTerminalInPath(
+    _ path: String,
+    branchName: String,
+    isWorktree: Bool,
+    skipCheckout: Bool = false,
+    cliConfiguration: CLICommandConfiguration,
+    initialPrompt: String? = nil,
+    dangerouslySkipPermissions: Bool = false,
+    worktreeName: String? = nil
+  ) -> Error? {
+    guard let claudeExecutablePath = findExecutable(
+      command: cliConfiguration.executableName,
+      additionalPaths: cliConfiguration.additionalPaths
+    ) else {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 1,
+        userInfo: [NSLocalizedDescriptionKey: "Could not find '\(cliConfiguration.executableName)' command. Please ensure Claude Code CLI is installed."]
+      )
+    }
+
+    // Escape all values for safe shell interpolation (single-quoted)
+    guard let escapedPath = shellEscapeSingleQuoted(path),
+          let escapedClaudePath = shellEscapeSingleQuoted(claudeExecutablePath),
+          let escapedBranch = shellEscapeSingleQuoted(branchName) else {
+      return NSError(
+        domain: "TerminalLauncher",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "Path, branch name, or executable path contains invalid characters (newlines)."]
+      )
+    }
+
+    let args = cliConfiguration.argumentsForSession(
+      sessionId: nil,
+      prompt: initialPrompt,
+      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      worktreeName: worktreeName
+    )
+    let joinedArgs = args.map { shellEscapeSingleQuotedAllowingNewlines($0) }.joined(separator: " ")
+
+    // Build the command - for worktrees or when skipCheckout is true, just cd and run claude
+    // Otherwise, checkout the branch first
+    let command: String
+    if isWorktree || skipCheckout {
+      command = joinedArgs.isEmpty
+        ? "cd \(escapedPath) && \(escapedClaudePath)"
+        : "cd \(escapedPath) && \(escapedClaudePath) \(joinedArgs)"
+    } else {
+      command = joinedArgs.isEmpty
+        ? "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath)"
+        : "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath) \(joinedArgs)"
+    }
+
+    return launchTerminalScript(command: command, scriptPrefix: "claude_open")
   }
 
   /// Creates and executes a terminal script using secure temp-file creation.
@@ -459,25 +379,7 @@ public struct TerminalLauncher {
     additionalPaths: [String]?
   ) -> String? {
     let fileManager = FileManager.default
-    let homeDir = NSHomeDirectory()
-
-    // Default search paths
-    let defaultPaths = [
-      "/usr/local/bin",
-      "/opt/homebrew/bin",
-      "/usr/bin",
-      "\(homeDir)/.claude/local",
-      "\(homeDir)/.codex/local",
-      "\(homeDir)/.codex/bin",
-      "\(homeDir)/.local/bin",
-      "\(homeDir)/.nvm/current/bin",
-      "\(homeDir)/.nvm/versions/node/v22.16.0/bin",
-      "\(homeDir)/.nvm/versions/node/v20.11.1/bin",
-      "\(homeDir)/.nvm/versions/node/v18.19.0/bin"
-    ]
-
-    // Combine additional paths with default paths
-    let allPaths = (additionalPaths ?? []) + defaultPaths
+    let allPaths = CLIPathResolver.executableSearchPaths(additionalPaths: additionalPaths ?? [])
 
     // Search for the command in all paths
     for path in allPaths {

@@ -5,7 +5,6 @@
 //  Created by Assistant on 1/11/26.
 //
 
-import ClaudeCodeSDK
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -67,7 +66,6 @@ public struct MonitoringCardView: View {
   let session: CLISession
   let state: SessionMonitorState?
   let planState: PlanState?
-  let claudeClient: (any ClaudeCode)?
   let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
   let initialPrompt: String?
@@ -111,13 +109,13 @@ public struct MonitoringCardView: View {
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
   @State private var showingRemixProviderPicker = false
+  @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
 
   public init(
     session: CLISession,
     state: SessionMonitorState?,
     planState: PlanState? = nil,
-    claudeClient: (any ClaudeCode)? = nil,
     cliConfiguration: CLICommandConfiguration? = nil,
     providerKind: SessionProviderKind = .claude,
     initialPrompt: String? = nil,
@@ -150,7 +148,6 @@ public struct MonitoringCardView: View {
     self.session = session
     self.state = state
     self.planState = planState
-    self.claudeClient = claudeClient
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.initialPrompt = initialPrompt
@@ -200,6 +197,10 @@ public struct MonitoringCardView: View {
     !resourceLinks.isEmpty || sessionGitHubQuickAccessViewModel.currentBranchPR != nil
   }
 
+  private var gitHubQuickAccessCoordinator: (any SessionGitHubQuickAccessCoordinatorProtocol)? {
+    viewModel?.agentHubProvider?.gitHubQuickAccessCoordinator ?? agentHub?.gitHubQuickAccessCoordinator
+  }
+
   public var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions
@@ -246,8 +247,21 @@ public struct MonitoringCardView: View {
     .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
       await sessionGitHubQuickAccessViewModel.load(
         projectPath: session.projectPath,
-        branchName: session.branchName
+        branchName: session.branchName,
+        coordinator: gitHubQuickAccessCoordinator
       )
+      if let lastActivityAt = state?.lastActivityAt {
+        await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: lastActivityAt)
+      }
+    }
+    .onDisappear {
+      sessionGitHubQuickAccessViewModel.stopPolling()
+    }
+    .onChange(of: state?.lastActivityAt) { _, newValue in
+      guard let newValue else { return }
+      Task {
+        await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: newValue)
+      }
     }
     .onDrop(
       of: [.fileURL, .png, .tiff, .image, .pdf],
@@ -265,7 +279,6 @@ public struct MonitoringCardView: View {
         session: item.session,
         projectPath: item.projectPath,
         onDismiss: { gitDiffSheetItem = nil },
-        claudeClient: claudeClient,
         cliConfiguration: cliConfiguration,
         providerKind: providerKind,
         onInlineRequestSubmit: onInlineRequestSubmit
@@ -286,7 +299,6 @@ public struct MonitoringCardView: View {
       PendingChangesView(
         session: item.session,
         pendingToolUse: item.pendingToolUse,
-        claudeClient: claudeClient,
         onDismiss: { pendingChangesSheetItem = nil },
         onApprovalResponse: { response, session in
           viewModel?.showTerminalWithPrompt(for: session, prompt: response)

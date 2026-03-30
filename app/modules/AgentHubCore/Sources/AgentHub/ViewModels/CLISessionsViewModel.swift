@@ -7,7 +7,6 @@
 
 import Foundation
 import Combine
-import ClaudeCodeSDK
 import Canvas
 
 #if canImport(AppKit)
@@ -25,7 +24,6 @@ public final class CLISessionsViewModel {
 
   private let monitorService: any SessionMonitorServiceProtocol
   private let searchService: (any SessionSearchServiceProtocol)?
-  public let claudeClient: (any ClaudeCode)?
   public let cliConfiguration: CLICommandConfiguration
   public let providerKind: SessionProviderKind
   private let worktreeService = GitWorktreeService()
@@ -286,6 +284,33 @@ public final class CLISessionsViewModel {
     return terminal
   }
 
+  /// Gets an existing auxiliary shell terminal or creates a new one for the given session key.
+  /// Key should be the raw session key used by Hub selection resolution:
+  /// real sessions use their session ID and pending sessions use "pending-{pendingId}".
+  public func getOrCreateAuxiliaryShellTerminal(
+    forKey key: String,
+    projectPath: String,
+    isDark: Bool = true
+  ) -> TerminalContainerView {
+    if let existing = auxiliaryShellTerminals[key] {
+      #if DEBUG
+      AppLogger.session.debug("[AuxShell] REUSING auxiliary shell for key: \(key, privacy: .public)")
+      #endif
+      return existing
+    }
+
+    #if DEBUG
+    AppLogger.session.debug("[AuxShell] CREATING auxiliary shell for key: \(key, privacy: .public)")
+    #endif
+    let terminal = TerminalContainerView()
+    terminal.configureShell(
+      projectPath: projectPath,
+      isDark: isDark
+    )
+    auxiliaryShellTerminals[key] = terminal
+    return terminal
+  }
+
   /// Removes the terminal for a given key and terminates its process
   public func removeTerminal(forKey key: String) {
     if let terminal = activeTerminals[key] {
@@ -299,6 +324,22 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pendingId.uuidString)"
     if let terminal = activeTerminals.removeValue(forKey: pendingKey) {
       activeTerminals[sessionId] = terminal
+    }
+  }
+
+  /// Removes the auxiliary shell terminal for a given key and terminates its process.
+  public func removeAuxiliaryShellTerminal(forKey key: String) {
+    if let terminal = auxiliaryShellTerminals[key] {
+      terminal.terminateProcess()
+    }
+    auxiliaryShellTerminals.removeValue(forKey: key)
+  }
+
+  /// Transfers the auxiliary shell terminal from pending key to real session ID.
+  public func transferAuxiliaryShellTerminal(fromPendingId pendingId: UUID, toSessionId sessionId: String) {
+    let pendingKey = "pending-\(pendingId.uuidString)"
+    if let terminal = auxiliaryShellTerminals.removeValue(forKey: pendingKey) {
+      auxiliaryShellTerminals[sessionId] = terminal
     }
   }
 
@@ -328,6 +369,17 @@ public final class CLISessionsViewModel {
     }
   }
 
+  /// Focuses the auxiliary shell terminal for a given key so it receives keyboard input.
+  public func focusAuxiliaryShellTerminal(forKey key: String) {
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(100))
+      guard let terminal = auxiliaryShellTerminals[key],
+            let terminalView = terminal.terminalView,
+            let window = terminalView.window else { return }
+      window.makeFirstResponder(terminalView)
+    }
+  }
+
   /// Sessions being started in Hub's embedded terminal (no session ID yet)
   public var pendingHubSessions: [PendingHubSession] = []
 
@@ -339,9 +391,18 @@ public final class CLISessionsViewModel {
   /// The sidebar nils this out after reading it.
   public var lastCreatedPendingId: UUID?
 
-  /// Active terminal views keyed by worktree path
-  /// Preserves terminal PTY across pending → real session transition
+  /// Active agent terminal views keyed by session key.
+  /// Preserves terminal PTY across pending → real session transition.
   public var activeTerminals: [String: TerminalContainerView] = [:]
+
+  /// Active auxiliary shell terminals keyed by session key.
+  /// Preserves shell PTY across session selection changes and pending → real transitions.
+  public var auxiliaryShellTerminals: [String: TerminalContainerView] = [:]
+
+  public var managedTerminalEntries: [(key: String, terminal: TerminalContainerView)] {
+    activeTerminals.map { ($0.key, $0.value) }
+      + auxiliaryShellTerminals.map { ("shell:\($0.key)", $0.value) }
+  }
 
   // MARK: - Monitoring State
 
@@ -399,13 +460,11 @@ public final class CLISessionsViewModel {
     searchService: (any SessionSearchServiceProtocol)?,
     cliConfiguration: CLICommandConfiguration,
     providerKind: SessionProviderKind,
-    claudeClient: ClaudeCode? = nil,
     metadataStore: SessionMetadataStore? = nil
   ) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
     self.searchService = searchService
-    self.claudeClient = claudeClient
     self.metadataStore = metadataStore
     self.fileWatcher = fileWatcher
     self.cliConfiguration = cliConfiguration
@@ -1025,17 +1084,9 @@ public final class CLISessionsViewModel {
         userInfo: [NSLocalizedDescriptionKey: "External terminal resume is only available for Claude sessions."]
       )
     }
-    guard let claudeClient = claudeClient else {
-      return NSError(
-        domain: "CLISessionsViewModel",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Claude client not configured"]
-      )
-    }
-
     return TerminalLauncher.launchTerminalWithSession(
       session.id,
-      claudeClient: claudeClient,
+      cliConfiguration: cliConfiguration,
       projectPath: session.projectPath
     )
   }
@@ -1054,20 +1105,12 @@ public final class CLISessionsViewModel {
         userInfo: [NSLocalizedDescriptionKey: "External terminal launch is only available for Claude sessions."]
       )
     }
-    guard let claudeClient = claudeClient else {
-      return NSError(
-        domain: "CLISessionsViewModel",
-        code: 1,
-        userInfo: [NSLocalizedDescriptionKey: "Claude client not configured"]
-      )
-    }
-
     return TerminalLauncher.launchTerminalInPath(
       worktree.path,
       branchName: worktree.name,
       isWorktree: worktree.isWorktree,
       skipCheckout: skipCheckout,
-      claudeClient: claudeClient,
+      cliConfiguration: cliConfiguration,
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
   }
@@ -1261,6 +1304,7 @@ public final class CLISessionsViewModel {
   public func cancelPendingSession(_ pending: PendingHubSession) {
     let pendingKey = "pending-\(pending.id.uuidString)"
     removeTerminal(forKey: pendingKey)
+    removeAuxiliaryShellTerminal(forKey: pendingKey)
     pendingHubSessions.removeAll { $0.id == pending.id }
     resolvedPendingSessions.removeValue(forKey: pending.id)
   }
@@ -1446,8 +1490,8 @@ public final class CLISessionsViewModel {
             pendingHubSessions.removeAll { $0.id == pending.id }
             resolvedPendingSessions[pending.id] = session.id
             AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(session.id.prefix(8), privacy: .public)")
-            // Transfer terminal from pending key to real session ID
             transferTerminal(fromPendingId: pending.id, toSessionId: session.id)
+            transferAuxiliaryShellTerminal(fromPendingId: pending.id, toSessionId: session.id)
             startMonitoring(session: session)
             found = true
             break
@@ -1463,8 +1507,8 @@ public final class CLISessionsViewModel {
               pendingHubSessions.removeAll { $0.id == pending.id }
               resolvedPendingSessions[pending.id] = session.id
               AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(session.id.prefix(8), privacy: .public)")
-              // Transfer terminal from pending key to real session ID
               transferTerminal(fromPendingId: pending.id, toSessionId: session.id)
+              transferAuxiliaryShellTerminal(fromPendingId: pending.id, toSessionId: session.id)
               startMonitoring(session: session)
               return
             }
@@ -1512,6 +1556,7 @@ public final class CLISessionsViewModel {
           resolvedPendingSessions[pending.id] = sessionId
           AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(sessionId.prefix(8), privacy: .public)")
           transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
+          transferAuxiliaryShellTerminal(fromPendingId: pending.id, toSessionId: sessionId)
           startMonitoring(session: newSession)
 #if DEBUG
           AppLogger.session.info(
@@ -1554,6 +1599,7 @@ public final class CLISessionsViewModel {
           resolvedPendingSessions[pending.id] = sessionId
           AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(sessionId.prefix(8), privacy: .public)")
           transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
+          transferAuxiliaryShellTerminal(fromPendingId: pending.id, toSessionId: sessionId)
           startMonitoring(session: newSession)
 #if DEBUG
           AppLogger.session.info(
@@ -1864,6 +1910,7 @@ public final class CLISessionsViewModel {
 
     // Remove and terminate the terminal process
     removeTerminal(forKey: sessionId)
+    removeAuxiliaryShellTerminal(forKey: sessionId)
 
     persistMonitoredSessions()
 
@@ -2095,7 +2142,7 @@ public final class CLISessionsViewModel {
   /// PIDs of active terminals managed by this view model
   private var activeTerminalPIDs: Set<Int32> {
     var pids: Set<Int32> = []
-    for (_, terminal) in activeTerminals {
+    for (_, terminal) in managedTerminalEntries {
       if let pid = terminal.currentProcessPID {
         pids.insert(pid)
       }

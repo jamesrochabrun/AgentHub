@@ -133,6 +133,8 @@ public actor SessionMetadataStore {
   /// Clears all metadata (for testing/reset)
   public func clearAll() throws {
     try dbQueue.write { db in
+      _ = try AIConfigRecord.deleteAll(db)
+      _ = try SessionRepoMapping.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
     }
   }

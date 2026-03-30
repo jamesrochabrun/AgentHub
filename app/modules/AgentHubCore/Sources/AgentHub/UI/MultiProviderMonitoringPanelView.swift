@@ -5,7 +5,6 @@
 //  Combines Claude + Codex monitored sessions into a single panel.
 //
 
-import ClaudeCodeSDK
 import Foundation
 import PierreDiffsSwift
 import SwiftUI
@@ -231,11 +230,19 @@ enum ProviderMonitoringItem: Identifiable {
   }
 }
 
+private struct HubAuxiliaryShellTarget {
+  let context: HubAuxiliaryShellContext
+  let viewModel: CLISessionsViewModel
+  let displayName: String
+}
+
 // MARK: - MultiProviderMonitoringPanelView
 
 public struct MultiProviderMonitoringPanelView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
+  @Binding var isAuxiliaryShellVisible: Bool
+  let onEmbeddedSidePanelVisibilityChange: (Bool) -> Void
   let onRequestStartSession: (String?) -> Void
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
@@ -261,14 +268,54 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var fileExplorerPanelItem: FileExplorerPanelItem?
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
+  @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
   @State private var cardHeights: [String: CGFloat] = [:]
+  private let embeddedPrimaryContentMinWidth: CGFloat = 470
+  private let embeddedSidePanelMinWidth: CGFloat = 400
+  private let embeddedSidePanelDefaultWidth: CGFloat = 700
+  private let embeddedSidePanelMaxWidth: CGFloat = 1200
+  private let embeddedSidePanelHandleWidth: CGFloat = 8
+  private let auxiliaryShellDefaultHeight: CGFloat = 220
+  private let auxiliaryShellMinHeight: CGFloat = 140
+  private let auxiliaryShellMinMainContentHeight: CGFloat = 260
 
   private var layoutMode: LayoutMode {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
   }
 
   private var canShowSidePanel: Bool {
-    availableDetailWidth >= 900
+    availableDetailWidth >= minimumWidthForEmbeddedSidePanel
+  }
+
+  private var minimumWidthForEmbeddedSidePanel: CGFloat {
+    embeddedPrimaryContentMinWidth + embeddedSidePanelMinWidth + embeddedSidePanelHandleWidth
+  }
+
+  private var allowedEmbeddedSidePanelWidth: CGFloat {
+    let availablePanelWidth = availableDetailWidth - embeddedPrimaryContentMinWidth - embeddedSidePanelHandleWidth
+    return min(
+      embeddedSidePanelMaxWidth,
+      max(embeddedSidePanelMinWidth, availablePanelWidth)
+    )
+  }
+
+  private var wantsEmbeddedSidePanelPresentation: Bool {
+    layoutMode == .single
+      && maximizedSessionId == nil
+      && sidePanelContent != nil
+      && !visibleItems.isEmpty
+  }
+
+  private var embeddedSidePanelTransition: AnyTransition {
+    .asymmetric(
+      insertion: .move(edge: .trailing).combined(with: .opacity),
+      removal: .move(edge: .trailing).combined(with: .opacity)
+    )
+  }
+
+  private var isEmbeddedSidePanelVisible: Bool {
+    wantsEmbeddedSidePanelPresentation
+      && canShowSidePanel
   }
 
   public init(
@@ -276,39 +323,43 @@ public struct MultiProviderMonitoringPanelView: View {
     codexViewModel: CLISessionsViewModel,
     filterMode: Binding<HubFilterMode>,
     primarySessionId: Binding<String?>,
+    isAuxiliaryShellVisible: Binding<Bool>,
+    onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
     onRequestStartSession: @escaping (String?) -> Void
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self._filterMode = filterMode
     self._primarySessionId = primarySessionId
+    self._isAuxiliaryShellVisible = isAuxiliaryShellVisible
+    self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onRequestStartSession = onRequestStartSession
   }
 
   public var body: some View {
-    VStack(spacing: 0) {
-      if let maximizedId = maximizedSessionId {
-        maximizedCardContent(for: maximizedId)
+    GeometryReader { geometry in
+      VStack(spacing: 0) {
+        mainContent
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .background(maximizedContainerBackgroundColor)
-      } else {
-        header
 
-        Divider()
-
-        if isLoading {
-          loadingState
-        } else if allItems.isEmpty {
-          emptyState
-        } else if visibleItems.isEmpty {
-          filteredEmptyState
-        } else {
-          monitoredSessionsList
+        if isAuxiliaryShellVisible, let target = auxiliaryShellTarget {
+          auxiliaryShellDock(
+            for: target,
+            availableHeight: geometry.size.height
+          )
+          .padding(.horizontal, 12)
+          .padding(.bottom, 12)
+          .transition(auxiliaryShellDockTransition)
         }
       }
+      .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
     }
     .background(monitorContainerBackgroundColor)
     .cornerRadius(8)
+    .onAppear {
+      onEmbeddedSidePanelVisibilityChange(wantsEmbeddedSidePanelPresentation)
+      syncAuxiliaryShellDockState()
+    }
     .onChange(of: sidePanelContent) { _, newContent in
       // Sync persistent FileExplorer state when the panel switches to/from fileExplorer
       if case .fileExplorer(_, let session, let projectPath, let initPath, let navId) = newContent {
@@ -317,6 +368,15 @@ public struct MultiProviderMonitoringPanelView: View {
         persistedFEInitPath = initPath
         persistedFENavId = navId
       }
+    }
+    .onChange(of: wantsEmbeddedSidePanelPresentation) { _, wantsPresentation in
+      onEmbeddedSidePanelVisibilityChange(wantsPresentation)
+    }
+    .onChange(of: effectivePrimarySessionId) { _, _ in
+      syncAuxiliaryShellDockState()
+    }
+    .onChange(of: isAuxiliaryShellVisible) { _, _ in
+      syncAuxiliaryShellDockState()
     }
     .overlay {
       // Hidden Shift+P trigger for QuickFilePicker
@@ -440,6 +500,45 @@ public struct MultiProviderMonitoringPanelView: View {
     return defaultBackground
   }
 
+  private var auxiliaryShellToggleAnimation: Animation {
+    accessibilityReduceMotion ? .easeInOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.9)
+  }
+
+  private var auxiliaryShellDockTransition: AnyTransition {
+    accessibilityReduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+  }
+
+  @ViewBuilder
+  private var mainContent: some View {
+    if let maximizedId = maximizedSessionId {
+      maximizedCardContent(for: maximizedId)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(maximizedContainerBackgroundColor)
+    } else {
+      VStack(spacing: 0) {
+        header
+
+        Divider()
+
+        mainContentBody
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var mainContentBody: some View {
+    if isLoading {
+      loadingState
+    } else if allItems.isEmpty {
+      emptyState
+    } else if visibleItems.isEmpty {
+      filteredEmptyState
+    } else {
+      monitoredSessionsList
+    }
+  }
+
   // MARK: - Header
 
   private var header: some View {
@@ -448,6 +547,22 @@ public struct MultiProviderMonitoringPanelView: View {
         .font(.heading)
 
       Spacer()
+
+      HStack(spacing: 6) {
+        Button(action: toggleAuxiliaryShellDock) {
+          Image(systemName: "apple.terminal")
+            .font(.caption)
+            .foregroundColor(isAuxiliaryShellVisible ? .primary : .secondary)
+            .frame(width: 26, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(auxiliaryShellTarget == nil)
+        .help("Toggle terminal (⌘J)")
+      }
+      .padding(4)
+      .background(Color.secondary.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: 6))
 
       // Layout mode toggle (single / list / grid)
       HStack(spacing: 6) {
@@ -597,7 +712,6 @@ public struct MultiProviderMonitoringPanelView: View {
           MonitoringCardView(
             session: pending.placeholderSession,
             state: nil,
-            claudeClient: viewModel.claudeClient,
             cliConfiguration: viewModel.cliConfiguration,
             providerKind: item.providerKind,
 
@@ -614,9 +728,9 @@ public struct MultiProviderMonitoringPanelView: View {
             onCopySessionId: { },
             onOpenSessionFile: { },
             onRefreshTerminal: { },
-            onShowWebPreview: canShowSidePanel ? { session, projectPath in
-              toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
-            } : nil,
+            onShowWebPreview: { session, projectPath in
+              presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+            },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
             isMaximized: false,
             onToggleMaximize: { },
@@ -637,7 +751,6 @@ public struct MultiProviderMonitoringPanelView: View {
             session: session,
             state: state,
             planState: planState,
-            claudeClient: viewModel.claudeClient,
             cliConfiguration: viewModel.cliConfiguration,
             providerKind: item.providerKind,
             initialPrompt: initialPrompt,
@@ -679,9 +792,9 @@ public struct MultiProviderMonitoringPanelView: View {
                 sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
               }
             } : nil,
-            onShowWebPreview: canShowSidePanel ? { session, projectPath in
-              toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
-            } : nil,
+            onShowWebPreview: { session, projectPath in
+              presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+            },
             onShowMermaid: canShowSidePanel ? { session in
               if case .mermaid(let sid, _) = sidePanelContent, sid == session.id {
                 withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
@@ -728,25 +841,27 @@ public struct MultiProviderMonitoringPanelView: View {
   ) -> some View {
     HStack(spacing: 0) {
       content()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
       if let panelContent = sidePanelContent, !panelContent.isFileExplorer {
         ResizablePanelContainer(
           side: .trailing,
-          minWidth: 400,
-          maxWidth: 1200,
-          defaultWidth: 700,
+          minWidth: embeddedSidePanelMinWidth,
+          maxWidth: allowedEmbeddedSidePanelWidth,
+          defaultWidth: min(embeddedSidePanelDefaultWidth, allowedEmbeddedSidePanelWidth),
           userDefaultsKey: AgentHubDefaults.sidePanelWidth
         ) {
           sidePanelView(for: panelContent, viewModel: viewModel)
         }
+        .transition(embeddedSidePanelTransition)
       }
 
       if sidePanelContent?.isFileExplorer == true, let feSession = persistedFESession {
         ResizablePanelContainer(
           side: .trailing,
-          minWidth: 400,
-          maxWidth: 1200,
-          defaultWidth: 700,
+          minWidth: embeddedSidePanelMinWidth,
+          maxWidth: allowedEmbeddedSidePanelWidth,
+          defaultWidth: min(embeddedSidePanelDefaultWidth, allowedEmbeddedSidePanelWidth),
           userDefaultsKey: AgentHubDefaults.sidePanelWidth
         ) {
           FileExplorerView(
@@ -758,19 +873,48 @@ public struct MultiProviderMonitoringPanelView: View {
           )
           .id(persistedFENavId)
         }
+        .transition(embeddedSidePanelTransition)
       }
     }
-    .animation(.easeInOut(duration: 0.25), value: sidePanelContent != nil)
+    .animation(.easeInOut(duration: 0.25), value: sidePanelContent)
+    .animation(.easeInOut(duration: 0.25), value: isEmbeddedSidePanelVisible)
     .padding(12)
+  }
+
+  private func presentWebPreviewInSidePanel(forItemID itemID: String, session: CLISession, projectPath: String) {
+    // TODO: Standardize this with the other auxiliary panel flows once web preview
+    // selections can route context back into the main terminal across all layouts.
+    withAnimation(.easeInOut(duration: 0.25)) {
+      if primarySessionId != itemID {
+        primarySessionId = itemID
+      }
+      if layoutMode != .single {
+        layoutModeRawValue = LayoutMode.single.rawValue
+      }
+      if maximizedSessionId != nil {
+        maximizedSessionId = nil
+      }
+    }
+    toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
   }
 
   private func toggleWebPreviewSidePanel(for session: CLISession, projectPath: String) {
     if case .webPreview(let sessionId, _, _) = sidePanelContent, sessionId == session.id {
-      withAnimation(.easeInOut(duration: 0.25)) {
-        sidePanelContent = nil
-      }
+      closeEmbeddedSidePanel()
     } else {
-      sidePanelContent = .webPreview(sessionId: session.id, session: session, projectPath: projectPath)
+      openEmbeddedSidePanel(.webPreview(sessionId: session.id, session: session, projectPath: projectPath))
+    }
+  }
+
+  private func openEmbeddedSidePanel(_ content: SidePanelContent) {
+    withAnimation(.easeInOut(duration: 0.25)) {
+      sidePanelContent = content
+    }
+  }
+
+  private func closeEmbeddedSidePanel() {
+    withAnimation(.easeInOut(duration: 0.25)) {
+      sidePanelContent = nil
     }
   }
 
@@ -782,7 +926,6 @@ public struct MultiProviderMonitoringPanelView: View {
         session: session,
         projectPath: projectPath,
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-        claudeClient: viewModel.claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: visibleItems.first?.providerKind ?? .claude,
         onInlineRequestSubmit: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) },
@@ -846,7 +989,6 @@ public struct MultiProviderMonitoringPanelView: View {
       MonitoringCardView(
         session: pending.placeholderSession,
         state: nil,
-        claudeClient: viewModel.claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: item.providerKind,
         initialPrompt: pending.initialPrompt,
@@ -861,6 +1003,9 @@ public struct MultiProviderMonitoringPanelView: View {
         onCopySessionId: { },
         onOpenSessionFile: { },
         onRefreshTerminal: { },
+        onShowWebPreview: { session, projectPath in
+          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+        },
         onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
         isMaximized: maximizedSessionId == item.id,
         onToggleMaximize: {
@@ -881,7 +1026,6 @@ public struct MultiProviderMonitoringPanelView: View {
         session: session,
         state: state,
         planState: planState,
-        claudeClient: viewModel.claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: item.providerKind,
         initialPrompt: initialPrompt,
@@ -908,6 +1052,9 @@ public struct MultiProviderMonitoringPanelView: View {
         },
         onInlineRequestSubmit: { prompt, sess in
           viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+        },
+        onShowWebPreview: { session, projectPath in
+          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
         },
         onPromptConsumed: {
           viewModel.clearPendingPrompt(for: session.id)
@@ -1008,7 +1155,6 @@ public struct MultiProviderMonitoringPanelView: View {
         MonitoringCardView(
           session: pending.placeholderSession,
           state: nil,
-          claudeClient: viewModel.claudeClient,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: item.providerKind,
 
@@ -1030,6 +1176,9 @@ public struct MultiProviderMonitoringPanelView: View {
           onCopySessionId: { },
           onOpenSessionFile: { },
           onRefreshTerminal: { },
+          onShowWebPreview: { session, projectPath in
+            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
+          },
           onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
           isMaximized: true,
           onToggleMaximize: {
@@ -1048,7 +1197,6 @@ public struct MultiProviderMonitoringPanelView: View {
           session: session,
           state: state,
           planState: planState,
-          claudeClient: viewModel.claudeClient,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: item.providerKind,
           initialPrompt: initialPrompt,
@@ -1078,6 +1226,9 @@ public struct MultiProviderMonitoringPanelView: View {
           },
           onInlineRequestSubmit: { prompt, sess in
             viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          },
+          onShowWebPreview: { session, projectPath in
+            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
           },
           onPromptConsumed: {
             viewModel.clearPendingPrompt(for: session.id)
@@ -1128,6 +1279,30 @@ public struct MultiProviderMonitoringPanelView: View {
 
   private var flatSortedItems: [ProviderMonitoringItem] {
     groupedMonitoredSessions.flatMap { $0.items }
+  }
+
+  private var effectivePrimaryItem: ProviderMonitoringItem? {
+    guard let selectedId = effectivePrimarySessionId else { return nil }
+    return filteredItems.first(where: { $0.id == selectedId })
+  }
+
+  private var auxiliaryShellTarget: HubAuxiliaryShellTarget? {
+    guard let item = effectivePrimaryItem else { return nil }
+
+    switch item {
+    case .pending(let provider, let viewModel, let pending):
+      return HubAuxiliaryShellTarget(
+        context: .pending(pending: pending, providerKind: provider),
+        viewModel: viewModel,
+        displayName: pending.worktree.name
+      )
+    case .monitored(let provider, let viewModel, let session, _):
+      return HubAuxiliaryShellTarget(
+        context: .monitored(session: session, providerKind: provider),
+        viewModel: viewModel,
+        displayName: viewModel.displayName(for: session)
+      )
+    }
   }
 
   private var allSelectedRepositories: [SelectedRepository] {
@@ -1199,6 +1374,64 @@ public struct MultiProviderMonitoringPanelView: View {
   private func setPrimarySessionIfNeeded(_ sessionId: String) {
     guard primarySessionId != sessionId else { return }
     primarySessionId = sessionId
+  }
+
+  private func toggleAuxiliaryShellDock() {
+    guard auxiliaryShellTarget != nil else { return }
+    withAnimation(auxiliaryShellToggleAnimation) {
+      isAuxiliaryShellVisible.toggle()
+    }
+  }
+
+  private func syncAuxiliaryShellDockState() {
+    guard isAuxiliaryShellVisible else { return }
+    guard let target = auxiliaryShellTarget else {
+      withAnimation(auxiliaryShellToggleAnimation) {
+        isAuxiliaryShellVisible = false
+      }
+      return
+    }
+    guard target.context.isLaunchable else { return }
+    target.viewModel.focusAuxiliaryShellTerminal(forKey: target.context.terminalKey)
+  }
+
+  @ViewBuilder
+  private func auxiliaryShellDock(
+    for target: HubAuxiliaryShellTarget,
+    availableHeight: CGFloat
+  ) -> some View {
+    let maxHeight = max(auxiliaryShellMinHeight, availableHeight - auxiliaryShellMinMainContentHeight)
+    let resolvedHeight = max(auxiliaryShellMinHeight, min(auxiliaryShellDefaultHeight, maxHeight))
+
+    Group {
+      if target.context.isLaunchable, let projectPath = target.context.projectPath {
+        AuxiliaryShellTerminalView(
+          terminalKey: target.context.terminalKey,
+          projectPath: projectPath,
+          viewModel: target.viewModel
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: target.context.terminalKey) {
+          target.viewModel.focusAuxiliaryShellTerminal(forKey: target.context.terminalKey)
+        }
+      } else {
+        VStack(spacing: 10) {
+          Image(systemName: "clock.arrow.circlepath")
+            .font(.title2)
+            .foregroundStyle(.secondary)
+
+          Text(target.context.placeholderMessage ?? "Shell is waiting for a worktree path.")
+            .font(.primaryCaption)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+      }
+    }
+    .frame(height: resolvedHeight, alignment: .top)
+    .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
+    .clipShape(RoundedRectangle(cornerRadius: 8))
   }
 
   @ViewBuilder
