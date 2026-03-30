@@ -211,6 +211,7 @@ Toggle between modes in the app settings.
 ### Provider Defaults
 
 Provider defaults are applied only when AgentHub starts a new embedded CLI session. Resume flows keep the original session configuration and do not inject new model or approval flags.
+These settings are persisted locally in AgentHub's SQLite metadata store.
 
 #### Claude
 
