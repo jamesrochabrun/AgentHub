@@ -7,14 +7,14 @@
 
 import Foundation
 import Combine
-import ClaudeCodeSDK
-import SwiftAnthropic
+import ClaudeCodeClient
 
 /// Simplified stream processor for the Intelligence feature.
 /// Processes Claude's streaming responses and triggers callbacks for tool calls/results.
 @MainActor
 final class IntelligenceStreamProcessor {
 
+  private let timeoutNanoseconds: UInt64
   private var cancellables = Set<AnyCancellable>()
   private var activeContinuation: CheckedContinuation<Void, Never>?
   private var continuationResumed = false
@@ -28,7 +28,7 @@ final class IntelligenceStreamProcessor {
 
   // Callbacks
   var onTextReceived: ((String) -> Void)?
-  var onToolUse: ((String, String, [String: MessageResponse.Content.DynamicContent]) -> Void)?
+  var onToolUse: ((String, String, [String: DynamicJSONValue]) -> Void)?
   var onToolResult: ((String) -> Void)?
   var onComplete: (() -> Void)?
   var onError: ((Error) -> Void)?
@@ -40,7 +40,11 @@ final class IntelligenceStreamProcessor {
   var onLastAssistantMessage: ((String) -> Void)?
 
   /// Callback fired when a ResultMessage is received (carries final assembled text + metadata)
-  var onResultMessage: ((ResultMessage) -> Void)?
+  var onResultMessage: ((CLIResultMessage) -> Void)?
+
+  init(timeoutNanoseconds: UInt64 = 120_000_000_000) {
+    self.timeoutNanoseconds = timeoutNanoseconds
+  }
 
   /// Cancels the current stream processing
   func cancelStream() {
@@ -55,8 +59,8 @@ final class IntelligenceStreamProcessor {
     }
   }
 
-  /// Process a streaming response from Claude Code SDK
-  func processStream(_ publisher: AnyPublisher<ResponseChunk, Error>) async {
+  /// Process a streaming response from CLI process service
+  func processStream(_ publisher: AnyPublisher<StreamJSONChunk, Error>) async {
     continuationResumed = false
     accumulatedText = ""
     lastAssistantMessageText = ""
@@ -70,7 +74,7 @@ final class IntelligenceStreamProcessor {
 
       // Timeout task
       let timeoutTask = Task { [weak self] in
-        try? await Task.sleep(nanoseconds: 120_000_000_000) // 120 seconds
+        try? await Task.sleep(nanoseconds: self?.timeoutNanoseconds ?? 120_000_000_000)
         if !hasReceivedData && !Task.isCancelled {
           guard let self = self else { return }
           subscription?.cancel()
@@ -80,7 +84,7 @@ final class IntelligenceStreamProcessor {
           self.continuationResumed = true
           self.activeContinuation = nil
 
-          self.onError?(ClaudeCodeError.timeout(120.0))
+          self.onError?(ClaudeCodeClientError.timeout(Double(self.timeoutNanoseconds) / 1_000_000_000))
           continuation.resume()
         }
       }
@@ -123,9 +127,9 @@ final class IntelligenceStreamProcessor {
     }
   }
 
-  private func processChunk(_ chunk: ResponseChunk) {
+  private func processChunk(_ chunk: StreamJSONChunk) {
     switch chunk {
-    case .initSystem:
+    case .system(_):
       break
 
     case .assistant(let message):
@@ -136,10 +140,13 @@ final class IntelligenceStreamProcessor {
 
     case .result(let resultMessage):
       processResultMessage(resultMessage)
+
+    case .unknown(_):
+      break
     }
   }
 
-  private func processAssistantMessage(_ message: AssistantMessage) {
+  private func processAssistantMessage(_ message: CLIAssistantMessage) {
     let needsSeparator = !accumulatedText.isEmpty
 
     // Reset per-message text so we capture only this message's content
@@ -147,7 +154,7 @@ final class IntelligenceStreamProcessor {
 
     for content in message.message.content {
       switch content {
-      case .text(let textContent, _):
+      case .text(let textContent):
         if !textContent.isEmpty {
           let fullText = (needsSeparator ? "\n\n" : "") + textContent
           onTextReceived?(fullText)
@@ -169,7 +176,7 @@ final class IntelligenceStreamProcessor {
       case .thinking:
         break
 
-      default:
+      case .unknown:
         break
       }
     }
@@ -199,7 +206,7 @@ final class IntelligenceStreamProcessor {
   }
 
   /// Process the final result message from Claude
-  private func processResultMessage(_ resultMessage: ResultMessage) {
+  private func processResultMessage(_ resultMessage: CLIResultMessage) {
     // Forward metadata
     onResultMessage?(resultMessage)
 
@@ -211,7 +218,7 @@ final class IntelligenceStreamProcessor {
     }
   }
 
-  private func processUserMessage(_ userMessage: UserMessage) {
+  private func processUserMessage(_ userMessage: CLIUserMessage) {
     for content in userMessage.message.content {
       if case .toolResult(let toolResult) = content {
         let resultContent = formatToolResult(toolResult.content)
@@ -220,7 +227,7 @@ final class IntelligenceStreamProcessor {
     }
   }
 
-  private func formatToolResult(_ content: MessageResponse.Content.ToolResultContent) -> String {
+  private func formatToolResult(_ content: CLIToolResultContent) -> String {
     switch content {
     case .string(let str):
       return str

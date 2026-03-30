@@ -5,7 +5,6 @@
 //  Created by Assistant on 1/11/26.
 //
 
-import ClaudeCodeSDK
 import PierreDiffsSwift
 import SwiftUI
 
@@ -97,7 +96,6 @@ private enum MonitoringItem: Identifiable {
 /// Right panel view showing all monitored sessions
 public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
-  let claudeClient: (any ClaudeCode)?
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
   /// Primary session shown in Single mode and highlighted in All mode
@@ -118,11 +116,9 @@ public struct MonitoringPanelView: View {
 
   public init(
     viewModel: CLISessionsViewModel,
-    claudeClient: (any ClaudeCode)?,
     primarySessionId: Binding<String?>
   ) {
     self.viewModel = viewModel
-    self.claudeClient = claudeClient
     self._primarySessionId = primarySessionId
   }
 
@@ -340,10 +336,8 @@ public struct MonitoringPanelView: View {
       MonitoringCardView(
         session: pending.placeholderSession,
         state: nil,
-        claudeClient: claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
-
         initialPrompt: pending.initialPrompt,
         initialInputText: pending.initialInputText,
         terminalKey: "pending-\(pending.id.uuidString)",
@@ -351,7 +345,6 @@ public struct MonitoringPanelView: View {
         dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
         permissionModePlan: pending.permissionModePlan,
         worktreeName: pending.worktreeName,
-
         onStopMonitoring: {
           viewModel.cancelPendingSession(pending)
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -382,7 +375,6 @@ public struct MonitoringPanelView: View {
         session: item.session,
         state: item.state,
         planState: planState,
-        claudeClient: claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
         initialPrompt: initialPrompt,
@@ -489,10 +481,8 @@ public struct MonitoringPanelView: View {
         MonitoringCardView(
           session: pending.placeholderSession,
           state: nil,
-          claudeClient: claudeClient,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: viewModel.providerKind,
-  
           initialPrompt: pending.initialPrompt,
           initialInputText: pending.initialInputText,
           terminalKey: pendingId,
@@ -500,7 +490,6 @@ public struct MonitoringPanelView: View {
           dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
           permissionModePlan: pending.permissionModePlan,
           worktreeName: pending.worktreeName,
-  
           onStopMonitoring: {
             viewModel.cancelPendingSession(pending)
           },
@@ -525,7 +514,6 @@ public struct MonitoringPanelView: View {
           session: session,
           state: state,
           planState: planState,
-          claudeClient: claudeClient,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: viewModel.providerKind,
           initialPrompt: initialPrompt,
@@ -579,10 +567,8 @@ public struct MonitoringPanelView: View {
       MonitoringCardView(
         session: pending.placeholderSession,
         state: nil,
-        claudeClient: claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
-
         initialPrompt: pending.initialPrompt,
         initialInputText: pending.initialInputText,
         terminalKey: pendingId,
@@ -590,7 +576,6 @@ public struct MonitoringPanelView: View {
         dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
         permissionModePlan: pending.permissionModePlan,
         worktreeName: pending.worktreeName,
-
         onStopMonitoring: {
           viewModel.cancelPendingSession(pending)
         },
@@ -621,7 +606,6 @@ public struct MonitoringPanelView: View {
         session: session,
         state: state,
         planState: planState,
-        claudeClient: claudeClient,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: viewModel.providerKind,
         initialPrompt: initialPrompt,
@@ -958,6 +942,6 @@ private struct MonitoringSessionFileSheetView: View {
     providerKind: .claude
   )
 
-  MonitoringPanelView(viewModel: viewModel, claudeClient: nil, primarySessionId: .constant(nil))
+  MonitoringPanelView(viewModel: viewModel, primarySessionId: .constant(nil))
     .frame(width: 350, height: 500)
 }

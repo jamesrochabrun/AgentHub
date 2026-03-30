@@ -7,7 +7,6 @@
 //  for framework projects requiring transpilation.
 //
 
-import ClaudeCodeSDK
 import SwiftUI
 import Canvas
 

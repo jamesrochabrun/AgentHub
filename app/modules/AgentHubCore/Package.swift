@@ -9,13 +9,16 @@ let package = Package(
   ],
   products: [
     .library(
+      name: "ClaudeCodeClient",
+      targets: ["ClaudeCodeClient"]
+    ),
+    .library(
       name: "AgentHubCore",
       targets: ["AgentHubCore"]
     ),
   ],
   dependencies: [
     .package(url: "https://github.com/jamesrochabrun/Canvas.git", exact: "1.0.3"),
-    .package(url: "https://github.com/jamesrochabrun/ClaudeCodeSDK", exact: "1.2.4"),
     .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.1.5"),
     .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.11.0"),
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
@@ -27,10 +30,17 @@ let package = Package(
   ],
   targets: [
     .target(
+      name: "ClaudeCodeClient",
+      path: "Sources/ClaudeCodeClient",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .target(
       name: "AgentHubCore",
       dependencies: [
+        "ClaudeCodeClient",
         .product(name: "Canvas", package: "Canvas"),
-        .product(name: "ClaudeCodeSDK", package: "ClaudeCodeSDK"),
         .product(name: "PierreDiffsSwift", package: "PierreDiffsSwift"),
         .product(name: "SwiftTerm", package: "SwiftTerm"),
         .product(name: "MarkdownUI", package: "swift-markdown-ui"),
@@ -49,8 +59,16 @@ let package = Package(
       ]
     ),
     .testTarget(
+      name: "ClaudeCodeClientTests",
+      dependencies: ["ClaudeCodeClient"],
+      path: "Tests/ClaudeCodeClientTests",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .testTarget(
       name: "AgentHubTests",
-      dependencies: ["AgentHubCore"],
+      dependencies: ["AgentHubCore", "ClaudeCodeClient"],
       path: "Tests/AgentHubTests",
       swiftSettings: [
         .swiftLanguageMode(.v5)

@@ -7,7 +7,6 @@
 
 import SwiftUI
 import PierreDiffsSwift
-import ClaudeCodeSDK
 
 // MARK: - PendingChangesView
 
@@ -16,7 +15,6 @@ import ClaudeCodeSDK
 public struct PendingChangesView: View {
   let session: CLISession
   let pendingToolUse: PendingToolUse
-  let claudeClient: (any ClaudeCode)?
   let onDismiss: () -> Void
   let onApprovalResponse: ((String, CLISession) -> Void)?
 
@@ -49,13 +47,11 @@ public struct PendingChangesView: View {
   public init(
     session: CLISession,
     pendingToolUse: PendingToolUse,
-    claudeClient: (any ClaudeCode)? = nil,
     onDismiss: @escaping () -> Void,
     onApprovalResponse: ((String, CLISession) -> Void)? = nil
   ) {
     self.session = session
     self.pendingToolUse = pendingToolUse
-    self.claudeClient = claudeClient
     self.onDismiss = onDismiss
     self.onApprovalResponse = onApprovalResponse
   }

@@ -6,20 +6,19 @@
 //
 
 import Foundation
-import ClaudeCodeSDK
 import Combine
-import SwiftAnthropic
+import ClaudeCodeClient
 
 /// View model for the Intelligence feature.
-/// Manages communication with Claude Code SDK and handles streaming responses.
+/// Manages communication with Claude CLI process and handles streaming responses.
 @Observable
 @MainActor
 public final class IntelligenceViewModel {
 
   // MARK: - Properties
 
-  /// The Claude Code client for SDK communication (nil if CLI is unavailable)
-  private var claudeClient: ClaudeCode?
+  /// The CLI process service for running Claude prompts (nil if CLI is unavailable)
+  private var processService: (any ClaudeCLIClientProtocol)?
 
   /// Stream processor for handling responses
   private let streamProcessor = IntelligenceStreamProcessor()
@@ -51,47 +50,32 @@ public final class IntelligenceViewModel {
 
   // MARK: - Initialization
 
-  /// Creates a new IntelligenceViewModel with a Claude Code client
-  public init(claudeClient: ClaudeCode? = nil) {
-    // Create Claude client
-    if let client = claudeClient {
-      self.claudeClient = client
+  /// Creates a new IntelligenceViewModel with a CLI process service
+  public init(processService: (any ClaudeCLIClientProtocol)? = nil) {
+    if let service = processService {
+      self.processService = service
     } else {
-      // Create client with NVM support and local Claude path
-      do {
-        var config = ClaudeCodeConfiguration.withNvmSupport()
-        #if DEBUG
-        config.enableDebugLogging = true
-        #endif
-
-        let homeDir = NSHomeDirectory()
-
-        // Add local Claude installation path (highest priority)
-        let localClaudePath = "\(homeDir)/.claude/local"
-        if FileManager.default.fileExists(atPath: localClaudePath) {
-          config.additionalPaths.insert(localClaudePath, at: 0)
-        }
-
-        // Add common development tool paths
-        config.additionalPaths.append(contentsOf: [
-          "/usr/local/bin",
-          "/opt/homebrew/bin",
-          "/usr/bin",
-          "\(homeDir)/.bun/bin",
-          "\(homeDir)/.deno/bin",
-          "\(homeDir)/.cargo/bin",
-          "\(homeDir)/.local/bin"
-        ])
-
-        self.claudeClient = try ClaudeCodeClient(configuration: config)
-      } catch {
-        AppLogger.intelligence.error("Failed to create ClaudeCodeClient: \(error)")
-        self.claudeClient = nil
-        self.errorMessage = "Claude CLI not available: \(error.localizedDescription)"
-      }
+      self.processService = Self.createDefaultProcessService()
     }
 
     setupStreamCallbacks()
+  }
+
+  private static func createDefaultProcessService() -> (any ClaudeCLIClientProtocol)? {
+    let debugLogger: (@Sendable (String) -> Void)?
+    #if DEBUG
+    debugLogger = { message in
+      AppLogger.intelligence.debug("\(message, privacy: .public)")
+    }
+    #else
+    debugLogger = nil
+    #endif
+
+    return ClaudeCLIClient(
+      command: "claude",
+      additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: []),
+      debugLogger: debugLogger
+    )
   }
 
   private func setupStreamCallbacks() {
@@ -99,7 +83,7 @@ public final class IntelligenceViewModel {
       self?.lastResponse += text
     }
 
-    streamProcessor.onToolUse = { [weak self] (toolName: String, _: String, input: [String: MessageResponse.Content.DynamicContent]) in
+    streamProcessor.onToolUse = { [weak self] (toolName: String, _: String, input: [String: DynamicJSONValue]) in
       guard let self else { return }
       let summary = Self.extractToolSummary(toolName: toolName, input: input)
       self.toolSteps.append(ToolStep(toolName: toolName, summary: summary))
@@ -153,17 +137,17 @@ public final class IntelligenceViewModel {
   public func cancelRequest() {
     AppLogger.intelligence.info("cancelRequest: cancelling active request")
     streamProcessor.cancelStream()
-    claudeClient?.cancel()
+    processService?.cancel()
     isLoading = false
   }
 
-  /// Generate a plan using Claude Code SDK in plan mode.
+  /// Generate a plan using Claude CLI in plan mode.
   /// Streams a structured implementation plan without executing any changes.
   /// Any detected `<orchestration-plan>` is captured in `parsedOrchestrationPlan`.
   public func generatePlan(prompt: String, workingDirectory: String) {
     guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     guard !isLoading else { return }
-    guard claudeClient != nil else {
+    guard processService != nil else {
       errorMessage = "Claude CLI not available. Please ensure Claude Code CLI is installed."
       return
     }
@@ -179,84 +163,57 @@ public final class IntelligenceViewModel {
     AppLogger.intelligence.info("generatePlan: starting for prompt (\(prompt.prefix(80))…)")
 
     Task {
-      do {
-        claudeClient?.configuration.workingDirectory = workingDirectory
+      guard let processService else { return }
 
-        var options = ClaudeCodeOptions()
-        options.permissionMode = .plan
-        options.disallowedTools = ["AskUserQuestion"]
-        options.systemPrompt = """
-          You are a task planner. Analyze the user's request and break it into \
-          parallel tasks that can each be handled by a separate coding agent.
+      let systemPrompt = """
+        You are a task planner. Analyze the user's request and break it into \
+        parallel tasks that can each be handled by a separate coding agent.
 
-          CONTEXT:
-          - Working directory: \(workingDirectory)
+        CONTEXT:
+        - Working directory: \(workingDirectory)
 
-          OUTPUT FORMAT:
-          1. A brief markdown summary of the overall approach
-          2. For each task: a heading, what it involves, and key files
-          3. End with an <orchestration-plan> JSON block:
+        OUTPUT FORMAT:
+        1. A brief markdown summary of the overall approach
+        2. For each task: a heading, what it involves, and key files
+        3. End with an <orchestration-plan> JSON block:
 
-          <orchestration-plan>
-          {
-            "modulePath": "\(workingDirectory)",
-            "sessions": [
-              {
-                "description": "Brief task description",
-                "branchName": "descriptive-branch-name",
-                "sessionType": "parallel",
-                "prompt": "Detailed prompt for this specific task with file paths and requirements"
-              }
-            ]
-          }
-          </orchestration-plan>
-
-          RULES:
-          - Each session prompt must be self-contained and detailed enough for an agent to execute independently
-          - Branch names: lowercase, hyphenated, descriptive (e.g., "add-unit-tests", "update-readme")
-          - Keep exploration minimal — use Glob/Grep only to identify key files, don't read entire files
-          - If the request is a single task, still output one session in the plan
-          """
-
-        guard let claudeClient else { return }
-        let result = try await claudeClient.runSinglePrompt(
-          prompt: prompt,
-          outputFormat: .streamJson,
-          options: options
-        )
-
-        await processResult(result)
-        AppLogger.intelligence.info("generatePlan: completed (\(self.lastResponse.count) chars)")
-      } catch {
-        AppLogger.intelligence.error("generatePlan: error — \(error.localizedDescription)")
-        await MainActor.run {
-          self.isLoading = false
-          self.errorMessage = error.localizedDescription
+        <orchestration-plan>
+        {
+          "modulePath": "\(workingDirectory)",
+          "sessions": [
+            {
+              "description": "Brief task description",
+              "branchName": "descriptive-branch-name",
+              "sessionType": "parallel",
+              "prompt": "Detailed prompt for this specific task with file paths and requirements"
+            }
+          ]
         }
-      }
-    }
-  }
+        </orchestration-plan>
 
-  /// Update the Claude client
-  public func updateClient(_ client: ClaudeCode) {
-    self.claudeClient = client
-  }
+        RULES:
+        - Each session prompt must be self-contained and detailed enough for an agent to execute independently
+        - Branch names: lowercase, hyphenated, descriptive (e.g., "add-unit-tests", "update-readme")
+        - Keep exploration minimal — use Glob/Grep only to identify key files, don't read entire files
+        - If the request is a single task, still output one session in the plan
+        """
 
-  // MARK: - Private Methods
+      let publisher = processService.runStreamingPrompt(
+        prompt: prompt,
+        workingDirectory: workingDirectory,
+        systemPrompt: systemPrompt,
+        permissionMode: "plan",
+        disallowedTools: ["AskUserQuestion"]
+      )
 
-  private func processResult(_ result: ClaudeCodeResult) async {
-    switch result {
-    case .stream(let publisher):
       await streamProcessor.processStream(publisher)
-
-    case .text(let text):
-      lastResponse = text
-      isLoading = false
-
-    case .json(let resultMessage):
-      lastResponse = resultMessage.result ?? ""
-      isLoading = false
+      AppLogger.intelligence.info("generatePlan: completed (\(self.lastResponse.count) chars)")
     }
+  }
+
+  /// Update the process service
+  public func updateService(_ service: any ClaudeCLIClientProtocol) {
+    self.processService = service
   }
 
   // MARK: - Tool Summary Extraction
@@ -264,7 +221,7 @@ public final class IntelligenceViewModel {
   /// Extracts the most useful parameter per tool type for concise display.
   static func extractToolSummary(
     toolName: String,
-    input: [String: MessageResponse.Content.DynamicContent]
+    input: [String: DynamicJSONValue]
   ) -> String {
     switch toolName {
     case "Read", "Edit", "Write", "MultiEdit":
