@@ -96,6 +96,12 @@ public final class AgentHubProvider {
     }
   }()
 
+  /// AI configuration service for provider-specific session defaults
+  public private(set) lazy var aiConfigService: (any AIConfigServiceProtocol)? = {
+    guard let store = metadataStore else { return nil }
+    return AIConfigService(metadataStore: store)
+  }()
+
   // MARK: - GitHub Integration
 
   /// GitHub CLI service for PR/issue operations

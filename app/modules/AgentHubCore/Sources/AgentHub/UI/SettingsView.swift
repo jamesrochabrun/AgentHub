@@ -8,6 +8,11 @@
 import SwiftUI
 
 public struct SettingsView: View {
+  @Environment(\.agentHub) private var agentHub
+  @State private var aiConfigViewModel = AIConfigSettingsViewModel()
+  @State private var isClaudeConfigurationExpanded = true
+  @State private var isCodexConfigurationExpanded = true
+
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
 
@@ -49,117 +54,101 @@ public struct SettingsView: View {
   public init() {}
 
   public var body: some View {
+    TabView {
+      generalSettingsForm
+        .tabItem {
+          Label("General", systemImage: "gearshape")
+        }
+
+      configurationSettingsForm
+        .tabItem {
+          Label("Configuration", systemImage: "sparkles")
+        }
+
+      appearanceSettingsForm
+        .tabItem {
+          Label("Appearance", systemImage: "paintpalette")
+        }
+    }
+    .frame(width: 700, height: 620)
+    .task {
+      await ensureSupportedThemeSelection()
+      await aiConfigViewModel.load(service: agentHub?.aiConfigService)
+    }
+  }
+
+  private var generalSettingsForm: some View {
     Form {
-      Section("CLI Status") {
-        DisclosureGroup {
-          HStack {
-            Text("Command:")
-              .foregroundColor(.secondary)
-            TextField("claude", text: $claudeCommand)
-              .textFieldStyle(.roundedBorder)
-              .disabled(claudeCommandLocked)
-            if claudeCommandLocked {
-              Image(systemName: "lock.fill")
-                .foregroundColor(.secondary)
-                .font(.caption)
-            }
-          }
-          .padding(.vertical, 4)
-        } label: {
-          HStack {
-            Text("Claude")
-              .foregroundColor(Color.brandPrimary(for: .claude))
-            Spacer()
-            if CLIDetectionService.isClaudeInstalled() {
-              Label("Installed", systemImage: "checkmark.circle.fill")
-                .foregroundColor(.green)
-                .font(.caption)
-            } else {
-              Label("Not Installed", systemImage: "xmark.circle.fill")
-                .foregroundColor(.secondary)
-                .font(.caption)
-            }
-          }
-        }
+      Section("Notifications") {
+        settingsToggle(
+          title: "Notification sounds",
+          description: "Play a sound when tools require approval",
+          isOn: $notificationSoundsEnabled
+        )
 
-        DisclosureGroup {
-          HStack {
-            Text("Command:")
-              .foregroundColor(.secondary)
-            TextField("codex", text: $codexCommand)
-              .textFieldStyle(.roundedBorder)
-              .disabled(codexCommandLocked)
-            if codexCommandLocked {
-              Image(systemName: "lock.fill")
-                .foregroundColor(.secondary)
-                .font(.caption)
-            }
-          }
-          .padding(.vertical, 4)
-        } label: {
-          HStack {
-            Text("Codex")
-              .foregroundColor(Color.brandPrimary(for: .codex))
-            Spacer()
-            if CLIDetectionService.isCodexInstalled() {
-              Label("Installed", systemImage: "checkmark.circle.fill")
-                .foregroundColor(.green)
-                .font(.caption)
-            } else {
-              Label("Not Installed", systemImage: "xmark.circle.fill")
-                .foregroundColor(.secondary)
-                .font(.caption)
-            }
-          }
-        }
-      }
-
-      Section {
-        Toggle(isOn: $notificationSoundsEnabled) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Notification sounds")
-            Text("Play a sound when tools require approval")
-              .font(.caption)
-              .foregroundColor(.secondary)
-          }
-        }
-        Toggle(isOn: $pushNotificationsEnabled) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Push notifications")
-            Text("Show a notification banner when tools require approval")
-              .font(.caption)
-              .foregroundColor(.secondary)
-          }
-        }
-      } header: {
-        Text("Notifications")
+        settingsToggle(
+          title: "Push notifications",
+          description: "Show a notification banner when tools require approval",
+          isOn: $pushNotificationsEnabled
+        )
       }
 
       Section("Features") {
-        Toggle(isOn: $smartModeEnabled) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Smart mode")
-            Text("Use AI to plan and orchestrate multi-session launches")
-              .font(.caption)
-              .foregroundColor(.secondary)
-          }
+        settingsToggle(
+          title: "File explorer always modal",
+          description: "Open file explorer as a floating window instead of a side panel",
+          isOn: $fileExplorerAlwaysModal
+        )
+      }
+    }
+    .formStyle(.grouped)
+  }
+
+  private var configurationSettingsForm: some View {
+    Form {
+      Section("CLI Configuration") {
+        providerConfigurationSection(
+          title: "Claude",
+          provider: .claude,
+          isExpanded: $isClaudeConfigurationExpanded,
+          command: $claudeCommand,
+          locked: claudeCommandLocked,
+          installed: CLIDetectionService.isClaudeInstalled()
+        ) {
+          ClaudeAIConfigView(viewModel: aiConfigViewModel)
         }
-        Toggle(isOn: $flatSessionLayout) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("Flat session layout")
-            Text("Show all sessions without per-repository sections")
-              .font(.caption)
-              .foregroundColor(.secondary)
-          }
+
+        providerConfigurationSection(
+          title: "Codex",
+          provider: .codex,
+          isExpanded: $isCodexConfigurationExpanded,
+          command: $codexCommand,
+          locked: codexCommandLocked,
+          installed: CLIDetectionService.isCodexInstalled()
+        ) {
+          CodexAIConfigView(viewModel: aiConfigViewModel)
         }
-        Toggle(isOn: $fileExplorerAlwaysModal) {
-          VStack(alignment: .leading, spacing: 2) {
-            Text("File explorer always modal")
-            Text("Open file explorer as a floating window instead of a side panel")
-              .font(.caption)
-              .foregroundColor(.secondary)
-          }
-        }
+      }
+
+      Section("AI Features") {
+        settingsToggle(
+          title: "Smart mode",
+          description: "Use AI to plan and orchestrate multi-session launches",
+          isOn: $smartModeEnabled
+        )
+      }
+    }
+    .formStyle(.grouped)
+  }
+
+  private var appearanceSettingsForm: some View {
+    Form {
+      Section("Layout") {
+        settingsToggle(
+          title: "Flat session layout",
+          description: "Show all sessions without per-repository sections",
+          isOn: $flatSessionLayout
+        )
       }
 
       Section("Terminal") {
@@ -172,6 +161,7 @@ public struct SettingsView: View {
               .monospacedDigit()
           }
         }
+
         Picker("Newline shortcut", selection: $newlineShortcutRawValue) {
           ForEach(NewlineShortcut.allCases, id: \.rawValue) { shortcut in
             Text(shortcut.label).tag(shortcut.rawValue)
@@ -187,14 +177,12 @@ public struct SettingsView: View {
           Text("Sentry").tag(sentryThemeFileId)
         }
 
-        HStack(spacing: 8) {
-          Button(action: {
-            Task { await themeManager.discoverThemes() }
-          }) {
-            Image(systemName: "arrow.clockwise")
-          }
-          .help("Refresh theme list")
+        Button {
+          Task { await themeManager.discoverThemes() }
+        } label: {
+          Label("Refresh themes", systemImage: "arrow.clockwise")
         }
+        .buttonStyle(.link)
       } header: {
         Text("Theme")
       } footer: {
@@ -205,9 +193,90 @@ public struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 300, height: 500)
-    .task {
-      await ensureSupportedThemeSelection()
+  }
+
+  private func providerConfigurationSection<Content: View>(
+    title: String,
+    provider: SessionProviderKind,
+    isExpanded: Binding<Bool>,
+    command: Binding<String>,
+    locked: Bool,
+    installed: Bool,
+    @ViewBuilder content: @escaping () -> Content
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Button {
+        withAnimation(.easeInOut(duration: 0.16)) {
+          isExpanded.wrappedValue.toggle()
+        }
+      } label: {
+        HStack(spacing: 8) {
+          Image(systemName: isExpanded.wrappedValue ? "chevron.down" : "chevron.right")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+
+          Text(title)
+            .foregroundColor(Color.brandPrimary(for: provider))
+
+          Spacer()
+
+          if installed {
+            Label("Installed", systemImage: "checkmark.circle.fill")
+              .foregroundColor(.green)
+              .font(.caption)
+          } else {
+            Label("Not Installed", systemImage: "xmark.circle.fill")
+              .foregroundColor(.secondary)
+              .font(.caption)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+
+      if isExpanded.wrappedValue {
+        VStack(alignment: .leading, spacing: 16) {
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Command")
+              .font(.caption)
+              .foregroundColor(.secondary)
+
+            HStack(spacing: 8) {
+              TextField(title.lowercased(), text: command)
+                .textFieldStyle(.roundedBorder)
+                .disabled(locked)
+
+              if locked {
+                Image(systemName: "lock.fill")
+                  .foregroundColor(.secondary)
+                  .font(.caption)
+              }
+            }
+          }
+
+          content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 20)
+        .padding(.top, 4)
+      }
+    }
+    .padding(.vertical, 4)
+  }
+
+  private func settingsToggle(
+    title: String,
+    description: String,
+    isOn: Binding<Bool>
+  ) -> some View {
+    Toggle(isOn: isOn) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+        Text(description)
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
     }
   }
 

@@ -40,6 +40,12 @@ Concrete types: `CLISessionMonitorService` / `CodexSessionMonitorService`, `Sess
 - `AgentHubProvider` is the service locator; tests substitute mock implementations
 - Actors implement protocols for thread-safe I/O; mocks can be plain classes
 
+## CLI Launch & Persistence Invariants
+
+- AI override flags are applied only when starting a new CLI session, never when resuming an existing one
+- Empty or unsupported saved provider settings must fall back to the CLI's own defaults instead of emitting override flags
+- Session metadata is stored in SQLite via GRDB; schema changes must be added as new `DatabaseMigrator` migrations rather than rewriting existing migrations
+
 ```swift
 protocol SessionSearchServiceProtocol {
   func search(query: String, in sessions: [CLISession]) async -> [SearchResult]

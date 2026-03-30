@@ -193,6 +193,12 @@ When active, a teal indicator appears below the prompt.
 
 ## Configuration
 
+AgentHub's settings window is organized into three tabs:
+
+- **General** — Notifications and app-wide behavior such as opening the file explorer in a modal window
+- **Configuration** — Claude and Codex CLI commands, provider-specific defaults, and Smart mode
+- **Appearance** — Flat session layout, terminal preferences, and theme selection
+
 ### Display Mode
 
 AgentHub supports two display modes:
@@ -201,6 +207,32 @@ AgentHub supports two display modes:
 - **Popover Mode** — Stats appear as a toolbar button in the app window
 
 Toggle between modes in the app settings.
+
+### Provider Defaults
+
+Provider defaults are applied only when AgentHub starts a new embedded CLI session. Resume flows keep the original session configuration and do not inject new model or approval flags.
+These settings are persisted locally in AgentHub's SQLite metadata store.
+
+#### Claude
+
+AgentHub maps Claude defaults to the installed CLI flags:
+
+- `Model` → `--model <model>`
+- `Effort` → `--effort <low|medium|high>`
+- `Allowed Tools` → `--allowedTools <tool...>`
+- `Denied Tools` → `--disallowedTools <tool...>`
+
+The Claude tool lists in Settings accept either comma-separated values or one pattern per line. AgentHub normalizes both forms before launching the session.
+
+#### Codex
+
+AgentHub maps Codex defaults to the current interactive CLI flags:
+
+- `Model` → `--model <model>`
+- `Approval` → `-a untrusted|on-request|never` or `--full-auto`
+- `Effort` → `-c model_reasoning_effort="low|medium|high|xhigh"`
+
+These mappings are verified in unit tests against the current CLI surface exposed by `codex --help` and `claude --help`.
 
 ### Session Data
 

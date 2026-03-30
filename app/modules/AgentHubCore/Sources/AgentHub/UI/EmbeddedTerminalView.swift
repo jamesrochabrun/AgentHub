@@ -62,6 +62,7 @@ class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
 /// SwiftUI wrapper for SwiftTerm's LocalProcessTerminalView
 /// Provides an embedded terminal for interacting with Claude sessions
 public struct EmbeddedTerminalView: NSViewRepresentable {
+  @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
   @AppStorage(AgentHubDefaults.terminalFontSize) private var terminalFontSize: Double = 12
 
@@ -139,7 +140,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
-      worktreeName: worktreeName
+      worktreeName: worktreeName,
+      metadataStore: agentHub?.metadataStore
     )
     containerView.onUserInteraction = onUserInteraction
     containerView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
@@ -175,6 +177,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+  var metadataStore: SessionMetadataStore?
   var terminateProcessCallCount = 0
 
   /// The PID of the current terminal process, if running
@@ -229,8 +232,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     isDark: Bool = true,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
-    worktreeName: String? = nil
+    worktreeName: String? = nil,
+    metadataStore: SessionMetadataStore? = nil
   ) {
+    if let metadataStore {
+      self.metadataStore = metadataStore
+    }
     guard !isConfigured else { return }
     isConfigured = true
 
@@ -551,13 +558,23 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
 #endif
 
+    // Read AI configuration defaults for this provider from SQLite
+    let aiConfig = metadataStore?.getAIConfigSync(for: cliConfiguration.mode.rawValue)
+    let allowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.allowedTools)
+    let disallowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.disallowedTools)
+
     // Build command: resume existing session or start new session
     let args = cliConfiguration.argumentsForSession(
       sessionId: sessionId,
       prompt: initialPrompt,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       worktreeName: worktreeName,
-      permissionModePlan: permissionModePlan
+      permissionModePlan: permissionModePlan,
+      model: aiConfig?.defaultModel,
+      effortLevel: aiConfig?.effortLevel,
+      allowedTools: allowedTools.isEmpty ? nil : allowedTools,
+      disallowedTools: disallowedTools.isEmpty ? nil : disallowedTools,
+      codexApprovalPolicy: aiConfig?.approvalPolicy
     )
     let escapedArgs = args.map { $0.replacingOccurrences(of: "'", with: "'\\''") }
     let joinedArgs = escapedArgs.map { "'\($0)'" }.joined(separator: " ")
