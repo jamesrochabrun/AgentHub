@@ -9,6 +9,7 @@ import AppKit
 import Canvas
 import Foundation
 import SwiftUI
+import WebKit
 
 @MainActor
 @Observable
@@ -23,10 +24,14 @@ final class WebPreviewInspectorViewModel {
   private var pendingWriteTask: Task<Void, Never>?
   private var trackedTextToken: String?
   private var userConfirmedLowConfidenceFile = false
+  private weak var previewWebView: WKWebView?
 
   private(set) var selectedElement: ElementInspectorData?
   private(set) var resolution: WebPreviewSourceResolution?
   private(set) var liveProperties: WebPreviewLivePropertiesSnapshot?
+  private(set) var selectedElementSnapshot: NSImage?
+  private(set) var toolbarValues: DesignToolbarValues?
+  private(set) var consoleEntries: [String] = []
 
   var isPanelVisible = false
   var isResolving = false
@@ -108,12 +113,50 @@ final class WebPreviewInspectorViewModel {
     matchedSelector ?? selectedElement?.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
   }
 
+  var parentContext: ParentLayoutContext? {
+    selectedElement?.parentContext
+  }
+
+  var parentContextSummary: String? {
+    guard let parentContext else { return nil }
+    var parts: [String] = []
+    if let display = parentContext.display {
+      parts.append(display)
+    }
+    if let justifyContent = parentContext.justifyContent {
+      parts.append("justify-content: \(justifyContent)")
+    }
+    if let alignItems = parentContext.alignItems {
+      parts.append("align-items: \(alignItems)")
+    }
+    if let gap = parentContext.gap {
+      parts.append("gap: \(gap)")
+    }
+    if let position = parentContext.position {
+      parts.append("position: \(position)")
+    }
+    guard !parts.isEmpty else { return nil }
+    return parts.joined(separator: ", ")
+  }
+
+  var childrenSummary: ElementRelationships {
+    selectedElement?.children ?? ElementRelationships()
+  }
+
+  var siblingsSummary: ElementRelationships {
+    selectedElement?.siblings ?? ElementRelationships()
+  }
+
   var confidenceDisplayText: String {
     resolution?.confidence.displayName ?? "No source match"
   }
 
   var contentDisplayText: String {
     liveProperties?.content ?? "—"
+  }
+
+  var hasConsoleEntries: Bool {
+    !consoleEntries.isEmpty
   }
 
   var relativeFilePath: String? {
@@ -219,6 +262,22 @@ final class WebPreviewInspectorViewModel {
     selectedTab = .design
   }
 
+  func registerWebView(_ webView: WKWebView) {
+    previewWebView = webView
+  }
+
+  func appendConsoleEntry(level: String, message: String) {
+    let formatted = "[\(level.uppercased())] \(message)"
+    consoleEntries.append(formatted)
+    if consoleEntries.count > 200 {
+      consoleEntries.removeFirst(consoleEntries.count - 200)
+    }
+  }
+
+  func clearConsoleEntries() {
+    consoleEntries.removeAll()
+  }
+
   func inspect(
     element: ElementInspectorData,
     previewFilePath: String?,
@@ -228,6 +287,8 @@ final class WebPreviewInspectorViewModel {
 
     selectedElement = element
     liveProperties = WebPreviewLivePropertiesSnapshot(element: element)
+    toolbarValues = DesignToolbarValues(element: element)
+    selectedElementSnapshot = nil
     isPanelVisible = true
     isResolving = true
     errorMessage = nil
@@ -252,6 +313,8 @@ final class WebPreviewInspectorViewModel {
 
     resolution = resolved
     matchedSelector = resolved.matchedSelector ?? matchedSelector
+
+    await captureElementSnapshot()
 
     let startingFilePath = resolved.primaryFilePath ?? resolved.candidateFilePaths.first
     guard let startingFilePath else {
@@ -279,6 +342,8 @@ final class WebPreviewInspectorViewModel {
     selectedElement = nil
     resolution = nil
     liveProperties = nil
+    selectedElementSnapshot = nil
+    toolbarValues = nil
     currentFilePath = nil
     fileContent = ""
     savedFileContent = ""
@@ -287,6 +352,7 @@ final class WebPreviewInspectorViewModel {
     trackedTextToken = nil
     matchedSelector = nil
     styleValues = [:]
+    consoleEntries.removeAll()
     userConfirmedLowConfidenceFile = false
     resetTabSelection()
   }
@@ -317,40 +383,14 @@ final class WebPreviewInspectorViewModel {
 
     trackedTextToken = value
     fileContent = updatedContent
-    liveProperties = liveProperties.map {
-      WebPreviewLivePropertiesSnapshot(
-        width: $0.width,
-        height: $0.height,
-        top: $0.top,
-        left: $0.left,
-        content: value,
-        fontFamily: $0.fontFamily,
-        fontWeight: $0.fontWeight,
-        fontSize: $0.fontSize,
-        lineHeight: $0.lineHeight,
-        textColor: $0.textColor,
-        backgroundColor: $0.backgroundColor
-      )
-    }
+    liveProperties = liveProperties?.updatingContent(value)
+    toolbarValues?.textContent = value
     scheduleWrite()
   }
 
   func updateStyleValue(_ property: WebPreviewStyleProperty, value: String) {
-    guard isEditable(property),
-          let selector = matchedSelector,
-          let updatedContent = Self.updateCSSDeclaration(
-            in: fileContent,
-            selectorCandidates: [selector],
-            property: property.rawValue,
-            value: value
-          ) else {
-      return
-    }
-
-    styleValues[property] = value
-    liveProperties = liveProperties?.applyingStyleValue(value, for: property)
-    fileContent = updatedContent
-    scheduleWrite()
+    guard isEditable(property) else { return }
+    applyRawStyleValue(property.rawValue, value: value, mappedProperty: property)
   }
 
   func updateStyleEditorValue(_ property: WebPreviewStyleProperty, value: String) {
@@ -379,6 +419,20 @@ final class WebPreviewInspectorViewModel {
     await persistCurrentFileIfNeeded()
   }
 
+  func apply(_ edit: DesignEdit) {
+    switch edit.action {
+    case .updateProperty(let property, value: let value):
+      applyRawStyleValue(property.rawValue, value: value, mappedProperty: WebPreviewStyleProperty(rawValue: property.rawValue))
+    case .updateTextContent(let value):
+      updateContentValue(value)
+    case .fitContent:
+      applyRawStyleValue("width", value: "fit-content", mappedProperty: .width)
+      applyRawStyleValue("height", value: "fit-content", mappedProperty: .height)
+    case .deleteElement:
+      return
+    }
+  }
+
   // MARK: - Private
 
   private func loadFile(at path: String) async {
@@ -400,6 +454,23 @@ final class WebPreviewInspectorViewModel {
       trackedTextToken = nil
       styleValues = [:]
       activeCapabilities = [.code]
+    }
+  }
+
+  private func captureElementSnapshot() async {
+    guard let selectedElement,
+          let previewWebView else {
+      selectedElementSnapshot = nil
+      return
+    }
+
+    do {
+      selectedElementSnapshot = try await ElementSnapshotCapture.captureSnapshot(
+        of: selectedElement,
+        in: previewWebView
+      )
+    } catch {
+      selectedElementSnapshot = nil
     }
   }
 
@@ -464,6 +535,61 @@ final class WebPreviewInspectorViewModel {
       guard !Task.isCancelled else { return }
       await self.persistCurrentFileIfNeeded()
     }
+  }
+
+  private func applyRawStyleValue(
+    _ propertyName: String,
+    value: String,
+    mappedProperty: WebPreviewStyleProperty?
+  ) {
+    guard let selector = matchedSelector,
+          let updatedContent = Self.updateCSSDeclaration(
+            in: fileContent,
+            selectorCandidates: [selector],
+            property: propertyName,
+            value: value
+          ) else {
+      return
+    }
+
+    if let mappedProperty {
+      styleValues[mappedProperty] = value
+      liveProperties = liveProperties?.applyingStyleValue(value, for: mappedProperty)
+    }
+
+    switch propertyName {
+    case "font-family":
+      toolbarValues?.fontFamily = value
+    case "color":
+      toolbarValues?.color = value
+    case "background-color":
+      toolbarValues?.backgroundColor = value
+    case "font-size":
+      toolbarValues?.fontSize = CSSParser.parsePixelValue(value) ?? toolbarValues?.fontSize ?? 16
+    case "font-weight":
+      toolbarValues?.isBold = CSSParser.isBoldWeight(value)
+    case "font-style":
+      toolbarValues?.isItalic = value.lowercased() == "italic"
+    case "text-align":
+      toolbarValues?.textAlign = DesignTextAlignment(rawValue: value.lowercased()) ?? toolbarValues?.textAlign ?? .left
+    case "letter-spacing":
+      toolbarValues?.letterSpacing = value
+    case "line-height":
+      toolbarValues?.lineHeight = value
+    case "border-radius":
+      toolbarValues?.borderRadius = value
+    case "padding":
+      toolbarValues?.padding = value
+    case "margin":
+      toolbarValues?.margin = value
+    case "object-fit":
+      toolbarValues?.objectFit = value
+    default:
+      break
+    }
+
+    fileContent = updatedContent
+    scheduleWrite()
   }
 
   private func persistCurrentFileIfNeeded() async {

@@ -107,7 +107,11 @@ private func makeElement(
   selector: String = ".cta",
   className: String = "cta",
   textContent: String = "Launch",
-  computedStyles: [String: String] = [:]
+  computedStyles: [String: String] = [:],
+  parentTagName: String = "",
+  parentStyles: [String: String] = [:],
+  children: ElementRelationships = ElementRelationships(),
+  siblings: ElementRelationships = ElementRelationships()
 ) -> ElementInspectorData {
   ElementInspectorData(
     tagName: tagName,
@@ -117,7 +121,11 @@ private func makeElement(
     outerHTML: "",
     cssSelector: selector,
     computedStyles: computedStyles,
-    boundingRect: .zero
+    boundingRect: .zero,
+    parentTagName: parentTagName,
+    parentStyles: parentStyles,
+    children: children,
+    siblings: siblings
   )
 }
 
@@ -558,5 +566,167 @@ struct WebPreviewInspectorViewModelTests {
     #expect(selectedTab == .design)
     #expect(!hasEditableDesignControls)
     #expect(designTabMessage == "This element does not have a safe design mapping. Edit it in Code mode.")
+  }
+
+  @Test("Toolbar edits update normalized style values and fit-content writes both dimensions")
+  func toolbarEditsWriteThroughTheInspectorViewModel() async throws {
+    let filePath = "/project/styles/site.css"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: """
+      .cta {
+        margin: 12px;
+        text-align: left;
+      }
+      """
+    ])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-10",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    let element = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Launch",
+      computedStyles: [
+        "display": "flex",
+        "margin-top": "12px",
+        "margin-right": "12px",
+        "margin-bottom": "12px",
+        "margin-left": "12px",
+        "text-align": "left",
+      ]
+    )
+
+    await viewModel.inspect(
+      element: element,
+      previewFilePath: filePath,
+      recentActivities: []
+    )
+
+    await MainActor.run {
+      viewModel.apply(
+        DesignEdit(
+          element: element,
+          action: .updateProperty(.margin, value: "24px")
+        )
+      )
+      viewModel.apply(
+        DesignEdit(
+          element: element,
+          action: .updateProperty(.textAlign, value: "center")
+        )
+      )
+      viewModel.apply(
+        DesignEdit(
+          element: element,
+          action: .fitContent
+        )
+      )
+    }
+    try await Task.sleep(for: .milliseconds(40))
+
+    let writes = await fileService.recordedWrites()
+    let toolbarMargin = await MainActor.run { viewModel.toolbarValues?.margin }
+    let toolbarAlignment = await MainActor.run { viewModel.toolbarValues?.textAlign }
+    let displayedMargin = await MainActor.run { viewModel.displayedStyleValue(for: .margin) }
+
+    #expect(writes.count == 1)
+    #expect(writes[0].content.contains("margin: 24px;"))
+    #expect(writes[0].content.contains("text-align: center;"))
+    #expect(writes[0].content.contains("width: fit-content;"))
+    #expect(writes[0].content.contains("height: fit-content;"))
+    #expect(toolbarMargin == "24px")
+    #expect(toolbarAlignment == .center)
+    #expect(displayedMargin == "24px")
+  }
+
+  @Test("Parent layout context and console state are surfaced for the rail")
+  func parentContextAndConsoleEntriesAreExposed() async throws {
+    let filePath = "/project/index.html"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: "<button>Launch</button>"])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-11",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(
+      element: makeElement(
+        selector: "button.cta",
+        textContent: "Launch",
+        parentTagName: "div",
+        parentStyles: [
+          "display": "flex",
+          "justify-content": "center",
+          "align-items": "stretch",
+          "gap": "16px",
+        ],
+        siblings: ElementRelationships(
+          count: 2,
+          items: [
+            ElementSummary(tagName: "SPAN", className: "eyebrow", textContent: "New"),
+            ElementSummary(tagName: "P", className: "copy", textContent: "Body"),
+          ]
+        )
+      ),
+      previewFilePath: filePath,
+      recentActivities: []
+    )
+
+    await MainActor.run {
+      for index in 0..<205 {
+        viewModel.appendConsoleEntry(level: index.isMultiple(of: 2) ? "log" : "warn", message: "entry-\(index)")
+      }
+    }
+
+    let parentTagName = await MainActor.run { viewModel.parentContext?.tagName }
+    let parentSummary = await MainActor.run { viewModel.parentContextSummary }
+    let siblingCount = await MainActor.run { viewModel.siblingsSummary.count }
+    let consoleCount = await MainActor.run { viewModel.consoleEntries.count }
+    let firstConsoleEntry = await MainActor.run { viewModel.consoleEntries.first }
+    let lastConsoleEntry = await MainActor.run { viewModel.consoleEntries.last }
+    let hasConsoleEntries = await MainActor.run { viewModel.hasConsoleEntries }
+
+    #expect(parentTagName == "div")
+    #expect(parentSummary == "flex, justify-content: center, align-items: stretch, gap: 16px")
+    #expect(siblingCount == 2)
+    #expect(consoleCount == 200)
+    #expect(firstConsoleEntry == "[WARN] entry-5")
+    #expect(lastConsoleEntry == "[LOG] entry-204")
+    #expect(hasConsoleEntries)
+
+    await MainActor.run {
+      viewModel.clearConsoleEntries()
+    }
+
+    let clearedConsoleCount = await MainActor.run { viewModel.consoleEntries.count }
+    #expect(clearedConsoleCount == 0)
   }
 }

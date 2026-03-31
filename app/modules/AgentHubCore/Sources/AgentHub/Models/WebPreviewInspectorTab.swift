@@ -10,6 +10,7 @@ import Foundation
 enum WebPreviewInspectorTab: String, CaseIterable, Equatable, Sendable {
   case design
   case code
+  case console
 
   var title: String {
     switch self {
@@ -17,6 +18,8 @@ enum WebPreviewInspectorTab: String, CaseIterable, Equatable, Sendable {
       "Design"
     case .code:
       "Code"
+    case .console:
+      "Console"
     }
   }
 }

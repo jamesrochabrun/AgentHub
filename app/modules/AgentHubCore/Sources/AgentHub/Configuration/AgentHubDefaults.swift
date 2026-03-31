@@ -133,6 +133,14 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let fileExplorerAlwaysModal = "\(keyPrefix)features.fileExplorerAlwaysModal"
 
+  /// Whether debug-only web preview design tools are enabled
+  /// Type: Bool (default: true in debug)
+  public static let webPreviewAdvancedEditingEnabled = "\(keyPrefix)developer.webPreviewAdvancedEditingEnabled"
+
+  /// Inspector payload level used by debug web preview inspect flows
+  /// Type: String (default: "regular")
+  public static let webPreviewInspectorDataLevel = "\(keyPrefix)developer.webPreviewInspectorDataLevel"
+
   /// Width of the side panel (diff, plan, web preview, file explorer) in the single-session layout
   /// Type: Double (default: 700)
   public static let sidePanelWidth = "\(keyPrefix)ui.sidePanelWidth"

@@ -38,7 +38,11 @@ private func makeInspectedElement(
   selector: String,
   elementID: String = "",
   className: String = "",
-  textContent: String = ""
+  textContent: String = "",
+  parentTagName: String = "",
+  parentStyles: [String: String] = [:],
+  children: ElementRelationships = ElementRelationships(),
+  siblings: ElementRelationships = ElementRelationships()
 ) -> ElementInspectorData {
   ElementInspectorData(
     tagName: tagName,
@@ -48,7 +52,11 @@ private func makeInspectedElement(
     outerHTML: "",
     cssSelector: selector,
     computedStyles: [:],
-    boundingRect: .zero
+    boundingRect: .zero,
+    parentTagName: parentTagName,
+    parentStyles: parentStyles,
+    children: children,
+    siblings: siblings
   )
 }
 
@@ -203,5 +211,53 @@ struct WebPreviewSourceResolverSourceMappingTests {
     #expect(Set(resolution.candidateFilePaths) == Set([firstPath, secondPath]))
     #expect(resolution.editableCapabilities == [.code])
     #expect(!resolution.allowsInlineStyleEditing)
+  }
+
+  @Test("Parent and sibling context break ties between otherwise similar candidates")
+  func parentAndSiblingContextImproveScoring() async throws {
+    let fixture = try SourceResolverFixture.create()
+    defer { fixture.cleanup() }
+
+    let firstPath = try fixture.write(
+      "pages/plain.html",
+      content: """
+      <section>
+        <button class="cta">Launch</button>
+        <p>Secondary copy</p>
+      </section>
+      """
+    )
+    let secondPath = try fixture.write(
+      "pages/layout.html",
+      content: """
+      <div class="container">
+        <button class="cta">Launch</button>
+        <span class="eyebrow">Secondary copy</span>
+      </div>
+      """
+    )
+
+    let resolver = WebPreviewSourceResolver(fileService: ProjectFileService.shared)
+    let resolution = await resolver.resolveSource(
+      for: makeInspectedElement(
+        tagName: "BUTTON",
+        selector: ".cta",
+        className: "cta",
+        textContent: "Launch",
+        parentTagName: "div",
+        siblings: ElementRelationships(
+          count: 1,
+          items: [
+            ElementSummary(tagName: "SPAN", className: "eyebrow", textContent: "Secondary copy")
+          ]
+        )
+      ),
+      projectPath: fixture.root.path,
+      previewFilePath: nil,
+      recentActivities: []
+    )
+
+    #expect(resolution.primaryFilePath == secondPath)
+    #expect(resolution.primaryFilePath != firstPath)
   }
 }
