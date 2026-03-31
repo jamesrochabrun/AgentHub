@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import Canvas
 
 public struct SettingsView: View {
   @Environment(\.agentHub) private var agentHub
@@ -46,10 +47,17 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.codexCommandLockedByDeveloper)
   private var codexCommandLocked: Bool = false
 
+  @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
+  private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
+
+  @AppStorage(AgentHubDefaults.webPreviewAdvancedEditingEnabled)
+  private var webPreviewAdvancedEditingEnabled: Bool = true
+
   @Environment(ThemeManager.self) private var themeManager
   @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "neutral"
   private let defaultThemeId = "neutral"
   private let sentryThemeFileId = "sentry.yaml"
+  private let webPreviewInspectorDataLevels: [ElementInspectorDataLevel] = [.regular, .full]
 
   public init() {}
 
@@ -69,6 +77,13 @@ public struct SettingsView: View {
         .tabItem {
           Label("Appearance", systemImage: "paintpalette")
         }
+
+#if DEBUG
+      developerSettingsForm
+        .tabItem {
+          Label("Developer", systemImage: "hammer")
+        }
+#endif
     }
     .frame(width: 700, height: 620)
     .task {
@@ -194,6 +209,35 @@ public struct SettingsView: View {
     }
     .formStyle(.grouped)
   }
+
+#if DEBUG
+  private var developerSettingsForm: some View {
+    Form {
+      Section {
+        settingsToggle(
+          title: "Enable web preview design tools",
+          description: "Shows the debug-only Design/Code/Console editing surface in web preview",
+          isOn: $webPreviewAdvancedEditingEnabled
+        )
+
+        Picker("Inspector payload", selection: webPreviewInspectorDataLevelBinding) {
+          ForEach(webPreviewInspectorDataLevels, id: \.rawValue) { level in
+            Text(level.settingsLabel).tag(level)
+          }
+        }
+
+        Text(selectedWebPreviewInspectorDataLevel.settingsDescription)
+          .font(.caption)
+          .foregroundColor(.secondary)
+      } header: {
+        Text("Web Preview")
+      } footer: {
+        Text("These controls only affect debug builds. Production users never see the design editing surface. Source edit mode still upgrades capture to Full when enabled.")
+      }
+    }
+    .formStyle(.grouped)
+  }
+#endif
 
   private func providerConfigurationSection<Content: View>(
     title: String,
@@ -349,5 +393,34 @@ public struct SettingsView: View {
   private func isSentryThemeId(_ value: String) -> Bool {
     let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     return normalized == "sentry" || normalized == "sentry.yaml" || normalized == "sentry.yml"
+  }
+
+  private var selectedWebPreviewInspectorDataLevel: ElementInspectorDataLevel {
+    ElementInspectorDataLevel(rawValue: webPreviewInspectorDataLevelRawValue) ?? .regular
+  }
+
+  private var webPreviewInspectorDataLevelBinding: Binding<ElementInspectorDataLevel> {
+    Binding(
+      get: { selectedWebPreviewInspectorDataLevel },
+      set: { webPreviewInspectorDataLevelRawValue = $0.rawValue }
+    )
+  }
+}
+
+private extension ElementInspectorDataLevel {
+  var settingsLabel: String {
+    switch self {
+    case .regular: "Regular"
+    case .full: "Full"
+    }
+  }
+
+  var settingsDescription: String {
+    switch self {
+    case .regular:
+      "Legacy compact payload with the core styles and no DOM neighborhood context."
+    case .full:
+      "Expanded CSS capture with parent, sibling, and child context for deeper debugging."
+    }
   }
 }

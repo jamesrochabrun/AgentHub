@@ -208,6 +208,17 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
         }
       }
 
+      if let parentTagName = tokens.parentTagName,
+         content.localizedCaseInsensitiveContains("<\(parentTagName)") {
+        score += 8
+      }
+
+      for token in tokens.neighborhoodTokens {
+        if Self.firstLiteralRange(of: token, in: content) != nil {
+          score += 8
+        }
+      }
+
       if tokens.tagName != nil, content.localizedCaseInsensitiveContains("<\(tokens.tagName ?? "")") {
         score += 10
       }
@@ -316,6 +327,19 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
       .map(String.init)
       .filter { !$0.isEmpty }
 
+    let relationshipTokens = LinkedHashSet(elements:
+      [element.parentTagName.lowercased()]
+        .compactMap { $0.nilIfEmpty }
+        + element.children.items.flatMap { summary in
+          [summary.tagName.lowercased(), summary.elementId, summary.className]
+            .filter { !$0.isEmpty }
+        }
+        + element.siblings.items.flatMap { summary in
+          [summary.tagName.lowercased(), summary.elementId, summary.className]
+            .filter { !$0.isEmpty }
+        }
+    ).elements
+
     let selectorCandidates = LinkedHashSet(elements:
       (element.elementId.isEmpty ? [] : ["#\(element.elementId)"])
         + classNames.map { ".\($0)" }
@@ -330,10 +354,12 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
 
     return SourceTokens(
       tagName: element.tagName.lowercased().nilIfEmpty,
+      parentTagName: element.parentTagName.lowercased().nilIfEmpty,
       text: element.textContent.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
       fullSelector: normalizedSelector.nilIfEmpty,
       selectorCandidates: selectorCandidates,
-      plainTokens: plainTokens
+      plainTokens: plainTokens,
+      neighborhoodTokens: relationshipTokens
     )
   }
 
@@ -419,10 +445,12 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
 
 private struct SourceTokens: Sendable {
   let tagName: String?
+  let parentTagName: String?
   let text: String?
   let fullSelector: String?
   let selectorCandidates: [String]
   let plainTokens: [String]
+  let neighborhoodTokens: [String]
 }
 
 private struct LinkedHashSet<Element: Hashable> {

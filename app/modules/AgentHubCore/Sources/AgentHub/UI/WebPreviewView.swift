@@ -9,11 +9,40 @@
 
 import SwiftUI
 import Canvas
+import WebKit
+
+private final class WebPreviewConsoleMessageHandler: NSObject, WKScriptMessageHandler {
+  var onMessage: ((String, String) -> Void)?
+
+  func userContentController(
+    _ userContentController: WKUserContentController,
+    didReceive message: WKScriptMessage
+  ) {
+    guard let body = message.body as? [String: Any],
+          let level = body["level"] as? String,
+          let payload = body["message"] as? String else {
+      return
+    }
+    onMessage?(level, payload)
+  }
+}
+
+private enum WebPreviewAdvancedEditing {
+#if DEBUG
+  static let isSupported = true
+#else
+  static let isSupported = false
+#endif
+}
 
 private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   case input
   case context
   case edit
+
+  static func availableCases(advancedEditingEnabled: Bool) -> [WebPreviewInspectBehavior] {
+    advancedEditingEnabled ? Self.allCases : [.input, .context]
+  }
 
   var id: String { rawValue }
 
@@ -95,6 +124,14 @@ public struct WebPreviewView: View {
   @State private var localhostPreviewStartedAt = Date()
   @State private var localhostReloadTask: Task<Void, Never>?
   @State private var inspectorViewModel: WebPreviewInspectorViewModel
+  @State private var previewWebView: WKWebView?
+  @State private var consoleMessageHandler = WebPreviewConsoleMessageHandler()
+
+  @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
+  private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
+
+  @AppStorage(AgentHubDefaults.webPreviewAdvancedEditingEnabled)
+  private var webPreviewAdvancedEditingEnabled: Bool = true
 
   /// Uses session ID as key for DevServerManager to support multiple sessions
   private var serverKey: String { session.id }
@@ -137,8 +174,16 @@ public struct WebPreviewView: View {
     viewModel?.queuedWebPreviewContextStore.queue(for: session.id) ?? localContextQueue
   }
 
+  private var isAdvancedEditingEnabled: Bool {
+#if DEBUG
+    WebPreviewAdvancedEditing.isSupported && webPreviewAdvancedEditingEnabled
+#else
+    false
+#endif
+  }
+
   private var showsInspectorRail: Bool {
-    inspectBehavior == .edit && inspectorViewModel.isPanelVisible
+    isAdvancedEditingEnabled && inspectBehavior == .edit && inspectorViewModel.isPanelVisible
   }
 
   private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
@@ -149,16 +194,24 @@ public struct WebPreviewView: View {
     WebPreviewUpdateState.resolve(
       resolution: resolution,
       serverState: serverState,
-      isEditMode: inspectBehavior == .edit
+      isEditMode: isAdvancedEditingEnabled && inspectBehavior == .edit
     )
+  }
+
+  private var configuredInspectorDataLevel: ElementInspectorDataLevel {
+#if DEBUG
+    ElementInspectorDataLevel(rawValue: webPreviewInspectorDataLevelRawValue) ?? .regular
+#else
+    .regular
+#endif
   }
 
   private var activeReloadToken: UUID? {
     switch resolution {
     case .directFile:
-      return inspectBehavior == .edit ? manualReloadToken : fileWatcher.reloadToken
+      return isAdvancedEditingEnabled && inspectBehavior == .edit ? manualReloadToken : fileWatcher.reloadToken
     case .devServer:
-      return inspectBehavior == .edit ? manualReloadToken : localhostReloadToken
+      return isAdvancedEditingEnabled && inspectBehavior == .edit ? manualReloadToken : localhostReloadToken
     case .noContent, nil:
       return nil
     }
@@ -197,6 +250,10 @@ public struct WebPreviewView: View {
           await inspectorViewModel.closePanel()
         }
       }
+    }
+    .onChange(of: webPreviewAdvancedEditingEnabled) { _, _ in
+      guard !isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
+      inspectBehavior = .input
     }
     .onChange(of: selectedFilePath) { _, newPath in
       if let path = newPath {
@@ -384,7 +441,7 @@ public struct WebPreviewView: View {
 
       if inspectState.isActive {
         HStack(spacing: 6) {
-          ForEach(WebPreviewInspectBehavior.allCases) { behavior in
+          ForEach(WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)) { behavior in
             Button {
               inspectBehavior = behavior
             } label: {
@@ -802,15 +859,24 @@ public struct WebPreviewView: View {
     onError: ((String) -> Void)? = nil
   ) -> some View {
     Group {
-      if inspectBehavior == .edit {
+      if isAdvancedEditingEnabled && inspectBehavior == .edit {
         InspectableWebView(
           url: url,
           isFileURL: isFileURL,
+          inspectorDataLevel: .full,
           allowingReadAccessTo: allowingReadAccessTo,
-          onLoadingChange: { isLoading = $0 },
+          onLoadingChange: { loading in
+            isLoading = loading
+            if !loading, let previewWebView {
+              installConsoleHook(in: previewWebView)
+            }
+          },
           onURLChange: { loadedURL in
             if isExternalServer, loadedURL != nil {
               hasLoadedExternalContent = true
+            }
+            if let previewWebView {
+              installConsoleHook(in: previewWebView)
             }
           },
           onError: onError,
@@ -822,22 +888,46 @@ public struct WebPreviewView: View {
             inspectState.updateSelectedElementViewportRect(rect)
           },
           isInspectModeActive: $inspectState.isActive,
-          selectedElementId: inspectState.selectedElement?.id
+          selectedElementId: inspectState.selectedElement?.id,
+          onWebViewReady: handleWebViewReady
         )
         .overlay(alignment: .top) {
           if inspectState.isActive {
-            editModeBanner
+            VStack(spacing: 8) {
+              editModeBanner
+              if let element = inspectorViewModel.selectedElement,
+                 let toolbarValues = inspectorViewModel.toolbarValues {
+                DesignToolbarContent(
+                  values: toolbarValues,
+                  element: element,
+                  onEdit: inspectorViewModel.apply
+                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+              }
+            }
           }
         }
       } else {
         InspectableWebView(
           url: url,
           isFileURL: isFileURL,
+          inspectorDataLevel: configuredInspectorDataLevel,
           allowingReadAccessTo: allowingReadAccessTo,
-          onLoadingChange: { isLoading = $0 },
+          onLoadingChange: { loading in
+            isLoading = loading
+            if !loading, let previewWebView {
+              installConsoleHook(in: previewWebView)
+            }
+          },
           onURLChange: { loadedURL in
             if isExternalServer, loadedURL != nil {
               hasLoadedExternalContent = true
+            }
+            if let previewWebView {
+              installConsoleHook(in: previewWebView)
             }
           },
           onError: onError,
@@ -849,7 +939,8 @@ public struct WebPreviewView: View {
             inspectState.updateSelectedElementViewportRect(rect)
           },
           isInspectModeActive: $inspectState.isActive,
-          selectedElementId: inspectState.selectedElement?.id
+          selectedElementId: inspectState.selectedElement?.id,
+          onWebViewReady: handleWebViewReady
         )
         .webInspectorOverlay(
           state: inspectState,
@@ -919,7 +1010,7 @@ public struct WebPreviewView: View {
   private func handleElementSelection(_ element: ElementInspectorData) {
     inspectState.selectElement(element)
 
-    guard inspectBehavior == .edit else { return }
+    guard isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
 
     Task {
       await inspectorViewModel.inspect(
@@ -984,6 +1075,52 @@ public struct WebPreviewView: View {
     .background(Color.accentColor.opacity(0.9))
     .padding(12)
   }
+
+  private func handleWebViewReady(_ webView: WKWebView) {
+    previewWebView = webView
+    guard isAdvancedEditingEnabled else { return }
+    inspectorViewModel.registerWebView(webView)
+    consoleMessageHandler.onMessage = { level, message in
+      Task { @MainActor in
+        inspectorViewModel.appendConsoleEntry(level: level, message: message)
+      }
+    }
+    let controller = webView.configuration.userContentController
+    controller.removeScriptMessageHandler(forName: "agentHubConsole")
+    controller.add(WeakScriptMessageHandler(consoleMessageHandler), name: "agentHubConsole")
+    installConsoleHook(in: webView)
+  }
+
+  private func installConsoleHook(in webView: WKWebView) {
+    guard isAdvancedEditingEnabled else { return }
+    webView.evaluateJavaScript(Self.consoleHookScript) { _, _ in }
+  }
+
+  private static let consoleHookScript = """
+    (function() {
+      if (window.__agentHubConsoleHookInstalled) { return; }
+      window.__agentHubConsoleHookInstalled = true;
+
+      function serialize(value) {
+        if (typeof value === 'string') { return value; }
+        try { return JSON.stringify(value); } catch (error) { return String(value); }
+      }
+
+      ['log', 'warn', 'error'].forEach(function(level) {
+        var original = console[level];
+        console[level] = function() {
+          var parts = Array.from(arguments).map(serialize).join(' ');
+          try {
+            window.webkit.messageHandlers.agentHubConsole.postMessage({
+              level: level,
+              message: parts
+            });
+          } catch (error) {}
+          return original.apply(console, arguments);
+        };
+      });
+    })();
+  """
 }
 
 // MARK: - Preview

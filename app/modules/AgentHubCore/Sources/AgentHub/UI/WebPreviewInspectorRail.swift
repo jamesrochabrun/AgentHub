@@ -59,6 +59,18 @@ struct WebPreviewInspectorRail: View {
 
   private var header: some View {
     HStack(alignment: .top, spacing: 10) {
+      if let snapshot = viewModel.selectedElementSnapshot {
+        Image(nsImage: snapshot)
+          .resizable()
+          .scaledToFill()
+          .frame(width: 72, height: 72)
+          .clipShape(RoundedRectangle(cornerRadius: 10))
+          .overlay(
+            RoundedRectangle(cornerRadius: 10)
+              .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+          )
+      }
+
       if let tagName = viewModel.selectedTagName {
         tagBadge(tagName)
       }
@@ -72,6 +84,19 @@ struct WebPreviewInspectorRail: View {
         if let selectorSummary = viewModel.selectorSummary {
           Text(selectorSummary)
             .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(2)
+        }
+
+        if let parentContext = viewModel.parentContext {
+          Text("Inside \(parentContext.tagName.lowercased())")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.secondary)
+        }
+
+        if let parentContextSummary = viewModel.parentContextSummary {
+          Text(parentContextSummary)
+            .font(.system(size: 11))
             .foregroundStyle(.secondary)
             .lineLimit(2)
         }
@@ -113,6 +138,11 @@ struct WebPreviewInspectorRail: View {
         designTabContent
       case .code:
         codeTabContent
+      case .console:
+        WebPreviewConsoleView(
+          entries: viewModel.consoleEntries,
+          onClear: viewModel.clearConsoleEntries
+        )
       }
     }
   }
@@ -149,12 +179,43 @@ struct WebPreviewInspectorRail: View {
           statusBanner(message, color: .secondary)
         }
 
+        layoutSection
         propertiesSection
         contentSection
+        boxModelSection
         typographySection
         stylesSection
+        effectsSection
+        if let snapshot = viewModel.liveProperties {
+          BoxModelView(snapshot: snapshot)
+          ElementTreeView(
+            children: viewModel.childrenSummary,
+            siblings: viewModel.siblingsSummary
+          )
+        }
       }
       .padding(12)
+    }
+  }
+
+  private var layoutSection: some View {
+    inspectorSection("Layout") {
+      VStack(spacing: 6) {
+        editableValueRow(
+          title: "Display",
+          value: formattedDisplayValue(for: .display),
+          property: .display
+        )
+        readOnlyValueRow(title: "Position", value: viewModel.liveProperties?.position ?? "—")
+
+        if let display = viewModel.liveProperties?.display?.lowercased(),
+           display.contains("flex") || display.contains("grid") {
+          readOnlyValueRow(title: "Flex Direction", value: viewModel.liveProperties?.flexDirection ?? "—")
+          readOnlyValueRow(title: "Justify", value: viewModel.liveProperties?.justifyContent ?? "—")
+          readOnlyValueRow(title: "Align Items", value: viewModel.liveProperties?.alignItems ?? "—")
+          readOnlyValueRow(title: "Gap", value: viewModel.liveProperties?.gap ?? "—")
+        }
+      }
     }
   }
 
@@ -238,6 +299,47 @@ struct WebPreviewInspectorRail: View {
           value: viewModel.typographyValue(\.lineHeight, fallbackTo: .lineHeight),
           property: .lineHeight
         )
+        editableValueRow(
+          title: "Letter Spacing",
+          value: formattedDisplayValue(for: .letterSpacing),
+          property: .letterSpacing
+        )
+        editableValueRow(
+          title: "Text Align",
+          value: formattedDisplayValue(for: .textAlign),
+          property: .textAlign
+        )
+        readOnlyValueRow(title: "Decoration", value: viewModel.liveProperties?.textDecoration ?? "—")
+        readOnlyValueRow(title: "Transform", value: viewModel.liveProperties?.textTransform ?? "—")
+      }
+    }
+  }
+
+  private var boxModelSection: some View {
+    inspectorSection("Box Model") {
+      VStack(spacing: 6) {
+        editableValueRow(
+          title: "Margin",
+          value: formattedDisplayValue(for: .margin),
+          property: .margin
+        )
+        edgeValueRow(title: "Margin Top", value: viewModel.liveProperties?.marginEdges.top)
+        edgeValueRow(title: "Margin Right", value: viewModel.liveProperties?.marginEdges.right)
+        edgeValueRow(title: "Margin Bottom", value: viewModel.liveProperties?.marginEdges.bottom)
+        edgeValueRow(title: "Margin Left", value: viewModel.liveProperties?.marginEdges.left)
+
+        Divider()
+          .padding(.vertical, 4)
+
+        editableValueRow(
+          title: "Padding",
+          value: formattedDisplayValue(for: .padding),
+          property: .padding
+        )
+        edgeValueRow(title: "Padding Top", value: viewModel.liveProperties?.paddingEdges.top)
+        edgeValueRow(title: "Padding Right", value: viewModel.liveProperties?.paddingEdges.right)
+        edgeValueRow(title: "Padding Bottom", value: viewModel.liveProperties?.paddingEdges.bottom)
+        edgeValueRow(title: "Padding Left", value: viewModel.liveProperties?.paddingEdges.left)
       }
     }
   }
@@ -256,15 +358,23 @@ struct WebPreviewInspectorRail: View {
           property: .backgroundColor
         )
         editableValueRow(
-          title: "Padding",
-          value: formattedDisplayValue(for: .padding),
-          property: .padding
-        )
-        editableValueRow(
           title: "Radius",
           value: formattedDisplayValue(for: .borderRadius),
           property: .borderRadius
         )
+      }
+    }
+  }
+
+  private var effectsSection: some View {
+    inspectorSection("Effects") {
+      VStack(spacing: 6) {
+        editableValueRow(
+          title: "Opacity",
+          value: formattedDisplayValue(for: .opacity),
+          property: .opacity
+        )
+        readOnlyValueRow(title: "Box Shadow", value: viewModel.liveProperties?.boxShadow ?? "—")
       }
     }
   }
@@ -397,6 +507,10 @@ struct WebPreviewInspectorRail: View {
         .font(.system(size: 12, design: .monospaced))
         .foregroundStyle(.primary)
     }
+  }
+
+  private func edgeValueRow(title: String, value: String?) -> some View {
+    readOnlyValueRow(title: title, value: value ?? "—")
   }
 
   private func styleBinding(for property: WebPreviewStyleProperty) -> Binding<String> {

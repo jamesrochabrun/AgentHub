@@ -33,10 +33,15 @@ enum WebPreviewEditableCapability: Hashable, Sendable {
   case content
   case textColor
   case backgroundColor
+  case display
   case fontFamily
   case fontSize
   case fontWeight
   case lineHeight
+  case letterSpacing
+  case textAlign
+  case margin
+  case opacity
   case padding
   case borderRadius
   case width
@@ -51,10 +56,15 @@ enum WebPreviewEditableCapability: Hashable, Sendable {
 enum WebPreviewStyleProperty: String, CaseIterable, Hashable, Sendable {
   case textColor = "color"
   case backgroundColor = "background-color"
+  case display = "display"
   case fontFamily = "font-family"
   case fontSize = "font-size"
   case fontWeight = "font-weight"
   case lineHeight = "line-height"
+  case letterSpacing = "letter-spacing"
+  case textAlign = "text-align"
+  case margin = "margin"
+  case opacity = "opacity"
   case padding = "padding"
   case borderRadius = "border-radius"
   case width = "width"
@@ -66,10 +76,15 @@ enum WebPreviewStyleProperty: String, CaseIterable, Hashable, Sendable {
     switch self {
     case .textColor: "Text"
     case .backgroundColor: "Background"
+    case .display: "Display"
     case .fontFamily: "Font"
     case .fontSize: "Font Size"
     case .fontWeight: "Font Weight"
     case .lineHeight: "Line Height"
+    case .letterSpacing: "Letter Spacing"
+    case .textAlign: "Text Align"
+    case .margin: "Margin"
+    case .opacity: "Opacity"
     case .padding: "Padding"
     case .borderRadius: "Radius"
     case .width: "Width"
@@ -83,10 +98,15 @@ enum WebPreviewStyleProperty: String, CaseIterable, Hashable, Sendable {
     switch self {
     case .textColor: .textColor
     case .backgroundColor: .backgroundColor
+    case .display: .display
     case .fontFamily: .fontFamily
     case .fontSize: .fontSize
     case .fontWeight: .fontWeight
     case .lineHeight: .lineHeight
+    case .letterSpacing: .letterSpacing
+    case .textAlign: .textAlign
+    case .margin: .margin
+    case .opacity: .opacity
     case .padding: .padding
     case .borderRadius: .borderRadius
     case .width: .width
@@ -98,7 +118,7 @@ enum WebPreviewStyleProperty: String, CaseIterable, Hashable, Sendable {
 
   var fallbackUnit: String? {
     switch self {
-    case .fontSize, .lineHeight, .borderRadius, .width, .height, .top, .left:
+    case .fontSize, .lineHeight, .letterSpacing, .margin, .padding, .borderRadius, .width, .height, .top, .left:
       "px"
     default:
       nil
