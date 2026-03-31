@@ -16,7 +16,6 @@ private enum SidePanelContent: Equatable {
   case plan(sessionId: String, session: CLISession, planState: PlanState)
   case webPreview(sessionId: String, session: CLISession, projectPath: String)
   case mermaid(sessionId: String, session: CLISession)
-  case simulator(sessionId: String, session: CLISession)
   case fileExplorer(sessionId: String, session: CLISession, projectPath: String, initialFilePath: String?, navigationId: UUID = UUID())
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
@@ -28,8 +27,6 @@ private enum SidePanelContent: Equatable {
     case (.webPreview(let id1, _, let p1), .webPreview(let id2, _, let p2)):
       return id1 == id2 && p1 == p2
     case (.mermaid(let id1, _), .mermaid(let id2, _)):
-      return id1 == id2
-    case (.simulator(let id1, _), .simulator(let id2, _)):
       return id1 == id2
     case (.fileExplorer(let id1, _, let p1, _, let n1), .fileExplorer(let id2, _, let p2, _, let n2)):
       return id1 == id2 && p1 == p2 && n1 == n2
@@ -802,9 +799,6 @@ public struct MultiProviderMonitoringPanelView: View {
                 sidePanelContent = .mermaid(sessionId: session.id, session: session)
               }
             } : nil,
-            onShowSimulator: canShowSidePanel ? { session in
-              sidePanelContent = .simulator(sessionId: session.id, session: session)
-            } : nil,
             onShowFiles: (canShowSidePanel && !fileExplorerAlwaysModal) ? { session, projectPath in
               if case .fileExplorer(let sid, _, _, _, _) = sidePanelContent, sid == session.id {
                 withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
@@ -957,12 +951,6 @@ public struct MultiProviderMonitoringPanelView: View {
       )
     case .mermaid(_, let session):
       MermaidDiagramView(
-        session: session,
-        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-        isEmbedded: true
-      )
-    case .simulator(_, let session):
-      SimulatorPickerView(
         session: session,
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
         isEmbedded: true

@@ -85,7 +85,6 @@ public struct MonitoringCardView: View {
   let onShowPlan: ((CLISession, PlanState) -> Void)?
   let onShowWebPreview: ((CLISession, String) -> Void)?
   let onShowMermaid: ((CLISession) -> Void)?
-  let onShowSimulator: ((CLISession) -> Void)?
   let onShowFiles: ((CLISession, String) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
@@ -135,7 +134,6 @@ public struct MonitoringCardView: View {
     onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
     onShowWebPreview: ((CLISession, String) -> Void)? = nil,
     onShowMermaid: ((CLISession) -> Void)? = nil,
-    onShowSimulator: ((CLISession) -> Void)? = nil,
     onShowFiles: ((CLISession, String) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
@@ -167,7 +165,6 @@ public struct MonitoringCardView: View {
     self.onShowPlan = onShowPlan
     self.onShowWebPreview = onShowWebPreview
     self.onShowMermaid = onShowMermaid
-    self.onShowSimulator = onShowSimulator
     self.onShowFiles = onShowFiles
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
@@ -702,17 +699,9 @@ public struct MonitoringCardView: View {
         // Simulator button (only visible for Xcode projects)
         if XcodeProjectDetector.isXcodeProject(at: session.projectPath) {
           Button(action: {
-            if let onShowSimulator {
-              onShowSimulator(session)
-            } else {
-              simulatorSheetSession = session
-            }
+            simulatorSheetSession = session
           }) {
-            HStack(spacing: 4) {
-              Image(systemName: "iphone")
-                .font(.caption2)
-              Text("Simulator")
-            }
+            simulatorButtonLabel
           }
           .buttonStyle(.agentHubOutlined)
           .help("Manage iOS Simulators")
@@ -731,6 +720,45 @@ public struct MonitoringCardView: View {
       .fixedSize()
       .layoutPriority(2)
 
+    }
+  }
+
+  // MARK: - Simulator Button
+
+  @ViewBuilder
+  private var simulatorButtonLabel: some View {
+    let service = SimulatorService.shared
+    if let udid = service.preferredSimulatorUDIDs[session.projectPath],
+       let device = service.device(for: udid) {
+      let simState = service.state(for: udid, projectPath: session.projectPath)
+      HStack(spacing: 4) {
+        Circle()
+          .fill(simulatorStatusColor(for: simState, device: device))
+          .frame(width: 6, height: 6)
+        Text(device.name)
+          .lineLimit(1)
+      }
+    } else {
+      HStack(spacing: 4) {
+        Image(systemName: "iphone")
+          .font(.caption2)
+        Text("Simulator")
+      }
+    }
+  }
+
+  private func simulatorStatusColor(for state: SimulatorState, device: SimulatorDevice) -> Color {
+    switch state {
+    case .idle:
+      return device.isBooted ? .green : .gray.opacity(0.5)
+    case .booting, .building, .installing, .launching:
+      return .yellow
+    case .booted:
+      return .green
+    case .shuttingDown:
+      return .orange
+    case .failed:
+      return .red
     }
   }
 
