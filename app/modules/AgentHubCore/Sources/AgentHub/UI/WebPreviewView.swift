@@ -124,6 +124,7 @@ public struct WebPreviewView: View {
   @State private var localhostPreviewStartedAt = Date()
   @State private var localhostReloadTask: Task<Void, Never>?
   @State private var inspectorViewModel: WebPreviewInspectorViewModel
+  @State private var lastSelectedSelector: String?
   @State private var previewWebView: WKWebView?
   @State private var consoleMessageHandler = WebPreviewConsoleMessageHandler()
 
@@ -204,6 +205,10 @@ public struct WebPreviewView: View {
 #else
     .regular
 #endif
+  }
+
+  private var activeSelectorToRestore: String? {
+    lastSelectedSelector
   }
 
   private var activeReloadToken: UUID? {
@@ -867,8 +872,11 @@ public struct WebPreviewView: View {
           allowingReadAccessTo: allowingReadAccessTo,
           onLoadingChange: { loading in
             isLoading = loading
-            if !loading, let previewWebView {
-              installConsoleHook(in: previewWebView)
+            if !loading {
+              lastSelectedSelector = nil
+              if let previewWebView {
+                installConsoleHook(in: previewWebView)
+              }
             }
           },
           onURLChange: { loadedURL in
@@ -889,6 +897,7 @@ public struct WebPreviewView: View {
           },
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id,
+          selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady
         )
         .overlay(alignment: .top) {
@@ -918,8 +927,11 @@ public struct WebPreviewView: View {
           allowingReadAccessTo: allowingReadAccessTo,
           onLoadingChange: { loading in
             isLoading = loading
-            if !loading, let previewWebView {
-              installConsoleHook(in: previewWebView)
+            if !loading {
+              lastSelectedSelector = nil
+              if let previewWebView {
+                installConsoleHook(in: previewWebView)
+              }
             }
           },
           onURLChange: { loadedURL in
@@ -940,6 +952,7 @@ public struct WebPreviewView: View {
           },
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id,
+          selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady
         )
         .webInspectorOverlay(
@@ -1008,6 +1021,7 @@ public struct WebPreviewView: View {
   }
 
   private func handleElementSelection(_ element: ElementInspectorData) {
+    lastSelectedSelector = element.cssSelector
     inspectState.selectElement(element)
 
     guard isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
@@ -1077,7 +1091,9 @@ public struct WebPreviewView: View {
   }
 
   private func handleWebViewReady(_ webView: WKWebView) {
-    previewWebView = webView
+    Task { @MainActor in
+      previewWebView = webView
+    }
     guard isAdvancedEditingEnabled else { return }
     inspectorViewModel.registerWebView(webView)
     consoleMessageHandler.onMessage = { level, message in
