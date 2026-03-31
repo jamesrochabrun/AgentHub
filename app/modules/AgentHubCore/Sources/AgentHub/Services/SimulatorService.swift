@@ -102,6 +102,9 @@ public final class SimulatorService {
   /// Per-projectPath macOS build-and-run state
   private(set) var macRunStates: [String: MacRunState] = [:]
 
+  /// Per-projectPath preferred simulator UDID — shared across all views
+  private(set) var preferredSimulatorUDIDs: [String: String] = [:]
+
   /// Live process references for in-flight Mac builds, keyed by projectPath
   private var macBuildProcesses: [String: ProcessRef] = [:]
 
@@ -115,6 +118,21 @@ public final class SimulatorService {
   private var buildSetupCache: [String: BuildSetup] = [:]
 
   // MARK: - Public API
+
+  /// Sets the preferred simulator UDID for a given project path.
+  public func setPreferredSimulator(udid: String?, for projectPath: String) {
+    preferredSimulatorUDIDs[projectPath] = udid
+  }
+
+  /// Returns the SimulatorDevice for a given UDID, if it exists in the loaded runtimes.
+  func device(for udid: String) -> SimulatorDevice? {
+    for runtime in runtimes {
+      if let device = runtime.availableDevices.first(where: { $0.udid == udid }) {
+        return device
+      }
+    }
+    return nil
+  }
 
   /// Returns the combined state for a device in a given session's context.
   /// Build state (building/failed) is per-session; boot state (booted/booting/shuttingDown) is global.

@@ -2,8 +2,7 @@
 //  SimulatorPickerView.swift
 //  AgentHub
 //
-//  Side-panel view for managing run destinations (iOS simulators and My Mac).
-//  Mirrors the WebPreviewView interface: isEmbedded + onDismiss.
+//  Sheet view for managing run destinations (iOS simulators and My Mac).
 //
 
 import SwiftUI
@@ -14,23 +13,23 @@ public struct SimulatorPickerView: View {
   let session: CLISession
   let onDismiss: () -> Void
   let onSendToSession: ((String) -> Void)?
-  var isEmbedded: Bool = false
 
-  @State private var preferredUDID: String?
   @State private var platforms: Set<XcodePlatform> = []
   @State private var isLoadingPlatforms = true
   @Environment(\.colorScheme) private var colorScheme
 
+  private var preferredUDID: String? {
+    SimulatorService.shared.preferredSimulatorUDIDs[session.projectPath]
+  }
+
   public init(
     session: CLISession,
     onDismiss: @escaping () -> Void,
-    onSendToSession: ((String) -> Void)? = nil,
-    isEmbedded: Bool = false
+    onSendToSession: ((String) -> Void)? = nil
   ) {
     self.session = session
     self.onDismiss = onDismiss
     self.onSendToSession = onSendToSession
-    self.isEmbedded = isEmbedded
   }
 
   public var body: some View {
@@ -40,8 +39,8 @@ public struct SimulatorPickerView: View {
       content
     }
     .frame(
-      minWidth: isEmbedded ? 320 : 600, idealWidth: isEmbedded ? .infinity : 700, maxWidth: .infinity,
-      minHeight: isEmbedded ? 300 : 500, idealHeight: isEmbedded ? .infinity : 600, maxHeight: .infinity
+      minWidth: 600, idealWidth: 700, maxWidth: .infinity,
+      minHeight: 500, idealHeight: 600, maxHeight: .infinity
     )
     .task {
       async let devicesTask: Void = SimulatorService.shared.listDevices()
@@ -344,7 +343,7 @@ public struct SimulatorPickerView: View {
         : Color.clear
     )
     .onTapGesture {
-      preferredUDID = device.udid
+      SimulatorService.shared.setPreferredSimulator(udid: device.udid, for: session.projectPath)
     }
   }
 
