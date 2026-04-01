@@ -90,6 +90,14 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   }
 }
 
+private enum WebPreviewReloadMode: Equatable {
+  case none
+  case directFileAutomatic
+  case directFileManual
+  case devServerAutomatic
+  case devServerManual
+}
+
 // MARK: - WebPreviewView
 
 /// Displays a web preview with smart resolution: loads static HTML files instantly
@@ -124,8 +132,10 @@ public struct WebPreviewView: View {
   @State private var localhostPreviewStartedAt = Date()
   @State private var localhostReloadTask: Task<Void, Never>?
   @State private var inspectorViewModel: WebPreviewInspectorViewModel
+  @State private var lastSelectedSelector: String?
   @State private var previewWebView: WKWebView?
   @State private var consoleMessageHandler = WebPreviewConsoleMessageHandler()
+  @State private var scrollRestorationCoordinator = WebPreviewScrollRestorationCoordinator()
 
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
@@ -206,15 +216,39 @@ public struct WebPreviewView: View {
 #endif
   }
 
-  private var activeReloadToken: UUID? {
+  private var activeSelectorToRestore: String? {
+    guard !scrollRestorationCoordinator.suppressesSelectorRestore else { return nil }
+    return lastSelectedSelector
+  }
+
+  private var reloadMode: WebPreviewReloadMode {
+    let isManualReloadMode = isAdvancedEditingEnabled && inspectBehavior == .edit
+
     switch resolution {
     case .directFile:
-      return isAdvancedEditingEnabled && inspectBehavior == .edit ? manualReloadToken : fileWatcher.reloadToken
+      return isManualReloadMode ? .directFileManual : .directFileAutomatic
     case .devServer:
-      return isAdvancedEditingEnabled && inspectBehavior == .edit ? manualReloadToken : localhostReloadToken
+      return isManualReloadMode ? .devServerManual : .devServerAutomatic
     case .noContent, nil:
+      return .none
+    }
+  }
+
+  private var requestedReloadToken: UUID? {
+    switch reloadMode {
+    case .directFileAutomatic:
+      return fileWatcher.reloadToken
+    case .devServerAutomatic:
+      return localhostReloadToken
+    case .directFileManual, .devServerManual:
+      return manualReloadToken
+    case .none:
       return nil
     }
+  }
+
+  private var effectiveReloadToken: UUID? {
+    scrollRestorationCoordinator.effectiveReloadToken
   }
 
   public var body: some View {
@@ -241,6 +275,17 @@ public struct WebPreviewView: View {
     .onChange(of: latestLocalhostReloadSignal) { _, newSignal in
       handleLocalhostReloadSignal(newSignal)
     }
+    .onChange(of: reloadMode) { _, _ in
+      syncReloadCoordinatorBaseline()
+    }
+    .onChange(of: fileWatcher.reloadToken) { _, newToken in
+      guard reloadMode == .directFileAutomatic else { return }
+      handleRequestedReloadTokenChange(newToken)
+    }
+    .onChange(of: localhostReloadToken) { _, newToken in
+      guard reloadMode == .devServerAutomatic else { return }
+      handleRequestedReloadTokenChange(newToken)
+    }
     .onChange(of: inspectBehavior) { _, newBehavior in
       guard inspectState.isActive else { return }
       inspectState.activate(mode: newBehavior.canvasMode)
@@ -262,6 +307,7 @@ public struct WebPreviewView: View {
       } else {
         fileWatcher.stop()
       }
+      syncReloadCoordinatorBaseline()
     }
     .onKeyPress(.escape) {
       if inspectState.isActive {
@@ -465,7 +511,7 @@ public struct WebPreviewView: View {
       Button {
         toggleInspector()
       } label: {
-        Image(systemName: "hand.rays")
+        Image(systemName: "cursorarrow.rays")
           .font(.system(size: 12, weight: .medium))
           .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
       }
@@ -540,7 +586,7 @@ public struct WebPreviewView: View {
           url: URL(fileURLWithPath: filePath),
           isFileURL: true,
           allowingReadAccessTo: URL(fileURLWithPath: projPath),
-          reloadToken: activeReloadToken
+          reloadToken: effectiveReloadToken
         )
       }
 
@@ -566,7 +612,7 @@ public struct WebPreviewView: View {
       inspectablePreview(
         url: url,
         isFileURL: false,
-        reloadToken: activeReloadToken,
+        reloadToken: effectiveReloadToken,
         onError: isExternalServer ? { error in
           handleExternalServerLoadFailure(error: error, failedURL: url)
         } : nil
@@ -806,6 +852,7 @@ public struct WebPreviewView: View {
   @MainActor
   private func applyResolution(_ newResolution: WebPreviewResolution) async {
     resolution = newResolution
+    syncReloadCoordinatorBaseline()
 
     switch newResolution {
     case .directFile(let filePath, _):
@@ -866,18 +913,10 @@ public struct WebPreviewView: View {
           inspectorDataLevel: .full,
           allowingReadAccessTo: allowingReadAccessTo,
           onLoadingChange: { loading in
-            isLoading = loading
-            if !loading, let previewWebView {
-              installConsoleHook(in: previewWebView)
-            }
+            handlePreviewLoadingChange(loading)
           },
           onURLChange: { loadedURL in
-            if isExternalServer, loadedURL != nil {
-              hasLoadedExternalContent = true
-            }
-            if let previewWebView {
-              installConsoleHook(in: previewWebView)
-            }
+            handlePreviewURLChange(loadedURL)
           },
           onError: onError,
           reloadToken: reloadToken,
@@ -889,6 +928,7 @@ public struct WebPreviewView: View {
           },
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id,
+          selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady
         )
         .overlay(alignment: .top) {
@@ -917,18 +957,10 @@ public struct WebPreviewView: View {
           inspectorDataLevel: configuredInspectorDataLevel,
           allowingReadAccessTo: allowingReadAccessTo,
           onLoadingChange: { loading in
-            isLoading = loading
-            if !loading, let previewWebView {
-              installConsoleHook(in: previewWebView)
-            }
+            handlePreviewLoadingChange(loading)
           },
           onURLChange: { loadedURL in
-            if isExternalServer, loadedURL != nil {
-              hasLoadedExternalContent = true
-            }
-            if let previewWebView {
-              installConsoleHook(in: previewWebView)
-            }
+            handlePreviewURLChange(loadedURL)
           },
           onError: onError,
           reloadToken: reloadToken,
@@ -940,6 +972,7 @@ public struct WebPreviewView: View {
           },
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id,
+          selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady
         )
         .webInspectorOverlay(
@@ -979,7 +1012,7 @@ public struct WebPreviewView: View {
           await inspectorViewModel.flushPendingWriteIfNeeded()
         },
         reload: {
-          manualReloadToken = UUID()
+          requestManualReload()
         }
       )
     }
@@ -1007,7 +1040,106 @@ public struct WebPreviewView: View {
     }
   }
 
+  private func handleOverlayReloadingState(_ loading: Bool) {
+    guard inspectState.selectedElement != nil else { return }
+    if loading {
+      inspectState.isReloading = true
+    } else {
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(300))
+        inspectState.isReloading = false
+      }
+    }
+  }
+
+  private func handlePreviewLoadingChange(_ loading: Bool) {
+    isLoading = loading
+    handleOverlayReloadingState(loading)
+
+    guard !loading else { return }
+
+    restorePendingScrollPositionIfNeeded()
+    lastSelectedSelector = nil
+    if let previewWebView {
+      installConsoleHook(in: previewWebView)
+    }
+    beginPendingReloadCaptureIfNeeded()
+  }
+
+  private func handlePreviewURLChange(_ loadedURL: URL?) {
+    if isExternalServer, loadedURL != nil {
+      hasLoadedExternalContent = true
+    }
+    if let previewWebView {
+      installConsoleHook(in: previewWebView)
+    }
+  }
+
+  private func syncReloadCoordinatorBaseline() {
+    scrollRestorationCoordinator.reset(to: requestedReloadToken)
+  }
+
+  private func handleRequestedReloadTokenChange(_ newToken: UUID?) {
+    scrollRestorationCoordinator.queueReload(token: newToken)
+    beginPendingReloadCaptureIfNeeded()
+  }
+
+  private func requestManualReload() {
+    let newToken = UUID()
+    manualReloadToken = newToken
+    guard reloadMode == .directFileManual || reloadMode == .devServerManual else { return }
+    handleRequestedReloadTokenChange(newToken)
+  }
+
+  private func beginPendingReloadCaptureIfNeeded() {
+    guard !isLoading else { return }
+    guard scrollRestorationCoordinator.beginCaptureIfNeeded() else { return }
+
+    captureScrollPositionForPendingReload()
+  }
+
+  private func captureScrollPositionForPendingReload() {
+    guard let previewWebView else {
+      finishPendingReloadCapture(with: nil)
+      return
+    }
+
+    previewWebView.evaluateJavaScript(Self.scrollCaptureScript) { result, error in
+      let scrollPosition = WebPreviewScrollPosition.fromJavaScriptResult(result)
+      if let error {
+        AppLogger.devServer.debug(
+          "[WebPreview] Session \(session.id): failed to capture scroll offset before reload: \(error.localizedDescription)"
+        )
+      }
+
+      Task { @MainActor in
+        finishPendingReloadCapture(with: scrollPosition)
+      }
+    }
+  }
+
+  private func finishPendingReloadCapture(with scrollPosition: WebPreviewScrollPosition?) {
+    scrollRestorationCoordinator.finishCapture(with: scrollPosition)
+  }
+
+  private func restorePendingScrollPositionIfNeeded() {
+    let scrollPosition = scrollRestorationCoordinator.consumePendingScrollPosition()
+    guard let previewWebView,
+          let scrollPosition else {
+      return
+    }
+
+    previewWebView.evaluateJavaScript(Self.scrollRestoreScript(for: scrollPosition)) { _, error in
+      if let error {
+        AppLogger.devServer.debug(
+          "[WebPreview] Session \(session.id): failed to restore scroll offset after reload: \(error.localizedDescription)"
+        )
+      }
+    }
+  }
+
   private func handleElementSelection(_ element: ElementInspectorData) {
+    lastSelectedSelector = element.cssSelector
     inspectState.selectElement(element)
 
     guard isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
@@ -1077,7 +1209,9 @@ public struct WebPreviewView: View {
   }
 
   private func handleWebViewReady(_ webView: WKWebView) {
-    previewWebView = webView
+    Task { @MainActor in
+      previewWebView = webView
+    }
     guard isAdvancedEditingEnabled else { return }
     inspectorViewModel.registerWebView(webView)
     consoleMessageHandler.onMessage = { level, message in
@@ -1121,6 +1255,23 @@ public struct WebPreviewView: View {
       });
     })();
   """
+
+  private static let scrollCaptureScript = """
+    [window.scrollX || window.pageXOffset || 0, window.scrollY || window.pageYOffset || 0]
+  """
+
+  private static func scrollRestoreScript(for position: WebPreviewScrollPosition) -> String {
+    """
+    (function() {
+      const x = \(position.x);
+      const y = \(position.y);
+      const restore = function() { window.scrollTo(x, y); };
+      restore();
+      requestAnimationFrame(restore);
+      setTimeout(restore, 50);
+    })();
+    """
+  }
 }
 
 // MARK: - Preview
