@@ -511,7 +511,7 @@ public struct WebPreviewView: View {
       Button {
         toggleInspector()
       } label: {
-        Image(systemName: "hand.rays")
+        Image(systemName: "cursorarrow.rays")
           .font(.system(size: 12, weight: .medium))
           .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
       }
