@@ -18,7 +18,7 @@ let package = Package(
     ),
   ],
   dependencies: [
-    .package(url: "https://github.com/jamesrochabrun/Canvas.git", revision: "c2b49aad7ebee4a955af6d672e2fdf5e86641855"),
+    .package(url: "https://github.com/jamesrochabrun/Canvas.git", revision: "dcb386f62edc19f238b18f656caab1c0f64d7f9a"),
     .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.1.5"),
     .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.11.0"),
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
