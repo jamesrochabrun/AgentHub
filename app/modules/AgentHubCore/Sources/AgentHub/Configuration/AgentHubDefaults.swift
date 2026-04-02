@@ -153,6 +153,12 @@ public enum AgentHubDefaults {
   /// Type: Double (default: 360)
   public static let webPreviewInspectorWidth = "\(keyPrefix)ui.webPreviewInspectorWidth"
 
+  // MARK: - Worktree Settings
+
+  /// Prefix applied to AI-generated launcher worktree branches.
+  /// Type: String (default: "")
+  public static let worktreeBranchPrefix = "\(keyPrefix)worktree.generatedBranchPrefix"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

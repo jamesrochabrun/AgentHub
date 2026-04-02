@@ -102,6 +102,18 @@ public final class AgentHubProvider {
     return AIConfigService(metadataStore: store)
   }()
 
+  /// Claude-backed service for naming launcher-generated worktree branches.
+  public private(set) lazy var worktreeBranchNamingService: any WorktreeBranchNamingServiceProtocol = {
+    ClaudeWorktreeBranchNamingService(
+      additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths)
+    )
+  }()
+
+  /// Success sound service for completed launcher-created worktrees.
+  public private(set) lazy var worktreeSuccessSoundService: any WorktreeSuccessSoundServiceProtocol = {
+    WorktreeSuccessSoundService()
+  }()
+
   // MARK: - GitHub Integration
 
   /// GitHub CLI service for PR/issue operations

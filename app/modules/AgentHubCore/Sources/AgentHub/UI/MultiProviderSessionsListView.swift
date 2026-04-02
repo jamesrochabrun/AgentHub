@@ -66,17 +66,23 @@ public struct MultiProviderSessionsListView: View {
   private var selectedProviderRaw: String = "Claude"
 
   private let intelligenceViewModel: IntelligenceViewModel?
+  private let worktreeBranchNamingService: (any WorktreeBranchNamingServiceProtocol)?
+  private let worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)?
 
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
     columnVisibility: Binding<NavigationSplitViewVisibility>,
-    intelligenceViewModel: IntelligenceViewModel? = nil
+    intelligenceViewModel: IntelligenceViewModel? = nil,
+    worktreeBranchNamingService: (any WorktreeBranchNamingServiceProtocol)? = nil,
+    worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)? = nil
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self._columnVisibility = columnVisibility
     self.intelligenceViewModel = intelligenceViewModel
+    self.worktreeBranchNamingService = worktreeBranchNamingService
+    self.worktreeSuccessSoundService = worktreeSuccessSoundService
   }
 
   public var body: some View {
@@ -123,7 +129,9 @@ public struct MultiProviderSessionsListView: View {
         multiLaunchViewModel = MultiSessionLaunchViewModel(
           claudeViewModel: claudeViewModel,
           codexViewModel: codexViewModel,
-          intelligenceViewModel: intelligenceViewModel
+          intelligenceViewModel: intelligenceViewModel,
+          worktreeBranchNamingService: worktreeBranchNamingService,
+          worktreeSuccessSoundService: worktreeSuccessSoundService
         )
       }
       ensurePrimarySelection()

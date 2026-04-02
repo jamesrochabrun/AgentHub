@@ -73,6 +73,11 @@ public struct SettingsView: View {
           Label("Configuration", systemImage: "sparkles")
         }
 
+      WorktreeSettingsView()
+        .tabItem {
+          Label("Worktrees", systemImage: "arrow.triangle.branch")
+        }
+
       appearanceSettingsForm
         .tabItem {
           Label("Appearance", systemImage: "paintpalette")

@@ -23,6 +23,24 @@ private func awaitCompletion<Output>(
   }
 }
 
+private func awaitOutputs<Output>(
+  from publisher: AnyPublisher<Output, Error>
+) async -> ([Output], Subscribers.Completion<Error>) {
+  let box = CancellableBox()
+  return await withCheckedContinuation { continuation in
+    var outputs: [Output] = []
+    box.cancellable = publisher.sink(
+      receiveCompletion: { completion in
+        box.cancellable = nil
+        continuation.resume(returning: (outputs, completion))
+      },
+      receiveValue: { output in
+        outputs.append(output)
+      }
+    )
+  }
+}
+
 @Suite("ClaudeCLIClient")
 struct ClaudeCLIClientTests {
 
@@ -36,7 +54,8 @@ struct ClaudeCLIClientTests {
       workingDirectory: "",
       systemPrompt: nil,
       permissionMode: nil,
-      disallowedTools: nil
+      disallowedTools: nil,
+      model: nil
     ))
 
     guard case .failure(let error) = completion else {
@@ -51,6 +70,93 @@ struct ClaudeCLIClientTests {
     }
 
     #expect(missingCommand == command)
+  }
+
+  @Test("Model override appends --model flag")
+  func modelOverrideAppendsFlag() async throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-client-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let argsFile = tempDir.appendingPathComponent("args.txt")
+    let scriptURL = tempDir.appendingPathComponent("mock-claude.sh")
+    let escapedArgsPath = argsFile.path.replacingOccurrences(of: "\"", with: "\\\"")
+    let script = """
+    #!/bin/sh
+    printf '%s\n' "$@" > "\(escapedArgsPath)"
+    cat >/dev/null
+    printf '{"type":"result","subtype":"success","result":"named-branch"}\n'
+    """
+    try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+    let client = ClaudeCLIClient(command: scriptURL.path)
+    let (_, completion) = await awaitOutputs(from: client.runStreamingPrompt(
+      prompt: "hello",
+      workingDirectory: "",
+      systemPrompt: nil,
+      permissionMode: nil,
+      disallowedTools: nil,
+      model: "claude-haiku-4-20250514"
+    ))
+
+    guard case .finished = completion else {
+      Issue.record("Expected successful completion, got \(completion)")
+      return
+    }
+
+    let capturedArgs = try String(contentsOf: argsFile, encoding: .utf8)
+      .components(separatedBy: .newlines)
+      .filter { !$0.isEmpty }
+
+    guard let modelIndex = capturedArgs.firstIndex(of: "--model") else {
+      Issue.record("Expected --model flag in \(capturedArgs)")
+      return
+    }
+
+    #expect(capturedArgs[modelIndex + 1] == "claude-haiku-4-20250514")
+  }
+
+  @Test("No model override preserves existing args")
+  func noModelOverrideDoesNotAppendFlag() async throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-client-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let argsFile = tempDir.appendingPathComponent("args.txt")
+    let scriptURL = tempDir.appendingPathComponent("mock-claude.sh")
+    let escapedArgsPath = argsFile.path.replacingOccurrences(of: "\"", with: "\\\"")
+    let script = """
+    #!/bin/sh
+    printf '%s\n' "$@" > "\(escapedArgsPath)"
+    cat >/dev/null
+    printf '{"type":"result","subtype":"success","result":"named-branch"}\n'
+    """
+    try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+    let client = ClaudeCLIClient(command: scriptURL.path)
+    let (_, completion) = await awaitOutputs(from: client.runStreamingPrompt(
+      prompt: "hello",
+      workingDirectory: "",
+      systemPrompt: nil,
+      permissionMode: nil,
+      disallowedTools: nil,
+      model: nil
+    ))
+
+    guard case .finished = completion else {
+      Issue.record("Expected successful completion, got \(completion)")
+      return
+    }
+
+    let capturedArgs = try String(contentsOf: argsFile, encoding: .utf8)
+      .components(separatedBy: .newlines)
+      .filter { !$0.isEmpty }
+
+    #expect(!capturedArgs.contains("--model"))
   }
 }
 

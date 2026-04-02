@@ -760,10 +760,17 @@ public struct MultiSessionLaunchView: View {
 
   private var progressSection: some View {
     VStack(alignment: .leading, spacing: 6) {
-      if viewModel.isClaudeSelected {
+      if viewModel.branchNamingProgress.isVisible {
+        WorktreeBranchNamingProgressCard(
+          progress: viewModel.branchNamingProgress,
+          startedAt: viewModel.branchNamingStartedAt,
+          finishedAt: viewModel.branchNamingCompletedAt
+        )
+      }
+      if viewModel.isClaudeSelected && viewModel.claudeProgress != .idle {
         progressRow(label: "Claude", progress: viewModel.claudeProgress)
       }
-      if viewModel.isCodexSelected {
+      if viewModel.isCodexSelected && viewModel.codexProgress != .idle {
         progressRow(label: "Codex", progress: viewModel.codexProgress)
       }
     }
@@ -1256,6 +1263,14 @@ public struct MultiSessionLaunchView: View {
         .buttonStyle(.plain)
       }
 
+      if viewModel.branchNamingProgress.isVisible {
+        WorktreeBranchNamingProgressCard(
+          progress: viewModel.branchNamingProgress,
+          startedAt: viewModel.branchNamingStartedAt,
+          finishedAt: viewModel.branchNamingCompletedAt
+        )
+      }
+
       if viewModel.claudeProgress != .idle {
         progressRow(label: "Worktree", progress: viewModel.claudeProgress)
       }
@@ -1330,6 +1345,9 @@ public struct MultiSessionLaunchView: View {
       return "Launch Smart"
     }
     if viewModel.isLaunching {
+      if viewModel.branchNamingProgress.isInProgress {
+        return "Naming branch..."
+      }
       return viewModel.workMode == .worktree ? "Generating worktrees..." : "Launching..."
     }
     if viewModel.isClaudeSelected && viewModel.isCodexSelected {

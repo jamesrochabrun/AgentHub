@@ -96,6 +96,7 @@ public struct AttachedFile: Identifiable, Equatable {
 @MainActor
 @Observable
 public final class MultiSessionLaunchViewModel {
+  private static let aiWorktreeLogPrefix = "[AIWORKTREE]"
 
   // MARK: - Dependencies
 
@@ -103,6 +104,9 @@ public final class MultiSessionLaunchViewModel {
   private let codexViewModel: CLISessionsViewModel
   private let worktreeService: GitWorktreeService
   private let intelligenceViewModel: IntelligenceViewModel?
+  private let worktreeBranchNamingService: (any WorktreeBranchNamingServiceProtocol)?
+  private let worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)?
+  private var playedWorktreeSuccessPaths: Set<String> = []
 
   // MARK: - Form State
 
@@ -133,6 +137,9 @@ public final class MultiSessionLaunchViewModel {
   public var isLaunching: Bool = false
   public var claudeProgress: WorktreeCreationProgress = .idle
   public var codexProgress: WorktreeCreationProgress = .idle
+  public var branchNamingProgress: WorktreeBranchNamingProgress = .idle
+  public var branchNamingStartedAt: Date?
+  public var branchNamingCompletedAt: Date?
   public var launchError: String?
 
   // MARK: - Smart Mode State
@@ -193,12 +200,16 @@ public final class MultiSessionLaunchViewModel {
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
     worktreeService: GitWorktreeService = GitWorktreeService(),
-    intelligenceViewModel: IntelligenceViewModel? = nil
+    intelligenceViewModel: IntelligenceViewModel? = nil,
+    worktreeBranchNamingService: (any WorktreeBranchNamingServiceProtocol)? = nil,
+    worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)? = nil
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self.worktreeService = worktreeService
     self.intelligenceViewModel = intelligenceViewModel
+    self.worktreeBranchNamingService = worktreeBranchNamingService
+    self.worktreeSuccessSoundService = worktreeSuccessSoundService
   }
 
   // MARK: - Attachments
@@ -256,6 +267,7 @@ public final class MultiSessionLaunchViewModel {
     baseBranch = nil
     isLoadingBranches = false
     isLoadingCurrentBranch = false
+    resetBranchNamingProgress()
   }
 
   /// Preselects a repository already tracked by either provider.
@@ -295,37 +307,6 @@ public final class MultiSessionLaunchViewModel {
     isLoadingCurrentBranch = false
   }
 
-  /// Auto-generates branch names from prompt/attachment context + short UUID suffix.
-  /// Falls back to "session" when no context text exists.
-  public func autoGenerateBranchNames() {
-    let promptSeed = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    let attachmentSeed = attachedFiles
-      .prefix(3)
-      .map { $0.url.deletingPathExtension().lastPathComponent }
-      .joined(separator: "-")
-    let rawSeed = !promptSeed.isEmpty ? promptSeed : attachmentSeed
-
-    // Take first few words from available context, sanitize, and add short UUID.
-    let words = rawSeed.components(separatedBy: .whitespacesAndNewlines)
-      .filter { !$0.isEmpty }
-      .prefix(4)
-      .joined(separator: "-")
-    let sanitized = GitWorktreeService.sanitizeBranchName(words)
-    let suffix = String(UUID().uuidString.prefix(6)).lowercased()
-    let base = sanitized.isEmpty ? "session" : sanitized
-
-    let providers = selectedProviders
-    if providers.count > 1 {
-      claudeBranchName = "\(base)-\(suffix)-claude"
-      codexBranchName = "\(base)-\(suffix)-codex"
-      singleBranchName = ""
-    } else {
-      singleBranchName = "\(base)-\(suffix)"
-      claudeBranchName = ""
-      codexBranchName = ""
-    }
-  }
-
   /// Directory name for a given branch name in the selected repository
   public func directoryName(for branchName: String) -> String {
     guard let repo = selectedRepository else { return branchName }
@@ -351,17 +332,28 @@ public final class MultiSessionLaunchViewModel {
     smartPhase = .idle
     isLaunching = false
     launchError = nil
+    playedWorktreeSuccessPaths.removeAll()
+    resetBranchNamingProgress()
   }
 
   // MARK: - Manual Mode
 
   private func launchManualMode() async {
     guard let repo = selectedRepository else { return }
+    let workModeName = workMode.rawValue
+    let providerNames = selectedProviders.map(\.rawValue).joined(separator: ",")
+    let isUsingClaudeLocalWorktree = claudeWorktreeOption != nil
+
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) Start Session launch requested repo=\(repo.name, privacy: .public) workMode=\(workModeName, privacy: .public) providers=\(providerNames, privacy: .public) claudeLocalWorktree=\(isUsingClaudeLocalWorktree)"
+    )
 
     isLaunching = true
     launchError = nil
-    claudeProgress = .idle
-    codexProgress = .idle
+    playedWorktreeSuccessPaths.removeAll()
+    applyWorktreeProgress(.idle, to: \.claudeProgress)
+    applyWorktreeProgress(.idle, to: \.codexProgress)
+    resetBranchNamingProgress()
 
     let trimmedPrompt = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
     let attachmentPaths = attachedFiles.map { $0.quotedPath }.joined(separator: " ")
@@ -378,10 +370,38 @@ public final class MultiSessionLaunchViewModel {
 
     switch workMode {
     case .local:
+      if claudeWorktreeOption != nil {
+        AppLogger.intelligence.info(
+          "\(Self.aiWorktreeLogPrefix, privacy: .public) Local mode is using Claude's --worktree flow; launcher AI worktree naming does not run in this path"
+        )
+      } else {
+        AppLogger.intelligence.info(
+          "\(Self.aiWorktreeLogPrefix, privacy: .public) Skipping AI worktree naming because the Start Session launch is in local mode"
+        )
+      }
       await launchLocalSessions(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
     case .worktree:
-      autoGenerateBranchNames()
       let providers = selectedProviders
+      AppLogger.intelligence.info(
+        "\(Self.aiWorktreeLogPrefix, privacy: .public) Entering launcher worktree naming flow for providers=\(providers.map(\.rawValue).joined(separator: ","), privacy: .public)"
+      )
+      let namingResult = await resolveGeneratedBranchNames(
+        for: repo,
+        launchContext: .manualWorktree,
+        promptText: trimmedPrompt,
+        providerKinds: providers
+      )
+      applyResolvedBranchNames(namingResult)
+      guard validateResolvedBranchNames(for: providers) else {
+        AppLogger.intelligence.error(
+          "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree naming completed without usable branch names"
+        )
+        applyBranchNamingProgress(.failed(message: "AgentHub could not resolve a usable branch name"))
+        launchError = "Failed to resolve worktree branch names."
+        isLaunching = false
+        return
+      }
+
       if providers.count > 1 {
         await launchBothProviders(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
       } else if let provider = providers.first {
@@ -395,7 +415,9 @@ public final class MultiSessionLaunchViewModel {
             viewModel: claudeViewModel,
             dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions,
             permissionModePlan: isPlanModeEnabled,
-            progressSetter: { self.claudeProgress = $0 }
+            progressHandler: { [weak self] progress in
+              self?.applyWorktreeProgress(progress, to: \.claudeProgress)
+            }
           )
         case .codex:
           await launchSingleProvider(
@@ -405,7 +427,9 @@ public final class MultiSessionLaunchViewModel {
             branchName: singleBranchName,
             viewModel: codexViewModel,
             permissionModePlan: isPlanModeEnabled,
-            progressSetter: { self.codexProgress = $0 }
+            progressHandler: { [weak self] progress in
+              self?.applyWorktreeProgress(progress, to: \.codexProgress)
+            }
           )
         }
       }
@@ -498,6 +522,10 @@ public final class MultiSessionLaunchViewModel {
     smartPhase = .launching
     isLaunching = true
     launchError = nil
+    playedWorktreeSuccessPaths.removeAll()
+    applyWorktreeProgress(.idle, to: \.claudeProgress)
+    applyWorktreeProgress(.idle, to: \.codexProgress)
+    resetBranchNamingProgress()
 
     let viewModel = smartProvider == .claude ? claudeViewModel : codexViewModel
     let repoPath = repo.path
@@ -553,7 +581,7 @@ public final class MultiSessionLaunchViewModel {
           startPoint: baseBranch?.displayName
         ) { [weak self] progress in
           Task { @MainActor in
-            self?.claudeProgress = progress
+            self?.applyWorktreeProgress(progress, to: \.claudeProgress)
           }
         }
 
@@ -599,18 +627,24 @@ public final class MultiSessionLaunchViewModel {
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool = false
   ) async {
-    // Auto-generate branch name from prompt
-    let promptSeed = sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    let words = promptSeed.components(separatedBy: .whitespacesAndNewlines)
-      .filter { !$0.isEmpty }
-      .prefix(4)
-      .joined(separator: "-")
-    let sanitized = GitWorktreeService.sanitizeBranchName(words)
-    let suffix = String(UUID().uuidString.prefix(6)).lowercased()
-    let branchName = sanitized.isEmpty ? "smart-\(suffix)" : "\(sanitized)-\(suffix)"
-
     // Use the full plan text as the prompt, not the original user message
     let initialPrompt = smartPlanText.isEmpty ? sharedPrompt : smartPlanText
+    guard let repository = selectedRepository else { return }
+
+    let namingResult = await resolveGeneratedBranchNames(
+      for: repository,
+      launchContext: .smartFallback,
+      promptText: initialPrompt,
+      providerKinds: [smartProvider == .claude ? .claude : .codex]
+    )
+
+    guard let branchName = namingResult.single else {
+      applyBranchNamingProgress(.failed(message: "AgentHub could not resolve a fallback branch name"))
+      launchError = "Failed to resolve a worktree branch name."
+      smartPhase = .planReady
+      isLaunching = false
+      return
+    }
 
     do {
       let dirName = GitWorktreeService.worktreeDirectoryName(for: branchName, repoName: repoName)
@@ -621,7 +655,7 @@ public final class MultiSessionLaunchViewModel {
         startPoint: baseBranch?.displayName
       ) { [weak self] progress in
         Task { @MainActor in
-          self?.claudeProgress = progress
+          self?.applyWorktreeProgress(progress, to: \.claudeProgress)
         }
       }
 
@@ -655,6 +689,7 @@ public final class MultiSessionLaunchViewModel {
     smartPhase = .idle
     smartPlanText = ""
     smartOrchestrationPlan = nil
+    resetBranchNamingProgress()
   }
 
   /// Fully resets all form state for a fresh start
@@ -678,8 +713,10 @@ public final class MultiSessionLaunchViewModel {
     claudeWorktreeName = ""
     isCodexSelected = false
     isPlanModeEnabled = false
+    playedWorktreeSuccessPaths.removeAll()
     claudeProgress = .idle
     codexProgress = .idle
+    resetBranchNamingProgress()
     launchError = nil
     smartPhase = .idle
     smartProvider = .claude
@@ -756,11 +793,11 @@ public final class MultiSessionLaunchViewModel {
         startPoint: baseBranch?.displayName
       ) { [weak self] progress in
         Task { @MainActor in
-          self?.claudeProgress = progress
+          self?.applyWorktreeProgress(progress, to: \.claudeProgress)
         }
       }
     } catch {
-      claudeProgress = .failed(error: error.localizedDescription)
+      applyWorktreeProgress(.failed(error: error.localizedDescription), to: \.claudeProgress)
       launchError = "Claude worktree: \(error.localizedDescription)"
     }
 
@@ -775,11 +812,11 @@ public final class MultiSessionLaunchViewModel {
         startPoint: baseBranch?.displayName
       ) { [weak self] progress in
         Task { @MainActor in
-          self?.codexProgress = progress
+          self?.applyWorktreeProgress(progress, to: \.codexProgress)
         }
       }
     } catch {
-      codexProgress = .failed(error: error.localizedDescription)
+      applyWorktreeProgress(.failed(error: error.localizedDescription), to: \.codexProgress)
       let msg = "Codex worktree: \(error.localizedDescription)"
       launchError = launchError != nil ? "\(launchError!)\n\(msg)" : msg
     }
@@ -826,7 +863,7 @@ public final class MultiSessionLaunchViewModel {
     viewModel: CLISessionsViewModel,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
-    progressSetter: @escaping (WorktreeCreationProgress) -> Void
+    progressHandler: @escaping @MainActor @Sendable (WorktreeCreationProgress) -> Void
   ) async {
     viewModel.addRepository(at: repoPath)
     try? await Task.sleep(for: .milliseconds(300))
@@ -841,11 +878,11 @@ public final class MultiSessionLaunchViewModel {
         startPoint: baseBranch?.displayName
       ) { progress in
         Task { @MainActor in
-          progressSetter(progress)
+          progressHandler(progress)
         }
       }
     } catch {
-      progressSetter(.failed(error: error.localizedDescription))
+      progressHandler(.failed(error: error.localizedDescription))
       launchError = error.localizedDescription
       return
     }
@@ -864,5 +901,145 @@ public final class MultiSessionLaunchViewModel {
       permissionModePlan: permissionModePlan
     )
     viewModel.refresh()
+  }
+
+  func resolveGeneratedBranchNames(
+    for repository: SelectedRepository,
+    launchContext: WorktreeBranchNamingLaunchContext,
+    promptText: String,
+    providerKinds: [SessionProviderKind]
+  ) async -> WorktreeBranchNamingResult {
+    let attachmentNames = attachmentBasenames
+    let providerNames = providerKinds.map(\.rawValue).joined(separator: ",")
+    let baseBranchName = baseBranch?.displayName ?? "HEAD"
+    let request = WorktreeBranchNamingRequest(
+      repoName: repository.name,
+      repoPath: repository.path,
+      baseBranchName: baseBranch?.displayName,
+      launchContext: launchContext,
+      promptText: promptText,
+      attachmentBasenames: attachmentNames,
+      providerKinds: providerKinds
+    )
+
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) Built naming request context=\(launchContext.rawValue, privacy: .public) repo=\(repository.name, privacy: .public) base=\(baseBranchName, privacy: .public) providers=\(providerNames, privacy: .public) promptLength=\(promptText.count) attachments=\(attachmentNames.joined(separator: ","), privacy: .public)"
+    )
+
+    if let worktreeBranchNamingService {
+      branchNamingStartedAt = Date()
+      branchNamingCompletedAt = nil
+      branchNamingProgress = .preparingContext(
+        message: request.hasMeaningfulContext
+          ? "Preparing branch naming context"
+          : "Preparing repository context"
+      )
+      let result = await worktreeBranchNamingService.resolveBranchNames(for: request) { [weak self] progress in
+        self?.applyBranchNamingProgress(progress)
+      }
+      finalizeBranchNamingProgress(with: result)
+      AppLogger.intelligence.info(
+        "\(Self.aiWorktreeLogPrefix, privacy: .public) Resolved worktree names via \(result.source.rawValue, privacy: .public)"
+      )
+      return result
+    }
+
+    branchNamingStartedAt = Date()
+    branchNamingCompletedAt = nil
+    branchNamingProgress = .preparingContext(message: "Preparing fallback branch name")
+    let fallback = ClaudeWorktreeBranchNamingService.deterministicFallback(for: request)
+    finalizeBranchNamingProgress(with: fallback)
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) No naming service was available; resolved worktree names via deterministic fallback"
+    )
+    return fallback
+  }
+
+  private var attachmentBasenames: [String] {
+    attachedFiles.prefix(3).map { $0.url.deletingPathExtension().lastPathComponent }
+  }
+
+  private func applyResolvedBranchNames(_ result: WorktreeBranchNamingResult) {
+    singleBranchName = result.single ?? ""
+    claudeBranchName = result.claude ?? ""
+    codexBranchName = result.codex ?? ""
+    let resolvedSingle = singleBranchName
+    let resolvedClaude = claudeBranchName
+    let resolvedCodex = codexBranchName
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) Applied resolved branch names single=\(resolvedSingle, privacy: .public) claude=\(resolvedClaude, privacy: .public) codex=\(resolvedCodex, privacy: .public)"
+    )
+  }
+
+  private func validateResolvedBranchNames(for providers: [SessionProviderKind]) -> Bool {
+    if providers.count > 1 {
+      return (!claudeBranchName.isEmpty || !codexBranchName.isEmpty)
+        && (!providers.contains(.claude) || !claudeBranchName.isEmpty)
+        && (!providers.contains(.codex) || !codexBranchName.isEmpty)
+    }
+    return !singleBranchName.isEmpty
+  }
+
+  private func applyBranchNamingProgress(_ progress: WorktreeBranchNamingProgress) {
+    if branchNamingStartedAt == nil {
+      branchNamingStartedAt = Date()
+    }
+
+    branchNamingProgress = progress
+
+    if progress.isFinished {
+      branchNamingCompletedAt = Date()
+    } else {
+      branchNamingCompletedAt = nil
+    }
+  }
+
+  private func finalizeBranchNamingProgress(with result: WorktreeBranchNamingResult) {
+    let resolvedBranchNames = [result.single, result.claude, result.codex].compactMap { $0 }
+    if case .completed(_, let source, let branchNames) = branchNamingProgress,
+       source == result.source,
+       branchNames == resolvedBranchNames {
+      if branchNamingCompletedAt == nil {
+        branchNamingCompletedAt = Date()
+      }
+      return
+    }
+
+    let finalProgress = WorktreeBranchNamingProgress.completed(
+      message: result.source == .ai
+        ? "Branch name ready"
+        : "Fallback branch name ready",
+      source: result.source,
+      branchNames: resolvedBranchNames
+    )
+
+    applyBranchNamingProgress(finalProgress)
+  }
+
+  private func resetBranchNamingProgress() {
+    branchNamingProgress = .idle
+    branchNamingStartedAt = nil
+    branchNamingCompletedAt = nil
+  }
+
+  private func applyWorktreeProgress(
+    _ progress: WorktreeCreationProgress,
+    to keyPath: ReferenceWritableKeyPath<MultiSessionLaunchViewModel, WorktreeCreationProgress>
+  ) {
+    self[keyPath: keyPath] = progress
+
+    guard case .completed(let path) = progress,
+          playedWorktreeSuccessPaths.insert(path).inserted else {
+      return
+    }
+
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation completed path=\(path, privacy: .public); playing success sound"
+    )
+
+    guard let worktreeSuccessSoundService else { return }
+    Task {
+      await worktreeSuccessSoundService.playWorktreeCreatedSound()
+    }
   }
 }
