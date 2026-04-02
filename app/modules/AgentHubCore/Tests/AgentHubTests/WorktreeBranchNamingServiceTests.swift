@@ -9,7 +9,7 @@ import ClaudeCodeClient
 struct WorktreeBranchNamingServiceTests {
 
   @Test("AI result is sanitized, prefixed, and suffixed")
-  func aiResultUsesSanitizedStem() async {
+  func aiResultUsesSanitizedStem() async throws {
     let defaults = makeDefaults(prefix: "feature/")
     let recorder = InvocationRecorder()
     let service = makeService(
@@ -21,7 +21,7 @@ struct WorktreeBranchNamingServiceTests {
       ])
     )
 
-    let result = await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
+    let result = try await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
       repoName: "AgentHub",
       repoPath: "/tmp/repo",
       baseBranchName: "main",
@@ -40,7 +40,7 @@ struct WorktreeBranchNamingServiceTests {
   }
 
   @Test("Dual-provider launch shares a base token and adds provider suffixes")
-  func dualProviderNamesShareBase() async {
+  func dualProviderNamesShareBase() async throws {
     let service = makeService(
       defaults: makeDefaults(prefix: "feature/"),
       publisher: chunkPublisher([
@@ -48,7 +48,7 @@ struct WorktreeBranchNamingServiceTests {
       ])
     )
 
-    let result = await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
+    let result = try await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
       repoName: "AgentHub",
       repoPath: "/tmp/repo",
       baseBranchName: "main",
@@ -65,7 +65,7 @@ struct WorktreeBranchNamingServiceTests {
   }
 
   @Test("Empty context still invokes AI naming using repository metadata")
-  func emptyContextUsesAIRepoContext() async {
+  func emptyContextUsesAIRepoContext() async throws {
     let recorder = InvocationRecorder()
     let service = makeService(
       defaults: makeDefaults(),
@@ -75,7 +75,7 @@ struct WorktreeBranchNamingServiceTests {
       ])
     )
 
-    let result = await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
+    let result = try await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
       repoName: "Canvas",
       repoPath: "/tmp/repo",
       baseBranchName: "main",
@@ -91,14 +91,14 @@ struct WorktreeBranchNamingServiceTests {
   }
 
   @Test("Missing Claude executable falls back deterministically")
-  func missingExecutableFallsBack() async {
+  func missingExecutableFallsBack() async throws {
     let service = makeService(
       defaults: makeDefaults(prefix: "feature/"),
       publisher: Fail(error: ClaudeCodeClientError.notInstalled("claude"))
         .eraseToAnyPublisher()
     )
 
-    let result = await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
+    let result = try await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
       repoName: "AgentHub",
       repoPath: "/tmp/repo",
       baseBranchName: "main",
@@ -113,14 +113,14 @@ struct WorktreeBranchNamingServiceTests {
   }
 
   @Test("Empty context fallback uses repository name when Claude fails")
-  func emptyContextFallbackUsesRepositoryName() async {
+  func emptyContextFallbackUsesRepositoryName() async throws {
     let service = makeService(
       defaults: makeDefaults(prefix: "feature/"),
       publisher: Fail(error: ClaudeCodeClientError.notInstalled("claude"))
         .eraseToAnyPublisher()
     )
 
-    let result = await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
+    let result = try await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
       repoName: "Canvas",
       repoPath: "/tmp/repo",
       baseBranchName: "main",
@@ -135,7 +135,7 @@ struct WorktreeBranchNamingServiceTests {
   }
 
   @Test("Unusable AI output falls back deterministically")
-  func unusableOutputFallsBack() async {
+  func unusableOutputFallsBack() async throws {
     let service = makeService(
       defaults: makeDefaults(),
       publisher: chunkPublisher([
@@ -143,7 +143,7 @@ struct WorktreeBranchNamingServiceTests {
       ])
     )
 
-    let result = await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
+    let result = try await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
       repoName: "AgentHub",
       repoPath: "/tmp/repo",
       baseBranchName: "main",
@@ -158,7 +158,7 @@ struct WorktreeBranchNamingServiceTests {
   }
 
   @Test("Smart fallback request sends smart-plan text when provided")
-  func smartFallbackPromptUsesProvidedPlanText() async {
+  func smartFallbackPromptUsesProvidedPlanText() async throws {
     let recorder = InvocationRecorder()
     let service = makeService(
       defaults: makeDefaults(),
@@ -168,7 +168,7 @@ struct WorktreeBranchNamingServiceTests {
       ])
     )
 
-    _ = await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
+    _ = try await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
       repoName: "AgentHub",
       repoPath: "/tmp/repo",
       baseBranchName: "main",
@@ -185,7 +185,7 @@ struct WorktreeBranchNamingServiceTests {
   }
 
   @Test("Retries with a supported Haiku model when the preferred model is unavailable")
-  func retriesWithSupportedHaikuModel() async {
+  func retriesWithSupportedHaikuModel() async throws {
     let recorder = InvocationRecorder()
     let service = makeSequencedService(
       defaults: makeDefaults(),
@@ -209,7 +209,7 @@ struct WorktreeBranchNamingServiceTests {
       ]
     )
 
-    let result = await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
+    let result = try await service.resolveBranchNames(for: WorktreeBranchNamingRequest(
       repoName: "Canvas",
       repoPath: "/tmp/repo",
       baseBranchName: "main",
@@ -229,7 +229,7 @@ struct WorktreeBranchNamingServiceTests {
   }
 
   @Test("Naming timeout falls back deterministically and cancels the in-flight client")
-  func namingTimeoutFallsBackAndCancelsClient() async {
+  func namingTimeoutFallsBackAndCancelsClient() async throws {
     let cancellationRecorder = CancellationRecorder()
     let subjectBox = StreamSubjectBox()
     let progressRecorder = NamingProgressRecorder()
@@ -243,7 +243,7 @@ struct WorktreeBranchNamingServiceTests {
       publisher: subjectBox.subject.eraseToAnyPublisher()
     )
 
-    let result = await service.resolveBranchNames(
+    let result = try await service.resolveBranchNames(
       for: WorktreeBranchNamingRequest(
         repoName: "Canvas",
         repoPath: "/tmp/repo",
@@ -266,6 +266,47 @@ struct WorktreeBranchNamingServiceTests {
       source: .deterministicFallback,
       branchNames: ["feature/investigate-timeout-path-abcdef"]
     ))
+  }
+
+  @Test("Explicit user cancellation stops naming without falling back")
+  func explicitCancellationThrowsCancellationError() async throws {
+    let cancellationRecorder = CancellationRecorder()
+    let subjectBox = StreamSubjectBox()
+    let progressRecorder = NamingProgressRecorder()
+    let service = makeService(
+      defaults: makeDefaults(prefix: "feature/"),
+      cancellationRecorder: cancellationRecorder,
+      onCancel: {
+        subjectBox.subject.send(completion: .failure(ClaudeCodeClientError.executionFailed("Cancelled")))
+      },
+      publisher: subjectBox.subject.eraseToAnyPublisher()
+    )
+
+    let task = Task {
+      try await service.resolveBranchNames(
+        for: WorktreeBranchNamingRequest(
+          repoName: "Canvas",
+          repoPath: "/tmp/repo",
+          baseBranchName: "main",
+          launchContext: .manualWorktree,
+          promptText: "Investigate cancellation",
+          attachmentBasenames: [],
+          providerKinds: [.claude]
+        ),
+        onProgress: { progress in
+          progressRecorder.record(progress)
+        }
+      )
+    }
+
+    try await Task.sleep(for: .milliseconds(20))
+    await service.cancelActiveRequest()
+
+    await #expect(throws: CancellationError.self) {
+      _ = try await task.value
+    }
+    #expect(cancellationRecorder.snapshot() == 1)
+    #expect(progressRecorder.lastProgress() == .queryingModel(model: "haiku", message: "Generating branch name"))
   }
 }
 

@@ -11,6 +11,7 @@ public enum WorktreeBranchNamingProgress: Equatable, Sendable {
   case queryingModel(model: String, message: String)
   case sanitizing(message: String)
   case completed(message: String, source: WorktreeBranchNameSource, branchNames: [String])
+  case cancelled(message: String)
   case failed(message: String)
 
   public var message: String {
@@ -21,6 +22,7 @@ public enum WorktreeBranchNamingProgress: Equatable, Sendable {
          .queryingModel(_, let message),
          .sanitizing(let message),
          .completed(let message, _, _),
+         .cancelled(let message),
          .failed(let message):
       return message
     }
@@ -63,6 +65,8 @@ public enum WorktreeBranchNamingProgress: Equatable, Sendable {
       return 1
     case .sanitizing, .completed, .failed:
       return 2
+    case .cancelled:
+      return nil
     }
   }
 
@@ -74,14 +78,14 @@ public enum WorktreeBranchNamingProgress: Equatable, Sendable {
     switch self {
     case .preparingContext, .queryingModel, .sanitizing:
       return true
-    case .idle, .completed, .failed:
+    case .idle, .completed, .cancelled, .failed:
       return false
     }
   }
 
   public var isFinished: Bool {
     switch self {
-    case .completed, .failed:
+    case .completed, .cancelled, .failed:
       return true
     case .idle, .preparingContext, .queryingModel, .sanitizing:
       return false

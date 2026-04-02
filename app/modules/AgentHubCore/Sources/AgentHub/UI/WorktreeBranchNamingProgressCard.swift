@@ -92,6 +92,8 @@ struct WorktreeBranchNamingProgressCard: View {
     Group {
       if progress.isInProgress {
         badge(text: "Generating", systemImage: "waveform.path", tint: accentColor)
+      } else if case .cancelled = progress {
+        badge(text: "Cancelled", systemImage: "stop.circle.fill", tint: accentColor)
       } else if progress.isFallbackCompletion {
         badge(text: "Fallback", systemImage: "arrow.uturn.backward.circle", tint: accentColor)
       } else if progress.isFinished {
@@ -248,6 +250,8 @@ struct WorktreeBranchNamingProgressCard: View {
       return "Branch name ready"
     case .completed(_, .deterministicFallback, _):
       return "Fallback branch name ready"
+    case .cancelled:
+      return "Branch naming cancelled"
     case .failed:
       return "Branch naming failed"
     }
@@ -259,6 +263,8 @@ struct WorktreeBranchNamingProgressCard: View {
       return "sparkles"
     case .completed:
       return "checkmark.circle.fill"
+    case .cancelled:
+      return "stop.circle.fill"
     case .failed:
       return "xmark.octagon.fill"
     }
@@ -268,6 +274,8 @@ struct WorktreeBranchNamingProgressCard: View {
     switch progress {
     case .completed(_, .deterministicFallback, _):
       return .orange
+    case .cancelled:
+      return .secondary
     case .failed:
       return .red
     case .idle, .preparingContext, .queryingModel, .sanitizing, .completed:
@@ -291,6 +299,8 @@ struct WorktreeBranchNamingProgressCard: View {
     switch progress {
     case .completed:
       return true
+    case .cancelled:
+      return false
     case .failed:
       return index < (progress.currentStepIndex ?? 0)
     default:
@@ -308,7 +318,12 @@ struct WorktreeBranchNamingProgressCard: View {
 
     let signature = [
       progress.message,
-      progress.source?.rawValue ?? "failed",
+      progress.source?.rawValue ?? {
+        if case .cancelled = progress {
+          return "cancelled"
+        }
+        return "failed"
+      }(),
       progress.resolvedBranchNames.joined(separator: "|")
     ].joined(separator: "::")
 

@@ -62,29 +62,48 @@ private actor MockWorktreeBranchNamingService: WorktreeBranchNamingServiceProtoc
   private(set) var requests: [WorktreeBranchNamingRequest] = []
   private let result: WorktreeBranchNamingResult
   private let progressUpdates: [WorktreeBranchNamingProgress]
+  private let delay: Duration?
+  private(set) var cancelCallCount = 0
 
   init(
     result: WorktreeBranchNamingResult,
-    progressUpdates: [WorktreeBranchNamingProgress] = []
+    progressUpdates: [WorktreeBranchNamingProgress] = [],
+    delay: Duration? = nil
   ) {
     self.result = result
     self.progressUpdates = progressUpdates
+    self.delay = delay
   }
 
   func resolveBranchNames(
     for request: WorktreeBranchNamingRequest,
     onProgress: (@MainActor @Sendable (WorktreeBranchNamingProgress) -> Void)?
-  ) async -> WorktreeBranchNamingResult {
+  ) async throws -> WorktreeBranchNamingResult {
     requests.append(request)
     for update in progressUpdates {
       guard let onProgress else { continue }
       await onProgress(update)
     }
+    if let delay {
+      try await Task.sleep(for: delay)
+      try Task.checkCancellation()
+      if cancelCallCount > 0 {
+        throw CancellationError()
+      }
+    }
     return result
+  }
+
+  func cancelActiveRequest() async {
+    cancelCallCount += 1
   }
 
   func recordedRequests() -> [WorktreeBranchNamingRequest] {
     requests
+  }
+
+  func recordedCancelCallCount() -> Int {
+    cancelCallCount
   }
 }
 
@@ -425,7 +444,7 @@ struct MultiSessionLaunchViewModelAIWorktreeNamingTests {
 
   @Test("Smart fallback resolves names through the naming service")
   @MainActor
-  func smartFallbackUsesNamingService() async {
+  func smartFallbackUsesNamingService() async throws {
     let namingService = MockWorktreeBranchNamingService(
       result: WorktreeBranchNamingResult(
         single: "feature/smart-rollout-abcdef",
@@ -436,7 +455,7 @@ struct MultiSessionLaunchViewModelAIWorktreeNamingTests {
     let viewModel = fixture.viewModel
     let repository = SelectedRepository(path: "/tmp/repo", name: "repo")
 
-    let result = await viewModel.resolveGeneratedBranchNames(
+    let result = try await viewModel.resolveGeneratedBranchNames(
       for: repository,
       launchContext: .smartFallback,
       promptText: "Use the approved rollout plan",
@@ -452,7 +471,7 @@ struct MultiSessionLaunchViewModelAIWorktreeNamingTests {
 
   @Test("Naming progress captures service updates and completion timing")
   @MainActor
-  func namingProgressTracksServiceUpdates() async {
+  func namingProgressTracksServiceUpdates() async throws {
     let namingService = MockWorktreeBranchNamingService(
       result: WorktreeBranchNamingResult(
         single: "feature/live-progress-abcdef",
@@ -468,7 +487,7 @@ struct MultiSessionLaunchViewModelAIWorktreeNamingTests {
     let viewModel = fixture.viewModel
     let repository = SelectedRepository(path: "/tmp/repo", name: "repo")
 
-    let result = await viewModel.resolveGeneratedBranchNames(
+    let result = try await viewModel.resolveGeneratedBranchNames(
       for: repository,
       launchContext: .manualWorktree,
       promptText: "Live progress please",
@@ -483,6 +502,50 @@ struct MultiSessionLaunchViewModelAIWorktreeNamingTests {
       source: .ai,
       branchNames: ["feature/live-progress-abcdef"]
     ))
+  }
+
+  @Test("Cancelling during naming preserves form state and stops before worktree creation")
+  @MainActor
+  func cancellingDuringNamingPreservesForm() async throws {
+    let repo = try LauncherGitRepoFixture.create()
+    defer { repo.cleanup() }
+
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        single: "feature/late-result-abcdef",
+        source: .ai
+      ),
+      progressUpdates: [
+        .preparingContext(message: "Preparing repository context"),
+        .queryingModel(model: "haiku", message: "Generating branch name"),
+      ],
+      delay: .seconds(2)
+    )
+    let fixture = makeViewModelFixture(namingService: namingService)
+    let viewModel = fixture.viewModel
+    let claudeViewModel = fixture.claudeViewModel
+
+    viewModel.selectedRepository = SelectedRepository(path: repo.repoPath, name: "repo")
+    await viewModel.loadBranches()
+    viewModel.workMode = .worktree
+    viewModel.claudeMode = .enabled
+    viewModel.sharedPrompt = "Investigate the launcher cancellation path"
+
+    viewModel.beginLaunch()
+    try await Task.sleep(for: .milliseconds(100))
+    viewModel.cancelLaunch()
+
+    while viewModel.isLaunching {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    #expect(await namingService.recordedCancelCallCount() == 1)
+    #expect(viewModel.sharedPrompt == "Investigate the launcher cancellation path")
+    #expect(viewModel.selectedRepository?.path == repo.repoPath)
+    #expect(viewModel.singleBranchName.isEmpty)
+    #expect(viewModel.branchNamingProgress == .cancelled(message: "Branch naming cancelled"))
+    #expect(viewModel.lastLaunchEndedByCancellation)
+    #expect(claudeViewModel.pendingHubSessions.isEmpty)
   }
 
   @Test("Successful single-provider worktree creation plays one success sound")

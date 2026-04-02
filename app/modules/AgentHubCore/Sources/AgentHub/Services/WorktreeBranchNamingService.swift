@@ -11,12 +11,13 @@ public protocol WorktreeBranchNamingServiceProtocol: Sendable {
   func resolveBranchNames(
     for request: WorktreeBranchNamingRequest,
     onProgress: (@MainActor @Sendable (WorktreeBranchNamingProgress) -> Void)?
-  ) async -> WorktreeBranchNamingResult
+  ) async throws -> WorktreeBranchNamingResult
+  func cancelActiveRequest() async
 }
 
 public extension WorktreeBranchNamingServiceProtocol {
-  func resolveBranchNames(for request: WorktreeBranchNamingRequest) async -> WorktreeBranchNamingResult {
-    await resolveBranchNames(for: request, onProgress: nil)
+  func resolveBranchNames(for request: WorktreeBranchNamingRequest) async throws -> WorktreeBranchNamingResult {
+    try await resolveBranchNames(for: request, onProgress: nil)
   }
 }
 
@@ -35,6 +36,9 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
   private let clientFactory: ClientFactory
   private let namingTimeoutDuration: Duration
   private let uuidProvider: @Sendable () -> UUID
+  private var activeRequestID: UUID?
+  private var activeClient: (any ClaudeCLIClientProtocol)?
+  private var userCancelledRequestIDs: Set<UUID> = []
 
   init(
     additionalPaths: [String],
@@ -61,11 +65,13 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
   public func resolveBranchNames(
     for request: WorktreeBranchNamingRequest,
     onProgress: (@MainActor @Sendable (WorktreeBranchNamingProgress) -> Void)? = nil
-  ) async -> WorktreeBranchNamingResult {
+  ) async throws -> WorktreeBranchNamingResult {
     let settings = WorktreeBranchNamingSettings.load(from: defaults)
     let providers = request.providerKinds.map(\.rawValue).joined(separator: ",")
     let attachments = request.attachmentBasenames.joined(separator: ",")
-    let activeClientBox = ActiveClientBox()
+    let requestID = UUID()
+    activeRequestID = requestID
+    activeClient = nil
     AppLogger.intelligence.info(
       "\(Self.logPrefix, privacy: .public) Naming request context=\(request.launchContext.rawValue, privacy: .public) repo=\(request.repoName, privacy: .public) base=\(request.baseBranchName ?? "HEAD", privacy: .public) providers=\(providers, privacy: .public) promptLength=\(request.promptText.count) attachments=\(attachments, privacy: .public)"
     )
@@ -87,16 +93,16 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
     let raceOutcome = await withTaskGroup(of: NamingRaceOutcome?.self, returning: NamingRaceOutcome?.self) { group in
       group.addTask { [self] in
         do {
-          let result = try await resolveBranchNamesWithoutTimeout(
+          let result = try await self.resolveBranchNamesWithoutTimeout(
             for: request,
+            requestID: requestID,
             settings: settings,
             command: command,
-            activeClientBox: activeClientBox,
             onProgress: onProgress
           )
           return .resolved(result)
         } catch is CancellationError {
-          return nil
+          return .cancelled
         } catch {
           let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
           await emitProgress(
@@ -115,7 +121,7 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
       group.addTask { [self] in
         do {
           try await Task.sleep(for: namingTimeoutDuration)
-          await activeClientBox.cancel()
+          await cancelActiveClient()
           return .timedOut
         } catch {
           return nil
@@ -133,8 +139,16 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
 
     switch raceOutcome {
     case .resolved(let result):
+      clearActiveRequest(requestID)
       return result
+    case .cancelled:
+      clearActiveRequest(requestID)
+      throw CancellationError()
     case .timedOut, .none:
+      if isUserCancelled(requestID) || Task.isCancelled {
+        clearActiveRequest(requestID)
+        throw CancellationError()
+      }
       let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
       AppLogger.intelligence.error(
         "\(Self.logPrefix, privacy: .public) Branch naming timed out after \(Self.timeoutLabel(self.namingTimeoutDuration), privacy: .public); canceling Claude CLI and using deterministic fallback"
@@ -148,39 +162,59 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
         using: onProgress
       )
       logResolvedNames(fallback)
+      clearActiveRequest(requestID)
       return fallback
     }
+  }
+
+  public func cancelActiveRequest() async {
+    guard let requestID = activeRequestID else { return }
+    userCancelledRequestIDs.insert(requestID)
+    AppLogger.intelligence.info(
+      "\(Self.logPrefix, privacy: .public) User requested branch naming cancellation"
+    )
+    await cancelActiveClient()
   }
 }
 
 extension ClaudeWorktreeBranchNamingService {
-  actor ActiveClientBox {
-    private var client: (any ClaudeCLIClientProtocol)?
-
-    func set(_ client: (any ClaudeCLIClientProtocol)?) {
-      self.client = client
-    }
-
-    func cancel() async {
-      let client = self.client
-      self.client = nil
-      guard let client else { return }
-      await MainActor.run {
-        client.cancel()
-      }
-    }
-  }
-
   enum NamingRaceOutcome {
     case resolved(WorktreeBranchNamingResult)
     case timedOut
+    case cancelled
+  }
+
+  func setActiveClient(_ client: (any ClaudeCLIClientProtocol)?, for requestID: UUID) {
+    guard activeRequestID == requestID else { return }
+    activeClient = client
+  }
+
+  func cancelActiveClient() async {
+    let client = activeClient
+    activeClient = nil
+    guard let client else { return }
+    await MainActor.run {
+      client.cancel()
+    }
+  }
+
+  func clearActiveRequest(_ requestID: UUID) {
+    if activeRequestID == requestID {
+      activeRequestID = nil
+      activeClient = nil
+    }
+    userCancelledRequestIDs.remove(requestID)
+  }
+
+  func isUserCancelled(_ requestID: UUID) -> Bool {
+    userCancelledRequestIDs.contains(requestID)
   }
 
   func resolveBranchNamesWithoutTimeout(
     for request: WorktreeBranchNamingRequest,
+    requestID: UUID,
     settings: WorktreeBranchNamingSettings,
     command: String,
-    activeClientBox: ActiveClientBox,
     onProgress: (@MainActor @Sendable (WorktreeBranchNamingProgress) -> Void)?
   ) async throws -> WorktreeBranchNamingResult {
     for (index, model) in Self.namingModels.enumerated() {
@@ -197,7 +231,7 @@ extension ClaudeWorktreeBranchNamingService {
         "\(Self.logPrefix, privacy: .public) Invoking Claude prompt naming with command=\(command, privacy: .public) model=\(model, privacy: .public) cwd=\(request.repoPath, privacy: .public)"
       )
       let client = clientFactory(command, additionalPaths)
-      await activeClientBox.set(client)
+      setActiveClient(client, for: requestID)
 
       do {
         let candidate = try await collectCandidateStem(
@@ -205,8 +239,10 @@ extension ClaudeWorktreeBranchNamingService {
           request: request,
           model: model
         )
-        await activeClientBox.set(nil)
-        try Task.checkCancellation()
+        setActiveClient(nil, for: requestID)
+        if isUserCancelled(requestID) || Task.isCancelled {
+          throw CancellationError()
+        }
         AppLogger.intelligence.info(
           "\(Self.logPrefix, privacy: .public) Claude returned branch stem candidate length=\(candidate.count)"
         )
@@ -254,8 +290,10 @@ extension ClaudeWorktreeBranchNamingService {
         logResolvedNames(result)
         return result
       } catch {
-        await activeClientBox.set(nil)
-        try Task.checkCancellation()
+        setActiveClient(nil, for: requestID)
+        if isUserCancelled(requestID) || Task.isCancelled {
+          throw CancellationError()
+        }
         if index < Self.namingModels.count - 1,
            let rejectionMessage = Self.modelSelectionRejectionMessage(from: error) {
           AppLogger.intelligence.warning(
@@ -293,6 +331,9 @@ extension ClaudeWorktreeBranchNamingService {
     }
 
     let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
+    if isUserCancelled(requestID) || Task.isCancelled {
+      throw CancellationError()
+    }
     await emitProgress(
       .completed(
         message: "Fallback branch name ready",

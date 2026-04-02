@@ -98,6 +98,15 @@ public struct AttachedFile: Identifiable, Equatable {
 public final class MultiSessionLaunchViewModel {
   private static let aiWorktreeLogPrefix = "[AIWORKTREE]"
 
+  private struct ActiveWorktreeOperation {
+    let id: WorktreeCreationOperationID
+    let providerLabel: String
+    let branchName: String
+    let directoryName: String
+    let repoPath: String
+    let startedAt: Date
+  }
+
   // MARK: - Dependencies
 
   private let claudeViewModel: CLISessionsViewModel
@@ -107,6 +116,8 @@ public final class MultiSessionLaunchViewModel {
   private let worktreeBranchNamingService: (any WorktreeBranchNamingServiceProtocol)?
   private let worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)?
   private var playedWorktreeSuccessPaths: Set<String> = []
+  private var activeLaunchTask: Task<Void, Never>?
+  private var activeWorktreeOperations: [WorktreeCreationOperationID: ActiveWorktreeOperation] = [:]
 
   // MARK: - Form State
 
@@ -141,6 +152,7 @@ public final class MultiSessionLaunchViewModel {
   public var branchNamingStartedAt: Date?
   public var branchNamingCompletedAt: Date?
   public var launchError: String?
+  public var lastLaunchEndedByCancellation: Bool = false
 
   // MARK: - Smart Mode State
 
@@ -315,30 +327,68 @@ public final class MultiSessionLaunchViewModel {
 
   /// Creates worktrees and starts sessions based on the selected providers and work/launch mode
   public func launchSessions() async {
+    defer { activeLaunchTask = nil }
     guard isValid else { return }
+    lastLaunchEndedByCancellation = false
 
-    switch launchMode {
-    case .manual:
-      await launchManualMode()
-    case .smart:
-      await startSmartPlanning()
+    do {
+      switch launchMode {
+      case .manual:
+        try await launchManualMode()
+      case .smart:
+        try await startSmartPlanning()
+      }
+    } catch is CancellationError {
+      handleLaunchCancellation()
+    } catch {
+      launchError = error.localizedDescription
+      isLaunching = false
     }
   }
 
-  /// Cancels an in-progress smart launch and resets state
-  public func cancelSmartLaunch() {
-    AppLogger.intelligence.info("Smart launch: cancelled by user")
+  public func beginLaunch() {
+    guard activeLaunchTask == nil, isValid else { return }
+    let task = Task { @MainActor [weak self] in
+      guard let self else { return }
+      await self.launchSessions()
+    }
+    activeLaunchTask = task
+  }
+
+  public func beginApprovedSmartLaunch() {
+    guard activeLaunchTask == nil else { return }
+    let task = Task { @MainActor [weak self] in
+      guard let self else { return }
+      await self.approveSmartPlan()
+    }
+    activeLaunchTask = task
+  }
+
+  public func cancelLaunch() {
+    guard isLaunching || smartPhase == .planning || smartPhase == .launching || activeLaunchTask != nil else { return }
+    AppLogger.intelligence.info("\(Self.aiWorktreeLogPrefix, privacy: .public) Launcher cancellation requested by user")
     intelligenceViewModel?.cancelRequest()
-    smartPhase = .idle
-    isLaunching = false
-    launchError = nil
-    playedWorktreeSuccessPaths.removeAll()
-    resetBranchNamingProgress()
+    let operationIDs = Array(activeWorktreeOperations.keys)
+    let namingService = worktreeBranchNamingService
+    Task {
+      if let namingService {
+        await namingService.cancelActiveRequest()
+      }
+      for operationID in operationIDs {
+        await worktreeService.cancelWorktreeCreation(operationID)
+      }
+    }
+    activeLaunchTask?.cancel()
+  }
+
+  /// Backward-compatible wrapper for existing call sites.
+  public func cancelSmartLaunch() {
+    cancelLaunch()
   }
 
   // MARK: - Manual Mode
 
-  private func launchManualMode() async {
+  private func launchManualMode() async throws {
     guard let repo = selectedRepository else { return }
     let workModeName = workMode.rawValue
     let providerNames = selectedProviders.map(\.rawValue).joined(separator: ",")
@@ -350,6 +400,7 @@ public final class MultiSessionLaunchViewModel {
 
     isLaunching = true
     launchError = nil
+    lastLaunchEndedByCancellation = false
     playedWorktreeSuccessPaths.removeAll()
     applyWorktreeProgress(.idle, to: \.claudeProgress)
     applyWorktreeProgress(.idle, to: \.codexProgress)
@@ -379,13 +430,13 @@ public final class MultiSessionLaunchViewModel {
           "\(Self.aiWorktreeLogPrefix, privacy: .public) Skipping AI worktree naming because the Start Session launch is in local mode"
         )
       }
-      await launchLocalSessions(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
+      try await launchLocalSessions(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
     case .worktree:
       let providers = selectedProviders
       AppLogger.intelligence.info(
         "\(Self.aiWorktreeLogPrefix, privacy: .public) Entering launcher worktree naming flow for providers=\(providers.map(\.rawValue).joined(separator: ","), privacy: .public)"
       )
-      let namingResult = await resolveGeneratedBranchNames(
+      let namingResult = try await resolveGeneratedBranchNames(
         for: repo,
         launchContext: .manualWorktree,
         promptText: trimmedPrompt,
@@ -403,38 +454,37 @@ public final class MultiSessionLaunchViewModel {
       }
 
       if providers.count > 1 {
-        await launchBothProviders(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
+        try await launchBothProviders(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
       } else if let provider = providers.first {
         switch provider {
         case .claude:
-          await launchSingleProvider(
+          try await launchSingleProvider(
             initialPrompt: initialPrompt,
             initialInputText: initialInputText,
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: claudeViewModel,
+            providerLabel: SessionProviderKind.claude.rawValue,
             dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions,
             permissionModePlan: isPlanModeEnabled,
-            progressHandler: { [weak self] progress in
-              self?.applyWorktreeProgress(progress, to: \.claudeProgress)
-            }
+            progressKeyPath: \.claudeProgress
           )
         case .codex:
-          await launchSingleProvider(
+          try await launchSingleProvider(
             initialPrompt: initialPrompt,
             initialInputText: initialInputText,
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: codexViewModel,
+            providerLabel: SessionProviderKind.codex.rawValue,
             permissionModePlan: isPlanModeEnabled,
-            progressHandler: { [weak self] progress in
-              self?.applyWorktreeProgress(progress, to: \.codexProgress)
-            }
+            progressKeyPath: \.codexProgress
           )
         }
       }
     }
 
+    try Task.checkCancellation()
     isLaunching = false
     onLaunchCompleted?()
     reset()
@@ -443,7 +493,7 @@ public final class MultiSessionLaunchViewModel {
   // MARK: - Smart Mode
 
   /// Phase 1: Send prompt to SDK with plan permission mode and stream a plan.
-  private func startSmartPlanning() async {
+  private func startSmartPlanning() async throws {
     guard let repo = selectedRepository,
           let intelligence = intelligenceViewModel else { return }
 
@@ -455,6 +505,7 @@ public final class MultiSessionLaunchViewModel {
     smartPhase = .planning
     isLaunching = true
     launchError = nil
+    lastLaunchEndedByCancellation = false
 
     // Build prompt with attachment paths if any
     let attachmentPaths = attachedFiles.map { $0.quotedPath }.joined(separator: " ")
@@ -465,8 +516,11 @@ public final class MultiSessionLaunchViewModel {
 
     // Poll for completion
     while intelligence.isLoading {
-      try? await Task.sleep(for: .milliseconds(200))
+      try Task.checkCancellation()
+      try await Task.sleep(for: .milliseconds(200))
     }
+
+    try Task.checkCancellation()
 
     // Check for errors
     if let error = intelligence.errorMessage {
@@ -515,43 +569,54 @@ public final class MultiSessionLaunchViewModel {
   /// If a parsed orchestration plan exists, launches one session per task.
   /// Otherwise falls back to a single session using the full plan text.
   public func approveSmartPlan() async {
+    defer { activeLaunchTask = nil }
     guard let repo = selectedRepository else { return }
 
-    AppLogger.intelligence.info("Smart plan: approved")
+    do {
+      AppLogger.intelligence.info("Smart plan: approved")
 
-    smartPhase = .launching
-    isLaunching = true
-    launchError = nil
-    playedWorktreeSuccessPaths.removeAll()
-    applyWorktreeProgress(.idle, to: \.claudeProgress)
-    applyWorktreeProgress(.idle, to: \.codexProgress)
-    resetBranchNamingProgress()
+      smartPhase = .launching
+      isLaunching = true
+      launchError = nil
+      lastLaunchEndedByCancellation = false
+      playedWorktreeSuccessPaths.removeAll()
+      applyWorktreeProgress(.idle, to: \.claudeProgress)
+      applyWorktreeProgress(.idle, to: \.codexProgress)
+      resetBranchNamingProgress()
 
-    let viewModel = smartProvider == .claude ? claudeViewModel : codexViewModel
-    let repoPath = repo.path
-    let dangerously = smartProvider == .claude ? claudeMode.dangerouslySkipPermissions : false
+      let viewModel = smartProvider == .claude ? claudeViewModel : codexViewModel
+      let repoPath = repo.path
+      let dangerously = smartProvider == .claude ? claudeMode.dangerouslySkipPermissions : false
 
-    viewModel.addRepository(at: repoPath)
-    try? await Task.sleep(for: .milliseconds(300))
+      viewModel.addRepository(at: repoPath)
+      try await Task.sleep(for: .milliseconds(300))
+      try Task.checkCancellation()
 
-    if let plan = smartOrchestrationPlan, !plan.sessions.isEmpty {
-      // Multi-session launch from parsed orchestration plan
-      await launchOrchestrationSessions(
-        plan: plan,
-        repoPath: repoPath,
-        viewModel: viewModel,
-        dangerouslySkipPermissions: dangerously,
-        permissionModePlan: isPlanModeEnabled
-      )
-    } else {
-      // Fallback: single session with the full plan text (not the original prompt)
-      await launchFallbackSession(
-        repoPath: repoPath,
-        repoName: repo.name,
-        viewModel: viewModel,
-        dangerouslySkipPermissions: dangerously,
-        permissionModePlan: isPlanModeEnabled
-      )
+      if let plan = smartOrchestrationPlan, !plan.sessions.isEmpty {
+        // Multi-session launch from parsed orchestration plan
+        try await launchOrchestrationSessions(
+          plan: plan,
+          repoPath: repoPath,
+          viewModel: viewModel,
+          dangerouslySkipPermissions: dangerously,
+          permissionModePlan: isPlanModeEnabled
+        )
+      } else {
+        // Fallback: single session with the full plan text (not the original prompt)
+        try await launchFallbackSession(
+          repoPath: repoPath,
+          repoName: repo.name,
+          viewModel: viewModel,
+          dangerouslySkipPermissions: dangerously,
+          permissionModePlan: isPlanModeEnabled
+        )
+      }
+    } catch is CancellationError {
+      handleLaunchCancellation()
+    } catch {
+      launchError = error.localizedDescription
+      isLaunching = false
+      smartPhase = .planReady
     }
   }
 
@@ -562,10 +627,11 @@ public final class MultiSessionLaunchViewModel {
     viewModel: CLISessionsViewModel,
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool = false
-  ) async {
+  ) async throws {
     var errors: [String] = []
 
     for (index, session) in plan.sessions.enumerated() {
+      try Task.checkCancellation()
       AppLogger.intelligence.info(
         "Smart plan: creating session \(index + 1)/\(plan.sessions.count) — \(session.branchName)"
       )
@@ -574,19 +640,18 @@ public final class MultiSessionLaunchViewModel {
         let dirName = GitWorktreeService.worktreeDirectoryName(
           for: session.branchName, repoName: URL(fileURLWithPath: repoPath).lastPathComponent
         )
-        let worktreePath = try await worktreeService.createWorktreeWithNewBranch(
-          at: repoPath,
-          newBranchName: session.branchName,
+        let worktreePath = try await createWorktreeForLaunch(
+          providerLabel: smartProvider.rawValue,
+          repoPath: repoPath,
+          branchName: session.branchName,
           directoryName: dirName,
-          startPoint: baseBranch?.displayName
-        ) { [weak self] progress in
-          Task { @MainActor in
-            self?.applyWorktreeProgress(progress, to: \.claudeProgress)
-          }
-        }
+          startPoint: baseBranch?.displayName,
+          progressKeyPath: \.claudeProgress
+        )
 
         viewModel.refresh()
-        try? await Task.sleep(for: .milliseconds(500))
+        try await Task.sleep(for: .milliseconds(500))
+        try Task.checkCancellation()
 
         let worktree = WorktreeBranch(name: session.branchName, path: worktreePath, isWorktree: true)
         viewModel.startNewSessionInHub(
@@ -601,8 +666,11 @@ public final class MultiSessionLaunchViewModel {
 
         // Delay between launches to prevent macOS race conditions
         if index < plan.sessions.count - 1 {
-          try? await Task.sleep(for: .milliseconds(800))
+          try await Task.sleep(for: .milliseconds(800))
         }
+        try Task.checkCancellation()
+      } catch is CancellationError {
+        throw CancellationError()
       } catch {
         let msg = "\(session.branchName): \(error.localizedDescription)"
         AppLogger.intelligence.error("Smart plan: worktree failed — \(msg)")
@@ -626,12 +694,12 @@ public final class MultiSessionLaunchViewModel {
     viewModel: CLISessionsViewModel,
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool = false
-  ) async {
+  ) async throws {
     // Use the full plan text as the prompt, not the original user message
     let initialPrompt = smartPlanText.isEmpty ? sharedPrompt : smartPlanText
     guard let repository = selectedRepository else { return }
 
-    let namingResult = await resolveGeneratedBranchNames(
+    let namingResult = try await resolveGeneratedBranchNames(
       for: repository,
       launchContext: .smartFallback,
       promptText: initialPrompt,
@@ -648,19 +716,18 @@ public final class MultiSessionLaunchViewModel {
 
     do {
       let dirName = GitWorktreeService.worktreeDirectoryName(for: branchName, repoName: repoName)
-      let worktreePath = try await worktreeService.createWorktreeWithNewBranch(
-        at: repoPath,
-        newBranchName: branchName,
+      let worktreePath = try await createWorktreeForLaunch(
+        providerLabel: smartProvider.rawValue,
+        repoPath: repoPath,
+        branchName: branchName,
         directoryName: dirName,
-        startPoint: baseBranch?.displayName
-      ) { [weak self] progress in
-        Task { @MainActor in
-          self?.applyWorktreeProgress(progress, to: \.claudeProgress)
-        }
-      }
+        startPoint: baseBranch?.displayName,
+        progressKeyPath: \.claudeProgress
+      )
 
       viewModel.refresh()
-      try? await Task.sleep(for: .milliseconds(500))
+      try await Task.sleep(for: .milliseconds(500))
+      try Task.checkCancellation()
 
       let worktree = WorktreeBranch(name: branchName, path: worktreePath, isWorktree: true)
       viewModel.startNewSessionInHub(
@@ -675,6 +742,8 @@ public final class MultiSessionLaunchViewModel {
       isLaunching = false
       onLaunchCompleted?()
       reset()
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       AppLogger.intelligence.error("Smart plan: worktree creation failed — \(error.localizedDescription)")
       launchError = "Worktree creation failed: \(error.localizedDescription)"
@@ -694,6 +763,9 @@ public final class MultiSessionLaunchViewModel {
 
   /// Fully resets all form state for a fresh start
   public func reset() {
+    activeLaunchTask?.cancel()
+    activeLaunchTask = nil
+    activeWorktreeOperations.removeAll()
     for file in attachedFiles where file.isTemporary {
       try? FileManager.default.removeItem(at: file.url)
     }
@@ -718,6 +790,7 @@ public final class MultiSessionLaunchViewModel {
     codexProgress = .idle
     resetBranchNamingProgress()
     launchError = nil
+    lastLaunchEndedByCancellation = false
     smartPhase = .idle
     smartProvider = .claude
     smartPlanText = ""
@@ -727,7 +800,7 @@ public final class MultiSessionLaunchViewModel {
   // MARK: - Private
 
   /// Starts sessions directly in repo directory without worktree creation
-  private func launchLocalSessions(initialPrompt: String?, initialInputText: String?, repoPath: String) async {
+  private func launchLocalSessions(initialPrompt: String?, initialInputText: String?, repoPath: String) async throws {
     let providers = selectedProviders
 
     for provider in providers {
@@ -735,7 +808,8 @@ public final class MultiSessionLaunchViewModel {
       viewModel.addRepository(at: repoPath)
     }
 
-    try? await Task.sleep(for: .milliseconds(300))
+    try await Task.sleep(for: .milliseconds(300))
+    try Task.checkCancellation()
 
     let worktreeBranchName: String = {
       if let name = claudeWorktreeOption, !name.isEmpty { return name }
@@ -749,7 +823,8 @@ public final class MultiSessionLaunchViewModel {
 
     if providers.contains(.claude) {
       claudeViewModel.refresh()
-      try? await Task.sleep(for: .milliseconds(300))
+      try await Task.sleep(for: .milliseconds(300))
+      try Task.checkCancellation()
       claudeViewModel.startNewSessionInHub(
         worktree,
         initialPrompt: initialPrompt,
@@ -761,9 +836,11 @@ public final class MultiSessionLaunchViewModel {
     }
 
     if providers.contains(.codex) {
-      try? await Task.sleep(for: .milliseconds(500))
+      try await Task.sleep(for: .milliseconds(500))
+      try Task.checkCancellation()
       codexViewModel.refresh()
-      try? await Task.sleep(for: .milliseconds(300))
+      try await Task.sleep(for: .milliseconds(300))
+      try Task.checkCancellation()
       codexViewModel.startNewSessionInHub(
         worktree,
         initialPrompt: initialPrompt,
@@ -776,45 +853,48 @@ public final class MultiSessionLaunchViewModel {
     codexViewModel.refresh()
   }
 
-  private func launchBothProviders(initialPrompt: String?, initialInputText: String?, repoPath: String) async {
+  private func launchBothProviders(initialPrompt: String?, initialInputText: String?, repoPath: String) async throws {
     // Ensure the repository is added to both providers
     claudeViewModel.addRepository(at: repoPath)
     codexViewModel.addRepository(at: repoPath)
-    try? await Task.sleep(for: .milliseconds(300))
+    try await Task.sleep(for: .milliseconds(300))
+    try Task.checkCancellation()
 
     // 1. Create Claude worktree
     var claudeWorktreePath: String?
     do {
       let dirName = directoryName(for: claudeBranchName)
-      claudeWorktreePath = try await worktreeService.createWorktreeWithNewBranch(
-        at: repoPath,
-        newBranchName: claudeBranchName,
+      claudeWorktreePath = try await createWorktreeForLaunch(
+        providerLabel: SessionProviderKind.claude.rawValue,
+        repoPath: repoPath,
+        branchName: claudeBranchName,
         directoryName: dirName,
-        startPoint: baseBranch?.displayName
-      ) { [weak self] progress in
-        Task { @MainActor in
-          self?.applyWorktreeProgress(progress, to: \.claudeProgress)
-        }
-      }
+        startPoint: baseBranch?.displayName,
+        progressKeyPath: \.claudeProgress
+      )
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       applyWorktreeProgress(.failed(error: error.localizedDescription), to: \.claudeProgress)
       launchError = "Claude worktree: \(error.localizedDescription)"
     }
 
+    try Task.checkCancellation()
+
     // 2. Create Codex worktree
     var codexWorktreePath: String?
     do {
       let dirName = directoryName(for: codexBranchName)
-      codexWorktreePath = try await worktreeService.createWorktreeWithNewBranch(
-        at: repoPath,
-        newBranchName: codexBranchName,
+      codexWorktreePath = try await createWorktreeForLaunch(
+        providerLabel: SessionProviderKind.codex.rawValue,
+        repoPath: repoPath,
+        branchName: codexBranchName,
         directoryName: dirName,
-        startPoint: baseBranch?.displayName
-      ) { [weak self] progress in
-        Task { @MainActor in
-          self?.applyWorktreeProgress(progress, to: \.codexProgress)
-        }
-      }
+        startPoint: baseBranch?.displayName,
+        progressKeyPath: \.codexProgress
+      )
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
       applyWorktreeProgress(.failed(error: error.localizedDescription), to: \.codexProgress)
       let msg = "Codex worktree: \(error.localizedDescription)"
@@ -826,7 +906,8 @@ public final class MultiSessionLaunchViewModel {
     // 3. Refresh and start sessions
     claudeViewModel.refresh()
     codexViewModel.refresh()
-    try? await Task.sleep(for: .milliseconds(500))
+    try await Task.sleep(for: .milliseconds(500))
+    try Task.checkCancellation()
 
     if let path = claudeWorktreePath {
       let worktree = WorktreeBranch(name: claudeBranchName, path: path, isWorktree: true)
@@ -839,7 +920,8 @@ public final class MultiSessionLaunchViewModel {
       )
     }
 
-    try? await Task.sleep(for: .milliseconds(800))
+    try await Task.sleep(for: .milliseconds(800))
+    try Task.checkCancellation()
 
     if let path = codexWorktreePath {
       let worktree = WorktreeBranch(name: codexBranchName, path: path, isWorktree: true)
@@ -861,28 +943,30 @@ public final class MultiSessionLaunchViewModel {
     repoPath: String,
     branchName: String,
     viewModel: CLISessionsViewModel,
+    providerLabel: String,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
-    progressHandler: @escaping @MainActor @Sendable (WorktreeCreationProgress) -> Void
-  ) async {
+    progressKeyPath: ReferenceWritableKeyPath<MultiSessionLaunchViewModel, WorktreeCreationProgress>
+  ) async throws {
     viewModel.addRepository(at: repoPath)
-    try? await Task.sleep(for: .milliseconds(300))
+    try await Task.sleep(for: .milliseconds(300))
+    try Task.checkCancellation()
 
     var worktreePath: String?
     do {
       let dirName = directoryName(for: branchName)
-      worktreePath = try await worktreeService.createWorktreeWithNewBranch(
-        at: repoPath,
-        newBranchName: branchName,
+      worktreePath = try await createWorktreeForLaunch(
+        providerLabel: providerLabel,
+        repoPath: repoPath,
+        branchName: branchName,
         directoryName: dirName,
-        startPoint: baseBranch?.displayName
-      ) { progress in
-        Task { @MainActor in
-          progressHandler(progress)
-        }
-      }
+        startPoint: baseBranch?.displayName,
+        progressKeyPath: progressKeyPath
+      )
+    } catch is CancellationError {
+      throw CancellationError()
     } catch {
-      progressHandler(.failed(error: error.localizedDescription))
+      applyWorktreeProgress(.failed(error: error.localizedDescription), to: progressKeyPath)
       launchError = error.localizedDescription
       return
     }
@@ -890,7 +974,8 @@ public final class MultiSessionLaunchViewModel {
     guard let path = worktreePath else { return }
 
     viewModel.refresh()
-    try? await Task.sleep(for: .milliseconds(500))
+    try await Task.sleep(for: .milliseconds(500))
+    try Task.checkCancellation()
 
     let worktree = WorktreeBranch(name: branchName, path: path, isWorktree: true)
     viewModel.startNewSessionInHub(
@@ -908,7 +993,7 @@ public final class MultiSessionLaunchViewModel {
     launchContext: WorktreeBranchNamingLaunchContext,
     promptText: String,
     providerKinds: [SessionProviderKind]
-  ) async -> WorktreeBranchNamingResult {
+  ) async throws -> WorktreeBranchNamingResult {
     let attachmentNames = attachmentBasenames
     let providerNames = providerKinds.map(\.rawValue).joined(separator: ",")
     let baseBranchName = baseBranch?.displayName ?? "HEAD"
@@ -925,6 +1010,10 @@ public final class MultiSessionLaunchViewModel {
     AppLogger.intelligence.info(
       "\(Self.aiWorktreeLogPrefix, privacy: .public) Built naming request context=\(launchContext.rawValue, privacy: .public) repo=\(repository.name, privacy: .public) base=\(baseBranchName, privacy: .public) providers=\(providerNames, privacy: .public) promptLength=\(promptText.count) attachments=\(attachmentNames.joined(separator: ","), privacy: .public)"
     )
+    let namingStartedAt = Date()
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) Branch naming started context=\(launchContext.rawValue, privacy: .public) repo=\(repository.name, privacy: .public) providers=\(providerNames, privacy: .public)"
+    )
 
     if let worktreeBranchNamingService {
       branchNamingStartedAt = Date()
@@ -934,14 +1023,25 @@ public final class MultiSessionLaunchViewModel {
           ? "Preparing branch naming context"
           : "Preparing repository context"
       )
-      let result = await worktreeBranchNamingService.resolveBranchNames(for: request) { [weak self] progress in
-        self?.applyBranchNamingProgress(progress)
+      do {
+        let result = try await worktreeBranchNamingService.resolveBranchNames(for: request) { [weak self] progress in
+          self?.applyBranchNamingProgress(progress)
+        }
+        finalizeBranchNamingProgress(with: result)
+        AppLogger.intelligence.info(
+          "\(Self.aiWorktreeLogPrefix, privacy: .public) Branch naming completed source=\(result.source.rawValue, privacy: .public) elapsed=\(Self.formattedElapsed(since: namingStartedAt), privacy: .public)"
+        )
+        AppLogger.intelligence.info(
+          "\(Self.aiWorktreeLogPrefix, privacy: .public) Resolved worktree names via \(result.source.rawValue, privacy: .public)"
+        )
+        return result
+      } catch is CancellationError {
+        applyBranchNamingProgress(.cancelled(message: "Branch naming cancelled"))
+        AppLogger.intelligence.info(
+          "\(Self.aiWorktreeLogPrefix, privacy: .public) Branch naming cancelled elapsed=\(Self.formattedElapsed(since: namingStartedAt), privacy: .public)"
+        )
+        throw CancellationError()
       }
-      finalizeBranchNamingProgress(with: result)
-      AppLogger.intelligence.info(
-        "\(Self.aiWorktreeLogPrefix, privacy: .public) Resolved worktree names via \(result.source.rawValue, privacy: .public)"
-      )
-      return result
     }
 
     branchNamingStartedAt = Date()
@@ -949,6 +1049,9 @@ public final class MultiSessionLaunchViewModel {
     branchNamingProgress = .preparingContext(message: "Preparing fallback branch name")
     let fallback = ClaudeWorktreeBranchNamingService.deterministicFallback(for: request)
     finalizeBranchNamingProgress(with: fallback)
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) Branch naming completed source=\(fallback.source.rawValue, privacy: .public) elapsed=\(Self.formattedElapsed(since: namingStartedAt), privacy: .public)"
+    )
     AppLogger.intelligence.info(
       "\(Self.aiWorktreeLogPrefix, privacy: .public) No naming service was available; resolved worktree names via deterministic fallback"
     )
@@ -1020,6 +1123,112 @@ public final class MultiSessionLaunchViewModel {
     branchNamingProgress = .idle
     branchNamingStartedAt = nil
     branchNamingCompletedAt = nil
+  }
+
+  private func handleLaunchCancellation() {
+    lastLaunchEndedByCancellation = true
+    launchError = nil
+    isLaunching = false
+    activeLaunchTask = nil
+    singleBranchName = ""
+    claudeBranchName = ""
+    codexBranchName = ""
+    activeWorktreeOperations.removeAll()
+
+    if branchNamingProgress.isInProgress {
+      applyBranchNamingProgress(.cancelled(message: "Branch naming cancelled"))
+    }
+
+    if case .preparing = claudeProgress {
+      claudeProgress = .cancelled(message: "Worktree creation cancelled")
+    } else if case .updatingFiles = claudeProgress {
+      claudeProgress = .cancelled(message: "Worktree creation cancelled")
+    }
+
+    if case .preparing = codexProgress {
+      codexProgress = .cancelled(message: "Worktree creation cancelled")
+    } else if case .updatingFiles = codexProgress {
+      codexProgress = .cancelled(message: "Worktree creation cancelled")
+    }
+
+    switch smartPhase {
+    case .planning:
+      smartPhase = .idle
+    case .launching:
+      smartPhase = smartOrchestrationPlan != nil || !smartPlanText.isEmpty ? .planReady : .idle
+    case .idle, .planReady:
+      break
+    }
+  }
+
+  private func createWorktreeForLaunch(
+    providerLabel: String,
+    repoPath: String,
+    branchName: String,
+    directoryName: String,
+    startPoint: String?,
+    progressKeyPath: ReferenceWritableKeyPath<MultiSessionLaunchViewModel, WorktreeCreationProgress>
+  ) async throws -> String {
+    let operationID = WorktreeCreationOperationID()
+    let operation = ActiveWorktreeOperation(
+      id: operationID,
+      providerLabel: providerLabel,
+      branchName: branchName,
+      directoryName: directoryName,
+      repoPath: repoPath,
+      startedAt: Date()
+    )
+    activeWorktreeOperations[operationID] = operation
+
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation started provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public)"
+    )
+
+    let progressUpdater: @MainActor (WorktreeCreationProgress) -> Void = { [weak self] progress in
+      self?.applyWorktreeProgress(progress, to: progressKeyPath)
+    }
+
+    do {
+      let path = try await worktreeService.createWorktreeWithNewBranch(
+        at: repoPath,
+        newBranchName: branchName,
+        directoryName: directoryName,
+        startPoint: startPoint,
+        operationID: operationID
+      ) { progress in
+        await progressUpdater(progress)
+      }
+      activeWorktreeOperations.removeValue(forKey: operationID)
+      AppLogger.intelligence.info(
+        "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation completed provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public) elapsed=\(Self.formattedElapsed(since: operation.startedAt), privacy: .public)"
+      )
+      return path
+    } catch WorktreeCreationError.cancelled {
+      activeWorktreeOperations.removeValue(forKey: operationID)
+      applyWorktreeProgress(.cancelled(message: "Worktree creation cancelled"), to: progressKeyPath)
+      AppLogger.intelligence.info(
+        "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation cancelled provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public) elapsed=\(Self.formattedElapsed(since: operation.startedAt), privacy: .public)"
+      )
+      let cleanup = await worktreeService.cleanupCancelledWorktreeCreation(
+        repoPath: operation.repoPath,
+        newBranchName: operation.branchName,
+        directoryName: operation.directoryName
+      )
+      AppLogger.intelligence.info(
+        "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree cleanup completed provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public) removedWorktree=\(cleanup.removedWorktree) removedBranch=\(cleanup.removedBranch) notes=\(cleanup.notes.joined(separator: " | "), privacy: .public)"
+      )
+      throw CancellationError()
+    } catch {
+      activeWorktreeOperations.removeValue(forKey: operationID)
+      AppLogger.intelligence.error(
+        "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation failed provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public) elapsed=\(Self.formattedElapsed(since: operation.startedAt), privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+      throw error
+    }
+  }
+
+  private static func formattedElapsed(since startDate: Date) -> String {
+    String(format: "%.2fs", Date().timeIntervalSince(startDate))
   }
 
   private func applyWorktreeProgress(

@@ -75,6 +75,21 @@ struct GitRepoFixture {
     try runGit("worktree", "list")
   }
 
+  func installSleepingPostCheckoutHook(seconds: Int) throws {
+    let hookPath = repoPath + "/.git/hooks/post-checkout"
+    let contents = """
+    #!/bin/sh
+    sleep \(seconds)
+    """
+    try contents.write(toFile: hookPath, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hookPath)
+  }
+
+  func localBranchExists(_ branch: String) throws -> Bool {
+    let output = try runGit("branch", "--list", branch)
+    return !output.isEmpty
+  }
+
   func cleanup() {
     try? FileManager.default.removeItem(atPath: parentDir)
   }
@@ -132,6 +147,49 @@ struct RemoveWorktreeRelativeToTests {
     // Worktree list should be clean
     let listAfter = try fixture.worktreeList()
     #expect(!listAfter.contains("test-branch"))
+  }
+}
+
+@Suite("GitWorktreeService cancellation")
+struct GitWorktreeServiceCancellationTests {
+
+  @Test("Cancels in-flight worktree creation and cleans up generated artifacts")
+  func cancelsWorktreeCreationAndCleansUp() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.installSleepingPostCheckoutHook(seconds: 5)
+
+    let service = GitWorktreeService()
+    let operationID = WorktreeCreationOperationID()
+    let directoryName = "repo-cancelled-worktree"
+    let branchName = "cancelled-worktree-branch"
+
+    let task = Task {
+      try await service.createWorktreeWithNewBranch(
+        at: fixture.repoPath,
+        newBranchName: branchName,
+        directoryName: directoryName,
+        operationID: operationID
+      ) { _ in }
+    }
+
+    try await Task.sleep(for: .milliseconds(200))
+    await service.cancelWorktreeCreation(operationID)
+
+    await #expect(throws: WorktreeCreationError.self) {
+      _ = try await task.value
+    }
+
+    let cleanup = await service.cleanupCancelledWorktreeCreation(
+      repoPath: fixture.repoPath,
+      newBranchName: branchName,
+      directoryName: directoryName
+    )
+
+    #expect(cleanup.removedWorktree || cleanup.removedBranch || !cleanup.notes.isEmpty)
+    #expect(try fixture.localBranchExists(branchName) == false)
+    #expect(FileManager.default.fileExists(atPath: fixture.parentDir + "/\(directoryName)") == false)
   }
 }
 

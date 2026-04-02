@@ -904,6 +904,7 @@ public final class CLISessionsViewModel {
       newBranchName: branchName,
       directoryName: directoryName,
       startPoint: baseBranch,
+      operationID: WorktreeCreationOperationID(),
       onProgress: onProgress
     )
     refresh()
