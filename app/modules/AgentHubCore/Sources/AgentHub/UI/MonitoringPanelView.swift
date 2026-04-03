@@ -69,6 +69,31 @@ private struct ModuleSectionHeader: View {
   }
 }
 
+// MARK: - ApprovalSectionHeader
+
+/// Section header for sessions awaiting tool approval
+private struct ApprovalSectionHeader: View {
+  let sessionCount: Int
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Image(systemName: "exclamationmark.circle.fill")
+        .foregroundColor(.yellow)
+        .font(.caption)
+      Text("Requires Approval")
+        .font(.secondarySmall)
+        .foregroundColor(.yellow)
+      Spacer()
+      Text("\(sessionCount)")
+        .font(.secondarySmall)
+        .foregroundColor(.secondary)
+    }
+    .padding(.horizontal, 4)
+    .padding(.top, 6)
+    .padding(.bottom, 10)
+  }
+}
+
 // MARK: - MonitoringItem
 
 /// Unified type for both pending and monitored sessions in the monitoring panel
@@ -106,6 +131,8 @@ public struct MonitoringPanelView: View {
   private var previousLayoutModeRawValue: Int = -1
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
+  @AppStorage(AgentHubDefaults.approvalPrioritySorting)
+  private var approvalPrioritySorting: Bool = true
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @State private var cardHeights: [String: CGFloat] = [:]
@@ -170,9 +197,20 @@ public struct MonitoringPanelView: View {
     return allItems
   }
 
+  /// Items awaiting approval, sorted by approval timestamp ascending (oldest-waiting first)
+  private var approvalItems: [MonitoringItem] {
+    guard approvalPrioritySorting else { return [] }
+    return visibleItems
+      .filter { isAwaitingApproval($0) }
+      .sorted { (approvalTimestamp($0) ?? .distantFuture) < (approvalTimestamp($1) ?? .distantFuture) }
+  }
+
   /// All sessions (pending + monitored) grouped by module (main repository path)
   private var groupedMonitoredSessions: [(modulePath: String, items: [MonitoringItem])] {
-    let grouped = Dictionary(grouping: visibleItems) { findModulePath(for: $0) }
+    let itemsToGroup = approvalPrioritySorting
+      ? visibleItems.filter { !isAwaitingApproval($0) }
+      : visibleItems
+    let grouped = Dictionary(grouping: itemsToGroup) { findModulePath(for: $0) }
     return grouped.sorted { $0.key < $1.key }
       .map { (modulePath: $0.key, items: $0.value.sorted { item1, item2 in
         // Sort by timestamp descending (newest first)
@@ -181,7 +219,7 @@ public struct MonitoringPanelView: View {
   }
 
   private var flatSortedItems: [MonitoringItem] {
-    groupedMonitoredSessions.flatMap { $0.items }
+    approvalItems + groupedMonitoredSessions.flatMap { $0.items }
   }
 
   /// Helper to get timestamp for sorting MonitoringItems
@@ -189,6 +227,20 @@ public struct MonitoringPanelView: View {
     switch item {
     case .pending(let p): return p.startedAt
     case .monitored(let session, _): return session.lastActivityAt
+    }
+  }
+
+  private func isAwaitingApproval(_ item: MonitoringItem) -> Bool {
+    switch item {
+    case .pending: return false
+    case .monitored(_, let state): return state?.isAwaitingApproval ?? false
+    }
+  }
+
+  private func approvalTimestamp(_ item: MonitoringItem) -> Date? {
+    switch item {
+    case .pending: return nil
+    case .monitored(_, let state): return state?.pendingToolUse?.timestamp
     }
   }
 
@@ -655,6 +707,16 @@ public struct MonitoringPanelView: View {
   @ViewBuilder
   private var listModeGroupedContent: some View {
     VStack(alignment: .leading, spacing: 1) {
+      if !approvalItems.isEmpty {
+        VStack(alignment: .leading, spacing: 1) {
+          ApprovalSectionHeader(sessionCount: approvalItems.count)
+
+          ForEach(approvalItems) { item in
+            listModeCard(for: item)
+          }
+        }
+      }
+
       ForEach(groupedMonitoredSessions, id: \.modulePath) { group in
         VStack(alignment: .leading, spacing: 1) {
           ModuleSectionHeader(
@@ -672,6 +734,14 @@ public struct MonitoringPanelView: View {
 
   @ViewBuilder
   private var monitoredSessionsGroupedContent: some View {
+    if !approvalItems.isEmpty {
+      Section(header: ApprovalSectionHeader(sessionCount: approvalItems.count)) {
+        ForEach(approvalItems) { item in
+          itemCardView(for: item)
+        }
+      }
+    }
+
     ForEach(groupedMonitoredSessions, id: \.modulePath) { group in
       Section(header: ModuleSectionHeader(
         name: URL(fileURLWithPath: group.modulePath).lastPathComponent,

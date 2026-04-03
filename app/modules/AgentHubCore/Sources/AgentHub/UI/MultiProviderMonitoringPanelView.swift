@@ -125,6 +125,31 @@ private struct ModuleSectionHeader: View {
   }
 }
 
+// MARK: - ApprovalSectionHeader
+
+/// Section header for sessions awaiting tool approval
+private struct ApprovalSectionHeader: View {
+  let sessionCount: Int
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Image(systemName: "exclamationmark.circle.fill")
+        .foregroundColor(.yellow)
+        .font(.caption)
+      Text("Requires Approval")
+        .font(.secondarySmall)
+        .foregroundColor(.yellow)
+      Spacer()
+      Text("\(sessionCount)")
+        .font(.secondarySmall)
+        .foregroundColor(.secondary)
+    }
+    .padding(.horizontal, 4)
+    .padding(.top, 6)
+    .padding(.bottom, 10)
+  }
+}
+
 // MARK: - HubFilterControl
 
 struct HubFilterControl: View {
@@ -259,6 +284,8 @@ public struct MultiProviderMonitoringPanelView: View {
   private var previousLayoutModeRawValue: Int = -1
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
+  @AppStorage(AgentHubDefaults.approvalPrioritySorting)
+  private var approvalPrioritySorting: Bool = true
   @AppStorage(AgentHubDefaults.fileExplorerAlwaysModal)
   private var fileExplorerAlwaysModal: Bool = false
   @State private var showQuickFilePicker = false
@@ -1066,6 +1093,16 @@ public struct MultiProviderMonitoringPanelView: View {
   @ViewBuilder
   private var listModeGroupedContent: some View {
     VStack(alignment: .leading, spacing: 18) {
+      if !approvalItems.isEmpty {
+        VStack(alignment: .leading, spacing: 12) {
+          ApprovalSectionHeader(sessionCount: approvalItems.count)
+
+          ForEach(approvalItems) { item in
+            listModeCard(for: item)
+          }
+        }
+      }
+
       ForEach(groupedMonitoredSessions, id: \.modulePath) { group in
         VStack(alignment: .leading, spacing: 12) {
           ModuleSectionHeader(
@@ -1083,6 +1120,14 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @ViewBuilder
   private var monitoredSessionsGroupedContent: some View {
+    if !approvalItems.isEmpty {
+      Section(header: ApprovalSectionHeader(sessionCount: approvalItems.count)) {
+        ForEach(approvalItems) { item in
+          itemCardView(for: item)
+        }
+      }
+    }
+
     ForEach(groupedMonitoredSessions, id: \.modulePath) { group in
       Section(header: ModuleSectionHeader(
         name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
@@ -1259,14 +1304,39 @@ public struct MultiProviderMonitoringPanelView: View {
     return claudeItems + codexItems
   }
 
+  /// Items awaiting approval, sorted by approval timestamp ascending (oldest-waiting first)
+  private var approvalItems: [ProviderMonitoringItem] {
+    guard approvalPrioritySorting else { return [] }
+    return visibleItems
+      .filter { isAwaitingApproval($0) }
+      .sorted { (approvalTimestamp($0) ?? .distantFuture) < (approvalTimestamp($1) ?? .distantFuture) }
+  }
+
   private var groupedMonitoredSessions: [(modulePath: String, items: [ProviderMonitoringItem])] {
-    let grouped = Dictionary(grouping: visibleItems) { findModulePath(for: $0) }
+    let itemsToGroup = approvalPrioritySorting
+      ? visibleItems.filter { !isAwaitingApproval($0) }
+      : visibleItems
+    let grouped = Dictionary(grouping: itemsToGroup) { findModulePath(for: $0) }
     return grouped.sorted { $0.key < $1.key }
       .map { (modulePath: $0.key, items: $0.value.sorted { $0.timestamp > $1.timestamp }) }
   }
 
   private var flatSortedItems: [ProviderMonitoringItem] {
-    groupedMonitoredSessions.flatMap { $0.items }
+    approvalItems + groupedMonitoredSessions.flatMap { $0.items }
+  }
+
+  private func isAwaitingApproval(_ item: ProviderMonitoringItem) -> Bool {
+    switch item {
+    case .pending: return false
+    case .monitored(_, _, _, let state): return state?.isAwaitingApproval ?? false
+    }
+  }
+
+  private func approvalTimestamp(_ item: ProviderMonitoringItem) -> Date? {
+    switch item {
+    case .pending: return nil
+    case .monitored(_, _, _, let state): return state?.pendingToolUse?.timestamp
+    }
   }
 
   private var effectivePrimaryItem: ProviderMonitoringItem? {

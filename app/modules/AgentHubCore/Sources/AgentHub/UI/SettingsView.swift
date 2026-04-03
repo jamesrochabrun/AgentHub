@@ -23,6 +23,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.fileExplorerAlwaysModal)
   private var fileExplorerAlwaysModal: Bool = false
 
+  @AppStorage(AgentHubDefaults.approvalPrioritySorting)
+  private var approvalPrioritySorting: Bool = true
+
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
@@ -109,6 +112,12 @@ public struct SettingsView: View {
       }
 
       Section("Features") {
+        settingsToggle(
+          title: "Approval-priority sorting",
+          description: "Surface sessions awaiting tool approval to the top of the Hub",
+          isOn: $approvalPrioritySorting
+        )
+
         settingsToggle(
           title: "File explorer always modal",
           description: "Open file explorer as a floating window instead of a side panel",

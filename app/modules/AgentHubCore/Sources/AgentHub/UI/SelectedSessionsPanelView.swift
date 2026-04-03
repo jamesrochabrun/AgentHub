@@ -7,11 +7,38 @@
 
 import SwiftUI
 
+// MARK: - ApprovalSectionHeader
+
+/// Section header for sessions awaiting tool approval
+private struct ApprovalSectionHeader: View {
+  let sessionCount: Int
+
+  var body: some View {
+    HStack(spacing: 6) {
+      Image(systemName: "exclamationmark.circle.fill")
+        .foregroundColor(.yellow)
+        .font(.caption)
+      Text("Requires Approval")
+        .font(.secondarySmall)
+        .foregroundColor(.yellow)
+      Spacer()
+      Text("\(sessionCount)")
+        .font(.secondarySmall)
+        .foregroundColor(.secondary)
+    }
+    .padding(.horizontal, 4)
+    .padding(.top, 6)
+    .padding(.bottom, 10)
+  }
+}
+
 // MARK: - SelectedSessionsPanelView (Single Provider)
 
 public struct SelectedSessionsPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   @Binding var primarySessionId: String?
+  @AppStorage(AgentHubDefaults.approvalPrioritySorting)
+  private var approvalPrioritySorting: Bool = true
 
   public init(
     viewModel: CLISessionsViewModel,
@@ -26,11 +53,28 @@ public struct SelectedSessionsPanelView: View {
       header
         .padding(.bottom, 8)
 
-      if groupedItems.isEmpty {
+      if groupedItems.isEmpty && approvalItems.isEmpty {
         emptyState
       } else {
         ScrollView(showsIndicators: false) {
           LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+            if !approvalItems.isEmpty {
+              Section(header: ApprovalSectionHeader(sessionCount: approvalItems.count)) {
+                ForEach(approvalItems) { item in
+                  SelectedSessionRow(
+                    session: item.session,
+                    providerKind: viewModel.providerKind,
+                    timestamp: item.timestamp,
+                    isPending: item.isPending,
+                    isPrimary: item.id == primarySessionId,
+                    customName: viewModel.sessionCustomNames[item.session.id]
+                  ) {
+                    primarySessionId = item.id
+                  }
+                }
+              }
+            }
+
             ForEach(groupedItems, id: \.modulePath) { group in
               Section(header: ModuleSectionHeader(
                 name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
@@ -106,6 +150,8 @@ public struct SelectedSessionsPanelView: View {
     let timestamp: Date
     let modulePath: String
     let isPending: Bool
+    let isAwaitingApproval: Bool
+    let approvalTimestamp: Date?
   }
 
   private var items: [SelectedSessionItem] {
@@ -117,7 +163,9 @@ public struct SelectedSessionsPanelView: View {
         session: pending.placeholderSession,
         timestamp: pending.startedAt,
         modulePath: findModulePath(for: pending.worktree.path),
-        isPending: true
+        isPending: true,
+        isAwaitingApproval: false,
+        approvalTimestamp: nil
       ))
     }
 
@@ -127,15 +175,27 @@ public struct SelectedSessionsPanelView: View {
         session: item.session,
         timestamp: item.session.lastActivityAt,
         modulePath: findModulePath(for: item.session.projectPath),
-        isPending: false
+        isPending: false,
+        isAwaitingApproval: item.state?.isAwaitingApproval ?? false,
+        approvalTimestamp: item.state?.pendingToolUse?.timestamp
       ))
     }
 
     return results.sorted { $0.timestamp > $1.timestamp }
   }
 
+  private var approvalItems: [SelectedSessionItem] {
+    guard approvalPrioritySorting else { return [] }
+    return items
+      .filter { $0.isAwaitingApproval }
+      .sorted { ($0.approvalTimestamp ?? .distantFuture) < ($1.approvalTimestamp ?? .distantFuture) }
+  }
+
   private var groupedItems: [(modulePath: String, items: [SelectedSessionItem])] {
-    let grouped = Dictionary(grouping: items) { $0.modulePath }
+    let itemsToGroup = approvalPrioritySorting
+      ? items.filter { !$0.isAwaitingApproval }
+      : items
+    let grouped = Dictionary(grouping: itemsToGroup) { $0.modulePath }
     return grouped.sorted { $0.key < $1.key }
       .map { (modulePath: $0.key, items: $0.value.sorted { $0.timestamp > $1.timestamp }) }
   }
@@ -169,6 +229,8 @@ public struct MultiProviderSelectedSessionsPanelView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
   @Binding var primarySessionId: String?
+  @AppStorage(AgentHubDefaults.approvalPrioritySorting)
+  private var approvalPrioritySorting: Bool = true
 
   public init(
     claudeViewModel: CLISessionsViewModel,
@@ -185,11 +247,28 @@ public struct MultiProviderSelectedSessionsPanelView: View {
       header
         .padding(.bottom, 8)
 
-      if groupedItems.isEmpty {
+      if groupedItems.isEmpty && approvalItems.isEmpty {
         emptyState
       } else {
         ScrollView(showsIndicators: false) {
           LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
+            if !approvalItems.isEmpty {
+              Section(header: ApprovalSectionHeader(sessionCount: approvalItems.count)) {
+                ForEach(approvalItems) { item in
+                  SelectedSessionRow(
+                    session: item.session,
+                    providerKind: item.providerKind,
+                    timestamp: item.timestamp,
+                    isPending: item.isPending,
+                    isPrimary: item.id == primarySessionId,
+                    customName: customName(for: item)
+                  ) {
+                    primarySessionId = item.id
+                  }
+                }
+              }
+            }
+
             ForEach(groupedItems, id: \.modulePath) { group in
               Section(header: ModuleSectionHeader(
                 name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
@@ -266,6 +345,8 @@ public struct MultiProviderSelectedSessionsPanelView: View {
     let timestamp: Date
     let modulePath: String
     let isPending: Bool
+    let isAwaitingApproval: Bool
+    let approvalTimestamp: Date?
   }
 
   private var items: [SelectedSessionItem] {
@@ -278,7 +359,9 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         providerKind: .claude,
         timestamp: pending.startedAt,
         modulePath: findModulePath(for: pending.worktree.path),
-        isPending: true
+        isPending: true,
+        isAwaitingApproval: false,
+        approvalTimestamp: nil
       ))
     }
 
@@ -289,7 +372,9 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         providerKind: .codex,
         timestamp: pending.startedAt,
         modulePath: findModulePath(for: pending.worktree.path),
-        isPending: true
+        isPending: true,
+        isAwaitingApproval: false,
+        approvalTimestamp: nil
       ))
     }
 
@@ -300,7 +385,9 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         providerKind: .claude,
         timestamp: item.session.lastActivityAt,
         modulePath: findModulePath(for: item.session.projectPath),
-        isPending: false
+        isPending: false,
+        isAwaitingApproval: item.state?.isAwaitingApproval ?? false,
+        approvalTimestamp: item.state?.pendingToolUse?.timestamp
       ))
     }
 
@@ -311,15 +398,27 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         providerKind: .codex,
         timestamp: item.session.lastActivityAt,
         modulePath: findModulePath(for: item.session.projectPath),
-        isPending: false
+        isPending: false,
+        isAwaitingApproval: item.state?.isAwaitingApproval ?? false,
+        approvalTimestamp: item.state?.pendingToolUse?.timestamp
       ))
     }
 
     return results.sorted { $0.timestamp > $1.timestamp }
   }
 
+  private var approvalItems: [SelectedSessionItem] {
+    guard approvalPrioritySorting else { return [] }
+    return items
+      .filter { $0.isAwaitingApproval }
+      .sorted { ($0.approvalTimestamp ?? .distantFuture) < ($1.approvalTimestamp ?? .distantFuture) }
+  }
+
   private var groupedItems: [(modulePath: String, items: [SelectedSessionItem])] {
-    let grouped = Dictionary(grouping: items) { $0.modulePath }
+    let itemsToGroup = approvalPrioritySorting
+      ? items.filter { !$0.isAwaitingApproval }
+      : items
+    let grouped = Dictionary(grouping: itemsToGroup) { $0.modulePath }
     return grouped.sorted { $0.key < $1.key }
       .map { (modulePath: $0.key, items: $0.value.sorted { $0.timestamp > $1.timestamp }) }
   }

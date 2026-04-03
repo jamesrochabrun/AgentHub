@@ -133,6 +133,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let fileExplorerAlwaysModal = "\(keyPrefix)features.fileExplorerAlwaysModal"
 
+  /// Whether sessions awaiting approval are sorted to the top of the Hub and selected sessions panels
+  /// Type: Bool (default: true)
+  public static let approvalPrioritySorting = "\(keyPrefix)hub.approvalPrioritySorting"
+
   /// Whether debug-only web preview design tools are enabled
   /// Type: Bool (default: true in debug)
   public static let webPreviewAdvancedEditingEnabled = "\(keyPrefix)developer.webPreviewAdvancedEditingEnabled"
