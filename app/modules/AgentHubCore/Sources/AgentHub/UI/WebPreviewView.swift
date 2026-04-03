@@ -41,7 +41,7 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   case edit
 
   static func availableCases(advancedEditingEnabled: Bool) -> [WebPreviewInspectBehavior] {
-    advancedEditingEnabled ? Self.allCases : [.input, .context]
+    advancedEditingEnabled ? Self.allCases : [.input]
   }
 
   var id: String { rawValue }
@@ -486,25 +486,28 @@ public struct WebPreviewView: View {
       }
 
       if inspectState.isActive {
-        HStack(spacing: 6) {
-          ForEach(WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)) { behavior in
-            Button {
-              inspectBehavior = behavior
-            } label: {
-              Image(systemName: behavior.icon)
-                .font(.caption)
-                .frame(width: 26, height: 20)
-                .foregroundColor(inspectBehavior == behavior ? .accentColor : .secondary)
-                .contentShape(Rectangle())
+        let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
+        if availableModes.count > 1 {
+          HStack(spacing: 6) {
+            ForEach(availableModes) { behavior in
+              Button {
+                inspectBehavior = behavior
+              } label: {
+                Image(systemName: behavior.icon)
+                  .font(.caption)
+                  .frame(width: 26, height: 20)
+                  .foregroundColor(inspectBehavior == behavior ? .accentColor : .secondary)
+                  .contentShape(Rectangle())
+              }
+              .buttonStyle(.plain)
+              .accessibilityLabel(behavior.accessibilityLabel)
+              .help(behavior.helpText)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(behavior.accessibilityLabel)
-            .help(behavior.helpText)
           }
+          .padding(4)
+          .background(Color.secondary.opacity(0.12))
+          .clipShape(RoundedRectangle(cornerRadius: 6))
         }
-        .padding(4)
-        .background(Color.secondary.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
       }
 
       // Inspect toggle
