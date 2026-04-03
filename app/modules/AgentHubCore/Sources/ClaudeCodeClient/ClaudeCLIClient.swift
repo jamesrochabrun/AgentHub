@@ -12,7 +12,8 @@ public protocol ClaudeCLIClientProtocol: Sendable {
     workingDirectory: String,
     systemPrompt: String?,
     permissionMode: String?,
-    disallowedTools: [String]?
+    disallowedTools: [String]?,
+    model: String?
   ) -> AnyPublisher<StreamJSONChunk, Error>
 
   @MainActor func cancel()
@@ -42,7 +43,8 @@ public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable
     workingDirectory: String,
     systemPrompt: String?,
     permissionMode: String?,
-    disallowedTools: [String]?
+    disallowedTools: [String]?,
+    model: String? = nil
   ) -> AnyPublisher<StreamJSONChunk, Error> {
     let parsedCommand = ParsedCommand(command: command)
 
@@ -72,10 +74,15 @@ public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable
       args += ["--disallowed-tools", disallowedTools.joined(separator: ",")]
     }
 
+    if let model, !model.isEmpty {
+      args += ["--model", model]
+    }
+
     Task.detached { [weak self] in
       let process = Process()
       process.executableURL = URL(fileURLWithPath: executablePath)
       process.arguments = args
+      self?.debugLogger?("Launching Claude CLI executable=\(executablePath) cwd=\(workingDirectory) argCount=\(args.count)")
 
       if !workingDirectory.isEmpty {
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
@@ -151,6 +158,9 @@ public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable
         if proc.terminationStatus != 0 && proc.terminationReason != .uncaughtSignal {
           let stderr = String(data: stderrData, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+          self?.debugLogger?(
+            "Claude CLI failed status=\(proc.terminationStatus) reason=\(proc.terminationReason.rawValue) stderr=\(stderr.isEmpty ? "<empty>" : stderr)"
+          )
           let message = stderr.isEmpty ? "Process exited with status \(proc.terminationStatus)" : stderr
           subject.send(completion: .failure(ClaudeCodeClientError.executionFailed(message)))
         } else {
@@ -165,6 +175,7 @@ public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable
         }
         stdinPipe.fileHandleForWriting.closeFile()
       } catch {
+        self?.debugLogger?("Claude CLI failed to start: \(error.localizedDescription)")
         self?.setRunningProcess(nil)
         subject.send(completion: .failure(ClaudeCodeClientError.executionFailed(error.localizedDescription)))
       }

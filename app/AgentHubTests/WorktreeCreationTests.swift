@@ -27,6 +27,14 @@ private final class MockFileWatcher: SessionFileWatcherProtocol, @unchecked Send
 
 @MainActor
 private func makeViewModel() -> MultiSessionLaunchViewModel {
+  makeViewModelFixture().viewModel
+}
+
+@MainActor
+private func makeViewModelFixture(
+  namingService: (any WorktreeBranchNamingServiceProtocol)? = nil,
+  successSoundService: (any WorktreeSuccessSoundServiceProtocol)? = nil
+) -> (viewModel: MultiSessionLaunchViewModel, claudeViewModel: CLISessionsViewModel, codexViewModel: CLISessionsViewModel) {
   let claudeVM = CLISessionsViewModel(
     monitorService: MockMonitorService(),
     fileWatcher: MockFileWatcher(),
@@ -41,7 +49,128 @@ private func makeViewModel() -> MultiSessionLaunchViewModel {
     cliConfiguration: .codexDefault,
     providerKind: .codex
   )
-  return MultiSessionLaunchViewModel(claudeViewModel: claudeVM, codexViewModel: codexVM)
+  let viewModel = MultiSessionLaunchViewModel(
+    claudeViewModel: claudeVM,
+    codexViewModel: codexVM,
+    worktreeBranchNamingService: namingService,
+    worktreeSuccessSoundService: successSoundService
+  )
+  return (viewModel, claudeVM, codexVM)
+}
+
+private actor MockWorktreeBranchNamingService: WorktreeBranchNamingServiceProtocol {
+  private(set) var requests: [WorktreeBranchNamingRequest] = []
+  private let result: WorktreeBranchNamingResult
+  private let progressUpdates: [WorktreeBranchNamingProgress]
+  private let delay: Duration?
+  private(set) var cancelCallCount = 0
+
+  init(
+    result: WorktreeBranchNamingResult,
+    progressUpdates: [WorktreeBranchNamingProgress] = [],
+    delay: Duration? = nil
+  ) {
+    self.result = result
+    self.progressUpdates = progressUpdates
+    self.delay = delay
+  }
+
+  func resolveBranchNames(
+    for request: WorktreeBranchNamingRequest,
+    onProgress: (@MainActor @Sendable (WorktreeBranchNamingProgress) -> Void)?
+  ) async throws -> WorktreeBranchNamingResult {
+    requests.append(request)
+    for update in progressUpdates {
+      guard let onProgress else { continue }
+      await onProgress(update)
+    }
+    if let delay {
+      try await Task.sleep(for: delay)
+      try Task.checkCancellation()
+      if cancelCallCount > 0 {
+        throw CancellationError()
+      }
+    }
+    return result
+  }
+
+  func cancelActiveRequest() async {
+    cancelCallCount += 1
+  }
+
+  func recordedRequests() -> [WorktreeBranchNamingRequest] {
+    requests
+  }
+
+  func recordedCancelCallCount() -> Int {
+    cancelCallCount
+  }
+}
+
+private actor MockWorktreeSuccessSoundService: WorktreeSuccessSoundServiceProtocol {
+  private(set) var playCallCount = 0
+
+  func playWorktreeCreatedSound() async {
+    playCallCount += 1
+  }
+
+  func recordedPlayCallCount() -> Int {
+    playCallCount
+  }
+}
+
+private struct LauncherGitRepoFixture {
+  let repoPath: String
+  let parentDir: String
+
+  static func create() throws -> LauncherGitRepoFixture {
+    let parentDir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AgentHubLauncherTests-\(UUID().uuidString)", isDirectory: true)
+    let repoURL = parentDir.appendingPathComponent("repo", isDirectory: true)
+    try FileManager.default.createDirectory(at: repoURL, withIntermediateDirectories: true)
+
+    let fixture = LauncherGitRepoFixture(repoPath: repoURL.path, parentDir: parentDir.path)
+    try fixture.runGit("init", "-b", "main")
+    try fixture.runGit("config", "user.email", "test@test.com")
+    try fixture.runGit("config", "user.name", "Test")
+    try "initial".write(toFile: repoURL.appendingPathComponent("README.md").path, atomically: true, encoding: .utf8)
+    try fixture.runGit("add", ".")
+    try fixture.runGit("commit", "-m", "initial")
+    return fixture
+  }
+
+  @discardableResult
+  func runGit(_ args: String..., at path: String? = nil) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = args
+    process.currentDirectoryURL = URL(fileURLWithPath: path ?? repoPath)
+
+    let stdout = Pipe()
+    let stderr = Pipe()
+    process.standardOutput = stdout
+    process.standardError = stderr
+
+    try process.run()
+    process.waitUntilExit()
+
+    let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let error = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+      .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+    if process.terminationStatus != 0 {
+      throw NSError(domain: "LauncherGitRepoFixture", code: Int(process.terminationStatus), userInfo: [
+        NSLocalizedDescriptionKey: "git \(args.joined(separator: " ")) failed: \(error)"
+      ])
+    }
+
+    return output
+  }
+
+  func cleanup() {
+    try? FileManager.default.removeItem(atPath: parentDir)
+  }
 }
 
 // MARK: - CLICommandConfiguration --worktree flag tests
@@ -255,6 +384,230 @@ struct MultiSessionLaunchViewModelResetTests {
     vm.claudeWorktreeName = "branch"
     vm.reset()
     #expect(vm.claudeWorktreeOption == nil)
+  }
+
+  @Test("reset() clears branch naming progress state")
+  @MainActor
+  func resetClearsBranchNamingProgress() {
+    let vm = makeViewModel()
+    vm.branchNamingProgress = .queryingModel(model: "haiku", message: "Asking Claude Haiku")
+    vm.branchNamingStartedAt = Date()
+    vm.branchNamingCompletedAt = Date()
+
+    vm.reset()
+
+    #expect(vm.branchNamingProgress == .idle)
+    #expect(vm.branchNamingStartedAt == nil)
+    #expect(vm.branchNamingCompletedAt == nil)
+  }
+}
+
+@Suite("MultiSessionLaunchViewModel — AI worktree naming")
+struct MultiSessionLaunchViewModelAIWorktreeNamingTests {
+
+  @Test("Manual worktree launch resolves names through the naming service")
+  @MainActor
+  func manualWorktreeLaunchUsesNamingService() async throws {
+    let repo = try LauncherGitRepoFixture.create()
+    defer { repo.cleanup() }
+
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        single: "feature/ai-login-fix-abcdef",
+        source: .ai
+      )
+    )
+    let fixture = makeViewModelFixture(namingService: namingService)
+    let viewModel = fixture.viewModel
+    let claudeViewModel = fixture.claudeViewModel
+
+    viewModel.selectedRepository = SelectedRepository(path: repo.repoPath, name: "repo")
+    await viewModel.loadBranches()
+    viewModel.workMode = .worktree
+    viewModel.claudeMode = .enabled
+    viewModel.sharedPrompt = "Fix the login flow"
+
+    await viewModel.launchSessions()
+
+    let requests = await namingService.recordedRequests()
+    #expect(requests.count == 1)
+    #expect(requests.first?.launchContext == .manualWorktree)
+    #expect(requests.first?.promptText == "Fix the login flow")
+
+    #expect(claudeViewModel.pendingHubSessions.count == 1)
+    let pending = try #require(claudeViewModel.pendingHubSessions.first)
+    #expect(pending.worktree.name == "feature/ai-login-fix-abcdef")
+    #expect(FileManager.default.fileExists(atPath: pending.worktree.path))
+
+    claudeViewModel.pendingHubSessions.removeAll()
+  }
+
+  @Test("Smart fallback resolves names through the naming service")
+  @MainActor
+  func smartFallbackUsesNamingService() async throws {
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        single: "feature/smart-rollout-abcdef",
+        source: .ai
+      )
+    )
+    let fixture = makeViewModelFixture(namingService: namingService)
+    let viewModel = fixture.viewModel
+    let repository = SelectedRepository(path: "/tmp/repo", name: "repo")
+
+    let result = try await viewModel.resolveGeneratedBranchNames(
+      for: repository,
+      launchContext: .smartFallback,
+      promptText: "Use the approved rollout plan",
+      providerKinds: [.claude]
+    )
+
+    let requests = await namingService.recordedRequests()
+    #expect(result.single == "feature/smart-rollout-abcdef")
+    #expect(requests.count == 1)
+    #expect(requests.first?.launchContext == .smartFallback)
+    #expect(requests.first?.promptText == "Use the approved rollout plan")
+  }
+
+  @Test("Naming progress captures service updates and completion timing")
+  @MainActor
+  func namingProgressTracksServiceUpdates() async throws {
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        single: "feature/live-progress-abcdef",
+        source: .ai
+      ),
+      progressUpdates: [
+        .preparingContext(message: "Preparing branch naming context"),
+        .queryingModel(model: "haiku", message: "Generating branch name"),
+        .sanitizing(message: "Finalizing branch name"),
+      ]
+    )
+    let fixture = makeViewModelFixture(namingService: namingService)
+    let viewModel = fixture.viewModel
+    let repository = SelectedRepository(path: "/tmp/repo", name: "repo")
+
+    let result = try await viewModel.resolveGeneratedBranchNames(
+      for: repository,
+      launchContext: .manualWorktree,
+      promptText: "Live progress please",
+      providerKinds: [.claude]
+    )
+
+    #expect(result.single == "feature/live-progress-abcdef")
+    #expect(viewModel.branchNamingStartedAt != nil)
+    #expect(viewModel.branchNamingCompletedAt != nil)
+    #expect(viewModel.branchNamingProgress == .completed(
+      message: "Branch name ready",
+      source: .ai,
+      branchNames: ["feature/live-progress-abcdef"]
+    ))
+  }
+
+  @Test("Cancelling during naming preserves form state and stops before worktree creation")
+  @MainActor
+  func cancellingDuringNamingPreservesForm() async throws {
+    let repo = try LauncherGitRepoFixture.create()
+    defer { repo.cleanup() }
+
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        single: "feature/late-result-abcdef",
+        source: .ai
+      ),
+      progressUpdates: [
+        .preparingContext(message: "Preparing repository context"),
+        .queryingModel(model: "haiku", message: "Generating branch name"),
+      ],
+      delay: .seconds(2)
+    )
+    let fixture = makeViewModelFixture(namingService: namingService)
+    let viewModel = fixture.viewModel
+    let claudeViewModel = fixture.claudeViewModel
+
+    viewModel.selectedRepository = SelectedRepository(path: repo.repoPath, name: "repo")
+    await viewModel.loadBranches()
+    viewModel.workMode = .worktree
+    viewModel.claudeMode = .enabled
+    viewModel.sharedPrompt = "Investigate the launcher cancellation path"
+
+    viewModel.beginLaunch()
+    try await Task.sleep(for: .milliseconds(100))
+    viewModel.cancelLaunch()
+
+    while viewModel.isLaunching {
+      try await Task.sleep(for: .milliseconds(20))
+    }
+
+    #expect(await namingService.recordedCancelCallCount() == 1)
+    #expect(viewModel.sharedPrompt == "Investigate the launcher cancellation path")
+    #expect(viewModel.selectedRepository?.path == repo.repoPath)
+    #expect(viewModel.singleBranchName.isEmpty)
+    #expect(viewModel.branchNamingProgress == .cancelled(message: "Branch naming cancelled"))
+    #expect(viewModel.lastLaunchEndedByCancellation)
+    #expect(claudeViewModel.pendingHubSessions.isEmpty)
+  }
+
+  @Test("Successful single-provider worktree creation plays one success sound")
+  @MainActor
+  func singleProviderLaunchPlaysSuccessSound() async throws {
+    let repo = try LauncherGitRepoFixture.create()
+    defer { repo.cleanup() }
+
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        single: "feature/sound-check-abcdef",
+        source: .ai
+      )
+    )
+    let successSoundService = MockWorktreeSuccessSoundService()
+    let fixture = makeViewModelFixture(
+      namingService: namingService,
+      successSoundService: successSoundService
+    )
+    let viewModel = fixture.viewModel
+
+    viewModel.selectedRepository = SelectedRepository(path: repo.repoPath, name: "repo")
+    await viewModel.loadBranches()
+    viewModel.workMode = .worktree
+    viewModel.claudeMode = .enabled
+    viewModel.sharedPrompt = "Verify the launcher status"
+
+    await viewModel.launchSessions()
+
+    #expect(await successSoundService.recordedPlayCallCount() == 1)
+  }
+
+  @Test("Successful dual-provider worktree creation plays one sound per worktree")
+  @MainActor
+  func dualProviderLaunchPlaysTwoSuccessSounds() async throws {
+    let repo = try LauncherGitRepoFixture.create()
+    defer { repo.cleanup() }
+
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        claude: "feature/dual-sound-abcdef-claude",
+        codex: "feature/dual-sound-abcdef-codex",
+        source: .ai
+      )
+    )
+    let successSoundService = MockWorktreeSuccessSoundService()
+    let fixture = makeViewModelFixture(
+      namingService: namingService,
+      successSoundService: successSoundService
+    )
+    let viewModel = fixture.viewModel
+
+    viewModel.selectedRepository = SelectedRepository(path: repo.repoPath, name: "repo")
+    await viewModel.loadBranches()
+    viewModel.workMode = .worktree
+    viewModel.claudeMode = .enabled
+    viewModel.isCodexSelected = true
+    viewModel.sharedPrompt = "Split the validation and UI follow-up work"
+
+    await viewModel.launchSessions()
+
+    #expect(await successSoundService.recordedPlayCallCount() == 2)
   }
 }
 

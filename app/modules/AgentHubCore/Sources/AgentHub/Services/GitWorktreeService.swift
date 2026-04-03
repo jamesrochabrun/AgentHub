@@ -15,6 +15,7 @@ public enum WorktreeCreationError: LocalizedError, Sendable {
   case gitCommandFailed(String)
   case fetchFailed(String)
   case worktreeAlreadyExists(String)
+  case cancelled
   case timeout
   case notAGitRepository(String)
 
@@ -30,11 +31,37 @@ public enum WorktreeCreationError: LocalizedError, Sendable {
       return "Failed to fetch branches: \(message)"
     case .worktreeAlreadyExists(let branch):
       return "Worktree already exists for branch: \(branch)"
+    case .cancelled:
+      return "Git worktree creation was cancelled"
     case .timeout:
       return "Git command timed out"
     case .notAGitRepository(let path):
       return "Not a git repository: \(path)"
     }
+  }
+}
+
+public struct WorktreeCreationOperationID: Hashable, Sendable {
+  public let value: UUID
+
+  public init(_ value: UUID = UUID()) {
+    self.value = value
+  }
+}
+
+public struct WorktreeCancellationCleanupResult: Sendable, Equatable {
+  public let removedWorktree: Bool
+  public let removedBranch: Bool
+  public let notes: [String]
+
+  public init(
+    removedWorktree: Bool,
+    removedBranch: Bool,
+    notes: [String] = []
+  ) {
+    self.removedWorktree = removedWorktree
+    self.removedBranch = removedBranch
+    self.notes = notes
   }
 }
 
@@ -58,6 +85,8 @@ public actor GitWorktreeService {
   /// Cache for git root lookups to avoid repeated process spawns for the same path.
   /// Actor isolation provides thread safety.
   private var gitRootCache: [String: String] = [:]
+  private var activeWorktreeProcesses: [WorktreeCreationOperationID: Process] = [:]
+  private var cancelledWorktreeOperations: Set<WorktreeCreationOperationID> = []
 
   public init() { }
 
@@ -290,8 +319,15 @@ public actor GitWorktreeService {
     newBranchName: String,
     directoryName: String,
     startPoint: String? = nil,
+    operationID: WorktreeCreationOperationID,
     onProgress: @escaping @Sendable (WorktreeCreationProgress) async -> Void
   ) async throws -> String {
+    if cancelledWorktreeOperations.contains(operationID) {
+      await onProgress(.cancelled(message: "Cancelled before worktree creation began"))
+      cancelledWorktreeOperations.remove(operationID)
+      throw WorktreeCreationError.cancelled
+    }
+
     // Send initial progress
     await onProgress(.preparing(message: "Preparing worktree..."))
 
@@ -313,7 +349,13 @@ public actor GitWorktreeService {
       args.append(startPoint)
     }
 
-    try await runGitCommandWithProgress(args, at: gitRoot, timeout: Self.gitWorktreeTimeout, onProgress: onProgress)
+    try await runGitCommandWithProgress(
+      args,
+      at: gitRoot,
+      timeout: Self.gitWorktreeTimeout,
+      operationID: operationID,
+      onProgress: onProgress
+    )
 
     // Send completion
     await onProgress(.completed(path: worktreePath))
@@ -321,7 +363,88 @@ public actor GitWorktreeService {
     return worktreePath
   }
 
+  public func cancelWorktreeCreation(_ operationID: WorktreeCreationOperationID) {
+    cancelledWorktreeOperations.insert(operationID)
+    activeWorktreeProcesses[operationID]?.terminate()
+  }
+
+  public func cleanupCancelledWorktreeCreation(
+    repoPath: String,
+    newBranchName: String,
+    directoryName: String
+  ) async -> WorktreeCancellationCleanupResult {
+    var notes: [String] = []
+    var removedWorktree = false
+    var removedBranch = false
+
+    do {
+      let gitRoot = try await findGitRoot(at: repoPath)
+      let parentDir = (gitRoot as NSString).deletingLastPathComponent
+      let worktreePath = (parentDir as NSString).appendingPathComponent(directoryName)
+
+      let fileManager = FileManager.default
+
+      if fileManager.fileExists(atPath: worktreePath) {
+        if let orphaned = checkIfOrphaned(at: worktreePath),
+           orphaned.isOrphaned,
+           let parentRepoPath = orphaned.parentRepoPath {
+          do {
+            try await removeOrphanedWorktree(at: worktreePath, parentRepoPath: parentRepoPath)
+            removedWorktree = true
+            notes.append("Removed orphaned worktree directory")
+          } catch {
+            notes.append("Failed to remove orphaned worktree: \(error.localizedDescription)")
+          }
+        } else {
+          do {
+            try await removeWorktree(at: worktreePath, relativeTo: gitRoot, force: true)
+            removedWorktree = true
+            notes.append("Removed git worktree")
+          } catch {
+            notes.append("git worktree remove failed: \(error.localizedDescription)")
+            do {
+              try fileManager.removeItem(atPath: worktreePath)
+              removedWorktree = true
+              notes.append("Removed worktree directory directly")
+            } catch {
+              notes.append("Direct directory cleanup failed: \(error.localizedDescription)")
+            }
+          }
+        }
+      }
+
+      do {
+        if try await branchExists(newBranchName, at: gitRoot) {
+          try await runGitCommand(["branch", "-D", newBranchName], at: gitRoot)
+          removedBranch = true
+          notes.append("Removed generated branch")
+        }
+      } catch {
+        notes.append("Branch cleanup failed: \(error.localizedDescription)")
+      }
+
+      do {
+        try await runGitCommand(["worktree", "prune"], at: gitRoot)
+      } catch {
+        notes.append("Worktree prune failed: \(error.localizedDescription)")
+      }
+    } catch {
+      notes.append("Cleanup setup failed: \(error.localizedDescription)")
+    }
+
+    return WorktreeCancellationCleanupResult(
+      removedWorktree: removedWorktree,
+      removedBranch: removedBranch,
+      notes: notes
+    )
+  }
+
   // MARK: - Utilities
+
+  private func branchExists(_ branchName: String, at repoPath: String) async throws -> Bool {
+    let output = try await runGitCommand(["branch", "--list", branchName], at: repoPath)
+    return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+  }
 
   /// Sanitizes a branch name to create a valid directory name
   /// - Parameter branch: Branch name (e.g., "origin/feature/auth")
@@ -354,7 +477,7 @@ public actor GitWorktreeService {
   /// - Returns: Directory name (e.g., "apps-feature-auth")
   public static func worktreeDirectoryName(for branch: String, repoName: String) -> String {
     let sanitized = sanitizeBranchName(branch)
-    return "\(repoName)-\(sanitized)"
+    return "\(repoName.lowercased())-\(sanitized)"
   }
 
   // MARK: - Git Command Runner
@@ -456,6 +579,7 @@ public actor GitWorktreeService {
     _ arguments: [String],
     at path: String,
     timeout: TimeInterval,
+    operationID: WorktreeCreationOperationID,
     onProgress: @escaping @Sendable (WorktreeCreationProgress) async -> Void
   ) async throws -> String {
 
@@ -488,73 +612,86 @@ public actor GitWorktreeService {
     }
     let stderrAccumulator = StderrAccumulator()
 
-    // Use task group for proper async handling
-    let (exitCode, didTimeout) = try await withThrowingTaskGroup(of: (Int32, Bool).self) { group in
-      // Task 1: Run process and wait for termination
-      group.addTask {
-        try process.run()
-        try inputPipe.fileHandleForWriting.close()
+    activeWorktreeProcesses[operationID] = process
+    defer {
+      activeWorktreeProcesses.removeValue(forKey: operationID)
+    }
 
-        // Use terminationHandler with continuation for proper async handling
-        let exitCode = await withCheckedContinuation { (continuation: CheckedContinuation<Int32, Never>) in
-          process.terminationHandler = { proc in
-            continuation.resume(returning: proc.terminationStatus)
+    let (exitCode, didTimeout) = try await withTaskCancellationHandler {
+      try await withThrowingTaskGroup(of: (Int32, Bool).self) { group in
+        // Task 1: Run process and wait for termination
+        group.addTask {
+          try process.run()
+          try inputPipe.fileHandleForWriting.close()
+
+          // Use terminationHandler with continuation for proper async handling
+          let exitCode = await withCheckedContinuation { (continuation: CheckedContinuation<Int32, Never>) in
+            process.terminationHandler = { proc in
+              continuation.resume(returning: proc.terminationStatus)
+            }
+          }
+          return (exitCode, false)
+        }
+
+        // Task 2: Read stderr and parse progress using AsyncStream
+        group.addTask {
+          for try await line in errorPipe.fileHandleForReading.bytes.lines {
+            await stderrAccumulator.append(line)
+
+            if let match = line.firstMatch(of: pattern),
+               let current = Int(match.1),
+               let total = Int(match.2) {
+              await onProgress(.updatingFiles(current: current, total: total))
+            } else if line.contains("Preparing worktree") {
+              await onProgress(.preparing(message: "Preparing worktree..."))
+            }
+          }
+          return (Int32(-1), false) // Sentinel value
+        }
+
+        // Task 3: Timeout
+        group.addTask {
+          do {
+            try await Task.sleep(for: .seconds(timeout))
+            if process.isRunning {
+              AppLogger.git.warning("Git command timed out after \(timeout)s, terminating")
+              process.terminate()
+            }
+            return (Int32(-1), true)
+          } catch {
+            return (Int32(-1), false) // Task was cancelled
           }
         }
-        return (exitCode, false)
-      }
 
-      // Task 2: Read stderr and parse progress using AsyncStream
-      group.addTask {
-        for try await line in errorPipe.fileHandleForReading.bytes.lines {
-          await stderrAccumulator.append(line)
-
-          if let match = line.firstMatch(of: pattern),
-             let current = Int(match.1),
-             let total = Int(match.2) {
-            await onProgress(.updatingFiles(current: current, total: total))
-          } else if line.contains("Preparing worktree") {
-            await onProgress(.preparing(message: "Preparing worktree..."))
+        // Wait for process to complete or timeout
+        var result: (Int32, Bool) = (0, false)
+        for try await taskResult in group {
+          if taskResult.1 { // Timeout
+            result = taskResult
+            group.cancelAll()
+            break
+          } else if taskResult.0 >= 0 { // Process completed (valid exit code)
+            result = taskResult
+            group.cancelAll()
+            break
           }
         }
-        return (Int32(-1), false) // Sentinel value
+        return result
       }
-
-      // Task 3: Timeout
-      group.addTask {
-        do {
-          try await Task.sleep(for: .seconds(timeout))
-          if process.isRunning {
-            AppLogger.git.warning("Git command timed out after \(timeout)s, terminating")
-            process.terminate()
-          }
-          return (Int32(-1), true)
-        } catch {
-          return (Int32(-1), false) // Task was cancelled
-        }
-      }
-
-      // Wait for process to complete or timeout
-      var result: (Int32, Bool) = (0, false)
-      for try await taskResult in group {
-        if taskResult.1 { // Timeout
-          result = taskResult
-          group.cancelAll()
-          break
-        } else if taskResult.0 >= 0 { // Process completed (valid exit code)
-          result = taskResult
-          group.cancelAll()
-          break
-        }
-      }
-      return result
+    } onCancel: {
+      process.terminate()
     }
 
     let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
     let output = String(data: outputData, encoding: .utf8) ?? ""
+    let wasCancelled = cancelledWorktreeOperations.remove(operationID) != nil || Task.isCancelled
 
     if didTimeout {
       throw WorktreeCreationError.timeout
+    }
+
+    if wasCancelled {
+      throw WorktreeCreationError.cancelled
     }
 
     if exitCode != 0 {

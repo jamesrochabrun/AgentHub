@@ -203,7 +203,8 @@ public final class IntelligenceViewModel {
         workingDirectory: workingDirectory,
         systemPrompt: systemPrompt,
         permissionMode: "plan",
-        disallowedTools: ["AskUserQuestion"]
+        disallowedTools: ["AskUserQuestion"],
+        model: nil
       )
 
       await streamProcessor.processStream(publisher)

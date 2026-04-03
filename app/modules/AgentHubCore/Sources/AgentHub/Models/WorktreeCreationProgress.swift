@@ -14,6 +14,7 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
   case preparing(message: String)
   case updatingFiles(current: Int, total: Int)
   case completed(path: String)
+  case cancelled(message: String)
   case failed(error: String)
 
   /// Progress value from 0.0 to 1.0
@@ -27,6 +28,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
       return total > 0 ? Double(current) / Double(total) : 0
     case .completed:
       return 1.0
+    case .cancelled:
+      return 0
     case .failed:
       return 0
     }
@@ -44,6 +47,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
     case .completed(let path):
       let directory = (path as NSString).lastPathComponent
       return "Created: \(directory)"
+    case .cancelled(let message):
+      return message
     case .failed(let error):
       return error
     }
@@ -52,7 +57,7 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
   /// Whether the operation is currently in progress
   public var isInProgress: Bool {
     switch self {
-    case .idle, .completed, .failed:
+    case .idle, .completed, .cancelled, .failed:
       return false
     case .preparing, .updatingFiles:
       return true
@@ -70,6 +75,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable {
       return "doc.on.doc"
     case .completed:
       return "checkmark.circle.fill"
+    case .cancelled:
+      return "stop.circle.fill"
     case .failed:
       return "xmark.circle.fill"
     }

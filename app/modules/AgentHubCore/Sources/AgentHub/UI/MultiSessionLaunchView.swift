@@ -136,7 +136,7 @@ public struct MultiSessionLaunchView: View {
       }
     }
     .onChange(of: viewModel.isLaunching) { wasLaunching, isLaunching in
-      if wasLaunching && !isLaunching && !viewModel.isSmartInteractive {
+      if wasLaunching && !isLaunching && !viewModel.isSmartInteractive && !viewModel.lastLaunchEndedByCancellation {
         withAnimation(.easeInOut(duration: 0.2)) {
           isExpanded = false
         }
@@ -760,10 +760,17 @@ public struct MultiSessionLaunchView: View {
 
   private var progressSection: some View {
     VStack(alignment: .leading, spacing: 6) {
-      if viewModel.isClaudeSelected {
+      if viewModel.branchNamingProgress.isVisible {
+        WorktreeBranchNamingProgressCard(
+          progress: viewModel.branchNamingProgress,
+          startedAt: viewModel.branchNamingStartedAt,
+          finishedAt: viewModel.branchNamingCompletedAt
+        )
+      }
+      if viewModel.isClaudeSelected && viewModel.claudeProgress != .idle {
         progressRow(label: "Claude", progress: viewModel.claudeProgress)
       }
-      if viewModel.isCodexSelected {
+      if viewModel.isCodexSelected && viewModel.codexProgress != .idle {
         progressRow(label: "Codex", progress: viewModel.codexProgress)
       }
     }
@@ -810,6 +817,8 @@ public struct MultiSessionLaunchView: View {
     switch progress {
     case .completed:
       return .green
+    case .cancelled:
+      return .secondary
     case .failed:
       return .red
     default:
@@ -890,20 +899,6 @@ public struct MultiSessionLaunchView: View {
               .fill(Color.brandPrimary.opacity(0.12))
           )
 
-        Button(action: {
-          viewModel.cancelSmartLaunch()
-        }) {
-          Text("Cancel")
-            .font(.geist(size: 11, weight: .medium))
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-              Capsule()
-                .fill(Color.primary.opacity(0.05))
-            )
-        }
-        .buttonStyle(.plain)
       }
 
       if let intelligence, !intelligence.lastResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1189,9 +1184,7 @@ public struct MultiSessionLaunchView: View {
         Spacer()
 
         Button(action: {
-          Task {
-            await viewModel.approveSmartPlan()
-          }
+          viewModel.beginApprovedSmartLaunch()
         }) {
           HStack(spacing: 4) {
             Image(systemName: "checkmark.circle.fill")
@@ -1240,20 +1233,14 @@ public struct MultiSessionLaunchView: View {
 
         Spacer()
 
-        Button(action: {
-          viewModel.cancelSmartLaunch()
-        }) {
-          Text("Cancel")
-            .font(.geist(size: 11, weight: .medium))
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-              Capsule()
-                .fill(Color.primary.opacity(0.05))
-            )
-        }
-        .buttonStyle(.plain)
+      }
+
+      if viewModel.branchNamingProgress.isVisible {
+        WorktreeBranchNamingProgressCard(
+          progress: viewModel.branchNamingProgress,
+          startedAt: viewModel.branchNamingStartedAt,
+          finishedAt: viewModel.branchNamingCompletedAt
+        )
       }
 
       if viewModel.claudeProgress != .idle {
@@ -1298,11 +1285,14 @@ public struct MultiSessionLaunchView: View {
 
       Spacer()
 
-      if !(viewModel.launchMode == .smart && viewModel.isSmartInteractive) {
+      if viewModel.isLaunching {
+        Button("Cancel") {
+          viewModel.cancelLaunch()
+        }
+        .buttonStyle(.bordered)
+      } else if !(viewModel.launchMode == .smart && viewModel.isSmartInteractive) {
         Button(action: {
-          Task {
-            await viewModel.launchSessions()
-          }
+          viewModel.beginLaunch()
         }) {
           HStack(spacing: 6) {
             if viewModel.isLaunching {
@@ -1330,6 +1320,9 @@ public struct MultiSessionLaunchView: View {
       return "Launch Smart"
     }
     if viewModel.isLaunching {
+      if viewModel.branchNamingProgress.isInProgress {
+        return "Naming branch..."
+      }
       return viewModel.workMode == .worktree ? "Generating worktrees..." : "Launching..."
     }
     if viewModel.isClaudeSelected && viewModel.isCodexSelected {

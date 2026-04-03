@@ -54,7 +54,9 @@ public struct AgentHubSessionsView: View {
       claudeViewModel: provider.claudeSessionsViewModel,
       codexViewModel: provider.codexSessionsViewModel,
       columnVisibility: $columnVisibility,
-      intelligenceViewModel: provider.intelligenceViewModel
+      intelligenceViewModel: provider.intelligenceViewModel,
+      worktreeBranchNamingService: provider.worktreeBranchNamingService,
+      worktreeSuccessSoundService: provider.worktreeSuccessSoundService
     )
       .frame(minWidth: 1200, minHeight: 750)
       .modifier(RemoveTitleToolbarModifier())
