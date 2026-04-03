@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Storybook
 
 // MARK: - ProjectFramework
 
@@ -32,28 +33,9 @@ enum ProjectFramework: String, Sendable {
   }
 
   /// Checks whether the project at the given path has Storybook configured.
-  /// This is independent of the primary framework — a project can be both `.vite` and have Storybook.
+  /// Delegates to `StorybookDetector` from the Storybook module.
   static func hasStorybook(at projectPath: String) -> Bool {
-    let fm = FileManager.default
-
-    // Check for .storybook/ config directory
-    if fm.fileExists(atPath: "\(projectPath)/.storybook") {
-      return true
-    }
-
-    // Check package.json for storybook dependencies or scripts
-    let packageJsonPath = "\(projectPath)/package.json"
-    guard fm.fileExists(atPath: packageJsonPath),
-          let data = fm.contents(atPath: packageJsonPath),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-      return false
-    }
-
-    let scripts = json["scripts"] as? [String: String] ?? [:]
-    if scripts["storybook"] != nil { return true }
-
-    let devDeps = json["devDependencies"] as? [String: Any] ?? [:]
-    return devDeps.keys.contains { $0.hasPrefix("@storybook/") }
+    StorybookDetector.hasStorybook(at: projectPath)
   }
 
   /// Fast synchronous detection of project framework from package.json

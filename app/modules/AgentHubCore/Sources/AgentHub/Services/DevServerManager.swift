@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Storybook
 
 // MARK: - DevServerManager
 
@@ -285,26 +286,13 @@ public final class DevServerManager {
         readinessPatterns: ["localhost:", "astro"]
       )
     case .storybook:
-      // Storybook runs as a companion server, typically via "npm run storybook"
-      var scriptName = "storybook"
-      let fm = FileManager.default
-      let packageJsonPath = "\(projectPath)/package.json"
-      if let data = fm.contents(atPath: packageJsonPath),
-         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-         let scripts = json["scripts"] as? [String: String] {
-        // Use "storybook" script if available, otherwise try "storybook:dev"
-        if scripts["storybook"] != nil {
-          scriptName = "storybook"
-        } else if scripts["storybook:dev"] != nil {
-          scriptName = "storybook:dev"
-        }
-      }
+      let scriptName = StorybookDetector.storybookScript(at: projectPath) ?? "storybook"
       return DetectedProject(
         framework: .storybook,
         command: "npm",
         arguments: ["run", scriptName, "--", "-p"],
-        defaultPort: 6006,
-        readinessPatterns: ["Storybook", "localhost:", "started"]
+        defaultPort: StorybookDetector.defaultPort,
+        readinessPatterns: StorybookDetector.readinessPatterns
       )
 
     case .unknown:
@@ -541,6 +529,32 @@ public final class DevServerManager {
     if let pipes = outputPipes[key] {
       pipes.stdout.fileHandleForReading.readabilityHandler = nil
       pipes.stderr.fileHandleForReading.readabilityHandler = nil
+    }
+  }
+}
+
+// MARK: - StorybookService Conformance
+
+extension DevServerManager: StorybookService {
+  public func start(for sessionId: String, projectPath: String) async {
+    await startStorybookServer(for: sessionId, projectPath: projectPath)
+  }
+
+  public func stop(for sessionId: String) {
+    stopStorybookServer(for: sessionId)
+  }
+
+  public func state(for sessionId: String) -> StorybookServerState {
+    let key = "\(sessionId):storybook"
+    switch servers[key] {
+    case .idle, .detecting, .stopping, nil:
+      return .idle
+    case .starting, .waitingForReady:
+      return .starting
+    case .ready(let url):
+      return .ready(url: url)
+    case .failed(let error):
+      return .failed(error: error)
     }
   }
 }

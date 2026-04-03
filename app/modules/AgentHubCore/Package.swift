@@ -14,6 +14,7 @@ let package = Package(
     ),
   ],
   dependencies: [
+    .package(path: "../Storybook"),
     .package(url: "https://github.com/jamesrochabrun/Canvas.git", exact: "1.0.3"),
     .package(url: "https://github.com/jamesrochabrun/ClaudeCodeSDK", exact: "1.2.4"),
     .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.1.5"),
@@ -29,6 +30,7 @@ let package = Package(
     .target(
       name: "AgentHubCore",
       dependencies: [
+        .product(name: "Storybook", package: "Storybook"),
         .product(name: "Canvas", package: "Canvas"),
         .product(name: "ClaudeCodeSDK", package: "ClaudeCodeSDK"),
         .product(name: "PierreDiffsSwift", package: "PierreDiffsSwift"),

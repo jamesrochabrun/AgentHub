@@ -1,103 +1,69 @@
 import Foundation
 import Testing
+import Storybook
 
 @testable import AgentHubCore
 
-@Suite("Storybook Detection")
-struct StorybookDetectionTests {
+@Suite("Storybook Integration")
+struct StorybookIntegrationTests {
 
-  // MARK: - ProjectFramework.hasStorybook
+  // MARK: - ProjectFramework delegates to StorybookDetector
 
-  @Test("Detects storybook via .storybook directory")
-  func detectsStorybookViaDirectory() throws {
+  @Test("ProjectFramework.hasStorybook delegates to StorybookDetector")
+  func delegatesToStorybookDetector() throws {
     let tmpDir = FileManager.default.temporaryDirectory
       .appendingPathComponent("storybook-test-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tmpDir) }
 
-    // No .storybook/ directory yet
+    // Both should agree: no storybook
     #expect(!ProjectFramework.hasStorybook(at: tmpDir.path))
+    #expect(!StorybookDetector.hasStorybook(at: tmpDir.path))
 
-    // Create .storybook/ directory
-    let storybookDir = tmpDir.appendingPathComponent(".storybook")
-    try FileManager.default.createDirectory(at: storybookDir, withIntermediateDirectories: true)
+    // Add .storybook/ directory
+    try FileManager.default.createDirectory(
+      at: tmpDir.appendingPathComponent(".storybook"),
+      withIntermediateDirectories: true
+    )
 
+    // Both should agree: has storybook
     #expect(ProjectFramework.hasStorybook(at: tmpDir.path))
+    #expect(StorybookDetector.hasStorybook(at: tmpDir.path))
   }
-
-  @Test("Detects storybook via package.json storybook script")
-  func detectsStorybookViaScript() throws {
-    let tmpDir = FileManager.default.temporaryDirectory
-      .appendingPathComponent("storybook-test-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: tmpDir) }
-
-    let packageJson = """
-    {
-      "name": "test-project",
-      "scripts": {
-        "dev": "vite",
-        "storybook": "storybook dev -p 6006"
-      }
-    }
-    """
-    let packageJsonPath = tmpDir.appendingPathComponent("package.json")
-    try packageJson.write(to: packageJsonPath, atomically: true, encoding: .utf8)
-
-    #expect(ProjectFramework.hasStorybook(at: tmpDir.path))
-  }
-
-  @Test("Detects storybook via @storybook/ devDependency")
-  func detectsStorybookViaDevDependency() throws {
-    let tmpDir = FileManager.default.temporaryDirectory
-      .appendingPathComponent("storybook-test-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: tmpDir) }
-
-    let packageJson = """
-    {
-      "name": "test-project",
-      "devDependencies": {
-        "@storybook/react": "^7.0.0",
-        "typescript": "^5.0.0"
-      }
-    }
-    """
-    let packageJsonPath = tmpDir.appendingPathComponent("package.json")
-    try packageJson.write(to: packageJsonPath, atomically: true, encoding: .utf8)
-
-    #expect(ProjectFramework.hasStorybook(at: tmpDir.path))
-  }
-
-  @Test("Returns false when no storybook indicators present")
-  func returnsFalseWhenNoStorybook() throws {
-    let tmpDir = FileManager.default.temporaryDirectory
-      .appendingPathComponent("storybook-test-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: tmpDir) }
-
-    let packageJson = """
-    {
-      "name": "test-project",
-      "scripts": { "dev": "vite" },
-      "devDependencies": { "vite": "^5.0.0" }
-    }
-    """
-    let packageJsonPath = tmpDir.appendingPathComponent("package.json")
-    try packageJson.write(to: packageJsonPath, atomically: true, encoding: .utf8)
-
-    #expect(!ProjectFramework.hasStorybook(at: tmpDir.path))
-  }
-
-  @Test("Returns false for nonexistent path")
-  func returnsFalseForNonexistentPath() {
-    #expect(!ProjectFramework.hasStorybook(at: "/nonexistent/path/\(UUID().uuidString)"))
-  }
-
-  // MARK: - ProjectFramework enum properties
 
   @Test("Storybook framework requires dev server")
   func storybookRequiresDevServer() {
     #expect(ProjectFramework.storybook.requiresDevServer)
+  }
+
+  // MARK: - DevServerManager conforms to StorybookService
+
+  @MainActor
+  @Test("DevServerManager conforms to StorybookService protocol")
+  func devServerManagerConformsToStorybookService() {
+    let service: any StorybookService = DevServerManager.shared
+    let sessionId = "conformance-test-\(UUID().uuidString)"
+
+    // Initially idle
+    #expect(service.state(for: sessionId) == .idle)
+  }
+
+  @MainActor
+  @Test("StorybookService state maps DevServerState correctly")
+  func storybookServiceStateMapsCorrectly() {
+    let sessionId = "state-test-\(UUID().uuidString)"
+    let storybookKey = "\(sessionId):storybook"
+
+    // Connect an external server via the compound key
+    let url = URL(string: "http://localhost:6006")!
+    DevServerManager.shared.connectToExistingServer(for: storybookKey, url: url)
+    defer { DevServerManager.shared.stopServer(for: storybookKey) }
+
+    let service: any StorybookService = DevServerManager.shared
+    guard case .ready(let readyURL) = service.state(for: sessionId) else {
+      Issue.record("Expected .ready state from StorybookService")
+      return
+    }
+    #expect(readyURL.absoluteString == "http://localhost:6006")
   }
 }
