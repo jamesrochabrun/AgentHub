@@ -8,7 +8,7 @@
 import Foundation
 import Testing
 
-@testable import AgentHubCore
+@testable import AgentHubGitHub
 
 @Suite("GitHubCLIService Parsing")
 struct GitHubCLIServiceParsingTests {

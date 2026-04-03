@@ -5,6 +5,7 @@
 //  Main GitHub integration panel with PR list, issue list, and details
 //
 
+import AgentHubGitHub
 import AppKit
 import SwiftUI
 

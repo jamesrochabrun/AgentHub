@@ -5,6 +5,7 @@
 //  Created by Assistant on 3/11/26.
 //
 
+import AgentHubGitHub
 import SwiftUI
 
 // MARK: - ResourceLinksPanel

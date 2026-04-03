@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@testable import AgentHubCore
+@testable import AgentHubGitHub
 
 /// Mock GitHub CLI service for testing ViewModels and other consumers.
 ///

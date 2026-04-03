@@ -5,7 +5,7 @@
 
 import Testing
 
-@testable import AgentHubCore
+@testable import AgentHubGitHub
 
 @Suite("GitHubDiffRenderAdapter")
 struct GitHubDiffRenderAdapterTests {

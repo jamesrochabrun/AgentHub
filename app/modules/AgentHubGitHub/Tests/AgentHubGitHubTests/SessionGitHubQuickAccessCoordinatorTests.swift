@@ -8,7 +8,7 @@
 import Foundation
 import Testing
 
-@testable import AgentHubCore
+@testable import AgentHubGitHub
 
 private func makeCoordinatorPR(number: Int) -> GitHubPullRequest {
   GitHubPullRequest(

@@ -5,6 +5,7 @@
 //  Created by Assistant on 1/11/26.
 //
 
+import AgentHubGitHub
 import SwiftUI
 import UniformTypeIdentifiers
 

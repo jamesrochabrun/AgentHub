@@ -5,6 +5,7 @@
 //  Detailed view for a GitHub pull request with diff, comments, and actions
 //
 
+import AgentHubGitHub
 import AppKit
 import SwiftUI
 import PierreDiffsSwift

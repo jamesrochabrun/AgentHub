@@ -5,6 +5,7 @@
 //  Central service provider for AgentHub
 //
 
+import AgentHubGitHub
 import Foundation
 import os
 import ClaudeCodeClient
