@@ -931,6 +931,7 @@ public struct WebPreviewView: View {
           },
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id,
+          selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady
         )
         .overlay(alignment: .top) {
@@ -974,6 +975,7 @@ public struct WebPreviewView: View {
           },
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id,
+          selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady
         )
         .webInspectorOverlay(
@@ -1042,7 +1044,15 @@ public struct WebPreviewView: View {
   }
 
   private func handleOverlayReloadingState(_ loading: Bool) {
-    // no-op: local Canvas branch removed isReloading from ElementInspectState
+    guard inspectState.selectedElement != nil else { return }
+    if loading {
+      inspectState.isReloading = true
+    } else {
+      Task { @MainActor in
+        try? await Task.sleep(for: .milliseconds(300))
+        inspectState.isReloading = false
+      }
+    }
   }
 
   private func handlePreviewLoadingChange(_ loading: Bool) {
