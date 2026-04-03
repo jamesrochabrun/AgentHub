@@ -83,7 +83,12 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
 
     var entry = entries[repositoryKey] ?? Entry(projectPath: projectPath, branchName: branchName)
     entry.subscribers[subscriptionID] = continuation
-    entry.isTerminallyPaused = false
+    // Only un-pause for transient errors (timeout, command failures). Auth/install/repo
+    // errors won't resolve without user action, so preserve the terminal pause to avoid
+    // hammering gh on every SwiftUI view rebuild.
+    if !entry.isTerminallyPaused || entry.consecutiveErrorCount == 0 {
+      entry.isTerminallyPaused = false
+    }
     entries[repositoryKey] = entry
     subscriptionKeys[subscriptionID] = repositoryKey
 

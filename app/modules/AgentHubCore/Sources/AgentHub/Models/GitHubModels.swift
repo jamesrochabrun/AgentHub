@@ -124,6 +124,9 @@ public enum GitHubCheckStatus: Equatable, Sendable {
     case "FAIL": self = .fail
     case "SKIPPING": self = .skipping
     case "CANCEL", "CANCELLED": self = .cancel
+    // StatusContext.state values (legacy commit statuses)
+    case "SUCCESS": self = .pass
+    case "FAILURE", "ERROR": self = .fail
     default: self = .unknown(rawValue)
     }
   }
@@ -384,6 +387,28 @@ public struct GitHubCheckRun: Identifiable, Equatable, Sendable, Decodable {
   public let detailsUrl: String?
 
   public var id: String { name }
+
+  public init(from decoder: any Decoder) throws {
+    let c = try decoder.container(keyedBy: CodingKeys.self)
+    // CheckRun uses `name`; StatusContext uses `context`
+    name = try c.decodeIfPresent(String.self, forKey: .name)
+      ?? c.decodeIfPresent(String.self, forKey: .context)
+      ?? ""
+    // CheckRun uses `status`; StatusContext uses `state`
+    status = try c.decodeIfPresent(String.self, forKey: .status)
+      ?? c.decodeIfPresent(String.self, forKey: .state)
+      ?? ""
+    conclusion = try c.decodeIfPresent(String.self, forKey: .conclusion)
+    bucket = try c.decodeIfPresent(String.self, forKey: .bucket)
+    // CheckRun uses `detailsUrl`; StatusContext uses `targetUrl`
+    detailsUrl = try c.decodeIfPresent(String.self, forKey: .detailsUrl)
+      ?? c.decodeIfPresent(String.self, forKey: .targetUrl)
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case name, status, conclusion, bucket, detailsUrl
+    case context, state, targetUrl
+  }
 
   public var statusKind: GitHubCheckStatus {
     GitHubCheckStatus(rawValue: status)

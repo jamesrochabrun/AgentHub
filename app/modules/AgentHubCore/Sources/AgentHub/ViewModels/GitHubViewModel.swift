@@ -124,6 +124,16 @@ public final class GitHubViewModel {
   public var selectedIssue: GitHubIssue?
   public var issueDetailLoadingState: GitHubLoadingState = .idle
 
+  /// PR filter: show only my PRs
+  public var showOnlyMyPRs: Bool = false
+
+  /// PR filter: selected labels
+  public var selectedLabels: Set<String> = []
+
+  /// Available repository labels
+  public var availableLabels: [GitHubLabel] = []
+  public var labelsLoadingState: GitHubLoadingState = .idle
+
   /// CI checks
   public var checks: [GitHubCheckRun] = []
   public var checksLoadingState: GitHubLoadingState = .idle
@@ -183,11 +193,32 @@ public final class GitHubViewModel {
     prLoadingState = .loading
 
     do {
-      pullRequests = try await service.listPullRequests(at: repoPath, state: prFilter.ghState, limit: 30)
+      pullRequests = try await service.listPullRequests(
+        at: repoPath,
+        state: prFilter.ghState,
+        limit: 30,
+        authoredByMe: showOnlyMyPRs,
+        labels: Array(selectedLabels)
+      )
       prLoadingState = .loaded
     } catch {
       prLoadingState = .error(error.localizedDescription)
       AppLogger.github.error("Failed to load PRs: \(error.localizedDescription)")
+    }
+  }
+
+  /// Loads repository labels if not already loaded
+  public func loadLabelsIfNeeded() async {
+    guard let repoPath = currentRepoPath,
+          availableLabels.isEmpty,
+          labelsLoadingState != .loading else { return }
+    labelsLoadingState = .loading
+    do {
+      availableLabels = try await service.listLabels(at: repoPath)
+      labelsLoadingState = .loaded
+    } catch {
+      labelsLoadingState = .error(error.localizedDescription)
+      AppLogger.github.error("Failed to load labels: \(error.localizedDescription)")
     }
   }
 
