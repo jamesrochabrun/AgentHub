@@ -477,7 +477,7 @@ public actor GitWorktreeService {
   /// - Returns: Directory name (e.g., "apps-feature-auth")
   public static func worktreeDirectoryName(for branch: String, repoName: String) -> String {
     let sanitized = sanitizeBranchName(branch)
-    return "\(repoName)-\(sanitized)"
+    return "\(repoName.lowercased())-\(sanitized)"
   }
 
   // MARK: - Git Command Runner

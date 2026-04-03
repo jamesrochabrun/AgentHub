@@ -91,11 +91,9 @@ struct WorktreeBranchNamingProgressCard: View {
   private var statusBadge: some View {
     Group {
       if progress.isInProgress {
-        badge(text: "Generating", systemImage: "waveform.path", tint: accentColor)
+        badge(text: "Working", systemImage: "ellipsis", tint: accentColor)
       } else if case .cancelled = progress {
         badge(text: "Cancelled", systemImage: "stop.circle.fill", tint: accentColor)
-      } else if progress.isFallbackCompletion {
-        badge(text: "Fallback", systemImage: "arrow.uturn.backward.circle", tint: accentColor)
       } else if progress.isFinished {
         badge(text: "Ready", systemImage: "checkmark.circle.fill", tint: accentColor)
       }
@@ -105,7 +103,7 @@ struct WorktreeBranchNamingProgressCard: View {
   private var stepsRow: some View {
     HStack(spacing: 6) {
       stepPill(index: 0, label: "Context", systemImage: "tray.and.arrow.down")
-      stepPill(index: 1, label: "Generate", systemImage: "wand.and.rays")
+      stepPill(index: 1, label: "Name", systemImage: "textformat")
       stepPill(index: 2, label: "Finalize", systemImage: "checklist")
       Spacer(minLength: 0)
     }
@@ -117,7 +115,7 @@ struct WorktreeBranchNamingProgressCard: View {
         Image(systemName: "arrow.triangle.branch")
           .font(.system(size: 9, weight: .semibold))
           .foregroundStyle(.secondary)
-        Text(progress.resolvedBranchNames.count > 1 ? "Resolved branch names" : "Resolved branch name")
+        Text(progress.resolvedBranchNames.count > 1 ? "Branch names" : "Branch name")
           .font(.geist(size: 10, weight: .semibold))
           .foregroundStyle(.secondary)
       }
@@ -240,16 +238,10 @@ struct WorktreeBranchNamingProgressCard: View {
     switch progress {
     case .idle:
       return ""
-    case .preparingContext:
-      return "Preparing branch name"
-    case .queryingModel:
-      return "Generating branch name"
-    case .sanitizing:
-      return "Finalizing branch name"
-    case .completed(_, .ai, _):
+    case .preparingContext, .queryingModel, .sanitizing:
+      return "Setting up branch"
+    case .completed:
       return "Branch name ready"
-    case .completed(_, .deterministicFallback, _):
-      return "Fallback branch name ready"
     case .cancelled:
       return "Branch naming cancelled"
     case .failed:
@@ -260,7 +252,7 @@ struct WorktreeBranchNamingProgressCard: View {
   private var leadingIcon: String {
     switch progress {
     case .idle, .preparingContext, .queryingModel, .sanitizing:
-      return "sparkles"
+      return "arrow.triangle.branch"
     case .completed:
       return "checkmark.circle.fill"
     case .cancelled:

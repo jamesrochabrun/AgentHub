@@ -77,14 +77,12 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
     )
     if !request.hasMeaningfulContext {
       AppLogger.intelligence.info(
-        "\(Self.logPrefix, privacy: .public) No prompt or attachment context provided; asking Claude to infer a repo-scoped branch stem from repository metadata"
+        "\(Self.logPrefix, privacy: .public) No prompt or attachment context provided; requesting random city name from AI"
       )
     }
     await emitProgress(
       .preparingContext(
-        message: request.hasMeaningfulContext
-          ? "Preparing branch naming context"
-          : "Preparing repository context"
+        message: "Preparing branch name"
       ),
       using: onProgress
     )
@@ -221,9 +219,7 @@ extension ClaudeWorktreeBranchNamingService {
       await emitProgress(
         .queryingModel(
           model: model,
-          message: request.hasMeaningfulContext
-            ? "Generating branch name"
-            : "Generating a repository-scoped branch name"
+          message: "Generating branch name"
         ),
         using: onProgress
       )
@@ -482,7 +478,7 @@ private extension ClaudeWorktreeBranchNamingService {
     model: String
   ) async throws -> String {
     let accumulator = StreamAccumulator()
-    let systemPrompt = makeSystemPrompt()
+    let systemPrompt = makeSystemPrompt(hasContext: request.hasMeaningfulContext)
     let userPrompt = makeUserPrompt(for: request)
 
     AppLogger.intelligence.info(
@@ -529,22 +525,36 @@ private extension ClaudeWorktreeBranchNamingService {
     }
   }
 
-  func makeSystemPrompt() -> String {
-    """
-    You generate git branch stems for developer tooling.
+  func makeSystemPrompt(hasContext: Bool) -> String {
+    if hasContext {
+      return """
+      You generate git branch stems for developer tooling.
 
-    Return exactly one branch stem and nothing else.
+      Return exactly one branch stem and nothing else.
 
-    Rules:
-    - lowercase ascii only
-    - use 2 to 5 hyphen-separated words when possible
-    - no slash
-    - no prefix such as feature/ or fix/
-    - no uuid, timestamp, or explanation
-    - no markdown, quotes, bullets, or prose
-    - when prompt and attachments are empty, infer a useful repo-scoped stem from repository name, base branch, and launch context
-    - avoid generic outputs like session or worktree when repository context is available
-    """
+      Rules:
+      - lowercase ascii only
+      - use 2 to 5 hyphen-separated words when possible
+      - no slash
+      - no prefix such as feature/ or fix/
+      - no uuid, timestamp, or explanation
+      - no markdown, quotes, bullets, or prose
+      """
+    } else {
+      return """
+      You generate git branch stems for developer tooling.
+
+      Return the name of a random city anywhere in the world, formatted as a branch stem.
+
+      Rules:
+      - lowercase ascii only
+      - use hyphens to separate words if the city name has multiple words
+      - no slash, no prefix, no uuid, no timestamp, no explanation
+      - no markdown, quotes, bullets, or prose
+      - just the city name, nothing else
+      - pick a different city each time, be creative and varied across all continents
+      """
+    }
   }
 
   func makeUserPrompt(for request: WorktreeBranchNamingRequest) -> String {
