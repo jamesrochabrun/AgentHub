@@ -16,6 +16,10 @@ let package = Package(
       name: "AgentHubCore",
       targets: ["AgentHubCore"]
     ),
+    .library(
+      name: "SwiftUIPreviewKit",
+      targets: ["SwiftUIPreviewKit"]
+    ),
   ],
   dependencies: [
     .package(url: "https://github.com/jamesrochabrun/Canvas.git", exact: "1.0.7"),
@@ -37,9 +41,17 @@ let package = Package(
       ]
     ),
     .target(
+      name: "SwiftUIPreviewKit",
+      path: "Sources/SwiftUIPreviewKit",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .target(
       name: "AgentHubCore",
       dependencies: [
         "ClaudeCodeClient",
+        "SwiftUIPreviewKit",
         .product(name: "Canvas", package: "Canvas"),
         .product(name: "PierreDiffsSwift", package: "PierreDiffsSwift"),
         .product(name: "SwiftTerm", package: "SwiftTerm"),
@@ -70,6 +82,14 @@ let package = Package(
       name: "AgentHubTests",
       dependencies: ["AgentHubCore", "ClaudeCodeClient"],
       path: "Tests/AgentHubTests",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .testTarget(
+      name: "SwiftUIPreviewKitTests",
+      dependencies: ["SwiftUIPreviewKit"],
+      path: "Tests/SwiftUIPreviewKitTests",
       swiftSettings: [
         .swiftLanguageMode(.v5)
       ]

@@ -17,6 +17,7 @@ private enum SidePanelContent: Equatable {
   case webPreview(sessionId: String, session: CLISession, projectPath: String)
   case mermaid(sessionId: String, session: CLISession)
   case fileExplorer(sessionId: String, session: CLISession, projectPath: String, initialFilePath: String?, navigationId: UUID = UUID())
+  case swiftUIPreview(sessionId: String, session: CLISession, projectPath: String)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -30,6 +31,8 @@ private enum SidePanelContent: Equatable {
       return id1 == id2
     case (.fileExplorer(let id1, _, let p1, _, let n1), .fileExplorer(let id2, _, let p2, _, let n2)):
       return id1 == id2 && p1 == p2 && n1 == n2
+    case (.swiftUIPreview(let id1, _, let p1), .swiftUIPreview(let id2, _, let p2)):
+      return id1 == id2 && p1 == p2
     default: return false
     }
   }
@@ -811,6 +814,17 @@ public struct MultiProviderMonitoringPanelView: View {
                 )
               }
             } : nil,
+            onShowSwiftUIPreview: canShowSidePanel ? { session, projectPath in
+              if case .swiftUIPreview(let sid, _, _) = sidePanelContent, sid == session.id {
+                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+              } else {
+                sidePanelContent = .swiftUIPreview(
+                  sessionId: session.id,
+                  session: session,
+                  projectPath: projectPath
+                )
+              }
+            } : nil,
             onPromptConsumed: {
               viewModel.clearPendingPrompt(for: session.id)
             },
@@ -964,6 +978,13 @@ public struct MultiProviderMonitoringPanelView: View {
         initialFilePath: initialFilePath
       )
       .id(navId)
+    case .swiftUIPreview(_, let session, let projectPath):
+      SwiftUIPreviewView(
+        session: session,
+        projectPath: projectPath,
+        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        isEmbedded: true
+      )
     }
   }
 

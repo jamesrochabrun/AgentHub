@@ -86,6 +86,7 @@ public struct MonitoringCardView: View {
   let onShowWebPreview: ((CLISession, String) -> Void)?
   let onShowMermaid: ((CLISession) -> Void)?
   let onShowFiles: ((CLISession, String) -> Void)?
+  let onShowSwiftUIPreview: ((CLISession, String) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
   let isMaximized: Bool
@@ -135,6 +136,7 @@ public struct MonitoringCardView: View {
     onShowWebPreview: ((CLISession, String) -> Void)? = nil,
     onShowMermaid: ((CLISession) -> Void)? = nil,
     onShowFiles: ((CLISession, String) -> Void)? = nil,
+    onShowSwiftUIPreview: ((CLISession, String) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
     isMaximized: Bool = false,
@@ -166,6 +168,7 @@ public struct MonitoringCardView: View {
     self.onShowWebPreview = onShowWebPreview
     self.onShowMermaid = onShowMermaid
     self.onShowFiles = onShowFiles
+    self.onShowSwiftUIPreview = onShowSwiftUIPreview
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
     self.isMaximized = isMaximized
@@ -705,6 +708,21 @@ public struct MonitoringCardView: View {
           }
           .buttonStyle(.agentHubOutlined)
           .help("Manage iOS Simulators")
+
+          // SwiftUI Preview button
+          if let onShowSwiftUIPreview {
+            Button(action: {
+              onShowSwiftUIPreview(session, session.projectPath)
+            }) {
+              HStack(spacing: 4) {
+                Image(systemName: "eye")
+                  .font(.caption2)
+                Text("Preview")
+              }
+            }
+            .buttonStyle(.agentHubOutlined)
+            .help("Render SwiftUI #Preview")
+          }
         }
 
         Button(action: onRefreshTerminal) {

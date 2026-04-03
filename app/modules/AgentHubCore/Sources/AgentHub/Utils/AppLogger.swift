@@ -50,4 +50,7 @@ enum AppLogger {
 
   /// GitHub CLI operations (PRs, issues, reviews, checks)
   static let github = Logger(subsystem: subsystem, category: "GitHub")
+
+  /// SwiftUI preview scanning and rendering
+  static let preview = Logger(subsystem: subsystem, category: "Preview")
 }
