@@ -18,7 +18,7 @@ let package = Package(
     ),
   ],
   dependencies: [
-    .package(url: "https://github.com/jamesrochabrun/Canvas.git", exact: "1.0.7"),
+    .package(name: "Canvas", path: "../../../.local-canvas"),
     .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.1.5"),
     .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.11.0"),
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
@@ -53,7 +53,6 @@ let package = Package(
       path: "Sources/AgentHub",
       resources: [
         .copy("Design/Theme/BundledThemes"),
-        .process("Resources")
       ],
       swiftSettings: [
         .swiftLanguageMode(.v5)
