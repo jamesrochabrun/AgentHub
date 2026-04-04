@@ -983,6 +983,9 @@ public struct WebPreviewView: View {
           onCropRectSelected: { rect, elements in
             inspectState.selectCropRect(rect, elements: elements)
           },
+          onCropRectViewportChange: { rect in
+            inspectState.updateCropRect(rect)
+          },
           isInspectModeActive: $inspectState.isActive,
           inspectMode: inspectBehavior.canvasMode,
           selectedElementId: inspectState.selectedElement?.id,
