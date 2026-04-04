@@ -18,33 +18,8 @@ private struct SessionFileSheetItem: Identifiable {
   let content: String
 }
 
-// MARK: - LayoutMode
-
-/// Layout modes for the monitoring panel
-private enum LayoutMode: Int, CaseIterable {
-  case single = 0
-  case list = 1
-  case twoColumn = 2
-  case threeColumn = 3
-
-  var columnCount: Int {
-    switch self {
-    case .single: return 1
-    case .list: return 1
-    case .twoColumn: return 2
-    case .threeColumn: return 3
-    }
-  }
-
-  var icon: String {
-    switch self {
-    case .single: return "rectangle"
-    case .list: return "list.bullet"
-    case .twoColumn: return "square.grid.2x2"
-    case .threeColumn: return "square.grid.3x3"
-    }
-  }
-}
+// LayoutMode is defined as HubLayoutMode in MultiProviderMonitoringPanelView.swift
+private typealias LayoutMode = HubLayoutMode
 
 // MARK: - ModuleSectionHeader
 
@@ -202,10 +177,6 @@ public struct MonitoringPanelView: View {
           .background(maximizedContainerBackgroundColor)
       } else {
         // Normal list view
-        header
-
-        Divider()
-
         if visibleItems.isEmpty {
           emptyState
         } else {
@@ -253,55 +224,6 @@ public struct MonitoringPanelView: View {
       return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
     }
     return defaultBackground
-  }
-
-  // MARK: - Header
-
-  private var header: some View {
-    HStack {
-      Text("Hub")
-        .font(.heading)
-
-      Spacer()
-
-      // Layout toggle (single / list / grid)
-      HStack(spacing: 4) {
-        ForEach(LayoutMode.allCases, id: \.rawValue) { mode in
-          Button(action: {
-            previousLayoutModeRawValue = -1
-            withAnimation(.easeInOut(duration: 0.2)) { layoutModeRawValue = mode.rawValue }
-          }) {
-            Image(systemName: mode.icon)
-              .font(.caption)
-              .frame(width: 28, height: 22)
-              .foregroundColor(layoutMode == mode ? .brandPrimary : .secondary)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-        }
-      }
-      .padding(4)
-      .background(Color.secondary.opacity(0.12))
-      .clipShape(RoundedRectangle(cornerRadius: 6))
-      .animation(.easeInOut(duration: 0.2), value: layoutMode)
-
-      // Count badge (includes both monitored and pending)
-      let totalSessions = viewModel.monitoredSessionIds.count + viewModel.pendingHubSessions.count
-      if totalSessions > 0 {
-        Text("\(totalSessions)")
-          .font(.secondaryCaption)
-          .monospacedDigit()
-          .padding(.horizontal, DesignTokens.Spacing.sm)
-          .padding(.vertical, DesignTokens.Spacing.xs)
-          .background(
-            Capsule()
-              .fill(Color.brandPrimary.opacity(0.15))
-          )
-          .foregroundColor(.brandPrimary)
-      }
-    }
-    .padding(.horizontal, DesignTokens.Spacing.lg)
-    .padding(.vertical, DesignTokens.Spacing.md)
   }
 
   // MARK: - Empty State

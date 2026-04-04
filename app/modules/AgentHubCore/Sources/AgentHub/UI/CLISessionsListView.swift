@@ -52,11 +52,11 @@ public struct CLISessionsListView: View {
         viewModel: viewModel,
         primarySessionId: $primarySessionId
       )
-        .padding(12)
+        .padding(4)
         .agentHubPanel()
         .frame(minWidth: 300)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .padding(.horizontal, 4)
     }
     .navigationSplitViewStyle(.balanced)
     .background(appBackground.ignoresSafeArea())

@@ -44,7 +44,7 @@ public struct MultiProviderSessionsListView: View {
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
-  @State private var isAuxiliaryShellVisible = false
+  @AppStorage(AgentHubDefaults.auxiliaryShellVisible) private var isAuxiliaryShellVisible = false
   @State private var isEmbeddedTrailingPanelVisible = false
   @State private var sidebarVisibilityBeforeAutoHide: NavigationSplitViewVisibility?
   @FocusState private var isSearchFieldFocused: Bool
@@ -99,7 +99,6 @@ public struct MultiProviderSessionsListView: View {
           codexViewModel: codexViewModel,
           filterMode: $hubFilterMode,
           primarySessionId: $primarySessionId,
-          isAuxiliaryShellVisible: $isAuxiliaryShellVisible,
           onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
           onRequestStartSession: { preferredRepositoryPath in
             triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)

@@ -60,15 +60,15 @@ private struct SessionFileSheetItem: Identifiable {
   let content: String
 }
 
-// MARK: - LayoutMode
+// MARK: - HubLayoutMode
 
-private enum LayoutMode: Int, CaseIterable {
+public enum HubLayoutMode: Int, CaseIterable {
   case single = 0
   case list = 1
   case twoColumn = 2
   case threeColumn = 3
 
-  var columnCount: Int {
+  public var columnCount: Int {
     switch self {
     case .single: return 1
     case .list: return 1
@@ -77,7 +77,7 @@ private enum LayoutMode: Int, CaseIterable {
     }
   }
 
-  var icon: String {
+  public var icon: String {
     switch self {
     case .single: return "rectangle"
     case .list: return "list.bullet"
@@ -86,6 +86,8 @@ private enum LayoutMode: Int, CaseIterable {
     }
   }
 }
+
+private typealias LayoutMode = HubLayoutMode
 
 // MARK: - HubFilterMode
 
@@ -238,7 +240,7 @@ private struct HubAuxiliaryShellTarget {
 public struct MultiProviderMonitoringPanelView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
-  @Binding var isAuxiliaryShellVisible: Bool
+  @AppStorage(AgentHubDefaults.auxiliaryShellVisible) var isAuxiliaryShellVisible: Bool = false
   let onEmbeddedSidePanelVisibilityChange: (Bool) -> Void
   let onRequestStartSession: (String?) -> Void
 
@@ -320,7 +322,6 @@ public struct MultiProviderMonitoringPanelView: View {
     codexViewModel: CLISessionsViewModel,
     filterMode: Binding<HubFilterMode>,
     primarySessionId: Binding<String?>,
-    isAuxiliaryShellVisible: Binding<Bool>,
     onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
     onRequestStartSession: @escaping (String?) -> Void
   ) {
@@ -328,7 +329,6 @@ public struct MultiProviderMonitoringPanelView: View {
     self.codexViewModel = codexViewModel
     self._filterMode = filterMode
     self._primarySessionId = primarySessionId
-    self._isAuxiliaryShellVisible = isAuxiliaryShellVisible
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onRequestStartSession = onRequestStartSession
   }
@@ -512,14 +512,8 @@ public struct MultiProviderMonitoringPanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(maximizedContainerBackgroundColor)
     } else {
-      VStack(spacing: 0) {
-        header
-
-        Divider()
-
-        mainContentBody
-          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-      }
+      mainContentBody
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
   }
 
@@ -534,55 +528,6 @@ public struct MultiProviderMonitoringPanelView: View {
     } else {
       monitoredSessionsList
     }
-  }
-
-  // MARK: - Header
-
-  private var header: some View {
-    HStack(spacing: 12) {
-      Text("Hub")
-        .font(.heading)
-
-      Spacer()
-
-      HStack(spacing: 6) {
-        Button(action: toggleAuxiliaryShellDock) {
-          Image(systemName: "apple.terminal")
-            .font(.caption)
-            .foregroundColor(isAuxiliaryShellVisible ? .primary : .secondary)
-            .frame(width: 26, height: 20)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(auxiliaryShellTarget == nil)
-        .help("Toggle terminal (⌘J)")
-      }
-      .padding(4)
-      .background(Color.secondary.opacity(0.12))
-      .clipShape(RoundedRectangle(cornerRadius: 6))
-
-      // Layout mode toggle (single / list / grid)
-      HStack(spacing: 6) {
-        ForEach(LayoutMode.allCases, id: \.self) { mode in
-          Button(action: {
-            previousLayoutModeRawValue = -1
-            layoutModeRawValue = mode.rawValue
-          }) {
-            Image(systemName: mode.icon)
-              .font(.caption)
-              .foregroundColor(layoutMode == mode ? .primary : .secondary)
-              .frame(width: 26, height: 20)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-        }
-      }
-      .padding(4)
-      .background(Color.secondary.opacity(0.12))
-      .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 10)
   }
 
   // MARK: - Loading State

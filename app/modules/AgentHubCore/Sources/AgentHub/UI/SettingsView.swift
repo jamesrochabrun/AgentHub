@@ -56,7 +56,7 @@ public struct SettingsView: View {
   @Environment(ThemeManager.self) private var themeManager
   @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "neutral"
   private let defaultThemeId = "neutral"
-  private let sentryThemeFileId = "sentry.yaml"
+  private let bundledYAMLThemeFileIds = ["sentry.yaml", "rausch.yaml"]
   private let webPreviewInspectorDataLevels: [ElementInspectorDataLevel] = [.regular, .full]
 
   public init() {}
@@ -194,7 +194,9 @@ public struct SettingsView: View {
           Text("Default").tag(AppTheme.neutral.rawValue)
           Text("Claude").tag(AppTheme.claude.rawValue)
           Text("Codex").tag(AppTheme.codex.rawValue)
-          Text("Sentry").tag(sentryThemeFileId)
+          ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
+            Text(yamlThemeDisplayName(fileId)).tag(fileId)
+          }
         }
 
         Button {
@@ -332,8 +334,8 @@ public struct SettingsView: View {
   private var themeSelectionBinding: Binding<String> {
     Binding(
       get: {
-        if isSentryThemeId(selectedThemeId) {
-          return sentryThemeFileId
+        if let matchedFileId = matchingBundledYAMLFileId(for: selectedThemeId) {
+          return matchedFileId
         }
         if let appTheme = AppTheme(rawValue: selectedThemeId) {
           return appTheme.rawValue
@@ -349,8 +351,8 @@ public struct SettingsView: View {
   }
 
   private func ensureSupportedThemeSelection() async {
-    if isSentryThemeId(selectedThemeId) {
-      await applyThemeSelection(sentryThemeFileId)
+    if matchingBundledYAMLFileId(for: selectedThemeId) != nil {
+      await applyThemeSelection(selectedThemeId)
       return
     }
 
@@ -370,20 +372,21 @@ public struct SettingsView: View {
       return
     }
 
-    // Handle Sentry YAML theme
+    // Handle bundled YAML themes
+    let fileId = matchingBundledYAMLFileId(for: selection) ?? selection
     await themeManager.discoverThemes()
 
-    if let sentryTheme = themeManager.availableYAMLThemes.first(where: isSentryTheme),
-       let fileURL = sentryTheme.fileURL {
+    if let yamlTheme = themeManager.availableYAMLThemes.first(where: { $0.id == fileId }),
+       let fileURL = yamlTheme.fileURL {
       try? await themeManager.loadTheme(fileURL: fileURL)
-      selectedThemeId = sentryTheme.id
+      selectedThemeId = yamlTheme.id
       return
     }
 
-    let sentryURL = ThemeManager.themesDirectory().appendingPathComponent(sentryThemeFileId)
-    if FileManager.default.fileExists(atPath: sentryURL.path) {
-      try? await themeManager.loadTheme(fileURL: sentryURL)
-      selectedThemeId = sentryThemeFileId
+    let themeURL = ThemeManager.themesDirectory().appendingPathComponent(fileId)
+    if FileManager.default.fileExists(atPath: themeURL.path) {
+      try? await themeManager.loadTheme(fileURL: themeURL)
+      selectedThemeId = fileId
       return
     }
 
@@ -391,13 +394,17 @@ public struct SettingsView: View {
     themeManager.loadBuiltInTheme(.neutral)
   }
 
-  private func isSentryTheme(_ metadata: ThemeManager.ThemeMetadata) -> Bool {
-    isSentryThemeId(metadata.id) || metadata.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "sentry"
+  private func matchingBundledYAMLFileId(for value: String) -> String? {
+    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return bundledYAMLThemeFileIds.first { fileId in
+      let baseName = fileId.replacingOccurrences(of: ".yaml", with: "").replacingOccurrences(of: ".yml", with: "")
+      return normalized == baseName || normalized == fileId || normalized == baseName + ".yml"
+    }
   }
 
-  private func isSentryThemeId(_ value: String) -> Bool {
-    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    return normalized == "sentry" || normalized == "sentry.yaml" || normalized == "sentry.yml"
+  private func yamlThemeDisplayName(_ fileId: String) -> String {
+    let baseName = fileId.replacingOccurrences(of: ".yaml", with: "").replacingOccurrences(of: ".yml", with: "")
+    return baseName.prefix(1).uppercased() + baseName.dropFirst()
   }
 
   private var selectedWebPreviewInspectorDataLevel: ElementInspectorDataLevel {

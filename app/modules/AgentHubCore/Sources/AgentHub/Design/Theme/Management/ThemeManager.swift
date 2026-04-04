@@ -39,6 +39,23 @@ public final class ThemeManager {
       light: "#FAF9FB"
   """
 
+  private static let bundledRauschYAML = """
+  name: "Rausch"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Warm coral accent theme inspired by the Rausch color palette"
+
+  colors:
+    brand:
+      primary: "#FF385C"
+      secondary: "#E31C5F"
+      tertiary: "#D70466"
+
+    backgrounds:
+      dark: "#222222"
+      light: "#FFFFFF"
+  """
+
   public struct ThemeMetadata: Identifiable {
     public let id: String
     public let name: String
@@ -264,6 +281,11 @@ public final class ThemeManager {
     }
   }
 
+  private static let bundledThemes: [(name: String, fallbackYAML: String)] = [
+    ("sentry", bundledSentryYAML),
+    ("rausch", bundledRauschYAML),
+  ]
+
   private func installBundledThemesIfNeeded() {
     let themesDir = Self.themesDirectory()
     do {
@@ -273,13 +295,19 @@ public final class ThemeManager {
       return
     }
 
+    for (themeName, fallbackYAML) in Self.bundledThemes {
+      installBundledTheme(name: themeName, fallbackYAML: fallbackYAML, themesDir: themesDir)
+    }
+  }
+
+  private func installBundledTheme(name: String, fallbackYAML: String, themesDir: URL) {
     // Resolve bundled content
     let bundledContent: String
-    if let bundledURL = Self.bundledSentryThemeURL(),
+    if let bundledURL = Self.bundledThemeURL(name: name),
        let data = try? String(contentsOf: bundledURL, encoding: .utf8) {
       bundledContent = data
     } else {
-      bundledContent = Self.bundledSentryYAML
+      bundledContent = fallbackYAML
     }
 
     // Parse bundled version
@@ -292,10 +320,10 @@ public final class ThemeManager {
       }
 
     let defaults = UserDefaults.standard
-    let versionKey = AgentHubDefaults.installedBundledThemeVersion(for: "sentry")
+    let versionKey = AgentHubDefaults.installedBundledThemeVersion(for: name)
     let installedVersion = defaults.string(forKey: versionKey)
-    let sentryDestinationURL = themesDir.appendingPathComponent("sentry.yaml")
-    let fileExists = FileManager.default.fileExists(atPath: sentryDestinationURL.path)
+    let destinationURL = themesDir.appendingPathComponent("\(name).yaml")
+    let fileExists = FileManager.default.fileExists(atPath: destinationURL.path)
 
     // Skip if file exists and versions match
     if fileExists, let bundledVersion, installedVersion == bundledVersion {
@@ -303,28 +331,28 @@ public final class ThemeManager {
     }
 
     do {
-      try bundledContent.write(to: sentryDestinationURL, atomically: true, encoding: .utf8)
+      try bundledContent.write(to: destinationURL, atomically: true, encoding: .utf8)
       if let bundledVersion {
         defaults.set(bundledVersion, forKey: versionKey)
       }
     } catch {
-      AppLogger.session.error("Failed to install bundled sentry.yaml: \(error.localizedDescription)")
+      AppLogger.session.error("Failed to install bundled \(name).yaml: \(error.localizedDescription)")
     }
   }
 
-  private static func bundledSentryThemeURL() -> URL? {
+  private static func bundledThemeURL(name: String) -> URL? {
     let candidates: [URL?] = [
       Bundle.module.url(
-        forResource: "sentry",
+        forResource: name,
         withExtension: "yaml",
         subdirectory: "Design/Theme/BundledThemes"
       ),
       Bundle.module.url(
-        forResource: "sentry",
+        forResource: name,
         withExtension: "yaml",
         subdirectory: "BundledThemes"
       ),
-      Bundle.module.url(forResource: "sentry", withExtension: "yaml"),
+      Bundle.module.url(forResource: name, withExtension: "yaml"),
     ]
 
     if let candidate = candidates.compactMap({ $0 }).first {
@@ -332,7 +360,7 @@ public final class ThemeManager {
     }
 
     return Bundle.module.urls(forResourcesWithExtension: "yaml", subdirectory: nil)?
-      .first(where: { $0.lastPathComponent == "sentry.yaml" })
+      .first(where: { $0.lastPathComponent == "\(name).yaml" })
   }
 
   private func persistYAMLPalette(for cacheKey: String, runtime: RuntimeTheme) {

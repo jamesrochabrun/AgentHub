@@ -176,7 +176,7 @@ struct CollapsibleSessionRow: View {
         RoundedRectangle(cornerRadius: 6)
           .fill(LinearGradient(
             colors: [
-              Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.2 : 0.1),
+              Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.2 : 0.55),
               Color.clear
             ],
             startPoint: .leading,
@@ -189,7 +189,7 @@ struct CollapsibleSessionRow: View {
       RoundedRectangle(cornerRadius: 6)
         .stroke(
           isPrimary
-            ? statusColor.opacity(0.3)
+            ? statusColor.opacity(colorScheme == .dark ? 0.3 : 0.55)
             : Color.clear,
           lineWidth: 1
         )
