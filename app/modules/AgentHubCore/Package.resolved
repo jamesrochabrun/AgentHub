@@ -1,5 +1,5 @@
 {
-  "originHash" : "2c065692d00b961bc2c03915a45f4057518803abb0778cf1b46d0feb143330b4",
+  "originHash" : "53cde292a02227649c774f8e6adf228c5d875774a7e7f2fe919401a5a65344f2",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/Canvas.git",
       "state" : {
-        "revision" : "74dc0dd8792f5b8ad6376136a0bd90fed02e8480",
-        "version" : "1.0.8"
+        "revision" : "ece7ce2e8e1c68d65150c945726ddada518288ed",
+        "version" : "1.0.9"
       }
     },
     {
