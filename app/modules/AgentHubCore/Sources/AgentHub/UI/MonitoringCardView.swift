@@ -226,9 +226,9 @@ public struct MonitoringCardView: View {
       }
     }
     .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
-    .clipShape(Rectangle())
+    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     .overlay(
-      Rectangle()
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
         .stroke(
           showPrimaryIndicator && isPrimarySession
            ? Color.brandPrimary(for: providerKind)
@@ -860,6 +860,7 @@ public struct MonitoringCardView: View {
           viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
         }
       )
+      .padding(8)
       .frame(minHeight: 300)
 
       // Plus button for actions popover

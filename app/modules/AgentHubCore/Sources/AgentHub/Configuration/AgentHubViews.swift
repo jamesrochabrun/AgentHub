@@ -7,6 +7,77 @@
 
 import SwiftUI
 
+// MARK: - HubToolbarContent
+
+/// Toolbar content with layout mode and terminal buttons
+struct HubToolbarContent: View {
+  let isPopoverMode: Bool
+  let statsButton: AnyView?
+
+  @AppStorage(AgentHubDefaults.hubLayoutMode)
+  private var layoutModeRawValue: Int = HubLayoutMode.single.rawValue
+
+  @AppStorage(AgentHubDefaults.hubPreviousLayoutMode)
+  private var previousLayoutModeRawValue: Int = -1
+
+  @AppStorage(AgentHubDefaults.auxiliaryShellVisible)
+  private var isAuxiliaryShellVisible: Bool = false
+
+  private var layoutMode: HubLayoutMode {
+    HubLayoutMode(rawValue: layoutModeRawValue) ?? .single
+  }
+
+  var body: some View {
+    HStack(spacing: 12) {
+      Spacer()
+
+      // Terminal toggle
+      HStack(spacing: 6) {
+        Button {
+          isAuxiliaryShellVisible.toggle()
+        } label: {
+          Image(systemName: "apple.terminal")
+            .font(.caption)
+            .foregroundColor(isAuxiliaryShellVisible ? .primary : .secondary)
+            .frame(width: 26, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Toggle terminal")
+      }
+      .padding(4)
+      .background(Color.secondary.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: 6))
+
+      // Layout mode toggle
+      HStack(spacing: 6) {
+        ForEach(HubLayoutMode.allCases, id: \.self) { mode in
+          Button {
+            previousLayoutModeRawValue = -1
+            layoutModeRawValue = mode.rawValue
+          } label: {
+            Image(systemName: mode.icon)
+              .font(.caption)
+              .foregroundColor(layoutMode == mode ? .primary : .secondary)
+              .frame(width: 26, height: 20)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+        }
+      }
+      .padding(4)
+      .background(Color.secondary.opacity(0.12))
+      .clipShape(RoundedRectangle(cornerRadius: 6))
+
+      if let statsButton {
+        statsButton
+      }
+    }
+    .padding(.trailing, 8)
+    .frame(maxWidth: .infinity)
+  }
+}
+
 // MARK: - RemoveTitleToolbarModifier
 
 /// A view modifier that removes the toolbar title on macOS 15+
@@ -62,17 +133,15 @@ public struct AgentHubSessionsView: View {
       .modifier(RemoveTitleToolbarModifier())
       .toolbar {
         ToolbarItem(placement: .principal) {
-          HStack {
-            Spacer()
-            // Stats button (popover mode only)
-            if provider.displaySettings.isPopoverMode {
-              GlobalStatsPopoverButton(
-                claudeService: provider.statsService,
-                codexService: provider.codexStatsService
-              )
-            }
-          }
-          .frame(maxWidth: .infinity)
+          HubToolbarContent(
+            isPopoverMode: provider.displaySettings.isPopoverMode,
+            statsButton: provider.displaySettings.isPopoverMode
+              ? AnyView(GlobalStatsPopoverButton(
+                  claudeService: provider.statsService,
+                  codexService: provider.codexStatsService
+                ))
+              : nil
+          )
         }
       }
   }

@@ -44,8 +44,9 @@ private struct AgentHubCardModifier: ViewModifier {
   func body(content: Content) -> some View {
     // Simple black/white background
     let backgroundColor = colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.98)
+    let highlightOpacity = colorScheme == .dark ? 0.6 : 0.85
     let strokeColor = isHighlighted
-      ? Color.brandPrimary.opacity(0.6)
+      ? Color.brandPrimary.opacity(highlightOpacity)
       : Color.secondary.opacity(0.2)
     let strokeWidth: CGFloat = isHighlighted ? 2 : 1
 
@@ -68,8 +69,9 @@ private struct AgentHubRowModifier: ViewModifier {
   func body(content: Content) -> some View {
     // Simple black/white background
     let backgroundColor = colorScheme == .dark ? Color(white: 0.1) : Color(white: 0.96)
+    let highlightOpacity = colorScheme == .dark ? 0.5 : 0.75
     let strokeColor = isHighlighted
-      ? Color.brandPrimary.opacity(0.5)
+      ? Color.brandPrimary.opacity(highlightOpacity)
       : Color.secondary.opacity(0.2)
 
     return content
@@ -109,11 +111,13 @@ private struct AgentHubChipModifier: ViewModifier {
 
   func body(content: Content) -> some View {
     // Simple black/white background
+    let fillOpacity = colorScheme == .dark ? 0.15 : 0.4
     let fillColor = isActive
-      ? Color.brandPrimary.opacity(0.15)
+      ? Color.brandPrimary.opacity(fillOpacity)
       : (colorScheme == .dark ? Color(white: 0.15) : Color(white: 0.92))
+    let chipStrokeOpacity = colorScheme == .dark ? 0.4 : 0.65
     let strokeColor = isActive
-      ? Color.brandPrimary.opacity(0.4)
+      ? Color.brandPrimary.opacity(chipStrokeOpacity)
       : Color.secondary.opacity(0.25)
 
     return content

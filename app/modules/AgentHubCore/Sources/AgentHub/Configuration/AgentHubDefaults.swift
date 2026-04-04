@@ -111,6 +111,10 @@ public enum AgentHubDefaults {
   /// Type: Int (default: -1 = no saved layout)
   public static let hubPreviousLayoutMode = "\(keyPrefix)hub.previousLayoutMode"
 
+  /// Whether the auxiliary shell dock is visible
+  /// Type: Bool (default: false)
+  public static let auxiliaryShellVisible = "\(keyPrefix)hub.auxiliaryShellVisible"
+
   /// Whether the selected sessions panel is expanded
   /// Type: Bool (default: true)
   public static let selectedSessionsPanelExpanded = "\(keyPrefix)ui.selectedSessionsPanelExpanded"
