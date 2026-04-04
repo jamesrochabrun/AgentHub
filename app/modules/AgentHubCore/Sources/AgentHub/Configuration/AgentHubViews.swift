@@ -28,7 +28,7 @@ struct HubToolbarContent: View {
   }
 
   var body: some View {
-    HStack(spacing: 12) {
+    HStack(spacing: 6) {
       Spacer()
 
       // Terminal toggle
@@ -72,8 +72,9 @@ struct HubToolbarContent: View {
       if let statsButton {
         statsButton
       }
+
+      Spacer()
     }
-    .padding(.trailing, 8)
     .frame(maxWidth: .infinity)
   }
 }
