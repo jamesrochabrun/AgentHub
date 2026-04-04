@@ -1,0 +1,14 @@
+name: "Airbnb"
+version: "1.1"
+author: "Airbnb"
+description: "Official Airbnb-inspired color theme with Rausch coral accent"
+
+colors:
+  brand:
+    primary: "#FF385C"
+    secondary: "#E31C5F"
+    tertiary: "#D70466"
+
+  backgrounds:
+    dark: "#222222"
+    light: "#FFFFFF"
