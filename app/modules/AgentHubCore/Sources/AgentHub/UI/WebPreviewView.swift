@@ -37,11 +37,12 @@ private enum WebPreviewAdvancedEditing {
 
 private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   case input
+  case crop
   case context
   case edit
 
   static func availableCases(advancedEditingEnabled: Bool) -> [WebPreviewInspectBehavior] {
-    advancedEditingEnabled ? Self.allCases : [.input]
+    advancedEditingEnabled ? Self.allCases : [.input, .crop]
   }
 
   var id: String { rawValue }
@@ -49,6 +50,7 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   var icon: String {
     switch self {
     case .input: return "square.and.pencil"
+    case .crop: return "crop"
     case .context: return "square.and.arrow.up"
     case .edit: return "slider.horizontal.3"
     }
@@ -58,6 +60,8 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
     switch self {
     case .input:
       return "Select an element, then type an instruction before sending it to the agent."
+    case .crop:
+      return "Drag to select a region, then describe the change you want."
     case .context:
       return "Queue selected elements in the preview to attach them to the next terminal message."
     case .edit:
@@ -68,6 +72,7 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   var accessibilityLabel: String {
     switch self {
     case .input: return "Instruction mode"
+    case .crop: return "Crop region mode"
     case .context: return "Queued context mode"
     case .edit: return "Source edit mode"
     }
@@ -76,6 +81,7 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   var modeName: String {
     switch self {
     case .input: return "inspect"
+    case .crop: return "crop"
     case .context: return "context"
     case .edit: return "edit"
     }
@@ -84,6 +90,7 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   var canvasMode: InspectMode {
     switch self {
     case .input: return .input
+    case .crop: return .crop
     case .context: return .context
     case .edit: return .input
     }
@@ -973,7 +980,14 @@ public struct WebPreviewView: View {
           onSelectedElementViewportRectChange: { rect in
             inspectState.updateSelectedElementViewportRect(rect)
           },
+          onCropRectSelected: { rect, elements in
+            inspectState.selectCropRect(rect, elements: elements)
+          },
+          onCropRectViewportChange: { rect in
+            inspectState.updateCropRect(rect)
+          },
           isInspectModeActive: $inspectState.isActive,
+          inspectMode: inspectBehavior.canvasMode,
           selectedElementId: inspectState.selectedElement?.id,
           selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady
@@ -990,6 +1004,9 @@ public struct WebPreviewView: View {
           },
           onContextSelection: { element in
             handleContextSelection(element)
+          },
+          onCropSubmit: { rect, elements, instruction in
+            handleCropSubmit(rect: rect, elements: elements, instruction: instruction)
           }
         )
       }
@@ -1153,6 +1170,43 @@ public struct WebPreviewView: View {
         previewFilePath: selectedFilePath,
         recentActivities: monitorState?.recentActivities ?? []
       )
+    }
+  }
+
+  private func handleCropSubmit(rect: CGRect, elements: [ElementInspectorData], instruction: String) {
+    Task { @MainActor in
+      var screenshotPath: String? = nil
+      if let webView = previewWebView {
+        if let image = try? await ElementSnapshotCapture.captureSnapshot(of: rect, in: webView) {
+          screenshotPath = saveCropScreenshot(image, sessionId: session.id)
+        }
+      }
+      let prompt = ElementInspectorPromptBuilder.buildCropPrompt(
+        cropRect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath
+      )
+      onInspectSubmit?(prompt, session)
+    }
+  }
+
+  private func saveCropScreenshot(_ image: NSImage, sessionId: String) -> String? {
+    guard let tiffData = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiffData),
+          let pngData = bitmap.representation(using: .png, properties: [:]) else {
+      return nil
+    }
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AgentHub/crop-screenshots", isDirectory: true)
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let filename = "crop-\(sessionId.prefix(8))-\(Int(Date().timeIntervalSince1970)).png"
+    let fileURL = dir.appendingPathComponent(filename)
+    do {
+      try pngData.write(to: fileURL)
+      return fileURL.path
+    } catch {
+      return nil
     }
   }
 
