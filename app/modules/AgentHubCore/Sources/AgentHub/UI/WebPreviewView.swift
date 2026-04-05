@@ -318,7 +318,14 @@ public struct WebPreviewView: View {
     }
     .onKeyPress(.escape) {
       if inspectState.isActive {
-        deactivateInspector()
+        if inspectState.selectedElement != nil {
+          closeEditRail()
+          return .handled
+        }
+        if inspectState.cropRect != nil {
+          clearCropSelection()
+          return .handled
+        }
         return .handled
       }
       onDismiss()
@@ -1057,6 +1064,17 @@ public struct WebPreviewView: View {
     inspectState.dismissInput()
     Task {
       await inspectorViewModel.closePanel()
+    }
+  }
+
+  /// Clears the crop rectangle from both the Swift state (hides the input
+  /// editor) and the Canvas JS overlay drawn inside the WKWebView. Without
+  /// the bridge call the blue crop rectangle would remain visible on the
+  /// page even after the editor disappears.
+  private func clearCropSelection() {
+    inspectState.dismissCropRect()
+    if let previewWebView {
+      ElementInspectorBridge.clearCropSelection(in: previewWebView)
     }
   }
 
