@@ -43,6 +43,9 @@ enum WebPreviewUpdateState: Equatable {
     case .noContent(let reason):
       return WebPreviewUpdateState.unavailable(detail: reason)
 
+    case .launchOptions:
+      return WebPreviewUpdateState.unavailable(detail: "Reload is unavailable until a live preview is running.")
+
     case nil:
       return WebPreviewUpdateState.unavailable(detail: "Detecting preview configuration…")
     }

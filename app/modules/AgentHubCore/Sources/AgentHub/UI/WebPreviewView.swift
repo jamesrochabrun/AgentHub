@@ -123,6 +123,9 @@ public struct WebPreviewView: View {
   /// Reactive localhost URL from the agent's session. When this changes, the preview updates.
   var agentLocalhostURL: URL?
   var monitorState: SessionMonitorState?
+  /// Reachability probe used before connecting to an agent-advertised URL.
+  /// Injected so tests can substitute a deterministic mock.
+  var reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe()
 
   @State private var isLoading: Bool = false
   @State private var resolution: WebPreviewResolution?
@@ -143,6 +146,8 @@ public struct WebPreviewView: View {
   @State private var previewWebView: WKWebView?
   @State private var consoleMessageHandler = WebPreviewConsoleMessageHandler()
   @State private var scrollRestorationCoordinator = WebPreviewScrollRestorationCoordinator()
+  @State private var launchOptionsStatusOverride: String?
+  @State private var askAgentReprobeTask: Task<Void, Never>?
 
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
@@ -169,7 +174,8 @@ public struct WebPreviewView: View {
     onInspectSubmit: ((String, CLISession) -> Void)? = nil,
     viewModel: CLISessionsViewModel? = nil,
     agentLocalhostURL: URL? = nil,
-    monitorState: SessionMonitorState? = nil
+    monitorState: SessionMonitorState? = nil,
+    reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe()
   ) {
     self.session = session
     self.projectPath = projectPath
@@ -179,6 +185,7 @@ public struct WebPreviewView: View {
     self.viewModel = viewModel
     self.agentLocalhostURL = agentLocalhostURL
     self.monitorState = monitorState
+    self.reachabilityProbe = reachabilityProbe
     self._inspectorViewModel = State(
       initialValue: WebPreviewInspectorViewModel(
         sessionID: session.id,
@@ -236,7 +243,7 @@ public struct WebPreviewView: View {
       return isManualReloadMode ? .directFileManual : .directFileAutomatic
     case .devServer:
       return isManualReloadMode ? .devServerManual : .devServerAutomatic
-    case .noContent, nil:
+    case .launchOptions, .noContent, nil:
       return .none
     }
   }
@@ -337,6 +344,8 @@ public struct WebPreviewView: View {
         await inspectorViewModel.flushPendingWriteIfNeeded()
       }
       localhostReloadTask?.cancel()
+      askAgentReprobeTask?.cancel()
+      askAgentReprobeTask = nil
       fileWatcher.stop()
       if case .devServer = resolution {
         DevServerManager.shared.stopServer(for: serverKey)
@@ -370,6 +379,15 @@ public struct WebPreviewView: View {
       directFileIndicator
     case .devServer:
       devServerStatusIndicator
+    case .launchOptions:
+      HStack(spacing: 6) {
+        Image(systemName: "exclamationmark.triangle.fill")
+          .font(.system(size: 10))
+          .foregroundColor(.orange)
+        Text("Preview not running")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
     case .noContent:
       EmptyView()
     case nil:
@@ -610,6 +628,14 @@ public struct WebPreviewView: View {
     case .devServer:
       devServerContent
 
+    case .launchOptions(let options, let unreachableURL):
+      WebPreviewLaunchOptionsView(
+        launchOptions: options,
+        statusMessage: launchOptionsStatusMessage(for: unreachableURL),
+        onAskAgent: { askAgentToStartPreview(originalURL: unreachableURL) },
+        onOpenStaticPreview: { openStaticFallback(options.staticPreviewResolution) }
+      )
+
     case .noContent(let reason):
       noContentView(reason)
 
@@ -733,6 +759,12 @@ public struct WebPreviewView: View {
         .multilineTextAlignment(.center)
         .padding(.horizontal, 40)
 
+      Text("No worries, ask your agent to run a local server again and reopen this window.")
+        .font(.caption)
+        .foregroundColor(.secondary)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 40)
+
       Spacer()
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -777,12 +809,98 @@ public struct WebPreviewView: View {
   @MainActor
   private func connectToAgentServer(_ url: URL, logChange: Bool = false) async {
     let logPrefix = logChange ? "agent URL changed to" : "agent has localhost URL"
-    AppLogger.devServer.info("[WebPreview] Session \(session.id): \(logPrefix) \(url.absoluteString), connecting directly")
+    AppLogger.devServer.info(
+      "[WebPreview] Session \(session.id): \(logPrefix) \(url.absoluteString), probing reachability"
+    )
 
+    askAgentReprobeTask?.cancel()
+    askAgentReprobeTask = nil
+
+    let reachable = await reachabilityProbe.isReachable(url)
+    guard reachable else {
+      AppLogger.devServer.info(
+        "[WebPreview] Session \(session.id): agent URL \(url.absoluteString) is not reachable — presenting launch options"
+      )
+      DevServerManager.shared.stopServer(for: serverKey)
+      let resolution = await WebPreviewResolver.resolveLaunchOptions(
+        projectPath: projectPath,
+        unreachableURL: url
+      )
+      await applyResolution(resolution)
+      return
+    }
+
+    AppLogger.devServer.info(
+      "[WebPreview] Session \(session.id): reachable — connecting directly"
+    )
     DevServerManager.shared.stopServer(for: serverKey)
     hasLoadedExternalContent = false
+    launchOptionsStatusOverride = nil
     await applyResolution(WebPreviewExternalRecovery.initial(projectPath: projectPath).resolution)
     DevServerManager.shared.connectToExistingServer(for: serverKey, url: url)
+  }
+
+  // MARK: - Launch Options Actions
+
+  private func launchOptionsStatusMessage(for unreachableURL: URL?) -> String? {
+    if let launchOptionsStatusOverride { return launchOptionsStatusOverride }
+    return unreachableURL.map { "Could not reach \($0.absoluteString)." }
+  }
+
+  private func askAgentToStartPreview(originalURL: URL?) {
+    AppLogger.devServer.info(
+      "[WebPreview] Session \(session.id): user chose Ask Agent from launch options"
+    )
+    let prompt: String
+    if let originalURL {
+      prompt = "Please restart the local dev server at \(originalURL.absoluteString)."
+    } else {
+      prompt = "Please start a local dev server for this project."
+    }
+    onInspectSubmit?(prompt, session)
+    launchOptionsStatusOverride = "Asked the agent to start the preview. Waiting for a new localhost URL…"
+
+    if let originalURL {
+      startAskAgentReprobe(for: originalURL)
+    }
+  }
+
+  /// Polls the previously advertised URL after "Ask Agent" so the preview
+  /// auto-connects even when the agent restarts the server on the same URL
+  /// (which would not fire `.onChange(of: agentLocalhostURL)`).
+  private func startAskAgentReprobe(for url: URL) {
+    askAgentReprobeTask?.cancel()
+    let probe = reachabilityProbe
+    askAgentReprobeTask = Task { @MainActor in
+      let attempts = 20
+      let delay: Duration = .milliseconds(750)
+      for attempt in 0..<attempts {
+        if Task.isCancelled { return }
+        try? await Task.sleep(for: delay)
+        if Task.isCancelled { return }
+        if await probe.isReachable(url) {
+          if Task.isCancelled { return }
+          AppLogger.devServer.info(
+            "[WebPreview] Session \(self.session.id): ask-agent reprobe succeeded on attempt \(attempt + 1)"
+          )
+          await connectToAgentServer(url, logChange: true)
+          return
+        }
+      }
+      if Task.isCancelled { return }
+      launchOptionsStatusOverride = "Still waiting for the agent to start the preview. Click Ask Agent again if needed."
+    }
+  }
+
+  private func openStaticFallback(_ resolution: WebPreviewResolution) {
+    AppLogger.devServer.info(
+      "[WebPreview] Session \(session.id): user chose Open Static Preview from launch options"
+    )
+    guard case .directFile = resolution else { return }
+    launchOptionsStatusOverride = nil
+    Task { @MainActor in
+      await applyResolution(resolution)
+    }
   }
 
   private func handleExternalServerLoadFailure(error: String, failedURL: URL) {
@@ -819,7 +937,19 @@ public struct WebPreviewView: View {
         error: error,
         staticPreviewResolution: staticPreviewResolution
       )
-      await applyResolution(recovery.resolution)
+
+      // When there is no static fallback, promote the recovery into
+      // launch options so the user still gets actionable choices
+      // instead of a silent "No Web Content" dead-end.
+      if case .noContent = recovery.resolution {
+        let launchResolution = await WebPreviewResolver.resolveLaunchOptions(
+          projectPath: projectPath,
+          unreachableURL: failedURL
+        )
+        await applyResolution(launchResolution)
+      } else {
+        await applyResolution(recovery.resolution)
+      }
     }
   }
 
@@ -883,6 +1013,14 @@ public struct WebPreviewView: View {
       await loadWebFileList()
     case .devServer:
       resetLocalhostReloadTracking()
+      selectedFilePath = nil
+      webRenderableFiles = []
+      fileWatcher.stop()
+    case .launchOptions:
+      hasLoadedExternalContent = false
+      localhostReloadTask?.cancel()
+      localhostReloadTask = nil
+      handledCodeChangeActivityID = nil
       selectedFilePath = nil
       webRenderableFiles = []
       fileWatcher.stop()
