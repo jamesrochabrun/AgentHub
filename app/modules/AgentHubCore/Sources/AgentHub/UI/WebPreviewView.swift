@@ -475,6 +475,23 @@ public struct WebPreviewView: View {
   @ViewBuilder
   private var headerControls: some View {
     HStack(spacing: 12) {
+      if previewWebView != nil {
+        Button(action: refreshPreview) {
+          Image(systemName: "arrow.clockwise")
+            .font(.system(size: 12, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .help("Refresh preview (⌘R)")
+
+        // Hidden keyboard shortcut for Cmd+R
+        Button("") {
+          refreshPreview()
+        }
+        .keyboardShortcut("r", modifiers: .command)
+        .hidden()
+        .frame(width: 0, height: 0)
+      }
+
       switch resolution {
       case .devServer:
         // Only show server control buttons for servers we manage (not the agent's)
@@ -1214,6 +1231,15 @@ public struct WebPreviewView: View {
     if let previewWebView {
       ElementInspectorBridge.clearCropSelection(in: previewWebView)
     }
+  }
+
+  /// Reloads the current preview page using WKWebView's built-in reload.
+  /// Works for every resolution (dev server, direct file, external URL)
+  /// because it operates on whatever the web view is currently displaying.
+  private func refreshPreview() {
+    guard let previewWebView else { return }
+    AppLogger.devServer.info("[WebPreview] Session \(session.id): user refreshed preview")
+    previewWebView.reload()
   }
 
   private func handleOverlayReloadingState(_ loading: Bool) {
