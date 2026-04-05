@@ -16,6 +16,12 @@ enum WebPreviewResolution: Equatable {
   case directFile(filePath: String, projectPath: String)
   /// Need a dev server (framework project requiring transpilation/bundling)
   case devServer(projectPath: String)
+  /// The agent advertised a localhost URL that isn't reachable (or died mid-session).
+  /// Present an actionable chooser instead of a blank WKWebView.
+  ///
+  /// Marked `indirect` because `WebPreviewLaunchOptions` holds a nested
+  /// `WebPreviewResolution` for its static fallback.
+  indirect case launchOptions(WebPreviewLaunchOptions, unreachableURL: URL?)
   /// No web content found
   case noContent(reason: String)
 }
@@ -46,6 +52,30 @@ enum WebPreviewResolver {
     }
 
     return await resolveStaticPreview(projectPath: projectPath)
+  }
+
+  /// Builds a `.launchOptions` resolution describing the actionable choices
+  /// presented when an agent-advertised localhost URL cannot be reached.
+  ///
+  /// - Parameters:
+  ///   - projectPath: Project directory used to compute the static fallback.
+  ///   - unreachableURL: The URL that failed the reachability probe, shown in
+  ///     the status message. `nil` when presented for reasons other than an
+  ///     unreachable probe (e.g. a late disconnect).
+  ///   - canAskAgent: Whether the "Ask Agent" affordance should be offered.
+  ///     Defaults to `true` because this resolution is only produced in
+  ///     contexts where a live session is attached.
+  static func resolveLaunchOptions(
+    projectPath: String,
+    unreachableURL: URL?,
+    canAskAgent: Bool = true
+  ) async -> WebPreviewResolution {
+    let staticResolution = await resolveStaticPreview(projectPath: projectPath)
+    let options = WebPreviewLaunchOptions(
+      staticPreviewResolution: staticResolution,
+      canAskAgent: canAskAgent
+    )
+    return .launchOptions(options, unreachableURL: unreachableURL)
   }
 
   /// Resolves the best static preview candidate without considering framework/dev-server preference.
