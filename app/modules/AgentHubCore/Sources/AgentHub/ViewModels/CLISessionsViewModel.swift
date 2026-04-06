@@ -496,6 +496,9 @@ public final class CLISessionsViewModel {
     providerKind: SessionProviderKind,
     metadataStore: SessionMetadataStore? = nil,
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
+    /// When `false`, skips requesting `UNUserNotificationCenter` permissions
+    /// during init. Pass `false` in tests to avoid hitting the notification
+    /// center, which is unavailable in test bundles.
     requestNotificationPermissionsOnInit: Bool = true
   ) {
     // [CLISessionsVM] init called")
