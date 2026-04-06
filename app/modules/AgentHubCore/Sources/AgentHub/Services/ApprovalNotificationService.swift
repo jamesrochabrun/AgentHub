@@ -11,10 +11,24 @@ import AppKit
 #endif
 import UserNotifications
 
+// MARK: - ApprovalNotificationServiceProtocol
+
+public protocol ApprovalNotificationServiceProtocol: AnyObject, Sendable {
+  @discardableResult
+  func requestPermission() async -> Bool
+  func sendApprovalNotification(
+    sessionId: String,
+    toolName: String,
+    projectPath: String?,
+    model: String?,
+    lastMessage: String?
+  )
+}
+
 // MARK: - ApprovalNotificationService
 
 /// Service for playing alert sounds and sending push notifications when tools need approval
-public final class ApprovalNotificationService {
+public final class ApprovalNotificationService: ApprovalNotificationServiceProtocol {
 
   // MARK: - Singleton
 
@@ -102,4 +116,5 @@ public final class ApprovalNotificationService {
       // Silently fail — notification is a best-effort enhancement
     }
   }
+
 }

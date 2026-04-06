@@ -35,12 +35,12 @@ struct WebPreviewLaunchOptionsView: View {
       VStack(spacing: 10) {
         if launchOptions.canAskAgent {
           Button("Ask Agent To Start Preview", action: onAskAgent)
-            .buttonStyle(.borderedProminent)
+            .webPreviewPrimaryButtonStyle()
         }
 
         if launchOptions.hasStaticFallback {
           Button("Open Static Preview", action: onOpenStaticPreview)
-            .buttonStyle(.bordered)
+            .webPreviewSecondaryButtonStyle()
         }
       }
 

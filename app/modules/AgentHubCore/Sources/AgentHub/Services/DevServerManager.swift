@@ -151,6 +151,27 @@ public final class DevServerManager {
       return
     }
 
+    disposeManagedServer(for: key, finalState: .idle, logAction: "Stopping")
+  }
+
+  /// Marks a managed server as failed and keeps the error visible to the UI.
+  public func failServer(for key: String, error: String) {
+    externalServers.remove(key)
+    disposeManagedServer(for: key, finalState: .failed(error: error), logAction: "Failing")
+  }
+
+  /// Stops all running servers. Called on app quit.
+  public func stopAllServers() {
+    for key in Array(servers.keys) {
+      stopServer(for: key)
+    }
+  }
+
+  private func disposeManagedServer(
+    for key: String,
+    finalState: DevServerState,
+    logAction: String
+  ) {
     readinessTasks[key]?.cancel()
     readinessTasks.removeValue(forKey: key)
 
@@ -162,14 +183,14 @@ public final class DevServerManager {
     outputPipes.removeValue(forKey: key)
 
     guard let process = processes[key] else {
-      servers[key] = .idle
+      servers[key] = finalState
       return
     }
 
     servers[key] = .stopping
     let pid = process.processIdentifier
 
-    AppLogger.devServer.info("[DevServerManager] Stopping server for key=\(key) (PID: \(pid))")
+    AppLogger.devServer.info("[DevServerManager] \(logAction) server for key=\(key) (PID: \(pid))")
 
     // SIGTERM to process group, then escalate
     if killpg(pid, SIGTERM) != 0 {
@@ -188,14 +209,7 @@ public final class DevServerManager {
     TerminalProcessRegistry.shared.unregister(pid: pid)
     processes.removeValue(forKey: key)
     assignedPorts.removeValue(forKey: key)
-    servers[key] = .idle
-  }
-
-  /// Stops all running servers. Called on app quit.
-  public func stopAllServers() {
-    for key in Array(servers.keys) {
-      stopServer(for: key)
-    }
+    servers[key] = finalState
   }
 
   // MARK: - Project Detection
@@ -203,7 +217,7 @@ public final class DevServerManager {
   /// Detects the project framework from package.json and returns the appropriate server config.
   /// Uses shared `ProjectFramework.detect(at:)` for framework identification, then maps to
   /// the full `DetectedProject` with command, args, port, and readiness patterns.
-  private nonisolated static func detectProject(at projectPath: String) -> DetectedProject {
+  nonisolated static func detectProject(at projectPath: String) -> DetectedProject {
     let framework = ProjectFramework.detect(at: projectPath)
 
     switch framework {
@@ -213,7 +227,9 @@ public final class DevServerManager {
         command: "npm",
         arguments: ["run", "dev", "--", "--port"],
         defaultPort: 5173,
-        readinessPatterns: ["Local:", "localhost:", "ready in", "VITE"]
+        // Avoid matching npm's echoed command line (`vite --port ...`) before
+        // the dev server has actually bound the socket.
+        readinessPatterns: ["Local:", "localhost:", "ready in"]
       )
     case .nextjs:
       return DetectedProject(
@@ -253,7 +269,9 @@ public final class DevServerManager {
         command: "npm",
         arguments: ["run", "dev", "--", "--port"],
         defaultPort: 4321,
-        readinessPatterns: ["localhost:", "astro"]
+        // Avoid matching npm's echoed command line (`astro dev --port ...`)
+        // before Astro prints its real ready banner or localhost URL.
+        readinessPatterns: ["ready in", "localhost:"]
       )
     case .unknown:
       // Has package.json with scripts but no recognized framework
@@ -279,6 +297,24 @@ public final class DevServerManager {
           command: "npm",
           arguments: ["start"],
           defaultPort: 3000,
+          readinessPatterns: ["localhost:", "ready", "compiled", "started", "listening"]
+        )
+      }
+      if scripts["serve"] != nil {
+        return DetectedProject(
+          framework: .unknown,
+          command: "npm",
+          arguments: ["run", "serve"],
+          defaultPort: 3000,
+          readinessPatterns: ["localhost:", "ready", "compiled", "started", "listening"]
+        )
+      }
+      if scripts["preview"] != nil {
+        return DetectedProject(
+          framework: .unknown,
+          command: "npm",
+          arguments: ["run", "preview"],
+          defaultPort: 4173,
           readinessPatterns: ["localhost:", "ready", "compiled", "started", "listening"]
         )
       }

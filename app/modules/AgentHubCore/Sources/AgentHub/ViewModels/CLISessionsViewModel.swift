@@ -29,6 +29,8 @@ public final class CLISessionsViewModel {
   private let worktreeService = GitWorktreeService()
   private let metadataStore: SessionMetadataStore?
   private let fileWatcher: any SessionFileWatcherProtocol
+  private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
+  private let approvalNotificationService: any ApprovalNotificationServiceProtocol
   weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
@@ -115,6 +117,36 @@ public final class CLISessionsViewModel {
   ///   with the terminal's input buffer (see `EmbeddedTerminalView.sendPromptIfNeeded`).
   public var pendingTerminalPrompts: [String: String] = [:]
   private(set) var queuedWebPreviewContextStore = QueuedWebPreviewContextStore()
+
+  public func webPreviewCandidateStatus(for projectPath: String) -> WebPreviewCandidateStatus? {
+    webPreviewCandidates[WebPreviewCandidateService.normalize(projectPath)]
+  }
+
+  public func ensureWebPreviewCandidate(
+    for projectPath: String,
+    forceRefresh: Bool = false
+  ) async {
+    let normalizedProjectPath = WebPreviewCandidateService.normalize(projectPath)
+
+    if !forceRefresh {
+      if let currentStatus = webPreviewCandidates[normalizedProjectPath] {
+        if currentStatus.isCandidate || currentStatus.isChecking {
+          return
+        }
+      }
+
+      if let cachedStatus = await webPreviewCandidateService.cachedCandidateStatus(for: normalizedProjectPath) {
+        webPreviewCandidates[normalizedProjectPath] = cachedStatus
+        return
+      }
+    }
+
+    if webPreviewCandidates[normalizedProjectPath] == nil || forceRefresh {
+      webPreviewCandidates[normalizedProjectPath] = .checking
+    }
+    let status = await webPreviewCandidateService.candidateStatus(for: normalizedProjectPath)
+    webPreviewCandidates[normalizedProjectPath] = status
+  }
 
   /// Start polling for a session
   private func startPolling(session: CLISession) {
@@ -412,6 +444,9 @@ public final class CLISessionsViewModel {
   /// Current monitoring states keyed by session ID
   public private(set) var monitorStates: [String: SessionMonitorState] = [:]
 
+  /// Cached project-level preview eligibility keyed by normalized project path.
+  public private(set) var webPreviewCandidates: [String: WebPreviewCandidateStatus] = [:]
+
   /// Combine cancellables for monitoring subscriptions (keyed by session ID)
   private var monitoringCancellables: [String: AnyCancellable] = [:]
 
@@ -460,13 +495,17 @@ public final class CLISessionsViewModel {
     searchService: (any SessionSearchServiceProtocol)?,
     cliConfiguration: CLICommandConfiguration,
     providerKind: SessionProviderKind,
-    metadataStore: SessionMetadataStore? = nil
+    metadataStore: SessionMetadataStore? = nil,
+    webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
+    approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared
   ) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
     self.searchService = searchService
     self.metadataStore = metadataStore
     self.fileWatcher = fileWatcher
+    self.webPreviewCandidateService = webPreviewCandidateService
+    self.approvalNotificationService = approvalNotificationService
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
@@ -496,7 +535,7 @@ public final class CLISessionsViewModel {
 
   private func requestNotificationPermissions() {
     Task {
-      await ApprovalNotificationService.shared.requestPermission()
+      await approvalNotificationService.requestPermission()
     }
   }
 

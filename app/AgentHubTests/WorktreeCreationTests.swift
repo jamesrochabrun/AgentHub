@@ -5,6 +5,11 @@ import Testing
 
 // MARK: - Minimal mocks for CLISessionsViewModel dependencies
 
+private final class NoOpApprovalNotificationService: ApprovalNotificationServiceProtocol, @unchecked Sendable {
+  func requestPermission() async -> Bool { false }
+  func sendApprovalNotification(sessionId: String, toolName: String, projectPath: String?, model: String?, lastMessage: String?) {}
+}
+
 private final class MockMonitorService: SessionMonitorServiceProtocol, @unchecked Sendable {
   private let subject = PassthroughSubject<[SelectedRepository], Never>()
   var repositoriesPublisher: AnyPublisher<[SelectedRepository], Never> { subject.eraseToAnyPublisher() }
@@ -40,14 +45,16 @@ private func makeViewModelFixture(
     fileWatcher: MockFileWatcher(),
     searchService: nil,
     cliConfiguration: .claudeDefault,
-    providerKind: .claude
+    providerKind: .claude,
+    approvalNotificationService: NoOpApprovalNotificationService()
   )
   let codexVM = CLISessionsViewModel(
     monitorService: MockMonitorService(),
     fileWatcher: MockFileWatcher(),
     searchService: nil,
     cliConfiguration: .codexDefault,
-    providerKind: .codex
+    providerKind: .codex,
+    approvalNotificationService: NoOpApprovalNotificationService()
   )
   let viewModel = MultiSessionLaunchViewModel(
     claudeViewModel: claudeVM,

@@ -60,6 +60,11 @@ private enum RemixFixtureError: Error {
 
 // MARK: - Stubs
 
+private final class NoOpApprovalNotificationService: ApprovalNotificationServiceProtocol, @unchecked Sendable {
+  func requestPermission() async -> Bool { false }
+  func sendApprovalNotification(sessionId: String, toolName: String, projectPath: String?, model: String?, lastMessage: String?) {}
+}
+
 private actor StubMonitorService: SessionMonitorServiceProtocol {
   nonisolated var repositoriesPublisher: AnyPublisher<[SelectedRepository], Never> {
     Empty<[SelectedRepository], Never>().eraseToAnyPublisher()
@@ -96,7 +101,8 @@ private func makeViewModel(providerKind: SessionProviderKind) -> CLISessionsView
       additionalPaths: [],
       mode: providerKind == .claude ? .claude : .codex
     ),
-    providerKind: providerKind
+    providerKind: providerKind,
+    approvalNotificationService: NoOpApprovalNotificationService()
   )
 }
 

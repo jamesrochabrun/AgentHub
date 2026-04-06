@@ -475,12 +475,8 @@ public struct WebPreviewView: View {
   @ViewBuilder
   private var headerControls: some View {
     HStack(spacing: 12) {
-      if previewWebView != nil {
-        Button(action: refreshPreview) {
-          Image(systemName: "arrow.clockwise")
-            .font(.system(size: 12, weight: .medium))
-        }
-        .buttonStyle(.plain)
+      if canRefreshCurrentPreview {
+        headerActionButton("Reload", systemImage: "arrow.clockwise", action: refreshPreview)
         .help("Refresh preview (⌘R)")
 
         // Hidden keyboard shortcut for Cmd+R
@@ -497,35 +493,22 @@ public struct WebPreviewView: View {
         // Only show server control buttons for servers we manage (not the agent's)
         if !isExternalServer {
           if case .ready = serverState {
-            Button(action: {
+            headerActionButton("Restart", systemImage: "arrow.triangle.2.circlepath") {
               DevServerManager.shared.stopServer(for: serverKey)
               Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
-            }) {
-              Image(systemName: "arrow.clockwise")
-                .font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(.plain)
             .help("Restart server")
 
-            Button(action: {
+            headerActionButton("Stop", systemImage: "stop.circle") {
               DevServerManager.shared.stopServer(for: serverKey)
-            }) {
-              Image(systemName: "stop.circle")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.secondary)
             }
-            .buttonStyle(.plain)
             .help("Stop server")
           }
 
           if case .failed = serverState {
-            Button(action: {
+            headerActionButton("Retry", systemImage: "arrow.triangle.2.circlepath") {
               Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
-            }) {
-              Image(systemName: "arrow.clockwise")
-                .font(.system(size: 12, weight: .medium))
             }
-            .buttonStyle(.plain)
             .help("Retry")
           }
         }
@@ -595,6 +578,19 @@ public struct WebPreviewView: View {
     .animation(.easeInOut(duration: 0.2), value: inspectBehavior)
   }
 
+  private func headerActionButton(
+    _ title: String,
+    systemImage: String,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(action: action) {
+      Label(title, systemImage: systemImage)
+        .font(.caption)
+    }
+    .webPreviewSecondaryButtonStyle()
+    .controlSize(.small)
+  }
+
   // MARK: - Content
 
   @ViewBuilder
@@ -634,12 +630,18 @@ public struct WebPreviewView: View {
     switch resolution {
     case .directFile(_, let projPath):
       if let filePath = selectedFilePath {
-        inspectablePreview(
-          url: URL(fileURLWithPath: filePath),
-          isFileURL: true,
-          allowingReadAccessTo: URL(fileURLWithPath: projPath),
-          reloadToken: effectiveReloadToken
-        )
+        ZStack {
+          inspectablePreview(
+            url: URL(fileURLWithPath: filePath),
+            isFileURL: true,
+            allowingReadAccessTo: URL(fileURLWithPath: projPath),
+            reloadToken: effectiveReloadToken
+          )
+
+          if isLoading {
+            previewLoadingOverlay
+          }
+        }
       }
 
     case .devServer:
@@ -669,14 +671,20 @@ public struct WebPreviewView: View {
     case .idle, .detecting, .starting, .waitingForReady:
       loadingContent
     case .ready(let url):
-      inspectablePreview(
-        url: url,
-        isFileURL: false,
-        reloadToken: effectiveReloadToken,
-        onError: isExternalServer ? { error in
-          handleExternalServerLoadFailure(error: error, failedURL: url)
-        } : nil
-      )
+      ZStack {
+        inspectablePreview(
+          url: url,
+          isFileURL: false,
+          reloadToken: effectiveReloadToken,
+          onError: { error in
+            handleDevServerLoadFailure(error: error, failedURL: url)
+          }
+        )
+
+        if isLoading {
+          previewLoadingOverlay
+        }
+      }
     case .failed(let error):
       failedContent(error)
     case .stopping:
@@ -730,6 +738,28 @@ public struct WebPreviewView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
+  private var previewLoadingOverlay: some View {
+    ZStack {
+      Color.surfaceCanvas
+
+      VStack(spacing: 18) {
+        ProgressView()
+          .controlSize(.large)
+
+        Text(previewLoadingTitle)
+          .font(.headline)
+          .foregroundColor(.secondary)
+
+        Text(previewLoadingSubtitle)
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+      .padding(.horizontal, 24)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .allowsHitTesting(false)
+  }
+
   private func failedContent(_ error: String) -> some View {
     VStack(spacing: 16) {
       Spacer()
@@ -751,7 +781,7 @@ public struct WebPreviewView: View {
       Button("Retry") {
         Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
       }
-      .buttonStyle(.borderedProminent)
+      .webPreviewPrimaryButtonStyle()
 
       Spacer()
     }
@@ -793,6 +823,60 @@ public struct WebPreviewView: View {
     case .starting(let msg): return msg
     case .waitingForReady: return "Starting dev server..."
     default: return "Preparing..."
+    }
+  }
+
+  private var previewLoadingTitle: String {
+    switch resolution {
+    case .devServer:
+      switch serverState {
+      case .detecting:
+        return "Detecting project type..."
+      case .starting(let message):
+        return message
+      case .waitingForReady:
+        return "Starting dev server..."
+      case .ready:
+        return "Reloading preview..."
+      case .failed:
+        return "Recovering preview..."
+      case .idle, .stopping:
+        return "Preparing preview..."
+      }
+    case .directFile:
+      return "Loading preview..."
+    case .launchOptions, .noContent, nil:
+      return "Preparing preview..."
+    }
+  }
+
+  private var previewLoadingSubtitle: String {
+    switch resolution {
+    case .devServer:
+      if case .ready = serverState {
+        return "Waiting for localhost to respond..."
+      }
+      return "Starting dev server for \(session.projectName)..."
+    case .directFile:
+      return "Rendering \(session.projectName)..."
+    case .launchOptions, .noContent, nil:
+      return "Preparing \(session.projectName)..."
+    }
+  }
+
+  private var canRefreshCurrentPreview: Bool {
+    guard previewWebView != nil, !isLoading else { return false }
+
+    switch resolution {
+    case .directFile:
+      return selectedFilePath != nil
+    case .devServer:
+      if isExternalServer, case .ready = serverState {
+        return true
+      }
+      return false
+    case .launchOptions, .noContent, nil:
+      return false
     }
   }
 
@@ -970,6 +1054,43 @@ public struct WebPreviewView: View {
     }
   }
 
+  private func handleDevServerLoadFailure(error: String, failedURL: URL) {
+    if isExternalServer {
+      handleExternalServerLoadFailure(error: error, failedURL: failedURL)
+      return
+    }
+
+    handleManagedServerLoadFailure(error: error, failedURL: failedURL)
+  }
+
+  private func handleManagedServerLoadFailure(error: String, failedURL: URL) {
+    Task { @MainActor in
+      guard isCurrentManagedServerURL(failedURL) else { return }
+
+      let shouldRecover = WebPreviewExternalLoadFailurePolicy.shouldFallbackForManagedPreview(error: error)
+      if !shouldRecover {
+        AppLogger.devServer.info(
+          "[WebPreview] Session \(session.id): ignoring managed server load error during live preview: \(error)"
+        )
+        return
+      }
+
+      AppLogger.devServer.error(
+        "[WebPreview] Session \(session.id): failed to load managed server \(failedURL.absoluteString): \(error)"
+      )
+
+      let recovery = WebPreviewManagedRecovery.recovered(
+        projectPath: projectPath,
+        failedURL: failedURL,
+        error: error
+      )
+
+      DevServerManager.shared.failServer(for: serverKey, error: recovery.failureMessage)
+      launchOptionsStatusOverride = nil
+      await applyResolution(recovery.resolution)
+    }
+  }
+
   @MainActor
   private func handleLocalhostReloadSignal(_ latestSignal: WebPreviewLocalhostReloadSignal?) {
     guard case .devServer = resolution else { return }
@@ -1016,6 +1137,8 @@ public struct WebPreviewView: View {
   @MainActor
   private func applyResolution(_ newResolution: WebPreviewResolution) async {
     resolution = newResolution
+    previewWebView = nil
+    isLoading = false
     syncReloadCoordinatorBaseline()
 
     switch newResolution {
@@ -1055,6 +1178,16 @@ public struct WebPreviewView: View {
   @MainActor
   private func isCurrentExternalServerURL(_ url: URL) -> Bool {
     guard isExternalServer,
+          case .ready(let currentURL) = serverState else {
+      return false
+    }
+
+    return currentURL == url
+  }
+
+  @MainActor
+  private func isCurrentManagedServerURL(_ url: URL) -> Bool {
+    guard !isExternalServer,
           case .ready(let currentURL) = serverState else {
       return false
     }

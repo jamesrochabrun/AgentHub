@@ -34,6 +34,8 @@ public actor SessionFileWatcher {
   /// Seconds to wait before considering a tool as awaiting approval
   private var approvalTimeoutSeconds: Int = 0
 
+  private let approvalNotificationService: any ApprovalNotificationServiceProtocol
+
   /// Publisher for state updates
   public nonisolated var statePublisher: AnyPublisher<StateUpdate, Never> {
     stateSubject.eraseToAnyPublisher()
@@ -41,8 +43,12 @@ public actor SessionFileWatcher {
 
   // MARK: - Initialization
 
-  public init(claudePath: String = "~/.claude") {
+  public init(
+    claudePath: String = "~/.claude",
+    approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared
+  ) {
     self.claudePath = NSString(string: claudePath).expandingTildeInPath
+    self.approvalNotificationService = approvalNotificationService
   }
 
   /// Set the approval timeout in seconds
@@ -219,7 +225,7 @@ public actor SessionFileWatcher {
               .description
 
             // Send notification
-            ApprovalNotificationService.shared.sendApprovalNotification(
+            self.approvalNotificationService.sendApprovalNotification(
               sessionId: sessionId,
               toolName: tool,
               projectPath: filePath,
