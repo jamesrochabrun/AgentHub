@@ -217,7 +217,7 @@ public final class DevServerManager {
   /// Detects the project framework from package.json and returns the appropriate server config.
   /// Uses shared `ProjectFramework.detect(at:)` for framework identification, then maps to
   /// the full `DetectedProject` with command, args, port, and readiness patterns.
-  private nonisolated static func detectProject(at projectPath: String) -> DetectedProject {
+  nonisolated static func detectProject(at projectPath: String) -> DetectedProject {
     let framework = ProjectFramework.detect(at: projectPath)
 
     switch framework {
@@ -227,7 +227,9 @@ public final class DevServerManager {
         command: "npm",
         arguments: ["run", "dev", "--", "--port"],
         defaultPort: 5173,
-        readinessPatterns: ["Local:", "localhost:", "ready in", "VITE"]
+        // Avoid matching npm's echoed command line (`vite --port ...`) before
+        // the dev server has actually bound the socket.
+        readinessPatterns: ["Local:", "localhost:", "ready in"]
       )
     case .nextjs:
       return DetectedProject(
@@ -267,7 +269,9 @@ public final class DevServerManager {
         command: "npm",
         arguments: ["run", "dev", "--", "--port"],
         defaultPort: 4321,
-        readinessPatterns: ["localhost:", "astro"]
+        // Avoid matching npm's echoed command line (`astro dev --port ...`)
+        // before Astro prints its real ready banner or localhost URL.
+        readinessPatterns: ["ready in", "localhost:"]
       )
     case .unknown:
       // Has package.json with scripts but no recognized framework
