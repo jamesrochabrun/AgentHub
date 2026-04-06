@@ -1064,39 +1064,30 @@ public struct WebPreviewView: View {
   }
 
   private func handleManagedServerLoadFailure(error: String, failedURL: URL) {
-    Task {
-      let shouldRecover = await MainActor.run {
-        guard isCurrentManagedServerURL(failedURL) else {
-          return false
-        }
+    Task { @MainActor in
+      guard isCurrentManagedServerURL(failedURL) else { return }
 
-        let shouldFallback = WebPreviewExternalLoadFailurePolicy.shouldFallbackForManagedPreview(error: error)
-        if !shouldFallback {
-          AppLogger.devServer.info(
-            "[WebPreview] Session \(session.id): ignoring managed server load error during live preview: \(error)"
-          )
-        }
-        return shouldFallback
+      let shouldRecover = WebPreviewExternalLoadFailurePolicy.shouldFallbackForManagedPreview(error: error)
+      if !shouldRecover {
+        AppLogger.devServer.info(
+          "[WebPreview] Session \(session.id): ignoring managed server load error during live preview: \(error)"
+        )
+        return
       }
-      guard shouldRecover else { return }
 
       AppLogger.devServer.error(
         "[WebPreview] Session \(session.id): failed to load managed server \(failedURL.absoluteString): \(error)"
       )
 
-      let launchResolution = await WebPreviewResolver.resolveLaunchOptions(
+      let recovery = WebPreviewManagedRecovery.recovered(
         projectPath: projectPath,
-        unreachableURL: failedURL
+        failedURL: failedURL,
+        error: error
       )
-      await MainActor.run {
-        guard isCurrentManagedServerURL(failedURL) else { return }
-        DevServerManager.shared.stopServer(for: serverKey)
-        launchOptionsStatusOverride = """
-          Could not load \(failedURL.absoluteString).
-          \(error)
-          """
-      }
-      await applyResolution(launchResolution)
+
+      DevServerManager.shared.failServer(for: serverKey, error: recovery.failureMessage)
+      launchOptionsStatusOverride = nil
+      await applyResolution(recovery.resolution)
     }
   }
 

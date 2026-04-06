@@ -174,6 +174,21 @@ struct WebPreviewCandidateServiceTests {
     #expect(status == .candidate(reason: .staticEntry))
   }
 
+  @Test("One-level-deep framework package without HTML is not a candidate from the repo root")
+  func oneLevelDeepFrameworkPackageWithoutHTMLIsNotCandidate() async throws {
+    let fixture = try WebPreviewCandidateFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write(
+      "frontend/package.json",
+      content: #"{"dependencies":{"vite":"5.0.0"}}"#
+    )
+
+    let status = await WebPreviewCandidateService().candidateStatus(for: fixture.root.path)
+
+    #expect(status == .notCandidate)
+  }
+
   @Test("Package preview script is treated as a likely web package")
   func packagePreviewScriptIsLikelyWebPackage() async throws {
     let fixture = try WebPreviewCandidateFixture.create()

@@ -115,7 +115,7 @@ public actor WebPreviewCandidateService: WebPreviewCandidateServiceProtocol {
     "svelte.config.ts",
   ]
 
-  private static let entryPointPaths: [String] = [
+  private static let rootEntryPointPaths: [String] = [
     "index.html",
     "public/index.html",
     "static/index.html",
@@ -135,6 +135,16 @@ public actor WebPreviewCandidateService: WebPreviewCandidateServiceProtocol {
     "pages/index.jsx",
     "pages/index.ts",
     "pages/index.tsx",
+  ]
+
+  private static let staticHTMLPathSignals: [String] = [
+    "index.html",
+    "public/index.html",
+    "static/index.html",
+    "src/index.html",
+    "www/index.html",
+    "dist/index.html",
+    "build/index.html",
   ]
 
   private static let skippedChildDirectoryNames: Set<String> = [
@@ -248,20 +258,22 @@ public actor WebPreviewCandidateService: WebPreviewCandidateServiceProtocol {
   }
 
   private nonisolated static func evaluateSynchronously(projectPath: String) -> WebPreviewCandidateStatus {
-    for candidateProjectPath in candidateProjectPaths(rootProjectPath: projectPath) {
-      let packageSignals = loadPackageSignals(projectPath: candidateProjectPath)
+    let packageSignals = loadPackageSignals(projectPath: projectPath)
 
-      if hasKnownFrameworkSignal(projectPath: candidateProjectPath, packageSignals: packageSignals) {
-        return .candidate(reason: .knownFramework)
-      }
+    if hasKnownFrameworkSignal(projectPath: projectPath, packageSignals: packageSignals) {
+      return .candidate(reason: .knownFramework)
+    }
 
-      if hasLikelyWebPackageSignal(packageSignals: packageSignals) {
-        return .candidate(reason: .likelyWebPackage)
-      }
+    if hasLikelyWebPackageSignal(packageSignals: packageSignals) {
+      return .candidate(reason: .likelyWebPackage)
+    }
 
-      if hasStaticEntrySignal(projectPath: candidateProjectPath) {
-        return .candidate(reason: .staticEntry)
-      }
+    if hasRootEntrySignal(projectPath: projectPath) {
+      return .candidate(reason: .staticEntry)
+    }
+
+    if hasShallowChildStaticHTMLSignal(rootProjectPath: projectPath) {
+      return .candidate(reason: .staticEntry)
     }
 
     return .notCandidate
@@ -298,8 +310,14 @@ public actor WebPreviewCandidateService: WebPreviewCandidateServiceProtocol {
     return !likelyScriptNames.isDisjoint(with: packageSignals.scriptKeys)
   }
 
-  private nonisolated static func hasStaticEntrySignal(projectPath: String) -> Bool {
-    entryPointPaths.contains { relativePath in
+  private nonisolated static func hasRootEntrySignal(projectPath: String) -> Bool {
+    rootEntryPointPaths.contains { relativePath in
+      FileManager.default.fileExists(atPath: projectPath + "/" + relativePath)
+    }
+  }
+
+  private nonisolated static func hasStaticHTMLSignal(projectPath: String) -> Bool {
+    staticHTMLPathSignals.contains { relativePath in
       FileManager.default.fileExists(atPath: projectPath + "/" + relativePath)
     }
   }
@@ -330,9 +348,17 @@ public actor WebPreviewCandidateService: WebPreviewCandidateServiceProtocol {
     )
   }
 
-  private nonisolated static func candidateProjectPaths(rootProjectPath: String) -> [String] {
-    var paths = [rootProjectPath]
+  private nonisolated static func hasShallowChildStaticHTMLSignal(rootProjectPath: String) -> Bool {
+    for childProjectPath in shallowChildProjectPaths(rootProjectPath: rootProjectPath) {
+      if hasStaticHTMLSignal(projectPath: childProjectPath) {
+        return true
+      }
+    }
 
+    return false
+  }
+
+  private nonisolated static func shallowChildProjectPaths(rootProjectPath: String) -> [String] {
     let rootURL = URL(fileURLWithPath: rootProjectPath)
     let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey]
 
@@ -341,10 +367,14 @@ public actor WebPreviewCandidateService: WebPreviewCandidateServiceProtocol {
       includingPropertiesForKeys: Array(resourceKeys),
       options: [.skipsHiddenFiles]
     ) else {
-      return paths
+      return []
     }
 
-    let childDirectories = childURLs
+    // Keep this scan intentionally shallow and HTML-only. The resolver and
+    // managed dev-server launcher still operate on the root project path, so
+    // child package.json-based apps require a dedicated preview target path
+    // before they can be surfaced safely.
+    return childURLs
       .filter { url in
         guard skippedChildDirectoryNames.contains(url.lastPathComponent) == false else {
           return false
@@ -355,9 +385,6 @@ public actor WebPreviewCandidateService: WebPreviewCandidateServiceProtocol {
       }
       .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
       .map(\.path)
-
-    paths.append(contentsOf: childDirectories)
-    return paths
   }
 
   nonisolated static func normalize(_ projectPath: String) -> String {

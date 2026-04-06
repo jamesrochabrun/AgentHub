@@ -151,6 +151,27 @@ public final class DevServerManager {
       return
     }
 
+    disposeManagedServer(for: key, finalState: .idle, logAction: "Stopping")
+  }
+
+  /// Marks a managed server as failed and keeps the error visible to the UI.
+  public func failServer(for key: String, error: String) {
+    externalServers.remove(key)
+    disposeManagedServer(for: key, finalState: .failed(error: error), logAction: "Failing")
+  }
+
+  /// Stops all running servers. Called on app quit.
+  public func stopAllServers() {
+    for key in Array(servers.keys) {
+      stopServer(for: key)
+    }
+  }
+
+  private func disposeManagedServer(
+    for key: String,
+    finalState: DevServerState,
+    logAction: String
+  ) {
     readinessTasks[key]?.cancel()
     readinessTasks.removeValue(forKey: key)
 
@@ -162,14 +183,14 @@ public final class DevServerManager {
     outputPipes.removeValue(forKey: key)
 
     guard let process = processes[key] else {
-      servers[key] = .idle
+      servers[key] = finalState
       return
     }
 
     servers[key] = .stopping
     let pid = process.processIdentifier
 
-    AppLogger.devServer.info("[DevServerManager] Stopping server for key=\(key) (PID: \(pid))")
+    AppLogger.devServer.info("[DevServerManager] \(logAction) server for key=\(key) (PID: \(pid))")
 
     // SIGTERM to process group, then escalate
     if killpg(pid, SIGTERM) != 0 {
@@ -188,14 +209,7 @@ public final class DevServerManager {
     TerminalProcessRegistry.shared.unregister(pid: pid)
     processes.removeValue(forKey: key)
     assignedPorts.removeValue(forKey: key)
-    servers[key] = .idle
-  }
-
-  /// Stops all running servers. Called on app quit.
-  public func stopAllServers() {
-    for key in Array(servers.keys) {
-      stopServer(for: key)
-    }
+    servers[key] = finalState
   }
 
   // MARK: - Project Detection
