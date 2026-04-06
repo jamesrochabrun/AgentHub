@@ -44,21 +44,21 @@ struct WebPreviewDisconnectedBanner: View {
 
       HStack(spacing: 8) {
         Button("Retry", action: onRetry)
-          .buttonStyle(.borderedProminent)
+          .webPreviewPrimaryButtonStyle()
 
         if canUseManagedPreview {
           Button("Use App Preview", action: onUseManagedPreview)
-            .buttonStyle(.bordered)
+            .webPreviewSecondaryButtonStyle()
         }
 
         if state.hasStaticFallback {
           Button("Use Static Preview", action: onUseStaticPreview)
-            .buttonStyle(.bordered)
+            .webPreviewSecondaryButtonStyle()
         }
 
         if canAskAgent {
           Button("Ask Agent", action: onAskAgent)
-            .buttonStyle(.bordered)
+            .webPreviewSecondaryButtonStyle()
         }
       }
 

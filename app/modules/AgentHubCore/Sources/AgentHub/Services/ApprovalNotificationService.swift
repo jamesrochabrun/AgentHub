@@ -28,6 +28,7 @@ public final class ApprovalNotificationService {
 
   @discardableResult
   public func requestPermission() async -> Bool {
+    guard canAccessUserNotificationCenter else { return false }
     do {
       let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
       return granted
@@ -80,6 +81,8 @@ public final class ApprovalNotificationService {
   }
 
   private func sendPushNotification(toolName: String, projectPath: String?, sessionId: String) async {
+    guard canAccessUserNotificationCenter else { return }
+
     let content = UNMutableNotificationContent()
     content.title = "Approval Required"
     content.body = "\(toolName) needs your approval"
@@ -101,5 +104,14 @@ public final class ApprovalNotificationService {
     } catch {
       // Silently fail — notification is a best-effort enhancement
     }
+  }
+
+  private var canAccessUserNotificationCenter: Bool {
+    let bundlePath = Bundle.main.bundleURL.path
+    if bundlePath.hasSuffix(".xctest") || bundlePath.contains("/swift/pm/") {
+      return false
+    }
+
+    return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
   }
 }

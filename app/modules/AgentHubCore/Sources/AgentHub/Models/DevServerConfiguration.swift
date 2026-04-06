@@ -66,7 +66,10 @@ enum ProjectFramework: String, Sendable {
     }
 
     // Has package.json with dev/start scripts but no recognized framework
-    if scripts["dev"] != nil || scripts["start"] != nil {
+    if scripts["dev"] != nil
+        || scripts["start"] != nil
+        || scripts["serve"] != nil
+        || scripts["preview"] != nil {
       return .unknown
     }
 

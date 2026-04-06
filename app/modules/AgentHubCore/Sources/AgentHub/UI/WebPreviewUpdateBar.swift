@@ -41,7 +41,7 @@ struct WebPreviewUpdateBar: View {
             )
         }
       }
-      .buttonStyle(.borderedProminent)
+      .webPreviewPrimaryButtonStyle()
       .disabled(!state.isEnabled)
       .help("Update preview (⌘↵)")
     }

@@ -40,14 +40,16 @@ private func makeViewModelFixture(
     fileWatcher: MockFileWatcher(),
     searchService: nil,
     cliConfiguration: .claudeDefault,
-    providerKind: .claude
+    providerKind: .claude,
+    requestNotificationPermissionsOnInit: false
   )
   let codexVM = CLISessionsViewModel(
     monitorService: MockMonitorService(),
     fileWatcher: MockFileWatcher(),
     searchService: nil,
     cliConfiguration: .codexDefault,
-    providerKind: .codex
+    providerKind: .codex,
+    requestNotificationPermissionsOnInit: false
   )
   let viewModel = MultiSessionLaunchViewModel(
     claudeViewModel: claudeVM,

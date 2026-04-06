@@ -86,6 +86,11 @@ public final class AgentHubProvider {
     StatsDisplaySettings(configuration.statsDisplayMode)
   }()
 
+  /// Cached project-level detector for web preview button visibility.
+  lazy var webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = {
+    WebPreviewCandidateService.shared
+  }()
+
   /// Session metadata store for user-provided session names
   public private(set) lazy var metadataStore: SessionMetadataStore? = {
     do {
@@ -260,7 +265,8 @@ public final class AgentHubProvider {
       searchService: selectedSearch,
       cliConfiguration: cliConfiguration,
       providerKind: providerKind,
-      metadataStore: metadataStore
+      metadataStore: metadataStore,
+      webPreviewCandidateService: webPreviewCandidateService
     )
     vm.agentHubProvider = self
     return vm

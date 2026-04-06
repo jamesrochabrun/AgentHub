@@ -282,6 +282,24 @@ public final class DevServerManager {
           readinessPatterns: ["localhost:", "ready", "compiled", "started", "listening"]
         )
       }
+      if scripts["serve"] != nil {
+        return DetectedProject(
+          framework: .unknown,
+          command: "npm",
+          arguments: ["run", "serve"],
+          defaultPort: 3000,
+          readinessPatterns: ["localhost:", "ready", "compiled", "started", "listening"]
+        )
+      }
+      if scripts["preview"] != nil {
+        return DetectedProject(
+          framework: .unknown,
+          command: "npm",
+          arguments: ["run", "preview"],
+          defaultPort: 4173,
+          readinessPatterns: ["localhost:", "ready", "compiled", "started", "listening"]
+        )
+      }
       return staticHTMLProject()
     case .staticHTML:
       return staticHTMLProject()

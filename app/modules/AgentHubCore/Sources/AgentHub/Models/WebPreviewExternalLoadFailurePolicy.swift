@@ -27,6 +27,14 @@ enum WebPreviewExternalLoadFailurePolicy {
     return !hasLoadedExternalContent
   }
 
+  static func shouldFallbackForManagedPreview(error: String) -> Bool {
+    if isConnectionRefused(error: error) {
+      return true
+    }
+
+    return !isIgnorable(error: error)
+  }
+
   private static func isIgnorable(error: String) -> Bool {
     let normalizedError = error.lowercased()
 

@@ -186,6 +186,17 @@ public struct MonitoringCardView: View {
     viewModel?.queuedWebPreviewContextStore.count(for: session.id) ?? 0
   }
 
+  private var webPreviewCandidateStatus: WebPreviewCandidateStatus? {
+    viewModel?.webPreviewCandidateStatus(for: session.projectPath)
+  }
+
+  private var shouldShowWebPreviewButton: Bool {
+    WebPreviewCandidateVisibility.shouldShow(
+      candidateStatus: webPreviewCandidateStatus,
+      detectedLocalhostURL: state?.detectedLocalhostURL
+    )
+  }
+
   private var resourceLinks: [ResourceLink] {
     state?.detectedResourceLinks ?? []
   }
@@ -241,6 +252,9 @@ public struct MonitoringCardView: View {
       radius: isDragging ? 12 : 0
     )
     .animation(.easeInOut(duration: 0.2), value: isDragging)
+    .task(id: session.projectPath) {
+      await loadWebPreviewCandidateIfNeeded()
+    }
     .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
       await sessionGitHubQuickAccessViewModel.load(
         projectPath: session.projectPath,
@@ -258,6 +272,13 @@ public struct MonitoringCardView: View {
       guard let newValue else { return }
       Task {
         await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: newValue)
+        await loadWebPreviewCandidateIfNeeded()
+      }
+    }
+    .onChange(of: state?.detectedLocalhostURL) { _, newValue in
+      guard newValue == nil else { return }
+      Task {
+        await loadWebPreviewCandidateIfNeeded()
       }
     }
     .onDrop(
@@ -518,6 +539,12 @@ public struct MonitoringCardView: View {
     }
   }
 
+  @MainActor
+  private func loadWebPreviewCandidateIfNeeded() async {
+    guard state?.detectedLocalhostURL == nil else { return }
+    await viewModel?.ensureWebPreviewCandidate(for: session.projectPath)
+  }
+
   private func presentGitHubPanel() {
     gitHubSheetItem = GitHubSheetItem(
       session: session,
@@ -656,11 +683,7 @@ public struct MonitoringCardView: View {
 
         // Web preview button — visible when the project looks like a web project
         // or the agent has already detected a running localhost server
-        let framework = ProjectFramework.detect(at: session.projectPath)
-        if framework.requiresDevServer
-            || framework == .unknown
-            || state?.detectedLocalhostURL != nil
-            || WebPreviewResolver.hasAnyHTMLFile(at: session.projectPath) {
+        if shouldShowWebPreviewButton {
           Button(action: presentWebPreview) {
             HStack(spacing: 4) {
               Image(systemName: "globe")

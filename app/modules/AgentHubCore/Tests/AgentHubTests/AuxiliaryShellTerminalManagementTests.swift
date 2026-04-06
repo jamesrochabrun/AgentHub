@@ -37,7 +37,8 @@ private func makeAuxiliaryShellViewModel() -> CLISessionsViewModel {
     fileWatcher: AuxiliaryShellStubFileWatcher(),
     searchService: nil,
     cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
-    providerKind: .claude
+    providerKind: .claude,
+    requestNotificationPermissionsOnInit: false
   )
 }
 

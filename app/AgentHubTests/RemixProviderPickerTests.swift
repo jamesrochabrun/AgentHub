@@ -96,7 +96,8 @@ private func makeViewModel(providerKind: SessionProviderKind) -> CLISessionsView
       additionalPaths: [],
       mode: providerKind == .claude ? .claude : .codex
     ),
-    providerKind: providerKind
+    providerKind: providerKind,
+    requestNotificationPermissionsOnInit: false
   )
 }
 
