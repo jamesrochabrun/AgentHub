@@ -106,6 +106,10 @@ public final class ApprovalNotificationService {
     }
   }
 
+  /// Runtime heuristic that detects test bundles and skips
+  /// `UNUserNotificationCenter` calls which crash in that environment.
+  /// Ideally this service would be protocol-based and tests would inject
+  /// a no-op implementation instead of relying on bundle-path sniffing.
   private var canAccessUserNotificationCenter: Bool {
     let bundlePath = Bundle.main.bundleURL.path
     if bundlePath.hasSuffix(".xctest") || bundlePath.contains("/swift/pm/") {
