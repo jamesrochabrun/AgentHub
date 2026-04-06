@@ -341,7 +341,7 @@ struct CLISessionsViewModelWebPreviewCandidateTests {
       cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
       providerKind: .claude,
       webPreviewCandidateService: candidateService,
-      requestNotificationPermissionsOnInit: false
+      approvalNotificationService: NoOpApprovalNotificationService()
     )
 
     await viewModel.ensureWebPreviewCandidate(for: "/tmp/project")
@@ -366,7 +366,7 @@ struct CLISessionsViewModelWebPreviewCandidateTests {
       cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
       providerKind: .claude,
       webPreviewCandidateService: candidateService,
-      requestNotificationPermissionsOnInit: false
+      approvalNotificationService: NoOpApprovalNotificationService()
     )
 
     await viewModel.ensureWebPreviewCandidate(for: "/tmp/project")

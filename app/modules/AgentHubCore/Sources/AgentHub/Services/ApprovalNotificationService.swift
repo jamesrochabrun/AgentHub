@@ -11,10 +11,24 @@ import AppKit
 #endif
 import UserNotifications
 
+// MARK: - ApprovalNotificationServiceProtocol
+
+public protocol ApprovalNotificationServiceProtocol: AnyObject, Sendable {
+  @discardableResult
+  func requestPermission() async -> Bool
+  func sendApprovalNotification(
+    sessionId: String,
+    toolName: String,
+    projectPath: String?,
+    model: String?,
+    lastMessage: String?
+  )
+}
+
 // MARK: - ApprovalNotificationService
 
 /// Service for playing alert sounds and sending push notifications when tools need approval
-public final class ApprovalNotificationService {
+public final class ApprovalNotificationService: ApprovalNotificationServiceProtocol {
 
   // MARK: - Singleton
 
@@ -28,7 +42,6 @@ public final class ApprovalNotificationService {
 
   @discardableResult
   public func requestPermission() async -> Bool {
-    guard canAccessUserNotificationCenter else { return false }
     do {
       let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
       return granted
@@ -81,8 +94,6 @@ public final class ApprovalNotificationService {
   }
 
   private func sendPushNotification(toolName: String, projectPath: String?, sessionId: String) async {
-    guard canAccessUserNotificationCenter else { return }
-
     let content = UNMutableNotificationContent()
     content.title = "Approval Required"
     content.body = "\(toolName) needs your approval"
@@ -106,16 +117,4 @@ public final class ApprovalNotificationService {
     }
   }
 
-  /// Runtime heuristic that detects test bundles and skips
-  /// `UNUserNotificationCenter` calls which crash in that environment.
-  /// Ideally this service would be protocol-based and tests would inject
-  /// a no-op implementation instead of relying on bundle-path sniffing.
-  private var canAccessUserNotificationCenter: Bool {
-    let bundlePath = Bundle.main.bundleURL.path
-    if bundlePath.hasSuffix(".xctest") || bundlePath.contains("/swift/pm/") {
-      return false
-    }
-
-    return ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
-  }
 }

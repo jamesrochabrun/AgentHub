@@ -38,7 +38,7 @@ private func makeAuxiliaryShellViewModel() -> CLISessionsViewModel {
     searchService: nil,
     cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
     providerKind: .claude,
-    requestNotificationPermissionsOnInit: false
+    approvalNotificationService: NoOpApprovalNotificationService()
   )
 }
 

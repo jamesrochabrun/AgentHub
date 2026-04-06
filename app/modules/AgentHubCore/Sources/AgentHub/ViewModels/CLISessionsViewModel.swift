@@ -30,6 +30,7 @@ public final class CLISessionsViewModel {
   private let metadataStore: SessionMetadataStore?
   private let fileWatcher: any SessionFileWatcherProtocol
   private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
+  private let approvalNotificationService: any ApprovalNotificationServiceProtocol
   weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
@@ -496,10 +497,7 @@ public final class CLISessionsViewModel {
     providerKind: SessionProviderKind,
     metadataStore: SessionMetadataStore? = nil,
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
-    /// When `false`, skips requesting `UNUserNotificationCenter` permissions
-    /// during init. Pass `false` in tests to avoid hitting the notification
-    /// center, which is unavailable in test bundles.
-    requestNotificationPermissionsOnInit: Bool = true
+    approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared
   ) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
@@ -507,6 +505,7 @@ public final class CLISessionsViewModel {
     self.metadataStore = metadataStore
     self.fileWatcher = fileWatcher
     self.webPreviewCandidateService = webPreviewCandidateService
+    self.approvalNotificationService = approvalNotificationService
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
@@ -524,9 +523,7 @@ public final class CLISessionsViewModel {
 
     setupSubscriptions()
     restorePersistedRepositories()
-    if requestNotificationPermissionsOnInit {
-      requestNotificationPermissions()
-    }
+    requestNotificationPermissions()
 
     // Set initial timeout on file watcher
     Task {
@@ -538,7 +535,7 @@ public final class CLISessionsViewModel {
 
   private func requestNotificationPermissions() {
     Task {
-      await ApprovalNotificationService.shared.requestPermission()
+      await approvalNotificationService.requestPermission()
     }
   }
 
