@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import os
 
 // MARK: - Errors
 
@@ -149,16 +148,49 @@ public actor GitHubCLIService {
   public func listPullRequests(
     at repoPath: String,
     state: String = "open",
-    limit: Int = 30
+    limit: Int = 30,
+    authoredByMe: Bool = false,
+    labels: [String] = []
   ) async throws -> [GitHubPullRequest] {
     let fields = "number,title,body,state,url,headRefName,baseRefName,author,createdAt,updatedAt,isDraft,mergeable,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,labels,reviewRequests"
 
+    let effectiveLimit = authoredByMe ? 200 : limit
+    GitHubLogger.github.debug("[PR list] fetching state=\(state) limit=\(effectiveLimit) authoredByMe=\(authoredByMe) labels=\(labels) repoPath=\(repoPath)")
+    var args = ["pr", "list", "--state", state, "--limit", "\(effectiveLimit)", "--json", fields]
+    if authoredByMe { args += ["--author", "@me"] }
+    for label in labels { args += ["--label", label] }
+
+    let startTime = Date()
+    let json = try await runGH(args, at: repoPath)
+    let elapsed = Date().timeIntervalSince(startTime)
+    let bytes = json.utf8.count
+    GitHubLogger.github.debug("[PR list] fetched in \(elapsed)s (\(bytes) bytes)")
+
+    let prs = try decodePRList(json)
+    GitHubLogger.github.debug("[PR list] decoded \(prs.count) PRs")
+    return prs
+  }
+
+  /// Lists labels defined in the repository
+  public func listLabels(at repoPath: String) async throws -> [GitHubLabel] {
     let json = try await runGH(
-      ["pr", "list", "--state", state, "--limit", "\(limit)", "--json", fields],
+      ["label", "list", "--json", "name,color,description", "--limit", "100"],
       at: repoPath
     )
 
-    return try decodePRList(json)
+    guard let data = json.data(using: .utf8) else {
+      throw GitHubCLIError.parseError("Invalid encoding")
+    }
+
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+    do {
+      return try decoder.decode([GitHubLabel].self, from: data)
+    } catch {
+      GitHubLogger.github.error("Failed to decode labels: \(error.localizedDescription)")
+      throw GitHubCLIError.parseError(error.localizedDescription)
+    }
   }
 
   /// Gets details of a specific pull request
@@ -440,6 +472,10 @@ public actor GitHubCLIService {
     timeout: TimeInterval = commandTimeout,
     allowedExitCodes: Set<Int> = [0]
   ) async throws -> String {
+    let cmdDescription = ([executable] + arguments).joined(separator: " ")
+    GitHubLogger.github.debug("[runCommand] START timeout=\(timeout)s cmd=\(cmdDescription)")
+    let cmdStart = Date()
+
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
@@ -466,7 +502,7 @@ public actor GitHubCLIService {
       try process.run()
       try inputPipe.fileHandleForWriting.close()
     } catch {
-      AppLogger.github.error("Failed to start gh process: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to start gh process: \(error.localizedDescription)")
       throw GitHubCLIError.commandFailed("Failed to start gh: \(error.localizedDescription)")
     }
 
@@ -501,7 +537,7 @@ public actor GitHubCLIService {
         do {
           try await Task.sleep(for: .seconds(timeout))
           if process.isRunning {
-            AppLogger.github.warning("gh command timed out after \(timeout)s, terminating")
+            GitHubLogger.github.warning("gh command timed out after \(timeout)s, terminating")
             process.terminate()
           }
           return true
@@ -517,13 +553,18 @@ public actor GitHubCLIService {
 
     let output = String(data: outputData ?? Data(), encoding: .utf8) ?? ""
     let errorOutput = String(data: errorData ?? Data(), encoding: .utf8) ?? ""
+    let cmdElapsed = Date().timeIntervalSince(cmdStart)
+    let outputBytes = outputData?.count ?? 0
 
     if didTimeout {
+      GitHubLogger.github.error("[runCommand] TIMEOUT after \(cmdElapsed)s cmd=\(cmdDescription)")
       throw GitHubCLIError.timeout
     }
 
     if !allowedExitCodes.contains(Int(process.terminationStatus)) {
       let errMsg = errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+      let exitCode = process.terminationStatus
+      GitHubLogger.github.error("[runCommand] FAILED in \(cmdElapsed)s exitCode=\(exitCode) stderr=\(errMsg) cmd=\(cmdDescription)")
 
       if errMsg.contains("not logged") || errMsg.contains("auth login") {
         throw GitHubCLIError.notAuthenticated
@@ -538,6 +579,7 @@ public actor GitHubCLIService {
       throw GitHubCLIError.commandFailed(errMsg)
     }
 
+    GitHubLogger.github.debug("[runCommand] OK in \(cmdElapsed)s stdout=\(outputBytes) bytes cmd=\(cmdDescription)")
     return output
   }
 
@@ -555,7 +597,7 @@ public actor GitHubCLIService {
     do {
       return try decoder.decode([GitHubPullRequest].self, from: data)
     } catch {
-      AppLogger.github.error("Failed to decode PR list: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to decode PR list: \(error.localizedDescription)")
       throw GitHubCLIError.parseError(error.localizedDescription)
     }
   }
@@ -572,7 +614,7 @@ public actor GitHubCLIService {
     do {
       return try decoder.decode(GitHubPullRequest.self, from: data)
     } catch {
-      AppLogger.github.error("Failed to decode PR: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to decode PR: \(error.localizedDescription)")
       throw GitHubCLIError.parseError(error.localizedDescription)
     }
   }
@@ -589,7 +631,7 @@ public actor GitHubCLIService {
     do {
       return try decoder.decode([GitHubIssue].self, from: data)
     } catch {
-      AppLogger.github.error("Failed to decode issue list: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to decode issue list: \(error.localizedDescription)")
       throw GitHubCLIError.parseError(error.localizedDescription)
     }
   }
@@ -606,7 +648,7 @@ public actor GitHubCLIService {
     do {
       return try decoder.decode(GitHubIssue.self, from: data)
     } catch {
-      AppLogger.github.error("Failed to decode issue: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to decode issue: \(error.localizedDescription)")
       throw GitHubCLIError.parseError(error.localizedDescription)
     }
   }
@@ -635,7 +677,7 @@ public actor GitHubCLIService {
         )
       }
     } catch {
-      AppLogger.github.error("Failed to decode check runs: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to decode check runs: \(error.localizedDescription)")
       throw GitHubCLIError.parseError(error.localizedDescription)
     }
   }
@@ -697,7 +739,7 @@ public actor GitHubCLIService {
     do {
       rawComments = try decodePaginatedArray(RawComment.self, from: data, using: JSONDecoder())
     } catch {
-      AppLogger.github.error("Failed to decode review comments: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to decode review comments: \(error.localizedDescription)")
       throw GitHubCLIError.parseError(error.localizedDescription)
     }
 

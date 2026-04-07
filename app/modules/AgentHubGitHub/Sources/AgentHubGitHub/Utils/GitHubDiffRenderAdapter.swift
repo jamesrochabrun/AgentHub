@@ -7,15 +7,15 @@
 
 import Foundation
 
-struct GitHubRenderedDiff: Equatable, Sendable {
-  let oldContent: String
-  let newContent: String
+public struct GitHubRenderedDiff: Equatable, Sendable {
+  public let oldContent: String
+  public let newContent: String
 }
 
-enum GitHubDiffRenderAdapter {
+public enum GitHubDiffRenderAdapter {
   private static let omittedSectionMarker = "..."
 
-  static func renderedDiff(from patch: String) -> GitHubRenderedDiff? {
+  public static func renderedDiff(from patch: String) -> GitHubRenderedDiff? {
     guard !patch.isEmpty else { return nil }
 
     let lines = patch.components(separatedBy: "\n")

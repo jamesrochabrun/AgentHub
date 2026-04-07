@@ -124,7 +124,7 @@ public final class SessionGitHubQuickAccessViewModel {
     self.currentBranchPR = currentBranchPR
   }
 
-  nonisolated static func repositoryKey(projectPath: String, branchName: String?) -> String {
+  public nonisolated static func repositoryKey(projectPath: String, branchName: String?) -> String {
     "\(projectPath)|\(branchName ?? "")"
   }
 }

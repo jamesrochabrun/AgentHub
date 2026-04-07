@@ -6,7 +6,7 @@
 //
 
 import Foundation
-@testable import AgentHubCore
+@testable import AgentHubGitHub
 
 /// Mock GitHub CLI service for testing ViewModels and other consumers.
 ///
@@ -67,12 +67,19 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
   var listPullRequestsState: String?
   var listPullRequestsLimit: Int?
 
-  func listPullRequests(at repoPath: String, state: String, limit: Int) async throws -> [GitHubPullRequest] {
+  func listPullRequests(at repoPath: String, state: String, limit: Int, authoredByMe: Bool, labels: [String]) async throws -> [GitHubPullRequest] {
     listPullRequestsCalled = true
     listPullRequestsState = state
     listPullRequestsLimit = limit
     if let error = errorToThrow { throw error }
     return pullRequestsResult
+  }
+
+  var labelsResult: [GitHubLabel] = []
+
+  func listLabels(at repoPath: String) async throws -> [GitHubLabel] {
+    if let error = errorToThrow { throw error }
+    return labelsResult
   }
 
   var pullRequestResult: GitHubPullRequest?

@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import os
 
 // MARK: - GitHub Tab
 
@@ -124,6 +123,16 @@ public final class GitHubViewModel {
   public var selectedIssue: GitHubIssue?
   public var issueDetailLoadingState: GitHubLoadingState = .idle
 
+  /// PR filter: show only my PRs
+  public var showOnlyMyPRs: Bool = false
+
+  /// PR filter: selected labels
+  public var selectedLabels: Set<String> = []
+
+  /// Available repository labels
+  public var availableLabels: [GitHubLabel] = []
+  public var labelsLoadingState: GitHubLoadingState = .idle
+
   /// CI checks
   public var checks: [GitHubCheckRun] = []
   public var checksLoadingState: GitHubLoadingState = .idle
@@ -171,7 +180,7 @@ public final class GitHubViewModel {
     do {
       repoInfo = try await service.getRepoInfo(at: repoPath)
     } catch {
-      AppLogger.github.error("Failed to get repo info: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to get repo info: \(error.localizedDescription)")
     }
   }
 
@@ -183,11 +192,32 @@ public final class GitHubViewModel {
     prLoadingState = .loading
 
     do {
-      pullRequests = try await service.listPullRequests(at: repoPath, state: prFilter.ghState, limit: 30)
+      pullRequests = try await service.listPullRequests(
+        at: repoPath,
+        state: prFilter.ghState,
+        limit: 30,
+        authoredByMe: showOnlyMyPRs,
+        labels: Array(selectedLabels)
+      )
       prLoadingState = .loaded
     } catch {
       prLoadingState = .error(error.localizedDescription)
-      AppLogger.github.error("Failed to load PRs: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to load PRs: \(error.localizedDescription)")
+    }
+  }
+
+  /// Loads repository labels if not already loaded
+  public func loadLabelsIfNeeded() async {
+    guard let repoPath = currentRepoPath,
+          availableLabels.isEmpty,
+          labelsLoadingState != .loading else { return }
+    labelsLoadingState = .loading
+    do {
+      availableLabels = try await service.listLabels(at: repoPath)
+      labelsLoadingState = .loaded
+    } catch {
+      labelsLoadingState = .error(error.localizedDescription)
+      GitHubLogger.github.error("Failed to load labels: \(error.localizedDescription)")
     }
   }
 
@@ -215,12 +245,12 @@ public final class GitHubViewModel {
         guard !Task.isCancelled, selectedPR == nil || selectedPR?.number == number else { return }
         selectedPRFiles = files
       } catch {
-        AppLogger.github.warning("Failed to load PR files: \(error.localizedDescription)")
+        GitHubLogger.github.warning("Failed to load PR files: \(error.localizedDescription)")
       }
     } catch {
       guard !Task.isCancelled, selectedPR == nil || selectedPR?.number == number else { return }
       prDetailLoadingState = .error(error.localizedDescription)
-      AppLogger.github.error("Failed to load PR detail: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to load PR detail: \(error.localizedDescription)")
     }
   }
 
@@ -230,7 +260,7 @@ public final class GitHubViewModel {
     do {
       currentBranchPR = try await service.getCurrentBranchPR(at: repoPath)
     } catch {
-      AppLogger.github.info("No PR for current branch: \(error.localizedDescription)")
+      GitHubLogger.github.info("No PR for current branch: \(error.localizedDescription)")
     }
   }
 
@@ -302,7 +332,7 @@ public final class GitHubViewModel {
       issueLoadingState = .loaded
     } catch {
       issueLoadingState = .error(error.localizedDescription)
-      AppLogger.github.error("Failed to load issues: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to load issues: \(error.localizedDescription)")
     }
   }
 
@@ -319,7 +349,7 @@ public final class GitHubViewModel {
     } catch {
       guard !Task.isCancelled, selectedIssue == nil || selectedIssue?.number == number else { return }
       issueDetailLoadingState = .error(error.localizedDescription)
-      AppLogger.github.error("Failed to load issue: \(error.localizedDescription)")
+      GitHubLogger.github.error("Failed to load issue: \(error.localizedDescription)")
     }
   }
 

@@ -32,7 +32,10 @@ public protocol GitHubCLIServiceProtocol: AnyObject, Sendable {
   // MARK: - Pull Requests
 
   /// Lists pull requests for the repository
-  func listPullRequests(at repoPath: String, state: String, limit: Int) async throws -> [GitHubPullRequest]
+  func listPullRequests(at repoPath: String, state: String, limit: Int, authoredByMe: Bool, labels: [String]) async throws -> [GitHubPullRequest]
+
+  /// Lists labels defined in the repository
+  func listLabels(at repoPath: String) async throws -> [GitHubLabel]
 
   /// Gets details of a specific pull request
   func getPullRequest(number: Int, at repoPath: String) async throws -> GitHubPullRequest

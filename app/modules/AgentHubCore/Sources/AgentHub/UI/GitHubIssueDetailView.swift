@@ -5,6 +5,7 @@
 //  Detailed view for a GitHub issue with comments and actions
 //
 
+import AgentHubGitHub
 import SwiftUI
 
 // MARK: - GitHubIssueDetailView
