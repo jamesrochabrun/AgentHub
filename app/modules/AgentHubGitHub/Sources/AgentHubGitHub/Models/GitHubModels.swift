@@ -15,7 +15,7 @@ public enum GitHubPullRequestState: Equatable, Sendable {
   case merged
   case unknown(String)
 
-  init(rawValue: String) {
+  public init(rawValue: String) {
     switch rawValue.uppercased() {
     case "OPEN": self = .open
     case "CLOSED": self = .closed
@@ -39,7 +39,7 @@ public enum GitHubIssueState: Equatable, Sendable {
   case closed
   case unknown(String)
 
-  init(rawValue: String) {
+  public init(rawValue: String) {
     switch rawValue.uppercased() {
     case "OPEN": self = .open
     case "CLOSED": self = .closed
@@ -61,7 +61,7 @@ public enum GitHubMergeability: Equatable, Sendable {
   case conflicting
   case unknown(String)
 
-  init(rawValue: String) {
+  public init(rawValue: String) {
     switch rawValue.uppercased() {
     case "MERGEABLE": self = .mergeable
     case "CONFLICTING": self = .conflicting
@@ -84,7 +84,7 @@ public enum GitHubReviewDecisionState: Equatable, Sendable {
   case reviewRequired
   case unknown(String)
 
-  init(rawValue: String) {
+  public init(rawValue: String) {
     switch rawValue.uppercased() {
     case "APPROVED": self = .approved
     case "CHANGES_REQUESTED": self = .changesRequested
@@ -114,7 +114,7 @@ public enum GitHubCheckStatus: Equatable, Sendable {
   case cancel
   case unknown(String)
 
-  init(rawValue: String) {
+  public init(rawValue: String) {
     switch rawValue.uppercased() {
     case "COMPLETED": self = .completed
     case "IN_PROGRESS": self = .inProgress
@@ -159,7 +159,7 @@ public enum GitHubCheckConclusion: Equatable, Sendable {
   case stale
   case unknown(String)
 
-  init(rawValue: String) {
+  public init(rawValue: String) {
     switch rawValue.uppercased() {
     case "SUCCESS": self = .success
     case "FAILURE": self = .failure
@@ -200,7 +200,7 @@ public enum GitHubCheckBucket: Equatable, Sendable {
   case cancel
   case unknown(String)
 
-  init(rawValue: String) {
+  public init(rawValue: String) {
     switch rawValue.lowercased() {
     case "pass": self = .pass
     case "fail": self = .fail
@@ -247,6 +247,50 @@ public struct GitHubPullRequest: Identifiable, Equatable, Sendable, Decodable {
   public let labels: [GitHubLabel]?
   public let reviewRequests: [GitHubReviewRequest]?
   public let comments: [GitHubComment]?
+
+  public init(
+    number: Int,
+    title: String,
+    body: String?,
+    state: String,
+    url: String,
+    headRefName: String,
+    baseRefName: String,
+    author: GitHubAuthor?,
+    createdAt: Date?,
+    updatedAt: Date?,
+    isDraft: Bool,
+    mergeable: String?,
+    additions: Int,
+    deletions: Int,
+    changedFiles: Int,
+    reviewDecision: String?,
+    statusCheckRollup: [GitHubCheckRun]?,
+    labels: [GitHubLabel]?,
+    reviewRequests: [GitHubReviewRequest]?,
+    comments: [GitHubComment]?
+  ) {
+    self.number = number
+    self.title = title
+    self.body = body
+    self.state = state
+    self.url = url
+    self.headRefName = headRefName
+    self.baseRefName = baseRefName
+    self.author = author
+    self.createdAt = createdAt
+    self.updatedAt = updatedAt
+    self.isDraft = isDraft
+    self.mergeable = mergeable
+    self.additions = additions
+    self.deletions = deletions
+    self.changedFiles = changedFiles
+    self.reviewDecision = reviewDecision
+    self.statusCheckRollup = statusCheckRollup
+    self.labels = labels
+    self.reviewRequests = reviewRequests
+    self.comments = comments
+  }
 
   public var id: Int { number }
 
