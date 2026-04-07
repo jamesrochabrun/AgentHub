@@ -56,6 +56,25 @@ public final class ThemeManager {
       light: "#FFFFFF"
   """
 
+  private static let bundledBetelgeuseYAML = """
+  name: "Betelgeuse"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Warm orange gradient inspired by the red supergiant"
+
+  colors:
+    brand:
+      primary: "#FF6B22"
+      secondary: "#FF8C42"
+      tertiary: "#FFB574"
+
+    backgroundGradient:
+      - color: "#FF6B22"
+        opacity: 0.44
+      - color: "#FF8C42"
+        opacity: 0.25
+  """
+
   public struct ThemeMetadata: Identifiable {
     public let id: String
     public let name: String
@@ -70,7 +89,7 @@ public final class ThemeManager {
     if let appTheme = AppTheme(rawValue: saved) {
       self.currentTheme = Self.loadBuiltInTheme(appTheme)
     } else {
-      // YAML theme — start with neutral, async load will replace it
+      // YAML theme — start with neutral (orange) sync, async load adds gradient
       self.currentTheme = Self.loadBuiltInTheme(.neutral)
     }
     self.fileWatcher = ThemeFileWatcher()
@@ -185,12 +204,6 @@ public final class ThemeManager {
         brandSecondary: Color(hex: "#00A5B2"),
         brandTertiary: Color(hex: "#00A5B2")
       )
-    case .bat:
-      return ThemeColors(
-        brandPrimary: Color(hex: "#7C3AED"),
-        brandSecondary: Color(hex: "#FFB000"),
-        brandTertiary: Color(hex: "#64748B")
-      )
     case .xcode:
       return ThemeColors(
         brandPrimary: Color(nsColor: .systemBlue),
@@ -282,6 +295,7 @@ public final class ThemeManager {
   }
 
   private static let bundledThemes: [(name: String, fallbackYAML: String)] = [
+    ("betelgeuse", bundledBetelgeuseYAML),
     ("sentry", bundledSentryYAML),
     ("rausch", bundledRauschYAML),
   ]

@@ -56,7 +56,7 @@ public struct SettingsView: View {
   @Environment(ThemeManager.self) private var themeManager
   @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "neutral"
   private let defaultThemeId = "neutral"
-  private let bundledYAMLThemeFileIds = ["sentry.yaml", "rausch.yaml"]
+  private let bundledYAMLThemeFileIds = ["betelgeuse.yaml", "sentry.yaml", "rausch.yaml"]
   private let webPreviewInspectorDataLevels: [ElementInspectorDataLevel] = [.regular, .full]
 
   public init() {}

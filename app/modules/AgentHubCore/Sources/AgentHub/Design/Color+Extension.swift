@@ -40,7 +40,6 @@ public enum AppTheme: String, CaseIterable, Identifiable {
   case neutral = "neutral"
   case claude = "claude"
   case codex = "codex"
-  case bat = "bat"
   case xcode = "Blue"
   case custom = "custom"
 
@@ -51,7 +50,6 @@ public enum AppTheme: String, CaseIterable, Identifiable {
     case .neutral: return "Default"
     case .claude: return "Claude"
     case .codex: return "Codex"
-    case .bat: return "Bat"
     case .xcode: return "Blue"
     case .custom: return "Custom"
     }
@@ -62,7 +60,6 @@ public enum AppTheme: String, CaseIterable, Identifiable {
     case .neutral: return "Clean, system-adaptive colors"
     case .claude: return "Warm earth tones"
     case .codex: return "Teal and purple"
-    case .bat: return "Purple with mustard accents"
     case .xcode: return "Cool blues"
     case .custom: return "User-defined colors"
     }
@@ -166,7 +163,7 @@ extension Color {
       }
     case .codex:
       return Color(hex: "#00A5B2")
-    case .bat, .xcode, .custom, .none:
+    case .xcode, .custom, .none:
       return getCurrentThemeColors().brandPrimary
     }
   }
@@ -183,7 +180,7 @@ extension Color {
       }
     case .codex:
       return Color(hex: "#00A5B2")
-    case .bat, .xcode, .custom, .none:
+    case .xcode, .custom, .none:
       return getCurrentThemeColors().brandSecondary
     }
   }
@@ -200,7 +197,7 @@ extension Color {
       }
     case .codex:
       return Color(hex: "#00A5B2")
-    case .bat, .xcode, .custom, .none:
+    case .xcode, .custom, .none:
       return getCurrentThemeColors().brandTertiary
     }
   }
