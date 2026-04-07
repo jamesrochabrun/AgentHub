@@ -47,22 +47,12 @@ struct GitHubPRDetailView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      // Navigation header
       navigationHeader
-
-      Divider()
-
-      // PR info header
+      GradientDivider()
       prInfoHeader
-
-      Divider()
-
-      // Tab bar
-      tabBar
-
-      Divider()
-
-      // Tab content
+      GradientDivider()
+      detailTabBar
+      GradientDivider()
       tabContent
     }
     .onAppear {
@@ -80,11 +70,11 @@ struct GitHubPRDetailView: View {
   // MARK: - Navigation Header
 
   private var navigationHeader: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: DesignTokens.Spacing.sm) {
       Button {
         viewModel.deselectPR()
       } label: {
-        HStack(spacing: 4) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
           Image(systemName: "chevron.left")
             .font(.system(size: 10, weight: .semibold))
           Text("Back")
@@ -96,8 +86,7 @@ struct GitHubPRDetailView: View {
 
       Spacer()
 
-      // Action buttons
-      HStack(spacing: 6) {
+      HStack(spacing: DesignTokens.Spacing.sm) {
         Button {
           if let url = URL(string: pr.url) {
             NSWorkspace.shared.open(url)
@@ -107,47 +96,21 @@ struct GitHubPRDetailView: View {
             Image(systemName: "safari")
               .font(.system(size: 10))
             Text("Open in Browser")
-              .font(GitHubTypography.button)
           }
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.secondary.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: 5))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.agentHubOutlined)
 
         Button {
           Task { await viewModel.checkoutPR() }
         } label: {
           HStack(spacing: 3) {
-            switch viewModel.checkoutState {
-            case .loading:
-              ProgressView()
-                .controlSize(.mini)
-                .frame(width: 10, height: 10)
-            case .success:
-              Image(systemName: "checkmark")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.green)
-            case .error:
-              Image(systemName: "xmark")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.red)
-            case .idle:
-              Image(systemName: "arrow.down.to.line")
-                .font(.system(size: 10))
-            }
+            checkoutIcon
             Text(checkoutButtonLabel)
-              .font(GitHubTypography.button)
           }
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(checkoutButtonBackground)
-          .clipShape(RoundedRectangle(cornerRadius: 5))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.agentHubOutlined(tint: checkoutTintColor))
         .disabled(viewModel.checkoutState == .loading)
-        // TODO: Bring back automated code review via a custom review prompt/session flow.
+
         if let session, let onSendToSession {
           Button {
             let prompt = "Look at PR #\(pr.number) (\(pr.title)) on branch \(pr.headRefName). The PR has \(pr.additions) additions and \(pr.deletions) deletions across \(pr.changedFiles) files."
@@ -157,20 +120,35 @@ struct GitHubPRDetailView: View {
               Image(systemName: "arrow.right.circle")
                 .font(.system(size: 10))
               Text("Send to Session")
-                .font(GitHubTypography.button)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.accentColor.opacity(0.15))
-            .foregroundStyle(Color.accentColor)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.agentHubOutlined(tint: Color.brandPrimary))
         }
       }
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 6)
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
+  }
+
+  @ViewBuilder
+  private var checkoutIcon: some View {
+    switch viewModel.checkoutState {
+    case .loading:
+      ProgressView()
+        .controlSize(.mini)
+        .frame(width: 10, height: 10)
+    case .success:
+      Image(systemName: "checkmark")
+        .font(.system(size: 10, weight: .bold))
+        .foregroundStyle(GitHubPalette.addition)
+    case .error:
+      Image(systemName: "xmark")
+        .font(.system(size: 10, weight: .bold))
+        .foregroundStyle(GitHubPalette.deletion)
+    case .idle:
+      Image(systemName: "arrow.down.to.line")
+        .font(.system(size: 10))
+    }
   }
 
   private var checkoutButtonLabel: String {
@@ -182,32 +160,35 @@ struct GitHubPRDetailView: View {
     }
   }
 
-  private var checkoutButtonBackground: Color {
+  private var checkoutTintColor: Color {
     switch viewModel.checkoutState {
-    case .success: return Color.green.opacity(0.15)
-    case .error: return Color.red.opacity(0.15)
-    default: return Color.secondary.opacity(0.1)
+    case .success: return .green
+    case .error: return .red
+    default: return .secondary
     }
   }
 
   // MARK: - PR Info Header
 
   private var prInfoHeader: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack(spacing: 8) {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+      // State + number row
+      HStack(spacing: DesignTokens.Spacing.sm) {
         Image(systemName: pr.stateIcon)
           .font(.system(size: 14))
           .foregroundStyle(prStateColor)
 
         Text("#\(pr.number)")
           .font(GitHubTypography.monoTitle)
+          .foregroundStyle(Color.brandPrimary)
 
         if pr.isDraft {
           Text("Draft")
             .font(GitHubTypography.badge)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Color.secondary.opacity(0.2))
+            .background(Color.secondary.opacity(0.15))
+            .foregroundStyle(.secondary)
             .clipShape(Capsule())
         }
       }
@@ -216,62 +197,47 @@ struct GitHubPRDetailView: View {
         .font(GitHubTypography.sectionTitle)
         .fixedSize(horizontal: false, vertical: true)
 
-      HStack(spacing: 12) {
+      // Metadata row
+      HStack(spacing: DesignTokens.Spacing.md) {
         if let author = pr.author {
-          HStack(spacing: 3) {
-            Image(systemName: "person")
-              .font(.system(size: 9))
+          HStack(spacing: DesignTokens.Spacing.xs) {
+            AuthorAvatarView(login: author.login, size: 18)
             Text(author.login)
               .font(GitHubTypography.bodySmall)
           }
           .foregroundStyle(.secondary)
         }
 
-        HStack(spacing: 3) {
-          Text(pr.headRefName)
-            .font(GitHubTypography.monoCaption)
-            .foregroundStyle(.blue)
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          BranchBadge(name: pr.headRefName)
           Image(systemName: "arrow.right")
             .font(.system(size: 8))
             .foregroundStyle(.tertiary)
-          Text(pr.baseRefName)
-            .font(GitHubTypography.monoCaption)
-            .foregroundStyle(.secondary)
+          BranchBadge(name: pr.baseRefName)
         }
 
-        HStack(spacing: 6) {
-          Text("+\(pr.additions)")
-            .font(GitHubTypography.monoBody)
-            .foregroundStyle(.green)
-          Text("-\(pr.deletions)")
-            .font(GitHubTypography.monoBody)
-            .foregroundStyle(.red)
-          Text("\(pr.changedFiles) files")
-            .font(GitHubTypography.bodySmall)
-            .foregroundStyle(.secondary)
-        }
+        AdditionsDeletionsBadge(additions: pr.additions, deletions: pr.deletions)
+
+        Text("\(pr.changedFiles) files")
+          .font(GitHubTypography.bodySmall)
+          .foregroundStyle(.secondary)
 
         if let decision = pr.reviewDecision {
-          reviewDecisionBadge(decision)
+          ReviewDecisionBadge(decision: decision)
         }
       }
 
       if let labels = pr.labels, !labels.isEmpty {
-        HStack(spacing: 4) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
           ForEach(labels) { label in
-            Text(label.name)
-              .font(GitHubTypography.badge)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(Color.secondary.opacity(0.12))
-              .clipShape(Capsule())
+            GitHubLabelPill(label: label)
           }
         }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
   }
 
   private var prStateColor: Color {
@@ -283,75 +249,27 @@ struct GitHubPRDetailView: View {
     }
   }
 
-  private func reviewDecisionBadge(_ decision: String) -> some View {
-    let (label, color): (String, Color) = {
-      switch GitHubReviewDecisionState(rawValue: decision) {
-      case .approved: return ("Approved", .green)
-      case .changesRequested: return ("Changes Requested", .orange)
-      case .reviewRequired: return ("Review Required", .secondary)
-      case .unknown(let rawValue): return (rawValue, .secondary)
-      }
-    }()
-
-    return Text(label)
-      .font(GitHubTypography.badge)
-      .padding(.horizontal, 6)
-      .padding(.vertical, 2)
-      .background(color.opacity(0.15))
-      .foregroundStyle(color)
-      .clipShape(Capsule())
-  }
-
   // MARK: - Tab Bar
 
-  private var tabBar: some View {
-    HStack(spacing: 2) {
-      ForEach(PRDetailTab.allCases) { tab in
-        Button {
-          selectedTab = tab
-          if tab == .checks && viewModel.loadedChecksPRNumber != pr.number {
-            Task { await viewModel.loadChecks(prNumber: pr.number) }
-          }
-        } label: {
-          HStack(spacing: 4) {
-            Image(systemName: tab.icon)
-              .font(.system(size: 10))
-            Text(tab.rawValue)
-              .font(GitHubTypography.button)
-
-            // Badge counts
-            if tab == .comments, let comments = pr.comments, !comments.isEmpty {
-              Text("\(comments.count)")
-                .font(GitHubTypography.monoCaption)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(Color.secondary.opacity(0.2))
-                .clipShape(Capsule())
-            }
-            if tab == .files {
-              Text("\(pr.changedFiles)")
-                .font(GitHubTypography.monoCaption)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 1)
-                .background(Color.secondary.opacity(0.2))
-                .clipShape(Capsule())
-            }
-          }
-          .padding(.horizontal, 10)
-          .padding(.vertical, 5)
-          .background(
-            selectedTab == tab
-              ? Color.accentColor.opacity(0.12)
-              : Color.clear
-          )
-          .clipShape(RoundedRectangle(cornerRadius: 5))
+  private var detailTabBar: some View {
+    GitHubUnderlineTabBar(
+      tabs: PRDetailTab.allCases,
+      selected: $selectedTab,
+      icon: { $0.icon },
+      title: { $0.rawValue },
+      badge: { tab in
+        switch tab {
+        case .comments: return pr.comments?.count
+        case .files: return pr.changedFiles > 0 ? pr.changedFiles : nil
+        default: return nil
         }
-        .buttonStyle(.plain)
+      },
+      onSelect: { tab in
+        if tab == .checks && viewModel.loadedChecksPRNumber != pr.number {
+          Task { await viewModel.loadChecks(prNumber: pr.number) }
+        }
       }
-      Spacer()
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 4)
+    )
   }
 
   // MARK: - Tab Content
@@ -374,7 +292,7 @@ struct GitHubPRDetailView: View {
 
   private var overviewTab: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 12) {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
         if let body = pr.body, !body.isEmpty {
           MarkdownCardView(content: body)
         } else {
@@ -384,43 +302,92 @@ struct GitHubPRDetailView: View {
             .italic()
         }
 
-        // Quick stats
-        VStack(alignment: .leading, spacing: 8) {
-          Text("Details")
-            .font(GitHubTypography.sectionLabel)
+        // Details card
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+          HStack(spacing: DesignTokens.Spacing.xs) {
+            Image(systemName: "doc.text")
+              .font(.system(size: 11))
+              .foregroundStyle(Color.brandPrimary)
+            Text("Details")
+              .font(GitHubTypography.sectionLabel)
+          }
 
-          detailRow("Mergeable", value: pr.mergeabilityKind?.displayName ?? "Unknown")
-          if let created = pr.createdAt {
-            detailRow("Created", value: relativeTime(created))
-          }
-          if let updated = pr.updatedAt {
-            detailRow("Updated", value: relativeTime(updated))
-          }
-          if let reviewRequests = pr.reviewRequests, !reviewRequests.isEmpty {
-            detailRow("Reviewers", value: reviewRequests.compactMap { $0.login ?? $0.slug }.joined(separator: ", "))
+          VStack(spacing: 0) {
+            detailRow("Mergeable", value: pr.mergeabilityKind?.displayName ?? "Unknown", icon: mergeableIcon)
+            detailDivider
+            if let created = pr.createdAt {
+              detailRow("Created", value: relativeTime(created))
+              detailDivider
+            }
+            if let updated = pr.updatedAt {
+              detailRow("Updated", value: relativeTime(updated))
+              detailDivider
+            }
+            if let reviewRequests = pr.reviewRequests, !reviewRequests.isEmpty {
+              reviewersRow(reviewRequests)
+            }
           }
         }
-        .padding(12)
-        .background(
-          RoundedRectangle(cornerRadius: 8)
-            .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
-        )
+        .padding(DesignTokens.Spacing.md)
+        .agentHubCard()
       }
-      .padding(12)
+      .padding(DesignTokens.Spacing.md)
     }
   }
 
-  private func detailRow(_ label: String, value: String) -> some View {
+  private var mergeableIcon: String? {
+    switch pr.mergeabilityKind {
+    case .mergeable: return "checkmark.circle.fill"
+    case .conflicting: return "exclamationmark.triangle.fill"
+    default: return nil
+    }
+  }
+
+  private func detailRow(_ label: String, value: String, icon: String? = nil) -> some View {
     HStack {
       Text(label)
         .font(GitHubTypography.button)
         .foregroundStyle(.secondary)
         .frame(width: 100, alignment: .leading)
+      if let icon {
+        Image(systemName: icon)
+          .font(.system(size: 10))
+          .foregroundStyle(icon.contains("checkmark") ? .green : .orange)
+      }
       Text(value)
         .font(GitHubTypography.bodySmall)
         .foregroundStyle(.primary)
       Spacer()
     }
+    .padding(.vertical, DesignTokens.Spacing.xs)
+  }
+
+  private func reviewersRow(_ requests: [GitHubReviewRequest]) -> some View {
+    HStack {
+      Text("Reviewers")
+        .font(GitHubTypography.button)
+        .foregroundStyle(.secondary)
+        .frame(width: 100, alignment: .leading)
+      HStack(spacing: DesignTokens.Spacing.xs) {
+        ForEach(requests.prefix(5), id: \.login) { request in
+          if let login = request.login {
+            AuthorAvatarView(login: login, size: 20)
+              .help(login)
+          } else if let slug = request.slug {
+            Text(slug)
+              .font(GitHubTypography.bodySmall)
+          }
+        }
+      }
+      Spacer()
+    }
+    .padding(.vertical, DesignTokens.Spacing.xs)
+  }
+
+  private var detailDivider: some View {
+    Rectangle()
+      .fill(Color.secondary.opacity(0.1))
+      .frame(height: 0.5)
   }
 
   // MARK: - Files Tab
@@ -429,6 +396,7 @@ struct GitHubPRDetailView: View {
     Group {
       if viewModel.selectedPRFiles.isEmpty && viewModel.prDetailLoadingState == .loading {
         ProgressView("Loading files...")
+          .tint(Color.brandPrimary)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else if viewModel.selectedPRFiles.isEmpty {
         Text("No files changed")
@@ -437,90 +405,68 @@ struct GitHubPRDetailView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
         HSplitView {
-          // File list
-          ScrollView {
-            LazyVStack(spacing: 1) {
-              ForEach(viewModel.selectedPRFiles) { file in
-                Button {
-                  selectedFile = file
-                } label: {
-                  HStack(spacing: 6) {
-                    Image(systemName: file.statusIcon)
-                      .font(.system(size: 10))
-                      .foregroundStyle(fileStatusColor(file.status))
-                      .frame(width: 16)
-
-                    Text(file.filename)
-                      .font(GitHubTypography.monoBody)
-                      .lineLimit(1)
-                      .truncationMode(.middle)
-
-                    Spacer()
-
-                    HStack(spacing: 4) {
-                      Text("+\(file.additions)")
-                        .font(GitHubTypography.monoCaption)
-                        .foregroundStyle(.green)
-                      Text("-\(file.deletions)")
-                        .font(GitHubTypography.monoCaption)
-                        .foregroundStyle(.red)
-                    }
-                  }
-                  .padding(.horizontal, 8)
-                  .padding(.vertical, 5)
-                  .background(
-                    selectedFile?.id == file.id
-                      ? Color.accentColor.opacity(0.1)
-                      : Color.clear
-                  )
-                }
-                .buttonStyle(.plain)
-              }
-            }
-          }
-          .frame(minWidth: 200, idealWidth: 280, maxWidth: 350)
-
-          // Diff content
-          if let file = selectedFile, let renderedDiff = renderedDiff(for: file) {
-            VStack(spacing: 0) {
-              diffHeader(for: file)
-              Divider()
-              PierreDiffView(
-                oldContent: renderedDiff.oldContent,
-                newContent: renderedDiff.newContent,
-                fileName: (file.filename as NSString).lastPathComponent,
-                diffStyle: $diffStyle,
-                overflowMode: $overflowMode
-              )
-            }
-            .background(colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.98))
-          } else if let file = selectedFile {
-            VStack {
-              Spacer()
-              Text("No diff available for \(file.filename)")
-                .font(GitHubTypography.body)
-                .foregroundStyle(.secondary)
-              Spacer()
-            }
-            .frame(maxWidth: .infinity)
-          } else {
-            VStack {
-              Spacer()
-              Text("Select a file to view its diff")
-                .font(GitHubTypography.body)
-                .foregroundStyle(.secondary)
-              Spacer()
-            }
-            .frame(maxWidth: .infinity)
-          }
+          fileList
+          diffPane
         }
       }
     }
   }
 
+  private var fileList: some View {
+    ScrollView {
+      LazyVStack(spacing: 1) {
+        ForEach(viewModel.selectedPRFiles) { file in
+          FileListRow(
+            file: file,
+            isSelected: selectedFile?.id == file.id
+          ) {
+            selectedFile = file
+          }
+        }
+      }
+    }
+    .frame(minWidth: 200, idealWidth: 280, maxWidth: 350)
+  }
+
+  @ViewBuilder
+  private var diffPane: some View {
+    if let file = selectedFile, let renderedDiff = renderedDiff(for: file) {
+      VStack(spacing: 0) {
+        diffHeader(for: file)
+        Divider()
+        PierreDiffView(
+          oldContent: renderedDiff.oldContent,
+          newContent: renderedDiff.newContent,
+          fileName: (file.filename as NSString).lastPathComponent,
+          diffStyle: $diffStyle,
+          overflowMode: $overflowMode
+        )
+      }
+      .background(colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.98))
+    } else if let file = selectedFile {
+      VStack {
+        Spacer()
+        Text("No diff available for \(file.filename)")
+          .font(GitHubTypography.body)
+          .foregroundStyle(.secondary)
+        Spacer()
+      }
+      .frame(maxWidth: .infinity)
+    } else {
+      VStack {
+        Spacer()
+        Text("Select a file to view its diff")
+          .font(GitHubTypography.body)
+          .foregroundStyle(.secondary)
+        Spacer()
+      }
+      .frame(maxWidth: .infinity)
+    }
+  }
+
   private func diffHeader(for file: GitHubPRFile) -> some View {
-    HStack(spacing: 10) {
-      HStack(spacing: 6) {
+    HStack(spacing: DesignTokens.Spacing.sm) {
+      HStack(spacing: DesignTokens.Spacing.sm) {
         Image(systemName: file.statusIcon)
           .font(.system(size: 11))
           .foregroundStyle(fileStatusColor(file.status))
@@ -533,16 +479,9 @@ struct GitHubPRDetailView: View {
 
       Spacer()
 
-      HStack(spacing: 6) {
-        Text("+\(file.additions)")
-          .font(GitHubTypography.monoCaption)
-          .foregroundStyle(.green)
-        Text("-\(file.deletions)")
-          .font(GitHubTypography.monoCaption)
-          .foregroundStyle(.red)
-      }
+      AdditionsDeletionsBadge(additions: file.additions, deletions: file.deletions)
 
-      HStack(spacing: 8) {
+      HStack(spacing: DesignTokens.Spacing.sm) {
         Button {
           diffStyle = diffStyle == .split ? .unified : .split
         } label: {
@@ -564,8 +503,8 @@ struct GitHubPRDetailView: View {
         .help(overflowMode == .wrap ? "Disable word wrap" : "Enable word wrap")
       }
     }
-    .padding(.horizontal, 10)
-    .padding(.vertical, 8)
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
   }
 
   private func fileStatusColor(_ status: String) -> Color {
@@ -627,9 +566,10 @@ struct GitHubPRDetailView: View {
       switch viewModel.checksLoadingState {
       case .loading:
         ProgressView("Loading checks...")
+          .tint(Color.brandPrimary)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       case .error(let msg):
-        VStack(spacing: 8) {
+        VStack(spacing: DesignTokens.Spacing.sm) {
           Spacer()
           Text("Failed to load checks")
             .font(GitHubTypography.sectionTitle)
@@ -639,8 +579,7 @@ struct GitHubPRDetailView: View {
           Button("Retry") {
             Task { await viewModel.loadChecks(prNumber: pr.number) }
           }
-          .buttonStyle(.bordered)
-          .controlSize(.small)
+          .buttonStyle(.agentHubOutlined(tint: .orange))
           Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -649,7 +588,7 @@ struct GitHubPRDetailView: View {
           VStack {
             Spacer()
             Image(systemName: "checkmark.shield")
-              .font(.system(size: 24))
+              .font(.system(size: 28))
               .foregroundStyle(.tertiary)
             Text("No CI checks configured")
               .font(GitHubTypography.body)
@@ -658,34 +597,7 @@ struct GitHubPRDetailView: View {
           }
           .frame(maxWidth: .infinity)
         } else {
-          ScrollView {
-            LazyVStack(spacing: 2) {
-              ForEach(viewModel.checks) { check in
-                HStack(spacing: 8) {
-                  Image(systemName: check.statusIcon)
-                    .font(.system(size: 13))
-                    .foregroundStyle(checkColor(check))
-                    .frame(width: 20)
-
-                  VStack(alignment: .leading, spacing: 1) {
-                    Text(check.name)
-                      .font(GitHubTypography.body)
-
-                    HStack(spacing: 4) {
-                      Text(check.statusDisplayName)
-                        .font(GitHubTypography.caption)
-                        .foregroundStyle(.secondary)
-                    }
-                  }
-
-                  Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-              }
-            }
-            .padding(.vertical, 8)
-          }
+          checksContent
         }
       }
     }
@@ -696,12 +608,76 @@ struct GitHubPRDetailView: View {
     }
   }
 
-  private func checkColor(_ check: GitHubCheckRun) -> Color {
-    switch check.ciStatus {
-    case .success: return .green
-    case .failure: return .red
-    case .pending: return .orange
-    case .none: return .secondary
+  private var checksContent: some View {
+    VStack(spacing: 0) {
+      // Summary banner
+      checksSummaryBanner
+
+      ScrollView {
+        LazyVStack(spacing: DesignTokens.Spacing.xs) {
+          ForEach(sortedChecks) { check in
+            CheckRunRow(check: check)
+          }
+        }
+        .padding(DesignTokens.Spacing.md)
+      }
+    }
+  }
+
+  private var checksSummaryBanner: some View {
+    let passed = viewModel.checks.filter { $0.ciStatus == .success }.count
+    let failed = viewModel.checks.filter { $0.ciStatus == .failure }.count
+    let pending = viewModel.checks.filter { $0.ciStatus == .pending }.count
+
+    return HStack(spacing: DesignTokens.Spacing.md) {
+      if passed > 0 {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          Image(systemName: "checkmark.circle.fill")
+            .font(.system(size: 11))
+            .foregroundStyle(GitHubPalette.addition)
+          Text("\(passed) passed")
+            .font(GitHubTypography.bodySmall)
+            .foregroundStyle(GitHubPalette.addition)
+        }
+      }
+      if failed > 0 {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          Image(systemName: "xmark.circle.fill")
+            .font(.system(size: 11))
+            .foregroundStyle(GitHubPalette.deletion)
+          Text("\(failed) failed")
+            .font(GitHubTypography.bodySmall)
+            .foregroundStyle(GitHubPalette.deletion)
+        }
+      }
+      if pending > 0 {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          Image(systemName: "clock.fill")
+            .font(.system(size: 11))
+            .foregroundStyle(.orange)
+          Text("\(pending) pending")
+            .font(GitHubTypography.bodySmall)
+            .foregroundStyle(.orange)
+        }
+      }
+      Spacer()
+    }
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
+    .background(colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.97))
+  }
+
+  private var sortedChecks: [GitHubCheckRun] {
+    viewModel.checks.sorted { a, b in
+      let order: (CIStatus) -> Int = { status in
+        switch status {
+        case .failure: return 0
+        case .pending: return 1
+        case .success: return 2
+        case .none: return 3
+        }
+      }
+      return order(a.ciStatus) < order(b.ciStatus)
     }
   }
 
@@ -709,26 +685,33 @@ struct GitHubPRDetailView: View {
 
   private var commentsTab: some View {
     VStack(spacing: 0) {
-      // Comments list
       ScrollView {
-        LazyVStack(spacing: 8) {
+        LazyVStack(spacing: DesignTokens.Spacing.sm) {
           // PR body comments
           if let comments = pr.comments {
             ForEach(comments) { comment in
-              commentCard(comment)
+              GitHubCommentCard(
+                author: comment.author,
+                createdAt: comment.createdAt,
+                commentBody: comment.body
+              )
             }
           }
 
           // Review comments
           if !viewModel.selectedPRReviewComments.isEmpty {
-            Divider()
-              .padding(.vertical, 4)
+            GradientDivider()
+              .padding(.vertical, DesignTokens.Spacing.xs)
 
-            Text("Review Comments")
-              .font(GitHubTypography.sectionLabel)
-              .foregroundStyle(.secondary)
-              .frame(maxWidth: .infinity, alignment: .leading)
-              .padding(.horizontal, 12)
+            HStack(spacing: DesignTokens.Spacing.xs) {
+              Image(systemName: "text.bubble")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.brandPrimary)
+              Text("Review Comments")
+                .font(GitHubTypography.sectionLabel)
+                .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             ForEach(viewModel.selectedPRReviewComments) { comment in
               reviewCommentCard(comment)
@@ -736,10 +719,10 @@ struct GitHubPRDetailView: View {
           }
 
           if (pr.comments ?? []).isEmpty && viewModel.selectedPRReviewComments.isEmpty {
-            VStack(spacing: 8) {
+            VStack(spacing: DesignTokens.Spacing.sm) {
               Spacer()
               Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 24))
+                .font(.system(size: 28))
                 .foregroundStyle(.tertiary)
               Text("No comments yet")
                 .font(GitHubTypography.body)
@@ -749,47 +732,25 @@ struct GitHubPRDetailView: View {
             .frame(maxWidth: .infinity, minHeight: 100)
           }
         }
-        .padding(12)
+        .padding(DesignTokens.Spacing.md)
       }
 
-      Divider()
+      GradientDivider()
 
-      // New comment input
-      commentInput
-    }
-  }
-
-  private func commentCard(_ comment: GitHubComment) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 6) {
-        if let author = comment.author {
-          Text(author.login)
-            .font(GitHubTypography.sectionLabel)
-        }
-        if let created = comment.createdAt {
-          Text(relativeTime(created))
-            .font(GitHubTypography.caption)
-            .foregroundStyle(.tertiary)
-        }
-        Spacer()
+      GitHubCommentInput(
+        text: $viewModel.newCommentText,
+        isSubmitting: viewModel.isSubmittingComment
+      ) {
+        Task { await viewModel.submitPRComment() }
       }
-
-      Text(comment.body)
-        .font(GitHubTypography.body)
-        .textSelection(.enabled)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(10)
-    .background(
-      RoundedRectangle(cornerRadius: 8)
-        .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
-    )
   }
 
   private func reviewCommentCard(_ comment: GitHubComment) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 6) {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+      HStack(spacing: DesignTokens.Spacing.sm) {
         if let author = comment.author {
+          AuthorAvatarView(login: author.login, size: 20)
           Text(author.login)
             .font(GitHubTypography.sectionLabel)
         }
@@ -816,9 +777,10 @@ struct GitHubPRDetailView: View {
         Text(hunk.components(separatedBy: "\n").suffix(3).joined(separator: "\n"))
           .font(GitHubTypography.monoCaption)
           .foregroundStyle(.secondary)
-          .padding(6)
+          .padding(DesignTokens.Spacing.sm)
+          .frame(maxWidth: .infinity, alignment: .leading)
           .background(
-            RoundedRectangle(cornerRadius: 4)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
               .fill(colorScheme == .dark ? Color(white: 0.04) : Color(white: 0.93))
           )
       }
@@ -828,45 +790,133 @@ struct GitHubPRDetailView: View {
         .textSelection(.enabled)
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(10)
-    .background(
-      RoundedRectangle(cornerRadius: 8)
-        .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
-    )
+    .padding(DesignTokens.Spacing.md)
+    .agentHubCard()
   }
+}
 
-  private var commentInput: some View {
-    HStack(spacing: 8) {
-      TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
-        .font(GitHubTypography.body)
-        .textFieldStyle(.plain)
-        .submitLabel(.send)
-        .onSubmit(submitComment)
-        .lineLimit(1...4)
-        .padding(8)
-        .background(
-          RoundedRectangle(cornerRadius: 8)
-            .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: 8)
-            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-        )
+// MARK: - File List Row
 
-      Button {
-        submitComment()
-      } label: {
-        Image(systemName: "arrow.up.circle.fill")
-          .font(.system(size: 20))
-          .foregroundStyle(viewModel.newCommentText.isEmpty ? Color.secondary : Color.accentColor)
+private struct FileListRow: View {
+  let file: GitHubPRFile
+  let isSelected: Bool
+  let onSelect: () -> Void
+
+  @State private var isHovered = false
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    Button(action: onSelect) {
+      HStack(spacing: 0) {
+        if isSelected {
+          Rectangle()
+            .fill(Color.brandPrimary)
+            .frame(width: 2)
+        }
+
+        HStack(spacing: DesignTokens.Spacing.sm) {
+          Image(systemName: file.statusIcon)
+            .font(.system(size: 10))
+            .foregroundStyle(fileStatusColor)
+            .frame(width: 16)
+
+          Text(file.filename)
+            .font(GitHubTypography.monoBody)
+            .lineLimit(1)
+            .truncationMode(.middle)
+
+          Spacer()
+
+          AdditionsDeletionsBadge(additions: file.additions, deletions: file.deletions)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, 5)
       }
-      .buttonStyle(.plain)
-      .disabled(viewModel.newCommentText.isEmpty || viewModel.isSubmittingComment)
+      .background(rowBackground)
     }
-    .padding(10)
+    .buttonStyle(.plain)
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.1), value: isHovered)
   }
 
-  private func submitComment() {
-    Task { await viewModel.submitPRComment() }
+  private var rowBackground: Color {
+    if isSelected {
+      return Color.brandPrimary.opacity(0.1)
+    }
+    if isHovered {
+      return colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96)
+    }
+    return Color.clear
+  }
+
+  private var fileStatusColor: Color {
+    switch file.status {
+    case "added": return .green
+    case "removed": return .red
+    case "modified": return .orange
+    case "renamed": return .blue
+    default: return .secondary
+    }
+  }
+}
+
+// MARK: - Check Run Row
+
+private struct CheckRunRow: View {
+  let check: GitHubCheckRun
+
+  @State private var isHovered = false
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    HStack(spacing: DesignTokens.Spacing.sm) {
+      Image(systemName: check.statusIcon)
+        .font(.system(size: 13))
+        .foregroundStyle(checkColor)
+        .frame(width: 20)
+
+      VStack(alignment: .leading, spacing: 1) {
+        Text(check.name)
+          .font(GitHubTypography.body)
+
+        Text(check.statusDisplayName)
+          .font(GitHubTypography.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      Spacer()
+
+      CIStatusBadge(status: check.ciStatus)
+    }
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
+    .background(
+      RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous)
+        .fill(isHovered
+          ? (colorScheme == .dark ? Color(white: 0.10) : Color(white: 0.96))
+          : (colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.98))
+        )
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous)
+        .stroke(Color.secondary.opacity(0.1), lineWidth: 1)
+    )
+    .clipShape(RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous))
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
+    .onTapGesture {
+      if let url = check.detailsUrl.flatMap(URL.init(string:)) {
+        NSWorkspace.shared.open(url)
+      }
+    }
+  }
+
+  private var checkColor: Color {
+    switch check.ciStatus {
+    case .success: return .green
+    case .failure: return .red
+    case .pending: return .orange
+    case .none: return .secondary
+    }
   }
 }

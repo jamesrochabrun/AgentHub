@@ -20,72 +20,29 @@ struct GitHubIssueDetailView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      // Navigation header
       navigationHeader
-
-      Divider()
-
-      // Issue info
+      GradientDivider()
       issueInfoHeader
-
-      Divider()
-
-      // Content: body + comments
-      ScrollView {
-        VStack(alignment: .leading, spacing: 12) {
-          // Issue body
-          if let body = issue.body, !body.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
-              Text("Description")
-                .font(GitHubTypography.sectionLabel)
-                .foregroundStyle(.secondary)
-
-              Text(body)
-                .font(GitHubTypography.body)
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                  RoundedRectangle(cornerRadius: 8)
-                    .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
-                )
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-          }
-
-          // Comments
-          if let comments = issue.comments, !comments.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-              Text("Comments (\(comments.count))")
-                .font(GitHubTypography.sectionLabel)
-                .foregroundStyle(.secondary)
-
-              ForEach(comments) { comment in
-                issueCommentCard(comment)
-              }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-          }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      GradientDivider()
+      issueBody
+      GradientDivider()
+      GitHubCommentInput(
+        text: $viewModel.newCommentText,
+        isSubmitting: viewModel.isSubmittingComment
+      ) {
+        Task { await viewModel.submitIssueComment() }
       }
-
-      Divider()
-
-      // New comment input
-      commentInput
     }
   }
 
   // MARK: - Navigation Header
 
   private var navigationHeader: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: DesignTokens.Spacing.sm) {
       Button {
         viewModel.deselectIssue()
       } label: {
-        HStack(spacing: 4) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
           Image(systemName: "chevron.left")
             .font(.system(size: 10, weight: .semibold))
           Text("Back")
@@ -110,41 +67,34 @@ struct GitHubIssueDetailView: View {
             Image(systemName: "arrow.right.circle")
               .font(.system(size: 10))
             Text("Send to Session")
-              .font(GitHubTypography.button)
           }
-          .padding(.horizontal, 8)
-          .padding(.vertical, 4)
-          .background(Color.accentColor.opacity(0.15))
-          .foregroundStyle(Color.accentColor)
-          .clipShape(RoundedRectangle(cornerRadius: 5))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.agentHubOutlined(tint: Color.brandPrimary))
       }
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 6)
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
   }
 
   // MARK: - Issue Info Header
 
   private var issueInfoHeader: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      HStack(spacing: 8) {
+    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+      // State + number row
+      HStack(spacing: DesignTokens.Spacing.sm) {
         Image(systemName: issue.stateIcon)
           .font(.system(size: 14))
           .foregroundStyle(issueStateColor)
 
         Text("#\(issue.number)")
           .font(GitHubTypography.monoTitle)
+          .foregroundStyle(Color.brandPrimary)
 
         Text(issue.stateKind.displayName)
           .font(GitHubTypography.badge)
           .padding(.horizontal, 6)
           .padding(.vertical, 2)
-          .background(
-            issueStateColor
-              .opacity(0.15)
-          )
+          .background(issueStateColor.opacity(0.15))
           .foregroundStyle(issueStateColor)
           .clipShape(Capsule())
       }
@@ -153,11 +103,11 @@ struct GitHubIssueDetailView: View {
         .font(GitHubTypography.sectionTitle)
         .fixedSize(horizontal: false, vertical: true)
 
-      HStack(spacing: 12) {
+      // Metadata row
+      HStack(spacing: DesignTokens.Spacing.md) {
         if let author = issue.author {
-          HStack(spacing: 3) {
-            Image(systemName: "person")
-              .font(.system(size: 9))
+          HStack(spacing: DesignTokens.Spacing.xs) {
+            AuthorAvatarView(login: author.login, size: 18)
             Text(author.login)
               .font(GitHubTypography.bodySmall)
           }
@@ -171,32 +121,30 @@ struct GitHubIssueDetailView: View {
         }
 
         if let assignees = issue.assignees, !assignees.isEmpty {
-          HStack(spacing: 3) {
-            Image(systemName: "person.2")
-              .font(.system(size: 9))
-            Text(assignees.map(\.login).joined(separator: ", "))
-              .font(GitHubTypography.bodySmall)
+          HStack(spacing: -4) {
+            ForEach(assignees.prefix(5), id: \.login) { assignee in
+              AuthorAvatarView(login: assignee.login, size: 18)
+                .overlay(
+                  Circle()
+                    .stroke(colorScheme == .dark ? Color(white: 0.05) : Color.white, lineWidth: 1.5)
+                )
+            }
           }
-          .foregroundStyle(.secondary)
+          .help(assignees.map(\.login).joined(separator: ", "))
         }
       }
 
       if let labels = issue.labels, !labels.isEmpty {
-        HStack(spacing: 4) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
           ForEach(labels) { label in
-            Text(label.name)
-              .font(GitHubTypography.badge)
-              .padding(.horizontal, 6)
-              .padding(.vertical, 2)
-              .background(Color.secondary.opacity(0.12))
-              .clipShape(Capsule())
+            GitHubLabelPill(label: label)
           }
         }
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.vertical, DesignTokens.Spacing.sm)
   }
 
   private var issueStateColor: Color {
@@ -207,69 +155,53 @@ struct GitHubIssueDetailView: View {
     }
   }
 
-  // MARK: - Comment Card
+  // MARK: - Issue Body + Comments
 
-  private func issueCommentCard(_ comment: GitHubComment) -> some View {
-    VStack(alignment: .leading, spacing: 4) {
-      HStack(spacing: 6) {
-        if let author = comment.author {
-          Text(author.login)
-            .font(GitHubTypography.sectionLabel)
+  private var issueBody: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
+        // Issue description
+        if let body = issue.body, !body.isEmpty {
+          VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+              Image(systemName: "doc.text")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.brandPrimary)
+              Text("Description")
+                .font(GitHubTypography.sectionLabel)
+                .foregroundStyle(.secondary)
+            }
+
+            MarkdownCardView(content: body)
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
-        if let created = comment.createdAt {
-          Text(relativeTime(created))
-            .font(GitHubTypography.caption)
-            .foregroundStyle(.tertiary)
+
+        // Comments
+        if let comments = issue.comments, !comments.isEmpty {
+          VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+            HStack(spacing: DesignTokens.Spacing.xs) {
+              Image(systemName: "bubble.left.and.bubble.right")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.brandPrimary)
+              Text("Comments (\(comments.count))")
+                .font(GitHubTypography.sectionLabel)
+                .foregroundStyle(.secondary)
+            }
+
+            ForEach(comments) { comment in
+              GitHubCommentCard(
+                author: comment.author,
+                createdAt: comment.createdAt,
+                commentBody: comment.body
+              )
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
         }
-        Spacer()
       }
-
-      Text(comment.body)
-        .font(GitHubTypography.body)
-        .textSelection(.enabled)
+      .padding(DesignTokens.Spacing.md)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(10)
-    .background(
-      RoundedRectangle(cornerRadius: 8)
-        .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
-    )
-  }
-
-  // MARK: - Comment Input
-
-  private var commentInput: some View {
-    HStack(spacing: 8) {
-      TextField("Add a comment...", text: $viewModel.newCommentText, axis: .vertical)
-        .font(GitHubTypography.body)
-        .textFieldStyle(.plain)
-        .submitLabel(.send)
-        .onSubmit(submitComment)
-        .lineLimit(1...4)
-        .padding(8)
-        .background(
-          RoundedRectangle(cornerRadius: 8)
-            .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.96))
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: 8)
-            .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
-        )
-
-      Button {
-        submitComment()
-      } label: {
-        Image(systemName: "arrow.up.circle.fill")
-          .font(.system(size: 20))
-          .foregroundStyle(viewModel.newCommentText.isEmpty ? Color.secondary : Color.accentColor)
-      }
-      .buttonStyle(.plain)
-      .disabled(viewModel.newCommentText.isEmpty || viewModel.isSubmittingComment)
-    }
-    .padding(10)
-  }
-
-  private func submitComment() {
-    Task { await viewModel.submitIssueComment() }
   }
 }
