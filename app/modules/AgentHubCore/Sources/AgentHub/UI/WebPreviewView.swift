@@ -475,47 +475,16 @@ public struct WebPreviewView: View {
   @ViewBuilder
   private var headerControls: some View {
     HStack(spacing: 12) {
-      if canRefreshCurrentPreview {
-        headerActionButton("Reload", systemImage: "arrow.clockwise", action: refreshPreview)
-        .help("Refresh preview (⌘R)")
-
-        // Hidden keyboard shortcut for Cmd+R
-        Button("") {
-          refreshPreview()
-        }
-        .keyboardShortcut("r", modifiers: .command)
-        .hidden()
-        .frame(width: 0, height: 0)
+      // Inspect toggle
+      Button {
+        toggleInspector()
+      } label: {
+        Image(systemName: "cursorarrow.rays")
+          .font(.system(size: 14, weight: .medium))
+          .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
       }
-
-      switch resolution {
-      case .devServer:
-        // Only show server control buttons for servers we manage (not the agent's)
-        if !isExternalServer {
-          if case .ready = serverState {
-            headerActionButton("Restart", systemImage: "arrow.triangle.2.circlepath") {
-              DevServerManager.shared.stopServer(for: serverKey)
-              Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
-            }
-            .help("Restart server")
-
-            headerActionButton("Stop", systemImage: "stop.circle") {
-              DevServerManager.shared.stopServer(for: serverKey)
-            }
-            .help("Stop server")
-          }
-
-          if case .failed = serverState {
-            headerActionButton("Retry", systemImage: "arrow.triangle.2.circlepath") {
-              Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
-            }
-            .help("Retry")
-          }
-        }
-
-      default:
-        EmptyView()
-      }
+      .buttonStyle(.plain)
+      .help("\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior.modeName) mode (Cmd+Shift+I)")
 
       if inspectState.isActive {
         let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
@@ -542,38 +511,58 @@ public struct WebPreviewView: View {
         }
       }
 
-      // Inspect toggle
-      Button {
-        toggleInspector()
-      } label: {
-        Image(systemName: "cursorarrow.rays")
-          .font(.system(size: 14, weight: .medium))
-          .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
+      if canRefreshCurrentPreview {
+        headerActionButton("Reload", systemImage: "arrow.clockwise", action: refreshPreview)
+          .help("Refresh preview (⌘R)")
       }
-      .buttonStyle(.plain)
-      .help("\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior.modeName) mode (Cmd+Shift+I)")
 
-      // Hidden keyboard shortcut
-      Button("") {
-        toggleInspector()
-      }
-      .keyboardShortcut("i", modifiers: [.command, .shift])
-      .hidden()
-      .frame(width: 0, height: 0)
+      switch resolution {
+      case .devServer:
+        if !isExternalServer {
+          if case .ready = serverState {
+            headerActionButton("Restart", systemImage: "arrow.triangle.2.circlepath") {
+              DevServerManager.shared.stopServer(for: serverKey)
+              Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
+            }
+            .help("Restart server")
 
-      if showsInspectorRail {
-        Button("") {
-          handleManualUpdate()
+            headerActionButton("Stop", systemImage: "stop.circle") {
+              DevServerManager.shared.stopServer(for: serverKey)
+            }
+            .help("Stop server")
+          }
+
+          if case .failed = serverState {
+            headerActionButton("Retry", systemImage: "arrow.triangle.2.circlepath") {
+              Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
+            }
+            .help("Retry")
+          }
         }
-        .keyboardShortcut(.return, modifiers: .command)
-        .disabled(!updateState.isEnabled)
-        .hidden()
-        .frame(width: 0, height: 0)
+
+      default:
+        EmptyView()
       }
 
       Button("Close") {
         onDismiss()
       }
+    }
+    .overlay {
+      // Hidden keyboard shortcuts — kept outside HStack layout to avoid phantom spacing
+      HStack(spacing: 0) {
+        Button("") { toggleInspector() }
+          .keyboardShortcut("i", modifiers: [.command, .shift])
+        Button("") { refreshPreview() }
+          .keyboardShortcut("r", modifiers: .command)
+        if showsInspectorRail {
+          Button("") { handleManualUpdate() }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(!updateState.isEnabled)
+        }
+      }
+      .hidden()
+      .frame(width: 0, height: 0)
     }
     .animation(.easeInOut(duration: 0.2), value: inspectBehavior)
   }
