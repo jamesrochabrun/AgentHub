@@ -87,6 +87,7 @@ public struct MonitoringCardView: View {
   let onShowWebPreview: ((CLISession, String) -> Void)?
   let onShowMermaid: ((CLISession) -> Void)?
   let onShowFiles: ((CLISession, String) -> Void)?
+  let onShowGitHub: ((CLISession, String) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
   let isMaximized: Bool
@@ -136,6 +137,7 @@ public struct MonitoringCardView: View {
     onShowWebPreview: ((CLISession, String) -> Void)? = nil,
     onShowMermaid: ((CLISession) -> Void)? = nil,
     onShowFiles: ((CLISession, String) -> Void)? = nil,
+    onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
     isMaximized: Bool = false,
@@ -167,6 +169,7 @@ public struct MonitoringCardView: View {
     self.onShowWebPreview = onShowWebPreview
     self.onShowMermaid = onShowMermaid
     self.onShowFiles = onShowFiles
+    self.onShowGitHub = onShowGitHub
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
     self.isMaximized = isMaximized
@@ -547,10 +550,14 @@ public struct MonitoringCardView: View {
   }
 
   private func presentGitHubPanel() {
-    gitHubSheetItem = GitHubSheetItem(
-      session: session,
-      projectPath: session.projectPath
-    )
+    if let onShowGitHub {
+      onShowGitHub(session, session.projectPath)
+    } else {
+      gitHubSheetItem = GitHubSheetItem(
+        session: session,
+        projectPath: session.projectPath
+      )
+    }
   }
 
   // MARK: - Header
@@ -731,6 +738,17 @@ public struct MonitoringCardView: View {
           .help("Manage iOS Simulators")
         }
 
+        // GitHub button
+        Button(action: presentGitHubPanel) {
+          HStack(spacing: 4) {
+            Image(systemName: "arrow.triangle.pull")
+              .font(.caption2)
+            Text("GitHub")
+          }
+        }
+        .buttonStyle(.agentHubOutlined)
+        .help("View GitHub PRs, issues, and CI status")
+
         Button(action: onRefreshTerminal) {
           HStack(spacing: 4) {
             Image(systemName: "arrow.clockwise")
@@ -857,8 +875,6 @@ public struct MonitoringCardView: View {
       }
 
       Spacer(minLength: 8)
-
-      ProjectPathGitHubButton(action: presentGitHubPanel)
     }
     .frame(minHeight: 24)
   }
