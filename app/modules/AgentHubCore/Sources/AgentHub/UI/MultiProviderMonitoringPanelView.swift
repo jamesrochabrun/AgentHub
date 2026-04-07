@@ -5,6 +5,7 @@
 //  Combines Claude + Codex monitored sessions into a single panel.
 //
 
+import AgentHubGitHub
 import Foundation
 import PierreDiffsSwift
 import SwiftUI
@@ -17,6 +18,7 @@ private enum SidePanelContent: Equatable {
   case webPreview(sessionId: String, session: CLISession, projectPath: String)
   case mermaid(sessionId: String, session: CLISession)
   case fileExplorer(sessionId: String, session: CLISession, projectPath: String, initialFilePath: String?, navigationId: UUID = UUID())
+  case gitHub(sessionId: String, session: CLISession, projectPath: String)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -30,6 +32,8 @@ private enum SidePanelContent: Equatable {
       return id1 == id2
     case (.fileExplorer(let id1, _, let p1, _, let n1), .fileExplorer(let id2, _, let p2, _, let n2)):
       return id1 == id2 && p1 == p2 && n1 == n2
+    case (.gitHub(let id1, _, let p1), .gitHub(let id2, _, let p2)):
+      return id1 == id2 && p1 == p2
     default: return false
     }
   }
@@ -49,6 +53,14 @@ private struct FileExplorerPanelItem: Identifiable {
   let session: CLISession
   let projectPath: String
   let initialFilePath: String?
+}
+
+// MARK: - GitHubPopOutItem
+
+private struct GitHubPopOutItem: Identifiable {
+  let id = UUID()
+  let session: CLISession
+  let projectPath: String
 }
 
 // MARK: - SessionFileSheetItem
@@ -265,6 +277,7 @@ public struct MultiProviderMonitoringPanelView: View {
   private var fileExplorerAlwaysModal: Bool = false
   @State private var showQuickFilePicker = false
   @State private var fileExplorerPanelItem: FileExplorerPanelItem?
+  @State private var gitHubPopOutItem: GitHubPopOutItem?
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -421,6 +434,18 @@ public struct MultiProviderMonitoringPanelView: View {
         onDismiss: { fileExplorerPanelItem = nil },
         isEmbedded: false,
         initialFilePath: item.initialFilePath
+      )
+    }
+    .modalPanel(
+      item: $gitHubPopOutItem,
+      title: "GitHub",
+      autosaveName: "com.agenthub.panel.github"
+    ) { item in
+      GitHubPanelView(
+        projectPath: item.projectPath,
+        onDismiss: { gitHubPopOutItem = nil },
+        isEmbedded: false,
+        session: item.session
       )
     }
     .sheet(item: $sessionFileSheetItem) { item in
@@ -756,6 +781,13 @@ public struct MultiProviderMonitoringPanelView: View {
                 )
               }
             } : nil,
+            onShowGitHub: canShowSidePanel ? { session, projectPath in
+              if case .gitHub(let sid, _, _) = sidePanelContent, sid == session.id {
+                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+              } else {
+                sidePanelContent = .gitHub(sessionId: session.id, session: session, projectPath: projectPath)
+              }
+            } : nil,
             onPromptConsumed: {
               viewModel.clearPendingPrompt(for: session.id)
             },
@@ -909,6 +941,18 @@ public struct MultiProviderMonitoringPanelView: View {
         initialFilePath: initialFilePath
       )
       .id(navId)
+    case .gitHub(_, let session, let projectPath):
+      GitHubPanelView(
+        projectPath: projectPath,
+        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        isEmbedded: true,
+        session: session,
+        onSendToSession: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) },
+        onPopOut: {
+          withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+          gitHubPopOutItem = GitHubPopOutItem(session: session, projectPath: projectPath)
+        }
+      )
     }
   }
 

@@ -18,6 +18,7 @@ public struct GitHubPanelView: View {
   var isEmbedded: Bool = false
   var onSendToSession: ((String, CLISession) -> Void)?
   var session: CLISession?
+  var onPopOut: (() -> Void)?
 
   @State private var viewModel = GitHubViewModel()
   @Environment(\.colorScheme) private var colorScheme
@@ -27,13 +28,15 @@ public struct GitHubPanelView: View {
     onDismiss: @escaping () -> Void,
     isEmbedded: Bool = false,
     session: CLISession? = nil,
-    onSendToSession: ((String, CLISession) -> Void)? = nil
+    onSendToSession: ((String, CLISession) -> Void)? = nil,
+    onPopOut: (() -> Void)? = nil
   ) {
     self.projectPath = projectPath
     self.onDismiss = onDismiss
     self.isEmbedded = isEmbedded
     self.session = session
     self.onSendToSession = onSendToSession
+    self.onPopOut = onPopOut
   }
 
   public var body: some View {
@@ -85,14 +88,22 @@ public struct GitHubPanelView: View {
 
       Spacer()
 
-      if !isEmbedded {
-        Button { onDismiss() } label: {
-          Image(systemName: "xmark.circle.fill")
-            .font(.system(size: 16))
+      if isEmbedded, let onPopOut {
+        Button { onPopOut() } label: {
+          Image(systemName: "rectangle.portrait.and.arrow.right")
+            .font(.system(size: 14))
             .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+        .help("Open in separate window")
       }
+
+      Button { onDismiss() } label: {
+        Image(systemName: "xmark.circle.fill")
+          .font(.system(size: 16))
+          .foregroundStyle(.secondary)
+      }
+      .buttonStyle(.plain)
     }
     .padding(.horizontal, 16)
     .padding(.vertical, 10)
