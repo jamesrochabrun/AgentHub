@@ -42,7 +42,7 @@ public struct GitHubPanelView: View {
   public var body: some View {
     VStack(spacing: 0) {
       header
-      Divider()
+      GradientDivider()
       content
     }
     .frame(
@@ -72,10 +72,10 @@ public struct GitHubPanelView: View {
   // MARK: - Header
 
   private var header: some View {
-    HStack(spacing: 8) {
+    HStack(spacing: DesignTokens.Spacing.sm) {
       Image(systemName: "arrow.triangle.pull")
         .font(.system(size: 14, weight: .semibold))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Color.brandPrimary)
 
       Text("GitHub")
         .font(GitHubTypography.panelTitle)
@@ -105,8 +105,8 @@ public struct GitHubPanelView: View {
       }
       .buttonStyle(.plain)
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 10)
+    .padding(.horizontal, DesignTokens.Spacing.lg)
+    .padding(.vertical, DesignTokens.Spacing.md)
     .background(colorScheme == .dark ? Color(white: 0.08) : Color.white)
   }
 
@@ -125,15 +125,42 @@ public struct GitHubPanelView: View {
 
   private var mainContent: some View {
     VStack(spacing: 0) {
-      // Tab bar
-      tabBar
+      GitHubUnderlineTabBar(
+        tabs: GitHubTab.allCases,
+        selected: $viewModel.selectedTab,
+        icon: { $0.icon },
+        title: { $0.rawValue },
+        onSelect: { tab in
+          if tab == .issues && viewModel.issues.isEmpty {
+            Task { await viewModel.loadIssues() }
+          }
+        },
+        trailing: {
+          AnyView(
+            Button {
+              Task {
+                switch viewModel.selectedTab {
+                case .pullRequests: await viewModel.loadPullRequests()
+                case .issues: await viewModel.loadIssues()
+                }
+              }
+            } label: {
+              Image(systemName: "arrow.clockwise")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(DesignTokens.Spacing.xs)
+            }
+            .buttonStyle(.plain)
+          )
+        }
+      )
 
-      Divider()
+      GradientDivider()
 
       // Current branch PR banner
       if let branchPR = viewModel.currentBranchPR, viewModel.selectedPR == nil {
         currentBranchPRBanner(branchPR)
-        Divider()
+        GradientDivider()
       }
 
       // Tab content
@@ -146,92 +173,12 @@ public struct GitHubPanelView: View {
     }
   }
 
-  // MARK: - Tab Bar
-
-  private var tabBar: some View {
-    HStack(spacing: 2) {
-      ForEach(GitHubTab.allCases) { tab in
-        Button {
-          viewModel.selectedTab = tab
-          if tab == .issues && viewModel.issues.isEmpty {
-            Task { await viewModel.loadIssues() }
-          }
-        } label: {
-          HStack(spacing: 4) {
-            Image(systemName: tab.icon)
-              .font(.system(size: 11))
-            Text(tab.rawValue)
-              .font(GitHubTypography.body)
-          }
-          .padding(.horizontal, 12)
-          .padding(.vertical, 6)
-          .background(
-            viewModel.selectedTab == tab
-              ? Color.accentColor.opacity(0.15)
-              : Color.clear
-          )
-          .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-      }
-
-      Spacer()
-
-      // Refresh button
-      Button {
-        Task {
-          switch viewModel.selectedTab {
-          case .pullRequests: await viewModel.loadPullRequests()
-          case .issues: await viewModel.loadIssues()
-          }
-        }
-      } label: {
-        Image(systemName: "arrow.clockwise")
-          .font(.system(size: 11))
-          .foregroundStyle(.secondary)
-      }
-      .buttonStyle(.plain)
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 6)
-  }
-
   // MARK: - Current Branch PR Banner
 
   private func currentBranchPRBanner(_ pr: GitHubPullRequest) -> some View {
-    Button {
+    CurrentBranchPRBannerView(pr: pr) {
       viewModel.selectPR(pr)
-    } label: {
-      HStack(spacing: 8) {
-        Image(systemName: "arrow.triangle.branch")
-          .font(.system(size: 11))
-          .foregroundStyle(.blue)
-
-        Text("Current branch:")
-          .font(GitHubTypography.caption)
-          .foregroundStyle(.secondary)
-
-        Text("#\(pr.number)")
-          .font(GitHubTypography.monoStrong)
-          .foregroundStyle(.blue)
-
-        Text(pr.title)
-          .font(GitHubTypography.button)
-          .lineLimit(1)
-
-        Spacer()
-
-        ciStatusBadge(pr.ciStatus)
-
-        Image(systemName: "chevron.right")
-          .font(.system(size: 9))
-          .foregroundStyle(.tertiary)
-      }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
-      .background(Color.blue.opacity(0.05))
     }
-    .buttonStyle(.plain)
   }
 
   // MARK: - PR Content
@@ -252,6 +199,11 @@ public struct GitHubPanelView: View {
 
   private var prListContent: some View {
     VStack(spacing: 0) {
+      // Stats header
+      if case .loaded = viewModel.prLoadingState, !viewModel.pullRequests.isEmpty {
+        statsHeader
+      }
+
       // Filter bar
       VStack(spacing: 4) {
         HStack(spacing: 4) {
@@ -377,10 +329,10 @@ public struct GitHubPanelView: View {
           }
         }
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 6)
+      .padding(.horizontal, DesignTokens.Spacing.md)
+      .padding(.vertical, DesignTokens.Spacing.sm)
 
-      Divider()
+      GradientDivider()
 
       // PR list
       switch viewModel.prLoadingState {
@@ -394,17 +346,45 @@ public struct GitHubPanelView: View {
         emptyView("No pull requests", "No \(viewModel.prFilter.rawValue.lowercased()) pull requests found.")
       default:
         ScrollView {
-          LazyVStack(spacing: 1) {
+          LazyVStack(spacing: DesignTokens.Spacing.sm) {
             ForEach(viewModel.pullRequests) { pr in
               GitHubPRRow(pr: pr) {
                 viewModel.selectPR(pr)
               }
             }
           }
-          .padding(.vertical, 4)
+          .padding(.horizontal, DesignTokens.Spacing.md)
+          .padding(.vertical, DesignTokens.Spacing.sm)
         }
       }
     }
+  }
+
+  private var statsHeader: some View {
+    HStack(spacing: DesignTokens.Spacing.sm) {
+      let openCount = viewModel.pullRequests.filter { $0.stateKind == .open }.count
+      let mergedCount = viewModel.pullRequests.filter { $0.stateKind == .merged }.count
+      let totalLines = viewModel.pullRequests.reduce(0) { $0 + $1.additions + $1.deletions }
+
+      StatCardView(
+        value: "\(openCount)",
+        label: "Open PRs",
+        tintColor: GitHubPalette.merged
+      )
+      StatCardView(
+        value: "\(mergedCount)",
+        label: "Merged",
+        tintColor: .secondary
+      )
+      StatCardView(
+        value: abbreviateNumber(totalLines),
+        label: "Lines Changed",
+        tintColor: GitHubPalette.linesChanged
+      )
+    }
+    .padding(.horizontal, DesignTokens.Spacing.md)
+    .padding(.top, DesignTokens.Spacing.md)
+    .padding(.bottom, DesignTokens.Spacing.xs)
   }
 
   // MARK: - Issue Content
@@ -426,31 +406,22 @@ public struct GitHubPanelView: View {
   private var issueListContent: some View {
     VStack(spacing: 0) {
       // Filter bar
-      HStack(spacing: 4) {
+      HStack(spacing: DesignTokens.Spacing.xs) {
         ForEach(GitHubIssueFilter.allCases) { filter in
-          Button {
+          GitHubFilterChip(
+            title: filter.rawValue,
+            isActive: viewModel.issueFilter == filter
+          ) {
             viewModel.issueFilter = filter
             Task { await viewModel.loadIssues() }
-          } label: {
-            Text(filter.rawValue)
-              .font(GitHubTypography.button)
-              .padding(.horizontal, 8)
-              .padding(.vertical, 3)
-              .background(
-                viewModel.issueFilter == filter
-                  ? Color.secondary.opacity(0.2)
-                  : Color.clear
-              )
-              .clipShape(RoundedRectangle(cornerRadius: 4))
           }
-          .buttonStyle(.plain)
         }
         Spacer()
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 6)
+      .padding(.horizontal, DesignTokens.Spacing.md)
+      .padding(.vertical, DesignTokens.Spacing.sm)
 
-      Divider()
+      GradientDivider()
 
       // Issue list
       switch viewModel.issueLoadingState {
@@ -464,14 +435,15 @@ public struct GitHubPanelView: View {
         emptyView("No issues", "No \(viewModel.issueFilter.rawValue.lowercased()) issues found.")
       default:
         ScrollView {
-          LazyVStack(spacing: 1) {
+          LazyVStack(spacing: DesignTokens.Spacing.sm) {
             ForEach(viewModel.issues) { issue in
               GitHubIssueRow(issue: issue) {
                 viewModel.selectIssue(issue)
               }
             }
           }
-          .padding(.vertical, 4)
+          .padding(.horizontal, DesignTokens.Spacing.md)
+          .padding(.vertical, DesignTokens.Spacing.sm)
         }
       }
     }
@@ -479,34 +451,12 @@ public struct GitHubPanelView: View {
 
   // MARK: - Shared Components
 
-  private func ciStatusBadge(_ status: CIStatus) -> some View {
-    HStack(spacing: 3) {
-      Image(systemName: status.icon)
-        .font(.system(size: 9))
-      Text(status.rawValue.capitalized)
-        .font(GitHubTypography.badge)
-    }
-    .padding(.horizontal, 6)
-    .padding(.vertical, 2)
-    .background(ciStatusColor(status).opacity(0.15))
-    .foregroundStyle(ciStatusColor(status))
-    .clipShape(Capsule())
-  }
-
-  private func ciStatusColor(_ status: CIStatus) -> Color {
-    switch status {
-    case .success: return .green
-    case .failure: return .red
-    case .pending: return .orange
-    case .none: return .secondary
-    }
-  }
-
   private func loadingView(_ message: String) -> some View {
-    VStack(spacing: 12) {
+    VStack(spacing: DesignTokens.Spacing.md) {
       Spacer()
       ProgressView()
         .scaleEffect(0.8)
+        .tint(Color.brandPrimary)
       Text(message)
         .font(GitHubTypography.body)
         .foregroundStyle(.secondary)
@@ -516,29 +466,28 @@ public struct GitHubPanelView: View {
   }
 
   private func errorView(_ message: String, retry: @escaping () -> Void) -> some View {
-    VStack(spacing: 12) {
+    VStack(spacing: DesignTokens.Spacing.md) {
       Spacer()
       Image(systemName: "exclamationmark.triangle")
-        .font(.system(size: 24))
+        .font(.system(size: 28))
         .foregroundStyle(.orange)
       Text(message)
         .font(GitHubTypography.body)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
       Button("Retry") { retry() }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
+        .buttonStyle(.agentHubOutlined(tint: .orange))
       Spacer()
     }
     .frame(maxWidth: .infinity)
-    .padding()
+    .padding(DesignTokens.Spacing.lg)
   }
 
   private func emptyView(_ title: String, _ message: String) -> some View {
-    VStack(spacing: 8) {
+    VStack(spacing: DesignTokens.Spacing.sm) {
       Spacer()
       Image(systemName: "tray")
-        .font(.system(size: 24))
+        .font(.system(size: 28))
         .foregroundStyle(.tertiary)
       Text(title)
         .font(GitHubTypography.sectionTitle)
@@ -553,44 +502,41 @@ public struct GitHubPanelView: View {
   // MARK: - GH Not Installed
 
   private var ghNotInstalledView: some View {
-    VStack(spacing: 16) {
+    VStack(spacing: DesignTokens.Spacing.lg) {
       Spacer()
       Image(systemName: "terminal")
         .font(.system(size: 36))
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(Color.brandPrimary.opacity(0.5))
 
       Text("GitHub CLI Not Installed")
         .font(GitHubTypography.sectionTitle)
 
-      Text("Install the GitHub CLI to use GitHub integration.\nRun: brew install gh")
+      Text("Install the GitHub CLI to use GitHub integration.")
         .font(GitHubTypography.body)
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
 
-      HStack(spacing: 8) {
-        Text("brew install gh")
-          .font(GitHubTypography.monoBody)
-          .padding(.horizontal, 12)
-          .padding(.vertical, 6)
-          .background(Color.secondary.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: 6))
-          .textSelection(.enabled)
-      }
+      Text("brew install gh")
+        .font(GitHubTypography.monoBody)
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, DesignTokens.Spacing.sm)
+        .agentHubInset()
+        .textSelection(.enabled)
 
       Spacer()
     }
     .frame(maxWidth: .infinity)
-    .padding()
+    .padding(DesignTokens.Spacing.lg)
   }
 
   // MARK: - GH Not Authenticated
 
   private var ghNotAuthenticatedView: some View {
-    VStack(spacing: 16) {
+    VStack(spacing: DesignTokens.Spacing.lg) {
       Spacer()
       Image(systemName: "person.badge.key")
         .font(.system(size: 36))
-        .foregroundStyle(.tertiary)
+        .foregroundStyle(Color.brandPrimary.opacity(0.5))
 
       Text("Not Authenticated")
         .font(GitHubTypography.sectionTitle)
@@ -600,20 +546,79 @@ public struct GitHubPanelView: View {
         .foregroundStyle(.secondary)
         .multilineTextAlignment(.center)
 
-      HStack(spacing: 8) {
-        Text("gh auth login")
-          .font(GitHubTypography.monoBody)
-          .padding(.horizontal, 12)
-          .padding(.vertical, 6)
-          .background(Color.secondary.opacity(0.1))
-          .clipShape(RoundedRectangle(cornerRadius: 6))
-          .textSelection(.enabled)
-      }
+      Text("gh auth login")
+        .font(GitHubTypography.monoBody)
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, DesignTokens.Spacing.sm)
+        .agentHubInset()
+        .textSelection(.enabled)
 
       Spacer()
     }
     .frame(maxWidth: .infinity)
-    .padding()
+    .padding(DesignTokens.Spacing.lg)
+  }
+}
+
+// MARK: - Current Branch PR Banner
+
+private struct CurrentBranchPRBannerView: View {
+  let pr: GitHubPullRequest
+  let onSelect: () -> Void
+
+  @State private var isHovered = false
+
+  var body: some View {
+    Button(action: onSelect) {
+      HStack(spacing: 0) {
+        // Left accent bar
+        Rectangle()
+          .fill(Color.brandPrimary)
+          .frame(width: 3)
+
+        HStack(spacing: DesignTokens.Spacing.sm) {
+          Image(systemName: "arrow.triangle.branch")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Color.brandPrimary)
+
+          Text("Current branch:")
+            .font(GitHubTypography.caption)
+            .foregroundStyle(.secondary)
+
+          Text("#\(pr.number)")
+            .font(GitHubTypography.monoStrong)
+            .foregroundStyle(Color.brandPrimary)
+
+          Text(pr.title)
+            .font(GitHubTypography.button)
+            .lineLimit(1)
+
+          Spacer()
+
+          CIStatusBadge(status: pr.ciStatus)
+
+          Image(systemName: "chevron.right")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, DesignTokens.Spacing.sm)
+      }
+      .fixedSize(horizontal: false, vertical: true)
+      .background(
+        LinearGradient(
+          colors: [
+            Color.brandPrimary.opacity(isHovered ? 0.1 : 0.06),
+            Color.brandPrimary.opacity(isHovered ? 0.04 : 0.02)
+          ],
+          startPoint: .leading,
+          endPoint: .trailing
+        )
+      )
+    }
+    .buttonStyle(.plain)
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
   }
 }
 
@@ -623,98 +628,113 @@ struct GitHubPRRow: View {
   let pr: GitHubPullRequest
   let onSelect: () -> Void
 
+  @State private var isHovered = false
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     Button(action: onSelect) {
-      HStack(spacing: 10) {
-        // State icon
-        Image(systemName: pr.stateIcon)
-          .font(.system(size: 13))
-          .foregroundStyle(prStateColor)
-          .frame(width: 20)
+      HStack(spacing: 0) {
+        // Left state accent bar
+        RoundedRectangle(cornerRadius: 2)
+          .fill(prStateColor)
+          .frame(width: 3)
+          .padding(.vertical, DesignTokens.Spacing.xs)
 
-        VStack(alignment: .leading, spacing: 2) {
-          HStack(spacing: 6) {
-            Text("#\(pr.number)")
-              .font(GitHubTypography.monoStrong)
-              .foregroundStyle(.secondary)
-
-            Text(pr.title)
-              .font(GitHubTypography.body)
-              .lineLimit(1)
+        HStack(spacing: DesignTokens.Spacing.sm) {
+          // Author avatar
+          if let author = pr.author {
+            AuthorAvatarView(login: author.login, size: 28)
           }
 
-          HStack(spacing: 8) {
-            if let author = pr.author {
-              Text(author.login)
-                .font(GitHubTypography.caption)
-                .foregroundStyle(.tertiary)
-            }
+          VStack(alignment: .leading, spacing: 3) {
+            // Title row
+            HStack(spacing: DesignTokens.Spacing.xs) {
+              Text("#\(pr.number)")
+                .font(GitHubTypography.monoStrong)
+                .foregroundStyle(Color.brandPrimary)
 
-            Text(pr.headRefName)
-              .font(GitHubTypography.monoCaption)
-              .foregroundStyle(.blue.opacity(0.8))
-              .lineLimit(1)
+              Text(pr.title)
+                .font(.geist(size: 12, weight: .semibold))
+                .lineLimit(1)
 
-            if let labels = pr.labels, !labels.isEmpty {
-              ForEach(labels.prefix(2)) { label in
-                Text(label.name)
+              if pr.isDraft {
+                Text("Draft")
                   .font(GitHubTypography.badge)
                   .padding(.horizontal, 5)
                   .padding(.vertical, 1)
-                  .background(labelColor(label).opacity(0.2))
-                  .foregroundStyle(labelColor(label))
+                  .background(Color.secondary.opacity(0.15))
+                  .foregroundStyle(.secondary)
                   .clipShape(Capsule())
               }
             }
-          }
-        }
 
-        Spacer()
+            // Metadata row
+            HStack(spacing: DesignTokens.Spacing.sm) {
+              if let author = pr.author {
+                Text(author.login)
+                  .font(GitHubTypography.caption)
+                  .foregroundStyle(.tertiary)
+              }
 
-        // Stats
-        HStack(spacing: 8) {
-          if pr.changedFiles > 0 {
-            HStack(spacing: 2) {
-              Image(systemName: "doc")
-                .font(.system(size: 9))
-              Text("\(pr.changedFiles)")
-                .font(GitHubTypography.monoCaption)
+              BranchBadge(name: pr.headRefName)
+
+              if let labels = pr.labels, !labels.isEmpty {
+                ForEach(labels.prefix(2)) { label in
+                  GitHubLabelPill(label: label)
+                }
+              }
             }
-            .foregroundStyle(.secondary)
           }
 
-          HStack(spacing: 4) {
-            Text("+\(pr.additions)")
-              .font(GitHubTypography.monoCaption)
-              .foregroundStyle(.green)
-            Text("-\(pr.deletions)")
-              .font(GitHubTypography.monoCaption)
-              .foregroundStyle(.red)
-          }
+          Spacer()
 
-          // Review decision
-          if let decision = pr.reviewDecision {
-            reviewBadge(decision)
-          }
+          // Right side: stats + badges
+          HStack(spacing: DesignTokens.Spacing.sm) {
+            if pr.changedFiles > 0 {
+              HStack(spacing: 2) {
+                Image(systemName: "doc")
+                  .font(.system(size: 9))
+                Text("\(pr.changedFiles)")
+                  .font(GitHubTypography.monoCaption)
+              }
+              .foregroundStyle(.secondary)
+            }
 
-          // CI status
-          ciIcon(pr.ciStatus)
+            AdditionsDeletionsBadge(
+              additions: pr.additions,
+              deletions: pr.deletions
+            )
+
+            if let decision = pr.reviewDecision {
+              ReviewDecisionBadge(decision: decision)
+            }
+
+            ciIcon(pr.ciStatus)
+
+            Image(systemName: "chevron.right")
+              .font(.system(size: 9, weight: .semibold))
+              .foregroundStyle(.tertiary)
+          }
         }
-
-        Image(systemName: "chevron.right")
-          .font(.system(size: 9))
-          .foregroundStyle(.tertiary)
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, DesignTokens.Spacing.sm)
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
       .background(
-        (colorScheme == .dark ? Color(white: 0.06) : Color.white)
-          .opacity(0.5)
+        RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous)
+          .fill(rowBackground)
       )
+      .overlay(
+        RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous)
+          .stroke(
+            isHovered ? Color.brandPrimary.opacity(0.3) : Color.secondary.opacity(0.15),
+            lineWidth: 1
+          )
+      )
+      .clipShape(RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous))
     }
     .buttonStyle(.plain)
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
     .contextMenu {
       Button {
         if let url = URL(string: pr.url) {
@@ -728,26 +748,18 @@ struct GitHubPRRow: View {
 
   private var prStateColor: Color {
     switch pr.stateKind {
-    case .open: return pr.isDraft ? .secondary : .green
-    case .closed: return .red
-    case .merged: return .purple
+    case .open: return pr.isDraft ? .secondary : GitHubPalette.open
+    case .closed: return GitHubPalette.closed
+    case .merged: return GitHubPalette.merged
     case .unknown: return .secondary
     }
   }
 
-  private func reviewBadge(_ decision: String) -> some View {
-    let (icon, color): (String, Color) = {
-      switch GitHubReviewDecisionState(rawValue: decision) {
-      case .approved: return ("checkmark.circle.fill", .green)
-      case .changesRequested: return ("exclamationmark.circle.fill", .orange)
-      case .reviewRequired: return ("eye.circle", .secondary)
-      case .unknown: return ("minus.circle", .secondary)
-      }
-    }()
-
-    return Image(systemName: icon)
-      .font(.system(size: 12))
-      .foregroundStyle(color)
+  private var rowBackground: Color {
+    if isHovered {
+      return colorScheme == .dark ? Color(white: 0.10) : Color(white: 0.96)
+    }
+    return colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.98)
   }
 
   private func ciIcon(_ status: CIStatus) -> some View {
@@ -758,16 +770,11 @@ struct GitHubPRRow: View {
 
   private func ciColor(_ status: CIStatus) -> Color {
     switch status {
-    case .success: return .green
-    case .failure: return .red
+    case .success: return GitHubPalette.addition
+    case .failure: return GitHubPalette.deletion
     case .pending: return .orange
     case .none: return .clear
     }
-  }
-
-  private func labelColor(_ label: GitHubLabel) -> Color {
-    guard let hex = label.color else { return .secondary }
-    return Color(hex: hex)
   }
 }
 
@@ -777,85 +784,110 @@ struct GitHubIssueRow: View {
   let issue: GitHubIssue
   let onSelect: () -> Void
 
+  @State private var isHovered = false
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     Button(action: onSelect) {
-      HStack(spacing: 10) {
-        Image(systemName: issue.stateIcon)
-          .font(.system(size: 13))
-          .foregroundStyle(issueStateColor)
-          .frame(width: 20)
+      HStack(spacing: 0) {
+        // Left state accent bar
+        RoundedRectangle(cornerRadius: 2)
+          .fill(issueStateColor)
+          .frame(width: 3)
+          .padding(.vertical, DesignTokens.Spacing.xs)
 
-        VStack(alignment: .leading, spacing: 2) {
-          HStack(spacing: 6) {
-            Text("#\(issue.number)")
-              .font(GitHubTypography.monoStrong)
-              .foregroundStyle(.secondary)
-
-            Text(issue.title)
-              .font(GitHubTypography.body)
-              .lineLimit(1)
+        HStack(spacing: DesignTokens.Spacing.sm) {
+          // Author avatar
+          if let author = issue.author {
+            AuthorAvatarView(login: author.login, size: 28)
           }
 
-          HStack(spacing: 8) {
-            if let author = issue.author {
-              Text(author.login)
-                .font(GitHubTypography.caption)
-                .foregroundStyle(.tertiary)
+          VStack(alignment: .leading, spacing: 3) {
+            // Title row
+            HStack(spacing: DesignTokens.Spacing.xs) {
+              Text("#\(issue.number)")
+                .font(GitHubTypography.monoStrong)
+                .foregroundStyle(Color.brandPrimary)
+
+              Text(issue.title)
+                .font(.geist(size: 12, weight: .semibold))
+                .lineLimit(1)
             }
 
-            if let labels = issue.labels, !labels.isEmpty {
-              ForEach(labels.prefix(3)) { label in
-                Text(label.name)
-                  .font(GitHubTypography.badge)
-                  .padding(.horizontal, 5)
-                  .padding(.vertical, 1)
-                  .background(Color.secondary.opacity(0.15))
-                  .clipShape(Capsule())
+            // Metadata row
+            HStack(spacing: DesignTokens.Spacing.sm) {
+              if let author = issue.author {
+                Text(author.login)
+                  .font(GitHubTypography.caption)
+                  .foregroundStyle(.tertiary)
+              }
+
+              if let labels = issue.labels, !labels.isEmpty {
+                ForEach(labels.prefix(3)) { label in
+                  GitHubLabelPill(label: label)
+                }
+              }
+
+              if let timeAgo = issue.createdAt.map(relativeTime) {
+                Text(timeAgo)
+                  .font(GitHubTypography.caption)
+                  .foregroundStyle(.tertiary)
               }
             }
+          }
 
-            if let timeAgo = issue.createdAt.map(relativeTime) {
-              Text(timeAgo)
-                .font(GitHubTypography.caption)
-                .foregroundStyle(.tertiary)
+          Spacer()
+
+          HStack(spacing: DesignTokens.Spacing.sm) {
+            if let comments = issue.comments, !comments.isEmpty {
+              HStack(spacing: 2) {
+                Image(systemName: "bubble.right")
+                  .font(.system(size: 9))
+                Text("\(comments.count)")
+                  .font(GitHubTypography.monoCaption)
+              }
+              .foregroundStyle(.secondary)
             }
+
+            Image(systemName: "chevron.right")
+              .font(.system(size: 9, weight: .semibold))
+              .foregroundStyle(.tertiary)
           }
         }
-
-        Spacer()
-
-        if let comments = issue.comments, !comments.isEmpty {
-          HStack(spacing: 2) {
-            Image(systemName: "bubble.right")
-              .font(.system(size: 9))
-            Text("\(comments.count)")
-              .font(GitHubTypography.monoCaption)
-          }
-          .foregroundStyle(.secondary)
-        }
-
-        Image(systemName: "chevron.right")
-          .font(.system(size: 9))
-          .foregroundStyle(.tertiary)
+        .padding(.horizontal, DesignTokens.Spacing.md)
+        .padding(.vertical, DesignTokens.Spacing.sm)
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
       .background(
-        (colorScheme == .dark ? Color(white: 0.06) : Color.white)
-          .opacity(0.5)
+        RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous)
+          .fill(rowBackground)
       )
+      .overlay(
+        RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous)
+          .stroke(
+            isHovered ? Color.brandPrimary.opacity(0.3) : Color.secondary.opacity(0.15),
+            lineWidth: 1
+          )
+      )
+      .clipShape(RoundedRectangle(cornerRadius: AgentHubLayout.rowCornerRadius, style: .continuous))
     }
     .buttonStyle(.plain)
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
   }
 
   private var issueStateColor: Color {
     switch issue.stateKind {
-    case .open: return .green
-    case .closed: return .purple
+    case .open: return GitHubPalette.open
+    case .closed: return GitHubPalette.merged
     case .unknown: return .secondary
     }
+  }
+
+  private var rowBackground: Color {
+    if isHovered {
+      return colorScheme == .dark ? Color(white: 0.10) : Color(white: 0.96)
+    }
+    return colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.98)
   }
 }
 
