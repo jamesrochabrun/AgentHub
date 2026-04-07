@@ -56,6 +56,25 @@ public final class ThemeManager {
       light: "#FFFFFF"
   """
 
+  private static let bundledAgentHubYAML = """
+  name: "AgentHub"
+  version: "1.2"
+  author: "AgentHub"
+  description: "Warm orange gradient - the default AgentHub theme"
+
+  colors:
+    brand:
+      primary: "#FF6B22"
+      secondary: "#FF8C42"
+      tertiary: "#FFB574"
+
+    backgroundGradient:
+      - color: "#FF6B22"
+        opacity: 0.44
+      - color: "#FF8C42"
+        opacity: 0.25
+  """
+
   public struct ThemeMetadata: Identifiable {
     public let id: String
     public let name: String
@@ -65,12 +84,18 @@ public final class ThemeManager {
   }
 
   public init() {
+    // Migrate "neutral" → "agenthub.yaml" for existing users
+    var saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "agenthub.yaml"
+    if saved == "neutral" {
+      saved = "agenthub.yaml"
+      UserDefaults.standard.set(saved, forKey: AgentHubDefaults.selectedTheme)
+    }
+
     // Load the correct built-in theme synchronously to avoid flash on launch
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
     if let appTheme = AppTheme(rawValue: saved) {
       self.currentTheme = Self.loadBuiltInTheme(appTheme)
     } else {
-      // YAML theme — start with neutral, async load will replace it
+      // YAML theme — start with neutral (orange) sync, async load adds gradient
       self.currentTheme = Self.loadBuiltInTheme(.neutral)
     }
     self.fileWatcher = ThemeFileWatcher()
@@ -169,9 +194,9 @@ public final class ThemeManager {
     switch theme {
     case .neutral:
       return ThemeColors(
-        brandPrimary: Color.primary,
-        brandSecondary: Color.secondary,
-        brandTertiary: Color(nsColor: .tertiaryLabelColor)
+        brandPrimary: Color(hex: "#FF6B22"),
+        brandSecondary: Color(hex: "#FF8C42"),
+        brandTertiary: Color(hex: "#FFB574")
       )
     case .claude:
       return ThemeColors(
@@ -187,9 +212,9 @@ public final class ThemeManager {
       )
     case .bat:
       return ThemeColors(
-        brandPrimary: Color(hex: "#7C3AED"),
-        brandSecondary: Color(hex: "#FFB000"),
-        brandTertiary: Color(hex: "#64748B")
+        brandPrimary: Color.primary,
+        brandSecondary: Color.secondary,
+        brandTertiary: Color(nsColor: .tertiaryLabelColor)
       )
     case .xcode:
       return ThemeColors(
@@ -238,7 +263,7 @@ public final class ThemeManager {
   }
 
   public func loadSavedTheme() async {
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "agenthub.yaml"
 
     // Check if it's a built-in theme
     if let appTheme = AppTheme(rawValue: saved) {
@@ -282,6 +307,7 @@ public final class ThemeManager {
   }
 
   private static let bundledThemes: [(name: String, fallbackYAML: String)] = [
+    ("agenthub", bundledAgentHubYAML),
     ("sentry", bundledSentryYAML),
     ("rausch", bundledRauschYAML),
   ]

@@ -54,9 +54,9 @@ public struct SettingsView: View {
   private var webPreviewAdvancedEditingEnabled: Bool = true
 
   @Environment(ThemeManager.self) private var themeManager
-  @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "neutral"
-  private let defaultThemeId = "neutral"
-  private let bundledYAMLThemeFileIds = ["sentry.yaml", "rausch.yaml"]
+  @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "agenthub.yaml"
+  private let defaultThemeId = "agenthub.yaml"
+  private let bundledYAMLThemeFileIds = ["agenthub.yaml", "sentry.yaml", "rausch.yaml"]
   private let webPreviewInspectorDataLevels: [ElementInspectorDataLevel] = [.regular, .full]
 
   public init() {}
@@ -191,10 +191,11 @@ public struct SettingsView: View {
 
       Section {
         Picker("Theme", selection: themeSelectionBinding) {
-          Text("Default").tag(AppTheme.neutral.rawValue)
+          Text("Default").tag(defaultThemeId)
           Text("Claude").tag(AppTheme.claude.rawValue)
           Text("Codex").tag(AppTheme.codex.rawValue)
-          ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
+          Text("Bat").tag(AppTheme.bat.rawValue)
+          ForEach(bundledYAMLThemeFileIds.filter { $0 != defaultThemeId }, id: \.self) { fileId in
             Text(yamlThemeDisplayName(fileId)).tag(fileId)
           }
         }
@@ -361,7 +362,7 @@ public struct SettingsView: View {
     }
 
     selectedThemeId = defaultThemeId
-    themeManager.loadBuiltInTheme(.neutral)
+    await applyThemeSelection(defaultThemeId)
   }
 
   private func applyThemeSelection(_ selection: String) async {
@@ -391,7 +392,7 @@ public struct SettingsView: View {
     }
 
     selectedThemeId = defaultThemeId
-    themeManager.loadBuiltInTheme(.neutral)
+    themeManager.loadBuiltInTheme(.neutral) // neutral has orange colors as sync fallback
   }
 
   private func matchingBundledYAMLFileId(for value: String) -> String? {

@@ -166,7 +166,7 @@ public enum AgentHubDefaults {
   // MARK: - Theme Settings
 
   /// Selected color theme name
-  /// Type: String (default: "neutral")
+  /// Type: String (default: "agenthub.yaml")
   public static let selectedTheme = "\(keyPrefix)theme.selected"
 
   /// Custom primary color hex value
@@ -226,28 +226,36 @@ public enum AgentHubDefaults {
     let defaults = UserDefaults.standard
     let migrationKey = "\(keyPrefix)migration.completed"
 
-    // Skip if already migrated
-    guard !defaults.bool(forKey: migrationKey) else { return }
-
-    for (legacyKey, newKey) in legacyKeyMappings {
-      // Only migrate if legacy key exists and new key doesn't
-      if defaults.object(forKey: legacyKey) != nil && defaults.object(forKey: newKey) == nil {
-        if let value = defaults.object(forKey: legacyKey) {
-          defaults.set(value, forKey: newKey)
+    // Legacy key migration (first-run only)
+    if !defaults.bool(forKey: migrationKey) {
+      for (legacyKey, newKey) in legacyKeyMappings {
+        if defaults.object(forKey: legacyKey) != nil && defaults.object(forKey: newKey) == nil {
+          if let value = defaults.object(forKey: legacyKey) {
+            defaults.set(value, forKey: newKey)
+          }
         }
+      }
+      defaults.set(true, forKey: migrationKey)
+
+      // Migrate old "claude" default theme
+      let themeMigrationKey = "\(keyPrefix)migration.themeDefaultMigrated"
+      if !defaults.bool(forKey: themeMigrationKey) {
+        let current = defaults.string(forKey: selectedTheme)
+        if current == "claude" || current == nil {
+          defaults.set("agenthub.yaml", forKey: selectedTheme)
+        }
+        defaults.set(true, forKey: themeMigrationKey)
       }
     }
 
-    defaults.set(true, forKey: migrationKey)
-
-    // Migrate old "claude" default theme to "neutral"
-    let themeMigrationKey = "\(keyPrefix)migration.themeDefaultMigrated"
-    if !defaults.bool(forKey: themeMigrationKey) {
+    // Migrate "neutral" default theme to "agenthub.yaml" (runs independently)
+    let yamlDefaultMigrationKey = "\(keyPrefix)migration.yamlDefaultThemeMigrated"
+    if !defaults.bool(forKey: yamlDefaultMigrationKey) {
       let current = defaults.string(forKey: selectedTheme)
-      if current == "claude" || current == nil {
-        defaults.set("neutral", forKey: selectedTheme)
+      if current == "neutral" || current == nil {
+        defaults.set("agenthub.yaml", forKey: selectedTheme)
       }
-      defaults.set(true, forKey: themeMigrationKey)
+      defaults.set(true, forKey: yamlDefaultMigrationKey)
     }
   }
 }

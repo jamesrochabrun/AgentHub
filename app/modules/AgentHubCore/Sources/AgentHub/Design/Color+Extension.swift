@@ -59,10 +59,10 @@ public enum AppTheme: String, CaseIterable, Identifiable {
 
   public var description: String {
     switch self {
-    case .neutral: return "Clean, system-adaptive colors"
+    case .neutral: return "Warm orange gradient"
     case .claude: return "Warm earth tones"
     case .codex: return "Teal and purple"
-    case .bat: return "Purple with mustard accents"
+    case .bat: return "Clean, system-adaptive colors"
     case .xcode: return "Cool blues"
     case .custom: return "User-defined colors"
     }
@@ -158,7 +158,7 @@ extension Color {
     let selectedTheme = currentAppTheme
     switch selectedTheme {
     case .neutral:
-      return Color.primary
+      return Color(hex: "#FF6B22")
     case .claude:
       switch provider {
       case .claude: return Color(hex: "#CC785C")
@@ -175,7 +175,7 @@ extension Color {
     let selectedTheme = currentAppTheme
     switch selectedTheme {
     case .neutral:
-      return Color.secondary
+      return Color(hex: "#FF8C42")
     case .claude:
       switch provider {
       case .claude: return Color(hex: "#D4A27F")
@@ -192,7 +192,7 @@ extension Color {
     let selectedTheme = currentAppTheme
     switch selectedTheme {
     case .neutral:
-      return Color(nsColor: .tertiaryLabelColor)
+      return Color(hex: "#FFB574")
     case .claude:
       switch provider {
       case .claude: return Color(hex: "#EBDBBC")
@@ -206,19 +206,19 @@ extension Color {
   }
 
   private static var currentAppTheme: AppTheme? {
-    let selected = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    let selected = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "agenthub.yaml"
     return AppTheme(rawValue: selected)
   }
 
   // MARK: - Theme Colors Helper
 
   private static func getCurrentThemeColors() -> ThemeColors {
-    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "agenthub.yaml"
     guard let theme = AppTheme(rawValue: selectedTheme) else {
       // YAML theme — read cached hex values
-      let yamlPrimary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlPrimaryHex) ?? "#CC785C"
-      let yamlSecondary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlSecondaryHex) ?? "#D4A27F"
-      let yamlTertiary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlTertiaryHex) ?? "#EBDBBC"
+      let yamlPrimary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlPrimaryHex) ?? "#FF6B22"
+      let yamlSecondary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlSecondaryHex) ?? "#FF8C42"
+      let yamlTertiary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlTertiaryHex) ?? "#FFB574"
       return ThemeColors(
         brandPrimary: Color(hex: yamlPrimary),
         brandSecondary: Color(hex: yamlSecondary),
@@ -261,7 +261,7 @@ extension Color {
   }
 
   private static var isYAMLThemeSelected: Bool {
-    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "agenthub.yaml"
     return AppTheme(rawValue: selectedTheme) == nil
   }
 

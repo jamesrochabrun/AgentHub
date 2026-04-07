@@ -1,0 +1,16 @@
+name: "AgentHub"
+version: "1.2"
+author: "AgentHub"
+description: "Warm orange gradient - the default AgentHub theme"
+
+colors:
+  brand:
+    primary: "#FF8C42"
+    secondary: "#FFA04D"
+    tertiary: "#FFB574"
+
+  backgroundGradient:
+    - color: "#FF6B22"
+      opacity: 0.44
+    - color: "#FF8C42"
+      opacity: 0.25
