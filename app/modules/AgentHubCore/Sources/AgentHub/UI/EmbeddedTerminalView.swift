@@ -332,8 +332,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// prompt delivery state.
   func submitPromptImmediately(_ prompt: String) -> Bool {
     guard let terminal = terminalView else { return false }
-    terminal.send(txt: prompt)
-    terminal.send([13])
+    terminal.send(TerminalPromptSubmissionPayload.bytes(
+      prompt: prompt,
+      bracketedPasteMode: terminal.terminal?.bracketedPasteMode ?? false
+    ))
     return true
   }
 
@@ -450,11 +452,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
           self.onUserInteraction?()
           return nil
         case .appendContextAndSubmit(let queuedContextPrompt):
-          terminal.send(txt: "\n\n\(queuedContextPrompt)")
-          Task { @MainActor [weak terminal] in
-            try? await Task.sleep(for: .milliseconds(100))
-            terminal?.send([0x0D])
-          }
+          terminal.send(TerminalPromptSubmissionPayload.bytes(
+            prompt: "\n\n\(queuedContextPrompt)",
+            bracketedPasteMode: terminal.terminal?.bracketedPasteMode ?? false
+          ))
           self.onUserInteraction?()
           return nil
         }
