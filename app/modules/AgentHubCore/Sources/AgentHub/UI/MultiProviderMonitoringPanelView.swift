@@ -472,9 +472,11 @@ public struct MultiProviderMonitoringPanelView: View {
       ensurePrimarySelection()
     }
     .onChange(of: effectivePrimarySessionId) { _, newId in
+      guard let currentSidePanelContent = sidePanelContent else { return }
+
       // When switching sessions, update file explorer to new session's project path
-      // instead of closing it
-      if sidePanelContent?.isFileExplorer == true, let newId {
+      // instead of closing it.
+      if currentSidePanelContent.isFileExplorer, let newId {
         if let item = allItems.first(where: { $0.id == newId }),
            case .monitored(_, _, let session, _) = item {
           sidePanelContent = .fileExplorer(
@@ -487,6 +489,17 @@ public struct MultiProviderMonitoringPanelView: View {
         } else {
           sidePanelContent = nil
         }
+      } else if case .webPreview(let sessionId, _, let projectPath) = currentSidePanelContent,
+                sessionId.hasPrefix("pending-"),
+                let newId,
+                let item = allItems.first(where: { $0.id == newId }),
+                case .monitored(_, _, let session, _) = item,
+                session.projectPath == projectPath {
+        sidePanelContent = .webPreview(
+          sessionId: session.id,
+          session: session,
+          projectPath: session.projectPath
+        )
       } else {
         sidePanelContent = nil
       }
@@ -920,7 +933,12 @@ public struct MultiProviderMonitoringPanelView: View {
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
         isEmbedded: true,
         onInspectSubmit: { prompt, sess in
-          viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          if !viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) {
+            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          }
+        },
+        onQueuedSubmit: { prompt, sess in
+          viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt)
         },
         viewModel: viewModel,
         agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL,

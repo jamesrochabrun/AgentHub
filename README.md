@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
 - **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
 - **Web preview** — Prefers agent-started localhost servers, recovers recent localhost URLs from session files when needed, and falls back to static HTML (`index.html` first) when no live preview is available
-- **Web preview context mode** — Inspect and select elements in the live web preview, queue multiple selections, and attach them as structured context (HTML, CSS selectors, computed styles) to your next terminal message — no copy-paste needed
+- **Web preview batch updates** — Inspect elements or crop regions in the live web preview, queue multiple requested updates with structured context, and attach the batch to your next terminal message — no copy-paste needed
 - **iOS Simulator run destination** — Build, install, and launch your app on any booted iOS Simulator directly from a session card; cancel at any phase (Building / Installing / Launching) via a stop button; boot-readiness check times out after 90 seconds to prevent hangs
 - **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting; switch to Review mode to annotate individual lines and send batch feedback directly to Claude's interactive plan prompt
 - **Global search** — Search across all session files with ranked results

@@ -1,4 +1,5 @@
 import Canvas
+import CoreGraphics
 import Testing
 
 @testable import AgentHubCore
@@ -6,17 +7,20 @@ import Testing
 @Suite("WebPreviewContextQueue")
 struct WebPreviewContextQueueTests {
 
-  @Test("Accumulates selections in order")
+  @Test("Accumulates updates in order")
   func accumulatesSelections() {
     var queue = WebPreviewContextQueue()
 
     let first = makeElement(tagName: "BUTTON", selector: ".hero button")
     let second = makeElement(tagName: "DIV", selector: ".pricing-card")
 
-    queue.append(first)
-    queue.append(second)
+    queue.append(first, instruction: "Make this button larger")
+    queue.append(second, instruction: "Add more contrast")
 
-    #expect(queue.elements == [first, second])
+    #expect(queue.items == [
+      WebPreviewQueuedUpdate(element: first, instruction: "Make this button larger"),
+      WebPreviewQueuedUpdate(element: second, instruction: "Add more contrast"),
+    ])
     #expect(queue.count == 2)
   }
 
@@ -26,15 +30,17 @@ struct WebPreviewContextQueueTests {
 
     let first = makeElement(tagName: "BUTTON", selector: ".hero button")
     let second = makeElement(tagName: "DIV", selector: ".pricing-card")
-    queue.append(first)
-    queue.append(second)
+    queue.append(first, instruction: "Make this button larger")
+    queue.append(second, instruction: "Add more contrast")
 
     queue.remove(id: first.id)
 
-    #expect(queue.elements == [second])
+    #expect(queue.items == [
+      WebPreviewQueuedUpdate(element: second, instruction: "Add more contrast"),
+    ])
   }
 
-  @Test("Clears all queued selections")
+  @Test("Clears all queued updates")
   func clearsSelections() {
     var queue = WebPreviewContextQueue()
 
@@ -44,32 +50,55 @@ struct WebPreviewContextQueueTests {
     queue.clear()
 
     #expect(queue.isEmpty)
-    #expect(queue.elements.isEmpty)
+    #expect(queue.items.isEmpty)
   }
 
-  @Test("Composes a multi-element context prompt")
-  func composesContextPrompt() {
+  @Test("Composes a multi-update prompt")
+  func composesBatchUpdatePrompt() {
     var queue = WebPreviewContextQueue()
     queue.append(makeElement(
       tagName: "BUTTON",
       selector: ".hero button",
       outerHTML: "<button>Launch</button>",
       computedStyles: ["color": "#fff"]
-    ))
+    ), instruction: "Make this button larger")
     queue.append(makeElement(
       tagName: "SECTION",
       selector: ".pricing",
       outerHTML: "<section class=\"pricing\"></section>",
       computedStyles: ["backgroundColor": "#111"]
-    ))
+    ), instruction: "Increase contrast")
 
     let prompt = queue.composedContextPrompt()
 
-    #expect(prompt?.contains("### Element 1") == true)
-    #expect(prompt?.contains("### Element 2") == true)
+    #expect(prompt?.contains("Queued web preview updates:") == true)
+    #expect(prompt?.contains("## Update 1: Element") == true)
+    #expect(prompt?.contains("## Update 2: Element") == true)
     #expect(prompt?.contains(".hero button") == true)
     #expect(prompt?.contains(".pricing") == true)
-    #expect(prompt?.contains("User request") == false)
+    #expect(prompt?.contains("User request: Make this button larger") == true)
+    #expect(prompt?.contains("User request: Increase contrast") == true)
+  }
+
+  @Test("Composes a queued crop update prompt")
+  func composesCropUpdatePrompt() {
+    var queue = WebPreviewContextQueue()
+    let rect = CGRect(x: 10, y: 20, width: 300, height: 120)
+
+    queue.appendCrop(
+      cropRect: rect,
+      elements: [makeElement(tagName: "SECTION", selector: ".hero")],
+      instruction: "Tighten the spacing",
+      screenshotPath: "/tmp/AgentHub/crop-screenshots/crop.png"
+    )
+
+    let prompt = queue.composedContextPrompt()
+
+    #expect(prompt?.contains("selected region") == true)
+    #expect(prompt?.contains("300") == true)
+    #expect(prompt?.contains("120") == true)
+    #expect(prompt?.contains("User request: Tighten the spacing") == true)
+    #expect(prompt?.contains("crop.png") == true)
   }
 
   @Test("Returns nil for an empty queue")

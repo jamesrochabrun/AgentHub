@@ -42,7 +42,7 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   case edit
 
   static func availableCases(advancedEditingEnabled: Bool) -> [WebPreviewInspectBehavior] {
-    advancedEditingEnabled ? Self.allCases : [.input, .crop]
+    advancedEditingEnabled ? [.input, .crop, .edit] : [.input, .crop]
   }
 
   var id: String { rawValue }
@@ -59,9 +59,9 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
   var helpText: String {
     switch self {
     case .input:
-      return "Select an element, then type an instruction before sending it to the agent."
+      return "Select an element, then type an instruction to queue it for the next terminal message."
     case .crop:
-      return "Drag to select a region, then describe the change you want."
+      return "Drag to select a region, then describe the change to queue it for the next terminal message."
     case .context:
       return "Queue selected elements in the preview to attach them to the next terminal message."
     case .edit:
@@ -119,6 +119,7 @@ public struct WebPreviewView: View {
   let onDismiss: () -> Void
   var isEmbedded: Bool = false
   var onInspectSubmit: ((String, CLISession) -> Void)?
+  var onQueuedSubmit: ((String, CLISession) -> Bool)?
   let viewModel: CLISessionsViewModel?
   /// Reactive localhost URL from the agent's session. When this changes, the preview updates.
   var agentLocalhostURL: URL?
@@ -148,6 +149,7 @@ public struct WebPreviewView: View {
   @State private var scrollRestorationCoordinator = WebPreviewScrollRestorationCoordinator()
   @State private var launchOptionsStatusOverride: String?
   @State private var askAgentReprobeTask: Task<Void, Never>?
+  @State private var queueSendFailureMessage: String?
 
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
@@ -172,6 +174,7 @@ public struct WebPreviewView: View {
     onDismiss: @escaping () -> Void,
     isEmbedded: Bool = false,
     onInspectSubmit: ((String, CLISession) -> Void)? = nil,
+    onQueuedSubmit: ((String, CLISession) -> Bool)? = nil,
     viewModel: CLISessionsViewModel? = nil,
     agentLocalhostURL: URL? = nil,
     monitorState: SessionMonitorState? = nil,
@@ -182,6 +185,7 @@ public struct WebPreviewView: View {
     self.onDismiss = onDismiss
     self.isEmbedded = isEmbedded
     self.onInspectSubmit = onInspectSubmit
+    self.onQueuedSubmit = onQueuedSubmit
     self.viewModel = viewModel
     self.agentLocalhostURL = agentLocalhostURL
     self.monitorState = monitorState
@@ -1280,18 +1284,15 @@ public struct WebPreviewView: View {
           state: inspectState,
           inputPlacement: .selectionAnchored,
           onSubmit: { element, instruction in
-            let prompt = ElementInspectorPromptBuilder.buildPrompt(
-              element: element,
-              instruction: instruction
-            )
-            onInspectSubmit?(prompt, session)
+            handleInspectUpdateSubmit(element: element, instruction: instruction)
           },
           onContextSelection: { element in
             handleContextSelection(element)
           },
           onCropSubmit: { rect, elements, instruction in
             handleCropSubmit(rect: rect, elements: elements, instruction: instruction)
-          }
+          },
+          deactivateOnSubmit: false
         )
       }
     }
@@ -1299,9 +1300,11 @@ public struct WebPreviewView: View {
 
   private var bottomBarContent: some View {
     WebPreviewQueuedContextView(
-      queuedElements: queuedContext.elements,
-      isSelectingContext: inspectState.isActive && inspectBehavior == .context,
-      onRemoveElement: removeQueuedContextElement,
+      queuedItems: queuedContext.items,
+      isQueueing: inspectState.isActive && inspectBehavior != .edit,
+      failureMessage: queueSendFailureMessage,
+      onRemoveItem: removeQueuedContextElement,
+      onSendAll: sendQueuedUpdates,
       onClearAll: clearQueuedContext
     )
     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -1477,21 +1480,42 @@ public struct WebPreviewView: View {
     }
   }
 
+  private func handleInspectUpdateSubmit(element: ElementInspectorData, instruction: String) {
+    queueSendFailureMessage = nil
+    if let viewModel {
+      viewModel.queueWebPreviewUpdate(element, instruction: instruction, for: session.id)
+    } else {
+      localContextQueue.append(element, instruction: instruction)
+    }
+  }
+
   private func handleCropSubmit(rect: CGRect, elements: [ElementInspectorData], instruction: String) {
     Task { @MainActor in
+      clearCropSelection()
       var screenshotPath: String? = nil
       if let webView = previewWebView {
         if let image = try? await ElementSnapshotCapture.captureSnapshot(of: rect, in: webView) {
           screenshotPath = saveCropScreenshot(image, sessionId: session.id)
         }
       }
-      let prompt = ElementInspectorPromptBuilder.buildCropPrompt(
-        cropRect: rect,
-        elements: elements,
-        instruction: instruction,
-        screenshotPath: screenshotPath
-      )
-      onInspectSubmit?(prompt, session)
+      if let viewModel {
+        queueSendFailureMessage = nil
+        viewModel.queueWebPreviewCropUpdate(
+          cropRect: rect,
+          elements: elements,
+          instruction: instruction,
+          screenshotPath: screenshotPath,
+          for: session.id
+        )
+      } else {
+        queueSendFailureMessage = nil
+        localContextQueue.appendCrop(
+          cropRect: rect,
+          elements: elements,
+          instruction: instruction,
+          screenshotPath: screenshotPath
+        )
+      }
     }
   }
 
@@ -1515,6 +1539,7 @@ public struct WebPreviewView: View {
   }
 
   private func handleContextSelection(_ element: ElementInspectorData) {
+    queueSendFailureMessage = nil
     if let viewModel {
       viewModel.queueWebPreviewContext(element, for: session.id)
     } else {
@@ -1523,6 +1548,7 @@ public struct WebPreviewView: View {
   }
 
   private func clearQueuedContext() {
+    queueSendFailureMessage = nil
     if let viewModel {
       viewModel.clearQueuedWebPreviewContext(for: session.id)
     } else {
@@ -1530,7 +1556,27 @@ public struct WebPreviewView: View {
     }
   }
 
+  private func sendQueuedUpdates() {
+    guard let prompt = queuedContext.composedContextPrompt() else {
+      return
+    }
+
+    if let onQueuedSubmit {
+      guard onQueuedSubmit(prompt, session) else {
+        queueSendFailureMessage = "Could not find an active terminal for this session. Keep the preview open and try again when the terminal is ready."
+        return
+      }
+      clearQueuedContext()
+      return
+    }
+
+    guard let onInspectSubmit else { return }
+    clearQueuedContext()
+    onInspectSubmit(prompt, session)
+  }
+
   private func removeQueuedContextElement(_ elementID: UUID) {
+    queueSendFailureMessage = nil
     if let viewModel {
       viewModel.removeQueuedWebPreviewContextElement(elementID, for: session.id)
     } else {

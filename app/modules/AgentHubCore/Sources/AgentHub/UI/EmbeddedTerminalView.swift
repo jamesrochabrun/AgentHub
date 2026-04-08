@@ -327,6 +327,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
   }
 
+  /// Sends a follow-up prompt directly to the running CLI and submits it.
+  /// This path is for explicit user actions and must not be gated by initial
+  /// prompt delivery state.
+  func submitPromptImmediately(_ prompt: String) -> Bool {
+    guard let terminal = terminalView else { return false }
+    terminal.send(txt: prompt)
+    terminal.send([13])
+    return true
+  }
+
   /// Types text into the terminal WITHOUT pressing Enter.
   /// Used for drag-and-drop file paths where user adds context before submitting.
   public func typeText(_ text: String) {

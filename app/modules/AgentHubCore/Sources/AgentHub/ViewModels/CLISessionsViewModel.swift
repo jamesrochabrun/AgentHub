@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 import Canvas
+import CoreGraphics
 
 #if canImport(AppKit)
 import AppKit
@@ -213,9 +214,40 @@ public final class CLISessionsViewModel {
     pendingTerminalPrompts.removeValue(forKey: sessionId)
   }
 
+  public func sendPromptToActiveTerminal(forKey key: String, prompt: String) -> Bool {
+    guard let terminal = activeTerminals[key] else {
+      return false
+    }
+    return terminal.submitPromptImmediately(prompt)
+  }
+
   public func queueWebPreviewContext(_ element: ElementInspectorData, for sessionID: String) {
     var store = queuedWebPreviewContextStore
     store.append(element, for: sessionID)
+    queuedWebPreviewContextStore = store
+  }
+
+  public func queueWebPreviewUpdate(_ element: ElementInspectorData, instruction: String, for sessionID: String) {
+    var store = queuedWebPreviewContextStore
+    store.append(element, instruction: instruction, for: sessionID)
+    queuedWebPreviewContextStore = store
+  }
+
+  public func queueWebPreviewCropUpdate(
+    cropRect: CGRect,
+    elements: [ElementInspectorData],
+    instruction: String,
+    screenshotPath: String?,
+    for sessionID: String
+  ) {
+    var store = queuedWebPreviewContextStore
+    store.appendCrop(
+      cropRect: cropRect,
+      elements: elements,
+      instruction: instruction,
+      screenshotPath: screenshotPath,
+      for: sessionID
+    )
     queuedWebPreviewContextStore = store
   }
 
@@ -236,6 +268,12 @@ public final class CLISessionsViewModel {
     let prompt = store.consumeContextPrompt(for: sessionID)
     queuedWebPreviewContextStore = store
     return prompt
+  }
+
+  public func transferQueuedWebPreviewContext(from oldSessionID: String, to newSessionID: String) {
+    var store = queuedWebPreviewContextStore
+    store.transferQueue(from: oldSessionID, to: newSessionID)
+    queuedWebPreviewContextStore = store
   }
 
   // MARK: - Terminal Management
@@ -357,6 +395,7 @@ public final class CLISessionsViewModel {
     if let terminal = activeTerminals.removeValue(forKey: pendingKey) {
       activeTerminals[sessionId] = terminal
     }
+    transferQueuedWebPreviewContext(from: pendingKey, to: sessionId)
   }
 
   /// Removes the auxiliary shell terminal for a given key and terminates its process.

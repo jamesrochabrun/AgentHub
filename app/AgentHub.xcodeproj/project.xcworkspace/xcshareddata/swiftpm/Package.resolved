@@ -11,15 +11,6 @@
       }
     },
     {
-      "identity" : "canvas",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/jamesrochabrun/Canvas.git",
-      "state" : {
-        "revision" : "ece7ce2e8e1c68d65150c945726ddada518288ed",
-        "version" : "1.0.9"
-      }
-    },
-    {
       "identity" : "codeedittextview",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/CodeEditApp/CodeEditTextView",
@@ -141,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/migueldeicaza/SwiftTerm",
       "state" : {
-        "revision" : "36642aa383e14834604bb5f2bafbbde47142bd0c",
-        "version" : "1.11.0"
+        "revision" : "8e7a1e154f470e19c709a00a8768df348ba5fc43",
+        "version" : "1.13.0"
       }
     },
     {

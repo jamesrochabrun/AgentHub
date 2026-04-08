@@ -11,15 +11,6 @@
       }
     },
     {
-      "identity" : "canvas",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/jamesrochabrun/Canvas.git",
-      "state" : {
-        "revision" : "ece7ce2e8e1c68d65150c945726ddada518288ed",
-        "version" : "1.0.9"
-      }
-    },
-    {
       "identity" : "codeedittextview",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/CodeEditApp/CodeEditTextView",
