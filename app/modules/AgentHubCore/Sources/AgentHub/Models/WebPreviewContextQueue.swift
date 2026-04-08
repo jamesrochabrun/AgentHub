@@ -109,11 +109,14 @@ struct WebPreviewQueuedUpdate: Identifiable, Equatable, Sendable {
       return ElementInspectorPromptBuilder.buildContextPrompt(element: element)
 
     case .crop(let crop):
+      // Screenshot paths are handled separately at send time so that
+      // they appear at the start of the terminal input where Claude
+      // Code can detect and attach them as images.
       return ElementInspectorPromptBuilder.buildCropPrompt(
         cropRect: crop.cropRect,
         elements: crop.elements,
         instruction: instruction ?? "Use this selected region as additional context.",
-        screenshotPath: crop.screenshotPath
+        screenshotPath: nil
       )
     }
   }
@@ -200,5 +203,15 @@ struct WebPreviewContextQueue: Equatable, Sendable {
     }
 
     return lines.joined(separator: "\n")
+  }
+
+  /// Returns screenshot file paths from crop items, in queue order.
+  /// These are sent at the start of the terminal input so Claude Code
+  /// detects and attaches them as images.
+  func screenshotPaths() -> [String] {
+    items.compactMap { item in
+      guard case .crop(let crop) = item.selection else { return nil }
+      return crop.screenshotPath
+    }
   }
 }

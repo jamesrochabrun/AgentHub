@@ -48,4 +48,32 @@ struct TerminalPromptSubmissionPayloadTests {
     #expect(payload.dropLast() == ArraySlice(expected))
     #expect(payload.last == 0x0D)
   }
+
+  @Test("textBytes without bracketed paste returns raw prompt bytes")
+  func textBytesNonBracketed() {
+    let prompt = "hello world"
+
+    let payload = TerminalPromptSubmissionPayload.textBytes(
+      prompt: prompt,
+      bracketedPasteMode: false
+    )
+
+    #expect(payload == Array(prompt.utf8))
+  }
+
+  @Test("textBytes with bracketed paste wraps but omits carriage return")
+  func textBytesBracketed() {
+    let prompt = "hello world"
+    let start: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E]
+    let end: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]
+
+    let payload = TerminalPromptSubmissionPayload.textBytes(
+      prompt: prompt,
+      bracketedPasteMode: true
+    )
+    let expected = start + Array(prompt.utf8) + end
+
+    #expect(payload == expected)
+    #expect(!payload.contains(0x0D))
+  }
 }

@@ -82,8 +82,16 @@ struct QueuedWebPreviewContextStore: Equatable, Sendable {
   }
 
   mutating func consumeContextPrompt(for sessionID: String) -> String? {
-    let prompt = contextPrompt(for: sessionID)
+    let q = queue(for: sessionID)
+    guard let prompt = q.composedContextPrompt() else {
+      return nil
+    }
+    let screenshotPaths = q.screenshotPaths()
     clear(for: sessionID)
-    return prompt
+    guard !screenshotPaths.isEmpty else { return prompt }
+    let pathsPrefix = screenshotPaths
+      .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
+      .joined(separator: " ")
+    return "\(pathsPrefix) \(prompt)"
   }
 }

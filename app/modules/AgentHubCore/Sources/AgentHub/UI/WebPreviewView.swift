@@ -1491,13 +1491,13 @@ public struct WebPreviewView: View {
 
   private func handleCropSubmit(rect: CGRect, elements: [ElementInspectorData], instruction: String) {
     Task { @MainActor in
-      clearCropSelection()
       var screenshotPath: String? = nil
       if let webView = previewWebView {
         if let image = try? await ElementSnapshotCapture.captureSnapshot(of: rect, in: webView) {
           screenshotPath = saveCropScreenshot(image, sessionId: session.id)
         }
       }
+      clearCropSelection()
       if let viewModel {
         queueSendFailureMessage = nil
         viewModel.queueWebPreviewCropUpdate(
@@ -1561,8 +1561,21 @@ public struct WebPreviewView: View {
       return
     }
 
+    // Prepend screenshot paths so Claude Code detects them as image
+    // attachments (same mechanism as drag-and-drop file paths).
+    let screenshotPaths = queuedContext.screenshotPaths()
+    let finalPrompt: String
+    if screenshotPaths.isEmpty {
+      finalPrompt = prompt
+    } else {
+      let pathsPrefix = screenshotPaths
+        .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
+        .joined(separator: " ")
+      finalPrompt = "\(pathsPrefix) \(prompt)"
+    }
+
     if let onQueuedSubmit {
-      guard onQueuedSubmit(prompt, session) else {
+      guard onQueuedSubmit(finalPrompt, session) else {
         queueSendFailureMessage = "Could not find an active terminal for this session. Keep the preview open and try again when the terminal is ready."
         return
       }
@@ -1572,7 +1585,7 @@ public struct WebPreviewView: View {
 
     guard let onInspectSubmit else { return }
     clearQueuedContext()
-    onInspectSubmit(prompt, session)
+    onInspectSubmit(finalPrompt, session)
   }
 
   private func removeQueuedContextElement(_ elementID: UUID) {

@@ -98,7 +98,36 @@ struct WebPreviewContextQueueTests {
     #expect(prompt?.contains("300") == true)
     #expect(prompt?.contains("120") == true)
     #expect(prompt?.contains("User request: Tighten the spacing") == true)
-    #expect(prompt?.contains("crop.png") == true)
+    // Screenshot paths are excluded from the text prompt and returned
+    // via screenshotPaths() for separate handling at send time.
+    #expect(prompt?.contains("crop.png") == false)
+    #expect(queue.screenshotPaths() == ["/tmp/AgentHub/crop-screenshots/crop.png"])
+  }
+
+  @Test("Multi-item composed prompt excludes screenshot path")
+  func multiItemPromptExcludesScreenshotPath() {
+    var queue = WebPreviewContextQueue()
+
+    queue.append(makeElement(
+      tagName: "H1",
+      selector: ".title",
+      outerHTML: "<h1>Hello</h1>"
+    ), instruction: "Make it bigger")
+
+    queue.appendCrop(
+      cropRect: CGRect(x: 23, y: 317, width: 298, height: 159),
+      elements: [makeElement(tagName: "SPAN", selector: ".arrow")],
+      instruction: "What is this?",
+      screenshotPath: "/tmp/AgentHub/crop-screenshots/crop-test.png"
+    )
+
+    let prompt = queue.composedContextPrompt()
+
+    #expect(prompt != nil)
+    #expect(prompt?.contains("## Update 1: Element") == true)
+    #expect(prompt?.contains("## Update 2: Region") == true)
+    #expect(prompt?.contains("crop-test.png") == false)
+    #expect(queue.screenshotPaths() == ["/tmp/AgentHub/crop-screenshots/crop-test.png"])
   }
 
   @Test("Returns nil for an empty queue")

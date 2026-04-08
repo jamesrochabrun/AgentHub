@@ -65,6 +65,23 @@ struct QueuedWebPreviewContextStoreTests {
     #expect(store.queue(for: "session-a").isEmpty)
   }
 
+  @Test("Consumed prompt prepends screenshot paths for image attachment")
+  func consumedPromptPrependsScreenshotPaths() {
+    var store = QueuedWebPreviewContextStore()
+    store.appendCrop(
+      cropRect: CGRect(x: 0, y: 0, width: 300, height: 120),
+      elements: [makeElement(tagName: "DIV", selector: ".card")],
+      instruction: "Fix this",
+      screenshotPath: "/tmp/crop.png",
+      for: "session-a"
+    )
+
+    let prompt = store.consumeContextPrompt(for: "session-a")
+
+    #expect(prompt?.hasPrefix("/tmp/crop.png ") == true)
+    #expect(prompt?.contains("selected region") == true)
+  }
+
   @Test("Transfers queued updates from pending session to resolved session")
   func transfersQueueFromPendingSession() {
     var store = QueuedWebPreviewContextStore()

@@ -332,11 +332,26 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// prompt delivery state.
   func submitPromptImmediately(_ prompt: String) -> Bool {
     guard let terminal = terminalView else { return false }
-    terminal.send(TerminalPromptSubmissionPayload.bytes(
+    terminal.send(TerminalPromptSubmissionPayload.textBytes(
       prompt: prompt,
       bracketedPasteMode: terminal.terminal?.bracketedPasteMode ?? false
     ))
+    let delay = Self.submitDelay(forByteCount: prompt.utf8.count)
+    Task { @MainActor [weak terminal] in
+      try? await Task.sleep(for: delay)
+      terminal?.send([0x0D])
+    }
     return true
+  }
+
+  /// Scales the delay between pasting text and pressing Enter so the CLI
+  /// has time to process larger payloads before receiving the submit signal.
+  private static func submitDelay(forByteCount count: Int) -> Duration {
+    switch count {
+    case ..<500:   return .milliseconds(100)
+    case ..<2000:  return .milliseconds(250)
+    default:       return .milliseconds(500)
+    }
   }
 
   /// Types text into the terminal WITHOUT pressing Enter.
@@ -452,10 +467,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
           self.onUserInteraction?()
           return nil
         case .appendContextAndSubmit(let queuedContextPrompt):
-          terminal.send(TerminalPromptSubmissionPayload.bytes(
-            prompt: "\n\n\(queuedContextPrompt)",
+          let fullText = "\n\n\(queuedContextPrompt)"
+          terminal.send(TerminalPromptSubmissionPayload.textBytes(
+            prompt: fullText,
             bracketedPasteMode: terminal.terminal?.bracketedPasteMode ?? false
           ))
+          let delay = Self.submitDelay(forByteCount: fullText.utf8.count)
+          Task { @MainActor [weak terminal] in
+            try? await Task.sleep(for: delay)
+            terminal?.send([0x0D])
+          }
           self.onUserInteraction?()
           return nil
         }
