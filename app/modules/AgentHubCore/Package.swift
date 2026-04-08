@@ -21,7 +21,7 @@ let package = Package(
     .package(path: "../AgentHubGitHub"),
     .package(url: "https://github.com/jamesrochabrun/Canvas", exact: "1.0.9"),
     .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.1.5"),
-    .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.11.0"),
+    .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0"),
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
     .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),
     .package(url: "https://github.com/appstefan/HighlightSwift", from: "1.1.0"),
