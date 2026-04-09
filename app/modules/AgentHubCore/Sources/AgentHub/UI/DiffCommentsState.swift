@@ -186,7 +186,7 @@ final class DiffCommentsState {
           id: comment.id.uuidString,
           author: "You",
           body: comment.text,
-          subtitle: comment.lineLabel
+          subtitle: "Code review: \(comment.lineLabel.lowercased())"
         )
       )
     }
