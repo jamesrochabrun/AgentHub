@@ -1309,7 +1309,7 @@ public struct WebPreviewView: View {
     )
     .transition(.opacity.combined(with: .move(edge: .bottom)))
     .padding(.horizontal, 12)
-    .padding(.vertical, 12)
+    .padding(.vertical, 6)
   }
 
   private func handleManualUpdate() {

@@ -91,20 +91,41 @@ struct WebPreviewQueuedContextView: View {
 
   private var queuedItemList: some View {
     ScrollView {
-      VStack(alignment: .leading, spacing: 8) {
+      VStack(alignment: .leading, spacing: 6) {
         ForEach(queuedItems) { item in
           queuedItemRow(for: item)
+            .transition(.opacity)
         }
       }
       .padding(.horizontal, 12)
-      .padding(.vertical, 10)
+      .padding(.vertical, 6)
     }
-    .frame(maxHeight: min(CGFloat(max(queuedItems.count, 1)) * 76, 220))
+    .frame(maxHeight: min(CGFloat(max(queuedItems.count, 1)) * 56, 220))
+    .animation(.easeInOut(duration: 0.25), value: queuedItems.map(\.id))
+  }
+
+  @ViewBuilder
+  private func thumbnailView(for path: String) -> some View {
+    if let nsImage = NSImage(contentsOfFile: path) {
+      Image(nsImage: nsImage)
+        .resizable()
+        .scaledToFill()
+        .frame(width: 36, height: 36)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+          RoundedRectangle(cornerRadius: 6)
+            .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+        )
+    }
   }
 
   private func queuedItemRow(for item: WebPreviewQueuedUpdate) -> some View {
-    HStack(alignment: .top, spacing: 8) {
-      VStack(alignment: .leading, spacing: 6) {
+    HStack(alignment: .center, spacing: 6) {
+      if let path = item.cropScreenshotPath {
+        thumbnailView(for: path)
+      }
+
+      VStack(alignment: .leading, spacing: 4) {
         HStack(spacing: 8) {
           Label(item.kindLabel, systemImage: item.iconName)
             .labelStyle(.titleAndIcon)
@@ -131,7 +152,7 @@ struct WebPreviewQueuedContextView: View {
           .truncationMode(.tail)
       }
 
-      Spacer(minLength: 8)
+      Spacer(minLength: 4)
 
       Button {
         onRemoveItem(item.id)
@@ -145,13 +166,13 @@ struct WebPreviewQueuedContextView: View {
       .buttonStyle(.plain)
       .help("Remove queued update")
     }
-    .padding(10)
+    .padding(6)
     .background(
-      RoundedRectangle(cornerRadius: 10)
+      RoundedRectangle(cornerRadius: 8)
         .fill(Color(NSColor.windowBackgroundColor).opacity(0.65))
     )
     .overlay(
-      RoundedRectangle(cornerRadius: 10)
+      RoundedRectangle(cornerRadius: 8)
         .stroke(Color(NSColor.separatorColor), lineWidth: 1)
     )
   }
@@ -165,5 +186,10 @@ private extension WebPreviewQueuedUpdate {
     case .crop:
       return .orange
     }
+  }
+
+  var cropScreenshotPath: String? {
+    guard case .crop(let crop) = selection else { return nil }
+    return crop.screenshotPath
   }
 }
