@@ -185,7 +185,8 @@ final class DiffCommentsState {
         metadata: AnnotationMetadata(
           id: comment.id.uuidString,
           author: "You",
-          body: comment.text
+          body: comment.text,
+          subtitle: comment.lineLabel
         )
       )
     }
