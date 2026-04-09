@@ -930,6 +930,7 @@ private struct GitDiffContentView: View {
               fileName: fileName,
               diffStyle: $diffStyle,
               overflowMode: $overflowMode,
+              annotations: commentsState.annotations(for: filePath),
               onLineClickWithPosition: isInlineEditorEnabled ? { position, localPoint in
                 let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
 
@@ -968,6 +969,27 @@ private struct GitDiffContentView: View {
                   )
                 }
               } : nil,
+              onAnnotationClick: isInlineEditorEnabled ? { id, _, _, localPoint in
+                if let comment = commentsState.comment(byAnnotationId: id) {
+                  let fileContent = comment.side == "left" ? oldContent : newContent
+                  let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
+
+                  withAnimation(.easeOut(duration: 0.2)) {
+                    inlineEditorState.show(
+                      at: anchorPoint,
+                      lineNumber: comment.lineNumber,
+                      endLineNumber: comment.endLineNumber,
+                      side: comment.side,
+                      fileName: comment.filePath,
+                      lineContent: comment.lineContent,
+                      fullFileContent: fileContent
+                    )
+                  }
+                }
+              } : nil,
+              onAnnotationDelete: { id, _, _ in
+                commentsState.removeComment(byAnnotationId: id)
+              },
               onReady: {
                 withAnimation(.easeInOut(duration: 0.3)) {
                   isWebViewReady = true
@@ -1035,10 +1057,6 @@ private struct GitDiffContentView: View {
                   lineContent: context.lineContent,
                   text: message
                 )
-                // Auto-expand panel when first comment is added
-                if commentsState.commentCount == 1 {
-                  commentsState.isPanelExpanded = true
-                }
               },
               commentsState: commentsState
             )
