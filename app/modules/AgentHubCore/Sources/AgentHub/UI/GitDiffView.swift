@@ -969,10 +969,9 @@ private struct GitDiffContentView: View {
                   )
                 }
               } : nil,
-              onAnnotationClick: isInlineEditorEnabled ? { id, side, lineNumber, localPoint in
+              onAnnotationClick: isInlineEditorEnabled ? { id, _, _, localPoint in
                 if let comment = commentsState.comment(byAnnotationId: id) {
-                  let commentSide = side == "deletions" ? "left" : "right"
-                  let fileContent = commentSide == "left" ? oldContent : newContent
+                  let fileContent = comment.side == "left" ? oldContent : newContent
                   let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
 
                   withAnimation(.easeOut(duration: 0.2)) {
@@ -980,7 +979,7 @@ private struct GitDiffContentView: View {
                       at: anchorPoint,
                       lineNumber: comment.lineNumber,
                       endLineNumber: comment.endLineNumber,
-                      side: commentSide,
+                      side: comment.side,
                       fileName: comment.filePath,
                       lineContent: comment.lineContent,
                       fullFileContent: fileContent

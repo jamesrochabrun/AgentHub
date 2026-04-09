@@ -65,12 +65,12 @@ struct InlineEditorOverlay: View {
     )
   }
 
-  /// Check if there's an existing comment at the current location
+  /// Check if there's an existing comment at the current line (ignores endLineNumber
+  /// so single-click and range-selection both find the same comment).
   private var existingComment: DiffComment? {
-    commentsState?.getComment(
+    commentsState?.getCommentForLine(
       filePath: state.fileName,
       lineNumber: state.lineNumber,
-      endLineNumber: state.endLineNumber,
       side: state.side
     )
   }
