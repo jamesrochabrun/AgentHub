@@ -5,6 +5,7 @@
 //  Created by Assistant on 1/29/26.
 //
 
+import PierreDiffsSwift
 import SwiftUI
 
 /// Observable state manager for PR-style review comments on diffs.
@@ -166,6 +167,35 @@ final class DiffCommentsState {
       locationKey = "\(filePath):\(lineNumber):\(side)"
     }
     return comments[locationKey]
+  }
+
+  // MARK: - Annotation Bridge
+
+  /// Converts stored comments for a file into `DiffAnnotation` values for PierreDiffView.
+  func annotations(for filePath: String) -> [DiffAnnotation] {
+    commentsByFile[filePath]?.map { comment in
+      DiffAnnotation(
+        side: comment.side == "left" ? .deletions : .additions,
+        lineNumber: comment.lineNumber,
+        metadata: AnnotationMetadata(
+          id: comment.id.uuidString,
+          author: "You",
+          body: comment.text
+        )
+      )
+    } ?? []
+  }
+
+  /// Finds a comment by its annotation ID (UUID string).
+  func comment(byAnnotationId id: String) -> DiffComment? {
+    comments.values.first { $0.id.uuidString == id }
+  }
+
+  /// Removes a comment by its annotation ID (UUID string).
+  func removeComment(byAnnotationId id: String) {
+    if let key = comments.first(where: { $0.value.id.uuidString == id })?.key {
+      comments.removeValue(forKey: key)
+    }
   }
 
   /// Clears all comments.

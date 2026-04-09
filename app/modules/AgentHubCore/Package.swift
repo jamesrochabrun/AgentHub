@@ -20,7 +20,7 @@ let package = Package(
   dependencies: [
     .package(path: "../AgentHubGitHub"),
     .package(url: "https://github.com/jamesrochabrun/Canvas", from: "1.2.0"),
-    .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.1.5"),
+    .package(path: "../../../../PierreDiffsSwift"),
     .package(url: "https://github.com/migueldeicaza/SwiftTerm", from: "1.13.0"),
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
     .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),

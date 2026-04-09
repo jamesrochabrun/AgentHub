@@ -930,6 +930,7 @@ private struct GitDiffContentView: View {
               fileName: fileName,
               diffStyle: $diffStyle,
               overflowMode: $overflowMode,
+              annotations: commentsState.annotations(for: filePath),
               onLineClickWithPosition: isInlineEditorEnabled ? { position, localPoint in
                 let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
 
@@ -968,6 +969,28 @@ private struct GitDiffContentView: View {
                   )
                 }
               } : nil,
+              onAnnotationClick: isInlineEditorEnabled ? { id, side, lineNumber, localPoint in
+                if let comment = commentsState.comment(byAnnotationId: id) {
+                  let commentSide = side == "deletions" ? "left" : "right"
+                  let fileContent = commentSide == "left" ? oldContent : newContent
+                  let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
+
+                  withAnimation(.easeOut(duration: 0.2)) {
+                    inlineEditorState.show(
+                      at: anchorPoint,
+                      lineNumber: comment.lineNumber,
+                      endLineNumber: comment.endLineNumber,
+                      side: commentSide,
+                      fileName: comment.filePath,
+                      lineContent: comment.lineContent,
+                      fullFileContent: fileContent
+                    )
+                  }
+                }
+              } : nil,
+              onAnnotationDelete: { id, _, _ in
+                commentsState.removeComment(byAnnotationId: id)
+              },
               onReady: {
                 withAnimation(.easeInOut(duration: 0.3)) {
                   isWebViewReady = true
