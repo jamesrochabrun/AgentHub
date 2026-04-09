@@ -333,7 +333,12 @@ public struct MonitoringCardView: View {
         projectPath: item.projectPath,
         onDismiss: { webPreviewSheetItem = nil },
         onInspectSubmit: { prompt, sess in
-          viewModel?.showTerminalWithPrompt(for: sess, prompt: prompt)
+          if viewModel?.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) != true {
+            viewModel?.showTerminalWithPrompt(for: sess, prompt: prompt)
+          }
+        },
+        onQueuedSubmit: { prompt, sess in
+          viewModel?.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) == true
         },
         viewModel: viewModel,
         agentLocalhostURL: viewModel?.monitorStates[item.session.id]?.detectedLocalhostURL ?? item.agentLocalhostURL,
@@ -704,7 +709,7 @@ public struct MonitoringCardView: View {
           }
           .buttonStyle(.agentHubOutlined)
           .help(queuedPreviewContextCount > 0
-            ? "Preview localhost web app (\(queuedPreviewContextCount) queued selections pending next send)"
+            ? "Preview localhost web app (\(queuedPreviewContextCount) queued updates pending next send)"
             : "Preview localhost web app")
         }
 

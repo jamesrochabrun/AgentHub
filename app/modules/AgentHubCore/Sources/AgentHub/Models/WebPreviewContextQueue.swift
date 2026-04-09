@@ -6,47 +6,198 @@
 //
 
 import Canvas
+import CoreGraphics
 import Foundation
 
-/// Holds the set of web-preview context selections queued for the next terminal submit.
+/// A web-preview selection queued for the next terminal submit.
+struct WebPreviewQueuedUpdate: Identifiable, Equatable, Sendable {
+  enum Selection: Equatable, Sendable {
+    case element(ElementInspectorData)
+    case crop(WebPreviewQueuedCropSelection)
+  }
+
+  let id: UUID
+  let selection: Selection
+  let instruction: String?
+
+  init(
+    id: UUID = UUID(),
+    selection: Selection,
+    instruction: String? = nil
+  ) {
+    self.id = id
+    self.selection = selection
+    self.instruction = Self.normalizedInstruction(instruction)
+  }
+
+  init(
+    element: ElementInspectorData,
+    instruction: String? = nil
+  ) {
+    self.init(id: element.id, selection: .element(element), instruction: instruction)
+  }
+
+  init(
+    cropRect: CGRect,
+    elements: [ElementInspectorData],
+    instruction: String,
+    screenshotPath: String?
+  ) {
+    self.init(
+      selection: .crop(WebPreviewQueuedCropSelection(
+        cropRect: cropRect,
+        elements: elements,
+        screenshotPath: screenshotPath
+      )),
+      instruction: instruction
+    )
+  }
+
+  var kindLabel: String {
+    switch selection {
+    case .element: return instruction == nil ? "Context" : "Element"
+    case .crop: return "Region"
+    }
+  }
+
+  var iconName: String {
+    switch selection {
+    case .element: return instruction == nil ? "square.and.arrow.up" : "cursorarrow.rays"
+    case .crop: return "crop"
+    }
+  }
+
+  var summary: String {
+    switch selection {
+    case .element(let element):
+      let tag = element.tagName.isEmpty ? "element" : element.tagName.lowercased()
+      guard !element.cssSelector.isEmpty else { return tag }
+      return "\(tag) \(element.cssSelector)"
+    case .crop(let crop):
+      return "Region \(Int(crop.cropRect.width)) x \(Int(crop.cropRect.height)) px"
+    }
+  }
+
+  var detail: String {
+    if let instruction {
+      return instruction
+    }
+
+    switch selection {
+    case .element(let element):
+      if !element.outerHTML.isEmpty {
+        return element.outerHTML
+      }
+      if !element.textContent.isEmpty {
+        return "\"\(element.textContent)\""
+      }
+      return element.tagName.lowercased()
+    case .crop(let crop):
+      return "\(crop.elements.count) captured element\(crop.elements.count == 1 ? "" : "s")"
+    }
+  }
+
+  var prompt: String {
+    switch selection {
+    case .element(let element):
+      if let instruction {
+        return ElementInspectorPromptBuilder.buildPrompt(
+          element: element,
+          instruction: instruction
+        )
+      }
+      return ElementInspectorPromptBuilder.buildContextPrompt(element: element)
+
+    case .crop(let crop):
+      // Screenshot paths are handled separately at send time so that
+      // they appear at the start of the terminal input where Claude
+      // Code can detect and attach them as images.
+      return ElementInspectorPromptBuilder.buildCropPrompt(
+        cropRect: crop.cropRect,
+        elements: crop.elements,
+        instruction: instruction ?? "Use this selected region as additional context.",
+        screenshotPath: nil
+      )
+    }
+  }
+
+  private static func normalizedInstruction(_ instruction: String?) -> String? {
+    guard let instruction else { return nil }
+    let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+}
+
+struct WebPreviewQueuedCropSelection: Equatable, Sendable {
+  let cropRect: CGRect
+  let elements: [ElementInspectorData]
+  let screenshotPath: String?
+}
+
+/// Holds the set of web-preview updates queued for the next terminal submit.
 struct WebPreviewContextQueue: Equatable, Sendable {
-  private(set) var elements: [ElementInspectorData] = []
+  private(set) var items: [WebPreviewQueuedUpdate] = []
 
   var isEmpty: Bool {
-    elements.isEmpty
+    items.isEmpty
   }
 
   var count: Int {
-    elements.count
+    items.count
   }
 
   mutating func append(_ element: ElementInspectorData) {
-    elements.append(element)
+    append(element, instruction: nil)
+  }
+
+  mutating func append(_ element: ElementInspectorData, instruction: String?) {
+    items.append(WebPreviewQueuedUpdate(element: element, instruction: instruction))
+  }
+
+  mutating func appendCrop(
+    cropRect: CGRect,
+    elements: [ElementInspectorData],
+    instruction: String,
+    screenshotPath: String?
+  ) {
+    items.append(WebPreviewQueuedUpdate(
+      cropRect: cropRect,
+      elements: elements,
+      instruction: instruction,
+      screenshotPath: screenshotPath
+    ))
+  }
+
+  mutating func append(contentsOf updates: [WebPreviewQueuedUpdate]) {
+    items.append(contentsOf: updates)
   }
 
   mutating func remove(id: UUID) {
-    elements.removeAll { $0.id == id }
+    items.removeAll { $0.id == id }
   }
 
   mutating func clear() {
-    elements.removeAll()
+    items.removeAll()
   }
 
   func composedContextPrompt() -> String? {
-    guard !elements.isEmpty else { return nil }
-    if elements.count == 1, let element = elements.first {
-      return ElementInspectorPromptBuilder.buildContextPrompt(element: element)
+    guard !items.isEmpty else { return nil }
+    if items.count == 1, let item = items.first {
+      return item.prompt
     }
 
     var lines = [
-      "Selected web element context:",
+      "Queued web preview updates:",
+      "",
+      "Please apply these updates together.",
       "",
     ]
 
-    for (index, element) in elements.enumerated() {
-      lines.append("### Element \(index + 1)")
-      lines.append(contentsOf: Self.elementLines(for: element))
-      if index < elements.count - 1 {
+    for (index, item) in items.enumerated() {
+      lines.append("## Update \(index + 1): \(item.kindLabel)")
+      lines.append("")
+      lines.append(item.prompt)
+      if index < items.count - 1 {
         lines.append("")
       }
     }
@@ -54,27 +205,13 @@ struct WebPreviewContextQueue: Equatable, Sendable {
     return lines.joined(separator: "\n")
   }
 
-  private static let relevantStyles = [
-    "background-color", "backgroundColor", "color", "font-size", "fontSize",
-    "padding", "border-radius", "borderRadius", "width", "height", "display",
-  ]
-
-  // Mirrors Canvas 1.0.2 single-element prompt formatting while supporting queued multi-select locally.
-  private static func elementLines(for element: ElementInspectorData) -> [String] {
-    var lines = [
-      "**Element**: \(element.outerHTML.isEmpty ? element.tagName.lowercased() : element.outerHTML)",
-      "**CSS Selector**: \(element.cssSelector)",
-    ]
-
-    let presentStyles = relevantStyles.compactMap { key -> String? in
-      guard let value = element.computedStyles[key], !value.isEmpty else { return nil }
-      return "  \(key): \(value)"
+  /// Returns screenshot file paths from crop items, in queue order.
+  /// These are sent at the start of the terminal input so Claude Code
+  /// detects and attaches them as images.
+  func screenshotPaths() -> [String] {
+    items.compactMap { item in
+      guard case .crop(let crop) = item.selection else { return nil }
+      return crop.screenshotPath
     }
-    if !presentStyles.isEmpty {
-      lines.append("**Computed Styles**:")
-      lines.append(contentsOf: presentStyles)
-    }
-
-    return lines
   }
 }

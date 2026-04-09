@@ -1,3 +1,4 @@
+import Canvas
 import Combine
 import Foundation
 import Testing
@@ -60,6 +61,27 @@ struct AuxiliaryShellTerminalManagementTests {
     #expect(viewModel.auxiliaryShellTerminals["session-123"] === terminal)
   }
 
+  @Test("Resolving pending session transfers queued web preview context")
+  @MainActor
+  func transferTerminalMovesQueuedWebPreviewContext() {
+    let viewModel = makeAuxiliaryShellViewModel()
+    let pendingID = UUID()
+    let pendingKey = "pending-\(pendingID.uuidString)"
+    let element = makeQueuedElement()
+
+    viewModel.queueWebPreviewUpdate(
+      element,
+      instruction: "Make this button larger",
+      for: pendingKey
+    )
+
+    viewModel.transferTerminal(fromPendingId: pendingID, toSessionId: "session-123")
+
+    #expect(viewModel.queuedWebPreviewContextStore.count(for: pendingKey) == 0)
+    #expect(viewModel.queuedWebPreviewContextStore.count(for: "session-123") == 1)
+    #expect(viewModel.queuedWebPreviewContextStore.queue(for: "session-123").items.first?.detail == "Make this button larger")
+  }
+
   @Test("Canceling pending session removes auxiliary shell terminal")
   @MainActor
   func cancelPendingSessionRemovesAuxiliaryShell() {
@@ -115,4 +137,17 @@ struct AuxiliaryShellTerminalManagementTests {
     #expect(agentTerminal.terminateProcessCallCount == 1)
     #expect(shellTerminal.terminateProcessCallCount == 1)
   }
+}
+
+private func makeQueuedElement() -> ElementInspectorData {
+  ElementInspectorData(
+    tagName: "BUTTON",
+    elementId: "",
+    className: "",
+    textContent: "",
+    outerHTML: "<button>Launch</button>",
+    cssSelector: ".hero button",
+    computedStyles: [:],
+    boundingRect: .zero
+  )
 }

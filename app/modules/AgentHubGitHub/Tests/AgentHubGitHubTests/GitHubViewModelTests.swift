@@ -587,7 +587,7 @@ struct GitHubViewModelErrorTests {
     mock.errorToThrow = GitHubCLIError.commandFailed("checkout failed")
     await vm.checkoutPR()
 
-    #expect(vm.checkoutState == .error("checkout failed"))
+    #expect(vm.checkoutState == .error("GitHub CLI command failed: checkout failed"))
     #expect(vm.errorMessage?.contains("checkout failed") == true)
   }
 
