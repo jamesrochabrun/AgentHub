@@ -1057,10 +1057,6 @@ private struct GitDiffContentView: View {
                   lineContent: context.lineContent,
                   text: message
                 )
-                // Auto-expand panel when first comment is added
-                if commentsState.commentCount == 1 {
-                  commentsState.isPanelExpanded = true
-                }
               },
               commentsState: commentsState
             )
