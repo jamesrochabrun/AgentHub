@@ -16,27 +16,25 @@ struct CollapsibleSessionRow: View {
   var isDeletingWorktree: Bool = false
   let onSelect: () -> Void
 
-  @State private var gradientProgress: CGFloat = 0
+  @State private var isHovered = false
   @State private var showArchiveConfirm = false
   @State private var pulseScale: CGFloat = 1.0
   @State private var isPulseAnimating = false
 
-  private var tildeProjectPath: String {
-    let home = FileManager.default.homeDirectoryForCurrentUser.path
-    if session.projectPath.hasPrefix(home) {
-      return "~" + session.projectPath.dropFirst(home.count)
-    }
-    return session.projectPath
+  // MARK: - Computed
+
+  private var displayName: String {
+    customName ?? session.slug ?? session.shortId
   }
 
   private var statusColor: Color {
-    guard let sessionStatus else { return .brandPrimary(for: providerKind) }
+    guard let sessionStatus else { return .secondary }
     switch sessionStatus {
     case .thinking: return .blue
     case .executingTool: return .orange
     case .waitingForUser: return .green
     case .awaitingApproval: return .yellow
-    case .idle: return .gray
+    case .idle: return .secondary
     }
   }
 
@@ -48,231 +46,184 @@ struct CollapsibleSessionRow: View {
     }
   }
 
-  private var statusIcon: String? {
-    guard let sessionStatus else { return nil }
-    switch sessionStatus {
-    case .thinking: return nil  // Use pulsing dot
-    case .executingTool: return nil  // Use pulsing dot
-    case .waitingForUser: return "checkmark.circle.fill"
-    case .awaitingApproval: return "exclamationmark.circle.fill"
-    case .idle: return nil
-    }
-  }
-
-  private var shouldPulse: Bool {
-    isActiveStatus
-  }
+  private var shouldPulse: Bool { isActiveStatus }
 
   private func statusDisplayText(_ status: SessionStatus) -> String {
     switch status {
-    case .thinking: return "Working"
-    case .executingTool(let name): return name
-    case .waitingForUser: return "Ready"
-    case .awaitingApproval(let tool): return "Approval: \(tool)"
-    case .idle: return "Idle"
+    case .thinking: return "working"
+    case .executingTool(let name): return name.lowercased()
+    case .waitingForUser: return "ready"
+    case .awaitingApproval(let tool): return tool.lowercased()
+    case .idle: return "idle"
     }
   }
 
+  private var showActions: Bool {
+    isHovered && !isPending && (onArchive != nil || onDeleteWorktree != nil)
+  }
+
+  // MARK: - Body
+
   var body: some View {
-    VStack(alignment: .leading, spacing: 2) {
-      // Top row: icon + session ID + status badge
-      HStack(alignment: .top, spacing: 6) {
-        // Terminal prompt icon
-        Text(">_")
-          .font(.jetBrainsMono(size: 13, weight: .bold))
-          .foregroundColor(statusColor.opacity(isActiveStatus ? 1.0 : 0.5))
+    HStack(spacing: 8) {
+      // Status dot
+      Circle()
+        .fill(statusColor)
+        .frame(width: 6, height: 6)
+        .scaleEffect(shouldPulse ? pulseScale : 1.0)
+        .animation(.easeInOut(duration: 0.35), value: statusColor)
 
-        // Session ID
-        HStack(spacing: 4) {
-          Text("session:")
-            .font(.primaryCaption)
-            .foregroundColor(.secondary)
-          Text(customName ?? session.slug ?? session.shortId)
-            .font(.jetBrainsMono(size: 13, weight: .bold))
+      // Content
+      VStack(alignment: .leading, spacing: 2) {
+        // Row 1: name + provider + status + time
+        HStack(spacing: 6) {
+          Text(displayName)
+            .font(.secondaryDefault)
+            .foregroundColor(.primary)
             .lineLimit(1)
-        }
-
-        Spacer(minLength: 4)
-
-        // Status badge
-        VStack(alignment: .trailing, spacing: 4) {
-        // Status badge
-        if let sessionStatus {
-          HStack(spacing: 4) {
-            Circle()
-              .fill(statusColor)
-              .frame(width: 6, height: 6)
-              .scaleEffect(shouldPulse ? pulseScale : 1.0)
-            Text(statusDisplayText(sessionStatus).lowercased())
-              .font(.primaryCaption)
-              .foregroundColor(statusColor)
-          }
-          .padding(.horizontal, 8)
-          .padding(.vertical, 3)
-          .background(statusColor.opacity(0.12))
-          .clipShape(RoundedRectangle(cornerRadius: 4))
-        } else if isPending {
-          Text("starting")
-            .font(.primaryCaption)
-            .foregroundColor(.secondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Color.secondary.opacity(0.12))
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-        }
-
-          // Timestamp
-          Text(timestamp.timeAgoDisplay())
-            .font(.secondaryCaption)
-            .foregroundColor(.secondary)
-        }
-      }
-
-      // Branch line (aligned to leading edge)
-      if let branch = session.branchName {
-        HStack(spacing: 4) {
-          Image(systemName: "arrow.triangle.branch")
-            .font(.system(size: 9))
-            .foregroundColor(.secondary.opacity(0.6))
-          Text(branch)
-            .font(.primaryCaption)
-            .foregroundColor(.secondary.opacity(0.9))
-            .lineLimit(1)
-
-          Text("\u{2022}")
-            .font(.secondaryCaption)
-            .foregroundColor(.secondary.opacity(0.6))
+            .layoutPriority(1)
 
           Text(providerKind.rawValue)
             .font(.secondaryCaption)
-            .foregroundColor(.brandPrimary(for: providerKind))
+            .foregroundColor(.brandPrimary(for: providerKind).opacity(0.8))
+
+          Spacer(minLength: 4)
+
+          statusLabel
+            .animation(.easeInOut(duration: 0.3), value: isPending)
+            .animation(.easeInOut(duration: 0.3), value: sessionStatus)
+
+          Text(timestamp.timeAgoDisplay())
+            .font(.secondaryCaption)
+            .foregroundColor(.secondary.opacity(0.7))
+        }
+
+        // Row 2: message + actions
+        HStack(spacing: 0) {
+          if let message = session.firstMessage, !message.isEmpty {
+            Text(message)
+              .font(.secondarySmall)
+              .foregroundColor(.secondary.opacity(0.7))
+              .lineLimit(1)
+          }
+
+          Spacer(minLength: 4)
+
+          actionsView
+            .opacity(showActions ? 1 : 0)
+            .animation(.easeInOut(duration: 0.25), value: showActions)
         }
       }
-      else {
-        Text(providerKind.rawValue)
-          .font(.secondaryCaption)
-          .foregroundColor(.brandPrimary(for: providerKind))
-      }
-
-      // Message preview with $ prompt (aligned to leading edge)
-      if let message = session.firstMessage, !message.isEmpty {
-        Text("$ " + (message.count > 60 ? String(message.prefix(60)) + "..." : message))
-          .font(.primarySmall)
-          .foregroundColor(.primary.opacity(0.5))
-          .lineLimit(1)
-          .padding(.top, 2)
-          .padding(.trailing, 56)
-      }
     }
-    .padding(.horizontal, 8)
+    .padding(.horizontal, 10)
     .padding(.vertical, 8)
-    .foregroundColor(.primary)
     .contentShape(Rectangle())
     .onTapGesture { onSelect() }
     .background(
-      ZStack {
-        RoundedRectangle(cornerRadius: 6)
-          .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.94))
-        RoundedRectangle(cornerRadius: 6)
-          .fill(LinearGradient(
-            colors: [
-              Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.2 : 0.55),
-              Color.clear
-            ],
-            startPoint: .leading,
-            endPoint: .trailing
-          ))
-          .opacity(gradientProgress)
-      }
-    )
-    .overlay(
       RoundedRectangle(cornerRadius: 6)
-        .stroke(
-          isPrimary
-            ? statusColor.opacity(colorScheme == .dark ? 0.3 : 0.55)
-            : Color.clear,
-          lineWidth: 1
-        )
+        .fill(rowBackground)
+        .animation(.easeInOut(duration: 0.3), value: isPending)
     )
-    .overlay(alignment: .bottomTrailing) {
-      if !isPending, (onArchive != nil || onDeleteWorktree != nil) {
-        HStack(spacing: 4) {
-          if let onArchive {
-            Group {
-              if showArchiveConfirm {
-                Button {
-                  showArchiveConfirm = false
-                  onArchive()
-                } label: {
-                  Text("Confirm")
-                    .font(.secondaryCaption)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.brandPrimary(for: providerKind))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                }
-                .buttonStyle(.plain)
-              } else {
-                Button {
-                  withAnimation(.easeInOut(duration: 0.15)) {
-                    showArchiveConfirm = true
-                  }
-                } label: {
-                  Image(systemName: "archivebox")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-                    .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.plain)
-                .help("Archive session")
-              }
-            }
-            .transition(.opacity.combined(with: .scale(scale: 0.8)))
-          }
-
-          if let onDeleteWorktree {
-            if isDeletingWorktree {
-              ProgressView()
-                .controlSize(.small)
-                .frame(width: 20, height: 20)
-            } else {
-              Button {
-                onDeleteWorktree()
-              } label: {
-                Image(systemName: "trash")
-                  .font(.system(size: 11))
-                  .foregroundColor(.secondary)
-                  .frame(width: 20, height: 20)
-              }
-              .buttonStyle(.plain)
-              .help("Delete worktree")
-            }
-          }
-        }
-        .padding(.trailing, 8)
-        .padding(.bottom, 8)
-      }
-    }
-    .padding(.vertical, 2)
     .onHover { hovering in
+      withAnimation(.easeInOut(duration: 0.12)) {
+        isHovered = hovering
+      }
       if !hovering && showArchiveConfirm {
         withAnimation(.easeInOut(duration: 0.15)) {
           showArchiveConfirm = false
         }
       }
     }
-    .onAppear {
-      gradientProgress = isPrimary ? 1 : 0
-      startPulseAnimation()
+    .onAppear { startPulseAnimation() }
+    .onChange(of: sessionStatus) { _, _ in startPulseAnimation() }
+    .onChange(of: isPending) { _, _ in startPulseAnimation() }
+  }
+
+  @ViewBuilder
+  private var statusLabel: some View {
+    if let sessionStatus {
+      Text(statusDisplayText(sessionStatus))
+        .font(.secondaryCaption)
+        .foregroundColor(statusColor)
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        .id("status-\(statusDisplayText(sessionStatus))")
+    } else if isPending {
+      Text("starting")
+        .font(.secondaryCaption)
+        .foregroundColor(.secondary)
+        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+        .id("status-pending")
     }
-    .onChange(of: isPrimary) { _, newValue in
-      withAnimation(.interpolatingSpring(mass: 0.8, stiffness: 350, damping: 22, initialVelocity: 0)) {
-        gradientProgress = newValue ? 1 : 0
+  }
+
+  // MARK: - Subviews
+
+  private var rowBackground: Color {
+    if isPrimary && isHovered {
+      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.28 : 0.22)
+    }
+    if isPrimary {
+      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.2 : 0.16)
+    }
+    if isHovered {
+      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.12 : 0.1)
+    }
+    return .clear
+  }
+
+  @ViewBuilder
+  private var actionsView: some View {
+    HStack(spacing: 2) {
+      if let onArchive {
+        if showArchiveConfirm {
+          Button {
+            showArchiveConfirm = false
+            onArchive()
+          } label: {
+            Text("Confirm")
+              .font(.secondaryCaption)
+              .foregroundColor(.white)
+              .padding(.horizontal, 6)
+              .padding(.vertical, 2)
+              .background(Color.brandPrimary(for: providerKind))
+              .clipShape(RoundedRectangle(cornerRadius: 4))
+          }
+          .buttonStyle(.plain)
+          .transition(.opacity.combined(with: .scale(scale: 0.8)))
+        } else {
+          Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+              showArchiveConfirm = true
+            }
+          } label: {
+            Image(systemName: "archivebox")
+              .font(.system(size: 10))
+              .foregroundColor(.secondary)
+              .frame(width: 18, height: 18)
+          }
+          .buttonStyle(.plain)
+          .help("Archive session")
+        }
       }
-    }
-    .onChange(of: sessionStatus) { _, _ in
-      startPulseAnimation()
+
+      if let onDeleteWorktree {
+        if isDeletingWorktree {
+          ProgressView()
+            .controlSize(.mini)
+            .frame(width: 18, height: 18)
+        } else {
+          Button {
+            onDeleteWorktree()
+          } label: {
+            Image(systemName: "trash")
+              .font(.system(size: 10))
+              .foregroundColor(.secondary)
+              .frame(width: 18, height: 18)
+          }
+          .buttonStyle(.plain)
+          .help("Delete worktree")
+        }
+      }
     }
   }
 
@@ -303,221 +254,171 @@ struct CollapsibleSessionRow: View {
 
 // MARK: - Preview
 
-#Preview("CollapsibleSessionRow States") {
-  let claudeSession = CLISession(
-    id: "abc12345-6789-0def-ghij-klmnopqrstuv",
-    projectPath: "/Users/dev/projects/AgentHub",
-    branchName: "feature/multi-session",
-    lastActivityAt: Date(),
-    messageCount: 12,
-    isActive: true,
-    firstMessage: "Help me refactor the authentication module to use async/await patterns",
-    slug: "cryptic-orbiting-flame"
-  )
+#Preview("CollapsibleSessionRow — Flat Design") {
+  let sessions = [
+    CLISession(
+      id: "abc12345-6789-0def-ghij-klmnopqrstuv",
+      projectPath: "/Users/dev/projects/AgentHub",
+      branchName: "feature/multi-session",
+      lastActivityAt: Date(),
+      messageCount: 12,
+      isActive: true,
+      firstMessage: "Help me refactor the authentication module to use async/await patterns",
+      slug: "cryptic-orbiting-flame"
+    ),
+    CLISession(
+      id: "def98765-4321-0abc-wxyz-abcdefghijkl",
+      projectPath: "/Users/dev/projects/AgentHub",
+      branchName: "main",
+      lastActivityAt: Date().addingTimeInterval(-3600),
+      messageCount: 5,
+      isActive: true,
+      firstMessage: "Write unit tests for the session manager",
+      slug: "bright-wandering-star"
+    ),
+    CLISession(
+      id: "fff11111-2222-3333-4444-555566667777",
+      projectPath: "/Users/dev/projects/AgentHub",
+      branchName: "fix/login-bug",
+      lastActivityAt: Date().addingTimeInterval(-86400),
+      messageCount: 0,
+      isActive: false,
+      slug: "silent-morning-dew"
+    ),
+    CLISession(
+      id: "aaa22222-3333-4444-5555-666677778888",
+      projectPath: "/Users/dev/projects/AgentHub",
+      branchName: "refactor/db-layer",
+      lastActivityAt: Date().addingTimeInterval(-7200),
+      messageCount: 8,
+      isActive: true,
+      firstMessage: "Migrate the persistence layer from CoreData to GRDB",
+      slug: nil
+    ),
+  ]
 
-  let codexSession = CLISession(
-    id: "def98765-4321-0abc-wxyz-abcdefghijkl",
-    projectPath: "/Users/dev/projects/AgentHub",
-    branchName: "main",
-    lastActivityAt: Date().addingTimeInterval(-3600),
-    messageCount: 5,
-    isActive: true,
-    firstMessage: "Write unit tests for the session manager",
-    slug: "bright-wandering-star"
-  )
-
-  let pendingSession = CLISession(
-    id: "fff11111-2222-3333-4444-555566667777",
-    projectPath: "/Users/dev/projects/AgentHub",
-    branchName: "fix/login-bug",
-    lastActivityAt: Date(),
-    messageCount: 0,
-    isActive: false,
-    slug: "silent-morning-dew"
-  )
+  let statuses: [(SessionStatus?, Bool, Bool)] = [
+    (.thinking, false, true),
+    (.executingTool(name: "Bash"), false, false),
+    (.idle, false, false),
+    (.waitingForUser, false, true),
+    (.awaitingApproval(tool: "Edit"), false, false),
+    (nil, true, false),
+  ]
 
   ScrollView {
-    VStack(spacing: 16) {
-      // Section: Claude provider
-      Text("Claude — Selected (isPrimary)")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    VStack(alignment: .leading, spacing: 24) {
 
-      CollapsibleSessionRow(
-        session: claudeSession,
-        providerKind: .claude,
-        timestamp: Date(),
-        isPending: false,
-        isPrimary: true,
-        customName: nil,
-        sessionStatus: .thinking,
-        colorScheme: .dark,
-        onArchive: {},
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
-
-      Text("Claude — Default")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-      CollapsibleSessionRow(
-        session: claudeSession,
-        providerKind: .claude,
-        timestamp: Date(),
-        isPending: false,
-        isPrimary: false,
-        customName: nil,
-        sessionStatus: .idle,
-        colorScheme: .dark,
-        onArchive: {},
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
+      // --- All states ---
+      sectionHeader("All States")
+      VStack(spacing: 1) {
+        ForEach(Array(statuses.enumerated()), id: \.offset) { idx, state in
+          let s = sessions[idx % sessions.count]
+          CollapsibleSessionRow(
+            session: s,
+            providerKind: idx % 2 == 0 ? .claude : .codex,
+            timestamp: s.lastActivityAt,
+            isPending: state.1,
+            isPrimary: state.2,
+            customName: idx == 3 ? "Auth Refactor" : nil,
+            sessionStatus: state.0,
+            colorScheme: .dark,
+            onArchive: state.1 ? nil : {},
+            onDeleteWorktree: nil,
+            onSelect: {}
+          )
+        }
+      }
 
       Divider().padding(.vertical, 4)
 
-      // Section: Codex provider
-      Text("Codex — Selected (isPrimary)")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-      CollapsibleSessionRow(
-        session: codexSession,
-        providerKind: .codex,
-        timestamp: Date().addingTimeInterval(-3600),
-        isPending: false,
-        isPrimary: true,
-        customName: nil,
-        sessionStatus: .executingTool(name: "Bash"),
-        colorScheme: .dark,
-        onArchive: {},
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
-
-      Text("Codex — Default")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-      CollapsibleSessionRow(
-        session: codexSession,
-        providerKind: .codex,
-        timestamp: Date().addingTimeInterval(-3600),
-        isPending: false,
-        isPrimary: false,
-        customName: nil,
-        sessionStatus: .waitingForUser,
-        colorScheme: .dark,
-        onArchive: {},
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
+      // --- List feel ---
+      sectionHeader("List — multiple sessions")
+      VStack(spacing: 1) {
+        ForEach(Array(sessions.enumerated()), id: \.1.id) { idx, s in
+          CollapsibleSessionRow(
+            session: s,
+            providerKind: idx < 2 ? .claude : .codex,
+            timestamp: s.lastActivityAt,
+            isPending: false,
+            isPrimary: idx == 0,
+            customName: nil,
+            sessionStatus: idx == 0 ? .thinking : (idx == 1 ? .executingTool(name: "Read") : .idle),
+            colorScheme: .dark,
+            onArchive: {},
+            onDeleteWorktree: nil,
+            onSelect: {}
+          )
+        }
+      }
 
       Divider().padding(.vertical, 4)
 
-      // Section: Pending state
-      Text("Claude — Pending + Selected")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      // --- Light mode ---
+      sectionHeader("Light Mode")
+      VStack(spacing: 1) {
+        CollapsibleSessionRow(
+          session: sessions[0],
+          providerKind: .claude,
+          timestamp: Date(),
+          isPending: false,
+          isPrimary: true,
+          customName: nil,
+          sessionStatus: .thinking,
+          colorScheme: .light,
+          onArchive: {},
+          onDeleteWorktree: nil,
+          onSelect: {}
+        )
+        .environment(\.colorScheme, .light)
 
-      CollapsibleSessionRow(
-        session: pendingSession,
-        providerKind: .claude,
-        timestamp: Date(),
-        isPending: true,
-        isPrimary: true,
-        customName: nil,
-        sessionStatus: nil,
-        colorScheme: .dark,
-        onArchive: nil,
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
+        CollapsibleSessionRow(
+          session: sessions[1],
+          providerKind: .claude,
+          timestamp: Date().addingTimeInterval(-3600),
+          isPending: false,
+          isPrimary: false,
+          customName: nil,
+          sessionStatus: .idle,
+          colorScheme: .light,
+          onArchive: {},
+          onDeleteWorktree: nil,
+          onSelect: {}
+        )
+        .environment(\.colorScheme, .light)
 
-      Text("Codex — Pending + Default")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-      CollapsibleSessionRow(
-        session: pendingSession,
-        providerKind: .codex,
-        timestamp: Date(),
-        isPending: true,
-        isPrimary: false,
-        customName: nil,
-        sessionStatus: nil,
-        colorScheme: .dark,
-        onArchive: nil,
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
-
-      Divider().padding(.vertical, 4)
-
-      // Section: Custom name
-      Text("Claude — Custom Name + Selected")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-      CollapsibleSessionRow(
-        session: claudeSession,
-        providerKind: .claude,
-        timestamp: Date(),
-        isPending: false,
-        isPrimary: true,
-        customName: "Auth Refactor",
-        sessionStatus: .awaitingApproval(tool: "Edit"),
-        colorScheme: .dark,
-        onArchive: {},
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
-
-      Divider().padding(.vertical, 4)
-
-      // Section: Light mode
-      Text("Claude — Selected (Light Mode)")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-      CollapsibleSessionRow(
-        session: claudeSession,
-        providerKind: .claude,
-        timestamp: Date(),
-        isPending: false,
-        isPrimary: true,
-        customName: nil,
-        sessionStatus: .thinking,
-        colorScheme: .light,
-        onArchive: {},
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
-      .environment(\.colorScheme, .light)
-
-      Text("Claude — Default (Light Mode)")
-        .font(.caption).foregroundColor(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
-
-      CollapsibleSessionRow(
-        session: claudeSession,
-        providerKind: .claude,
-        timestamp: Date(),
-        isPending: false,
-        isPrimary: false,
-        customName: nil,
-        sessionStatus: .idle,
-        colorScheme: .light,
-        onArchive: {},
-        onDeleteWorktree: nil,
-        onSelect: {}
-      )
-      .environment(\.colorScheme, .light)
+        CollapsibleSessionRow(
+          session: sessions[2],
+          providerKind: .codex,
+          timestamp: Date().addingTimeInterval(-86400),
+          isPending: false,
+          isPrimary: false,
+          customName: nil,
+          sessionStatus: .waitingForUser,
+          colorScheme: .light,
+          onArchive: {},
+          onDeleteWorktree: nil,
+          onSelect: {}
+        )
+        .environment(\.colorScheme, .light)
+      }
+      .background(Color(white: 0.96))
+      .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     .padding()
   }
-  .frame(width: 320, height: 900)
+  .frame(width: 340, height: 800)
   .background(Color(nsColor: .windowBackgroundColor))
   .preferredColorScheme(.dark)
+}
+
+// MARK: - Preview Helpers
+
+@ViewBuilder
+private func sectionHeader(_ title: String) -> some View {
+  Text(title)
+    .font(.secondaryCaption)
+    .foregroundColor(.secondary)
+    .textCase(.uppercase)
+    .frame(maxWidth: .infinity, alignment: .leading)
 }
