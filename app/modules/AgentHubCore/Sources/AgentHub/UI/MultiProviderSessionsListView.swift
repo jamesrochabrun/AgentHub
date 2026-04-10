@@ -40,6 +40,7 @@ public struct MultiProviderSessionsListView: View {
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
   @State private var showCommandPalette = false
+  @State private var collapsedProjectGroups: Set<String> = []
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
@@ -693,44 +694,60 @@ public struct MultiProviderSessionsListView: View {
     if !groups.isEmpty {
       VStack(alignment: .leading, spacing: 0) {
         ForEach(groups) { group in
-          ProjectGroupHeader(name: group.displayName)
-          ForEach(group.items) { item in
-            CollapsibleSessionRow(
-              session: item.session,
-              providerKind: item.providerKind,
-              timestamp: item.timestamp,
-              isPending: item.isPending,
-              isPrimary: item.id == primarySessionId,
-              customName: selectedSessionCustomName(for: item),
-              sessionStatus: item.sessionStatus,
-              colorScheme: colorScheme,
-              onArchive: item.isPending ? nil : {
-                withAnimation(.easeInOut(duration: 0.25)) {
-                  switch item.providerKind {
-                  case .claude: claudeViewModel.stopMonitoring(session: item.session)
-                  case .codex: codexViewModel.stopMonitoring(session: item.session)
-                  }
-                }
-              },
-              onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-                sessionToDeleteWorktree = item.session
-                showDeleteWorktreeAlert = true
-              } : nil,
-              isDeletingWorktree: item.session.isWorktree && {
-                switch item.providerKind {
-                case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-                case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-                }
-              }(),
-              onSelect: {
-                primarySessionId = item.id
+          let isExpanded = !collapsedProjectGroups.contains(group.id)
+
+          ProjectGroupHeader(
+            name: group.displayName,
+            isExpanded: isExpanded
+          ) {
+            withAnimation(.easeInOut(duration: 0.25)) {
+              if isExpanded {
+                collapsedProjectGroups.insert(group.id)
+              } else {
+                collapsedProjectGroups.remove(group.id)
               }
-            )
-            .transition(.asymmetric(
-              insertion: .opacity,
-              removal: .move(edge: .trailing).combined(with: .opacity)
-            ))
-            .id(item.id)
+            }
+          }
+
+          if isExpanded {
+            ForEach(group.items) { item in
+              CollapsibleSessionRow(
+                session: item.session,
+                providerKind: item.providerKind,
+                timestamp: item.timestamp,
+                isPending: item.isPending,
+                isPrimary: item.id == primarySessionId,
+                customName: selectedSessionCustomName(for: item),
+                sessionStatus: item.sessionStatus,
+                colorScheme: colorScheme,
+                onArchive: item.isPending ? nil : {
+                  withAnimation(.easeInOut(duration: 0.25)) {
+                    switch item.providerKind {
+                    case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                    case .codex: codexViewModel.stopMonitoring(session: item.session)
+                    }
+                  }
+                },
+                onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+                  sessionToDeleteWorktree = item.session
+                  showDeleteWorktreeAlert = true
+                } : nil,
+                isDeletingWorktree: item.session.isWorktree && {
+                  switch item.providerKind {
+                  case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+                  case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+                  }
+                }(),
+                onSelect: {
+                  primarySessionId = item.id
+                }
+              )
+              .transition(.asymmetric(
+                insertion: .opacity,
+                removal: .move(edge: .trailing).combined(with: .opacity)
+              ))
+              .id(item.id)
+            }
           }
         }
       }
@@ -1185,19 +1202,26 @@ public struct MultiProviderSessionsListView: View {
 
 private struct ProjectGroupHeader: View {
   let name: String
+  let isExpanded: Bool
+  let onToggle: () -> Void
 
   var body: some View {
-    HStack(spacing: 8) {
-      Image(systemName: "folder")
-        .font(.system(size: 12))
-        .foregroundColor(.secondary)
-      Text(name)
-        .font(.secondaryDefault)
-        .foregroundColor(.secondary)
-      Spacer()
+    Button(action: onToggle) {
+      HStack(spacing: 8) {
+        Image(systemName: isExpanded ? "folder.fill" : "folder")
+          .font(.system(size: 12))
+          .foregroundColor(.secondary)
+          .contentTransition(.symbolEffect(.replace))
+        Text(name)
+          .font(.secondaryDefault)
+          .foregroundColor(.secondary)
+        Spacer()
+      }
+      .padding(.vertical, 6)
+      .padding(.horizontal, 4)
+      .contentShape(Rectangle())
     }
-    .padding(.vertical, 6)
-    .padding(.horizontal, 4)
+    .buttonStyle(.plain)
   }
 }
 
