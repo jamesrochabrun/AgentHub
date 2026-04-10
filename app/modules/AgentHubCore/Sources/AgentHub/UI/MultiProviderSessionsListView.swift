@@ -615,48 +615,123 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  // MARK: - Project Grouping
+
+  private struct SessionGroup: Identifiable {
+    let id: String            // repoPath
+    let displayName: String
+    let items: [SelectedSessionItem]
+  }
+
+  /// Deduplicated tracked repos from both providers, preserving insertion order,
+  /// newest-first. Claude's repos are walked first, then Codex-only repos.
+  private var orderedTrackedRepos: [SelectedRepository] {
+    var seen: Set<String> = []
+    var combined: [SelectedRepository] = []
+    for repo in claudeViewModel.selectedRepositories {
+      if seen.insert(repo.path).inserted { combined.append(repo) }
+    }
+    for repo in codexViewModel.selectedRepositories {
+      if seen.insert(repo.path).inserted { combined.append(repo) }
+    }
+    // Newest-added first (reverse of insertion order).
+    return combined.reversed()
+  }
+
+  /// Returns the parent repo path for an arbitrary session path — handles both
+  /// "path is the repo root" and "path is a worktree under the repo". Falls back
+  /// to the original path when no tracked repo matches (used for the orphan group).
+  private func findParentRepoPath(for itemPath: String) -> String {
+    for repo in orderedTrackedRepos {
+      if repo.path == itemPath { return repo.path }
+      if repo.worktrees.contains(where: { $0.path == itemPath }) {
+        return repo.path
+      }
+    }
+    return itemPath
+  }
+
+  /// Groups built from tracked repos first (even empty), then an orphan bucket
+  /// for sessions whose path doesn't belong to any tracked repo.
+  private var groupedSelectedSessions: [SessionGroup] {
+    let allItems = selectedSessionItems
+    var byRepo: [String: [SelectedSessionItem]] = [:]
+    for item in allItems {
+      let key = findParentRepoPath(for: item.session.projectPath)
+      byRepo[key, default: []].append(item)
+    }
+
+    var groups: [SessionGroup] = []
+    var handledKeys: Set<String> = []
+
+    // Tracked repos — always emit a header, even if empty.
+    for repo in orderedTrackedRepos {
+      let items = (byRepo[repo.path] ?? []).sorted { $0.timestamp > $1.timestamp }
+      groups.append(SessionGroup(
+        id: repo.path,
+        displayName: URL(fileURLWithPath: repo.path).lastPathComponent,
+        items: items
+      ))
+      handledKeys.insert(repo.path)
+    }
+
+    // Orphan sessions (repo not tracked yet — e.g. a brand-new pending one).
+    for (key, items) in byRepo where !handledKeys.contains(key) {
+      groups.append(SessionGroup(
+        id: key,
+        displayName: URL(fileURLWithPath: key).lastPathComponent,
+        items: items.sorted { $0.timestamp > $1.timestamp }
+      ))
+    }
+
+    return groups
+  }
+
   @ViewBuilder
   private var inlineSelectedSessions: some View {
-    let items = selectedSessionItems
-    if !items.isEmpty {
+    let groups = groupedSelectedSessions
+    if !groups.isEmpty {
       VStack(alignment: .leading, spacing: 0) {
-        ForEach(items) { item in
-          CollapsibleSessionRow(
-            session: item.session,
-            providerKind: item.providerKind,
-            timestamp: item.timestamp,
-            isPending: item.isPending,
-            isPrimary: item.id == primarySessionId,
-            customName: selectedSessionCustomName(for: item),
-            sessionStatus: item.sessionStatus,
-            colorScheme: colorScheme,
-            onArchive: item.isPending ? nil : {
-              withAnimation(.easeInOut(duration: 0.25)) {
-                switch item.providerKind {
-                case .claude: claudeViewModel.stopMonitoring(session: item.session)
-                case .codex: codexViewModel.stopMonitoring(session: item.session)
+        ForEach(groups) { group in
+          ProjectGroupHeader(name: group.displayName)
+          ForEach(group.items) { item in
+            CollapsibleSessionRow(
+              session: item.session,
+              providerKind: item.providerKind,
+              timestamp: item.timestamp,
+              isPending: item.isPending,
+              isPrimary: item.id == primarySessionId,
+              customName: selectedSessionCustomName(for: item),
+              sessionStatus: item.sessionStatus,
+              colorScheme: colorScheme,
+              onArchive: item.isPending ? nil : {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                  switch item.providerKind {
+                  case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                  case .codex: codexViewModel.stopMonitoring(session: item.session)
+                  }
                 }
+              },
+              onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+                sessionToDeleteWorktree = item.session
+                showDeleteWorktreeAlert = true
+              } : nil,
+              isDeletingWorktree: item.session.isWorktree && {
+                switch item.providerKind {
+                case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+                case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+                }
+              }(),
+              onSelect: {
+                primarySessionId = item.id
               }
-            },
-            onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-              sessionToDeleteWorktree = item.session
-              showDeleteWorktreeAlert = true
-            } : nil,
-            isDeletingWorktree: item.session.isWorktree && {
-              switch item.providerKind {
-              case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-              case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-              }
-            }(),
-            onSelect: {
-              primarySessionId = item.id
-            }
-          )
-          .transition(.asymmetric(
-            insertion: .opacity,
-            removal: .move(edge: .trailing).combined(with: .opacity)
-          ))
-          .id(item.id)
+            )
+            .transition(.asymmetric(
+              insertion: .opacity,
+              removal: .move(edge: .trailing).combined(with: .opacity)
+            ))
+            .id(item.id)
+          }
         }
       }
       .padding(.bottom, 8)
@@ -1103,6 +1178,26 @@ public struct MultiProviderSessionsListView: View {
       primarySessionId = items.first?.id
       scrollToSessionId = items.first?.id
     }
+  }
+}
+
+// MARK: - ProjectGroupHeader
+
+private struct ProjectGroupHeader: View {
+  let name: String
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Image(systemName: "folder")
+        .font(.system(size: 12))
+        .foregroundColor(.secondary)
+      Text(name)
+        .font(.secondaryDefault)
+        .foregroundColor(.secondary)
+      Spacer()
+    }
+    .padding(.vertical, 6)
+    .padding(.horizontal, 4)
   }
 }
 
