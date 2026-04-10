@@ -742,10 +742,7 @@ public struct MultiProviderSessionsListView: View {
                   primarySessionId = item.id
                 }
               )
-              .transition(.asymmetric(
-                insertion: .opacity,
-                removal: .move(edge: .trailing).combined(with: .opacity)
-              ))
+              .transition(.opacity)
               .id(item.id)
             }
           }
