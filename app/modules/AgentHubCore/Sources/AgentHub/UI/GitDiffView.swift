@@ -506,9 +506,7 @@ public struct GitDiffView: View {
             commentsState: commentsState,
             cliConfiguration: cliConfiguration,
             providerKind: providerKind,
-            session: session,
-            onDismissView: onDismiss,
-            onInlineRequestSubmit: onInlineRequestSubmit
+            session: session
           )
           .frame(minHeight: 400)
           .id(selectedId)
@@ -885,8 +883,6 @@ private struct GitDiffContentView: View {
   let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
   let session: CLISession
-  let onDismissView: () -> Void
-  let onInlineRequestSubmit: ((String, CLISession) -> Void)?
 
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
@@ -1017,36 +1013,6 @@ private struct GitDiffContentView: View {
               state: inlineEditorState,
               containerSize: geometry.size,
               providerKind: providerKind,
-              onSubmit: { message, context in
-                // Build contextual prompt with line context
-                let prompt = buildInlinePrompt(
-                  question: message,
-                  lineNumber: context.lineNumber,
-                  endLineNumber: context.endLineNumber,
-                  side: context.side,
-                  lineContent: context.lineContent,
-                  fileName: context.fileName
-                )
-
-                // Use callback if provided (redirects to built-in terminal)
-                if let callback = onInlineRequestSubmit {
-                  callback(prompt, session)
-                  inlineEditorState.dismiss()
-                  onDismissView()
-                } else if let config = cliConfiguration {
-                  // Fallback to external Terminal with cliConfiguration
-                  if let error = TerminalLauncher.launchTerminalWithSession(
-                    session.id,
-                    cliConfiguration: config,
-                    projectPath: session.projectPath,
-                    initialPrompt: prompt
-                  ) {
-                    inlineEditorState.errorMessage = error.localizedDescription
-                  } else {
-                    onDismissView()
-                  }
-                }
-              },
               onAddComment: { message, context in
                 // Add comment to the collection
                 commentsState.addComment(
@@ -1203,36 +1169,6 @@ private struct GitDiffContentView: View {
     return lines[startIndex...endIndex].joined(separator: "\n")
   }
 
-  /// Builds a contextual prompt for the inline question
-  private func buildInlinePrompt(
-    question: String,
-    lineNumber: Int,
-    endLineNumber: Int? = nil,
-    side: String,
-    lineContent: String,
-    fileName: String
-  ) -> String {
-    let sideLabel = side == "left" ? "old" : "new"
-    let lineLabel: String
-    if let end = endLineNumber {
-      lineLabel = "Lines \(lineNumber)-\(end)"
-    } else {
-      lineLabel = "Line \(lineNumber)"
-    }
-    return """
-      I have the following review comment on the code changes:
-
-      ## \(fileName)
-
-      **\(lineLabel)** (\(sideLabel)):
-      ```
-      \(lineContent)
-      ```
-      Comment: \(question)
-
-      Please address this review comment.
-      """
-  }
 }
 
 // MARK: - Preview
