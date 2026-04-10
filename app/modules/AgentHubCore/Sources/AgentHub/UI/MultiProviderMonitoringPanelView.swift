@@ -101,22 +101,6 @@ public enum HubLayoutMode: Int, CaseIterable {
 
 private typealias LayoutMode = HubLayoutMode
 
-// MARK: - HubFilterMode
-
-public enum HubFilterMode: Int, CaseIterable {
-  case all = 0
-  case claude = 1
-  case codex = 2
-
-  var displayName: String {
-    switch self {
-    case .all: return "All"
-    case .claude: return "Claude"
-    case .codex: return "Codex"
-    }
-  }
-}
-
 // MARK: - ModuleSectionHeader
 
 private struct ModuleSectionHeader: View {
@@ -136,51 +120,6 @@ private struct ModuleSectionHeader: View {
     .padding(.horizontal, 4)
     .padding(.top, 6)
     .padding(.bottom, 10)
-  }
-}
-
-// MARK: - HubFilterControl
-
-struct HubFilterControl: View {
-  @Binding var filterMode: HubFilterMode
-  let claudeCount: Int
-  let codexCount: Int
-  let totalCount: Int
-
-  var body: some View {
-    HStack(spacing: 12) {
-      filterTab(for: .all, count: totalCount)
-      filterTab(for: .claude, count: claudeCount)
-      filterTab(for: .codex, count: codexCount)
-    }
-  }
-
-  private func filterTab(for mode: HubFilterMode, count: Int) -> some View {
-    let isSelected = filterMode == mode
-
-    return Button(action: { filterMode = mode }) {
-      VStack(spacing: 2) {
-        HStack(spacing: 3) {
-          Text(mode.displayName)
-            .fontWeight(isSelected ? .semibold : .regular)
-          Text("\(count)")
-            .foregroundColor(.secondary)
-        }
-        .font(.secondarySmall)
-        .foregroundColor(isSelected ? .primary : .secondary)
-
-        // Underline indicator
-        Rectangle()
-          .fill(Color.primary)
-          .frame(height: 1.5)
-          .opacity(isSelected ? 1 : 0)
-      }
-      .padding(.horizontal, 4)
-      .fixedSize()
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .animation(.easeInOut(duration: 0.2), value: filterMode)
   }
 }
 
@@ -264,7 +203,6 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var persistedFEProjectPath: String = ""
   @State private var persistedFENavId: UUID = UUID()
   @State private var persistedFEInitPath: String? = nil
-  @Binding var filterMode: HubFilterMode
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
   @AppStorage(AgentHubDefaults.hubLayoutMode)
@@ -333,14 +271,12 @@ public struct MultiProviderMonitoringPanelView: View {
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
-    filterMode: Binding<HubFilterMode>,
     primarySessionId: Binding<String?>,
     onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
     onRequestStartSession: @escaping (String?) -> Void
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
-    self._filterMode = filterMode
     self._primarySessionId = primarySessionId
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onRequestStartSession = onRequestStartSession
@@ -506,7 +442,7 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: primarySessionId) { _, newId in
       guard let newId else { return }
-      if let item = filteredItems.first(where: { $0.id == newId }) {
+      if let item = allItems.first(where: { $0.id == newId }) {
         item.viewModel.focusTerminal(forKey: item.sessionId)
       }
     }
@@ -561,8 +497,6 @@ public struct MultiProviderMonitoringPanelView: View {
       loadingState
     } else if allItems.isEmpty {
       emptyState
-    } else if visibleItems.isEmpty {
-      filteredEmptyState
     } else {
       monitoredSessionsList
     }
@@ -592,26 +526,6 @@ public struct MultiProviderMonitoringPanelView: View {
       viewModel: emptyStateViewModel,
       onStartSession: onRequestStartSession
     )
-  }
-
-  // MARK: - Filtered Empty State
-
-  private var filteredEmptyState: some View {
-    VStack(spacing: 12) {
-      Image(systemName: "line.3.horizontal.decrease.circle")
-        .font(.largeTitle)
-        .foregroundColor(.secondary.opacity(0.5))
-
-      Text("No \(filterMode.displayName) Sessions")
-        .font(.heading)
-        .foregroundColor(.secondary)
-
-      Button("Show All") {
-        filterMode = .all
-      }
-      .buttonStyle(.bordered)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   // MARK: - Monitored Sessions List
@@ -1102,41 +1016,19 @@ public struct MultiProviderMonitoringPanelView: View {
     }
   }
 
-  // MARK: - Filter Helpers
-
-  private func shouldShowItem(_ item: ProviderMonitoringItem) -> Bool {
-    switch filterMode {
-    case .all: return true
-    case .claude: return item.providerKind == .claude
-    case .codex: return item.providerKind == .codex
-    }
-  }
-
-  private var filteredItems: [ProviderMonitoringItem] {
-    allItems.filter { shouldShowItem($0) }
-  }
-
   private var effectivePrimarySessionId: String? {
-    if let current = primarySessionId, filteredItems.contains(where: { $0.id == current }) {
+    if let current = primarySessionId, allItems.contains(where: { $0.id == current }) {
       return current
     }
-    return filteredItems.sorted { $0.timestamp > $1.timestamp }.first?.id
+    return allItems.sorted { $0.timestamp > $1.timestamp }.first?.id
   }
 
   private var visibleItems: [ProviderMonitoringItem] {
     if layoutMode == .single {
       guard let selectedId = effectivePrimarySessionId else { return [] }
-      return filteredItems.filter { $0.id == selectedId }
+      return allItems.filter { $0.id == selectedId }
     }
-    return filteredItems
-  }
-
-  private var claudeItemCount: Int {
-    allItems.filter { $0.providerKind == .claude }.count
-  }
-
-  private var codexItemCount: Int {
-    allItems.filter { $0.providerKind == .codex }.count
+    return allItems
   }
 
   // MARK: - Helpers
@@ -1278,7 +1170,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
   private var effectivePrimaryItem: ProviderMonitoringItem? {
     guard let selectedId = effectivePrimarySessionId else { return nil }
-    return filteredItems.first(where: { $0.id == selectedId })
+    return allItems.first(where: { $0.id == selectedId })
   }
 
   private var auxiliaryShellTarget: HubAuxiliaryShellTarget? {
@@ -1312,16 +1204,9 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private var emptyStateViewModel: CLISessionsViewModel {
-    switch filterMode {
-    case .claude:
-      return claudeViewModel
-    case .codex:
-      return codexViewModel
-    case .all:
-      if !claudeViewModel.selectedRepositories.isEmpty { return claudeViewModel }
-      if !codexViewModel.selectedRepositories.isEmpty { return codexViewModel }
-      return claudeViewModel
-    }
+    if !claudeViewModel.selectedRepositories.isEmpty { return claudeViewModel }
+    if !codexViewModel.selectedRepositories.isEmpty { return codexViewModel }
+    return claudeViewModel
   }
 
   private func findModulePath(for item: ProviderMonitoringItem) -> String {

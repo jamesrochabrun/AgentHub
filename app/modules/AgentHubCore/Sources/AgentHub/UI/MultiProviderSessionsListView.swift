@@ -40,7 +40,6 @@ public struct MultiProviderSessionsListView: View {
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
   @State private var showCommandPalette = false
-  @State private var hubFilterMode: HubFilterMode = .all
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
@@ -97,7 +96,6 @@ public struct MultiProviderSessionsListView: View {
         MultiProviderMonitoringPanelView(
           claudeViewModel: claudeViewModel,
           codexViewModel: codexViewModel,
-          filterMode: $hubFilterMode,
           primarySessionId: $primarySessionId,
           onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
           onRequestStartSession: { preferredRepositoryPath in
@@ -153,13 +151,7 @@ public struct MultiProviderSessionsListView: View {
     }
     .onChange(of: selectedSessionItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
-      if filteredSelectedSessionItems.isEmpty {
-        setAuxiliaryShellVisible(false)
-      }
-    }
-    .onChange(of: hubFilterMode) { _, _ in
-      applyHubFilterToSidebar()
-      if filteredSelectedSessionItems.isEmpty {
+      if selectedSessionItems.isEmpty {
         setAuxiliaryShellVisible(false)
       }
     }
@@ -345,23 +337,10 @@ public struct MultiProviderSessionsListView: View {
         .padding(.bottom, 8)
       }
 
-      // 2. Provider Filter (mirrors Hub filter)
-      if !selectedSessionItems.isEmpty {
-        HubFilterControl(
-          filterMode: $hubFilterMode,
-          claudeCount: claudeFocusedSessionCount,
-          codexCount: codexFocusedSessionCount,
-          totalCount: selectedSessionItems.count
-        )
-        .padding(.top, 8)
-        .padding(.bottom, 12)
-        .transition(.move(edge: .top).combined(with: .opacity))
-      }
-
-      // 3. Inline Selected Sessions (monitored + pending)
+      // 2. Inline Selected Sessions (monitored + pending)
       inlineSelectedSessions
 
-      // 4. Collapsible Browse Sessions section
+      // 3. Collapsible Browse Sessions section
       browseSectionView
     }
     .animation(.easeInOut(duration: 0.2), value: isSearchExpanded)
@@ -629,25 +608,6 @@ public struct MultiProviderSessionsListView: View {
     return results.sorted { $0.timestamp > $1.timestamp }
   }
 
-  private var filteredSelectedSessionItems: [SelectedSessionItem] {
-    switch hubFilterMode {
-    case .all:
-      return selectedSessionItems
-    case .claude:
-      return selectedSessionItems.filter { $0.providerKind == .claude }
-    case .codex:
-      return selectedSessionItems.filter { $0.providerKind == .codex }
-    }
-  }
-
-  private var claudeFocusedSessionCount: Int {
-    selectedSessionItems.filter { $0.providerKind == .claude }.count
-  }
-
-  private var codexFocusedSessionCount: Int {
-    selectedSessionItems.filter { $0.providerKind == .codex }.count
-  }
-
   private func selectedSessionCustomName(for item: SelectedSessionItem) -> String? {
     switch item.providerKind {
     case .claude: return claudeViewModel.sessionCustomNames[item.session.id]
@@ -657,19 +617,9 @@ public struct MultiProviderSessionsListView: View {
 
   @ViewBuilder
   private var inlineSelectedSessions: some View {
-    let items = filteredSelectedSessionItems
+    let items = selectedSessionItems
     if !items.isEmpty {
       VStack(alignment: .leading, spacing: 0) {
-        HStack {
-          Text("Focused Sessions")
-            .font(.heading)
-          Text("(\(items.count))")
-            .font(.secondaryCaption)
-            .foregroundColor(.secondary)
-          Spacer()
-        }
-        .padding(.vertical, 6)
-
         ForEach(items) { item in
           CollapsibleSessionRow(
             session: item.session,
@@ -763,16 +713,14 @@ public struct MultiProviderSessionsListView: View {
 
       if isBrowseExpanded {
         VStack(spacing: 6) {
-          if hubFilterMode == .all {
-            ProviderSegmentedControl(
-              selectedProvider: Binding(
-                get: { selectedProvider },
-                set: { selectedProviderRaw = $0.rawValue }
-              ),
-              claudeSessionCount: claudeViewModel.totalSessionCount,
-              codexSessionCount: codexViewModel.totalSessionCount
-            )
-          }
+          ProviderSegmentedControl(
+            selectedProvider: Binding(
+              get: { selectedProvider },
+              set: { selectedProviderRaw = $0.rawValue }
+            ),
+            claudeSessionCount: claudeViewModel.totalSessionCount,
+            codexSessionCount: codexViewModel.totalSessionCount
+          )
 
           if hasCurrentProviderRepositories {
             statusHeader
@@ -942,26 +890,6 @@ public struct MultiProviderSessionsListView: View {
     currentViewModel.showLastMessage.toggle()
   }
 
-  private func applyHubFilterToSidebar() {
-    switch hubFilterMode {
-    case .all:
-      break
-    case .claude:
-      selectedProviderRaw = SessionProviderKind.claude.rawValue
-    case .codex:
-      selectedProviderRaw = SessionProviderKind.codex.rawValue
-    }
-
-    guard let current = primarySessionId else {
-      primarySessionId = filteredSelectedSessionItems.first?.id
-      return
-    }
-
-    if !filteredSelectedSessionItems.contains(where: { $0.id == current }) {
-      primarySessionId = filteredSelectedSessionItems.first?.id
-    }
-  }
-
   private func handleResolvedSessions(
     _ resolutions: [UUID: String],
     provider: SessionProviderKind,
@@ -980,7 +908,7 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func ensurePrimarySelection() {
-    let items = filteredSelectedSessionItems
+    let items = selectedSessionItems
     guard !items.isEmpty else {
       primarySessionId = nil
       return
@@ -1135,7 +1063,7 @@ public struct MultiProviderSessionsListView: View {
 
   private func toggleAuxiliaryShellDock() {
     ensurePrimarySelection()
-    guard !filteredSelectedSessionItems.isEmpty else { return }
+    guard !selectedSessionItems.isEmpty else { return }
     withAnimation(auxiliaryShellToggleAnimation) {
       isAuxiliaryShellVisible.toggle()
     }
@@ -1157,7 +1085,7 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func navigateSessionHistory(direction: NavigationDirection) {
-    let items = filteredSelectedSessionItems
+    let items = selectedSessionItems
     guard !items.isEmpty else { return }
 
     if let currentId = primarySessionId,
