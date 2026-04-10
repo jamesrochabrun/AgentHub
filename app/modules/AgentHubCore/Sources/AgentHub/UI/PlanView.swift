@@ -304,11 +304,6 @@ public struct PlanView: View {
           fileName: planFilePath,
           errorMessage: nil,
           providerKind: providerKind,
-          onSubmit: { message in
-            let feedback = "Feedback on line \(lineNumber): \(message)"
-            onSendFeedback?("\u{1B}[B\u{1B}[B\u{1B}[B\r\(feedback)", session)
-            withAnimation { activeLineIndex = nil }
-          },
           onAddComment: { message in
             commentsState.addComment(
               filePath: planFilePath,

@@ -7,9 +7,8 @@
 
 import SwiftUI
 
-/// A compact bottom toolbar showing the pending review comment count
-/// with clear and send actions. Individual comments are managed via
-/// inline annotations in the diff view.
+/// A collapsible bottom toolbar showing the pending review comment count.
+/// Starts collapsed as a header; tapping expands to reveal clear and send actions.
 struct DiffCommentsPanelView: View {
 
   // MARK: - Properties
@@ -18,20 +17,98 @@ struct DiffCommentsPanelView: View {
   let providerKind: SessionProviderKind
   let onSendToCloud: () -> Void
 
+  @State private var isExpanded = false
   @State private var showClearConfirmation = false
 
   // MARK: - Body
 
   var body: some View {
+    VStack(spacing: 0) {
+      // Collapsed header — always visible
+      headerView
+
+      // Expanded content — shown on tap
+      if isExpanded {
+        Divider()
+
+        // Comment list
+        ScrollView {
+          LazyVStack(spacing: 0) {
+            ForEach(commentsState.orderedComments) { comment in
+              DiffCommentRow(
+                comment: comment,
+                onSave: { newText in
+                  commentsState.updateComment(id: comment.id, newText: newText)
+                },
+                onDelete: {
+                  commentsState.removeComment(id: comment.id)
+                }
+              )
+              Divider()
+            }
+          }
+        }
+        .frame(maxHeight: 200)
+
+        toolbarView
+          .transition(.move(edge: .bottom).combined(with: .opacity))
+      }
+    }
+    .background(Color.surfaceElevated)
+    .overlay(
+      Rectangle()
+        .frame(height: 1)
+        .foregroundColor(Color(NSColor.separatorColor)),
+      alignment: .top
+    )
+    .animation(.easeInOut(duration: 0.2), value: isExpanded)
+    .confirmationDialog(
+      "Clear All Comments",
+      isPresented: $showClearConfirmation,
+      titleVisibility: .visible
+    ) {
+      Button("Clear All", role: .destructive) {
+        commentsState.clearAll()
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text("This will remove all \(commentsState.commentCount) pending comments. This action cannot be undone.")
+    }
+  }
+
+  // MARK: - Header
+
+  private var headerView: some View {
+    Button {
+      isExpanded.toggle()
+    } label: {
+      HStack(spacing: 8) {
+        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+          .font(.caption2.weight(.semibold))
+          .foregroundColor(.secondary)
+          .frame(width: 10)
+
+        Image(systemName: "text.bubble.fill")
+          .font(.caption)
+          .foregroundColor(.secondary)
+
+        Text("\(commentsState.commentCount) Comment\(commentsState.commentCount == 1 ? "" : "s")")
+          .font(.caption.bold())
+          .foregroundColor(.primary)
+
+        Spacer()
+      }
+      .padding(.horizontal, 12)
+      .padding(.vertical, 8)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+  }
+
+  // MARK: - Toolbar
+
+  private var toolbarView: some View {
     HStack(spacing: 12) {
-      Image(systemName: "text.bubble.fill")
-        .font(.caption)
-        .foregroundColor(.secondary)
-
-      Text("\(commentsState.commentCount) Comment\(commentsState.commentCount == 1 ? "" : "s")")
-        .font(.caption.bold())
-        .foregroundColor(.primary)
-
       Spacer()
 
       // Clear all button
@@ -69,26 +146,7 @@ struct DiffCommentsPanelView: View {
       .help("Send all comments to \(providerKind.rawValue) (⌘⇧↵)")
     }
     .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .background(Color.surfaceElevated)
-    .overlay(
-      Rectangle()
-        .frame(height: 1)
-        .foregroundColor(Color(NSColor.separatorColor)),
-      alignment: .top
-    )
-    .confirmationDialog(
-      "Clear All Comments",
-      isPresented: $showClearConfirmation,
-      titleVisibility: .visible
-    ) {
-      Button("Clear All", role: .destructive) {
-        commentsState.clearAll()
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text("This will remove all \(commentsState.commentCount) pending comments. This action cannot be undone.")
-    }
+    .padding(.bottom, 8)
   }
 }
 

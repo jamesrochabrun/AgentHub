@@ -10,7 +10,7 @@ import SwiftUI
 /// An overlay that positions the inline editor below clicked diff lines.
 /// Handles tap-outside dismissal and edge positioning.
 ///
-/// Supports both immediate submission and adding comments to a review collection.
+/// Comments are added to the review collection; sending happens from the bottom panel.
 struct InlineEditorOverlay: View {
 
   // MARK: - Properties
@@ -19,11 +19,8 @@ struct InlineEditorOverlay: View {
   let containerSize: CGSize
   let providerKind: SessionProviderKind
 
-  /// Called when user presses Enter - sends immediately to the provider
-  let onSubmit: (String, DiffLineContext) -> Void
-
-  /// Called when user presses Cmd+Enter - adds to comment collection (optional)
-  let onAddComment: ((String, DiffLineContext) -> Void)?
+  /// Called when user presses Return - adds to comment collection
+  let onAddComment: (String, DiffLineContext) -> Void
 
   /// Comments state for checking existing comments (optional)
   let commentsState: DiffCommentsState?
@@ -40,14 +37,12 @@ struct InlineEditorOverlay: View {
     state: InlineEditorState,
     containerSize: CGSize,
     providerKind: SessionProviderKind = .claude,
-    onSubmit: @escaping (String, DiffLineContext) -> Void,
-    onAddComment: ((String, DiffLineContext) -> Void)? = nil,
+    onAddComment: @escaping (String, DiffLineContext) -> Void,
     commentsState: DiffCommentsState? = nil
   ) {
     self.state = state
     self.containerSize = containerSize
     self.providerKind = providerKind
-    self.onSubmit = onSubmit
     self.onAddComment = onAddComment
     self.commentsState = commentsState
   }
@@ -106,15 +101,12 @@ struct InlineEditorOverlay: View {
           fileName: state.fileName,
           errorMessage: state.errorMessage,
           providerKind: providerKind,
-          onSubmit: { message in
-            onSubmit(message, currentContext)
-          },
-          onAddComment: onAddComment != nil ? { message in
-            onAddComment?(message, currentContext)
+          onAddComment: { message in
+            onAddComment(message, currentContext)
             withAnimation(.easeOut(duration: 0.15)) {
               state.dismiss()
             }
-          } : nil,
+          },
           onDeleteComment: isEditMode ? {
             // Delete existing comment
             if let comment = existingComment {
@@ -200,7 +192,7 @@ struct InlineEditorOverlay: View {
         InlineEditorOverlay(
           state: state,
           containerSize: CGSize(width: 600, height: 600),
-          onSubmit: { _, _ in }
+          onAddComment: { _, _ in }
         )
       }
       .frame(width: 600, height: 600)
