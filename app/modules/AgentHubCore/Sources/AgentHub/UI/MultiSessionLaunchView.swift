@@ -12,12 +12,28 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+// MARK: - LaunchFormStyle
+
+/// Controls which sections of `MultiSessionLaunchView` are rendered.
+///
+/// - `full`: the default — everything (form header, repo picker, prompt editor,
+///   attached files, provider pills, work mode, worktree row, smart mode, etc.)
+/// - `compact`: for modal/sheet entry points where the project is already known
+///   and the caller doesn't want a prompt editor. Hides the form header, repo
+///   picker, prompt editor, attached files, and plan-mode hint. Always behaves
+///   as if the form were expanded.
+public enum LaunchFormStyle: Sendable {
+  case full
+  case compact
+}
+
 // MARK: - MultiSessionLaunchView
 
 public struct MultiSessionLaunchView: View {
   @Bindable var viewModel: MultiSessionLaunchViewModel
   var intelligenceViewModel: IntelligenceViewModel?
   var expandRequestID: Int = 0
+  var style: LaunchFormStyle = .full
 
   @AppStorage(AgentHubDefaults.smartModeEnabled) private var smartModeEnabled: Bool = false
 
@@ -30,40 +46,56 @@ public struct MultiSessionLaunchView: View {
 
   public var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      formHeader
+      if style == .full {
+        formHeader
+      }
 
-      if isExpanded {
-        Divider()
+      if style == .compact || isExpanded {
+        if style == .full {
+          Divider()
+        }
 
         if viewModel.isSmartModeAvailable && smartModeEnabled {
           launchModeToggle
         }
 
-        repositorySection
+        if style == .full {
+          repositorySection
 
-        promptEditor
+          promptEditor
 
-        if viewModel.isPlanModeEnabled {
-          planModeHint
-            .transition(.asymmetric(
-              insertion: .move(edge: .top).combined(with: .opacity),
-              removal: .move(edge: .top).combined(with: .opacity)
-            ))
-        }
+          if viewModel.isPlanModeEnabled {
+            planModeHint
+              .transition(.asymmetric(
+                insertion: .move(edge: .top).combined(with: .opacity),
+                removal: .move(edge: .top).combined(with: .opacity)
+              ))
+          }
 
-        if !viewModel.attachedFiles.isEmpty {
-          attachedFilesSection
+          if !viewModel.attachedFiles.isEmpty {
+            attachedFilesSection
+          }
         }
 
         if viewModel.launchMode == .manual {
-          if viewModel.selectedRepository != nil {
-            workModeRow
-          }
+          if style == .compact {
+            // Compact order: providers first, then work mode.
+            providerPills
 
-          providerPills
+            if viewModel.selectedRepository != nil {
+              workModeRow
+            }
+          } else {
+            // Full order: work mode first, then providers.
+            if viewModel.selectedRepository != nil {
+              workModeRow
+            }
 
-          if viewModel.selectedRepository != nil && viewModel.isClaudeSelected && !viewModel.isCodexSelected && viewModel.workMode == .local {
-            worktreeRow
+            providerPills
+
+            if viewModel.selectedRepository != nil && viewModel.isClaudeSelected && !viewModel.isCodexSelected && viewModel.workMode == .local {
+              worktreeRow
+            }
           }
 
           if viewModel.isLaunching && viewModel.workMode == .worktree {
@@ -110,9 +142,9 @@ public struct MultiSessionLaunchView: View {
     )
     .onDrop(
       of: [.fileURL, .png, .tiff, .image, .pdf],
-      isTargeted: isExpanded ? $isDragging : .constant(false)
+      isTargeted: (isExpanded && style == .full) ? $isDragging : .constant(false)
     ) { providers in
-      guard isExpanded else { return false }
+      guard isExpanded, style == .full else { return false }
       handleDroppedFiles(providers)
       return true
     }
@@ -596,11 +628,30 @@ public struct MultiSessionLaunchView: View {
       claudePill
       providerPill(
         label: "Codex",
-        isSelected: $viewModel.isCodexSelected,
+        isSelected: codexSelectionBinding,
         disabled: viewModel.isPlanModeEnabled
       )
       Spacer()
     }
+  }
+
+  /// In compact mode the sheet allows only one provider at a time. A tap that
+  /// turns Codex ON also turns Claude off (mutually exclusive). In full mode
+  /// this is a pass-through. Both mutations happen inside the same transaction
+  /// so the launch-button title never observes an intermediate "both selected"
+  /// state across re-renders.
+  private var codexSelectionBinding: Binding<Bool> {
+    Binding(
+      get: { viewModel.isCodexSelected },
+      set: { newValue in
+        withAnimation(.easeInOut(duration: 0.2)) {
+          if style == .compact && newValue {
+            viewModel.claudeMode = .disabled
+          }
+          viewModel.isCodexSelected = newValue
+        }
+      }
+    )
   }
 
   private var planModeHint: some View {
@@ -621,6 +672,10 @@ public struct MultiSessionLaunchView: View {
   private var claudePill: some View {
     Button(action: {
       withAnimation(.easeInOut(duration: 0.2)) {
+        if style == .compact {
+          // Mutually exclusive in the sheet: activating Claude deactivates Codex.
+          viewModel.isCodexSelected = false
+        }
         viewModel.claudeMode = viewModel.claudeMode.next
       }
     }) {
@@ -1278,10 +1333,12 @@ public struct MultiSessionLaunchView: View {
 
   private var actionButtons: some View {
     HStack {
-      Button("Reset") {
-        viewModel.reset()
+      if style == .full {
+        Button("Reset") {
+          viewModel.reset()
+        }
+        .disabled(viewModel.isLaunching)
       }
-      .disabled(viewModel.isLaunching)
 
       Spacer()
 
@@ -1300,6 +1357,8 @@ public struct MultiSessionLaunchView: View {
                 .scaleEffect(0.7)
             }
             Text(launchButtonTitle)
+              .contentTransition(.identity)
+              .animation(nil, value: launchButtonTitle)
             if !viewModel.isLaunching {
               Text("⌘↵")
                 .font(.secondarySmall)

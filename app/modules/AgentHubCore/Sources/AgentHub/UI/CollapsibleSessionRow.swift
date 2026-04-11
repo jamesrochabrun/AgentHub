@@ -182,10 +182,10 @@ struct CollapsibleSessionRow: View {
           } label: {
             Text("Confirm")
               .font(.secondaryCaption)
-              .foregroundColor(.white)
+              .foregroundColor(colorScheme == .dark ? .black : .white)
               .padding(.horizontal, 6)
               .padding(.vertical, 2)
-              .background(Color.brandPrimary(for: providerKind))
+              .background(colorScheme == .dark ? Color.white : Color.black)
               .clipShape(RoundedRectangle(cornerRadius: 4))
           }
           .buttonStyle(.plain)

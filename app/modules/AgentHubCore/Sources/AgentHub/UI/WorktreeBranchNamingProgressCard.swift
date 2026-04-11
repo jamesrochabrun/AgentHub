@@ -19,7 +19,7 @@ struct WorktreeBranchNamingProgressCard: View {
       if progress.isVisible, let startedAt {
         VStack(alignment: .leading, spacing: 10) {
           header(startedAt: startedAt)
-          stepsRow
+//          stepsRow
 
           if !progress.resolvedBranchNames.isEmpty {
             branchNamesSection
@@ -44,7 +44,7 @@ struct WorktreeBranchNamingProgressCard: View {
   }
 
   private func header(startedAt: Date) -> some View {
-    HStack(alignment: .top, spacing: 10) {
+    HStack(alignment: .center, spacing: 10) {
       ZStack {
         Circle()
           .fill(accentColor.opacity(0.14))
@@ -239,9 +239,9 @@ struct WorktreeBranchNamingProgressCard: View {
     case .idle:
       return ""
     case .preparingContext, .queryingModel, .sanitizing:
-      return "Setting up branch"
+      return "Setting up worktree"
     case .completed:
-      return "Branch name ready"
+      return "worktree ready"
     case .cancelled:
       return "Branch naming cancelled"
     case .failed:
@@ -326,3 +326,111 @@ struct WorktreeBranchNamingProgressCard: View {
     completionAnimationToken += 1
   }
 }
+
+// MARK: - Previews
+
+#if DEBUG
+#Preview("Preparing Context (step 1)") {
+  WorktreeBranchNamingProgressCard(
+    progress: .preparingContext(message: "Gathering repo context"),
+    startedAt: Date().addingTimeInterval(-1.2),
+    finishedAt: nil
+  )
+  .padding(24)
+  .frame(width: 520)
+  .background(Color.black)
+}
+
+#Preview("Querying Model (step 2)") {
+  WorktreeBranchNamingProgressCard(
+    progress: .queryingModel(model: "claude-sonnet-4-5", message: "Generating branch name"),
+    startedAt: Date().addingTimeInterval(-4.0),
+    finishedAt: nil
+  )
+  .padding(24)
+  .frame(width: 520)
+  .background(Color.black)
+}
+
+#Preview("Sanitizing (step 3)") {
+  WorktreeBranchNamingProgressCard(
+    progress: .sanitizing(message: "Finalizing branch name"),
+    startedAt: Date().addingTimeInterval(-6.3),
+    finishedAt: nil
+  )
+  .padding(24)
+  .frame(width: 520)
+  .background(Color.black)
+}
+
+#Preview("Completed — AI") {
+  WorktreeBranchNamingProgressCard(
+    progress: .completed(
+      message: "Branch ready",
+      source: .ai,
+      branchNames: ["jroch/refactor-session-launcher"]
+    ),
+    startedAt: Date().addingTimeInterval(-7.8),
+    finishedAt: Date()
+  )
+  .padding(24)
+  .frame(width: 520)
+  .background(Color.black)
+}
+
+#Preview("Completed — Multiple names") {
+  WorktreeBranchNamingProgressCard(
+    progress: .completed(
+      message: "Branches ready",
+      source: .ai,
+      branchNames: [
+        "jroch/refactor-session-launcher",
+        "jroch/add-threads-sidebar",
+        "jroch/tighten-project-row"
+      ]
+    ),
+    startedAt: Date().addingTimeInterval(-9.4),
+    finishedAt: Date()
+  )
+  .padding(24)
+  .frame(width: 520)
+  .background(Color.black)
+}
+
+#Preview("Completed — Deterministic fallback") {
+  WorktreeBranchNamingProgressCard(
+    progress: .completed(
+      message: "Using fallback name",
+      source: .deterministicFallback,
+      branchNames: ["jroch/2026-04-11-session"]
+    ),
+    startedAt: Date().addingTimeInterval(-3.2),
+    finishedAt: Date()
+  )
+  .padding(24)
+  .frame(width: 520)
+  .background(Color.black)
+}
+
+#Preview("Failed") {
+  WorktreeBranchNamingProgressCard(
+    progress: .failed(message: "Model request timed out"),
+    startedAt: Date().addingTimeInterval(-5.1),
+    finishedAt: Date()
+  )
+  .padding(24)
+  .frame(width: 520)
+  .background(Color.black)
+}
+
+#Preview("Cancelled") {
+  WorktreeBranchNamingProgressCard(
+    progress: .cancelled(message: "User cancelled"),
+    startedAt: Date().addingTimeInterval(-2.0),
+    finishedAt: Date()
+  )
+  .padding(24)
+  .frame(width: 520)
+  .background(Color.black)
+}
+#endif

@@ -717,9 +717,9 @@ public struct MultiProviderSessionsListView: View {
                 }
               }
             },
-            onCreateSession: { provider in
-              createNewSession(for: group.id, provider: provider)
-            }
+            repoPath: group.id,
+            launchViewModel: multiLaunchViewModel,
+            intelligenceViewModel: intelligenceViewModel
           )
 
           if isExpanded {
@@ -942,27 +942,6 @@ public struct MultiProviderSessionsListView: View {
   private func addRepository(at path: String) {
     claudeViewModel.addRepository(at: path)
     codexViewModel.addRepository(at: path)
-  }
-
-  /// Creates an empty pending session for the given repo path using the picked provider.
-  /// The new pending session is auto-promoted to primary via the existing
-  /// `lastCreatedPendingId` onChange handler, so the terminal appears in the detail pane.
-  private func createNewSession(for repoPath: String, provider: SessionProviderKind) {
-    let repos = claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
-    let branchName = repos
-      .first(where: { $0.path == repoPath })?
-      .worktrees
-      .first(where: { !$0.isWorktree })?
-      .name ?? "main"
-
-    let worktree = WorktreeBranch(
-      name: branchName,
-      path: repoPath,
-      isWorktree: false
-    )
-
-    let viewModel = viewModel(for: provider)
-    viewModel.startNewSessionInHub(worktree)
   }
 
   private func removeRepository(_ repository: SelectedRepository, from viewModel: CLISessionsViewModel) {
@@ -1239,9 +1218,12 @@ private struct ProjectGroupHeader: View {
   let isExpanded: Bool
   let canToggle: Bool
   let onToggle: () -> Void
-  let onCreateSession: (SessionProviderKind) -> Void
+  let repoPath: String
+  let launchViewModel: MultiSessionLaunchViewModel?
+  let intelligenceViewModel: IntelligenceViewModel?
 
   @State private var isHovered: Bool = false
+  @State private var showStartSheet: Bool = false
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
@@ -1249,29 +1231,41 @@ private struct ProjectGroupHeader: View {
       Button(action: { if canToggle { onToggle() } }) {
         HStack(spacing: 8) {
           Image(systemName: canToggle && isExpanded ? "folder.fill" : "folder")
-            .font(.system(size: 14))
-            .foregroundColor(.secondary)
+            .font(.system(size: 13))
+            .foregroundColor(.primary)
             .contentTransition(.symbolEffect(.replace))
           Text(name)
-            .font(.secondaryLarge)
-            .foregroundColor(.secondary)
+            .font(Font.geist(size: 13, weight: .semibold))
+            .foregroundColor(.primary)
           Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
 
-      HeaderIconMenu(
+      HeaderIconButton(
         systemName: "square.and.pencil",
-        size: 10,
+        size: 14,
         help: "Start a new session"
       ) {
-        Button("Claude") { onCreateSession(.claude) }
-        Button("Codex") { onCreateSession(.codex) }
+        guard let vm = launchViewModel else { return }
+        Task { @MainActor in
+          _ = await vm.preselectRepository(path: repoPath)
+          showStartSheet = true
+        }
       }
-      .opacity(isHovered ? 1 : 0)
+      .opacity(isHovered || showStartSheet ? 1 : 0)
+      .sheet(isPresented: $showStartSheet) {
+        if let vm = launchViewModel {
+          StartSessionSheet(
+            launchViewModel: vm,
+            intelligenceViewModel: intelligenceViewModel,
+            onDismiss: { showStartSheet = false }
+          )
+        }
+      }
     }
-    .padding(.vertical, 9)
+    .padding(.vertical, 6)
     .padding(.horizontal, 4)
     .background(
       RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -1282,6 +1276,60 @@ private struct ProjectGroupHeader: View {
     .contentShape(Rectangle())
     .onHover { isHovered = $0 }
     .animation(.easeInOut(duration: 0.15), value: isHovered)
+  }
+}
+
+// MARK: - StartSessionSheet
+
+/// Sheet wrapper that renders `MultiSessionLaunchView` in compact style for the
+/// project-row pencil entry point. Auto-dismisses when the launch pipeline
+/// finishes (unless the user cancelled or is in an interactive smart-mode phase).
+private struct StartSessionSheet: View {
+  @Bindable var launchViewModel: MultiSessionLaunchViewModel
+  let intelligenceViewModel: IntelligenceViewModel?
+  let onDismiss: () -> Void
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack {
+        Text("Start Session")
+          .font(.heading)
+        Spacer()
+        Button {
+          onDismiss()
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+            .font(.system(size: 16))
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.escape, modifiers: [])
+        .help("Close")
+      }
+      .padding(.horizontal, 16)
+      .padding(.top, 14)
+      .padding(.bottom, 10)
+
+      Divider()
+
+      MultiSessionLaunchView(
+        viewModel: launchViewModel,
+        intelligenceViewModel: intelligenceViewModel,
+        expandRequestID: 0,
+        style: .compact
+      )
+      .padding(16)
+    }
+    .frame(minWidth: 480, idealWidth: 520)
+    .background(colorScheme == .dark ? Color.black : Color(nsColor: .windowBackgroundColor))
+    .onChange(of: launchViewModel.isLaunching) { wasLaunching, isLaunching in
+      guard wasLaunching, !isLaunching else { return }
+      if launchViewModel.isSmartInteractive { return }
+      if launchViewModel.lastLaunchEndedByCancellation { return }
+      onDismiss()
+    }
   }
 }
 
