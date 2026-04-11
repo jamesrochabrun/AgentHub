@@ -723,41 +723,44 @@ public struct MultiProviderSessionsListView: View {
           )
 
           if isExpanded {
-            ForEach(group.items) { item in
-              CollapsibleSessionRow(
-                session: item.session,
-                providerKind: item.providerKind,
-                timestamp: item.timestamp,
-                isPending: item.isPending,
-                isPrimary: item.id == primarySessionId,
-                customName: selectedSessionCustomName(for: item),
-                sessionStatus: item.sessionStatus,
-                colorScheme: colorScheme,
-                onArchive: item.isPending ? nil : {
-                  withAnimation(.easeInOut(duration: 0.25)) {
-                    switch item.providerKind {
-                    case .claude: claudeViewModel.stopMonitoring(session: item.session)
-                    case .codex: codexViewModel.stopMonitoring(session: item.session)
+            VStack(spacing: 2) {
+              ForEach(group.items) { item in
+                CollapsibleSessionRow(
+                  session: item.session,
+                  providerKind: item.providerKind,
+                  timestamp: item.timestamp,
+                  isPending: item.isPending,
+                  isPrimary: item.id == primarySessionId,
+                  customName: selectedSessionCustomName(for: item),
+                  sessionStatus: item.sessionStatus,
+                  colorScheme: colorScheme,
+                  onArchive: item.isPending ? nil : {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                      switch item.providerKind {
+                      case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                      case .codex: codexViewModel.stopMonitoring(session: item.session)
+                      }
                     }
+                  },
+                  onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+                    sessionToDeleteWorktree = item.session
+                    showDeleteWorktreeAlert = true
+                  } : nil,
+                  isDeletingWorktree: item.session.isWorktree && {
+                    switch item.providerKind {
+                    case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+                    case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+                    }
+                  }(),
+                  onSelect: {
+                    primarySessionId = item.id
                   }
-                },
-                onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-                  sessionToDeleteWorktree = item.session
-                  showDeleteWorktreeAlert = true
-                } : nil,
-                isDeletingWorktree: item.session.isWorktree && {
-                  switch item.providerKind {
-                  case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-                  case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-                  }
-                }(),
-                onSelect: {
-                  primarySessionId = item.id
-                }
-              )
-              .transition(.opacity)
-              .id(item.id)
+                )
+                .transition(.opacity)
+                .id(item.id)
+              }
             }
+            .padding(.top, 2)
           }
         }
       }
@@ -1246,11 +1249,11 @@ private struct ProjectGroupHeader: View {
       Button(action: { if canToggle { onToggle() } }) {
         HStack(spacing: 8) {
           Image(systemName: canToggle && isExpanded ? "folder.fill" : "folder")
-            .font(.system(size: 12))
+            .font(.system(size: 14))
             .foregroundColor(.secondary)
             .contentTransition(.symbolEffect(.replace))
           Text(name)
-            .font(.secondaryDefault)
+            .font(.secondaryLarge)
             .foregroundColor(.secondary)
           Spacer(minLength: 0)
         }
@@ -1268,7 +1271,7 @@ private struct ProjectGroupHeader: View {
       }
       .opacity(isHovered ? 1 : 0)
     }
-    .padding(.vertical, 6)
+    .padding(.vertical, 9)
     .padding(.horizontal, 4)
     .background(
       RoundedRectangle(cornerRadius: 6, style: .continuous)
