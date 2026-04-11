@@ -44,6 +44,12 @@ public struct MultiProviderSessionsListView: View {
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
+
+  // TODO: Remove along with MultiSessionLaunchView once the new Threads-based
+  // session-start flow is fully implemented. Flip to `true` to restore the
+  // legacy launcher during iteration.
+  private let showLegacyLauncher = false
+
   @AppStorage(AgentHubDefaults.auxiliaryShellVisible) private var isAuxiliaryShellVisible = false
   @State private var isEmbeddedTrailingPanelVisible = false
   @State private var sidebarVisibilityBeforeAutoHide: NavigationSplitViewVisibility?
@@ -328,8 +334,8 @@ public struct MultiProviderSessionsListView: View {
 
   private var sessionListContent: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // 1. Session Launcher (always visible)
-      if let multiLaunchViewModel {
+      // 1. Session Launcher (legacy — hidden behind flag during Threads redesign)
+      if showLegacyLauncher, let multiLaunchViewModel {
         MultiSessionLaunchView(
           viewModel: multiLaunchViewModel,
           intelligenceViewModel: intelligenceViewModel,
@@ -338,7 +344,7 @@ public struct MultiProviderSessionsListView: View {
         .padding(.bottom, 8)
       }
 
-      // 2. Inline Selected Sessions (monitored + pending)
+      // 2. Threads (Inline Selected Sessions — monitored + pending)
       inlineSelectedSessions
 
       // 3. Collapsible Browse Sessions section
@@ -691,23 +697,30 @@ public struct MultiProviderSessionsListView: View {
   @ViewBuilder
   private var inlineSelectedSessions: some View {
     let groups = groupedSelectedSessions
-    if !groups.isEmpty {
-      VStack(alignment: .leading, spacing: 0) {
+    VStack(alignment: .leading, spacing: 0) {
+      ThreadsSectionHeader(onAddFolder: { showAddRepositoryPicker() })
+
+      if !groups.isEmpty {
         ForEach(groups) { group in
           let isExpanded = !collapsedProjectGroups.contains(group.id)
 
           ProjectGroupHeader(
             name: group.displayName,
-            isExpanded: isExpanded
-          ) {
-            withAnimation(.easeInOut(duration: 0.25)) {
-              if isExpanded {
-                collapsedProjectGroups.insert(group.id)
-              } else {
-                collapsedProjectGroups.remove(group.id)
+            isExpanded: isExpanded,
+            canToggle: !group.items.isEmpty,
+            onToggle: {
+              withAnimation(.easeInOut(duration: 0.25)) {
+                if isExpanded {
+                  collapsedProjectGroups.insert(group.id)
+                } else {
+                  collapsedProjectGroups.remove(group.id)
+                }
               }
+            },
+            onCreateSession: { provider in
+              createNewSession(for: group.id, provider: provider)
             }
-          }
+          )
 
           if isExpanded {
             ForEach(group.items) { item in
@@ -748,8 +761,8 @@ public struct MultiProviderSessionsListView: View {
           }
         }
       }
-      .padding(.bottom, 8)
     }
+    .padding(.bottom, 8)
   }
 
   // MARK: - Per-Provider Content
@@ -926,6 +939,27 @@ public struct MultiProviderSessionsListView: View {
   private func addRepository(at path: String) {
     claudeViewModel.addRepository(at: path)
     codexViewModel.addRepository(at: path)
+  }
+
+  /// Creates an empty pending session for the given repo path using the picked provider.
+  /// The new pending session is auto-promoted to primary via the existing
+  /// `lastCreatedPendingId` onChange handler, so the terminal appears in the detail pane.
+  private func createNewSession(for repoPath: String, provider: SessionProviderKind) {
+    let repos = claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
+    let branchName = repos
+      .first(where: { $0.path == repoPath })?
+      .worktrees
+      .first(where: { !$0.isWorktree })?
+      .name ?? "main"
+
+    let worktree = WorktreeBranch(
+      name: branchName,
+      path: repoPath,
+      isWorktree: false
+    )
+
+    let viewModel = viewModel(for: provider)
+    viewModel.startNewSessionInHub(worktree)
   }
 
   private func removeRepository(_ repository: SelectedRepository, from viewModel: CLISessionsViewModel) {
@@ -1200,25 +1234,133 @@ public struct MultiProviderSessionsListView: View {
 private struct ProjectGroupHeader: View {
   let name: String
   let isExpanded: Bool
+  let canToggle: Bool
   let onToggle: () -> Void
+  let onCreateSession: (SessionProviderKind) -> Void
+
+  @State private var isHovered: Bool = false
+  @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
-    Button(action: onToggle) {
-      HStack(spacing: 8) {
-        Image(systemName: isExpanded ? "folder.fill" : "folder")
-          .font(.system(size: 12))
-          .foregroundColor(.secondary)
-          .contentTransition(.symbolEffect(.replace))
-        Text(name)
-          .font(.secondaryDefault)
-          .foregroundColor(.secondary)
-        Spacer()
+    HStack(spacing: 4) {
+      Button(action: { if canToggle { onToggle() } }) {
+        HStack(spacing: 8) {
+          Image(systemName: canToggle && isExpanded ? "folder.fill" : "folder")
+            .font(.system(size: 12))
+            .foregroundColor(.secondary)
+            .contentTransition(.symbolEffect(.replace))
+          Text(name)
+            .font(.secondaryDefault)
+            .foregroundColor(.secondary)
+          Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
       }
-      .padding(.vertical, 6)
-      .padding(.horizontal, 4)
+      .buttonStyle(.plain)
+
+      HeaderIconMenu(
+        systemName: "square.and.pencil",
+        size: 10,
+        help: "Start a new session"
+      ) {
+        Button("Claude") { onCreateSession(.claude) }
+        Button("Codex") { onCreateSession(.codex) }
+      }
+      .opacity(isHovered ? 1 : 0)
+    }
+    .padding(.vertical, 6)
+    .padding(.horizontal, 4)
+    .background(
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(isHovered
+              ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.12 : 0.1)
+              : Color.clear)
+    )
+    .contentShape(Rectangle())
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
+  }
+}
+
+// MARK: - ThreadsSectionHeader
+
+private struct ThreadsSectionHeader: View {
+  let onAddFolder: () -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: 2) {
+        Text("Threads")
+          .font(.heading)
+          .foregroundColor(.secondary)
+
+        Spacer()
+
+        // Stub — non-functional in step 1
+        HeaderIconButton(systemName: "line.3.horizontal.decrease") {}
+
+        HeaderIconButton(
+          systemName: "folder.badge.plus",
+          help: "Add a folder as a new module",
+          action: onAddFolder
+        )
+      }
+      .padding(.vertical, 4)
+      .padding(.leading, 4)
+
+      Divider()
+    }
+  }
+}
+
+// MARK: - Header icon primitives
+
+/// Shared styling for small icon buttons/menus used in sidebar section headers.
+/// Keeps the hit area generous (28×28) while the glyph size is tunable so
+/// in-row controls can be visually smaller without losing tap area.
+private extension View {
+  func headerIconStyle(size: CGFloat = DesignTokens.IconSize.sm) -> some View {
+    self
+      .font(.system(size: size))
+      .foregroundColor(.secondary)
+      .frame(width: 28, height: 28)
       .contentShape(Rectangle())
+  }
+}
+
+/// Small icon button with an enlarged square hit area, used in sidebar section headers.
+private struct HeaderIconButton: View {
+  let systemName: String
+  var size: CGFloat = DesignTokens.IconSize.sm
+  var help: String? = nil
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: systemName).headerIconStyle(size: size)
     }
     .buttonStyle(.plain)
+    .help(help ?? "")
+  }
+}
+
+/// Icon-only Menu with the same styling as HeaderIconButton.
+private struct HeaderIconMenu<Content: View>: View {
+  let systemName: String
+  var size: CGFloat = DesignTokens.IconSize.sm
+  var help: String? = nil
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    Menu {
+      content()
+    } label: {
+      Image(systemName: systemName).headerIconStyle(size: size)
+    }
+    .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
+    .fixedSize()
+    .help(help ?? "")
   }
 }
 
