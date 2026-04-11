@@ -150,13 +150,6 @@ public struct SettingsView: View {
         }
       }
 
-      Section("AI Features") {
-        settingsToggle(
-          title: "Smart mode",
-          description: "Use AI to plan and orchestrate multi-session launches",
-          isOn: $smartModeEnabled
-        )
-      }
     }
     .formStyle(.grouped)
   }
@@ -220,6 +213,14 @@ public struct SettingsView: View {
 #if DEBUG
   private var developerSettingsForm: some View {
     Form {
+      Section("AI Features") {
+        settingsToggle(
+          title: "Smart mode",
+          description: "Use AI to plan and orchestrate multi-session launches",
+          isOn: $smartModeEnabled
+        )
+      }
+
       Section {
         settingsToggle(
           title: "Enable web preview design tools",

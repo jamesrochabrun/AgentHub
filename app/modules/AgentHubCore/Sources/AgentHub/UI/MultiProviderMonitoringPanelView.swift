@@ -78,14 +78,12 @@ public enum HubLayoutMode: Int, CaseIterable {
   case single = 0
   case list = 1
   case twoColumn = 2
-  case threeColumn = 3
 
   public var columnCount: Int {
     switch self {
     case .single: return 1
     case .list: return 1
     case .twoColumn: return 2
-    case .threeColumn: return 3
     }
   }
 
@@ -94,7 +92,6 @@ public enum HubLayoutMode: Int, CaseIterable {
     case .single: return "rectangle"
     case .list: return "list.bullet"
     case .twoColumn: return "square.grid.2x2"
-    case .threeColumn: return "square.grid.3x3"
     }
   }
 }

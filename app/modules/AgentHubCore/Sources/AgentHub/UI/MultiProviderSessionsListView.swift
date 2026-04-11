@@ -44,6 +44,12 @@ public struct MultiProviderSessionsListView: View {
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
+
+  // TODO: Remove along with MultiSessionLaunchView once the new Threads-based
+  // session-start flow is fully implemented. Flip to `true` to restore the
+  // legacy launcher during iteration.
+  private let showLegacyLauncher = false
+
   @AppStorage(AgentHubDefaults.auxiliaryShellVisible) private var isAuxiliaryShellVisible = false
   @State private var isEmbeddedTrailingPanelVisible = false
   @State private var sidebarVisibilityBeforeAutoHide: NavigationSplitViewVisibility?
@@ -328,8 +334,8 @@ public struct MultiProviderSessionsListView: View {
 
   private var sessionListContent: some View {
     VStack(alignment: .leading, spacing: 0) {
-      // 1. Session Launcher (always visible)
-      if let multiLaunchViewModel {
+      // 1. Session Launcher (legacy — hidden behind flag during Threads redesign)
+      if showLegacyLauncher, let multiLaunchViewModel {
         MultiSessionLaunchView(
           viewModel: multiLaunchViewModel,
           intelligenceViewModel: intelligenceViewModel,
@@ -338,7 +344,7 @@ public struct MultiProviderSessionsListView: View {
         .padding(.bottom, 8)
       }
 
-      // 2. Inline Selected Sessions (monitored + pending)
+      // 2. Threads (Inline Selected Sessions — monitored + pending)
       inlineSelectedSessions
 
       // 3. Collapsible Browse Sessions section
@@ -691,65 +697,75 @@ public struct MultiProviderSessionsListView: View {
   @ViewBuilder
   private var inlineSelectedSessions: some View {
     let groups = groupedSelectedSessions
-    if !groups.isEmpty {
-      VStack(alignment: .leading, spacing: 0) {
+    VStack(alignment: .leading, spacing: 0) {
+      ThreadsSectionHeader(onAddFolder: { showAddRepositoryPicker() })
+
+      if !groups.isEmpty {
         ForEach(groups) { group in
           let isExpanded = !collapsedProjectGroups.contains(group.id)
 
           ProjectGroupHeader(
             name: group.displayName,
-            isExpanded: isExpanded
-          ) {
-            withAnimation(.easeInOut(duration: 0.25)) {
-              if isExpanded {
-                collapsedProjectGroups.insert(group.id)
-              } else {
-                collapsedProjectGroups.remove(group.id)
+            isExpanded: isExpanded,
+            canToggle: !group.items.isEmpty,
+            onToggle: {
+              withAnimation(.easeInOut(duration: 0.25)) {
+                if isExpanded {
+                  collapsedProjectGroups.insert(group.id)
+                } else {
+                  collapsedProjectGroups.remove(group.id)
+                }
               }
-            }
-          }
+            },
+            repoPath: group.id,
+            launchViewModel: multiLaunchViewModel,
+            intelligenceViewModel: intelligenceViewModel
+          )
 
           if isExpanded {
-            ForEach(group.items) { item in
-              CollapsibleSessionRow(
-                session: item.session,
-                providerKind: item.providerKind,
-                timestamp: item.timestamp,
-                isPending: item.isPending,
-                isPrimary: item.id == primarySessionId,
-                customName: selectedSessionCustomName(for: item),
-                sessionStatus: item.sessionStatus,
-                colorScheme: colorScheme,
-                onArchive: item.isPending ? nil : {
-                  withAnimation(.easeInOut(duration: 0.25)) {
-                    switch item.providerKind {
-                    case .claude: claudeViewModel.stopMonitoring(session: item.session)
-                    case .codex: codexViewModel.stopMonitoring(session: item.session)
+            VStack(spacing: 2) {
+              ForEach(group.items) { item in
+                CollapsibleSessionRow(
+                  session: item.session,
+                  providerKind: item.providerKind,
+                  timestamp: item.timestamp,
+                  isPending: item.isPending,
+                  isPrimary: item.id == primarySessionId,
+                  customName: selectedSessionCustomName(for: item),
+                  sessionStatus: item.sessionStatus,
+                  colorScheme: colorScheme,
+                  onArchive: item.isPending ? nil : {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                      switch item.providerKind {
+                      case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                      case .codex: codexViewModel.stopMonitoring(session: item.session)
+                      }
                     }
+                  },
+                  onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+                    sessionToDeleteWorktree = item.session
+                    showDeleteWorktreeAlert = true
+                  } : nil,
+                  isDeletingWorktree: item.session.isWorktree && {
+                    switch item.providerKind {
+                    case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+                    case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+                    }
+                  }(),
+                  onSelect: {
+                    primarySessionId = item.id
                   }
-                },
-                onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-                  sessionToDeleteWorktree = item.session
-                  showDeleteWorktreeAlert = true
-                } : nil,
-                isDeletingWorktree: item.session.isWorktree && {
-                  switch item.providerKind {
-                  case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-                  case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-                  }
-                }(),
-                onSelect: {
-                  primarySessionId = item.id
-                }
-              )
-              .transition(.opacity)
-              .id(item.id)
+                )
+                .transition(.opacity)
+                .id(item.id)
+              }
             }
+            .padding(.top, 2)
           }
         }
       }
-      .padding(.bottom, 8)
     }
+    .padding(.bottom, 8)
   }
 
   // MARK: - Per-Provider Content
@@ -1200,25 +1216,202 @@ public struct MultiProviderSessionsListView: View {
 private struct ProjectGroupHeader: View {
   let name: String
   let isExpanded: Bool
+  let canToggle: Bool
   let onToggle: () -> Void
+  let repoPath: String
+  let launchViewModel: MultiSessionLaunchViewModel?
+  let intelligenceViewModel: IntelligenceViewModel?
+
+  @State private var isHovered: Bool = false
+  @State private var showStartSheet: Bool = false
+  @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
-    Button(action: onToggle) {
-      HStack(spacing: 8) {
-        Image(systemName: isExpanded ? "folder.fill" : "folder")
-          .font(.system(size: 12))
-          .foregroundColor(.secondary)
-          .contentTransition(.symbolEffect(.replace))
-        Text(name)
-          .font(.secondaryDefault)
-          .foregroundColor(.secondary)
-        Spacer()
+    HStack(spacing: 4) {
+      Button(action: { if canToggle { onToggle() } }) {
+        HStack(spacing: 8) {
+          Image(systemName: canToggle && isExpanded ? "folder.fill" : "folder")
+            .font(.system(size: 13))
+            .foregroundColor(.primary)
+            .contentTransition(.symbolEffect(.replace))
+          Text(name)
+            .font(Font.geist(size: 13, weight: .semibold))
+            .foregroundColor(.primary)
+          Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
       }
-      .padding(.vertical, 6)
-      .padding(.horizontal, 4)
+      .buttonStyle(.plain)
+
+      HeaderIconButton(
+        systemName: "square.and.pencil",
+        size: 14,
+        help: "Start a new session"
+      ) {
+        guard let vm = launchViewModel else { return }
+        Task { @MainActor in
+          _ = await vm.preselectRepository(path: repoPath)
+          showStartSheet = true
+        }
+      }
+      .opacity(isHovered || showStartSheet ? 1 : 0)
+      .sheet(isPresented: $showStartSheet) {
+        if let vm = launchViewModel {
+          StartSessionSheet(
+            launchViewModel: vm,
+            intelligenceViewModel: intelligenceViewModel,
+            onDismiss: { showStartSheet = false }
+          )
+        }
+      }
+    }
+    .padding(.vertical, 6)
+    .padding(.horizontal, 4)
+    .background(
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(isHovered
+              ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.12 : 0.1)
+              : Color.clear)
+    )
+    .contentShape(Rectangle())
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
+  }
+}
+
+// MARK: - StartSessionSheet
+
+/// Sheet wrapper that renders `MultiSessionLaunchView` in compact style for the
+/// project-row pencil entry point. Auto-dismisses when the launch pipeline
+/// finishes (unless the user cancelled or is in an interactive smart-mode phase).
+private struct StartSessionSheet: View {
+  @Bindable var launchViewModel: MultiSessionLaunchViewModel
+  let intelligenceViewModel: IntelligenceViewModel?
+  let onDismiss: () -> Void
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 0) {
+      HStack {
+        Text("Start Session")
+          .font(.heading)
+        Spacer()
+        Button {
+          onDismiss()
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+            .font(.system(size: 16))
+            .foregroundColor(.secondary)
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut(.escape, modifiers: [])
+        .help("Close")
+      }
+      .padding(.horizontal, 16)
+      .padding(.top, 14)
+      .padding(.bottom, 10)
+
+      Divider()
+
+      MultiSessionLaunchView(
+        viewModel: launchViewModel,
+        intelligenceViewModel: intelligenceViewModel,
+        expandRequestID: 0,
+        style: .compact
+      )
+      .padding(16)
+    }
+    .frame(minWidth: 480, idealWidth: 520)
+    .background(colorScheme == .dark ? Color.black : Color(nsColor: .windowBackgroundColor))
+    .onChange(of: launchViewModel.isLaunching) { wasLaunching, isLaunching in
+      guard wasLaunching, !isLaunching else { return }
+      if launchViewModel.isSmartInteractive { return }
+      if launchViewModel.lastLaunchEndedByCancellation { return }
+      onDismiss()
+    }
+  }
+}
+
+// MARK: - ThreadsSectionHeader
+
+private struct ThreadsSectionHeader: View {
+  let onAddFolder: () -> Void
+
+  var body: some View {
+    VStack(spacing: 0) {
+      HStack(spacing: 2) {
+        Text("Threads")
+          .font(.heading)
+          .foregroundColor(.secondary)
+
+        Spacer()
+
+        // Stub — non-functional in step 1
+        HeaderIconButton(systemName: "line.3.horizontal.decrease") {}
+
+        HeaderIconButton(
+          systemName: "folder.badge.plus",
+          help: "Add a folder as a new module",
+          action: onAddFolder
+        )
+      }
+      .padding(.vertical, 4)
+      .padding(.leading, 4)
+
+      Divider()
+    }
+  }
+}
+
+// MARK: - Header icon primitives
+
+/// Shared styling for small icon buttons/menus used in sidebar section headers.
+/// Keeps the hit area generous (28×28) while the glyph size is tunable so
+/// in-row controls can be visually smaller without losing tap area.
+private extension View {
+  func headerIconStyle(size: CGFloat = DesignTokens.IconSize.sm) -> some View {
+    self
+      .font(.system(size: size))
+      .foregroundColor(.secondary)
+      .frame(width: 28, height: 28)
       .contentShape(Rectangle())
+  }
+}
+
+/// Small icon button with an enlarged square hit area, used in sidebar section headers.
+private struct HeaderIconButton: View {
+  let systemName: String
+  var size: CGFloat = DesignTokens.IconSize.sm
+  var help: String? = nil
+  let action: () -> Void
+
+  var body: some View {
+    Button(action: action) {
+      Image(systemName: systemName).headerIconStyle(size: size)
     }
     .buttonStyle(.plain)
+    .help(help ?? "")
+  }
+}
+
+/// Icon-only Menu with the same styling as HeaderIconButton.
+private struct HeaderIconMenu<Content: View>: View {
+  let systemName: String
+  var size: CGFloat = DesignTokens.IconSize.sm
+  var help: String? = nil
+  @ViewBuilder let content: () -> Content
+
+  var body: some View {
+    Menu {
+      content()
+    } label: {
+      Image(systemName: systemName).headerIconStyle(size: size)
+    }
+    .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
+    .fixedSize()
+    .help(help ?? "")
   }
 }
 
