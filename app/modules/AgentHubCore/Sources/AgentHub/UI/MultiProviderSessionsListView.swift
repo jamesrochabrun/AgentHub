@@ -19,6 +19,42 @@ private struct SessionFileSheetItem: Identifiable {
   let content: String
 }
 
+// MARK: - SidebarGroupMode
+
+private enum SidebarGroupMode: String, CaseIterable {
+  case repo = "Repo"
+  case status = "Status"
+}
+
+// MARK: - StatusGroupCategory
+
+private enum StatusGroupCategory: String, CaseIterable, Identifiable {
+  case working = "Working"
+  case ready = "Ready"
+  case needsAttention = "Needs Attention"
+  case idle = "Idle"
+
+  var id: String { rawValue }
+
+  var color: Color {
+    switch self {
+    case .working: return .blue
+    case .ready: return .green
+    case .needsAttention: return .yellow
+    case .idle: return .gray
+    }
+  }
+
+  static func category(for status: SessionStatus?) -> StatusGroupCategory {
+    switch status {
+    case .thinking, .executingTool: return .working
+    case .waitingForUser: return .ready
+    case .awaitingApproval: return .needsAttention
+    case .idle, .none: return .idle
+    }
+  }
+}
+
 // MARK: - MultiProviderSessionsListView
 
 private struct WorktreeCreateContext: Identifiable {
@@ -41,6 +77,8 @@ public struct MultiProviderSessionsListView: View {
   @State private var sessionToDeleteWorktree: CLISession? = nil
   @State private var showCommandPalette = false
   @State private var collapsedProjectGroups: Set<String> = []
+  @State private var sidebarGroupMode: SidebarGroupMode = .repo
+  @State private var collapsedStatusGroups: Set<StatusGroupCategory> = []
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
@@ -694,73 +732,84 @@ public struct MultiProviderSessionsListView: View {
     return groups
   }
 
+  /// Sessions grouped by status category (Working / Needs Attention / Idle).
+  private var statusGroupedSessions: [StatusGroupCategory: [SelectedSessionItem]] {
+    var result: [StatusGroupCategory: [SelectedSessionItem]] = [:]
+    for item in selectedSessionItems {
+      let category = StatusGroupCategory.category(for: item.sessionStatus)
+      result[category, default: []].append(item)
+    }
+    // Sort each group by timestamp descending.
+    for key in result.keys {
+      result[key]?.sort { $0.timestamp > $1.timestamp }
+    }
+    return result
+  }
+
   @ViewBuilder
   private var inlineSelectedSessions: some View {
-    let groups = groupedSelectedSessions
     VStack(alignment: .leading, spacing: 0) {
-      ThreadsSectionHeader(onAddFolder: { showAddRepositoryPicker() })
+      ThreadsSectionHeader(
+        groupMode: $sidebarGroupMode,
+        onAddFolder: { showAddRepositoryPicker() }
+      )
 
-      if !groups.isEmpty {
-        ForEach(groups) { group in
-          let isExpanded = !collapsedProjectGroups.contains(group.id)
+      switch sidebarGroupMode {
+      case .repo:
+        let groups = groupedSelectedSessions
+        if !groups.isEmpty {
+          ForEach(groups) { group in
+            let isExpanded = !collapsedProjectGroups.contains(group.id)
 
-          ProjectGroupHeader(
-            name: group.displayName,
-            isExpanded: isExpanded,
-            canToggle: !group.items.isEmpty,
-            onToggle: {
-              withAnimation(.easeInOut(duration: 0.25)) {
-                if isExpanded {
-                  collapsedProjectGroups.insert(group.id)
-                } else {
-                  collapsedProjectGroups.remove(group.id)
+            ProjectGroupHeader(
+              name: group.displayName,
+              isExpanded: isExpanded,
+              canToggle: !group.items.isEmpty,
+              onToggle: {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                  if isExpanded {
+                    collapsedProjectGroups.insert(group.id)
+                  } else {
+                    collapsedProjectGroups.remove(group.id)
+                  }
+                }
+              },
+              repoPath: group.id,
+              launchViewModel: multiLaunchViewModel,
+              intelligenceViewModel: intelligenceViewModel
+            )
+
+            if isExpanded {
+              sessionRows(for: group.items)
+            }
+          }
+        }
+
+      case .status:
+        let grouped = statusGroupedSessions
+        ForEach(StatusGroupCategory.allCases) { category in
+          let items = grouped[category] ?? []
+          if !items.isEmpty {
+            let isExpanded = !collapsedStatusGroups.contains(category)
+
+            StatusGroupSectionHeader(
+              category: category,
+              count: items.count,
+              isExpanded: isExpanded,
+              onToggle: {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                  if isExpanded {
+                    collapsedStatusGroups.insert(category)
+                  } else {
+                    collapsedStatusGroups.remove(category)
+                  }
                 }
               }
-            },
-            repoPath: group.id,
-            launchViewModel: multiLaunchViewModel,
-            intelligenceViewModel: intelligenceViewModel
-          )
+            )
 
-          if isExpanded {
-            VStack(spacing: 2) {
-              ForEach(group.items) { item in
-                CollapsibleSessionRow(
-                  session: item.session,
-                  providerKind: item.providerKind,
-                  timestamp: item.timestamp,
-                  isPending: item.isPending,
-                  isPrimary: item.id == primarySessionId,
-                  customName: selectedSessionCustomName(for: item),
-                  sessionStatus: item.sessionStatus,
-                  colorScheme: colorScheme,
-                  onArchive: item.isPending ? nil : {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                      switch item.providerKind {
-                      case .claude: claudeViewModel.stopMonitoring(session: item.session)
-                      case .codex: codexViewModel.stopMonitoring(session: item.session)
-                      }
-                    }
-                  },
-                  onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-                    sessionToDeleteWorktree = item.session
-                    showDeleteWorktreeAlert = true
-                  } : nil,
-                  isDeletingWorktree: item.session.isWorktree && {
-                    switch item.providerKind {
-                    case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-                    case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-                    }
-                  }(),
-                  onSelect: {
-                    primarySessionId = item.id
-                  }
-                )
-                .transition(.opacity)
-                .id(item.id)
-              }
+            if isExpanded {
+              sessionRows(for: items)
             }
-            .padding(.top, 2)
           }
         }
       }
@@ -769,6 +818,48 @@ public struct MultiProviderSessionsListView: View {
   }
 
   // MARK: - Per-Provider Content
+
+  @ViewBuilder
+  private func sessionRows(for items: [SelectedSessionItem]) -> some View {
+    VStack(spacing: 2) {
+      ForEach(items) { item in
+        CollapsibleSessionRow(
+          session: item.session,
+          providerKind: item.providerKind,
+          timestamp: item.timestamp,
+          isPending: item.isPending,
+          isPrimary: item.id == primarySessionId,
+          customName: selectedSessionCustomName(for: item),
+          sessionStatus: item.sessionStatus,
+          colorScheme: colorScheme,
+          onArchive: item.isPending ? nil : {
+            withAnimation(.easeInOut(duration: 0.25)) {
+              switch item.providerKind {
+              case .claude: claudeViewModel.stopMonitoring(session: item.session)
+              case .codex: codexViewModel.stopMonitoring(session: item.session)
+              }
+            }
+          },
+          onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+            sessionToDeleteWorktree = item.session
+            showDeleteWorktreeAlert = true
+          } : nil,
+          isDeletingWorktree: item.session.isWorktree && {
+            switch item.providerKind {
+            case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+            case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+            }
+          }(),
+          onSelect: {
+            primarySessionId = item.id
+          }
+        )
+        .transition(.opacity)
+        .id(item.id)
+      }
+    }
+    .padding(.top, 2)
+  }
 
   @ViewBuilder
   private var selectedProviderContent: some View {
@@ -1279,6 +1370,51 @@ private struct ProjectGroupHeader: View {
   }
 }
 
+// MARK: - StatusGroupSectionHeader
+
+private struct StatusGroupSectionHeader: View {
+  let category: StatusGroupCategory
+  let count: Int
+  let isExpanded: Bool
+  let onToggle: () -> Void
+
+  @State private var isHovered: Bool = false
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    Button(action: onToggle) {
+      HStack(spacing: 8) {
+        Circle()
+          .fill(category.color)
+          .frame(width: 10, height: 10)
+        Text(category.rawValue)
+          .font(Font.geist(size: 13, weight: .semibold))
+          .foregroundColor(.primary)
+        Text("\(count)")
+          .font(Font.geist(size: 11, weight: .regular))
+          .foregroundColor(.secondary)
+        Spacer(minLength: 0)
+        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+          .font(.system(size: 10, weight: .medium))
+          .foregroundColor(.secondary)
+      }
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .padding(.vertical, 6)
+    .padding(.horizontal, 4)
+    .background(
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(isHovered
+              ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.12 : 0.1)
+              : Color.clear)
+    )
+    .contentShape(Rectangle())
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
+  }
+}
+
 // MARK: - StartSessionSheet
 
 /// Sheet wrapper that renders `MultiSessionLaunchView` in compact style for the
@@ -1336,7 +1472,10 @@ private struct StartSessionSheet: View {
 // MARK: - ThreadsSectionHeader
 
 private struct ThreadsSectionHeader: View {
+  @Binding var groupMode: SidebarGroupMode
   let onAddFolder: () -> Void
+
+  @State private var showGroupPopover = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -1347,8 +1486,15 @@ private struct ThreadsSectionHeader: View {
 
         Spacer()
 
-        // Stub — non-functional in step 1
-        HeaderIconButton(systemName: "line.3.horizontal.decrease") {}
+        HeaderIconButton(
+          systemName: "line.3.horizontal.decrease",
+          help: "Group sessions"
+        ) {
+          showGroupPopover.toggle()
+        }
+        .popover(isPresented: $showGroupPopover, arrowEdge: .bottom) {
+          GroupByPopover(groupMode: $groupMode)
+        }
 
         HeaderIconButton(
           systemName: "folder.badge.plus",
@@ -1361,6 +1507,32 @@ private struct ThreadsSectionHeader: View {
 
       Divider()
     }
+  }
+}
+
+// MARK: - GroupByPopover
+
+private struct GroupByPopover: View {
+  @Binding var groupMode: SidebarGroupMode
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      HStack {
+        Text("Group by")
+          .font(Font.geist(size: 13, weight: .medium))
+          .foregroundColor(.secondary)
+        Spacer(minLength: 16)
+        Picker("", selection: $groupMode) {
+          ForEach(SidebarGroupMode.allCases, id: \.self) { mode in
+            Text(mode.rawValue).tag(mode)
+          }
+        }
+        .pickerStyle(.menu)
+        .fixedSize()
+      }
+    }
+    .padding(12)
+    .frame(minWidth: 200)
   }
 }
 
