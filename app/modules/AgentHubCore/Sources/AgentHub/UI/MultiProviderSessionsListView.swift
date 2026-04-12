@@ -751,6 +751,9 @@ public struct MultiProviderSessionsListView: View {
     VStack(alignment: .leading, spacing: 0) {
       ThreadsSectionHeader(
         groupMode: $sidebarGroupMode,
+        repos: orderedTrackedRepos,
+        launchViewModel: multiLaunchViewModel,
+        intelligenceViewModel: intelligenceViewModel,
         onAddFolder: { showAddRepositoryPicker() }
       )
 
@@ -1473,9 +1476,13 @@ private struct StartSessionSheet: View {
 
 private struct ThreadsSectionHeader: View {
   @Binding var groupMode: SidebarGroupMode
+  let repos: [SelectedRepository]
+  let launchViewModel: MultiSessionLaunchViewModel?
+  let intelligenceViewModel: IntelligenceViewModel?
   let onAddFolder: () -> Void
 
   @State private var showGroupPopover = false
+  @State private var showStartSheet = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -1501,6 +1508,37 @@ private struct ThreadsSectionHeader: View {
           help: "Add a folder as a new module",
           action: onAddFolder
         )
+
+        if groupMode == .status {
+          HeaderIconMenu(
+            systemName: "plus",
+            help: "Start a new session"
+          ) {
+            ForEach(repos, id: \.path) { repo in
+              Button {
+                guard let vm = launchViewModel else { return }
+                Task { @MainActor in
+                  _ = await vm.preselectRepository(path: repo.path)
+                  showStartSheet = true
+                }
+              } label: {
+                Label(
+                  URL(fileURLWithPath: repo.path).lastPathComponent,
+                  systemImage: "folder"
+                )
+              }
+            }
+          }
+          .sheet(isPresented: $showStartSheet) {
+            if let vm = launchViewModel {
+              StartSessionSheet(
+                launchViewModel: vm,
+                intelligenceViewModel: intelligenceViewModel,
+                onDismiss: { showStartSheet = false }
+              )
+            }
+          }
+        }
       }
       .padding(.vertical, 4)
       .padding(.leading, 4)
