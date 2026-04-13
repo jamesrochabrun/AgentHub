@@ -13,7 +13,7 @@ import SwiftUI
 public struct CLIRepositoryTreeView: View {
   let repository: SelectedRepository
   let providerKind: SessionProviderKind
-  let onRemove: () -> Void
+  let onRemove: (() -> Void)?
   let onToggleExpanded: () -> Void
   let onToggleWorktreeExpanded: (WorktreeBranch) -> Void
   let onConnectSession: (CLISession) -> Void
@@ -36,7 +36,7 @@ public struct CLIRepositoryTreeView: View {
   public init(
     repository: SelectedRepository,
     providerKind: SessionProviderKind = .claude,
-    onRemove: @escaping () -> Void,
+    onRemove: (() -> Void)? = nil,
     onToggleExpanded: @escaping () -> Void,
     onToggleWorktreeExpanded: @escaping (WorktreeBranch) -> Void,
     onConnectSession: @escaping (CLISession) -> Void,
@@ -186,18 +186,20 @@ public struct CLIRepositoryTreeView: View {
       }
 
       // Remove button
-      Button(action: onRemove) {
-        Image(systemName: "xmark.circle.fill")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .padding(6)
-          .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-              .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-          )
+      if let onRemove {
+        Button(action: onRemove) {
+          Image(systemName: "xmark.circle.fill")
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .padding(6)
+            .background(
+              RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Remove repository")
       }
-      .buttonStyle(.plain)
-      .help("Remove repository")
     }
     .padding(.horizontal, 4)
     .padding(.vertical, 8)

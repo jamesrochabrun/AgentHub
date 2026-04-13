@@ -384,12 +384,8 @@ public struct MultiProviderSessionsListView: View {
 
       // 2. Threads (Inline Selected Sessions — monitored + pending)
       inlineSelectedSessions
-
-      // 3. Collapsible Browse Sessions section
-      browseSectionView
     }
     .animation(.easeInOut(duration: 0.2), value: isSearchExpanded)
-    .animation(.easeInOut(duration: 0.25), value: isBrowseExpanded)
     .animation(.easeInOut(duration: 0.22), value: selectedSessionItems.count)
     .onChange(of: currentViewModel.hasPerformedSearch) { oldValue, newValue in
       if oldValue && !newValue && isSearchExpanded {
@@ -401,19 +397,40 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private var sidePanelView: some View {
-    ScrollViewReader { proxy in
-      ScrollView(showsIndicators: false) {
-        sessionListContent
-          .padding(12)
-      }
-      .onChange(of: scrollToSessionId) { _, newId in
-        guard let newId else { return }
-        withAnimation(.easeInOut(duration: 0.25)) {
-          proxy.scrollTo(newId, anchor: .top)
+    VStack(spacing: 0) {
+      ScrollViewReader { proxy in
+        ScrollView(showsIndicators: false) {
+          VStack(spacing: 0) {
+            sessionListContent
+              .padding(12)
+
+            // Browse content (scrollable, shown when expanded)
+            if isBrowseExpanded {
+              browseExpandedContent
+                .padding(.horizontal, 12)
+                .padding(.bottom, 12)
+            }
+          }
         }
-        scrollToSessionId = nil
+        .onChange(of: scrollToSessionId) { _, newId in
+          guard let newId else { return }
+          withAnimation(.easeInOut(duration: 0.25)) {
+            proxy.scrollTo(newId, anchor: .top)
+          }
+          scrollToSessionId = nil
+        }
       }
+
+      // Pinned browse header at bottom
+      browseHeaderView
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.bar)
+        .overlay(alignment: .top) {
+          Divider()
+        }
     }
+    .animation(.easeInOut(duration: 0.25), value: isBrowseExpanded)
   }
 
   // MARK: - Collapsible Search Button
@@ -875,15 +892,9 @@ public struct MultiProviderSessionsListView: View {
     } else if !viewModel.selectedRepositories.isEmpty {
       ProviderSectionView(
         viewModel: viewModel,
-        onRemoveRepository: { removeRepository($0, from: viewModel) },
+        repositories: viewModel.selectedRepositories,
         onOpenSessionFile: { session in
           openSessionFile(for: session, viewModel: viewModel)
-        },
-        onCreateWorktree: { repository in
-          createWorktreeContext = WorktreeCreateContext(
-            providerKind: viewModel.providerKind,
-            repository: repository
-          )
         }
       )
     }
@@ -891,8 +902,11 @@ public struct MultiProviderSessionsListView: View {
 
   // MARK: - Browse Section
 
-  private var browseSectionView: some View {
-    VStack(spacing: 0) {
+  @State private var showBrowseInfo = false
+
+  /// Pinned header bar at the bottom of the sidebar.
+  private var browseHeaderView: some View {
+    HStack(spacing: 8) {
       Button {
         withAnimation(.easeInOut(duration: 0.25)) {
           isBrowseExpanded.toggle()
@@ -904,41 +918,57 @@ public struct MultiProviderSessionsListView: View {
             .font(.system(size: 10))
           Text("Browse all Sessions")
             .font(.heading)
-          Spacer()
         }
-        .padding(.vertical, 8)
       }
       .buttonStyle(.plain)
 
-      if isBrowseExpanded {
-        VStack(spacing: 6) {
-          ProviderSegmentedControl(
-            selectedProvider: Binding(
-              get: { selectedProvider },
-              set: { selectedProviderRaw = $0.rawValue }
-            ),
-            claudeSessionCount: claudeViewModel.totalSessionCount,
-            codexSessionCount: codexViewModel.totalSessionCount
-          )
+      Spacer()
 
-          if hasCurrentProviderRepositories {
-            statusHeader
-          }
-
-          CLIRepositoryPickerView(onAddRepository: showAddRepositoryPicker)
-
-          if isSearchExpanded {
-            expandedSearchBar
-          } else {
-            collapsedSearchButton
-          }
-
-          LazyVStack(spacing: 16) {
-            selectedProviderContent
-          }
-          .padding(.vertical, 4)
-        }
+      Button {
+        showBrowseInfo.toggle()
+      } label: {
+        Image(systemName: "info.circle")
+          .font(.system(size: 12))
+          .foregroundColor(.secondary)
       }
+      .buttonStyle(.plain)
+      .help("About Browse all Sessions")
+      .popover(isPresented: $showBrowseInfo, arrowEdge: .top) {
+        Text("Find all local Claude and Codex sessions started from the terminal and bring them into AgentHub.")
+          .font(.callout)
+          .foregroundColor(.secondary)
+          .padding(12)
+          .frame(width: 240)
+      }
+    }
+  }
+
+  /// Expandable content shown inside the scroll view when browse is expanded.
+  private var browseExpandedContent: some View {
+    VStack(spacing: 6) {
+      ProviderSegmentedControl(
+        selectedProvider: Binding(
+          get: { selectedProvider },
+          set: { selectedProviderRaw = $0.rawValue }
+        ),
+        claudeSessionCount: claudeViewModel.totalSessionCount,
+        codexSessionCount: codexViewModel.totalSessionCount
+      )
+
+      if hasCurrentProviderRepositories {
+        statusHeader
+      }
+
+      if isSearchExpanded {
+        expandedSearchBar
+      } else {
+        collapsedSearchButton
+      }
+
+      LazyVStack(spacing: 16) {
+        selectedProviderContent
+      }
+      .padding(.vertical, 4)
     }
   }
 
@@ -1036,10 +1066,6 @@ public struct MultiProviderSessionsListView: View {
   private func addRepository(at path: String) {
     claudeViewModel.addRepository(at: path)
     codexViewModel.addRepository(at: path)
-  }
-
-  private func removeRepository(_ repository: SelectedRepository, from viewModel: CLISessionsViewModel) {
-    viewModel.removeRepository(repository)
   }
 
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {
@@ -1629,17 +1655,15 @@ private struct HeaderIconMenu<Content: View>: View {
 
 private struct ProviderSectionView: View {
   @Bindable var viewModel: CLISessionsViewModel
-  let onRemoveRepository: (SelectedRepository) -> Void
+  let repositories: [SelectedRepository]
   let onOpenSessionFile: (CLISession) -> Void
-  var onCreateWorktree: ((SelectedRepository) -> Void)? = nil
 
   var body: some View {
     VStack(spacing: 12) {
-      ForEach(viewModel.selectedRepositories) { repository in
+      ForEach(repositories) { repository in
         CLIRepositoryTreeView(
           repository: repository,
           providerKind: viewModel.providerKind,
-          onRemove: { onRemoveRepository(repository) },
           onToggleExpanded: { viewModel.toggleRepositoryExpanded(repository) },
           onToggleWorktreeExpanded: { worktree in
             viewModel.toggleWorktreeExpanded(in: repository, worktree: worktree)
@@ -1665,9 +1689,6 @@ private struct ProviderSectionView: View {
           getCustomName: { sessionId in
             viewModel.sessionCustomNames[sessionId]
           },
-          onCreateWorktree: onCreateWorktree != nil ? { repository in
-            onCreateWorktree?(repository)
-          } : nil,
           onStartInHubForWorktree: { worktree in
             viewModel.startNewSessionInHub(worktree)
           },
