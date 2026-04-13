@@ -19,6 +19,85 @@ private struct SessionFileSheetItem: Identifiable {
   let content: String
 }
 
+// MARK: - GitHubSheetItem
+
+private struct GitHubSheetItem: Identifiable {
+  let id = UUID()
+  let projectPath: String
+}
+
+// MARK: - ArchiveConfirmation
+
+private struct ArchiveConfirmation {
+  let repoName: String
+  let count: Int
+  let action: () -> Void
+}
+
+// MARK: - RemoveConfirmation
+
+private struct RemoveConfirmation {
+  let repoName: String
+  let sessionCount: Int
+  let action: () -> Void
+}
+
+// MARK: - ArchiveConfirmationAlert
+
+private struct ArchiveConfirmationAlert: ViewModifier {
+  @Binding var confirmation: ArchiveConfirmation?
+
+  func body(content: Content) -> some View {
+    content.alert(
+      confirmation.map { "Archive \($0.count) threads?" } ?? "",
+      isPresented: Binding(
+        get: { confirmation != nil },
+        set: { if !$0 { confirmation = nil } }
+      )
+    ) {
+      Button("Cancel", role: .cancel) { confirmation = nil }
+      Button("Archive all", role: .destructive) {
+        confirmation?.action()
+        confirmation = nil
+      }
+    } message: {
+      if let confirmation {
+        Text("This will archive the threads in \(confirmation.repoName). You can find them later in your archived threads.")
+      }
+    }
+  }
+}
+
+// MARK: - RemoveConfirmationAlert
+
+private struct RemoveConfirmationAlert: ViewModifier {
+  @Binding var confirmation: RemoveConfirmation?
+
+  func body(content: Content) -> some View {
+    content.alert(
+      confirmation.map { "Remove \($0.repoName)?" } ?? "",
+      isPresented: Binding(
+        get: { confirmation != nil },
+        set: { if !$0 { confirmation = nil } }
+      )
+    ) {
+      Button("Cancel", role: .cancel) { confirmation = nil }
+      Button("Remove", role: .destructive) {
+        confirmation?.action()
+        confirmation = nil
+      }
+    } message: {
+      if let confirmation {
+        if confirmation.sessionCount > 0 {
+          Text("This will archive \(confirmation.sessionCount) active threads and remove \(confirmation.repoName) from your list.")
+        } else {
+          Text("This will remove \(confirmation.repoName) from your list.")
+        }
+      }
+    }
+  }
+}
+
 // MARK: - SidebarGroupMode
 
 private enum SidebarGroupMode: String, CaseIterable {
@@ -82,6 +161,9 @@ public struct MultiProviderSessionsListView: View {
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
+  @State private var gitHubSheetItem: GitHubSheetItem?
+  @State private var archiveConfirmation: ArchiveConfirmation?
+  @State private var removeConfirmation: RemoveConfirmation?
 
   // TODO: Remove along with MultiSessionLaunchView once the new Threads-based
   // session-start flow is fully implemented. Flip to `true` to restore the
@@ -297,6 +379,29 @@ public struct MultiProviderSessionsListView: View {
         }
       )
     }
+    .sheet(item: $gitHubSheetItem) { item in
+      GitHubPanelView(
+        projectPath: item.projectPath,
+        onDismiss: { gitHubSheetItem = nil },
+        isEmbedded: false,
+        onSendToSession: { prompt, session in
+          claudeViewModel.showTerminalWithPrompt(for: session, prompt: prompt)
+        },
+        onStartNewSession: { inputText, provider in
+          let projectPath = item.projectPath
+          let vm = provider == .claude ? claudeViewModel : codexViewModel
+          let repo = vm.selectedRepositories.first(where: { $0.path == projectPath })
+            ?? claudeViewModel.selectedRepositories.first(where: { $0.path == projectPath })
+            ?? codexViewModel.selectedRepositories.first(where: { $0.path == projectPath })
+          if let worktree = repo?.worktrees.first {
+            gitHubSheetItem = nil
+            vm.startNewSessionInHub(worktree, initialInputText: inputText)
+          }
+        }
+      )
+    }
+    .modifier(ArchiveConfirmationAlert(confirmation: $archiveConfirmation))
+    .modifier(RemoveConfirmationAlert(confirmation: $removeConfirmation))
   }
 
   // MARK: - UI Helpers
@@ -796,7 +901,42 @@ public struct MultiProviderSessionsListView: View {
               },
               repoPath: group.id,
               launchViewModel: multiLaunchViewModel,
-              intelligenceViewModel: intelligenceViewModel
+              intelligenceViewModel: intelligenceViewModel,
+              onOpenInFinder: {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: group.id)
+              },
+              onOpenGitHub: {
+                gitHubSheetItem = GitHubSheetItem(projectPath: group.id)
+              },
+              onArchiveThreads: group.items.isEmpty ? nil : {
+                let items = group.items
+                archiveConfirmation = ArchiveConfirmation(
+                  repoName: group.displayName,
+                  count: items.count
+                ) {
+                  withAnimation(.easeInOut(duration: 0.25)) {
+                    for item in items where !item.isPending {
+                      switch item.providerKind {
+                      case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                      case .codex: codexViewModel.stopMonitoring(session: item.session)
+                      }
+                    }
+                  }
+                }
+              },
+              onRemove: {
+                removeConfirmation = RemoveConfirmation(
+                  repoName: group.displayName,
+                  sessionCount: group.items.count
+                ) {
+                  if let repo = claudeViewModel.selectedRepositories.first(where: { $0.path == group.id }) {
+                    claudeViewModel.removeRepository(repo)
+                  }
+                  if let repo = codexViewModel.selectedRepositories.first(where: { $0.path == group.id }) {
+                    codexViewModel.removeRepository(repo)
+                  }
+                }
+              }
             )
 
             if isExpanded {
@@ -1341,6 +1481,10 @@ private struct ProjectGroupHeader: View {
   let repoPath: String
   let launchViewModel: MultiSessionLaunchViewModel?
   let intelligenceViewModel: IntelligenceViewModel?
+  let onOpenInFinder: () -> Void
+  let onOpenGitHub: () -> Void
+  let onArchiveThreads: (() -> Void)?
+  let onRemove: () -> Void
 
   @State private var isHovered: Bool = false
   @State private var showStartSheet: Bool = false
@@ -1362,6 +1506,25 @@ private struct ProjectGroupHeader: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+
+      HeaderIconMenu(systemName: "ellipsis", size: 14, help: "More actions") {
+        Button(action: onOpenInFinder) {
+          Label("Open in Finder", systemImage: "folder")
+        }
+        Button(action: onOpenGitHub) {
+          Label("GitHub", systemImage: "arrow.triangle.pull")
+        }
+        Divider()
+        if let onArchiveThreads {
+          Button(action: onArchiveThreads) {
+            Label("Archive Threads", systemImage: "archivebox")
+          }
+        }
+        Button(action: onRemove) {
+          Label("Remove", systemImage: "xmark")
+        }
+      }
+      .opacity(isHovered || showStartSheet ? 1 : 0)
 
       HeaderIconButton(
         systemName: "square.and.pencil",

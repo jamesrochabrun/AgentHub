@@ -37,6 +37,7 @@ struct GitHubPRDetailView: View {
   let pr: GitHubPullRequest
   let session: CLISession?
   let onSendToSession: ((String, CLISession) -> Void)?
+  let onStartNewSession: ((String, SessionProviderKind) -> Void)?
 
   @State private var selectedTab: PRDetailTab = .overview
   @State private var selectedFile: GitHubPRFile?
@@ -122,6 +123,28 @@ struct GitHubPRDetailView: View {
               Text("Send to Session")
             }
           }
+          .buttonStyle(.agentHubOutlined(tint: Color.brandPrimary))
+        } else if let onStartNewSession {
+          Menu {
+            Button {
+              onStartNewSession("/review \(pr.url)", .claude)
+            } label: {
+              Label("Claude", systemImage: "c.circle")
+            }
+            Button {
+              onStartNewSession("/review \(pr.url)", .codex)
+            } label: {
+              Label("Codex", systemImage: "c.square")
+            }
+          } label: {
+            HStack(spacing: 3) {
+              Image(systemName: "eye")
+                .font(.system(size: 10))
+              Text("Code Review")
+            }
+          }
+          .menuStyle(.borderlessButton)
+          .menuIndicator(.hidden)
           .buttonStyle(.agentHubOutlined(tint: Color.brandPrimary))
         }
       }

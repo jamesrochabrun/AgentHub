@@ -15,6 +15,7 @@ struct GitHubIssueDetailView: View {
   let issue: GitHubIssue
   let session: CLISession?
   let onSendToSession: ((String, CLISession) -> Void)?
+  let onStartNewSession: ((String, SessionProviderKind) -> Void)?
 
   @Environment(\.colorScheme) private var colorScheme
 
@@ -69,6 +70,28 @@ struct GitHubIssueDetailView: View {
             Text("Send to Session")
           }
         }
+        .buttonStyle(.agentHubOutlined(tint: Color.brandPrimary))
+      } else if let onStartNewSession {
+        Menu {
+          Button {
+            onStartNewSession("fix \(issue.url)", .claude)
+          } label: {
+            Label("Claude", systemImage: "c.circle")
+          }
+          Button {
+            onStartNewSession("fix \(issue.url)", .codex)
+          } label: {
+            Label("Codex", systemImage: "c.square")
+          }
+        } label: {
+          HStack(spacing: 3) {
+            Image(systemName: "wrench")
+              .font(.system(size: 10))
+            Text("Fix")
+          }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .buttonStyle(.agentHubOutlined(tint: Color.brandPrimary))
       }
     }

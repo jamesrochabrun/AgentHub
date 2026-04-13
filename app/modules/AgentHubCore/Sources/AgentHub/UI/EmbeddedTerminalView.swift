@@ -37,6 +37,12 @@ public enum NewlineShortcut: Int, CaseIterable {
 class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
   private var _isStopped = false
   private let stopLock = NSLock()
+  private var readyDebounceTask: Task<Void, Never>?
+
+  /// Called once after the process has finished its initial output burst
+  /// (i.e., the CLI prompt is rendered and ready for input).
+  /// Uses a debounce: fires after data stops arriving for 300ms.
+  var onProcessReady: (() -> Void)?
 
   var isStopped: Bool {
     stopLock.lock()
@@ -49,11 +55,26 @@ class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
     stopLock.lock()
     _isStopped = true
     stopLock.unlock()
+    readyDebounceTask?.cancel()
+    readyDebounceTask = nil
+    onProcessReady = nil
   }
 
   override func dataReceived(slice: ArraySlice<UInt8>) {
     guard !isStopped else { return }
     super.dataReceived(slice: slice)
+    if onProcessReady != nil {
+      // Reset debounce timer on each data chunk.
+      // When data stops flowing for 300ms, the CLI has finished rendering.
+      readyDebounceTask?.cancel()
+      readyDebounceTask = Task { @MainActor [weak self] in
+        try? await Task.sleep(for: .milliseconds(300))
+        guard !Task.isCancelled else { return }
+        self?.onProcessReady?()
+        self?.onProcessReady = nil
+        self?.readyDebounceTask = nil
+      }
+    }
   }
 }
 
@@ -258,8 +279,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     registerProcessIfNeeded(for: terminal)
 
     if let initialInputText, !initialInputText.isEmpty {
-      Task { @MainActor [weak self] in
-        try? await Task.sleep(for: .milliseconds(300))
+      terminal.onProcessReady = { [weak self] in
         self?.typeInitialTextIfNeeded(initialInputText)
       }
     }
