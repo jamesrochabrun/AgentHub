@@ -17,6 +17,7 @@ public struct GitHubPanelView: View {
   let onDismiss: () -> Void
   var isEmbedded: Bool = false
   var onSendToSession: ((String, CLISession) -> Void)?
+  var onStartNewSession: ((String, SessionProviderKind) -> Void)?
   var session: CLISession?
   var onPopOut: (() -> Void)?
 
@@ -29,6 +30,7 @@ public struct GitHubPanelView: View {
     isEmbedded: Bool = false,
     session: CLISession? = nil,
     onSendToSession: ((String, CLISession) -> Void)? = nil,
+    onStartNewSession: ((String, SessionProviderKind) -> Void)? = nil,
     onPopOut: (() -> Void)? = nil
   ) {
     self.projectPath = projectPath
@@ -36,6 +38,7 @@ public struct GitHubPanelView: View {
     self.isEmbedded = isEmbedded
     self.session = session
     self.onSendToSession = onSendToSession
+    self.onStartNewSession = onStartNewSession
     self.onPopOut = onPopOut
   }
 
@@ -190,7 +193,8 @@ public struct GitHubPanelView: View {
         viewModel: viewModel,
         pr: pr,
         session: session,
-        onSendToSession: onSendToSession
+        onSendToSession: onSendToSession,
+        onStartNewSession: onStartNewSession
       )
     } else {
       prListContent
@@ -396,7 +400,8 @@ public struct GitHubPanelView: View {
         viewModel: viewModel,
         issue: issue,
         session: session,
-        onSendToSession: onSendToSession
+        onSendToSession: onSendToSession,
+        onStartNewSession: onStartNewSession
       )
     } else {
       issueListContent
