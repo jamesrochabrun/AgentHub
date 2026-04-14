@@ -432,14 +432,32 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       switch event.type {
       case .keyDown:
         guard let window = terminal.window,
-              event.window === window,
-              isTerminalResponderActive(window: window, terminal: terminal) else { break }
+              event.window === window else { break }
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isTerminalVisible = terminal.superview != nil && !terminal.isHidden && terminal.alphaValue > 0
+
+        // Terminal-wide shortcuts (work when terminal is visible, even without focus)
+        if isTerminalVisible {
+          // Cmd+F: activate SwiftTerm's built-in search/find bar
+          if flags == .command, event.charactersIgnoringModifiers == "f" {
+            window.makeFirstResponder(terminal)
+            // performFindPanelAction requires an NSMenuItem with the correct tag
+            let menuItem = NSMenuItem()
+            menuItem.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+            terminal.performFindPanelAction(menuItem)
+            return nil
+          }
+
+          }
+
+        // Typing shortcuts (require terminal to be first responder)
+        guard isTerminalResponderActive(window: window, terminal: terminal) else { break }
 
         let shortcut = NewlineShortcut(
           rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalNewlineShortcut)
         ) ?? .system
 
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isReturn = event.keyCode == 36
 
         let action = TerminalSubmitInterception.keyAction(
@@ -645,6 +663,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     environment["TERM"] = "xterm-256color"
     environment["COLORTERM"] = "truecolor"
     environment["LANG"] = "en_US.UTF-8"
+    environment["TERM_PROGRAM"] = "SwiftTerm"
 
     let paths = CLIPathResolver.executableSearchPaths(additionalPaths: additionalPaths)
     let pathString = paths.joined(separator: ":")
