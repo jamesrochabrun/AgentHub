@@ -34,9 +34,23 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
     setup()
   }
 
+  /// Tracks OSC 133 semantic prompt boundaries for this terminal.
+  public let semanticPromptTracker = SemanticPromptTracker()
+
+  /// Stores position marks for this terminal.
+  public let markStore = MarkStore()
+
+  /// Smart selection engine for context-aware text selection.
+  public let smartSelectionEngine = SmartSelectionEngine()
+
   private func setup() {
     terminalDelegate = self
     process = LocalProcess(delegate: self)
+
+    // Register OSC 133 handler for semantic prompt tracking
+    terminal.registerOscHandler(code: 133) { [weak self] data in
+      self?.semanticPromptTracker.handleOsc133(data)
+    }
   }
 
   /// PID of the running child process, if any.
@@ -80,6 +94,28 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
   open func scrolled(source: TerminalView, position: Double) {}
 
   open func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+  // MARK: - File Path Opening
+
+  /// The project path for resolving relative file paths. Set by TerminalContainerView.
+  public var projectPath: String?
+
+  /// Called when user Cmd+clicks a file path. Set by parent view to route to the Files panel.
+  public var onOpenFile: ((String, Int?) -> Void)?
+
+  public func requestOpenFile(source: TerminalView, path: String, lineNumber: Int?) {
+    let resolvedPath: String
+    if path.hasPrefix("/") || path.hasPrefix("~") {
+      resolvedPath = (path as NSString).expandingTildeInPath
+    } else if let projectPath, !projectPath.isEmpty {
+      resolvedPath = (projectPath as NSString).appendingPathComponent(path)
+    } else {
+      resolvedPath = (NSHomeDirectory() as NSString).appendingPathComponent(path)
+    }
+
+    guard FileManager.default.fileExists(atPath: resolvedPath) else { return }
+    onOpenFile?(resolvedPath, lineNumber)
+  }
 
   // MARK: - Process Control
 

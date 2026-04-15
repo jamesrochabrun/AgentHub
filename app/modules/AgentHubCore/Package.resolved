@@ -1,5 +1,5 @@
 {
-  "originHash" : "33c89abc499c33d9a3ca8be4824e97fd2422e1b662ebcedd353bf7cc467abfa4",
+  "originHash" : "2929b57e1e88ace276de95b5aba8cc10118deb51a28af42ac44c558c70f34bf2",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -130,10 +130,10 @@
     {
       "identity" : "swiftterm",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/migueldeicaza/SwiftTerm",
+      "location" : "https://github.com/jamesrochabrun/SwiftTerm",
       "state" : {
-        "revision" : "8e7a1e154f470e19c709a00a8768df348ba5fc43",
-        "version" : "1.13.0"
+        "branch" : "agenthub",
+        "revision" : "a3c61c4d364b1a818fc7290586adb8c22a85a2b8"
       }
     },
     {
