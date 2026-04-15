@@ -430,8 +430,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let needsUpdate = lastAppliedIsDark != isDark || lastAppliedThemeId != themeId
     guard needsUpdate else { return }
 
-    // Background: theme → default dark/light
-    if let bg = theme?.terminalBackground {
+    // Theme terminal colors only apply in dark mode
+    if isDark, let bg = theme?.terminalBackground {
       terminal.nativeBackgroundColor = bg
     } else if isDark {
       terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
@@ -439,15 +439,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       terminal.nativeBackgroundColor = NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
     }
 
-    // Foreground: always default (CLI controls its own text colors)
     if isDark {
       terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
     } else {
       terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
     }
 
-    // Cursor: theme → default brand color
-    if let cursor = theme?.terminalCursor {
+    if isDark, let cursor = theme?.terminalCursor {
       terminal.caretColor = cursor
     } else {
       terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
