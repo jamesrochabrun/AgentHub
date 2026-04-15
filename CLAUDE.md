@@ -205,6 +205,32 @@ Cmd+K (palette), Cmd+N (new session), Cmd+B (sidebar), Cmd+[/] (navigate session
 | Yams | YAML parsing for themes |
 | Sparkle | Auto-updates with EdDSA verification |
 
+## Terminal Enhancements
+
+The embedded terminal uses a fork of SwiftTerm (`jamesrochabrun/SwiftTerm`, branch `agenthub`) with modular additions in `Sources/SwiftTerm/AgentHub/`. All new code lives in that directory to minimize merge conflicts with upstream.
+
+### Features
+
+| Feature | Shortcut | Description |
+|---------|----------|-------------|
+| **Search** | `Cmd+F` | Built-in find bar with regex, case-sensitive, whole-word toggles |
+| **Cmd+Click URLs** | `Cmd+Click` | Opens plain URLs in browser (no OSC 8 required) |
+| **Cmd+Click file paths** | `Cmd+Click` | Opens file in inline Files panel (configurable: AgentHub / VS Code / Xcode) |
+| **Theme integration** | Automatic | Terminal background and cursor follow active YAML theme (dark mode) |
+| **OSC 133 tracking** | — | Semantic prompt boundary tracking (foundation for future features) |
+
+### Fork Architecture
+
+- **Branch:** `agenthub` — all additions live here; `main` tracks upstream
+- **New files:** `Sources/SwiftTerm/AgentHub/` — PlainURLDetection, FilePathDetection, SemanticPromptTracker, MarkStore, SmartSelectionEngine
+- **Upstream changes:** Minimal — `cellDimension` and `displayBuffer` exposed as public, `requestOpenFile` delegate added
+- **Merge upstream:** `git fetch upstream && git merge upstream/main` into `agenthub`
+
+### Settings
+
+- **Open files with** — Choose AgentHub (inline), VS Code, or Xcode for Cmd+Click file paths
+- **Terminal colors** — YAML themes can define `terminal.background` and `terminal.cursor` hex colors
+
 ## Common Commands
 
 ```bash
