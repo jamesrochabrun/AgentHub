@@ -467,9 +467,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isTerminalVisible = terminal.superview != nil && !terminal.isHidden && terminal.alphaValue > 0
 
-        // Terminal-wide shortcuts (work when terminal is visible, even without focus)
-        if isTerminalVisible {
-          // Cmd+F: activate SwiftTerm's built-in search/find bar
+        // Cmd+F: only when terminal has focus (let file editor handle it otherwise)
+        if isTerminalVisible, self.isTerminalResponderActive(window: window, terminal: terminal) {
           if flags == .command, event.charactersIgnoringModifiers == "f" {
             window.makeFirstResponder(terminal)
             // performFindPanelAction requires an NSMenuItem with the correct tag
