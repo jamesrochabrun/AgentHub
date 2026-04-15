@@ -36,7 +36,6 @@ public final class ThemeManager {
 
     backgrounds:
       dark: "#1A1625"
-      light: "#FAF9FB"
   """
 
   private static let bundledRauschYAML = """
@@ -54,6 +53,57 @@ public final class ThemeManager {
     backgrounds:
       dark: "#222222"
       light: "#FFFFFF"
+  """
+
+  private static let bundledAntaresYAML = """
+  name: "Antares"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Warm rose-pink theme inspired by the red supergiant Antares — the heart of Scorpius"
+
+  colors:
+    brand:
+      primary: "#FF6B8A"
+      secondary: "#6B2A50"
+      tertiary: "#FFB3C1"
+
+    backgrounds:
+      dark: "#1F1018"
+      expandedContentDark: "#1A0C14"
+  """
+
+  private static let bundledVelaYAML = """
+  name: "Vela"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Deep forest green theme inspired by the Vela Pulsar's emerald supernova remnant"
+
+  colors:
+    brand:
+      primary: "#34D399"
+      secondary: "#134E3A"
+      tertiary: "#6EE7B7"
+
+    backgrounds:
+      dark: "#0A1A14"
+      expandedContentDark: "#071510"
+  """
+
+  private static let bundledRigelYAML = """
+  name: "Rigel"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Deep space navy with electric blue accents, inspired by the blue supergiant Rigel"
+
+  colors:
+    brand:
+      primary: "#38BDF8"
+      secondary: "#164E6A"
+      tertiary: "#7DD3FC"
+
+    backgrounds:
+      dark: "#0A1628"
+      expandedContentDark: "#081220"
   """
 
   private static let bundledBetelgeuseYAML = """
@@ -298,6 +348,9 @@ public final class ThemeManager {
     ("betelgeuse", bundledBetelgeuseYAML),
     ("sentry", bundledSentryYAML),
     ("rausch", bundledRauschYAML),
+    ("rigel", bundledRigelYAML),
+    ("vela", bundledVelaYAML),
+    ("antares", bundledAntaresYAML),
   ]
 
   private func installBundledThemesIfNeeded() {

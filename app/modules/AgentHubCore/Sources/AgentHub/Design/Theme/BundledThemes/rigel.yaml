@@ -1,0 +1,36 @@
+name: "Rigel"
+version: "1.0"
+author: "AgentHub"
+description: "Deep space navy with electric blue accents, inspired by the blue supergiant Rigel"
+
+colors:
+  brand:
+    primary: "#38BDF8"
+    secondary: "#164E6A"
+    tertiary: "#7DD3FC"
+
+  backgrounds:
+    dark: "#0A1628"
+    expandedContentDark: "#081220"
+
+  terminal:
+    background: "#0A1628"
+    foreground: "#E0ECFF"
+    cursor: "#38BDF8"
+    ansi:
+      black: "#0A1628"
+      red: "#F87171"
+      green: "#4ADE80"
+      yellow: "#FBBF24"
+      blue: "#38BDF8"
+      magenta: "#C084FC"
+      cyan: "#22D3EE"
+      white: "#E0ECFF"
+      brightBlack: "#44688A"
+      brightRed: "#FCA5A5"
+      brightGreen: "#86EFAC"
+      brightYellow: "#FDE68A"
+      brightBlue: "#7DD3FC"
+      brightMagenta: "#D8B4FE"
+      brightCyan: "#67E8F9"
+      brightWhite: "#FFFFFF"

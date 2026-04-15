@@ -11,7 +11,6 @@ colors:
 
   backgrounds:
     dark: "#1A1625"
-    light: "#FAF9FB"
 
   terminal:
     background: "#1A1625"
