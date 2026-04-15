@@ -126,6 +126,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       )
       terminalContainer.onUserInteraction = onUserInteraction
       terminalContainer.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
+      terminalContainer.terminalSessionKey = terminalKey
+      terminalContainer.sessionViewModel = viewModel
       return terminalContainer
     }
 
@@ -177,6 +179,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+  var terminalSessionKey: String?
+  weak var sessionViewModel: CLISessionsViewModel?
   var metadataStore: SessionMetadataStore?
   var terminateProcessCallCount = 0
 
@@ -242,6 +246,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     isConfigured = true
 
     let terminal = prepareTerminalView(isDark: isDark)
+    terminal.projectPath = projectPath
+    terminal.onOpenFile = { [weak self] path, line in
+      if let self, let vm = self.sessionViewModel, let key = self.terminalSessionKey {
+        vm.pendingFileOpen = (sessionId: key, filePath: path, lineNumber: line)
+      }
+    }
     installInteractionMonitorIfNeeded()
 
     // Start the CLI process

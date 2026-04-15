@@ -321,6 +321,19 @@ public struct MultiProviderMonitoringPanelView: View {
     .onChange(of: isAuxiliaryShellVisible) { _, _ in
       syncAuxiliaryShellDockState()
     }
+    .onChange(of: claudeViewModel.pendingFileOpen?.filePath) { _, filePath in
+      guard let pending = claudeViewModel.pendingFileOpen, let filePath else { return }
+      if let session = claudeViewModel.allSessions.first(where: { $0.id == pending.sessionId }) {
+        sidePanelContent = .fileExplorer(
+          sessionId: session.id,
+          session: session,
+          projectPath: session.projectPath,
+          initialFilePath: filePath,
+          navigationId: UUID()
+        )
+      }
+      claudeViewModel.pendingFileOpen = nil
+    }
     .overlay {
       // Hidden Shift+P trigger for QuickFilePicker
       Button("") { showQuickFilePicker = true }

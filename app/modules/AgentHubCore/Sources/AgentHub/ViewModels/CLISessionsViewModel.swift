@@ -117,6 +117,10 @@ public final class CLISessionsViewModel {
   /// - Note: Prompts are sent with a 100ms delay before pressing Enter to avoid race conditions
   ///   with the terminal's input buffer (see `EmbeddedTerminalView.sendPromptIfNeeded`).
   public var pendingTerminalPrompts: [String: String] = [:]
+
+  /// Pending file open request from Cmd+Click in terminal.
+  /// Set by TerminalContainerView, consumed by MultiProviderMonitoringPanelView.
+  public var pendingFileOpen: (sessionId: String, filePath: String, lineNumber: Int?)? = nil
   private(set) var queuedWebPreviewContextStore = QueuedWebPreviewContextStore()
 
   public func webPreviewCandidateStatus(for projectPath: String) -> WebPreviewCandidateStatus? {

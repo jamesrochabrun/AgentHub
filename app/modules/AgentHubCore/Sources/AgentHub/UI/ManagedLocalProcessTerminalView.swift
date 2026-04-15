@@ -95,6 +95,27 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
 
   open func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
+  // MARK: - File Path Opening
+
+  /// The project path for resolving relative file paths. Set by TerminalContainerView.
+  public var projectPath: String?
+
+  /// Called when user Cmd+clicks a file path. Set by parent view to route to the Files panel.
+  public var onOpenFile: ((String, Int?) -> Void)?
+
+  public func requestOpenFile(source: TerminalView, path: String, lineNumber: Int?) {
+    let resolvedPath: String
+    if path.hasPrefix("/") || path.hasPrefix("~") {
+      resolvedPath = (path as NSString).expandingTildeInPath
+    } else if let projectPath, !projectPath.isEmpty {
+      resolvedPath = (projectPath as NSString).appendingPathComponent(path)
+    } else {
+      resolvedPath = (NSHomeDirectory() as NSString).appendingPathComponent(path)
+    }
+
+    guard FileManager.default.fileExists(atPath: resolvedPath) else { return }
+    onOpenFile?(resolvedPath, lineNumber)
+  }
 
   // MARK: - Process Control
 
