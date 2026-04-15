@@ -99,6 +99,11 @@ public enum AgentHubDefaults {
   /// See: NewlineShortcut enum in EmbeddedTerminalView.swift
   public static let terminalNewlineShortcut = "\(keyPrefix)terminal.newlineShortcut"
 
+  /// Preferred editor for Cmd+Click file paths in the terminal
+  /// Type: Int (default: 0 = AgentHub inline)
+  /// See: FileOpenEditor enum in ManagedLocalProcessTerminalView.swift
+  public static let terminalFileOpenEditor = "\(keyPrefix)terminal.fileOpenEditor"
+
   /// Monitoring panel layout mode (list, 2-column, 3-column grid)
   /// Type: Int (default: 0 = list)
   public static let monitoringPanelLayoutMode = "\(keyPrefix)ui.monitoringPanelLayoutMode"
