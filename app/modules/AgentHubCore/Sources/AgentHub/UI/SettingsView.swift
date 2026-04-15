@@ -29,6 +29,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.terminalNewlineShortcut)
   private var newlineShortcutRawValue: Int = NewlineShortcut.system.rawValue
 
+  @AppStorage(AgentHubDefaults.terminalFileOpenEditor)
+  private var fileOpenEditorRawValue: Int = FileOpenEditor.agentHub.rawValue
+
   @AppStorage(AgentHubDefaults.notificationSoundsEnabled)
   private var notificationSoundsEnabled: Bool = true
 
@@ -178,6 +181,12 @@ public struct SettingsView: View {
         Picker("Newline shortcut", selection: $newlineShortcutRawValue) {
           ForEach(NewlineShortcut.allCases, id: \.rawValue) { shortcut in
             Text(shortcut.label).tag(shortcut.rawValue)
+          }
+        }
+
+        Picker("Open files with", selection: $fileOpenEditorRawValue) {
+          ForEach(FileOpenEditor.allCases, id: \.rawValue) { editor in
+            Text(editor.label).tag(editor.rawValue)
           }
         }
       }

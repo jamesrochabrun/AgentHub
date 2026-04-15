@@ -9,6 +9,26 @@ import AppKit
 import Darwin
 import SwiftTerm
 
+// MARK: - FileOpenEditor
+
+/// Preferred editor for opening files from Cmd+Click in the terminal.
+public enum FileOpenEditor: Int, CaseIterable {
+  /// Open in AgentHub's inline file viewer (default)
+  case agentHub = 0
+  /// Open in VS Code
+  case vscode = 1
+  /// Open in Xcode
+  case xcode = 2
+
+  public var label: String {
+    switch self {
+    case .agentHub: return "AgentHub"
+    case .vscode: return "VS Code"
+    case .xcode: return "Xcode"
+    }
+  }
+}
+
 /// Delegate for ManagedLocalProcessTerminalView process events.
 public protocol ManagedLocalProcessTerminalViewDelegate: AnyObject {
   func sizeChanged(source: ManagedLocalProcessTerminalView, newCols: Int, newRows: Int)
@@ -114,7 +134,42 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
     }
 
     guard FileManager.default.fileExists(atPath: resolvedPath) else { return }
-    onOpenFile?(resolvedPath, lineNumber)
+
+    let editor = FileOpenEditor(
+      rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalFileOpenEditor)
+    ) ?? .agentHub
+
+    switch editor {
+    case .agentHub:
+      onOpenFile?(resolvedPath, lineNumber)
+    case .vscode:
+      Self.openInVSCode(path: resolvedPath, line: lineNumber)
+    case .xcode:
+      Self.openInXcode(path: resolvedPath, line: lineNumber)
+    }
+  }
+
+  private static func openInVSCode(path: String, line: Int?) {
+    let codePaths = [
+      "/usr/local/bin/code",
+      "/opt/homebrew/bin/code",
+      "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+    ]
+    guard let codePath = codePaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+      NSWorkspace.shared.open(URL(fileURLWithPath: path))
+      return
+    }
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: codePath)
+    task.arguments = ["--goto", line != nil ? "\(path):\(line!)" : path]
+    try? task.run()
+  }
+
+  private static func openInXcode(path: String, line: Int?) {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/xed")
+    task.arguments = line != nil ? ["--line", "\(line!)", path] : [path]
+    try? task.run()
   }
 
   // MARK: - Process Control
