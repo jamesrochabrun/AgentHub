@@ -85,6 +85,7 @@ class SafeLocalProcessTerminalView: ManagedLocalProcessTerminalView {
 public struct EmbeddedTerminalView: NSViewRepresentable {
   @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
   @AppStorage(AgentHubDefaults.terminalFontSize) private var terminalFontSize: Double = 12
 
   let terminalKey: String  // Key for terminal storage (session ID or "pending-{pendingId}")
@@ -174,7 +175,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
     nsView.onUserInteraction = onUserInteraction
     nsView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
-    nsView.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize))
+    nsView.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), theme: runtimeTheme)
 
     // If there's a pending prompt in the viewModel, send it (and clear it)
     // Use terminalKey (not sessionId) since it works for both pending and real sessions
@@ -399,8 +400,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     typeText(text)
   }
 
-  public func syncAppearance(isDark: Bool, fontSize: CGFloat) {
-    updateColors(isDark: isDark)
+  public func syncAppearance(isDark: Bool, fontSize: CGFloat, theme: RuntimeTheme? = nil) {
+    updateColors(isDark: isDark, theme: theme)
     updateFont(size: fontSize)
   }
 
@@ -417,21 +418,43 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     lastAppliedFontSize = resolvedSize
   }
 
-  /// Updates terminal colors based on color scheme.
-  /// Called when the app's color scheme changes.
-  public func updateColors(isDark: Bool) {
-    guard let terminal = terminalView else { return }
-    guard lastAppliedIsDark != isDark else { return }
+  private var lastAppliedThemeId: String?
 
-    if isDark {
+  /// Updates terminal colors from theme or falls back to default dark/light.
+  /// Only background and cursor are themed — foreground and ANSI colors are left
+  /// untouched to preserve Claude Code / Codex syntax highlighting.
+  public func updateColors(isDark: Bool, theme: RuntimeTheme? = nil) {
+    guard let terminal = terminalView else { return }
+
+    let themeId = theme?.id
+    let needsUpdate = lastAppliedIsDark != isDark || lastAppliedThemeId != themeId
+    guard needsUpdate else { return }
+
+    // Background: theme → default dark/light
+    if let bg = theme?.terminalBackground {
+      terminal.nativeBackgroundColor = bg
+    } else if isDark {
       terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
-      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
     } else {
       terminal.nativeBackgroundColor = NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
+    }
+
+    // Foreground: always default (CLI controls its own text colors)
+    if isDark {
+      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
+    } else {
       terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
     }
 
+    // Cursor: theme → default brand color
+    if let cursor = theme?.terminalCursor {
+      terminal.caretColor = cursor
+    } else {
+      terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
+    }
+
     lastAppliedIsDark = isDark
+    lastAppliedThemeId = themeId
     terminal.needsDisplay = true
   }
 

@@ -1,5 +1,5 @@
 name: "Sentry"
-version: "1.0"
+version: "1.1"
 author: "Sentry"
 description: "Official Sentry-inspired color theme"
 
@@ -12,3 +12,25 @@ colors:
   backgrounds:
     dark: "#1A1625"
     light: "#FAF9FB"
+
+  terminal:
+    background: "#1A1625"
+    foreground: "#E8E6F0"
+    cursor: "#E1567C"
+    ansi:
+      black: "#1A1625"
+      red: "#E1567C"
+      green: "#33BF8C"
+      yellow: "#F5B944"
+      blue: "#6C63FF"
+      magenta: "#C463E1"
+      cyan: "#45C4E8"
+      white: "#E8E6F0"
+      brightBlack: "#584774"
+      brightRed: "#FF7A9A"
+      brightGreen: "#57D9A5"
+      brightYellow: "#FFD06B"
+      brightBlue: "#9490FF"
+      brightMagenta: "#DA8FEF"
+      brightCyan: "#6FD6F0"
+      brightWhite: "#FFFFFF"

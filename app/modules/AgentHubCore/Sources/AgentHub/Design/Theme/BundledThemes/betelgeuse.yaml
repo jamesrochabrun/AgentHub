@@ -1,5 +1,5 @@
 name: "Betelgeuse"
-version: "1.0"
+version: "1.1"
 author: "AgentHub"
 description: "Warm orange gradient inspired by the red supergiant"
 
@@ -14,3 +14,25 @@ colors:
       opacity: 0.44
     - color: "#FF8C42"
       opacity: 0.25
+
+  terminal:
+    background: "#1C1410"
+    foreground: "#F0E4D8"
+    cursor: "#FF8C42"
+    ansi:
+      black: "#1C1410"
+      red: "#E84C3D"
+      green: "#6ABF69"
+      yellow: "#FF8C42"
+      blue: "#5B9BD5"
+      magenta: "#C76DD7"
+      cyan: "#50B4C8"
+      white: "#F0E4D8"
+      brightBlack: "#5A4A3E"
+      brightRed: "#FF6B5A"
+      brightGreen: "#8CD98C"
+      brightYellow: "#FFA04D"
+      brightBlue: "#7CB6E8"
+      brightMagenta: "#DE92EB"
+      brightCyan: "#72CCE0"
+      brightWhite: "#FFFFFF"

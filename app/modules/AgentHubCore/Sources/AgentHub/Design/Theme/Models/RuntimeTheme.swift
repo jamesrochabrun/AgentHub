@@ -5,6 +5,7 @@
 //  Runtime theme with resolved colors
 //
 
+import AppKit
 import SwiftUI
 
 /// Runtime theme with resolved colors
@@ -27,6 +28,12 @@ public struct RuntimeTheme: Identifiable {
 
   // Background gradient (optional)
   public let backgroundGradient: LinearGradient?
+
+  // Terminal colors (optional — falls back to default dark/light if nil)
+  public let terminalBackground: NSColor?
+  public let terminalForeground: NSColor?
+  public let terminalCursor: NSColor?
+  public let terminalAnsiColors: [NSColor]?  // Exactly 16 if defined
 
   // Source file name for YAML themes (e.g., "sentry.yaml")
   public let sourceFileName: String?
@@ -65,6 +72,42 @@ public struct RuntimeTheme: Identifiable {
       self.expandedContentBackgroundLight = nil
     }
 
+    // Resolve terminal colors
+    if let tc = yaml.colors.terminal {
+      self.terminalBackground = tc.background.flatMap { NSColor(hex: $0) }
+      self.terminalForeground = tc.foreground.flatMap { NSColor(hex: $0) }
+      self.terminalCursor = tc.cursor.flatMap { NSColor(hex: $0) }
+      if let ansi = tc.ansi {
+        let colors: [NSColor?] = [
+          ansi.black.flatMap { NSColor(hex: $0) },
+          ansi.red.flatMap { NSColor(hex: $0) },
+          ansi.green.flatMap { NSColor(hex: $0) },
+          ansi.yellow.flatMap { NSColor(hex: $0) },
+          ansi.blue.flatMap { NSColor(hex: $0) },
+          ansi.magenta.flatMap { NSColor(hex: $0) },
+          ansi.cyan.flatMap { NSColor(hex: $0) },
+          ansi.white.flatMap { NSColor(hex: $0) },
+          ansi.brightBlack.flatMap { NSColor(hex: $0) },
+          ansi.brightRed.flatMap { NSColor(hex: $0) },
+          ansi.brightGreen.flatMap { NSColor(hex: $0) },
+          ansi.brightYellow.flatMap { NSColor(hex: $0) },
+          ansi.brightBlue.flatMap { NSColor(hex: $0) },
+          ansi.brightMagenta.flatMap { NSColor(hex: $0) },
+          ansi.brightCyan.flatMap { NSColor(hex: $0) },
+          ansi.brightWhite.flatMap { NSColor(hex: $0) },
+        ]
+        let resolved = colors.compactMap { $0 }
+        self.terminalAnsiColors = resolved.count == 16 ? resolved : nil
+      } else {
+        self.terminalAnsiColors = nil
+      }
+    } else {
+      self.terminalBackground = nil
+      self.terminalForeground = nil
+      self.terminalCursor = nil
+      self.terminalAnsiColors = nil
+    }
+
     // Resolve gradient
     if let gradient = yaml.colors.backgroundGradient, !gradient.isEmpty {
       let colors = gradient.map { Color(hex: $0.color).opacity($0.opacity) }
@@ -91,7 +134,11 @@ public struct RuntimeTheme: Identifiable {
     self.brandSecondary = colors.brandSecondary
     self.brandTertiary = colors.brandTertiary
 
-    // Built-in themes use code-defined backgrounds
+    // Built-in themes use code-defined backgrounds and default terminal colors
+    self.terminalBackground = nil
+    self.terminalForeground = nil
+    self.terminalCursor = nil
+    self.terminalAnsiColors = nil
     self.backgroundDark = nil
     self.backgroundLight = nil
     self.expandedContentBackgroundDark = nil
