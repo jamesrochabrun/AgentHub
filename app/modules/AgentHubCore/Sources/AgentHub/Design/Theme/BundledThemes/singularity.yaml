@@ -1,0 +1,36 @@
+name: "Singularity"
+version: "1.0"
+author: "AgentHub"
+description: "Matte black theme inspired by the infinite depth of a black hole's singularity"
+
+colors:
+  brand:
+    primary: "#E8A849"
+    secondary: "#3D2E1A"
+    tertiary: "#C4883A"
+
+  backgrounds:
+    dark: "#0D0D0D"
+    expandedContentDark: "#080808"
+
+  terminal:
+    background: "#0D0D0D"
+    foreground: "#D4D0C8"
+    cursor: "#E8A849"
+    ansi:
+      black: "#0D0D0D"
+      red: "#E06C75"
+      green: "#98C379"
+      yellow: "#E8A849"
+      blue: "#61AFEF"
+      magenta: "#C678DD"
+      cyan: "#56B6C2"
+      white: "#D4D0C8"
+      brightBlack: "#6B6862"
+      brightRed: "#E88A91"
+      brightGreen: "#B5D4A1"
+      brightYellow: "#F0C06E"
+      brightBlue: "#8CC8F5"
+      brightMagenta: "#D8A0E8"
+      brightCyan: "#7DCBD5"
+      brightWhite: "#F5F2ED"

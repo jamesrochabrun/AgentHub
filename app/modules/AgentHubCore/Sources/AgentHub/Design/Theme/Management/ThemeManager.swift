@@ -55,6 +55,23 @@ public final class ThemeManager {
       light: "#FFFFFF"
   """
 
+  private static let bundledSingularityYAML = """
+  name: "Singularity"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Matte black theme inspired by the infinite depth of a black hole's singularity"
+
+  colors:
+    brand:
+      primary: "#E8A849"
+      secondary: "#3D2E1A"
+      tertiary: "#C4883A"
+
+    backgrounds:
+      dark: "#0D0D0D"
+      expandedContentDark: "#080808"
+  """
+
   private static let bundledAntaresYAML = """
   name: "Antares"
   version: "1.0"
@@ -351,6 +368,7 @@ public final class ThemeManager {
     ("rigel", bundledRigelYAML),
     ("vela", bundledVelaYAML),
     ("antares", bundledAntaresYAML),
+    ("singularity", bundledSingularityYAML),
   ]
 
   private func installBundledThemesIfNeeded() {
