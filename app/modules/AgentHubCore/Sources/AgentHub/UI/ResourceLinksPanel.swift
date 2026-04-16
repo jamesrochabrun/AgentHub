@@ -11,11 +11,12 @@ import SwiftUI
 // MARK: - ResourceLinksPanel
 
 /// A compact bottom panel that displays clickable resource links detected in session responses
-struct ResourceLinksPanel: View {
+struct ResourceLinksPanel<TrailingAccessory: View>: View {
   let links: [ResourceLink]
   let providerKind: SessionProviderKind
   var currentPullRequest: GitHubPullRequest? = nil
   var onOpenCurrentPullRequest: ((GitHubPullRequest) -> Void)? = nil
+  @ViewBuilder var trailingAccessory: () -> TrailingAccessory
 
   @State private var isExpanded = false
 
@@ -47,8 +48,6 @@ struct ResourceLinksPanel: View {
             .contentShape(Rectangle())
           }
           .buttonStyle(.plain)
-        } else {
-          headerLabel
         }
 
         Spacer(minLength: 0)
@@ -59,6 +58,8 @@ struct ResourceLinksPanel: View {
             action: { openCurrentPullRequest(currentPullRequest) }
           )
         }
+
+        trailingAccessory()
       }
       .padding(.horizontal, 12)
       .padding(.vertical, 6)
@@ -256,7 +257,9 @@ private struct CurrentPullRequestChip: View {
         reviewRequests: nil,
         comments: nil
       )
-    )
+    ) {
+      EmptyView()
+    }
   }
   .frame(width: 400)
 }
