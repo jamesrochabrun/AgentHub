@@ -436,7 +436,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     } else if isDark {
       terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
     } else {
-      terminal.nativeBackgroundColor = NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
+      // Match app light background
+      terminal.nativeBackgroundColor = NSColor(Color.backgroundLight)
     }
 
     if isDark {
@@ -468,7 +469,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
       terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
     } else {
-      terminal.nativeBackgroundColor = NSColor(red: 0.98, green: 0.98, blue: 0.98, alpha: 1.0)
+      terminal.nativeBackgroundColor = NSColor(Color.backgroundLight)
       terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
     }
 
