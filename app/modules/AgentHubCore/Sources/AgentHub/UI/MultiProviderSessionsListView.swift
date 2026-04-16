@@ -212,11 +212,13 @@ public struct MultiProviderSessionsListView: View {
   }
 
   public var body: some View {
+    GeometryReader { proxy in
+      let sidebarMax = max(280, proxy.size.width * 0.20)
     ZStack {
       NavigationSplitView(columnVisibility: $columnVisibility) {
         sidePanelView
           .agentHubPanel()
-          .navigationSplitViewColumnWidth(min: 300, ideal: 420)
+          .navigationSplitViewColumnWidth(min: 280, ideal: 280, max: sidebarMax)
           .padding(.vertical, 8)
           .padding(.horizontal, 8)
       } detail: {
@@ -402,6 +404,7 @@ public struct MultiProviderSessionsListView: View {
     }
     .modifier(ArchiveConfirmationAlert(confirmation: $archiveConfirmation))
     .modifier(RemoveConfirmationAlert(confirmation: $removeConfirmation))
+    }
   }
 
   // MARK: - UI Helpers
