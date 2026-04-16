@@ -1,13 +1,13 @@
-name: "Singularity"
+name: "Nebula"
 version: "1.0"
 author: "AgentHub"
-description: "Matte black theme inspired by the infinite depth of a black hole's singularity"
+description: "Matte black theme with violet accents inspired by the ultraviolet glow of cosmic nebulae"
 
 colors:
   brand:
-    primary: "#A0AEC0"
-    secondary: "#2D3748"
-    tertiary: "#CBD5E0"
+    primary: "#A78BFA"
+    secondary: "#312E81"
+    tertiary: "#C4B5FD"
 
   backgrounds:
     dark: "#0D0D0D"
@@ -16,7 +16,7 @@ colors:
   terminal:
     background: "#0D0D0D"
     foreground: "#E2E8F0"
-    cursor: "#A0AEC0"
+    cursor: "#A78BFA"
     ansi:
       black: "#0D0D0D"
       red: "#E06C75"

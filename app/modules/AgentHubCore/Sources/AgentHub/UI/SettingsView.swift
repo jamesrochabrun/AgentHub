@@ -57,9 +57,9 @@ public struct SettingsView: View {
   private var webPreviewAdvancedEditingEnabled: Bool = true
 
   @Environment(ThemeManager.self) private var themeManager
-  @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "neutral"
-  private let defaultThemeId = "neutral"
-  private let bundledYAMLThemeFileIds = ["betelgeuse.yaml", "sentry.yaml", "rausch.yaml", "rigel.yaml", "vela.yaml", "antares.yaml", "singularity.yaml"]
+  @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "singularity.yaml"
+  private let defaultThemeId = "singularity.yaml"
+  private let bundledYAMLThemeFileIds = ["betelgeuse.yaml", "sentry.yaml", "rausch.yaml", "rigel.yaml", "vela.yaml", "antares.yaml", "singularity.yaml", "nebula.yaml"]
   private let webPreviewInspectorDataLevels: [ElementInspectorDataLevel] = [.regular, .full]
 
   public init() {}
@@ -193,7 +193,6 @@ public struct SettingsView: View {
 
       Section {
         Picker("Theme", selection: themeSelectionBinding) {
-          Text("Default").tag(AppTheme.neutral.rawValue)
           Text("Claude").tag(AppTheme.claude.rawValue)
           Text("Codex").tag(AppTheme.codex.rawValue)
           ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in

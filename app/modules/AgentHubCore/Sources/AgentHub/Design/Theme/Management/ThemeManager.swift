@@ -55,6 +55,23 @@ public final class ThemeManager {
       light: "#FFFFFF"
   """
 
+  private static let bundledNebulaYAML = """
+  name: "Nebula"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Matte black theme with violet accents inspired by the ultraviolet glow of cosmic nebulae"
+
+  colors:
+    brand:
+      primary: "#A78BFA"
+      secondary: "#312E81"
+      tertiary: "#C4B5FD"
+
+    backgrounds:
+      dark: "#0D0D0D"
+      expandedContentDark: "#080808"
+  """
+
   private static let bundledSingularityYAML = """
   name: "Singularity"
   version: "1.0"
@@ -63,9 +80,9 @@ public final class ThemeManager {
 
   colors:
     brand:
-      primary: "#E8A849"
-      secondary: "#3D2E1A"
-      tertiary: "#C4883A"
+      primary: "#A0AEC0"
+      secondary: "#2D3748"
+      tertiary: "#CBD5E0"
 
     backgrounds:
       dark: "#0D0D0D"
@@ -152,17 +169,17 @@ public final class ThemeManager {
 
   public init() {
     // Load the correct built-in theme synchronously to avoid flash on launch
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "singularity.yaml"
     if let appTheme = AppTheme(rawValue: saved) {
       self.currentTheme = Self.loadBuiltInTheme(appTheme)
     } else {
-      // YAML theme — start with neutral (orange) sync, async load adds gradient
+      // YAML theme — start with neutral sync, async load replaces it
       self.currentTheme = Self.loadBuiltInTheme(.neutral)
     }
     self.fileWatcher = ThemeFileWatcher()
     self.installBundledThemesIfNeeded()
 
-    // Only schedule async loading for YAML themes
+    // Schedule async loading for YAML themes (including the default)
     if AppTheme(rawValue: saved) == nil {
       Task { await self.loadSavedTheme() }
     }
@@ -318,7 +335,7 @@ public final class ThemeManager {
   }
 
   public func loadSavedTheme() async {
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "singularity.yaml"
 
     // Check if it's a built-in theme
     if let appTheme = AppTheme(rawValue: saved) {
@@ -333,8 +350,13 @@ public final class ThemeManager {
     if FileManager.default.fileExists(atPath: fileURL.path) {
       try? await loadTheme(fileURL: fileURL)
     } else {
-      // Fallback to default
-      loadBuiltInTheme(.neutral)
+      // Fallback: try singularity, then neutral
+      let fallbackURL = themesDir.appendingPathComponent("singularity.yaml")
+      if FileManager.default.fileExists(atPath: fallbackURL.path) {
+        try? await loadTheme(fileURL: fallbackURL)
+      } else {
+        loadBuiltInTheme(.neutral)
+      }
     }
   }
 
@@ -369,6 +391,7 @@ public final class ThemeManager {
     ("vela", bundledVelaYAML),
     ("antares", bundledAntaresYAML),
     ("singularity", bundledSingularityYAML),
+    ("nebula", bundledNebulaYAML),
   ]
 
   private func installBundledThemesIfNeeded() {
