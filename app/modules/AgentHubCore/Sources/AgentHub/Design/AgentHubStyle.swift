@@ -20,19 +20,10 @@ private struct AgentHubPanelModifier: ViewModifier {
   @Environment(\.runtimeTheme) private var runtimeTheme
 
   func body(content: Content) -> some View {
-    let defaultBackground = colorScheme == .dark ? Color.black : Color.white
-    let backgroundColor = runtimeTheme?.hasCustomBackgrounds == true
-      ? Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
-      : defaultBackground
-
     return content
       .background(
         RoundedRectangle(cornerRadius: AgentHubLayout.panelCornerRadius, style: .continuous)
-          .fill(backgroundColor)
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: AgentHubLayout.panelCornerRadius, style: .continuous)
-          .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+          .fill(Color.clear)
       )
   }
 }

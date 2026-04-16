@@ -530,7 +530,7 @@ public struct MultiProviderSessionsListView: View {
       browseHeaderView
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.bar)
+        .background(.clear)
         .overlay(alignment: .top) {
           Divider()
         }

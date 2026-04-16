@@ -240,7 +240,7 @@ public struct MonitoringCardView: View {
         )
       }
     }
-    .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
+    .background(.clear)
     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     .overlay(
       RoundedRectangle(cornerRadius: 6, style: .continuous)
