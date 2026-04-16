@@ -57,9 +57,11 @@ public struct SettingsView: View {
   private var webPreviewAdvancedEditingEnabled: Bool = true
 
   @Environment(ThemeManager.self) private var themeManager
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
   @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "singularity.yaml"
   private let defaultThemeId = "singularity.yaml"
-  private let bundledYAMLThemeFileIds = ["betelgeuse.yaml", "sentry.yaml", "rausch.yaml", "rigel.yaml", "vela.yaml", "antares.yaml", "singularity.yaml", "nebula.yaml"]
+  private let bundledYAMLThemeFileIds = ["sentry.yaml", "rigel.yaml", "vela.yaml", "antares.yaml", "singularity.yaml", "nebula.yaml", "helios.yaml"]
   private let webPreviewInspectorDataLevels: [ElementInspectorDataLevel] = [.regular, .full]
 
   public init() {}
@@ -100,6 +102,15 @@ public struct SettingsView: View {
     }
   }
 
+  @ViewBuilder
+  private var settingsBackground: some View {
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    } else {
+      Color.clear
+    }
+  }
+
   private var generalSettingsForm: some View {
     Form {
       Section("Notifications") {
@@ -125,6 +136,8 @@ public struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .background(settingsBackground.ignoresSafeArea())
   }
 
   private var configurationSettingsForm: some View {
@@ -155,6 +168,8 @@ public struct SettingsView: View {
 
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .background(settingsBackground.ignoresSafeArea())
   }
 
   private var appearanceSettingsForm: some View {
@@ -193,8 +208,6 @@ public struct SettingsView: View {
 
       Section {
         Picker("Theme", selection: themeSelectionBinding) {
-          Text("Claude").tag(AppTheme.claude.rawValue)
-          Text("Codex").tag(AppTheme.codex.rawValue)
           ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
             Text(yamlThemeDisplayName(fileId)).tag(fileId)
           }
@@ -216,6 +229,8 @@ public struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .background(settingsBackground.ignoresSafeArea())
   }
 
 #if DEBUG
@@ -252,6 +267,8 @@ public struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .background(settingsBackground.ignoresSafeArea())
   }
 #endif
 

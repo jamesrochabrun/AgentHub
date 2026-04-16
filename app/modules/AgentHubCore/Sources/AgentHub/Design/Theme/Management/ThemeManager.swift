@@ -38,21 +38,21 @@ public final class ThemeManager {
       dark: "#1A1625"
   """
 
-  private static let bundledRauschYAML = """
-  name: "Rausch"
+  private static let bundledHeliosYAML = """
+  name: "Helios"
   version: "1.0"
   author: "AgentHub"
-  description: "Warm coral accent theme inspired by the Rausch color palette"
+  description: "Warm amber and gold theme inspired by the Greek sun god — sunlight piercing the void"
 
   colors:
     brand:
-      primary: "#FF385C"
-      secondary: "#E31C5F"
-      tertiary: "#D70466"
+      primary: "#F59E0B"
+      secondary: "#78350F"
+      tertiary: "#FCD34D"
 
     backgrounds:
-      dark: "#222222"
-      light: "#FFFFFF"
+      dark: "#1A1410"
+      expandedContentDark: "#140E0A"
   """
 
   private static let bundledNebulaYAML = """
@@ -138,25 +138,6 @@ public final class ThemeManager {
     backgrounds:
       dark: "#0A1628"
       expandedContentDark: "#081220"
-  """
-
-  private static let bundledBetelgeuseYAML = """
-  name: "Betelgeuse"
-  version: "1.0"
-  author: "AgentHub"
-  description: "Warm orange gradient inspired by the red supergiant"
-
-  colors:
-    brand:
-      primary: "#FF6B22"
-      secondary: "#FF8C42"
-      tertiary: "#FFB574"
-
-    backgroundGradient:
-      - color: "#FF6B22"
-        opacity: 0.44
-      - color: "#FF8C42"
-        opacity: 0.25
   """
 
   public struct ThemeMetadata: Identifiable {
@@ -384,14 +365,13 @@ public final class ThemeManager {
   }
 
   private static let bundledThemes: [(name: String, fallbackYAML: String)] = [
-    ("betelgeuse", bundledBetelgeuseYAML),
     ("sentry", bundledSentryYAML),
-    ("rausch", bundledRauschYAML),
     ("rigel", bundledRigelYAML),
     ("vela", bundledVelaYAML),
     ("antares", bundledAntaresYAML),
     ("singularity", bundledSingularityYAML),
     ("nebula", bundledNebulaYAML),
+    ("helios", bundledHeliosYAML),
   ]
 
   private func installBundledThemesIfNeeded() {
