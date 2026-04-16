@@ -1,0 +1,36 @@
+name: "Antares"
+version: "1.0"
+author: "AgentHub"
+description: "Warm rose-pink theme inspired by the red supergiant Antares — the heart of Scorpius"
+
+colors:
+  brand:
+    primary: "#FF6B8A"
+    secondary: "#6B2A50"
+    tertiary: "#FFB3C1"
+
+  backgrounds:
+    dark: "#1F1018"
+    expandedContentDark: "#1A0C14"
+
+  terminal:
+    background: "#1F1018"
+    foreground: "#FFF0F4"
+    cursor: "#FF6B8A"
+    ansi:
+      black: "#1F1018"
+      red: "#FF6B8A"
+      green: "#4ADE80"
+      yellow: "#FBBF24"
+      blue: "#60A5FA"
+      magenta: "#E879F9"
+      cyan: "#22D3EE"
+      white: "#FFF0F4"
+      brightBlack: "#8A6478"
+      brightRed: "#FFB3C1"
+      brightGreen: "#86EFAC"
+      brightYellow: "#FDE68A"
+      brightBlue: "#93C5FD"
+      brightMagenta: "#F0ABFC"
+      brightCyan: "#67E8F9"
+      brightWhite: "#FFFFFF"

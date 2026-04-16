@@ -36,7 +36,6 @@ public final class ThemeManager {
 
     backgrounds:
       dark: "#1A1625"
-      light: "#FAF9FB"
   """
 
   private static let bundledRauschYAML = """
@@ -54,6 +53,91 @@ public final class ThemeManager {
     backgrounds:
       dark: "#222222"
       light: "#FFFFFF"
+  """
+
+  private static let bundledNebulaYAML = """
+  name: "Nebula"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Matte black theme with violet accents inspired by the ultraviolet glow of cosmic nebulae"
+
+  colors:
+    brand:
+      primary: "#A78BFA"
+      secondary: "#312E81"
+      tertiary: "#C4B5FD"
+
+    backgrounds:
+      dark: "#0D0D0D"
+      expandedContentDark: "#080808"
+  """
+
+  private static let bundledSingularityYAML = """
+  name: "Singularity"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Matte black theme inspired by the infinite depth of a black hole's singularity"
+
+  colors:
+    brand:
+      primary: "#A0AEC0"
+      secondary: "#2D3748"
+      tertiary: "#CBD5E0"
+
+    backgrounds:
+      dark: "#0D0D0D"
+      expandedContentDark: "#080808"
+  """
+
+  private static let bundledAntaresYAML = """
+  name: "Antares"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Warm rose-pink theme inspired by the red supergiant Antares — the heart of Scorpius"
+
+  colors:
+    brand:
+      primary: "#FF6B8A"
+      secondary: "#6B2A50"
+      tertiary: "#FFB3C1"
+
+    backgrounds:
+      dark: "#1F1018"
+      expandedContentDark: "#1A0C14"
+  """
+
+  private static let bundledVelaYAML = """
+  name: "Vela"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Deep forest green theme inspired by the Vela Pulsar's emerald supernova remnant"
+
+  colors:
+    brand:
+      primary: "#34D399"
+      secondary: "#134E3A"
+      tertiary: "#6EE7B7"
+
+    backgrounds:
+      dark: "#0A1A14"
+      expandedContentDark: "#071510"
+  """
+
+  private static let bundledRigelYAML = """
+  name: "Rigel"
+  version: "1.0"
+  author: "AgentHub"
+  description: "Deep space navy with electric blue accents, inspired by the blue supergiant Rigel"
+
+  colors:
+    brand:
+      primary: "#38BDF8"
+      secondary: "#164E6A"
+      tertiary: "#7DD3FC"
+
+    backgrounds:
+      dark: "#0A1628"
+      expandedContentDark: "#081220"
   """
 
   private static let bundledBetelgeuseYAML = """
@@ -85,17 +169,17 @@ public final class ThemeManager {
 
   public init() {
     // Load the correct built-in theme synchronously to avoid flash on launch
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "singularity.yaml"
     if let appTheme = AppTheme(rawValue: saved) {
       self.currentTheme = Self.loadBuiltInTheme(appTheme)
     } else {
-      // YAML theme — start with neutral (orange) sync, async load adds gradient
+      // YAML theme — start with neutral sync, async load replaces it
       self.currentTheme = Self.loadBuiltInTheme(.neutral)
     }
     self.fileWatcher = ThemeFileWatcher()
     self.installBundledThemesIfNeeded()
 
-    // Only schedule async loading for YAML themes
+    // Schedule async loading for YAML themes (including the default)
     if AppTheme(rawValue: saved) == nil {
       Task { await self.loadSavedTheme() }
     }
@@ -251,7 +335,7 @@ public final class ThemeManager {
   }
 
   public func loadSavedTheme() async {
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
+    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "singularity.yaml"
 
     // Check if it's a built-in theme
     if let appTheme = AppTheme(rawValue: saved) {
@@ -266,8 +350,13 @@ public final class ThemeManager {
     if FileManager.default.fileExists(atPath: fileURL.path) {
       try? await loadTheme(fileURL: fileURL)
     } else {
-      // Fallback to default
-      loadBuiltInTheme(.neutral)
+      // Fallback: try singularity, then neutral
+      let fallbackURL = themesDir.appendingPathComponent("singularity.yaml")
+      if FileManager.default.fileExists(atPath: fallbackURL.path) {
+        try? await loadTheme(fileURL: fallbackURL)
+      } else {
+        loadBuiltInTheme(.neutral)
+      }
     }
   }
 
@@ -298,6 +387,11 @@ public final class ThemeManager {
     ("betelgeuse", bundledBetelgeuseYAML),
     ("sentry", bundledSentryYAML),
     ("rausch", bundledRauschYAML),
+    ("rigel", bundledRigelYAML),
+    ("vela", bundledVelaYAML),
+    ("antares", bundledAntaresYAML),
+    ("singularity", bundledSingularityYAML),
+    ("nebula", bundledNebulaYAML),
   ]
 
   private func installBundledThemesIfNeeded() {

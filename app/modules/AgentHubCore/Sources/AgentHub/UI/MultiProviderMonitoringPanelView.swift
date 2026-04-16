@@ -786,7 +786,6 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .animation(.easeInOut(duration: 0.25), value: sidePanelContent)
     .animation(.easeInOut(duration: 0.25), value: isEmbeddedSidePanelVisible)
-    .padding(12)
   }
 
   private func presentWebPreviewInSidePanel(forItemID itemID: String, session: CLISession, projectPath: String) {

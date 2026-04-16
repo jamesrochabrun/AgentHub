@@ -85,7 +85,7 @@ struct CollapsibleSessionRow: View {
 
           Text(providerKind.rawValue)
             .font(.secondaryCaption)
-            .foregroundColor(.brandPrimary(for: providerKind).opacity(0.8))
+            .foregroundColor(isPrimary ? .white : .brandPrimary(for: providerKind).opacity(0.8))
 
           Spacer(minLength: 4)
 
@@ -160,13 +160,13 @@ struct CollapsibleSessionRow: View {
 
   private var rowBackground: Color {
     if isPrimary && isHovered {
-      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.28 : 0.22)
+      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.28 : 0.85)
     }
     if isPrimary {
-      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.2 : 0.16)
+      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.2 : 0.75)
     }
     if isHovered {
-      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.12 : 0.1)
+      return Color.brandPrimary(for: providerKind).opacity(colorScheme == .dark ? 0.12 : 0.35)
     }
     return .clear
   }

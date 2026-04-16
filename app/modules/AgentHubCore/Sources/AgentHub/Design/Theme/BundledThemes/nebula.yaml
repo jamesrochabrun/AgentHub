@@ -1,0 +1,36 @@
+name: "Nebula"
+version: "1.0"
+author: "AgentHub"
+description: "Matte black theme with violet accents inspired by the ultraviolet glow of cosmic nebulae"
+
+colors:
+  brand:
+    primary: "#A78BFA"
+    secondary: "#312E81"
+    tertiary: "#C4B5FD"
+
+  backgrounds:
+    dark: "#0D0D0D"
+    expandedContentDark: "#080808"
+
+  terminal:
+    background: "#0D0D0D"
+    foreground: "#E2E8F0"
+    cursor: "#A78BFA"
+    ansi:
+      black: "#0D0D0D"
+      red: "#E06C75"
+      green: "#98C379"
+      yellow: "#ECC94B"
+      blue: "#61AFEF"
+      magenta: "#C678DD"
+      cyan: "#56B6C2"
+      white: "#E2E8F0"
+      brightBlack: "#718096"
+      brightRed: "#E88A91"
+      brightGreen: "#B5D4A1"
+      brightYellow: "#F6E05E"
+      brightBlue: "#8CC8F5"
+      brightMagenta: "#D8A0E8"
+      brightCyan: "#7DCBD5"
+      brightWhite: "#F7FAFC"
