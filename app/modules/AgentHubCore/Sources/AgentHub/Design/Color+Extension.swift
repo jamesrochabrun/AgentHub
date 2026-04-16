@@ -146,60 +146,19 @@ extension Color {
   }
 
   // MARK: - Provider-Aware Colors
+  // Provider argument is retained for API compatibility but no longer affects
+  // color — all providers now use the active theme's brand colors.
 
   public static func brandPrimary(for provider: SessionProviderKind) -> Color {
-    if let yamlProviderColor = yamlProviderPrimaryColor(for: provider) {
-      return yamlProviderColor
-    }
-
-    let selectedTheme = currentAppTheme
-    switch selectedTheme {
-    case .neutral:
-      return Color.primary
-    case .claude:
-      switch provider {
-      case .claude: return Color(hex: "#CC785C")
-      case .codex: return Color(hex: "#00A5B2")
-      }
-    case .codex:
-      return Color(hex: "#00A5B2")
-    case .xcode, .custom, .none:
-      return getCurrentThemeColors().brandPrimary
-    }
+    brandPrimary
   }
 
   public static func brandSecondary(for provider: SessionProviderKind) -> Color {
-    let selectedTheme = currentAppTheme
-    switch selectedTheme {
-    case .neutral:
-      return Color.secondary
-    case .claude:
-      switch provider {
-      case .claude: return Color(hex: "#D4A27F")
-      case .codex: return Color(hex: "#00A5B2")
-      }
-    case .codex:
-      return Color(hex: "#00A5B2")
-    case .xcode, .custom, .none:
-      return getCurrentThemeColors().brandSecondary
-    }
+    brandSecondary
   }
 
   public static func brandTertiary(for provider: SessionProviderKind) -> Color {
-    let selectedTheme = currentAppTheme
-    switch selectedTheme {
-    case .neutral:
-      return Color(nsColor: .tertiaryLabelColor)
-    case .claude:
-      switch provider {
-      case .claude: return Color(hex: "#EBDBBC")
-      case .codex: return Color(hex: "#00A5B2")
-      }
-    case .codex:
-      return Color(hex: "#00A5B2")
-    case .xcode, .custom, .none:
-      return getCurrentThemeColors().brandTertiary
-    }
+    brandTertiary
   }
 
   private static var currentAppTheme: AppTheme? {
@@ -225,41 +184,6 @@ extension Color {
 
     // Delegate to ThemeManager as single source of truth for built-in themes
     return ThemeManager.getThemeColors(for: theme)
-  }
-
-  private static func yamlProviderPrimaryColor(for provider: SessionProviderKind) -> Color? {
-    guard isYAMLThemeSelected else { return nil }
-
-    let claudePrimary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlPrimaryHex)
-    let sentryLightCodex = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlSecondaryHex) ?? "#362D59"
-    let sentryDarkCodex = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlTertiaryHex) ?? "#584774"
-    let codexPrimary: String? = {
-      if isSentryYAMLSelected {
-        return sentryDarkCodex
-      }
-      return UserDefaults.standard.string(forKey: AgentHubDefaults.yamlSecondaryHex)
-    }()
-
-    switch provider {
-    case .claude:
-      guard let claudePrimary else { return nil }
-      return Color(hex: claudePrimary)
-    case .codex:
-      if isSentryYAMLSelected {
-        let dynamicCodex = NSColor(name: nil) { appearance in
-          let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-          return NSColor.fromHex(isDark ? sentryDarkCodex : sentryLightCodex)
-        }
-        return Color(nsColor: dynamicCodex)
-      }
-      guard let codexPrimary else { return nil }
-      return Color(hex: codexPrimary)
-    }
-  }
-
-  private static var isYAMLThemeSelected: Bool {
-    let selectedTheme = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "neutral"
-    return AppTheme(rawValue: selectedTheme) == nil
   }
 
   private static var isSentryYAMLSelected: Bool {
