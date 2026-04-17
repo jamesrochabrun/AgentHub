@@ -900,7 +900,7 @@ public struct MultiProviderSessionsListView: View {
   @ViewBuilder
   private var inlineSelectedSessions: some View {
     VStack(alignment: .leading, spacing: 0) {
-      ThreadsSectionHeader(
+      SessionsSectionHeader(
         groupMode: $sidebarGroupMode,
         repos: orderedTrackedRepos,
         launchViewModel: multiLaunchViewModel,
@@ -937,7 +937,7 @@ public struct MultiProviderSessionsListView: View {
               onOpenGitHub: {
                 gitHubSheetItem = GitHubSheetItem(projectPath: group.id)
               },
-              onArchiveThreads: group.items.isEmpty ? nil : {
+              onArchiveSessions: group.items.isEmpty ? nil : {
                 let items = group.items
                 archiveConfirmation = ArchiveConfirmation(
                   repoName: group.displayName,
@@ -1514,7 +1514,7 @@ private struct ProjectGroupHeader: View {
   let intelligenceViewModel: IntelligenceViewModel?
   let onOpenInFinder: () -> Void
   let onOpenGitHub: () -> Void
-  let onArchiveThreads: (() -> Void)?
+  let onArchiveSessions: (() -> Void)?
   let onRemove: () -> Void
 
   @State private var isHovered: Bool = false
@@ -1532,6 +1532,14 @@ private struct ProjectGroupHeader: View {
           Text(name)
             .font(Font.geist(size: 13, weight: .semibold))
             .foregroundColor(.primary)
+          if canToggle {
+            Image(systemName: "chevron.right")
+              .font(.system(size: 10, weight: .semibold))
+              .foregroundColor(.secondary)
+              .rotationEffect(.degrees(isExpanded ? 90 : 0))
+              .animation(.easeInOut(duration: 0.15), value: isExpanded)
+              .opacity(isHovered ? 1 : 0)
+          }
           Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
@@ -1546,9 +1554,9 @@ private struct ProjectGroupHeader: View {
           Label("GitHub", systemImage: "arrow.triangle.pull")
         }
         Divider()
-        if let onArchiveThreads {
-          Button(action: onArchiveThreads) {
-            Label("Archive Threads", systemImage: "archivebox")
+        if let onArchiveSessions {
+          Button(action: onArchiveSessions) {
+            Label("Archive Sessions", systemImage: "archivebox")
           }
         }
         Button(action: onRemove) {
@@ -1587,6 +1595,7 @@ private struct ProjectGroupHeader: View {
               ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.12 : 0.1)
               : Color.clear)
     )
+    .padding(.top, 2)
     .contentShape(Rectangle())
     .onHover { isHovered = $0 }
     .animation(.easeInOut(duration: 0.15), value: isHovered)
@@ -1692,9 +1701,9 @@ private struct StartSessionSheet: View {
   }
 }
 
-// MARK: - ThreadsSectionHeader
+// MARK: - SessionsSectionHeader
 
-private struct ThreadsSectionHeader: View {
+private struct SessionsSectionHeader: View {
   @Binding var groupMode: SidebarGroupMode
   let repos: [SelectedRepository]
   let launchViewModel: MultiSessionLaunchViewModel?
@@ -1707,7 +1716,7 @@ private struct ThreadsSectionHeader: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 2) {
-        Text("Threads")
+        Text("Sessions")
           .font(.heading)
           .foregroundColor(.secondary)
 
