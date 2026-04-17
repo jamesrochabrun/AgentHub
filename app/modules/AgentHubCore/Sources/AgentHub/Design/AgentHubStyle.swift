@@ -130,23 +130,29 @@ private struct AgentHubFlatRowModifier: ViewModifier {
   let isHighlighted: Bool
   let providerKind: SessionProviderKind?
 
+  @State private var isHovered = false
+
   func body(content: Content) -> some View {
-    // Always show subtle background, selection indicated only by left border
-    let backgroundColor = colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92)
     let accentColor: Color = if let provider = providerKind {
       Color.brandPrimary(for: provider)
     } else {
       Color.brandPrimary
     }
 
+    let hoverBackground = accentColor.opacity(colorScheme == .dark ? 0.12 : 0.35)
+
     return content
-      .background(backgroundColor)
+      .background(isHovered ? hoverBackground : .clear)
       .overlay(alignment: .leading) {
-        // Left accent bar for highlighted state only
         if isHighlighted {
           Rectangle()
             .fill(accentColor)
             .frame(width: 2)
+        }
+      }
+      .onHover { hovering in
+        withAnimation(.easeInOut(duration: 0.12)) {
+          isHovered = hovering
         }
       }
   }
