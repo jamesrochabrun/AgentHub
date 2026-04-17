@@ -79,6 +79,12 @@ public actor SessionMetadataStore {
       }
     }
 
+    migrator.registerMigration("v4_add_pinned") { db in
+      try db.alter(table: "session_metadata") { t in
+        t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+      }
+    }
+
     return migrator
   }
 
@@ -109,6 +115,36 @@ public actor SessionMetadataStore {
         )
         try metadata.insert(db)
       }
+    }
+  }
+
+  /// Sets the pinned state for a session
+  /// Creates new record if none exists, updates if it does
+  public func setPinned(_ isPinned: Bool, for sessionId: String) throws {
+    try dbQueue.write { db in
+      if var existing = try SessionMetadata.fetchOne(db, key: sessionId) {
+        existing.isPinned = isPinned
+        existing.updatedAt = Date()
+        try existing.update(db)
+      } else if isPinned {
+        let metadata = SessionMetadata(
+          sessionId: sessionId,
+          isPinned: true
+        )
+        try metadata.insert(db)
+      }
+    }
+  }
+
+  /// Gets all pinned session IDs
+  public func getPinnedSessionIds() throws -> Set<String> {
+    try dbQueue.read { db in
+      let ids = try SessionMetadata
+        .filter(Column("isPinned") == true)
+        .select(Column("sessionId"))
+        .fetchAll(db)
+        .map(\.sessionId)
+      return Set(ids)
     }
   }
 

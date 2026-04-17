@@ -150,6 +150,20 @@ public struct CollapsibleSelectedSessionsPanel: View {
             customName: customName(for: item),
             sessionStatus: item.sessionStatus,
             colorScheme: colorScheme,
+            isPinned: {
+              switch item.providerKind {
+              case .claude: return claudeViewModel.pinnedSessionIds.contains(item.session.id)
+              case .codex: return codexViewModel.pinnedSessionIds.contains(item.session.id)
+              }
+            }(),
+            onPin: {
+              withAnimation(.easeInOut(duration: 0.3)) {
+                switch item.providerKind {
+                case .claude: claudeViewModel.togglePin(for: item.session)
+                case .codex: codexViewModel.togglePin(for: item.session)
+                }
+              }
+            },
             onArchive: item.isPending ? nil : {
               switch item.providerKind {
               case .claude: claudeViewModel.stopMonitoring(session: item.session)
@@ -390,6 +404,12 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
             customName: viewModel.sessionCustomNames[item.session.id],
             sessionStatus: item.sessionStatus,
             colorScheme: colorScheme,
+            isPinned: viewModel.pinnedSessionIds.contains(item.session.id),
+            onPin: {
+              withAnimation(.easeInOut(duration: 0.3)) {
+                viewModel.togglePin(for: item.session)
+              }
+            },
             onArchive: item.isPending ? nil : {
               viewModel.stopMonitoring(session: item.session)
             },
