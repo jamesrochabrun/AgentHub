@@ -504,21 +504,18 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  private var browseAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeInOut(duration: 0.15)
+      : .spring(response: 0.35, dampingFraction: 0.88)
+  }
+
   private var sidePanelView: some View {
     VStack(spacing: 0) {
       ScrollViewReader { proxy in
         ScrollView(showsIndicators: false) {
-          VStack(spacing: 0) {
-            sessionListContent
-              .padding(12)
-
-            // Browse content (scrollable, shown when expanded)
-            if isBrowseExpanded {
-              browseExpandedContent
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
-            }
-          }
+          sessionListContent
+            .padding(12)
         }
         .onChange(of: scrollToSessionId) { _, newId in
           guard let newId else { return }
@@ -529,16 +526,45 @@ public struct MultiProviderSessionsListView: View {
         }
       }
 
-      // Pinned browse header at bottom
+      // Browse panel slides up from bottom with fixed max height
+      if isBrowseExpanded {
+        browsePanel
+          .transition(
+            accessibilityReduceMotion
+              ? .opacity
+              : .move(edge: .bottom).combined(with: .opacity)
+          )
+      } else {
+        browseHeaderView
+          .padding(.horizontal, 12)
+          .padding(.vertical, 6)
+          .overlay(alignment: .top) {
+            Divider()
+          }
+          .transition(.move(edge: .bottom).combined(with: .opacity))
+      }
+    }
+    .animation(browseAnimation, value: isBrowseExpanded)
+  }
+
+  private var browsePanel: some View {
+    VStack(spacing: 0) {
       browseHeaderView
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.clear)
         .overlay(alignment: .top) {
-          Divider()
+          Rectangle()
+            .fill(Color.primary.opacity(0.15))
+            .frame(height: 3)
         }
+
+      ScrollView(showsIndicators: false) {
+        browseExpandedContent
+          .padding(.horizontal, 12)
+          .padding(.vertical, 12)
+      }
     }
-    .animation(.easeInOut(duration: 0.25), value: isBrowseExpanded)
+    .frame(maxHeight: 420)
   }
 
   // MARK: - Collapsible Search Button
@@ -1047,18 +1073,19 @@ public struct MultiProviderSessionsListView: View {
 
   @State private var showBrowseInfo = false
 
-  /// Pinned header bar at the bottom of the sidebar.
+  /// Browse header — pinned at bottom when collapsed, at top of browse panel when expanded.
   private var browseHeaderView: some View {
     HStack(spacing: 8) {
       Button {
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(browseAnimation) {
           isBrowseExpanded.toggle()
         }
       } label: {
-        HStack(spacing: 8) {
-          Image(systemName: "chevron.right")
-            .rotationEffect(.degrees(isBrowseExpanded ? 90 : 0))
-            .font(.system(size: 10))
+        HStack(spacing: 6) {
+          Image(systemName: isBrowseExpanded ? "chevron.down" : "chevron.up")
+            .font(.system(size: DesignTokens.IconSize.sm, weight: .semibold))
+            .frame(width: 12, height: 12)
+            .contentTransition(.symbolEffect(.replace))
           Text("Browse all Sessions")
             .font(.heading)
         }
@@ -1071,12 +1098,13 @@ public struct MultiProviderSessionsListView: View {
         showBrowseInfo.toggle()
       } label: {
         Image(systemName: "info.circle")
-          .font(.system(size: 12))
+          .font(.system(size: DesignTokens.IconSize.sm))
           .foregroundColor(.secondary)
+          .frame(width: 12, height: 12)
       }
       .buttonStyle(.plain)
       .help("About Browse all Sessions")
-      .popover(isPresented: $showBrowseInfo, arrowEdge: .top) {
+      .popover(isPresented: $showBrowseInfo, arrowEdge: isBrowseExpanded ? .bottom : .top) {
         Text("Find all local Claude and Codex sessions started from the terminal and bring them into AgentHub.")
           .font(.callout)
           .foregroundColor(.secondary)
@@ -1391,7 +1419,7 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func triggerNewSessionFlow(preferredRepositoryPath: String? = nil) {
-    withAnimation(.easeInOut(duration: 0.2)) {
+    withAnimation(browseAnimation) {
       isBrowseExpanded = true
     }
     launchExpandRequestID += 1
