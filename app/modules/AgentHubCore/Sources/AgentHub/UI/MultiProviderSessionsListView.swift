@@ -49,7 +49,7 @@ private struct ArchiveConfirmationAlert: ViewModifier {
 
   func body(content: Content) -> some View {
     content.alert(
-      confirmation.map { "Archive \($0.count) threads?" } ?? "",
+      confirmation.map { "Archive \($0.count) sessions?" } ?? "",
       isPresented: Binding(
         get: { confirmation != nil },
         set: { if !$0 { confirmation = nil } }
@@ -158,6 +158,7 @@ public struct MultiProviderSessionsListView: View {
   @State private var collapsedProjectGroups: Set<String> = []
   @State private var sidebarGroupMode: SidebarGroupMode = .repo
   @State private var collapsedStatusGroups: Set<StatusGroupCategory> = []
+  @State private var isPinnedSectionCollapsed: Bool = false
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
@@ -847,10 +848,23 @@ public struct MultiProviderSessionsListView: View {
     return itemPath
   }
 
+  private var allPinnedIds: Set<String> {
+    claudeViewModel.pinnedSessionIds.union(codexViewModel.pinnedSessionIds)
+  }
+
+  private var pinnedSessionItems: [SelectedSessionItem] {
+    let pinned = allPinnedIds
+    guard !pinned.isEmpty else { return [] }
+    return selectedSessionItems
+      .filter { pinned.contains($0.session.id) }
+      .sorted { $0.timestamp > $1.timestamp }
+  }
+
   /// Groups built from tracked repos first (even empty), then an orphan bucket
   /// for sessions whose path doesn't belong to any tracked repo.
   private var groupedSelectedSessions: [SessionGroup] {
-    let allItems = selectedSessionItems
+    let pinned = allPinnedIds
+    let allItems = selectedSessionItems.filter { !pinned.contains($0.session.id) }
     var byRepo: [String: [SelectedSessionItem]] = [:]
     for item in allItems {
       let key = findParentRepoPath(for: item.session.projectPath)
@@ -885,8 +899,9 @@ public struct MultiProviderSessionsListView: View {
 
   /// Sessions grouped by status category (Working / Needs Attention / Idle).
   private var statusGroupedSessions: [StatusGroupCategory: [SelectedSessionItem]] {
+    let pinned = allPinnedIds
     var result: [StatusGroupCategory: [SelectedSessionItem]] = [:]
-    for item in selectedSessionItems {
+    for item in selectedSessionItems where !pinned.contains(item.session.id) {
       let category = StatusGroupCategory.category(for: item.sessionStatus)
       result[category, default: []].append(item)
     }
@@ -900,13 +915,32 @@ public struct MultiProviderSessionsListView: View {
   @ViewBuilder
   private var inlineSelectedSessions: some View {
     VStack(alignment: .leading, spacing: 0) {
-      ThreadsSectionHeader(
+      SessionsSectionHeader(
         groupMode: $sidebarGroupMode,
         repos: orderedTrackedRepos,
         launchViewModel: multiLaunchViewModel,
         intelligenceViewModel: intelligenceViewModel,
         onAddFolder: { showAddRepositoryPicker() }
       )
+
+      // Pinned sessions section
+      let pinned = pinnedSessionItems
+      if !pinned.isEmpty {
+        PinnedSectionHeader(
+          count: pinned.count,
+          isExpanded: !isPinnedSectionCollapsed,
+          onToggle: {
+            withAnimation(.easeInOut(duration: 0.25)) {
+              isPinnedSectionCollapsed.toggle()
+            }
+          }
+        )
+        .transition(.opacity)
+
+        if !isPinnedSectionCollapsed {
+          sessionRows(for: pinned)
+        }
+      }
 
       switch sidebarGroupMode {
       case .repo:
@@ -937,7 +971,7 @@ public struct MultiProviderSessionsListView: View {
               onOpenGitHub: {
                 gitHubSheetItem = GitHubSheetItem(projectPath: group.id)
               },
-              onArchiveThreads: group.items.isEmpty ? nil : {
+              onArchiveSessions: group.items.isEmpty ? nil : {
                 let items = group.items
                 archiveConfirmation = ArchiveConfirmation(
                   repoName: group.displayName,
@@ -1021,6 +1055,15 @@ public struct MultiProviderSessionsListView: View {
           customName: selectedSessionCustomName(for: item),
           sessionStatus: item.sessionStatus,
           colorScheme: colorScheme,
+          isPinned: allPinnedIds.contains(item.session.id),
+          onPin: item.isPending ? nil : {
+            withAnimation(.easeInOut(duration: 0.3)) {
+              switch item.providerKind {
+              case .claude: claudeViewModel.togglePin(for: item.session)
+              case .codex: codexViewModel.togglePin(for: item.session)
+              }
+            }
+          },
           onArchive: item.isPending ? nil : {
             withAnimation(.easeInOut(duration: 0.25)) {
               switch item.providerKind {
@@ -1048,6 +1091,7 @@ public struct MultiProviderSessionsListView: View {
       }
     }
     .padding(.top, 2)
+    .animation(.easeInOut(duration: 0.25), value: allPinnedIds)
   }
 
   @ViewBuilder
@@ -1514,7 +1558,7 @@ private struct ProjectGroupHeader: View {
   let intelligenceViewModel: IntelligenceViewModel?
   let onOpenInFinder: () -> Void
   let onOpenGitHub: () -> Void
-  let onArchiveThreads: (() -> Void)?
+  let onArchiveSessions: (() -> Void)?
   let onRemove: () -> Void
 
   @State private var isHovered: Bool = false
@@ -1532,6 +1576,14 @@ private struct ProjectGroupHeader: View {
           Text(name)
             .font(Font.geist(size: 13, weight: .semibold))
             .foregroundColor(.primary)
+          if canToggle {
+            Image(systemName: "chevron.right")
+              .font(.system(size: 10, weight: .semibold))
+              .foregroundColor(.secondary)
+              .rotationEffect(.degrees(isExpanded ? 90 : 0))
+              .animation(.easeInOut(duration: 0.15), value: isExpanded)
+              .opacity(isHovered ? 1 : 0)
+          }
           Spacer(minLength: 0)
         }
         .contentShape(Rectangle())
@@ -1546,9 +1598,9 @@ private struct ProjectGroupHeader: View {
           Label("GitHub", systemImage: "arrow.triangle.pull")
         }
         Divider()
-        if let onArchiveThreads {
-          Button(action: onArchiveThreads) {
-            Label("Archive Threads", systemImage: "archivebox")
+        if let onArchiveSessions {
+          Button(action: onArchiveSessions) {
+            Label("Archive Sessions", systemImage: "archivebox")
           }
         }
         Button(action: onRemove) {
@@ -1587,6 +1639,55 @@ private struct ProjectGroupHeader: View {
               ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.12 : 0.1)
               : Color.clear)
     )
+    .padding(.top, 2)
+    .contentShape(Rectangle())
+    .onHover { isHovered = $0 }
+    .animation(.easeInOut(duration: 0.15), value: isHovered)
+  }
+}
+
+// MARK: - PinnedSectionHeader
+
+private struct PinnedSectionHeader: View {
+  let count: Int
+  let isExpanded: Bool
+  let onToggle: () -> Void
+
+  @State private var isHovered: Bool = false
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    Button(action: onToggle) {
+      HStack(spacing: 6) {
+        Image(systemName: "pin.fill")
+          .font(.system(size: 10))
+          .foregroundColor(.secondary)
+        Text("Pinned")
+          .font(Font.geist(size: 13, weight: .semibold))
+          .foregroundColor(.primary)
+        Text("\(count)")
+          .font(Font.geist(size: 11, weight: .regular))
+          .foregroundColor(.secondary)
+        Spacer(minLength: 0)
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .medium))
+          .foregroundColor(.secondary)
+          .rotationEffect(.degrees(isExpanded ? 90 : 0))
+          .animation(.easeInOut(duration: 0.15), value: isExpanded)
+          .padding(.trailing, 4)
+      }
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .padding(.vertical, 6)
+    .padding(.horizontal, 4)
+    .background(
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(isHovered
+              ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.12 : 0.1)
+              : Color.clear)
+    )
+    .padding(.top, 2)
     .contentShape(Rectangle())
     .onHover { isHovered = $0 }
     .animation(.easeInOut(duration: 0.15), value: isHovered)
@@ -1620,6 +1721,7 @@ private struct StatusGroupSectionHeader: View {
         Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
           .font(.system(size: 10, weight: .medium))
           .foregroundColor(.secondary)
+          .padding(.trailing, 4)
       }
       .contentShape(Rectangle())
     }
@@ -1692,9 +1794,9 @@ private struct StartSessionSheet: View {
   }
 }
 
-// MARK: - ThreadsSectionHeader
+// MARK: - SessionsSectionHeader
 
-private struct ThreadsSectionHeader: View {
+private struct SessionsSectionHeader: View {
   @Binding var groupMode: SidebarGroupMode
   let repos: [SelectedRepository]
   let launchViewModel: MultiSessionLaunchViewModel?
@@ -1707,7 +1809,7 @@ private struct ThreadsSectionHeader: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: 2) {
-        Text("Threads")
+        Text("Sessions")
           .font(.heading)
           .foregroundColor(.secondary)
 

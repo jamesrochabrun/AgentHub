@@ -45,6 +45,11 @@ public final class CLISessionsViewModel {
   /// Cache of custom names keyed by session ID
   public private(set) var sessionCustomNames: [String: String] = [:]
 
+  // MARK: - Pinned Sessions State
+
+  /// Cache of pinned session IDs
+  public private(set) var pinnedSessionIds: Set<String> = []
+
   // MARK: - Worktree Deletion State
 
   public private(set) var deletingWorktreePath: String? = nil
@@ -564,6 +569,11 @@ public final class CLISessionsViewModel {
       loadingState = .restoringRepositories
     }
 
+    // Pre-populate pinned sessions synchronously to avoid flicker on launch
+    if let store = metadataStore {
+      pinnedSessionIds = store.getPinnedSessionIdsSync()
+    }
+
     setupSubscriptions()
     restorePersistedRepositories()
     requestNotificationPermissions()
@@ -631,6 +641,51 @@ public final class CLISessionsViewModel {
         }
       } catch {
         AppLogger.session.error("Failed to load custom names: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  // MARK: - Pinned Sessions
+
+  /// Toggles the pinned state for a session
+  public func togglePin(for session: CLISession) {
+    guard let store = metadataStore else { return }
+    let newPinned = !pinnedSessionIds.contains(session.id)
+
+    if newPinned {
+      pinnedSessionIds.insert(session.id)
+    } else {
+      pinnedSessionIds.remove(session.id)
+    }
+
+    Task {
+      do {
+        try await store.setPinned(newPinned, for: session.id)
+      } catch {
+        await MainActor.run {
+          if newPinned {
+            pinnedSessionIds.remove(session.id)
+          } else {
+            pinnedSessionIds.insert(session.id)
+          }
+        }
+        AppLogger.session.error("Failed to set pinned state: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  /// Loads pinned session IDs from database
+  public func loadPinnedSessions() {
+    guard let store = metadataStore else { return }
+
+    Task {
+      do {
+        let pinned = try await store.getPinnedSessionIds()
+        await MainActor.run {
+          pinnedSessionIds = pinned
+        }
+      } catch {
+        AppLogger.session.error("Failed to load pinned sessions: \(error.localizedDescription)")
       }
     }
   }
@@ -766,6 +821,7 @@ public final class CLISessionsViewModel {
       pendingRestorationSessionIds.subtract(restoredIds)
       expandItemsContainingMonitoredSessions()
       loadCustomNames()
+      loadPinnedSessions()
     }
   }
 
@@ -851,6 +907,7 @@ public final class CLISessionsViewModel {
 
     // Load custom session names from database
     loadCustomNames()
+    loadPinnedSessions()
   }
 
   /// Expands repositories and worktrees that contain monitored sessions.

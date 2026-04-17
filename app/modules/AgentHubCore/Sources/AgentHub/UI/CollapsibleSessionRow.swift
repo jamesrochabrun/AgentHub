@@ -11,6 +11,8 @@ struct CollapsibleSessionRow: View {
   let customName: String?
   let sessionStatus: SessionStatus?
   let colorScheme: ColorScheme
+  let isPinned: Bool
+  let onPin: (() -> Void)?
   let onArchive: (() -> Void)?
   let onDeleteWorktree: (() -> Void)?
   var isDeletingWorktree: Bool = false
@@ -59,7 +61,7 @@ struct CollapsibleSessionRow: View {
   }
 
   private var showActions: Bool {
-    isHovered && !isPending && (onArchive != nil || onDeleteWorktree != nil)
+    isHovered && !isPending && (onPin != nil || onArchive != nil || onDeleteWorktree != nil)
   }
 
   // MARK: - Body
@@ -174,6 +176,17 @@ struct CollapsibleSessionRow: View {
   @ViewBuilder
   private var actionsView: some View {
     HStack(spacing: 2) {
+      if let onPin {
+        Button(action: onPin) {
+          Image(systemName: isPinned ? "pin.fill" : "pin")
+            .font(.system(size: 10))
+            .foregroundColor(.secondary)
+            .frame(width: 18, height: 18)
+        }
+        .buttonStyle(.plain)
+        .help(isPinned ? "Unpin session" : "Pin session")
+      }
+
       if let onArchive {
         if showArchiveConfirm {
           Button {
@@ -323,6 +336,8 @@ struct CollapsibleSessionRow: View {
             customName: idx == 3 ? "Auth Refactor" : nil,
             sessionStatus: state.0,
             colorScheme: .dark,
+            isPinned: idx == 0,
+            onPin: {},
             onArchive: state.1 ? nil : {},
             onDeleteWorktree: nil,
             onSelect: {}
@@ -345,6 +360,8 @@ struct CollapsibleSessionRow: View {
             customName: nil,
             sessionStatus: idx == 0 ? .thinking : (idx == 1 ? .executingTool(name: "Read") : .idle),
             colorScheme: .dark,
+            isPinned: false,
+            onPin: {},
             onArchive: {},
             onDeleteWorktree: nil,
             onSelect: {}
@@ -366,6 +383,8 @@ struct CollapsibleSessionRow: View {
           customName: nil,
           sessionStatus: .thinking,
           colorScheme: .light,
+          isPinned: false,
+          onPin: {},
           onArchive: {},
           onDeleteWorktree: nil,
           onSelect: {}
@@ -381,6 +400,8 @@ struct CollapsibleSessionRow: View {
           customName: nil,
           sessionStatus: .idle,
           colorScheme: .light,
+          isPinned: false,
+          onPin: {},
           onArchive: {},
           onDeleteWorktree: nil,
           onSelect: {}
@@ -396,6 +417,8 @@ struct CollapsibleSessionRow: View {
           customName: nil,
           sessionStatus: .waitingForUser,
           colorScheme: .light,
+          isPinned: false,
+          onPin: {},
           onArchive: {},
           onDeleteWorktree: nil,
           onSelect: {}
