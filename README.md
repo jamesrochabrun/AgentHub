@@ -45,7 +45,8 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Usage stats** — Track token counts, costs, and daily activity per provider (menu bar or popover)
 - **Command palette** — Quick access to sessions, repositories, and actions via Cmd+K
 - **Pending changes preview** — Review Edit/Write/MultiEdit tool diffs before accepting
-- **Custom themes** — Ship with default and Sentry themes; load custom YAML themes with hot-reload
+- **Custom themes** — 7 bundled space-themed YAML themes (Singularity, Nebula, Helios, Rigel, Vela, Antares, Sentry) with full terminal ANSI palettes, custom backgrounds, and WCAG-compliant contrast; load custom YAML themes with hot-reload
+- **Terminal font picker** — Choose from 9 monospace fonts: SF Mono, JetBrains Mono, GeistMono, Fira Code, Cascadia Mono, Source Code Pro, Menlo, Monaco, Courier New
 - **Image & file attachments** — Drag-and-drop files into sessions
 - **Session naming** — Rename any session with custom names (SQLite-backed)
 - **Notification sounds** — Configurable audio alert when a tool call awaits approval

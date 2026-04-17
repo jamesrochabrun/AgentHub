@@ -30,11 +30,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
   private func registerBundledFonts() {
     let otfFonts = [
       "Geist-Regular", "Geist-Medium", "Geist-SemiBold", "Geist-Bold",
-      "GeistMono-Regular", "GeistMono-Medium", "GeistMono-SemiBold", "GeistMono-Bold"
+      "GeistMono-Regular", "GeistMono-Medium", "GeistMono-SemiBold", "GeistMono-Bold",
+      "SourceCodePro-Regular"
     ]
     let ttfFonts = [
       "JetBrainsMono-Regular", "JetBrainsMono-Medium",
-      "JetBrainsMono-SemiBold", "JetBrainsMono-Bold"
+      "JetBrainsMono-SemiBold", "JetBrainsMono-Bold",
+      "FiraCode-Regular",
+      "CascadiaMono-Regular"
     ]
     for name in otfFonts {
       if let url = Bundle.main.url(forResource: name, withExtension: "otf") {
