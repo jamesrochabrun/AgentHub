@@ -94,6 +94,10 @@ public enum AgentHubDefaults {
   /// Type: Double (default: 12.0)
   public static let terminalFontSize = "\(keyPrefix)terminal.fontSize"
 
+  /// Terminal font family name
+  /// Type: String (default: "SF Mono")
+  public static let terminalFontFamily = "\(keyPrefix)terminal.fontFamily"
+
   /// Preferred newline shortcut in the embedded terminal
   /// Type: Int (default: 0 = system/default)
   /// See: NewlineShortcut enum in EmbeddedTerminalView.swift

@@ -6,6 +6,8 @@
 import SwiftUI
 
 public struct WorktreeSettingsView: View {
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
   @AppStorage(AgentHubDefaults.worktreeBranchPrefix)
   private var worktreeBranchPrefix: String = ""
 
@@ -31,6 +33,17 @@ public struct WorktreeSettingsView: View {
       }
     }
     .formStyle(.grouped)
+    .scrollContentBackground(.hidden)
+    .background(settingsBackground.ignoresSafeArea())
+  }
+
+  @ViewBuilder
+  private var settingsBackground: some View {
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    } else {
+      Color.clear
+    }
   }
 
   private var previewBox: some View {

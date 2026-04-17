@@ -1,0 +1,36 @@
+name: "Helios"
+version: "1.0"
+author: "AgentHub"
+description: "Warm amber and gold theme inspired by the Greek sun god — sunlight piercing the void"
+
+colors:
+  brand:
+    primary: "#F59E0B"
+    secondary: "#78350F"
+    tertiary: "#FCD34D"
+
+  backgrounds:
+    dark: "#1A1410"
+    expandedContentDark: "#140E0A"
+
+  terminal:
+    background: "#1A1410"
+    foreground: "#F0E4D0"
+    cursor: "#F59E0B"
+    ansi:
+      black: "#1A1410"
+      red: "#E06C75"
+      green: "#98C379"
+      yellow: "#F5B944"
+      blue: "#61AFEF"
+      magenta: "#C678DD"
+      cyan: "#56B6C2"
+      white: "#F0E4D0"
+      brightBlack: "#6B5A48"
+      brightRed: "#E88A91"
+      brightGreen: "#B5D4A1"
+      brightYellow: "#FCD34D"
+      brightBlue: "#8CC8F5"
+      brightMagenta: "#D8A0E8"
+      brightCyan: "#7DCBD5"
+      brightWhite: "#FEF9E7"

@@ -87,6 +87,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @AppStorage(AgentHubDefaults.terminalFontSize) private var terminalFontSize: Double = 12
+  @AppStorage(AgentHubDefaults.terminalFontFamily) private var terminalFontFamily: String = "SF Mono"
 
   let terminalKey: String  // Key for terminal storage (session ID or "pending-{pendingId}")
   let sessionId: String?  // Optional: nil for new sessions, set for resume
@@ -175,7 +176,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
     nsView.onUserInteraction = onUserInteraction
     nsView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
-    nsView.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), theme: runtimeTheme)
+    nsView.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), fontFamily: terminalFontFamily, theme: runtimeTheme)
 
     // If there's a pending prompt in the viewModel, send it (and clear it)
     // Use terminalKey (not sessionId) since it works for both pending and real sessions
@@ -196,6 +197,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
   private var lastAppliedFontSize: CGFloat?
+  private var lastAppliedFontFamily: String?
   private var lastAppliedIsDark: Bool?
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
   private var localEventMonitor: Any?
@@ -400,22 +402,23 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     typeText(text)
   }
 
-  public func syncAppearance(isDark: Bool, fontSize: CGFloat, theme: RuntimeTheme? = nil) {
+  public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String = "SF Mono", theme: RuntimeTheme? = nil) {
     updateColors(isDark: isDark, theme: theme)
-    updateFont(size: fontSize)
+    updateFont(size: fontSize, family: fontFamily)
   }
 
-  /// Updates terminal font size.
-  public func updateFont(size: CGFloat) {
+  /// Updates terminal font size and family.
+  public func updateFont(size: CGFloat, family: String = "SF Mono") {
     guard let terminal = terminalView else { return }
     let resolvedSize = max(size, 8)
-    guard lastAppliedFontSize != resolvedSize else { return }
+    guard lastAppliedFontSize != resolvedSize || lastAppliedFontFamily != family else { return }
 
-    let font = NSFont(name: "SF Mono", size: resolvedSize)
-      ?? NSFont(name: "Menlo", size: resolvedSize)
+    let font = NSFont(name: family, size: resolvedSize)
+      ?? NSFont(name: "SF Mono", size: resolvedSize)
       ?? NSFont.monospacedSystemFont(ofSize: resolvedSize, weight: .regular)
     terminal.font = font
     lastAppliedFontSize = resolvedSize
+    lastAppliedFontFamily = family
   }
 
   private var lastAppliedThemeId: String?
@@ -461,7 +464,6 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let fontSize: CGFloat = 12
     lastAppliedFontSize = fontSize
     let font = NSFont(name: "SF Mono", size: fontSize)
-      ?? NSFont(name: "Menlo", size: fontSize)
       ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     terminal.font = font
 

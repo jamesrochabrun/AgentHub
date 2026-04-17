@@ -232,12 +232,25 @@ public struct MonitoringCardView: View {
 
       monitorContent
 
-      if shouldShowResourcesPanel {
-        ResourceLinksPanel(
-          links: resourceLinks,
-          providerKind: providerKind,
-          currentPullRequest: sessionGitHubQuickAccessViewModel.currentBranchPR
-        )
+      ResourceLinksPanel(
+        links: resourceLinks,
+        providerKind: providerKind,
+        currentPullRequest: sessionGitHubQuickAccessViewModel.currentBranchPR
+      ) {
+        Button {
+          showingActionsPopover = true
+        } label: {
+          Image(systemName: "ellipsis")
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundColor(Color.brandPrimary)
+            .padding(.horizontal, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showingActionsPopover) {
+          actionsPopoverContent
+        }
+        .help("Session actions")
       }
     }
     .background(.clear)
@@ -888,42 +901,24 @@ public struct MonitoringCardView: View {
 
   @ViewBuilder
   private var monitorContent: some View {
-    ZStack(alignment: .bottomTrailing) {
-      EmbeddedTerminalView(
-        terminalKey: terminalKey ?? session.id,
-        sessionId: session.id,
-        projectPath: session.projectPath,
-        cliConfiguration: viewModel?.cliConfiguration ?? .claudeDefault,
-        initialPrompt: initialPrompt,
-        initialInputText: initialInputText,
-        viewModel: viewModel,
-        dangerouslySkipPermissions: dangerouslySkipPermissions,
-        permissionModePlan: permissionModePlan,
-        worktreeName: worktreeName,
-        onUserInteraction: onTerminalInteraction,
-        consumeQueuedWebPreviewContextOnSubmit: {
-          viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
-        }
-      )
-      .padding(8)
-      .frame(minHeight: 300)
-
-      // Plus button for actions popover
-      Button {
-        showingActionsPopover = true
-      } label: {
-        Image(systemName: "plus.circle.fill")
-          .font(.system(size: 28))
-          .foregroundColor(.primary)
-          .shadow(color: .primary.opacity(0.4), radius: 4)
+    EmbeddedTerminalView(
+      terminalKey: terminalKey ?? session.id,
+      sessionId: session.id,
+      projectPath: session.projectPath,
+      cliConfiguration: viewModel?.cliConfiguration ?? .claudeDefault,
+      initialPrompt: initialPrompt,
+      initialInputText: initialInputText,
+      viewModel: viewModel,
+      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      permissionModePlan: permissionModePlan,
+      worktreeName: worktreeName,
+      onUserInteraction: onTerminalInteraction,
+      consumeQueuedWebPreviewContextOnSubmit: {
+        viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
       }
-      .buttonStyle(.plain)
-      .padding(12)
-      .popover(isPresented: $showingActionsPopover) {
-        actionsPopoverContent
-      }
-      .help("Session actions")
-    }
+    )
+    .padding(8)
+    .frame(minHeight: 300)
   }
 
   private var previewContextBadge: some View {
