@@ -569,6 +569,11 @@ public final class CLISessionsViewModel {
       loadingState = .restoringRepositories
     }
 
+    // Pre-populate pinned sessions synchronously to avoid flicker on launch
+    if let store = metadataStore {
+      pinnedSessionIds = store.getPinnedSessionIdsSync()
+    }
+
     setupSubscriptions()
     restorePersistedRepositories()
     requestNotificationPermissions()
@@ -647,17 +652,23 @@ public final class CLISessionsViewModel {
     guard let store = metadataStore else { return }
     let newPinned = !pinnedSessionIds.contains(session.id)
 
+    if newPinned {
+      pinnedSessionIds.insert(session.id)
+    } else {
+      pinnedSessionIds.remove(session.id)
+    }
+
     Task {
       do {
         try await store.setPinned(newPinned, for: session.id)
+      } catch {
         await MainActor.run {
           if newPinned {
-            pinnedSessionIds.insert(session.id)
-          } else {
             pinnedSessionIds.remove(session.id)
+          } else {
+            pinnedSessionIds.insert(session.id)
           }
         }
-      } catch {
         AppLogger.session.error("Failed to set pinned state: \(error.localizedDescription)")
       }
     }

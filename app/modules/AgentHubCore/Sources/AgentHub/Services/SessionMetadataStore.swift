@@ -139,13 +139,21 @@ public actor SessionMetadataStore {
   /// Gets all pinned session IDs
   public func getPinnedSessionIds() throws -> Set<String> {
     try dbQueue.read { db in
-      let ids = try SessionMetadata
+      let records = try SessionMetadata
         .filter(Column("isPinned") == true)
-        .select(Column("sessionId"))
         .fetchAll(db)
-        .map(\.sessionId)
-      return Set(ids)
+      return Set(records.map(\.sessionId))
     }
+  }
+
+  /// Synchronous read for pinned session IDs — safe to call from non-async contexts.
+  public nonisolated func getPinnedSessionIdsSync() -> Set<String> {
+    (try? dbQueue.read { db in
+      let records = try SessionMetadata
+        .filter(Column("isPinned") == true)
+        .fetchAll(db)
+      return Set(records.map(\.sessionId))
+    }) ?? []
   }
 
   /// Gets all metadata for multiple sessions at once (batch fetch)
