@@ -599,6 +599,7 @@ public struct WebPreviewView: View {
     HStack(spacing: 0) {
       previewContent
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .blursWhileResizing()
 
       if showsInspectorRail {
         ResizablePanelContainer(

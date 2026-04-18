@@ -14,6 +14,60 @@ enum ResizablePanelSide: Equatable {
   case trailing
 }
 
+// MARK: - Drag State Propagation
+
+/// Process-wide observable that publishes whether ANY split handle is being
+/// dragged. Individual panes subscribe via `.blursWhileResizing()` so both the
+/// main content and the resizable content can fade in a blur overlay without
+/// the overlay covering the handle itself.
+@MainActor
+@Observable
+final class ResizeInteractionState {
+  static let shared = ResizeInteractionState()
+
+  /// Number of concurrent active drags. `isResizing` is `true` when > 0.
+  /// Tracked as a counter so nested / overlapping drags all release cleanly.
+  private var activeCount: Int = 0
+
+  var isResizing: Bool { activeCount > 0 }
+
+  fileprivate func beginResize() { activeCount += 1 }
+  fileprivate func endResize() { activeCount = max(0, activeCount - 1) }
+
+  private init() {}
+}
+
+extension View {
+  /// Fades a blurred material overlay in while any descendant (or sibling)
+  /// `ResizablePanelContainer` is being dragged. Apply to each pane that should
+  /// blur. The handle itself is deliberately NOT wrapped so the preview guide +
+  /// width readout stay sharp on top.
+  func blursWhileResizing() -> some View {
+    modifier(BlurWhileResizingModifier())
+  }
+}
+
+private struct BlurWhileResizingModifier: ViewModifier {
+  @State private var state = ResizeInteractionState.shared
+
+  /// Peak opacity of the material overlay during a drag. `.ultraThinMaterial`
+  /// is already the lightest system material — lowering the opacity further
+  /// makes the blur very subtle so the underlying content stays readable.
+  private static let peakOpacity: Double = 0.75
+
+  func body(content: Content) -> some View {
+    let isResizing = state.isResizing
+    content
+      .overlay {
+        Rectangle()
+          .fill(.ultraThinMaterial)
+          .opacity(isResizing ? Self.peakOpacity : 0)
+          .animation(.easeInOut(duration: 0.2), value: isResizing)
+          .allowsHitTesting(false)
+      }
+  }
+}
+
 // MARK: - ResizablePanelContainer
 
 /// A self-contained split pane whose width state lives entirely inside this view.
@@ -75,13 +129,21 @@ struct ResizablePanelContainer<Content: View>: View {
       if side == .trailing {
         handle
           .zIndex(2)
-        content.frame(width: resolvedWidth)
+        resizableContent
       } else {
-        content.frame(width: resolvedWidth)
+        resizableContent
         handle
           .zIndex(2)
       }
     }
+  }
+
+  /// The resizable pane itself, blurred while this (or any sibling) handle is
+  /// being dragged. The handle is rendered separately so it stays sharp.
+  private var resizableContent: some View {
+    content
+      .frame(width: resolvedWidth)
+      .blursWhileResizing()
   }
 
   private var handle: some View {
@@ -165,7 +227,10 @@ struct ResizableSplitHandle: View {
     .help("Drag to resize. Double-click to reset.")
     .zIndex(isDragging ? 20 : 10)
     .onDisappear {
-      if isDragging { ResizeInteractionSuppression.shared.endResize() }
+      if isDragging {
+        ResizeInteractionSuppression.shared.endResize()
+        ResizeInteractionState.shared.endResize()
+      }
       isDragging = false
       previewWidth = nil
       updateCursor(isHovering: false)
@@ -204,6 +269,7 @@ struct ResizableSplitHandle: View {
           isDragging = true
           widthAtDragStart = resolvedWidth
           ResizeInteractionSuppression.shared.beginResize()
+          ResizeInteractionState.shared.beginResize()
         }
 
         let translatedWidth: CGFloat
@@ -222,6 +288,7 @@ struct ResizableSplitHandle: View {
         isDragging = false
         previewWidth = nil
         ResizeInteractionSuppression.shared.endResize()
+        ResizeInteractionState.shared.endResize()
         onDragEnd?(finalWidth)
       }
   }
