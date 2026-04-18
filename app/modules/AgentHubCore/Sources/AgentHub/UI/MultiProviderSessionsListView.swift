@@ -848,23 +848,30 @@ public struct MultiProviderSessionsListView: View {
     return itemPath
   }
 
-  private var allPinnedIds: Set<String> {
-    claudeViewModel.pinnedSessionIds.union(codexViewModel.pinnedSessionIds)
+  private var pinnedSessionSnapshot: ProviderScopedPinnedSessions {
+    ProviderScopedPinnedSessions(
+      claudeSessionIds: claudeViewModel.pinnedSessionIds,
+      codexSessionIds: codexViewModel.pinnedSessionIds
+    )
+  }
+
+  private func isPinned(_ item: SelectedSessionItem) -> Bool {
+    pinnedSessionSnapshot.contains(
+      sessionId: item.session.id,
+      providerKind: item.providerKind
+    )
   }
 
   private var pinnedSessionItems: [SelectedSessionItem] {
-    let pinned = allPinnedIds
-    guard !pinned.isEmpty else { return [] }
     return selectedSessionItems
-      .filter { pinned.contains($0.session.id) }
+      .filter { isPinned($0) }
       .sorted { $0.timestamp > $1.timestamp }
   }
 
   /// Groups built from tracked repos first (even empty), then an orphan bucket
   /// for sessions whose path doesn't belong to any tracked repo.
   private var groupedSelectedSessions: [SessionGroup] {
-    let pinned = allPinnedIds
-    let allItems = selectedSessionItems.filter { !pinned.contains($0.session.id) }
+    let allItems = selectedSessionItems.filter { !isPinned($0) }
     var byRepo: [String: [SelectedSessionItem]] = [:]
     for item in allItems {
       let key = findParentRepoPath(for: item.session.projectPath)
@@ -899,9 +906,8 @@ public struct MultiProviderSessionsListView: View {
 
   /// Sessions grouped by status category (Working / Needs Attention / Idle).
   private var statusGroupedSessions: [StatusGroupCategory: [SelectedSessionItem]] {
-    let pinned = allPinnedIds
     var result: [StatusGroupCategory: [SelectedSessionItem]] = [:]
-    for item in selectedSessionItems where !pinned.contains(item.session.id) {
+    for item in selectedSessionItems where !isPinned(item) {
       let category = StatusGroupCategory.category(for: item.sessionStatus)
       result[category, default: []].append(item)
     }
@@ -1055,7 +1061,7 @@ public struct MultiProviderSessionsListView: View {
           customName: selectedSessionCustomName(for: item),
           sessionStatus: item.sessionStatus,
           colorScheme: colorScheme,
-          isPinned: allPinnedIds.contains(item.session.id),
+          isPinned: isPinned(item),
           onPin: item.isPending ? nil : {
             withAnimation(.easeInOut(duration: 0.3)) {
               switch item.providerKind {
@@ -1091,7 +1097,7 @@ public struct MultiProviderSessionsListView: View {
       }
     }
     .padding(.top, 2)
-    .animation(.easeInOut(duration: 0.25), value: allPinnedIds)
+    .animation(.easeInOut(duration: 0.25), value: pinnedSessionSnapshot)
   }
 
   @ViewBuilder
