@@ -10,6 +10,25 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Environment Forwarding
+
+/// Environments captured from the parent view tree and injected into an `NSHostingView`
+/// so detached AppKit-hosted content still respects the active theme and provider.
+/// Reading these in the modifier's `body(content:)` ensures the modifier republishes
+/// when either value changes, which re-hosts the popped-out window.
+private struct HostedPanelEnvironment {
+  var runtimeTheme: RuntimeTheme?
+  var agentHub: AgentHubProvider?
+}
+
+private extension View {
+  func forwardingHostedEnvironment(_ env: HostedPanelEnvironment) -> some View {
+    self
+      .environment(\.runtimeTheme, env.runtimeTheme)
+      .environment(\.agentHub, env.agentHub)
+  }
+}
+
 // MARK: - Panel Window Delegate
 
 private final class PanelWindowDelegate: NSObject, NSWindowDelegate {
@@ -45,6 +64,9 @@ private struct ModalPanelModifier<Item: Identifiable, PanelContent: View>: ViewM
   @State private var panel: NSPanel?
   @State private var windowDelegate: PanelWindowDelegate?
 
+  @Environment(\.runtimeTheme) private var runtimeTheme
+  @Environment(\.agentHub) private var agentHub
+
   func body(content: Content) -> some View {
     content
       .onChange(of: item.map { AnyHashable($0.id) }) { _, newValue in
@@ -62,7 +84,11 @@ private struct ModalPanelModifier<Item: Identifiable, PanelContent: View>: ViewM
   private func presentPanel(for currentItem: Item) {
     dismissPanel()
 
-    let view = panelContent(currentItem)
+    let forwarded = HostedPanelEnvironment(
+      runtimeTheme: runtimeTheme,
+      agentHub: agentHub
+    )
+    let view = panelContent(currentItem).forwardingHostedEnvironment(forwarded)
     let hostingView = NSHostingView(rootView: view)
 
     let newPanel = NSPanel(

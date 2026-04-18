@@ -9,13 +9,14 @@ import SwiftUI
 
 struct MarkdownCardView: View {
   let content: String
+  var transparent: Bool = false
 
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     MarkdownView(content: content, includeScrollView: false)
       .padding(DesignTokens.Spacing.lg)
-      .background(cardBackground)
+      .background(transparent ? Color.clear : cardBackground)
       .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
       .overlay(
         RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)

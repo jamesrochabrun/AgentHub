@@ -53,6 +53,13 @@ public struct GitDiffView: View {
   @State private var showSidebar: Bool = true
   @State private var treeCommonPrefix: String = ""
 
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
+
+  private var headerBackground: Color {
+    Color.adaptiveExpandedContentBackground(for: colorScheme, theme: runtimeTheme)
+  }
+
   private let gitDiffService = GitDiffService()
 
   public init(
@@ -197,6 +204,7 @@ public struct GitDiffView: View {
         }
       }
       .pickerStyle(.segmented)
+      .controlSize(.small)
       .frame(width: 250)
       .tint(Color.primary)
       .onChange(of: diffMode) { _, newMode in
@@ -210,9 +218,11 @@ public struct GitDiffView: View {
           onDismiss()
         }
       }
+      .controlSize(.small)
     }
-    .padding()
-    .background(Color.surfaceElevated)
+    .padding(.horizontal, DesignTokens.Spacing.sm)
+    .frame(height: AgentHubLayout.topBarHeight)
+    .background(headerBackground)
   }
 
   // MARK: - Loading State
@@ -419,7 +429,9 @@ public struct GitDiffView: View {
             .font(.system(size: 13, weight: .bold, design: .monospaced))
         Spacer()
       }
-      .padding()
+      .padding(.horizontal, DesignTokens.Spacing.sm)
+      .frame(height: AgentHubLayout.topBarHeight)
+      .background(headerBackground)
 
       Divider()
 
@@ -891,6 +903,13 @@ private struct GitDiffContentView: View {
   @State private var previewLoading: Bool = false
   @State private var previewCurrentURL: URL?
 
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
+
+  private var headerBackground: Color {
+    Color.adaptiveExpandedContentBackground(for: colorScheme, theme: runtimeTheme)
+  }
+
   /// Inline editor is enabled when cliConfiguration is available
   private var isInlineEditorEnabled: Bool {
     cliConfiguration != nil
@@ -1114,8 +1133,9 @@ private struct GitDiffContentView: View {
         }
       }
     }
-    .padding(.horizontal)
-    .padding(.vertical, 12)
+    .padding(.horizontal, DesignTokens.Spacing.sm)
+    .frame(height: AgentHubLayout.topBarHeight)
+    .background(headerBackground)
   }
 
   // MARK: - Toggle Functions

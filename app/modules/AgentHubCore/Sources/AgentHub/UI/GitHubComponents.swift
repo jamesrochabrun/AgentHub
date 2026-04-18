@@ -26,6 +26,8 @@ struct AuthorAvatarView: View {
   let login: String
   let size: CGFloat
 
+  @Environment(\.runtimeTheme) private var runtimeTheme
+
   init(login: String, size: CGFloat = 22) {
     self.login = login
     self.size = size
@@ -35,16 +37,8 @@ struct AuthorAvatarView: View {
     String(login.prefix(1)).uppercased()
   }
 
-  private var avatarColor: Color {
-    let colors: [Color] = [
-      .primaryPurple, .indigoPurple, .skyBlue,
-      .softGreen, .goldenAmber, .warmCoral, .bluePurple
-    ]
-    let index = abs(login.utf8.reduce(0) { $0 &+ Int($1) }) % colors.count
-    return colors[index]
-  }
-
   var body: some View {
+    let avatarColor = Color.brandPrimary(from: runtimeTheme)
     ZStack {
       Circle()
         .fill(avatarColor.opacity(0.2))
@@ -66,45 +60,36 @@ struct StatCardView: View {
   let tintColor: Color
 
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 2) {
+    VStack(alignment: .leading, spacing: 4) {
       Text(value)
-        .font(.jetBrainsMono(size: 20, weight: .bold))
-        .foregroundStyle(tintColor)
-      Text(label)
+        .font(.jetBrainsMono(size: 24, weight: .bold))
+        .foregroundStyle(.primary)
+      Text(label.uppercased())
         .font(GitHubTypography.caption)
+        .tracking(0.8)
         .foregroundStyle(.secondary)
     }
     .padding(.horizontal, DesignTokens.Spacing.md)
-    .padding(.vertical, DesignTokens.Spacing.sm)
+    .padding(.vertical, DesignTokens.Spacing.md)
     .frame(maxWidth: .infinity, alignment: .leading)
     .background(
       RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
-        .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.98))
+        .fill(cardBackground)
     )
     .overlay(
       RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
         .stroke(tintColor.opacity(0.25), lineWidth: 1)
     )
   }
-}
 
-// MARK: - Filter Chip
-
-struct GitHubFilterChip: View {
-  let title: String
-  let isActive: Bool
-  let action: () -> Void
-
-  var body: some View {
-    Button(action: action) {
-      Text(title)
-        .font(GitHubTypography.button)
-        .foregroundStyle(isActive ? Color.brandPrimary : .secondary)
+  private var cardBackground: Color {
+    if runtimeTheme?.hasCustomBackgrounds == true {
+      return Color.adaptiveExpandedContentBackground(for: colorScheme, theme: runtimeTheme)
     }
-    .buttonStyle(.plain)
-    .agentHubChip(isActive: isActive)
+    return colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.98)
   }
 }
 
@@ -269,48 +254,13 @@ struct GitHubUnderlineTabBar<Tab: Identifiable & Hashable>: View {
   var trailing: (() -> AnyView)? = nil
 
   @Namespace private var tabNamespace
+  @Environment(\.runtimeTheme) private var runtimeTheme
 
   var body: some View {
-    HStack(spacing: 0) {
+    let accent = Color.brandPrimary(from: runtimeTheme)
+    HStack(spacing: DesignTokens.Spacing.lg) {
       ForEach(tabs) { tab in
-        Button {
-          withAnimation(.easeInOut(duration: 0.2)) {
-            selected = tab
-          }
-          onSelect?(tab)
-        } label: {
-          VStack(spacing: DesignTokens.Spacing.xs) {
-            HStack(spacing: DesignTokens.Spacing.xs) {
-              Image(systemName: icon(tab))
-                .font(.system(size: 11))
-              Text(title(tab))
-                .font(GitHubTypography.button)
-              if let count = badge?(tab), count > 0 {
-                Text("\(count)")
-                  .font(GitHubTypography.monoCaption)
-                  .padding(.horizontal, 5)
-                  .padding(.vertical, 1)
-                  .background(Color.brandPrimary.opacity(0.15))
-                  .clipShape(Capsule())
-              }
-            }
-            .foregroundStyle(selected == tab ? Color.brandPrimary : .secondary)
-            .padding(.horizontal, DesignTokens.Spacing.md)
-
-            ZStack {
-              Rectangle()
-                .fill(Color.clear)
-                .frame(height: 2)
-              if selected == tab {
-                Rectangle()
-                  .fill(Color.brandPrimary)
-                  .frame(height: 2)
-                  .matchedGeometryEffect(id: "underline", in: tabNamespace)
-              }
-            }
-          }
-        }
-        .buttonStyle(.plain)
+        tabSegment(tab, accent: accent)
       }
 
       Spacer()
@@ -320,18 +270,65 @@ struct GitHubUnderlineTabBar<Tab: Identifiable & Hashable>: View {
       }
     }
     .padding(.horizontal, DesignTokens.Spacing.md)
-    .padding(.top, DesignTokens.Spacing.sm)
+    .frame(height: AgentHubLayout.subBarHeight, alignment: .bottom)
+  }
+
+  @ViewBuilder
+  private func tabSegment(_ tab: Tab, accent: Color) -> some View {
+    let isSelected = selected == tab
+    Button {
+      withAnimation(.easeInOut(duration: 0.2)) {
+        selected = tab
+      }
+      onSelect?(tab)
+    } label: {
+      VStack(spacing: DesignTokens.Spacing.xs) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          Image(systemName: icon(tab))
+            .font(.system(size: 11))
+          Text(title(tab))
+            .font(GitHubTypography.button)
+          if let count = badge?(tab), count > 0 {
+            Text("\(count)")
+              .font(GitHubTypography.monoCaption)
+              .padding(.horizontal, 5)
+              .padding(.vertical, 1)
+              .background(Color.secondary.opacity(0.18))
+              .clipShape(Capsule())
+          }
+        }
+        .foregroundStyle(isSelected ? accent : .secondary)
+
+        ZStack {
+          Rectangle()
+            .fill(Color.clear)
+            .frame(height: 2)
+          if isSelected {
+            Rectangle()
+              .fill(accent)
+              .frame(height: 2)
+              .matchedGeometryEffect(id: "underline", in: tabNamespace)
+          }
+        }
+      }
+      .fixedSize(horizontal: true, vertical: false)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
   }
 }
 
 // MARK: - Gradient Divider
 
 struct GradientDivider: View {
+  @Environment(\.runtimeTheme) private var runtimeTheme
+
   var body: some View {
+    let accent = Color.brandPrimary(from: runtimeTheme)
     Rectangle()
       .fill(
         LinearGradient(
-          colors: [Color.brandPrimary.opacity(0.3), Color.brandPrimary.opacity(0.05), Color.clear],
+          colors: [accent.opacity(0.3), accent.opacity(0.05), Color.clear],
           startPoint: .leading,
           endPoint: .trailing
         )
@@ -375,7 +372,7 @@ struct GitHubCommentCard: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(DesignTokens.Spacing.md)
-    .agentHubCard()
+    .agentHubCard(transparent: true)
   }
 }
 

@@ -13,6 +13,14 @@ public enum AgentHubLayout {
   public static let rowCornerRadius: CGFloat = 10
   public static let chipCornerRadius: CGFloat = 8
   public static let buttonCornerRadius: CGFloat = 4
+
+  /// Shared height for top bars across panels (MonitoringCardView header,
+  /// GitHubPanelView header, etc.) so sibling panels line up exactly.
+  public static let topBarHeight: CGFloat = 34
+
+  /// Shared height for the secondary bar immediately below a top bar
+  /// (MonitoringCardView path row, GitHubPanelView tab bar, etc.).
+  public static let subBarHeight: CGFloat = 30
 }
 
 private struct AgentHubPanelModifier: ViewModifier {
@@ -31,6 +39,7 @@ private struct AgentHubPanelModifier: ViewModifier {
 private struct AgentHubCardModifier: ViewModifier {
   @Environment(\.colorScheme) private var colorScheme
   let isHighlighted: Bool
+  let transparent: Bool
 
   func body(content: Content) -> some View {
     // Simple black/white background
@@ -44,7 +53,7 @@ private struct AgentHubCardModifier: ViewModifier {
     return content
       .background(
         RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
-          .fill(backgroundColor)
+          .fill(transparent ? Color.clear : backgroundColor)
       )
       .overlay(
         RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
@@ -163,8 +172,8 @@ public extension View {
     modifier(AgentHubPanelModifier())
   }
 
-  func agentHubCard(isHighlighted: Bool = false) -> some View {
-    modifier(AgentHubCardModifier(isHighlighted: isHighlighted))
+  func agentHubCard(isHighlighted: Bool = false, transparent: Bool = false) -> some View {
+    modifier(AgentHubCardModifier(isHighlighted: isHighlighted, transparent: transparent))
   }
 
   func agentHubRow(isHighlighted: Bool = false) -> some View {

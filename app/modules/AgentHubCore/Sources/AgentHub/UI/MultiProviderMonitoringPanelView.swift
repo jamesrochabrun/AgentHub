@@ -63,6 +63,7 @@ private struct GitHubPopOutItem: Identifiable {
   let projectPath: String
 }
 
+
 // MARK: - SessionFileSheetItem
 
 private struct SessionFileSheetItem: Identifiable {
@@ -750,6 +751,7 @@ public struct MultiProviderMonitoringPanelView: View {
     HStack(spacing: 0) {
       content()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .blursWhileResizing()
 
       if let panelContent = sidePanelContent, !panelContent.isFileExplorer {
         ResizablePanelContainer(
