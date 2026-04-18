@@ -195,7 +195,7 @@ struct GitHubIssueDetailView: View {
                 .foregroundStyle(.secondary)
             }
 
-            MarkdownCardView(content: body)
+            MarkdownCardView(content: body, transparent: true)
           }
           .frame(maxWidth: .infinity, alignment: .leading)
         }

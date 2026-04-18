@@ -157,6 +157,13 @@ public struct WebPreviewView: View {
   @AppStorage(AgentHubDefaults.webPreviewAdvancedEditingEnabled)
   private var webPreviewAdvancedEditingEnabled: Bool = true
 
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
+
+  private var headerBackground: Color {
+    Color.adaptiveExpandedContentBackground(for: colorScheme, theme: runtimeTheme)
+  }
+
   /// Uses session ID as key for DevServerManager to support multiple sessions
   private var serverKey: String { session.id }
 
@@ -369,9 +376,9 @@ public struct WebPreviewView: View {
       // Controls
       headerControls
     }
-    .padding(.horizontal)
-    .padding(.vertical, 8)
-    .background(Color.surfaceElevated)
+    .padding(.horizontal, DesignTokens.Spacing.sm)
+    .frame(height: AgentHubLayout.topBarHeight)
+    .background(headerBackground)
   }
 
   // MARK: - Center Indicator
@@ -551,6 +558,7 @@ public struct WebPreviewView: View {
       Button("Close") {
         onDismiss()
       }
+      .controlSize(.small)
     }
     .overlay {
       // Hidden keyboard shortcuts — kept outside HStack layout to avoid phantom spacing

@@ -63,6 +63,7 @@ private struct GitHubPopOutItem: Identifiable {
   let projectPath: String
 }
 
+
 // MARK: - SessionFileSheetItem
 
 private struct SessionFileSheetItem: Identifiable {

@@ -45,6 +45,13 @@ public struct FileExplorerView: View {
   @State private var editorDisplayMode: EditorDisplayMode = .highlighted
   @State private var editorDocumentID = UUID()
 
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
+
+  private var headerBackground: Color {
+    Color.adaptiveExpandedContentBackground(for: colorScheme, theme: runtimeTheme)
+  }
+
 
   // MARK: - Init
 
@@ -230,25 +237,18 @@ public struct FileExplorerView: View {
       }
 
       // Close button
-      Button {
+      Button("Close") {
         if hasUnsavedChanges {
           showDiscardAlert = true
         } else {
           onDismiss()
         }
-      } label: {
-        Image(systemName: "xmark")
-          .font(.system(size: 12, weight: .medium))
-          .foregroundColor(.secondary)
-          .frame(width: 24, height: 24)
-          .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
-      .help("Close")
+      .controlSize(.small)
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .background(Color.surfaceElevated)
+    .padding(.horizontal, DesignTokens.Spacing.sm)
+    .frame(height: AgentHubLayout.topBarHeight)
+    .background(headerBackground)
   }
 
   // MARK: - File Tree Sidebar
@@ -260,8 +260,9 @@ public struct FileExplorerView: View {
           .font(.system(size: 13, weight: .bold, design: .monospaced))
         Spacer()
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 10)
+      .padding(.horizontal, DesignTokens.Spacing.sm)
+      .frame(height: AgentHubLayout.topBarHeight)
+      .background(headerBackground)
 
       Divider()
 

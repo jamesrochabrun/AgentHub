@@ -33,6 +33,10 @@ public struct PlanView: View {
   @State private var activeLineIndex: Int?
   @State private var isReviewMode: Bool = false
 
+  @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
+
+
   public init(
     session: CLISession,
     planState: PlanState,
@@ -78,6 +82,11 @@ public struct PlanView: View {
       minWidth: isEmbedded ? 300 : 700, idealWidth: isEmbedded ? .infinity : 900, maxWidth: .infinity,
       minHeight: isEmbedded ? 300 : 550, idealHeight: isEmbedded ? .infinity : 750, maxHeight: .infinity
     )
+    .background(
+      isEmbedded
+        ? Color.clear
+        : Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+    )
     .onKeyPress(.escape) {
       onDismiss()
       return .handled
@@ -101,11 +110,12 @@ public struct PlanView: View {
         }
       }
       .buttonStyle(.bordered)
+      .controlSize(.small)
       .disabled(content == nil)
       .help("Copy plan to clipboard")
     }
-    .padding()
-    .background(Color.surfaceElevated)
+    .padding(.horizontal, DesignTokens.Spacing.sm)
+    .frame(height: AgentHubLayout.topBarHeight)
   }
 
   // MARK: - Header
@@ -168,15 +178,17 @@ public struct PlanView: View {
           }
         }
         .buttonStyle(.bordered)
+        .controlSize(.small)
         .help(isReviewMode ? "Switch to rendered preview" : "Switch to review mode to annotate lines")
       }
 
       Button("Close") {
         onDismiss()
       }
+      .controlSize(.small)
     }
-    .padding()
-    .background(Color.surfaceElevated)
+    .padding(.horizontal, DesignTokens.Spacing.sm)
+    .frame(height: AgentHubLayout.topBarHeight)
   }
 
   // MARK: - Loading State
@@ -217,10 +229,9 @@ public struct PlanView: View {
 
   private func markdownContent(_ text: String) -> some View {
     ScrollView {
-      MarkdownCardView(content: text)
+      MarkdownCardView(content: text, transparent: true)
         .padding(DesignTokens.Spacing.xl)
     }
-    .background(Color.surfaceCanvas)
   }
 
   // MARK: - Review Content
@@ -236,7 +247,6 @@ public struct PlanView: View {
         }
         .padding(DesignTokens.Spacing.md)
       }
-      .background(Color.surfaceCanvas)
 
       if commentsState.hasComments {
         DiffCommentsPanelView(

@@ -217,15 +217,15 @@ public struct MonitoringCardView: View {
     VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions
       header
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .frame(height: AgentHubLayout.topBarHeight)
 
       Divider()
 
       // Path row with repo path, branch, and GitHub button
       pathRow
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .frame(height: AgentHubLayout.subBarHeight)
 
       // Terminal content
       Divider()
@@ -243,7 +243,7 @@ public struct MonitoringCardView: View {
           Image(systemName: "ellipsis")
             .font(.system(size: 18, weight: .semibold))
             .foregroundColor(Color.brandPrimary)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, DesignTokens.Spacing.sm)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -853,7 +853,7 @@ public struct MonitoringCardView: View {
       }
 
       Divider()
-        .padding(.vertical, 4)
+        .padding(.vertical, DesignTokens.Spacing.xs)
 
       PopoverButton(icon: "plus.rectangle.on.folder", title: "Add Files") {
         showingActionsPopover = false
@@ -862,7 +862,7 @@ public struct MonitoringCardView: View {
         }
       }
     }
-    .padding(8)
+    .padding(DesignTokens.Spacing.sm)
   }
 
   // MARK: - Path Row
@@ -917,7 +917,7 @@ public struct MonitoringCardView: View {
         viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
       }
     )
-    .padding(8)
+    .padding(DesignTokens.Spacing.sm)
     .frame(minHeight: 300)
   }
 
@@ -950,7 +950,7 @@ private struct PopoverButton: View {
         Text(title)
         Spacer()
       }
-      .padding(.horizontal, 8)
+      .padding(.horizontal, DesignTokens.Spacing.sm)
       .padding(.vertical, 6)
       .contentShape(Rectangle())
     }

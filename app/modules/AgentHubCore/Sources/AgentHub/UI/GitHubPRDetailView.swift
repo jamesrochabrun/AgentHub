@@ -317,7 +317,7 @@ struct GitHubPRDetailView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
         if let body = pr.body, !body.isEmpty {
-          MarkdownCardView(content: body)
+          MarkdownCardView(content: body, transparent: true)
         } else {
           Text("No description provided.")
             .font(GitHubTypography.body)
@@ -352,7 +352,7 @@ struct GitHubPRDetailView: View {
           }
         }
         .padding(DesignTokens.Spacing.md)
-        .agentHubCard()
+        .agentHubCard(transparent: true)
       }
       .padding(DesignTokens.Spacing.md)
     }
@@ -814,7 +814,7 @@ struct GitHubPRDetailView: View {
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(DesignTokens.Spacing.md)
-    .agentHubCard()
+    .agentHubCard(transparent: true)
   }
 }
 

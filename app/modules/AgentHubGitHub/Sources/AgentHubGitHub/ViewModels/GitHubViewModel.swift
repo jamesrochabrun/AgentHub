@@ -29,15 +29,19 @@ public enum GitHubTab: String, CaseIterable, Identifiable, Sendable {
 /// Filter for PR list state
 public enum GitHubPRFilter: String, CaseIterable, Identifiable, Sendable {
   case open = "Open"
+  case draft = "Draft"
+  case merged = "Merged"
   case closed = "Closed"
   case all = "All"
 
   public var id: String { rawValue }
 
+  /// gh CLI state used when querying the API.
+  /// Draft is a client-side refinement over open; merged is a client-side refinement over closed.
   var ghState: String {
     switch self {
-    case .open: return "open"
-    case .closed: return "closed"
+    case .open, .draft: return "open"
+    case .merged, .closed: return "closed"
     case .all: return "all"
     }
   }
@@ -192,18 +196,44 @@ public final class GitHubViewModel {
     prLoadingState = .loading
 
     do {
-      pullRequests = try await service.listPullRequests(
+      let raw = try await service.listPullRequests(
         at: repoPath,
         state: prFilter.ghState,
         limit: 30,
         authoredByMe: showOnlyMyPRs,
         labels: Array(selectedLabels)
       )
+      pullRequests = applyClientSideFilter(raw, filter: prFilter)
       prLoadingState = .loaded
     } catch {
       prLoadingState = .error(error.localizedDescription)
       GitHubLogger.github.error("Failed to load PRs: \(error.localizedDescription)")
     }
+  }
+
+  /// Refines the raw list returned by `gh` for filters that can't be expressed in the query.
+  /// - `.draft`: open PRs with `isDraft == true`
+  /// - `.open`:  open PRs with `isDraft == false` (so the draft chip isn't double-counted)
+  /// - `.merged`: closed PRs that were merged
+  /// - `.closed`: closed PRs that were not merged
+  /// - `.all`: no refinement
+  private func applyClientSideFilter(
+    _ prs: [GitHubPullRequest],
+    filter: GitHubPRFilter
+  ) -> [GitHubPullRequest] {
+    switch filter {
+    case .draft:  return prs.filter { $0.isDraft }
+    case .open:   return prs.filter { !$0.isDraft }
+    case .merged: return prs.filter { $0.stateKind == .merged }
+    case .closed: return prs.filter { $0.stateKind == .closed }
+    case .all:    return prs
+    }
+  }
+
+  /// Count of loaded PRs that fall into a given filter. Used for the filter chip badges.
+  /// Note: counts reflect the currently loaded set, not the full remote state.
+  public func filterCount(_ filter: GitHubPRFilter) -> Int {
+    applyClientSideFilter(pullRequests, filter: filter).count
   }
 
   /// Loads repository labels if not already loaded
