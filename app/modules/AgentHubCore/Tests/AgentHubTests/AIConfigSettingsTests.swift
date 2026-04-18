@@ -261,6 +261,22 @@ struct AIConfigServicePersistenceTests {
     #expect(try await store.getRepoMapping(for: "session-1") == nil)
     #expect(try await store.getAIConfig(for: "claude") == nil)
   }
+
+  @Test("Pinned session IDs round-trip through async and sync reads")
+  func pinnedSessionRoundTrip() async throws {
+    let dbPath = temporaryDatabasePath()
+    let store = try SessionMetadataStore(path: dbPath)
+
+    try await store.setPinned(true, for: "session-1")
+
+    #expect(try await store.getPinnedSessionIds() == Set(["session-1"]))
+    #expect(store.getPinnedSessionIdsSync() == Set(["session-1"]))
+
+    try await store.setPinned(false, for: "session-1")
+
+    #expect(try await store.getPinnedSessionIds().isEmpty)
+    #expect(store.getPinnedSessionIdsSync().isEmpty)
+  }
 }
 
 @Suite("AIConfigSettingsViewModel")
