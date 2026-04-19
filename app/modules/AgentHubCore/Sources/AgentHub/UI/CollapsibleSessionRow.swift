@@ -20,8 +20,6 @@ struct CollapsibleSessionRow: View {
 
   @State private var isHovered = false
   @State private var showArchiveConfirm = false
-  @State private var pulseScale: CGFloat = 1.0
-  @State private var isPulseAnimating = false
 
   // MARK: - Computed
 
@@ -39,16 +37,6 @@ struct CollapsibleSessionRow: View {
     case .idle: return .secondary
     }
   }
-
-  private var isActiveStatus: Bool {
-    guard let sessionStatus else { return false }
-    switch sessionStatus {
-    case .thinking, .executingTool: return true
-    default: return false
-    }
-  }
-
-  private var shouldPulse: Bool { isActiveStatus }
 
   private func statusDisplayText(_ status: SessionStatus) -> String {
     switch status {
@@ -68,14 +56,7 @@ struct CollapsibleSessionRow: View {
 
   var body: some View {
     HStack(spacing: 8) {
-      // Status dot
-      Circle()
-        .fill(statusColor)
-        .frame(width: 6, height: 6)
-        .scaleEffect(shouldPulse ? pulseScale : 1.0)
-        .animation(.easeInOut(duration: 0.35), value: statusColor)
-
-      // Content
+      // Content — leading padding aligns with the project header label.
       VStack(alignment: .leading, spacing: 2) {
         // Row 1: name + provider + status + time
         HStack(spacing: 6) {
@@ -117,7 +98,8 @@ struct CollapsibleSessionRow: View {
         }
       }
     }
-    .padding(.horizontal, 10)
+    .padding(.leading, 28)
+    .padding(.trailing, 10)
     .padding(.vertical, 8)
     .contentShape(Rectangle())
     .onTapGesture { onSelect() }
@@ -126,6 +108,10 @@ struct CollapsibleSessionRow: View {
         .fill(rowBackground)
         .animation(.easeInOut(duration: 0.3), value: isPending)
     )
+    .overlay(alignment: .leading) {
+      leadingPinButton
+        .padding(.leading, 4)
+    }
     .onHover { hovering in
       withAnimation(.easeInOut(duration: 0.12)) {
         isHovered = hovering
@@ -136,9 +122,6 @@ struct CollapsibleSessionRow: View {
         }
       }
     }
-    .onAppear { startPulseAnimation() }
-    .onChange(of: sessionStatus) { _, _ in startPulseAnimation() }
-    .onChange(of: isPending) { _, _ in startPulseAnimation() }
   }
 
   @ViewBuilder
@@ -174,19 +157,26 @@ struct CollapsibleSessionRow: View {
   }
 
   @ViewBuilder
+  private var leadingPinButton: some View {
+    if let onPin {
+      Button(action: onPin) {
+        Image(systemName: isPinned ? "pin.fill" : "pin")
+          .font(.system(size: 10))
+          .foregroundColor(.secondary)
+          .frame(width: 18, height: 18)
+      }
+      .buttonStyle(.plain)
+      .help(isPinned ? "Unpin session" : "Pin session")
+      .opacity(isPinned || isHovered ? 1 : 0)
+      .animation(.easeInOut(duration: 0.15), value: isHovered)
+    } else {
+      Color.clear.frame(width: 18, height: 18)
+    }
+  }
+
+  @ViewBuilder
   private var actionsView: some View {
     HStack(spacing: 2) {
-      if let onPin {
-        Button(action: onPin) {
-          Image(systemName: isPinned ? "pin.fill" : "pin")
-            .font(.system(size: 10))
-            .foregroundColor(.secondary)
-            .frame(width: 18, height: 18)
-        }
-        .buttonStyle(.plain)
-        .help(isPinned ? "Unpin session" : "Pin session")
-      }
-
       if let onArchive {
         if showArchiveConfirm {
           Button {
@@ -240,29 +230,6 @@ struct CollapsibleSessionRow: View {
     }
   }
 
-  // MARK: - Animations
-
-  private func startPulseAnimation() {
-    guard shouldPulse else {
-      guard isPulseAnimating else { return }
-      isPulseAnimating = false
-      withAnimation(.easeOut(duration: 0.2)) {
-        pulseScale = 1.0
-      }
-      return
-    }
-
-    guard !isPulseAnimating else { return }
-    isPulseAnimating = true
-    pulseScale = 1.0
-
-    withAnimation(
-      .easeInOut(duration: 1.0)
-      .repeatForever(autoreverses: true)
-    ) {
-      pulseScale = 1.4
-    }
-  }
 }
 
 // MARK: - Preview
