@@ -1,5 +1,5 @@
 {
-  "originHash" : "2929b57e1e88ace276de95b5aba8cc10118deb51a28af42ac44c558c70f34bf2",
+  "originHash" : "32e8e7d8d421e004d73399341fe6d495069b00bf10cf72b6371b3e8c467e7a38",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/SwiftTerm",
       "state" : {
-        "branch" : "agenthub",
-        "revision" : "d03ad83eecfe5b19f911408c7845ccd11ba2bf4f"
+        "revision" : "287a410162ca653e43b1c571faefc0320ae2f51b",
+        "version" : "1.13.0-agenthub.1"
       }
     },
     {

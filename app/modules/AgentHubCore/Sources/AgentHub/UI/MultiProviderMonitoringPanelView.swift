@@ -322,18 +322,11 @@ public struct MultiProviderMonitoringPanelView: View {
     .onChange(of: isAuxiliaryShellVisible) { _, _ in
       syncAuxiliaryShellDockState()
     }
-    .onChange(of: claudeViewModel.pendingFileOpen?.filePath) { _, filePath in
-      guard let pending = claudeViewModel.pendingFileOpen, let filePath else { return }
-      if let session = claudeViewModel.allSessions.first(where: { $0.id == pending.sessionId }) {
-        sidePanelContent = .fileExplorer(
-          sessionId: session.id,
-          session: session,
-          projectPath: session.projectPath,
-          initialFilePath: filePath,
-          navigationId: UUID()
-        )
-      }
-      claudeViewModel.pendingFileOpen = nil
+    .onChange(of: claudeViewModel.pendingFileOpen?.filePath) { _, _ in
+      consumePendingFileOpen(from: claudeViewModel, providerKind: .claude)
+    }
+    .onChange(of: codexViewModel.pendingFileOpen?.filePath) { _, _ in
+      consumePendingFileOpen(from: codexViewModel, providerKind: .codex)
     }
     .overlay {
       // Hidden Shift+P trigger for QuickFilePicker
@@ -426,6 +419,10 @@ public struct MultiProviderMonitoringPanelView: View {
       if currentSidePanelContent.isFileExplorer, let newId {
         if let item = allItems.first(where: { $0.id == newId }),
            case .monitored(_, _, let session, _) = item {
+          if case .fileExplorer(let currentSessionId, _, _, _, _) = currentSidePanelContent,
+             currentSessionId == session.id {
+            return
+          }
           sidePanelContent = .fileExplorer(
             sessionId: session.id,
             session: session,
@@ -1247,6 +1244,46 @@ public struct MultiProviderMonitoringPanelView: View {
         content: content
       )
     }
+  }
+
+  private func consumePendingFileOpen(
+    from viewModel: CLISessionsViewModel,
+    providerKind: SessionProviderKind
+  ) {
+    guard let pending = viewModel.pendingFileOpen else { return }
+    defer {
+      viewModel.pendingFileOpen = nil
+    }
+
+    guard let session = viewModel.allSessions.first(where: { $0.id == pending.sessionId })
+      ?? viewModel.monitoredSessions.first(where: { $0.session.id == pending.sessionId })?.session
+    else {
+      Self.logFileOpen(
+        "abort pendingFileOpen provider=\(providerKind.rawValue) missing session=\(pending.sessionId) file=\"\(pending.filePath)\""
+      )
+      return
+    }
+
+    let fileExplorerProjectPath = TerminalFileOpenProjectResolver.projectPath(
+      forFile: pending.filePath,
+      sessionProjectPath: session.projectPath,
+      repositories: allSelectedRepositories
+    )
+    Self.logFileOpen(
+      "consume pendingFileOpen provider=\(providerKind.rawValue) session=\(session.id) file=\"\(pending.filePath)\" sessionProject=\"\(session.projectPath)\" explorerProject=\"\(fileExplorerProjectPath)\""
+    )
+
+    sidePanelContent = .fileExplorer(
+      sessionId: session.id,
+      session: session,
+      projectPath: fileExplorerProjectPath,
+      initialFilePath: pending.filePath,
+      navigationId: UUID()
+    )
+  }
+
+  private static func logFileOpen(_ message: @autoclosure () -> String) {
+    print("[AH-OPEN][AgentHub] \(message())")
   }
 
   private func ensurePrimarySelection() {
