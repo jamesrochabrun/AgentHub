@@ -12,7 +12,7 @@ import AppKit
 /// A panel that lets the user browse and edit files in a project directory.
 ///
 /// - Shows a hierarchical file tree in a collapsible sidebar (240 pt wide).
-/// - Opens files in a ``CETextViewRepresentable`` editor backed by ``CodeEditTextView/TextView``.
+/// - Opens files in a source editor backed by CodeEditSourceEditor.
 /// - Tracks unsaved changes and prompts before closing.
 public struct FileExplorerView: View {
 
