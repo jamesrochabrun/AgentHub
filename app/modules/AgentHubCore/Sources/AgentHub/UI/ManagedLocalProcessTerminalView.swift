@@ -40,6 +40,7 @@ public protocol ManagedLocalProcessTerminalViewDelegate: AnyObject {
 /// Local-process terminal view with explicit process control.
 open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
   private var process: LocalProcess!
+  private static let fileOpenLogPrefix = "[AH-OPEN][AgentHub]"
 
   /// Delegate for process-related events.
   public weak var processDelegate: ManagedLocalProcessTerminalViewDelegate?
@@ -115,6 +116,24 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
 
   open func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 
+  public func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+    Self.logFileOpen("requestOpenLink link=\"\(link)\" params=\(params)")
+
+    if let fileLink = Self.filePathFromImplicitLink(link) {
+      Self.logFileOpen("redirect implicit file link to requestOpenFile path=\"\(fileLink.path)\" line=\(fileLink.lineNumber.map(String.init) ?? "nil")")
+      requestOpenFile(source: source, path: fileLink.path, lineNumber: fileLink.lineNumber)
+      return
+    }
+
+    guard let url = URL(string: link), url.scheme != nil else {
+      Self.logFileOpen("abort link is neither file path nor absolute URL link=\"\(link)\"")
+      return
+    }
+
+    let opened = NSWorkspace.shared.open(url)
+    Self.logFileOpen("dispatch=ExternalURL opened=\(opened) url=\"\(url.absoluteString)\"")
+  }
+
   // MARK: - File Path Opening
 
   /// The project path for resolving relative file paths. Set by TerminalContainerView.
@@ -124,6 +143,8 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
   public var onOpenFile: ((String, Int?) -> Void)?
 
   public func requestOpenFile(source: TerminalView, path: String, lineNumber: Int?) {
+    Self.logFileOpen("requestOpenFile rawPath=\"\(path)\" line=\(lineNumber.map(String.init) ?? "nil") projectPath=\"\(projectPath ?? "nil")\"")
+
     let resolvedPath: String
     if path.hasPrefix("/") || path.hasPrefix("~") {
       resolvedPath = (path as NSString).expandingTildeInPath
@@ -133,14 +154,23 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
       resolvedPath = (NSHomeDirectory() as NSString).appendingPathComponent(path)
     }
 
-    guard FileManager.default.fileExists(atPath: resolvedPath) else { return }
+    var isDirectory: ObjCBool = false
+    let exists = FileManager.default.fileExists(atPath: resolvedPath, isDirectory: &isDirectory)
+    Self.logFileOpen("resolvedPath=\"\(resolvedPath)\" exists=\(exists) isDirectory=\(isDirectory.boolValue)")
+    guard exists else {
+      Self.logFileOpen("abort missing resolvedPath=\"\(resolvedPath)\"")
+      return
+    }
 
+    let rawEditor = UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalFileOpenEditor)
     let editor = FileOpenEditor(
-      rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalFileOpenEditor)
+      rawValue: rawEditor
     ) ?? .agentHub
+    Self.logFileOpen("editor rawValue=\(rawEditor) resolved=\(editor.label) onOpenFileSet=\(onOpenFile != nil)")
 
     switch editor {
     case .agentHub:
+      Self.logFileOpen("dispatch=AgentHubInline path=\"\(resolvedPath)\" line=\(lineNumber.map(String.init) ?? "nil")")
       onOpenFile?(resolvedPath, lineNumber)
     case .vscode:
       Self.openInVSCode(path: resolvedPath, line: lineNumber)
@@ -156,20 +186,60 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
       "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
     ]
     guard let codePath = codePaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-      NSWorkspace.shared.open(URL(fileURLWithPath: path))
+      let opened = NSWorkspace.shared.open(URL(fileURLWithPath: path))
+      logFileOpen("VSCode not found; fallback=NSWorkspace.open opened=\(opened) path=\"\(path)\"")
       return
     }
     let task = Process()
     task.executableURL = URL(fileURLWithPath: codePath)
     task.arguments = ["--goto", line != nil ? "\(path):\(line!)" : path]
-    try? task.run()
+    do {
+      try task.run()
+      logFileOpen("dispatch=VSCode executable=\"\(codePath)\" args=\(task.arguments ?? []) pid=\(task.processIdentifier)")
+    } catch {
+      logFileOpen("dispatch=VSCode failed executable=\"\(codePath)\" error=\"\(error.localizedDescription)\"")
+    }
   }
 
   private static func openInXcode(path: String, line: Int?) {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/xed")
     task.arguments = line != nil ? ["--line", "\(line!)", path] : [path]
-    try? task.run()
+    do {
+      try task.run()
+      logFileOpen("dispatch=Xcode executable=\"/usr/bin/xed\" args=\(task.arguments ?? []) pid=\(task.processIdentifier)")
+    } catch {
+      logFileOpen("dispatch=Xcode failed executable=\"/usr/bin/xed\" error=\"\(error.localizedDescription)\"")
+    }
+  }
+
+  private static func logFileOpen(_ message: @autoclosure () -> String) {
+    print("\(fileOpenLogPrefix) \(message())")
+  }
+
+  private static func filePathFromImplicitLink(_ link: String) -> (path: String, lineNumber: Int?)? {
+    let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty,
+          !trimmed.contains("://"),
+          URLComponents(string: trimmed)?.scheme == nil,
+          trimmed.contains("/")
+            || trimmed.hasPrefix("~")
+            || trimmed.hasPrefix(".")
+            || trimmed.hasPrefix("/")
+    else {
+      return nil
+    }
+
+    var path = trimmed
+    var lineNumber: Int?
+    if let suffixRange = path.range(of: #":\d+(?::\d+)?$"#, options: .regularExpression) {
+      let suffix = String(path[suffixRange])
+      let parts = suffix.dropFirst().split(separator: ":")
+      lineNumber = parts.first.flatMap { Int($0) }
+      path = String(path[..<suffixRange.lowerBound])
+    }
+
+    return path.isEmpty ? nil : (path, lineNumber)
   }
 
   // MARK: - Process Control
