@@ -88,16 +88,22 @@ struct CollapsibleSessionRow: View {
           Text(providerKind.rawValue)
             .font(.secondaryCaption)
             .foregroundColor(isPrimary ? .white : .brandPrimary(for: providerKind).opacity(0.8))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
 
           Spacer(minLength: 4)
 
           statusLabel
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .animation(.easeInOut(duration: 0.3), value: isPending)
             .animation(.easeInOut(duration: 0.3), value: sessionStatus)
 
           Text(timestamp.timeAgoDisplay())
             .font(.secondaryCaption)
             .foregroundColor(.secondary.opacity(0.7))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
         }
 
         // Row 2: message + actions
