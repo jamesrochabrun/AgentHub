@@ -45,14 +45,6 @@ private struct WebPreviewSheetItem: Identifiable {
   var monitorState: SessionMonitorState?
 }
 
-/// Identifiable wrapper for file explorer sheet
-private struct FileExplorerSheetItem: Identifiable {
-  let id = UUID()
-  let session: CLISession
-  let projectPath: String
-  let initialFilePath: String?
-}
-
 /// Identifiable wrapper for GitHub panel sheet
 private struct GitHubSheetItem: Identifiable {
   let id = UUID()
@@ -73,6 +65,8 @@ public struct MonitoringCardView: View {
   let initialInputText: String?
   let terminalKey: String?  // Key for terminal storage (session ID or "pending-{pendingId}")
   let viewModel: CLISessionsViewModel?
+  let editorProjectPath: String
+  let editorNavigationRequest: FileExplorerNavigationRequest?
   var dangerouslySkipPermissions: Bool = false
   var permissionModePlan: Bool = false
   let worktreeName: String?
@@ -86,15 +80,17 @@ public struct MonitoringCardView: View {
   let onShowPlan: ((CLISession, PlanState) -> Void)?
   let onShowWebPreview: ((CLISession, String) -> Void)?
   let onShowMermaid: ((CLISession) -> Void)?
-  let onShowFiles: ((CLISession, String) -> Void)?
   let onShowGitHub: ((CLISession, String) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
+  let onRequestShowEditor: (() -> Void)?
   let isMaximized: Bool
   let onToggleMaximize: () -> Void
   let isPrimarySession: Bool
   let showPrimaryIndicator: Bool
   var isSidePanelOpen: Bool = false
+  @Binding private var contentMode: MonitoringCardContentMode
+  @Binding private var selectedEditorFilePath: String?
 
   @State private var gitDiffSheetItem: GitDiffSheetItem?
   @State private var planSheetItem: PlanSheetItem?
@@ -102,7 +98,6 @@ public struct MonitoringCardView: View {
   @State private var webPreviewSheetItem: WebPreviewSheetItem?
   @State private var mermaidSheetSession: CLISession?
   @State private var simulatorSheetSession: CLISession?
-  @State private var fileExplorerSheetItem: FileExplorerSheetItem?
   @State private var gitHubSheetItem: GitHubSheetItem?
   @State private var sessionGitHubQuickAccessViewModel = SessionGitHubQuickAccessViewModel()
   @State private var isDragging = false
@@ -123,6 +118,10 @@ public struct MonitoringCardView: View {
     initialInputText: String? = nil,
     terminalKey: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
+    contentMode: Binding<MonitoringCardContentMode> = .constant(.terminal),
+    selectedEditorFilePath: Binding<String?> = .constant(nil),
+    editorProjectPath: String? = nil,
+    editorNavigationRequest: FileExplorerNavigationRequest? = nil,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil,
@@ -136,10 +135,10 @@ public struct MonitoringCardView: View {
     onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
     onShowWebPreview: ((CLISession, String) -> Void)? = nil,
     onShowMermaid: ((CLISession) -> Void)? = nil,
-    onShowFiles: ((CLISession, String) -> Void)? = nil,
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
+    onRequestShowEditor: (() -> Void)? = nil,
     isMaximized: Bool = false,
     onToggleMaximize: @escaping () -> Void = {},
     isPrimarySession: Bool = false,
@@ -155,6 +154,10 @@ public struct MonitoringCardView: View {
     self.initialInputText = initialInputText
     self.terminalKey = terminalKey
     self.viewModel = viewModel
+    self._contentMode = contentMode
+    self._selectedEditorFilePath = selectedEditorFilePath
+    self.editorProjectPath = editorProjectPath ?? session.projectPath
+    self.editorNavigationRequest = editorNavigationRequest
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
     self.permissionModePlan = permissionModePlan
     self.worktreeName = worktreeName
@@ -168,10 +171,10 @@ public struct MonitoringCardView: View {
     self.onShowPlan = onShowPlan
     self.onShowWebPreview = onShowWebPreview
     self.onShowMermaid = onShowMermaid
-    self.onShowFiles = onShowFiles
     self.onShowGitHub = onShowGitHub
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
+    self.onRequestShowEditor = onRequestShowEditor
     self.isMaximized = isMaximized
     self.onToggleMaximize = onToggleMaximize
     self.isPrimarySession = isPrimarySession
@@ -373,19 +376,6 @@ public struct MonitoringCardView: View {
           vm.showTerminalWithPrompt(for: session, prompt: "Fix this build error:\n\(error)")
           simulatorSheetSession = nil
         }
-      )
-    }
-    .modalPanel(
-      item: $fileExplorerSheetItem,
-      title: "File Explorer",
-      autosaveName: "com.agenthub.panel.fileExplorer"
-    ) { item in
-      FileExplorerView(
-        session: item.session,
-        projectPath: item.projectPath,
-        onDismiss: { fileExplorerSheetItem = nil },
-        isEmbedded: false,
-        initialFilePath: item.initialFilePath
       )
     }
     .modalPanel(
@@ -686,27 +676,6 @@ public struct MonitoringCardView: View {
         .buttonStyle(.agentHubOutlined)
         .help("View git unstaged changes")
 
-        // Files button
-        Button(action: {
-          if let onShowFiles {
-            onShowFiles(session, session.projectPath)
-          } else {
-            fileExplorerSheetItem = FileExplorerSheetItem(
-              session: session,
-              projectPath: session.projectPath,
-              initialFilePath: nil
-            )
-          }
-        }) {
-          HStack(spacing: 4) {
-            Image(systemName: "folder")
-              .font(.caption2)
-            Text("Files")
-          }
-        }
-        .buttonStyle(.agentHubOutlined)
-        .help("Browse Files (⇧⌘P to search)")
-
         // Web preview button — visible when the project looks like a web project
         // or the agent has already detected a running localhost server
         if shouldShowWebPreviewButton {
@@ -893,14 +862,43 @@ public struct MonitoringCardView: View {
       }
 
       Spacer(minLength: 8)
+
+      contentModeToggle
+        .layoutPriority(2)
     }
     .frame(minHeight: 24)
+  }
+
+  // MARK: - Content Mode Toggle
+
+  private var contentModeToggle: some View {
+    BracketedSegmentedControl(
+      selection: $contentMode,
+      items: MonitoringCardContentMode.allCases.map { mode in
+        BracketedSegmentedControlItem(
+          value: mode,
+          title: mode.label.lowercased(),
+          helpText: mode.label
+        )
+      },
+      selectedColor: Color.brandPrimary(for: providerKind)
+    )
+    .help("Switch between terminal and code")
   }
 
   // MARK: - Monitor Content
 
   @ViewBuilder
   private var monitorContent: some View {
+    switch contentMode {
+    case .terminal:
+      terminalContent
+    case .editor:
+      editorContent
+    }
+  }
+
+  private var terminalContent: some View {
     EmbeddedTerminalView(
       terminalKey: terminalKey ?? session.id,
       sessionId: session.id,
@@ -913,12 +911,26 @@ public struct MonitoringCardView: View {
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName,
       onUserInteraction: onTerminalInteraction,
+      onRequestShowEditor: onRequestShowEditor,
       consumeQueuedWebPreviewContextOnSubmit: {
         viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
       }
     )
     .padding(DesignTokens.Spacing.sm)
     .frame(minHeight: 300)
+  }
+
+  private var editorContent: some View {
+    FileExplorerView(
+      session: session,
+      projectPath: editorProjectPath,
+      onDismiss: { contentMode = .terminal },
+      isEmbedded: false,
+      selectedFilePath: $selectedEditorFilePath,
+      navigationRequest: editorNavigationRequest
+    )
+    .frame(maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+    .id("editor-\(session.id)")
   }
 
   private var previewContextBadge: some View {

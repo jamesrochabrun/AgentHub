@@ -17,7 +17,6 @@ private enum SidePanelContent: Equatable {
   case plan(sessionId: String, session: CLISession, planState: PlanState)
   case webPreview(sessionId: String, session: CLISession, projectPath: String)
   case mermaid(sessionId: String, session: CLISession)
-  case fileExplorer(sessionId: String, session: CLISession, projectPath: String, initialFilePath: String?, navigationId: UUID = UUID())
   case gitHub(sessionId: String, session: CLISession, projectPath: String)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
@@ -30,29 +29,11 @@ private enum SidePanelContent: Equatable {
       return id1 == id2 && p1 == p2
     case (.mermaid(let id1, _), .mermaid(let id2, _)):
       return id1 == id2
-    case (.fileExplorer(let id1, _, let p1, _, let n1), .fileExplorer(let id2, _, let p2, _, let n2)):
-      return id1 == id2 && p1 == p2 && n1 == n2
     case (.gitHub(let id1, _, let p1), .gitHub(let id2, _, let p2)):
       return id1 == id2 && p1 == p2
     default: return false
     }
   }
-}
-
-extension SidePanelContent {
-  var isFileExplorer: Bool {
-    if case .fileExplorer = self { return true }
-    return false
-  }
-}
-
-// MARK: - FileExplorerPanelItem
-
-private struct FileExplorerPanelItem: Identifiable {
-  let id = UUID()
-  let session: CLISession
-  let projectPath: String
-  let initialFilePath: String?
 }
 
 // MARK: - GitHubPopOutItem
@@ -196,11 +177,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
   @State private var sidePanelContent: SidePanelContent?
-  // Persistent FileExplorer state – the view is never destroyed, only shown/hidden
-  @State private var persistedFESession: CLISession? = nil
-  @State private var persistedFEProjectPath: String = ""
-  @State private var persistedFENavId: UUID = UUID()
-  @State private var persistedFEInitPath: String? = nil
+  @State private var editorStates: [String: MonitoringEditorState] = [:]
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
   @AppStorage(AgentHubDefaults.hubLayoutMode)
@@ -209,10 +186,7 @@ public struct MultiProviderMonitoringPanelView: View {
   private var previousLayoutModeRawValue: Int = -1
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
-  @AppStorage(AgentHubDefaults.fileExplorerAlwaysModal)
-  private var fileExplorerAlwaysModal: Bool = false
   @State private var showQuickFilePicker = false
-  @State private var fileExplorerPanelItem: FileExplorerPanelItem?
   @State private var gitHubPopOutItem: GitHubPopOutItem?
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -302,19 +276,14 @@ public struct MultiProviderMonitoringPanelView: View {
     .cornerRadius(8)
     .onAppear {
       onEmbeddedSidePanelVisibilityChange(wantsEmbeddedSidePanelPresentation)
+      syncEditorStates()
       syncAuxiliaryShellDockState()
-    }
-    .onChange(of: sidePanelContent) { _, newContent in
-      // Sync persistent FileExplorer state when the panel switches to/from fileExplorer
-      if case .fileExplorer(_, let session, let projectPath, let initPath, let navId) = newContent {
-        persistedFESession = session
-        persistedFEProjectPath = projectPath
-        persistedFEInitPath = initPath
-        persistedFENavId = navId
-      }
     }
     .onChange(of: wantsEmbeddedSidePanelPresentation) { _, wantsPresentation in
       onEmbeddedSidePanelVisibilityChange(wantsPresentation)
+    }
+    .onChange(of: allItems.map(\.id)) { _, _ in
+      syncEditorStates()
     }
     .onChange(of: effectivePrimarySessionId) { _, _ in
       syncAuxiliaryShellDockState()
@@ -329,52 +298,36 @@ public struct MultiProviderMonitoringPanelView: View {
       consumePendingFileOpen(from: codexViewModel, providerKind: .codex)
     }
     .overlay {
-      // Hidden Shift+P trigger for QuickFilePicker
-      Button("") { showQuickFilePicker = true }
-        .keyboardShortcut("p", modifiers: [.command])
-        .frame(width: 0, height: 0)
-        .hidden()
+      Group {
+        Button("") { showQuickFilePicker = true }
+          .keyboardShortcut("p", modifiers: [.command])
+
+        Button("") { togglePrimarySessionContentMode() }
+          .keyboardShortcut("`", modifiers: [.control])
+      }
+      .frame(width: 0, height: 0)
+      .hidden()
+    }
+    .onReceive(NotificationCenter.default.publisher(for: .toggleMonitoringContentMode)) { _ in
+      togglePrimarySessionContentMode()
     }
     .floatingPanel(isPresented: $showQuickFilePicker, defaultSize: CGSize(width: 680, height: 640)) {
-      if let primaryItem = allItems.first(where: { $0.id == effectivePrimarySessionId }) {
+      if let primaryItem = effectivePrimaryItem {
         QuickFilePickerView(
           isPresented: $showQuickFilePicker,
-          projectPath: primaryItem.projectPath,
+          projectPath: editorState(for: primaryItem).projectPath,
           onFileSelected: { path in
             showQuickFilePicker = false
-            if case .monitored(_, _, let session, _) = primaryItem {
-              if fileExplorerAlwaysModal {
-                fileExplorerPanelItem = FileExplorerPanelItem(
-                  session: session,
-                  projectPath: primaryItem.projectPath,
-                  initialFilePath: path
-                )
-              } else {
-                sidePanelContent = .fileExplorer(
-                  sessionId: session.id,
-                  session: session,
-                  projectPath: primaryItem.projectPath,
-                  initialFilePath: path,
-                  navigationId: UUID()
-                )
-              }
-            }
+            openFileInEditor(
+              for: primaryItem.id,
+              filePath: path,
+              projectPath: editorState(for: primaryItem).projectPath,
+              lineNumber: nil,
+              makePrimary: false
+            )
           }
         )
       }
-    }
-    .modalPanel(
-      item: $fileExplorerPanelItem,
-      title: "File Explorer",
-      autosaveName: "com.agenthub.panel.fileExplorer"
-    ) { item in
-      FileExplorerView(
-        session: item.session,
-        projectPath: item.projectPath,
-        onDismiss: { fileExplorerPanelItem = nil },
-        isEmbedded: false,
-        initialFilePath: item.initialFilePath
-      )
     }
     .modalPanel(
       item: $gitHubPopOutItem,
@@ -413,32 +366,12 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: effectivePrimarySessionId) { _, newId in
       guard let currentSidePanelContent = sidePanelContent else { return }
-
-      // When switching sessions, update file explorer to new session's project path
-      // instead of closing it.
-      if currentSidePanelContent.isFileExplorer, let newId {
-        if let item = allItems.first(where: { $0.id == newId }),
-           case .monitored(_, _, let session, _) = item {
-          if case .fileExplorer(let currentSessionId, _, _, _, _) = currentSidePanelContent,
-             currentSessionId == session.id {
-            return
-          }
-          sidePanelContent = .fileExplorer(
-            sessionId: session.id,
-            session: session,
-            projectPath: session.projectPath,
-            initialFilePath: nil,
-            navigationId: UUID()
-          )
-        } else {
-          sidePanelContent = nil
-        }
-      } else if case .webPreview(let sessionId, _, let projectPath) = currentSidePanelContent,
-                sessionId.hasPrefix("pending-"),
-                let newId,
-                let item = allItems.first(where: { $0.id == newId }),
-                case .monitored(_, _, let session, _) = item,
-                session.projectPath == projectPath {
+      if case .webPreview(let sessionId, _, let projectPath) = currentSidePanelContent,
+         sessionId.hasPrefix("pending-"),
+         let newId,
+         let item = allItems.first(where: { $0.id == newId }),
+         case .monitored(_, _, let session, _) = item,
+         session.projectPath == projectPath {
         sidePanelContent = .webPreview(
           sessionId: session.id,
           session: session,
@@ -616,15 +549,17 @@ public struct MultiProviderMonitoringPanelView: View {
             state: nil,
             cliConfiguration: viewModel.cliConfiguration,
             providerKind: item.providerKind,
-
             initialPrompt: pending.initialPrompt,
             initialInputText: pending.initialInputText,
             terminalKey: pendingId,
             viewModel: viewModel,
+            contentMode: editorContentModeBinding(for: item),
+            selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+            editorProjectPath: editorState(for: item).projectPath,
+            editorNavigationRequest: editorState(for: item).navigationRequest,
             dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
             permissionModePlan: pending.permissionModePlan,
             worktreeName: pending.worktreeName,
-
             onStopMonitoring: { viewModel.cancelPendingSession(pending) },
             onConnect: { },
             onCopySessionId: { },
@@ -634,6 +569,7 @@ public struct MultiProviderMonitoringPanelView: View {
               presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
             },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+            onRequestShowEditor: { setContentMode(.editor, for: item) },
             isMaximized: false,
             onToggleMaximize: { },
             isPrimarySession: true,
@@ -658,6 +594,10 @@ public struct MultiProviderMonitoringPanelView: View {
             initialPrompt: initialPrompt,
             terminalKey: session.id,
             viewModel: viewModel,
+            contentMode: editorContentModeBinding(for: item),
+            selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+            editorProjectPath: editorState(for: item).projectPath,
+            editorNavigationRequest: editorState(for: item).navigationRequest,
             onStopMonitoring: {
               viewModel.stopMonitoring(session: session)
             },
@@ -704,18 +644,6 @@ public struct MultiProviderMonitoringPanelView: View {
                 sidePanelContent = .mermaid(sessionId: session.id, session: session)
               }
             } : nil,
-            onShowFiles: (canShowSidePanel && !fileExplorerAlwaysModal) ? { session, projectPath in
-              if case .fileExplorer(let sid, _, _, _, _) = sidePanelContent, sid == session.id {
-                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
-              } else {
-                sidePanelContent = .fileExplorer(
-                  sessionId: session.id,
-                  session: session,
-                  projectPath: projectPath,
-                  initialFilePath: nil
-                )
-              }
-            } : nil,
             onShowGitHub: canShowSidePanel ? { session, projectPath in
               if case .gitHub(let sid, _, _) = sidePanelContent, sid == session.id {
                 withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
@@ -727,6 +655,7 @@ public struct MultiProviderMonitoringPanelView: View {
               viewModel.clearPendingPrompt(for: session.id)
             },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+            onRequestShowEditor: { setContentMode(.editor, for: item) },
             isMaximized: false,
             onToggleMaximize: { },
             isPrimarySession: true,
@@ -750,7 +679,7 @@ public struct MultiProviderMonitoringPanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .blursWhileResizing()
 
-      if let panelContent = sidePanelContent, !panelContent.isFileExplorer {
+      if let panelContent = sidePanelContent {
         ResizablePanelContainer(
           side: .trailing,
           minWidth: embeddedSidePanelMinWidth,
@@ -759,26 +688,6 @@ public struct MultiProviderMonitoringPanelView: View {
           userDefaultsKey: AgentHubDefaults.sidePanelWidth
         ) {
           sidePanelView(for: panelContent, viewModel: viewModel)
-        }
-        .transition(embeddedSidePanelTransition)
-      }
-
-      if sidePanelContent?.isFileExplorer == true, let feSession = persistedFESession {
-        ResizablePanelContainer(
-          side: .trailing,
-          minWidth: embeddedSidePanelMinWidth,
-          maxWidth: allowedEmbeddedSidePanelWidth,
-          defaultWidth: min(embeddedSidePanelDefaultWidth, allowedEmbeddedSidePanelWidth),
-          userDefaultsKey: AgentHubDefaults.sidePanelWidth
-        ) {
-          FileExplorerView(
-            session: feSession,
-            projectPath: persistedFEProjectPath,
-            onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-            isEmbedded: true,
-            initialFilePath: persistedFEInitPath
-          )
-          .id(persistedFENavId)
         }
         .transition(embeddedSidePanelTransition)
       }
@@ -872,15 +781,6 @@ public struct MultiProviderMonitoringPanelView: View {
         onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
         isEmbedded: true
       )
-    case .fileExplorer(_, let session, let projectPath, let initialFilePath, let navId):
-      FileExplorerView(
-        session: session,
-        projectPath: projectPath,
-        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-        isEmbedded: true,
-        initialFilePath: initialFilePath
-      )
-      .id(navId)
     case .gitHub(_, let session, let projectPath):
       GitHubPanelView(
         projectPath: projectPath,
@@ -901,20 +801,24 @@ public struct MultiProviderMonitoringPanelView: View {
   @ViewBuilder
   private func itemCardView(for item: ProviderMonitoringItem) -> some View {
     let isPrimary = item.id == effectivePrimarySessionId
-    switch item {
-    case .pending(_, let viewModel, let pending):
-      MonitoringCardView(
-        session: pending.placeholderSession,
-        state: nil,
-        cliConfiguration: viewModel.cliConfiguration,
-        providerKind: item.providerKind,
-        initialPrompt: pending.initialPrompt,
-        initialInputText: pending.initialInputText,
-        terminalKey: "pending-\(pending.id.uuidString)",
-        viewModel: viewModel,
-        dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
-        permissionModePlan: pending.permissionModePlan,
-        worktreeName: pending.worktreeName,
+      switch item {
+      case .pending(_, let viewModel, let pending):
+        MonitoringCardView(
+          session: pending.placeholderSession,
+          state: nil,
+          cliConfiguration: viewModel.cliConfiguration,
+          providerKind: item.providerKind,
+          initialPrompt: pending.initialPrompt,
+          initialInputText: pending.initialInputText,
+          terminalKey: "pending-\(pending.id.uuidString)",
+          viewModel: viewModel,
+          contentMode: editorContentModeBinding(for: item),
+          selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+          editorProjectPath: editorState(for: item).projectPath,
+          editorNavigationRequest: editorState(for: item).navigationRequest,
+          dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
+          permissionModePlan: pending.permissionModePlan,
+          worktreeName: pending.worktreeName,
         onStopMonitoring: { viewModel.cancelPendingSession(pending) },
         onConnect: { },
         onCopySessionId: { },
@@ -924,6 +828,7 @@ public struct MultiProviderMonitoringPanelView: View {
           presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
         },
         onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+        onRequestShowEditor: { setContentMode(.editor, for: item) },
         isMaximized: maximizedSessionId == item.id,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -939,18 +844,22 @@ public struct MultiProviderMonitoringPanelView: View {
       let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
       let initialPrompt = viewModel.pendingPrompt(for: session.id)
 
-      MonitoringCardView(
-        session: session,
-        state: state,
-        planState: planState,
-        cliConfiguration: viewModel.cliConfiguration,
-        providerKind: item.providerKind,
-        initialPrompt: initialPrompt,
-        terminalKey: session.id,
-        viewModel: viewModel,
-        onStopMonitoring: {
-          viewModel.stopMonitoring(session: session)
-        },
+        MonitoringCardView(
+          session: session,
+          state: state,
+          planState: planState,
+          cliConfiguration: viewModel.cliConfiguration,
+          providerKind: item.providerKind,
+          initialPrompt: initialPrompt,
+          terminalKey: session.id,
+          viewModel: viewModel,
+          contentMode: editorContentModeBinding(for: item),
+          selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+          editorProjectPath: editorState(for: item).projectPath,
+          editorNavigationRequest: editorState(for: item).navigationRequest,
+          onStopMonitoring: {
+            viewModel.stopMonitoring(session: session)
+          },
         onConnect: {
           _ = viewModel.connectToSession(session)
         },
@@ -977,6 +886,7 @@ public struct MultiProviderMonitoringPanelView: View {
           viewModel.clearPendingPrompt(for: session.id)
         },
         onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+        onRequestShowEditor: { setContentMode(.editor, for: item) },
         isMaximized: maximizedSessionId == item.id,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -1052,15 +962,17 @@ public struct MultiProviderMonitoringPanelView: View {
           state: nil,
           cliConfiguration: viewModel.cliConfiguration,
           providerKind: item.providerKind,
-
           initialPrompt: pending.initialPrompt,
           initialInputText: pending.initialInputText,
           terminalKey: "pending-\(pending.id.uuidString)",
           viewModel: viewModel,
+          contentMode: editorContentModeBinding(for: item),
+          selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+          editorProjectPath: editorState(for: item).projectPath,
+          editorNavigationRequest: editorState(for: item).navigationRequest,
           dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
           permissionModePlan: pending.permissionModePlan,
           worktreeName: pending.worktreeName,
-
           onStopMonitoring: {
             viewModel.cancelPendingSession(pending)
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -1075,6 +987,7 @@ public struct MultiProviderMonitoringPanelView: View {
             presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
           },
           onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
+          onRequestShowEditor: { setContentMode(.editor, for: item) },
           isMaximized: true,
           onToggleMaximize: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -1097,6 +1010,10 @@ public struct MultiProviderMonitoringPanelView: View {
           initialPrompt: initialPrompt,
           terminalKey: session.id,
           viewModel: viewModel,
+          contentMode: editorContentModeBinding(for: item),
+          selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+          editorProjectPath: editorState(for: item).projectPath,
+          editorNavigationRequest: editorState(for: item).navigationRequest,
           onStopMonitoring: {
             viewModel.stopMonitoring(session: session)
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -1129,6 +1046,7 @@ public struct MultiProviderMonitoringPanelView: View {
             viewModel.clearPendingPrompt(for: session.id)
           },
           onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
+          onRequestShowEditor: { setContentMode(.editor, for: item) },
           isMaximized: true,
           onToggleMaximize: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -1264,21 +1182,28 @@ public struct MultiProviderMonitoringPanelView: View {
       return
     }
 
-    let fileExplorerProjectPath = TerminalFileOpenProjectResolver.projectPath(
+    let editorProjectPath = TerminalFileOpenProjectResolver.projectPath(
       forFile: pending.filePath,
       sessionProjectPath: session.projectPath,
       repositories: allSelectedRepositories
     )
     Self.logFileOpen(
-      "consume pendingFileOpen provider=\(providerKind.rawValue) session=\(session.id) file=\"\(pending.filePath)\" sessionProject=\"\(session.projectPath)\" explorerProject=\"\(fileExplorerProjectPath)\""
+      "consume pendingFileOpen provider=\(providerKind.rawValue) session=\(session.id) file=\"\(pending.filePath)\" sessionProject=\"\(session.projectPath)\" editorProject=\"\(editorProjectPath)\""
     )
 
-    sidePanelContent = .fileExplorer(
-      sessionId: session.id,
-      session: session,
-      projectPath: fileExplorerProjectPath,
-      initialFilePath: pending.filePath,
-      navigationId: UUID()
+    guard let item = allItems.first(where: { $0.providerKind == providerKind && $0.sessionId == pending.sessionId }) else {
+      Self.logFileOpen(
+        "abort pendingFileOpen provider=\(providerKind.rawValue) missing itemId for session=\(pending.sessionId)"
+      )
+      return
+    }
+
+    openFileInEditor(
+      for: item.id,
+      filePath: pending.filePath,
+      projectPath: editorProjectPath,
+      lineNumber: pending.lineNumber,
+      makePrimary: true
     )
   }
 
@@ -1377,6 +1302,88 @@ public struct MultiProviderMonitoringPanelView: View {
       get: { cardHeights[itemId] ?? 0 },
       set: { cardHeights[itemId] = $0 }
     )
+  }
+
+  private func editorState(for item: ProviderMonitoringItem) -> MonitoringEditorState {
+    MonitoringEditorStateStore.state(
+      for: item.id,
+      defaultProjectPath: item.projectPath,
+      in: editorStates
+    )
+  }
+
+  private func editorContentModeBinding(for item: ProviderMonitoringItem) -> Binding<MonitoringCardContentMode> {
+    Binding(
+      get: { editorState(for: item).contentMode },
+      set: { newValue in
+        setContentMode(newValue, for: item)
+      }
+    )
+  }
+
+  private func selectedEditorFilePathBinding(for item: ProviderMonitoringItem) -> Binding<String?> {
+    Binding(
+      get: { editorState(for: item).selectedFilePath },
+      set: { newValue in
+        setPrimarySessionIfNeeded(item.id)
+        editorStates = MonitoringEditorStateStore.setSelectedFilePath(
+          newValue,
+          for: item.id,
+          defaultProjectPath: editorState(for: item).projectPath,
+          in: editorStates
+        )
+      }
+    )
+  }
+
+  private func syncEditorStates() {
+    editorStates = MonitoringEditorStateStore.prune(
+      editorStates,
+      validItemIDs: Set(allItems.map(\.id))
+    )
+  }
+
+  private func setContentMode(_ contentMode: MonitoringCardContentMode, for item: ProviderMonitoringItem) {
+    setPrimarySessionIfNeeded(item.id)
+    editorStates = MonitoringEditorStateStore.setContentMode(
+      contentMode,
+      for: item.id,
+      defaultProjectPath: editorState(for: item).projectPath,
+      in: editorStates
+    )
+
+    if contentMode == .terminal {
+      item.viewModel.focusTerminal(forKey: item.sessionId)
+    }
+  }
+
+  private func togglePrimarySessionContentMode() {
+    guard let item = effectivePrimaryItem else { return }
+    let nextMode: MonitoringCardContentMode =
+      editorState(for: item).contentMode == .terminal ? .editor : .terminal
+    setContentMode(nextMode, for: item)
+  }
+
+  private func openFileInEditor(
+    for itemID: String,
+    filePath: String,
+    projectPath: String,
+    lineNumber: Int?,
+    makePrimary: Bool
+  ) {
+    let result = MonitoringEditorStateStore.routeOpenFile(
+      filePath,
+      lineNumber: lineNumber,
+      projectPath: projectPath,
+      for: itemID,
+      in: editorStates,
+      currentPrimaryItemID: primarySessionId,
+      makePrimary: makePrimary
+    )
+    editorStates = result.states
+    if let primaryItemID = result.primaryItemID {
+      primarySessionId = primaryItemID
+    }
   }
 
   private func listCardMetrics(for item: ProviderMonitoringItem) -> ResizableCardMetrics {

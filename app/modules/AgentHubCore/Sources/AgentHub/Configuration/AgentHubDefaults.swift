@@ -98,13 +98,21 @@ public enum AgentHubDefaults {
   /// Type: String (default: "SF Mono")
   public static let terminalFontFamily = "\(keyPrefix)terminal.fontFamily"
 
+  /// Whether source editors show the CodeEdit minimap
+  /// Type: Bool (default: false)
+  public static let sourceEditorMinimapEnabled = "\(keyPrefix)editor.minimapEnabled"
+
+  /// Whether source editors wrap long lines instead of using horizontal scrolling
+  /// Type: Bool (default: true)
+  public static let sourceEditorWrapLinesEnabled = "\(keyPrefix)editor.wrapLinesEnabled"
+
   /// Preferred newline shortcut in the embedded terminal
   /// Type: Int (default: 0 = system/default)
   /// See: NewlineShortcut enum in EmbeddedTerminalView.swift
   public static let terminalNewlineShortcut = "\(keyPrefix)terminal.newlineShortcut"
 
   /// Preferred editor for Cmd+Click file paths in the terminal
-  /// Type: Int (default: 0 = AgentHub inline)
+  /// Type: Int (default: 0 = AgentHub editor)
   /// See: FileOpenEditor enum in ManagedLocalProcessTerminalView.swift
   public static let terminalFileOpenEditor = "\(keyPrefix)terminal.fileOpenEditor"
 
@@ -142,10 +150,6 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let flatSessionLayout = "\(keyPrefix)hub.flatSessionLayout"
 
-  /// Whether file explorer always opens as a modal (never as side panel)
-  /// Type: Bool (default: false)
-  public static let fileExplorerAlwaysModal = "\(keyPrefix)features.fileExplorerAlwaysModal"
-
   /// Whether debug-only web preview design tools are enabled
   /// Type: Bool (default: true in debug)
   public static let webPreviewAdvancedEditingEnabled = "\(keyPrefix)developer.webPreviewAdvancedEditingEnabled"
@@ -154,7 +158,7 @@ public enum AgentHubDefaults {
   /// Type: String (default: "regular")
   public static let webPreviewInspectorDataLevel = "\(keyPrefix)developer.webPreviewInspectorDataLevel"
 
-  /// Width of the side panel (diff, plan, web preview, file explorer) in the single-session layout
+  /// Width of the side panel (diff, plan, web preview, GitHub) in the single-session layout
   /// Type: Double (default: 700)
   public static let sidePanelWidth = "\(keyPrefix)ui.sidePanelWidth"
 

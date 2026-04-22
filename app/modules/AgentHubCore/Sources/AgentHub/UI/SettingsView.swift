@@ -20,14 +20,17 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
 
-  @AppStorage(AgentHubDefaults.fileExplorerAlwaysModal)
-  private var fileExplorerAlwaysModal: Bool = false
-
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
   @AppStorage(AgentHubDefaults.terminalFontFamily)
   private var terminalFontFamily: String = "SF Mono"
+
+  @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
+  private var sourceEditorMinimapEnabled: Bool = false
+
+  @AppStorage(AgentHubDefaults.sourceEditorWrapLinesEnabled)
+  private var sourceEditorWrapLinesEnabled: Bool = true
 
   @AppStorage(AgentHubDefaults.terminalNewlineShortcut)
   private var newlineShortcutRawValue: Int = NewlineShortcut.system.rawValue
@@ -141,13 +144,6 @@ public struct SettingsView: View {
         )
       }
 
-      Section("Features") {
-        settingsToggle(
-          title: "File explorer always modal",
-          description: "Open file explorer as a floating window instead of a side panel",
-          isOn: $fileExplorerAlwaysModal
-        )
-      }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
@@ -226,6 +222,20 @@ public struct SettingsView: View {
             Text(editor.label).tag(editor.rawValue)
           }
         }
+      }
+
+      Section("Editor") {
+        settingsToggle(
+          title: "Show code editor minimap",
+          description: "Display the CodeEdit minimap in the session editor and web preview source editors",
+          isOn: $sourceEditorMinimapEnabled
+        )
+
+        settingsToggle(
+          title: "Wrap long lines",
+          description: "Soft-wrap long lines instead of using horizontal scrolling in source editors",
+          isOn: $sourceEditorWrapLinesEnabled
+        )
       }
 
       Section {

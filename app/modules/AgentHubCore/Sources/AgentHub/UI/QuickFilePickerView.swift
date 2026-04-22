@@ -2,7 +2,7 @@
 //  QuickFilePickerView.swift
 //  AgentHub
 //
-//  Cmd+Shift+P modal for fuzzy file search within a project.
+//  Cmd+P modal for fuzzy file search within a project.
 //
 
 import SwiftUI

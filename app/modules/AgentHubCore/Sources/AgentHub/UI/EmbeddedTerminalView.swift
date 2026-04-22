@@ -100,6 +100,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   let permissionModePlan: Bool  // One-shot flag: start session in plan mode
   let worktreeName: String?  // nil = no --worktree; "" = auto-name; non-empty = named
   let onUserInteraction: (() -> Void)?
+  let onRequestShowEditor: (() -> Void)?
   let consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
 
   public init(
@@ -114,6 +115,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     permissionModePlan: Bool = false,
     worktreeName: String? = nil,
     onUserInteraction: (() -> Void)? = nil,
+    onRequestShowEditor: (() -> Void)? = nil,
     consumeQueuedWebPreviewContextOnSubmit: (() -> String?)? = nil
   ) {
     self.terminalKey = terminalKey
@@ -127,6 +129,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     self.permissionModePlan = permissionModePlan
     self.worktreeName = worktreeName
     self.onUserInteraction = onUserInteraction
+    self.onRequestShowEditor = onRequestShowEditor
     self.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
   }
 
@@ -148,6 +151,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         worktreeName: worktreeName
       )
       terminalContainer.onUserInteraction = onUserInteraction
+      terminalContainer.onRequestShowEditor = onRequestShowEditor
       terminalContainer.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
       terminalContainer.terminalSessionKey = terminalKey
       terminalContainer.sessionViewModel = viewModel
@@ -169,12 +173,14 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       metadataStore: agentHub?.metadataStore
     )
     containerView.onUserInteraction = onUserInteraction
+    containerView.onRequestShowEditor = onRequestShowEditor
     containerView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
     return containerView
   }
 
   public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
     nsView.onUserInteraction = onUserInteraction
+    nsView.onRequestShowEditor = onRequestShowEditor
     nsView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
     nsView.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), fontFamily: terminalFontFamily, theme: runtimeTheme)
 
@@ -202,6 +208,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
+  public var onRequestShowEditor: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
   var terminalSessionKey: String?
   weak var sessionViewModel: CLISessionsViewModel?
@@ -490,6 +497,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isTerminalVisible = terminal.superview != nil && !terminal.isHidden && terminal.alphaValue > 0
+
+        if isTerminalVisible,
+           self.isTerminalResponderActive(window: window, terminal: terminal),
+           flags == .control,
+           event.keyCode == 50,
+           self.onRequestShowEditor != nil {
+          self.onRequestShowEditor?()
+          self.onUserInteraction?()
+          return nil
+        }
 
         // Cmd+F: only when terminal has focus (let file editor handle it otherwise)
         if isTerminalVisible, self.isTerminalResponderActive(window: window, terminal: terminal) {

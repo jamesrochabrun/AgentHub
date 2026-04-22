@@ -1439,6 +1439,9 @@ public struct MultiProviderSessionsListView: View {
 
     case .toggleFocusMode:
       toggleFocusMode()
+
+    case .toggleTerminalEditor:
+      NotificationCenter.default.post(name: .toggleMonitoringContentMode, object: nil)
     }
   }
 
