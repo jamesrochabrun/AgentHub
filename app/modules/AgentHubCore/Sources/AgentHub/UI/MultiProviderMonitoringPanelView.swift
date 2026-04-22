@@ -18,6 +18,7 @@ private enum SidePanelContent: Equatable {
   case webPreview(sessionId: String, session: CLISession, projectPath: String)
   case mermaid(sessionId: String, session: CLISession)
   case gitHub(sessionId: String, session: CLISession, projectPath: String)
+  case edits(sessionId: String, session: CLISession, pendingToolUse: PendingToolUse)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -31,6 +32,8 @@ private enum SidePanelContent: Equatable {
       return id1 == id2
     case (.gitHub(let id1, _, let p1), .gitHub(let id2, _, let p2)):
       return id1 == id2 && p1 == p2
+    case (.edits(let id1, _, let t1), .edits(let id2, _, let t2)):
+      return id1 == id2 && t1.toolUseId == t2.toolUseId
     default: return false
     }
   }
@@ -205,14 +208,6 @@ public struct MultiProviderMonitoringPanelView: View {
     get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
   }
 
-  private var canShowSidePanel: Bool {
-    availableDetailWidth >= minimumWidthForEmbeddedSidePanel
-  }
-
-  private var minimumWidthForEmbeddedSidePanel: CGFloat {
-    embeddedPrimaryContentMinWidth + embeddedSidePanelMinWidth + embeddedSidePanelHandleWidth
-  }
-
   private var allowedEmbeddedSidePanelWidth: CGFloat {
     let availablePanelWidth = availableDetailWidth - embeddedPrimaryContentMinWidth - embeddedSidePanelHandleWidth
     return min(
@@ -237,7 +232,6 @@ public struct MultiProviderMonitoringPanelView: View {
 
   private var isEmbeddedSidePanelVisible: Bool {
     wantsEmbeddedSidePanelPresentation
-      && canShowSidePanel
   }
 
   public init(
@@ -385,13 +379,6 @@ public struct MultiProviderMonitoringPanelView: View {
       guard let newId else { return }
       if let item = allItems.first(where: { $0.id == newId }) {
         item.viewModel.focusTerminal(forKey: item.sessionId)
-      }
-    }
-    .onChange(of: canShowSidePanel) { _, canShow in
-      if !canShow {
-        withAnimation(.easeInOut(duration: 0.25)) {
-          sidePanelContent = nil
-        }
       }
     }
   }
@@ -620,37 +607,39 @@ public struct MultiProviderMonitoringPanelView: View {
             onInlineRequestSubmit: { prompt, sess in
               viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
             },
-            onShowDiff: canShowSidePanel ? { session, projectPath in
-              if case .diff(let sid, _, _) = sidePanelContent, sid == session.id {
-                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
-              } else {
-                sidePanelContent = .diff(sessionId: session.id, session: session, projectPath: projectPath)
-              }
-            } : nil,
-            onShowPlan: canShowSidePanel ? { session, planState in
-              if case .plan(let sid, _, _) = sidePanelContent, sid == session.id {
-                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
-              } else {
-                sidePanelContent = .plan(sessionId: session.id, session: session, planState: planState)
-              }
-            } : nil,
+            onShowDiff: { session, projectPath in
+              toggleSidePanel(
+                .diff(sessionId: session.id, session: session, projectPath: projectPath),
+                forItemID: item.id
+              )
+            },
+            onShowPlan: { session, planState in
+              toggleSidePanel(
+                .plan(sessionId: session.id, session: session, planState: planState),
+                forItemID: item.id
+              )
+            },
             onShowWebPreview: { session, projectPath in
               presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
             },
-            onShowMermaid: canShowSidePanel ? { session in
-              if case .mermaid(let sid, _) = sidePanelContent, sid == session.id {
-                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
-              } else {
-                sidePanelContent = .mermaid(sessionId: session.id, session: session)
-              }
-            } : nil,
-            onShowGitHub: canShowSidePanel ? { session, projectPath in
-              if case .gitHub(let sid, _, _) = sidePanelContent, sid == session.id {
-                withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
-              } else {
-                sidePanelContent = .gitHub(sessionId: session.id, session: session, projectPath: projectPath)
-              }
-            } : nil,
+            onShowMermaid: { session in
+              toggleSidePanel(
+                .mermaid(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
+            },
+            onShowGitHub: { session, projectPath in
+              toggleSidePanel(
+                .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
+                forItemID: item.id
+              )
+            },
+            onShowPendingChanges: { session, pendingToolUse in
+              toggleSidePanel(
+                .edits(sessionId: session.id, session: session, pendingToolUse: pendingToolUse),
+                forItemID: item.id
+              )
+            },
             onPromptConsumed: {
               viewModel.clearPendingPrompt(for: session.id)
             },
@@ -697,8 +686,15 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func presentWebPreviewInSidePanel(forItemID itemID: String, session: CLISession, projectPath: String) {
-    // TODO: Standardize this with the other auxiliary panel flows once web preview
-    // selections can route context back into the main terminal across all layouts.
+    toggleSidePanel(
+      .webPreview(sessionId: session.id, session: session, projectPath: projectPath),
+      forItemID: itemID
+    )
+  }
+
+  /// Ensures the single-mode inline layout is active for `itemID`, then toggles the requested
+  /// side panel content (open if not already presenting it; close if re-selected).
+  private func toggleSidePanel(_ content: SidePanelContent, forItemID itemID: String) {
     withAnimation(.easeInOut(duration: 0.25)) {
       if primarySessionId != itemID {
         primarySessionId = itemID
@@ -710,14 +706,10 @@ public struct MultiProviderMonitoringPanelView: View {
         maximizedSessionId = nil
       }
     }
-    toggleWebPreviewSidePanel(for: session, projectPath: projectPath)
-  }
-
-  private func toggleWebPreviewSidePanel(for session: CLISession, projectPath: String) {
-    if case .webPreview(let sessionId, _, _) = sidePanelContent, sessionId == session.id {
+    if sidePanelContent == content {
       closeEmbeddedSidePanel()
     } else {
-      openEmbeddedSidePanel(.webPreview(sessionId: session.id, session: session, projectPath: projectPath))
+      openEmbeddedSidePanel(content)
     }
   }
 
@@ -791,6 +783,16 @@ public struct MultiProviderMonitoringPanelView: View {
         onPopOut: {
           withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
           gitHubPopOutItem = GitHubPopOutItem(session: session, projectPath: projectPath)
+        }
+      )
+    case .edits(_, let session, let pendingToolUse):
+      PendingChangesView(
+        session: session,
+        pendingToolUse: pendingToolUse,
+        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        isEmbedded: true,
+        onApprovalResponse: { response, sess in
+          viewModel.showTerminalWithPrompt(for: sess, prompt: response)
         }
       )
     }
@@ -879,8 +881,38 @@ public struct MultiProviderMonitoringPanelView: View {
         onInlineRequestSubmit: { prompt, sess in
           viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
         },
+        onShowDiff: { session, projectPath in
+          toggleSidePanel(
+            .diff(sessionId: session.id, session: session, projectPath: projectPath),
+            forItemID: item.id
+          )
+        },
+        onShowPlan: { session, planState in
+          toggleSidePanel(
+            .plan(sessionId: session.id, session: session, planState: planState),
+            forItemID: item.id
+          )
+        },
         onShowWebPreview: { session, projectPath in
           presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+        },
+        onShowMermaid: { session in
+          toggleSidePanel(
+            .mermaid(sessionId: session.id, session: session),
+            forItemID: item.id
+          )
+        },
+        onShowGitHub: { session, projectPath in
+          toggleSidePanel(
+            .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
+            forItemID: item.id
+          )
+        },
+        onShowPendingChanges: { session, pendingToolUse in
+          toggleSidePanel(
+            .edits(sessionId: session.id, session: session, pendingToolUse: pendingToolUse),
+            forItemID: item.id
+          )
         },
         onPromptConsumed: {
           viewModel.clearPendingPrompt(for: session.id)
@@ -1039,8 +1071,38 @@ public struct MultiProviderMonitoringPanelView: View {
           onInlineRequestSubmit: { prompt, sess in
             viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
           },
+          onShowDiff: { session, projectPath in
+            toggleSidePanel(
+              .diff(sessionId: session.id, session: session, projectPath: projectPath),
+              forItemID: itemId
+            )
+          },
+          onShowPlan: { session, planState in
+            toggleSidePanel(
+              .plan(sessionId: session.id, session: session, planState: planState),
+              forItemID: itemId
+            )
+          },
           onShowWebPreview: { session, projectPath in
             presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
+          },
+          onShowMermaid: { session in
+            toggleSidePanel(
+              .mermaid(sessionId: session.id, session: session),
+              forItemID: itemId
+            )
+          },
+          onShowGitHub: { session, projectPath in
+            toggleSidePanel(
+              .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
+              forItemID: itemId
+            )
+          },
+          onShowPendingChanges: { session, pendingToolUse in
+            toggleSidePanel(
+              .edits(sessionId: session.id, session: session, pendingToolUse: pendingToolUse),
+              forItemID: itemId
+            )
           },
           onPromptConsumed: {
             viewModel.clearPendingPrompt(for: session.id)

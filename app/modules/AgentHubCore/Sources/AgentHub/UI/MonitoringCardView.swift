@@ -9,49 +9,6 @@ import AgentHubGitHub
 import SwiftUI
 import UniformTypeIdentifiers
 
-// MARK: - GitDiffSheetItem
-
-/// Identifiable wrapper for git diff sheet - captures session and project path
-private struct GitDiffSheetItem: Identifiable {
-  let id = UUID()
-  let session: CLISession
-  let projectPath: String
-}
-
-// MARK: - PlanSheetItem
-
-/// Identifiable wrapper for plan sheet - captures session and plan state
-private struct PlanSheetItem: Identifiable {
-  let id = UUID()
-  let session: CLISession
-  let planState: PlanState
-}
-
-// MARK: - PendingChangesSheetItem
-
-/// Identifiable wrapper for pending changes preview sheet
-private struct PendingChangesSheetItem: Identifiable {
-  let id = UUID()
-  let session: CLISession
-  let pendingToolUse: PendingToolUse
-}
-
-/// Identifiable wrapper for web preview sheet
-private struct WebPreviewSheetItem: Identifiable {
-  let id = UUID()
-  let session: CLISession
-  let projectPath: String
-  var agentLocalhostURL: URL?
-  var monitorState: SessionMonitorState?
-}
-
-/// Identifiable wrapper for GitHub panel sheet
-private struct GitHubSheetItem: Identifiable {
-  let id = UUID()
-  let session: CLISession
-  let projectPath: String
-}
-
 // MARK: - MonitoringCardView
 
 /// Card view for displaying a monitored session in the monitoring panel
@@ -81,6 +38,7 @@ public struct MonitoringCardView: View {
   let onShowWebPreview: ((CLISession, String) -> Void)?
   let onShowMermaid: ((CLISession) -> Void)?
   let onShowGitHub: ((CLISession, String) -> Void)?
+  let onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
   let onRequestShowEditor: (() -> Void)?
@@ -92,13 +50,7 @@ public struct MonitoringCardView: View {
   @Binding private var contentMode: MonitoringCardContentMode
   @Binding private var selectedEditorFilePath: String?
 
-  @State private var gitDiffSheetItem: GitDiffSheetItem?
-  @State private var planSheetItem: PlanSheetItem?
-  @State private var pendingChangesSheetItem: PendingChangesSheetItem?
-  @State private var webPreviewSheetItem: WebPreviewSheetItem?
-  @State private var mermaidSheetSession: CLISession?
   @State private var simulatorSheetSession: CLISession?
-  @State private var gitHubSheetItem: GitHubSheetItem?
   @State private var sessionGitHubQuickAccessViewModel = SessionGitHubQuickAccessViewModel()
   @State private var isDragging = false
   @State private var showingActionsPopover = false
@@ -136,6 +88,7 @@ public struct MonitoringCardView: View {
     onShowWebPreview: ((CLISession, String) -> Void)? = nil,
     onShowMermaid: ((CLISession) -> Void)? = nil,
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
+    onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
     onRequestShowEditor: (() -> Void)? = nil,
@@ -172,6 +125,7 @@ public struct MonitoringCardView: View {
     self.onShowWebPreview = onShowWebPreview
     self.onShowMermaid = onShowMermaid
     self.onShowGitHub = onShowGitHub
+    self.onShowPendingChanges = onShowPendingChanges
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
     self.onRequestShowEditor = onRequestShowEditor
@@ -308,65 +262,6 @@ public struct MonitoringCardView: View {
       handleDroppedFiles(providers)
       return true
     }
-    .modalPanel(
-      item: $gitDiffSheetItem,
-      title: "Git Diff",
-      autosaveName: "com.agenthub.panel.gitDiff"
-    ) { item in
-      GitDiffView(
-        session: item.session,
-        projectPath: item.projectPath,
-        onDismiss: { gitDiffSheetItem = nil },
-        cliConfiguration: cliConfiguration,
-        providerKind: providerKind,
-        onInlineRequestSubmit: onInlineRequestSubmit
-      )
-    }
-    .sheet(item: $planSheetItem) { item in
-      PlanView(
-        session: item.session,
-        planState: item.planState,
-        onDismiss: { planSheetItem = nil },
-        providerKind: providerKind,
-        onSendFeedback: { feedback, sess in
-          viewModel?.showTerminalWithPrompt(for: sess, prompt: feedback)
-        }
-      )
-    }
-    .sheet(item: $pendingChangesSheetItem) { item in
-      PendingChangesView(
-        session: item.session,
-        pendingToolUse: item.pendingToolUse,
-        onDismiss: { pendingChangesSheetItem = nil },
-        onApprovalResponse: { response, session in
-          viewModel?.showTerminalWithPrompt(for: session, prompt: response)
-        }
-      )
-    }
-    .sheet(item: $webPreviewSheetItem) { item in
-      WebPreviewView(
-        session: item.session,
-        projectPath: item.projectPath,
-        onDismiss: { webPreviewSheetItem = nil },
-        onInspectSubmit: { prompt, sess in
-          if viewModel?.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) != true {
-            viewModel?.showTerminalWithPrompt(for: sess, prompt: prompt)
-          }
-        },
-        onQueuedSubmit: { prompt, sess in
-          viewModel?.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) == true
-        },
-        viewModel: viewModel,
-        agentLocalhostURL: viewModel?.monitorStates[item.session.id]?.detectedLocalhostURL ?? item.agentLocalhostURL,
-        monitorState: viewModel?.monitorStates[item.session.id] ?? item.monitorState
-      )
-    }
-    .sheet(item: $mermaidSheetSession) { session in
-      MermaidDiagramView(
-        session: session,
-        onDismiss: { mermaidSheetSession = nil }
-      )
-    }
     .sheet(item: $simulatorSheetSession) { session in
       SimulatorPickerView(
         session: session,
@@ -375,22 +270,6 @@ public struct MonitoringCardView: View {
           guard let vm = viewModel else { return }
           vm.showTerminalWithPrompt(for: session, prompt: "Fix this build error:\n\(error)")
           simulatorSheetSession = nil
-        }
-      )
-    }
-    .modalPanel(
-      item: $gitHubSheetItem,
-      title: "GitHub",
-      autosaveName: "com.agenthub.panel.github"
-    ) { item in
-      GitHubPanelView(
-        projectPath: item.projectPath,
-        onDismiss: { gitHubSheetItem = nil },
-        isEmbedded: false,
-        session: item.session,
-        onSendToSession: { prompt, session in
-          viewModel?.showTerminalWithPrompt(for: session, prompt: prompt)
-          gitHubSheetItem = nil
         }
       )
     }
@@ -539,16 +418,7 @@ public struct MonitoringCardView: View {
   }
 
   private func presentWebPreview() {
-    if let onShowWebPreview {
-      onShowWebPreview(session, session.projectPath)
-    } else {
-      webPreviewSheetItem = WebPreviewSheetItem(
-        session: session,
-        projectPath: session.projectPath,
-        agentLocalhostURL: state?.detectedLocalhostURL,
-        monitorState: state
-      )
-    }
+    onShowWebPreview?(session, session.projectPath)
   }
 
   @MainActor
@@ -558,14 +428,7 @@ public struct MonitoringCardView: View {
   }
 
   private func presentGitHubPanel() {
-    if let onShowGitHub {
-      onShowGitHub(session, session.projectPath)
-    } else {
-      gitHubSheetItem = GitHubSheetItem(
-        session: session,
-        projectPath: session.projectPath
-      )
-    }
+    onShowGitHub?(session, session.projectPath)
   }
 
   // MARK: - Header
@@ -619,10 +482,7 @@ public struct MonitoringCardView: View {
         if let pendingToolUse = state?.pendingToolUse,
            pendingToolUse.isCodeChangeTool {
           Button(action: {
-            pendingChangesSheetItem = PendingChangesSheetItem(
-              session: session,
-              pendingToolUse: pendingToolUse
-            )
+            onShowPendingChanges?(session, pendingToolUse)
           }) {
             HStack(spacing: 4) {
               Image(systemName: "eye")
@@ -637,14 +497,7 @@ public struct MonitoringCardView: View {
         // Plan button
         if let planState = planState {
           Button(action: {
-            if let onShowPlan = onShowPlan {
-              onShowPlan(session, planState)
-            } else {
-              planSheetItem = PlanSheetItem(
-                session: session,
-                planState: planState
-              )
-            }
+            onShowPlan?(session, planState)
           }) {
             HStack(spacing: 4) {
               Image(systemName: "list.bullet.clipboard")
@@ -658,14 +511,7 @@ public struct MonitoringCardView: View {
 
         // Diff button
         Button(action: {
-          if let onShowDiff = onShowDiff {
-            onShowDiff(session, session.projectPath)
-          } else {
-            gitDiffSheetItem = GitDiffSheetItem(
-              session: session,
-              projectPath: session.projectPath
-            )
-          }
+          onShowDiff?(session, session.projectPath)
         }) {
           HStack(spacing: 4) {
             Image(systemName: "arrow.left.arrow.right")
@@ -698,11 +544,7 @@ public struct MonitoringCardView: View {
         // Mermaid diagram button (only visible when mermaid content is detected)
         if state?.hasMermaidContent == true {
           Button(action: {
-            if let onShowMermaid {
-              onShowMermaid(session)
-            } else {
-              mermaidSheetSession = session
-            }
+            onShowMermaid?(session)
           }) {
             HStack(spacing: 4) {
               Image(systemName: "chart.xyaxis.line")
