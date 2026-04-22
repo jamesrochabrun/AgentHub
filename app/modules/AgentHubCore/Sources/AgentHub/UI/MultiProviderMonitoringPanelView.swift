@@ -298,11 +298,15 @@ public struct MultiProviderMonitoringPanelView: View {
       consumePendingFileOpen(from: codexViewModel, providerKind: .codex)
     }
     .overlay {
-      // Hidden Cmd+P trigger for QuickFilePicker
-      Button("") { showQuickFilePicker = true }
-        .keyboardShortcut("p", modifiers: [.command])
-        .frame(width: 0, height: 0)
-        .hidden()
+      Group {
+        Button("") { showQuickFilePicker = true }
+          .keyboardShortcut("p", modifiers: [.command])
+
+        Button("") { togglePrimarySessionContentMode() }
+          .keyboardShortcut("`", modifiers: [.control])
+      }
+      .frame(width: 0, height: 0)
+      .hidden()
     }
     .floatingPanel(isPresented: $showQuickFilePicker, defaultSize: CGSize(width: 680, height: 640)) {
       if let primaryItem = effectivePrimaryItem {
@@ -562,6 +566,7 @@ public struct MultiProviderMonitoringPanelView: View {
               presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
             },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+            onRequestShowEditor: { setContentMode(.editor, for: item) },
             isMaximized: false,
             onToggleMaximize: { },
             isPrimarySession: true,
@@ -647,6 +652,7 @@ public struct MultiProviderMonitoringPanelView: View {
               viewModel.clearPendingPrompt(for: session.id)
             },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+            onRequestShowEditor: { setContentMode(.editor, for: item) },
             isMaximized: false,
             onToggleMaximize: { },
             isPrimarySession: true,
@@ -819,6 +825,7 @@ public struct MultiProviderMonitoringPanelView: View {
           presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
         },
         onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+        onRequestShowEditor: { setContentMode(.editor, for: item) },
         isMaximized: maximizedSessionId == item.id,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -876,6 +883,7 @@ public struct MultiProviderMonitoringPanelView: View {
           viewModel.clearPendingPrompt(for: session.id)
         },
         onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
+        onRequestShowEditor: { setContentMode(.editor, for: item) },
         isMaximized: maximizedSessionId == item.id,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -976,6 +984,7 @@ public struct MultiProviderMonitoringPanelView: View {
             presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
           },
           onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
+          onRequestShowEditor: { setContentMode(.editor, for: item) },
           isMaximized: true,
           onToggleMaximize: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -1034,6 +1043,7 @@ public struct MultiProviderMonitoringPanelView: View {
             viewModel.clearPendingPrompt(for: session.id)
           },
           onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
+          onRequestShowEditor: { setContentMode(.editor, for: item) },
           isMaximized: true,
           onToggleMaximize: {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -1303,13 +1313,7 @@ public struct MultiProviderMonitoringPanelView: View {
     Binding(
       get: { editorState(for: item).contentMode },
       set: { newValue in
-        setPrimarySessionIfNeeded(item.id)
-        editorStates = MonitoringEditorStateStore.setContentMode(
-          newValue,
-          for: item.id,
-          defaultProjectPath: editorState(for: item).projectPath,
-          in: editorStates
-        )
+        setContentMode(newValue, for: item)
       }
     )
   }
@@ -1334,6 +1338,27 @@ public struct MultiProviderMonitoringPanelView: View {
       editorStates,
       validItemIDs: Set(allItems.map(\.id))
     )
+  }
+
+  private func setContentMode(_ contentMode: MonitoringCardContentMode, for item: ProviderMonitoringItem) {
+    setPrimarySessionIfNeeded(item.id)
+    editorStates = MonitoringEditorStateStore.setContentMode(
+      contentMode,
+      for: item.id,
+      defaultProjectPath: editorState(for: item).projectPath,
+      in: editorStates
+    )
+
+    if contentMode == .terminal {
+      item.viewModel.focusTerminal(forKey: item.sessionId)
+    }
+  }
+
+  private func togglePrimarySessionContentMode() {
+    guard let item = effectivePrimaryItem else { return }
+    let nextMode: MonitoringCardContentMode =
+      editorState(for: item).contentMode == .terminal ? .editor : .terminal
+    setContentMode(nextMode, for: item)
   }
 
   private func openFileInEditor(

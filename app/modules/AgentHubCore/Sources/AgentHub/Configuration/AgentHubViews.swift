@@ -50,24 +50,22 @@ struct HubToolbarContent: View {
       .clipShape(RoundedRectangle(cornerRadius: 6))
 
       // Layout mode toggle
-      HStack(spacing: 6) {
-        ForEach(HubLayoutMode.allCases, id: \.self) { mode in
-          Button {
+      IconSegmentedControl(
+        selection: Binding(
+          get: { layoutMode },
+          set: { newValue in
             previousLayoutModeRawValue = -1
-            layoutModeRawValue = mode.rawValue
-          } label: {
-            Image(systemName: mode.icon)
-              .font(.caption)
-              .foregroundColor(layoutMode == mode ? .primary : .secondary)
-              .frame(width: 26, height: 20)
-              .contentShape(Rectangle())
+            layoutModeRawValue = newValue.rawValue
           }
-          .buttonStyle(.plain)
+        ),
+        items: HubLayoutMode.allCases.map { mode in
+          IconSegmentedControlItem(
+            value: mode,
+            systemImage: mode.icon,
+            helpText: layoutHelpText(for: mode)
+          )
         }
-      }
-      .padding(4)
-      .background(Color.secondary.opacity(0.12))
-      .clipShape(RoundedRectangle(cornerRadius: 6))
+      )
 
       if let statsButton {
         statsButton
@@ -76,6 +74,17 @@ struct HubToolbarContent: View {
       Spacer()
     }
     .frame(maxWidth: .infinity)
+  }
+
+  private func layoutHelpText(for mode: HubLayoutMode) -> String {
+    switch mode {
+    case .single:
+      "Single-column layout"
+    case .list:
+      "List layout"
+    case .twoColumn:
+      "Two-column layout"
+    }
   }
 }
 

@@ -26,16 +26,9 @@ public struct ProviderSegmentedControl: View {
   }
 
   public var body: some View {
-    VStack(spacing: 0) {
-      HStack(spacing: 16) {
-        segmentButton(for: .claude, count: claudeSessionCount)
-        segmentButton(for: .codex, count: codexSessionCount)
-        Spacer()
-      }
-
-      Rectangle()
-        .fill(Color.brandPrimary(for: selectedProvider))
-        .frame(height: 2)
+    UnderlineSegmentedControl(tint: Color.brandPrimary(for: selectedProvider)) {
+      segmentButton(for: .claude, count: claudeSessionCount)
+      segmentButton(for: .codex, count: codexSessionCount)
     }
   }
 

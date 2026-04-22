@@ -83,6 +83,7 @@ public struct MonitoringCardView: View {
   let onShowGitHub: ((CLISession, String) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
+  let onRequestShowEditor: (() -> Void)?
   let isMaximized: Bool
   let onToggleMaximize: () -> Void
   let isPrimarySession: Bool
@@ -137,6 +138,7 @@ public struct MonitoringCardView: View {
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
+    onRequestShowEditor: (() -> Void)? = nil,
     isMaximized: Bool = false,
     onToggleMaximize: @escaping () -> Void = {},
     isPrimarySession: Bool = false,
@@ -172,6 +174,7 @@ public struct MonitoringCardView: View {
     self.onShowGitHub = onShowGitHub
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
+    self.onRequestShowEditor = onRequestShowEditor
     self.isMaximized = isMaximized
     self.onToggleMaximize = onToggleMaximize
     self.isPrimarySession = isPrimarySession
@@ -612,8 +615,6 @@ public struct MonitoringCardView: View {
 
       // Action buttons — fixed size, never shrink
       HStack(spacing: 6) {
-        contentModeToggle
-
         // Pending changes preview button - show immediately when code change tool is detected
         if let pendingToolUse = state?.pendingToolUse,
            pendingToolUse.isCodeChangeTool {
@@ -861,6 +862,9 @@ public struct MonitoringCardView: View {
       }
 
       Spacer(minLength: 8)
+
+      contentModeToggle
+        .layoutPriority(2)
     }
     .frame(minHeight: 24)
   }
@@ -868,18 +872,18 @@ public struct MonitoringCardView: View {
   // MARK: - Content Mode Toggle
 
   private var contentModeToggle: some View {
-    Picker("", selection: $contentMode) {
-      ForEach(MonitoringCardContentMode.allCases) { mode in
-        Image(systemName: mode.systemImage)
-          .help(mode.label)
-          .tag(mode)
-      }
-    }
-    .pickerStyle(.segmented)
-    .controlSize(.small)
-    .fixedSize()
-    .labelsHidden()
-    .help("Switch between terminal and editor")
+    BracketedSegmentedControl(
+      selection: $contentMode,
+      items: MonitoringCardContentMode.allCases.map { mode in
+        BracketedSegmentedControlItem(
+          value: mode,
+          title: mode.label.lowercased(),
+          helpText: mode.label
+        )
+      },
+      selectedColor: Color.brandPrimary(for: providerKind)
+    )
+    .help("Switch between terminal and code")
   }
 
   // MARK: - Monitor Content
@@ -907,6 +911,7 @@ public struct MonitoringCardView: View {
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName,
       onUserInteraction: onTerminalInteraction,
+      onRequestShowEditor: onRequestShowEditor,
       consumeQueuedWebPreviewContextOnSubmit: {
         viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
       }

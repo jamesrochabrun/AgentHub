@@ -14,7 +14,7 @@ public enum MonitoringCardContentMode: String, CaseIterable, Identifiable {
   var label: String {
     switch self {
     case .terminal: "Terminal"
-    case .editor: "Editor"
+    case .editor: "Code"
     }
   }
 
