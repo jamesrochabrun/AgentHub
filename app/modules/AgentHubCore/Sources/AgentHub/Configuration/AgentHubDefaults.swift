@@ -98,6 +98,14 @@ public enum AgentHubDefaults {
   /// Type: String (default: "SF Mono")
   public static let terminalFontFamily = "\(keyPrefix)terminal.fontFamily"
 
+  /// Whether source editors show the CodeEdit minimap
+  /// Type: Bool (default: false)
+  public static let sourceEditorMinimapEnabled = "\(keyPrefix)editor.minimapEnabled"
+
+  /// Whether source editors wrap long lines instead of using horizontal scrolling
+  /// Type: Bool (default: true)
+  public static let sourceEditorWrapLinesEnabled = "\(keyPrefix)editor.wrapLinesEnabled"
+
   /// Preferred newline shortcut in the embedded terminal
   /// Type: Int (default: 0 = system/default)
   /// See: NewlineShortcut enum in EmbeddedTerminalView.swift

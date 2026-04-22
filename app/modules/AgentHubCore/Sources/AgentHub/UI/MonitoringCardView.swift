@@ -60,6 +60,30 @@ private struct GitHubSheetItem: Identifiable {
   let projectPath: String
 }
 
+// MARK: - CardContentMode
+
+/// Selects which main content is rendered inside the monitoring card.
+private enum CardContentMode: String, CaseIterable, Identifiable {
+  case terminal
+  case editor
+
+  var id: String { rawValue }
+
+  var label: String {
+    switch self {
+    case .terminal: "Terminal"
+    case .editor: "Editor"
+    }
+  }
+
+  var systemImage: String {
+    switch self {
+    case .terminal: "terminal"
+    case .editor: "doc.text"
+    }
+  }
+}
+
 // MARK: - MonitoringCardView
 
 /// Card view for displaying a monitored session in the monitoring panel
@@ -110,6 +134,7 @@ public struct MonitoringCardView: View {
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
   @State private var showingRemixProviderPicker = false
+  @State private var contentMode: CardContentMode = .terminal
   @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
 
@@ -625,6 +650,8 @@ public struct MonitoringCardView: View {
 
       // Action buttons — fixed size, never shrink
       HStack(spacing: 6) {
+        contentModeToggle
+
         // Pending changes preview button - show immediately when code change tool is detected
         if let pendingToolUse = state?.pendingToolUse,
            pendingToolUse.isCodeChangeTool {
@@ -897,10 +924,36 @@ public struct MonitoringCardView: View {
     .frame(minHeight: 24)
   }
 
+  // MARK: - Content Mode Toggle
+
+  private var contentModeToggle: some View {
+    Picker("", selection: $contentMode) {
+      ForEach(CardContentMode.allCases) { mode in
+        Image(systemName: mode.systemImage)
+          .help(mode.label)
+          .tag(mode)
+      }
+    }
+    .pickerStyle(.segmented)
+    .controlSize(.small)
+    .fixedSize()
+    .labelsHidden()
+    .help("Switch between terminal and editor")
+  }
+
   // MARK: - Monitor Content
 
   @ViewBuilder
   private var monitorContent: some View {
+    switch contentMode {
+    case .terminal:
+      terminalContent
+    case .editor:
+      editorContent
+    }
+  }
+
+  private var terminalContent: some View {
     EmbeddedTerminalView(
       terminalKey: terminalKey ?? session.id,
       sessionId: session.id,
@@ -919,6 +972,18 @@ public struct MonitoringCardView: View {
     )
     .padding(DesignTokens.Spacing.sm)
     .frame(minHeight: 300)
+  }
+
+  private var editorContent: some View {
+    FileExplorerView(
+      session: session,
+      projectPath: session.projectPath,
+      onDismiss: { contentMode = .terminal },
+      isEmbedded: false,
+      initialFilePath: nil
+    )
+    .frame(maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+    .id("editor-\(session.id)")
   }
 
   private var previewContextBadge: some View {

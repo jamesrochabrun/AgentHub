@@ -21,6 +21,83 @@ struct SourceCodeEditorViewTests {
     #expect(EditorDisplayMode.displayMode(for: largeLineContent) == .plainText)
   }
 
+  @Test("Editor options use neutral spacing and disable line wrapping")
+  func editorOptionsUseNeutralSpacingWithoutWrapping() {
+    let options = AgentHubSourceEditorOptions(
+      displayMode: .highlighted,
+      isEditable: true,
+      isMinimapEnabled: false,
+      isWrapLinesEnabled: false
+    )
+
+    #expect(options.letterSpacing == 1.0)
+    #expect(options.wrapLines == false)
+  }
+
+  @Test("Editor options enable wrapping only when the setting is on")
+  func editorOptionsToggleWrapLinesBySetting() {
+    let wrapped = AgentHubSourceEditorOptions(
+      displayMode: .highlighted,
+      isEditable: true,
+      isMinimapEnabled: false,
+      isWrapLinesEnabled: true
+    )
+    let unwrapped = AgentHubSourceEditorOptions(
+      displayMode: .highlighted,
+      isEditable: true,
+      isMinimapEnabled: false,
+      isWrapLinesEnabled: false
+    )
+
+    #expect(wrapped.wrapLines)
+    #expect(unwrapped.wrapLines == false)
+  }
+
+  @Test("Editor options only enable minimap when the setting is on")
+  func editorOptionsTogglePeripheralsByDisplayMode() {
+    let highlightedWithMinimap = AgentHubSourceEditorOptions(
+      displayMode: .highlighted,
+      isEditable: true,
+      isMinimapEnabled: true,
+      isWrapLinesEnabled: false
+    )
+    let highlightedWithoutMinimap = AgentHubSourceEditorOptions(
+      displayMode: .highlighted,
+      isEditable: true,
+      isMinimapEnabled: false,
+      isWrapLinesEnabled: false
+    )
+    let plainTextWithMinimap = AgentHubSourceEditorOptions(
+      displayMode: .plainText,
+      isEditable: false,
+      isMinimapEnabled: true,
+      isWrapLinesEnabled: false
+    )
+
+    #expect(highlightedWithMinimap.showMinimap)
+    #expect(highlightedWithoutMinimap.showMinimap == false)
+    #expect(plainTextWithMinimap.showMinimap == false)
+  }
+
+  @Test("Editor options keep folding ribbon available for highlighted mode")
+  func editorOptionsKeepFoldingRibbonForHighlightedMode() {
+    let highlighted = AgentHubSourceEditorOptions(
+      displayMode: .highlighted,
+      isEditable: true,
+      isMinimapEnabled: false,
+      isWrapLinesEnabled: false
+    )
+    let plainText = AgentHubSourceEditorOptions(
+      displayMode: .plainText,
+      isEditable: false,
+      isMinimapEnabled: false,
+      isWrapLinesEnabled: false
+    )
+
+    #expect(highlighted.showFoldingRibbon)
+    #expect(plainText.showFoldingRibbon == false)
+  }
+
   @Test("Language resolver detects supported extensions and special filenames")
   func languageResolverDetectsSupportedFiles() {
     let cases: [(fileName: String, expectedIdentifier: String)] = [

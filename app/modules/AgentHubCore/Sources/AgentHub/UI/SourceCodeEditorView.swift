@@ -72,6 +72,7 @@ struct SourceCodeEditorView: View {
       onTextChange: onTextChange,
       onIdleTextSnapshot: onIdleTextSnapshot
     )
+    .clipped()
     .id(documentID)
   }
 }
@@ -86,6 +87,10 @@ private struct SourceCodeEditorHost: View {
   let onTextChange: (String) -> Void
   let onIdleTextSnapshot: (String) -> Void
 
+  @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
+  private var sourceEditorMinimapEnabled: Bool = false
+  @AppStorage(AgentHubDefaults.sourceEditorWrapLinesEnabled)
+  private var sourceEditorWrapLinesEnabled: Bool = true
   @Environment(\.colorScheme) private var colorScheme
   @State private var editorState = SourceEditorState()
   @State private var editCoordinator = SourceEditorEditCoordinator()
@@ -98,7 +103,7 @@ private struct SourceCodeEditorHost: View {
         content: text,
         displayMode: displayMode
       ),
-      configuration: editorConfiguration,
+      configuration: editorOptions.makeSourceEditorConfiguration(colorScheme: colorScheme),
       state: $editorState,
       highlightProviders: highlightProviders,
       coordinators: [editCoordinator]
@@ -116,18 +121,64 @@ private struct SourceCodeEditorHost: View {
     }
   }
 
-  private var editorConfiguration: SourceEditorConfiguration {
+  private var editorOptions: AgentHubSourceEditorOptions {
+    AgentHubSourceEditorOptions(
+      displayMode: displayMode,
+      isEditable: isEditable,
+      isMinimapEnabled: sourceEditorMinimapEnabled,
+      isWrapLinesEnabled: sourceEditorWrapLinesEnabled
+    )
+  }
+
+  private var highlightProviders: [any HighlightProviding]? {
+    displayMode.highlightsSyntax ? nil : []
+  }
+}
+
+// MARK: - AgentHubSourceEditorOptions
+
+struct AgentHubSourceEditorOptions {
+  let displayMode: EditorDisplayMode
+  let isEditable: Bool
+  let isMinimapEnabled: Bool
+  let isWrapLinesEnabled: Bool
+
+  let lineHeightMultiple: Double = 1.3
+  // CodeEdit treats 1.0 as neutral spacing. Passing 0 applies a full negative
+  // character-width kern and collapses line measurement.
+  let letterSpacing: Double = 1.0
+  let tabWidth = 2
+  let editorOverscroll: CGFloat = 0.2
+  let additionalTextInsets = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
+
+  var wrapLines: Bool {
+    isWrapLinesEnabled
+  }
+
+  var bracketPairEmphasis: BracketPairEmphasis? {
+    displayMode.highlightsSyntax ? .flash : nil
+  }
+
+  var showMinimap: Bool {
+    isMinimapEnabled && displayMode.usesFullEditorFeatures
+  }
+
+  var showFoldingRibbon: Bool {
+    displayMode.usesFullEditorFeatures
+  }
+
+  func makeSourceEditorConfiguration(colorScheme: ColorScheme) -> SourceEditorConfiguration {
     SourceEditorConfiguration(
       appearance: .init(
         theme: AgentHubSourceEditorTheme.theme(for: colorScheme),
         useThemeBackground: true,
         font: .monospacedSystemFont(ofSize: 12, weight: .regular),
-        lineHeightMultiple: 1.3,
-        letterSpacing: 0,
-        wrapLines: false,
+        lineHeightMultiple: lineHeightMultiple,
+        letterSpacing: letterSpacing,
+        wrapLines: wrapLines,
         useSystemCursor: true,
-        tabWidth: 2,
-        bracketPairEmphasis: displayMode.highlightsSyntax ? .flash : nil
+        tabWidth: tabWidth,
+        bracketPairEmphasis: bracketPairEmphasis
       ),
       behavior: .init(
         isEditable: isEditable,
@@ -136,21 +187,17 @@ private struct SourceCodeEditorHost: View {
         reformatAtColumn: 100
       ),
       layout: .init(
-        editorOverscroll: 0.2,
+        editorOverscroll: editorOverscroll,
         contentInsets: nil,
-        additionalTextInsets: NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
+        additionalTextInsets: additionalTextInsets
       ),
       peripherals: .init(
         showGutter: true,
-        showMinimap: displayMode.usesFullEditorFeatures,
+        showMinimap: showMinimap,
         showReformattingGuide: false,
-        showFoldingRibbon: displayMode.usesFullEditorFeatures
+        showFoldingRibbon: showFoldingRibbon
       )
     )
-  }
-
-  private var highlightProviders: [any HighlightProviding]? {
-    displayMode.highlightsSyntax ? nil : []
   }
 }
 
@@ -270,44 +317,54 @@ enum SourceEditorLanguageResolver {
 
 private enum AgentHubSourceEditorTheme {
   static func theme(for colorScheme: ColorScheme) -> EditorTheme {
-    colorScheme == .dark ? darkTheme : lightTheme
+    colorScheme == .dark ? darkTheme() : lightTheme()
   }
 
-  private static let lightTheme = EditorTheme(
-    text: .init(color: .labelColor),
-    insertionPoint: .controlAccentColor,
-    invisibles: .init(color: .tertiaryLabelColor),
-    background: .textBackgroundColor,
-    lineHighlight: NSColor.black.withAlphaComponent(0.05),
-    selection: .selectedTextBackgroundColor,
-    keywords: .init(color: NSColor.systemPurple),
-    commands: .init(color: NSColor.systemBlue),
-    types: .init(color: NSColor.systemTeal),
-    attributes: .init(color: NSColor.systemIndigo),
-    variables: .init(color: .labelColor),
-    values: .init(color: NSColor.systemMint),
-    numbers: .init(color: NSColor.systemOrange),
-    strings: .init(color: NSColor.systemRed),
-    characters: .init(color: NSColor.systemPink),
-    comments: .init(color: .secondaryLabelColor, italic: true)
-  )
+  private static func lightTheme() -> EditorTheme {
+    EditorTheme(
+      text: .init(color: rgb(.labelColor)),
+      insertionPoint: rgb(.controlAccentColor),
+      invisibles: .init(color: rgb(.tertiaryLabelColor)),
+      background: rgb(.textBackgroundColor),
+      lineHighlight: rgb(NSColor.black.withAlphaComponent(0.05)),
+      selection: rgb(.selectedTextBackgroundColor),
+      keywords: .init(color: rgb(.systemPurple)),
+      commands: .init(color: rgb(.systemBlue)),
+      types: .init(color: rgb(.systemTeal)),
+      attributes: .init(color: rgb(.systemIndigo)),
+      variables: .init(color: rgb(.labelColor)),
+      values: .init(color: rgb(.systemMint)),
+      numbers: .init(color: rgb(.systemOrange)),
+      strings: .init(color: rgb(.systemRed)),
+      characters: .init(color: rgb(.systemPink)),
+      comments: .init(color: rgb(.secondaryLabelColor), italic: true)
+    )
+  }
 
-  private static let darkTheme = EditorTheme(
-    text: .init(color: .labelColor),
-    insertionPoint: .controlAccentColor,
-    invisibles: .init(color: .tertiaryLabelColor),
-    background: NSColor.windowBackgroundColor,
-    lineHighlight: NSColor.white.withAlphaComponent(0.08),
-    selection: .selectedTextBackgroundColor,
-    keywords: .init(color: NSColor.systemPurple),
-    commands: .init(color: NSColor.systemBlue),
-    types: .init(color: NSColor.systemTeal),
-    attributes: .init(color: NSColor.systemIndigo),
-    variables: .init(color: .labelColor),
-    values: .init(color: NSColor.systemMint),
-    numbers: .init(color: NSColor.systemOrange),
-    strings: .init(color: NSColor.systemRed),
-    characters: .init(color: NSColor.systemPink),
-    comments: .init(color: .secondaryLabelColor, italic: true)
-  )
+  private static func darkTheme() -> EditorTheme {
+    EditorTheme(
+      text: .init(color: rgb(.labelColor)),
+      insertionPoint: rgb(.controlAccentColor),
+      invisibles: .init(color: rgb(.tertiaryLabelColor)),
+      background: rgb(.windowBackgroundColor),
+      lineHighlight: rgb(NSColor.white.withAlphaComponent(0.08)),
+      selection: rgb(.selectedTextBackgroundColor),
+      keywords: .init(color: rgb(.systemPurple)),
+      commands: .init(color: rgb(.systemBlue)),
+      types: .init(color: rgb(.systemTeal)),
+      attributes: .init(color: rgb(.systemIndigo)),
+      variables: .init(color: rgb(.labelColor)),
+      values: .init(color: rgb(.systemMint)),
+      numbers: .init(color: rgb(.systemOrange)),
+      strings: .init(color: rgb(.systemRed)),
+      characters: .init(color: rgb(.systemPink)),
+      comments: .init(color: rgb(.secondaryLabelColor), italic: true)
+    )
+  }
+
+  // CodeEditSourceEditor reads color components (e.g. brightness) from theme
+  // colors; catalog/system NSColors throw until resolved into an RGB colorspace.
+  private static func rgb(_ color: NSColor) -> NSColor {
+    color.usingColorSpace(.sRGB) ?? color
+  }
 }

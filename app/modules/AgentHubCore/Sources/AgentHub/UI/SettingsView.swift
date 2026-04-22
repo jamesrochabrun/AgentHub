@@ -29,6 +29,12 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.terminalFontFamily)
   private var terminalFontFamily: String = "SF Mono"
 
+  @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
+  private var sourceEditorMinimapEnabled: Bool = false
+
+  @AppStorage(AgentHubDefaults.sourceEditorWrapLinesEnabled)
+  private var sourceEditorWrapLinesEnabled: Bool = true
+
   @AppStorage(AgentHubDefaults.terminalNewlineShortcut)
   private var newlineShortcutRawValue: Int = NewlineShortcut.system.rawValue
 
@@ -226,6 +232,20 @@ public struct SettingsView: View {
             Text(editor.label).tag(editor.rawValue)
           }
         }
+      }
+
+      Section("Editor") {
+        settingsToggle(
+          title: "Show code editor minimap",
+          description: "Display the CodeEdit minimap in file explorer and web preview source editors",
+          isOn: $sourceEditorMinimapEnabled
+        )
+
+        settingsToggle(
+          title: "Wrap long lines",
+          description: "Soft-wrap long lines instead of using horizontal scrolling in source editors",
+          isOn: $sourceEditorWrapLinesEnabled
+        )
       }
 
       Section {
