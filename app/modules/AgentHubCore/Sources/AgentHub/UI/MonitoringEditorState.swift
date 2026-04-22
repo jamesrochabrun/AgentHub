@@ -5,6 +5,11 @@
 
 import Foundation
 
+extension Notification.Name {
+  /// Request the focused monitoring card to swap between Terminal and Code content modes.
+  static let toggleMonitoringContentMode = Notification.Name("com.agenthub.toggleMonitoringContentMode")
+}
+
 public enum MonitoringCardContentMode: String, CaseIterable, Identifiable {
   case terminal
   case editor

@@ -308,6 +308,9 @@ public struct MultiProviderMonitoringPanelView: View {
       .frame(width: 0, height: 0)
       .hidden()
     }
+    .onReceive(NotificationCenter.default.publisher(for: .toggleMonitoringContentMode)) { _ in
+      togglePrimarySessionContentMode()
+    }
     .floatingPanel(isPresented: $showQuickFilePicker, defaultSize: CGSize(width: 680, height: 640)) {
       if let primaryItem = effectivePrimaryItem {
         QuickFilePickerView(
