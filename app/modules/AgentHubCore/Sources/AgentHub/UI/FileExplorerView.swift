@@ -22,13 +22,13 @@ public struct FileExplorerView: View {
   let projectPath: String
   let onDismiss: () -> Void
   let isEmbedded: Bool
-  let initialFilePath: String?
+  let navigationRequest: FileExplorerNavigationRequest?
+  @Binding var selectedFilePath: String?
 
   // MARK: - State
 
   @State private var treeNodes: [FileTreeNode] = []
   @State private var isLoading = true
-  @State private var selectedFilePath: String?
   @State private var fileContent: String = ""
   @State private var savedFileContent: String = ""
   @State private var isLoadingFile = false
@@ -60,13 +60,15 @@ public struct FileExplorerView: View {
     projectPath: String,
     onDismiss: @escaping () -> Void,
     isEmbedded: Bool = false,
-    initialFilePath: String? = nil
+    selectedFilePath: Binding<String?> = .constant(nil),
+    navigationRequest: FileExplorerNavigationRequest? = nil
   ) {
     self.session = session
     self.projectPath = projectPath
     self.onDismiss = onDismiss
     self.isEmbedded = isEmbedded
-    self.initialFilePath = initialFilePath
+    self._selectedFilePath = selectedFilePath
+    self.navigationRequest = navigationRequest
   }
 
   private var normalizedProjectPath: String {
@@ -74,7 +76,7 @@ public struct FileExplorerView: View {
   }
 
   private var loadTaskID: String {
-    normalizedProjectPath + "::" + (initialFilePath ?? "")
+    normalizedProjectPath
   }
 
   // MARK: - Body
@@ -120,17 +122,13 @@ public struct FileExplorerView: View {
     )
     .task(id: loadTaskID) {
       await loadFileTree()
-      if let initial = initialFilePath {
-        let resolvedInitialPath = URL(fileURLWithPath: initial)
-          .standardizedFileURL
-          .resolvingSymlinksInPath()
-          .path
-        await expandToFile(initial)
-        await openFile(at: initial)
-        // Delay scroll to let the expanded tree render
-        try? await Task.sleep(for: .milliseconds(100))
-        scrollToPath = resolvedInitialPath
+      if navigationRequest == nil, let initialPath = selectedFilePath {
+        await navigateToFile(at: initialPath)
       }
+    }
+    .task(id: navigationRequest?.id) {
+      guard let navigationRequest else { return }
+      await navigateToFile(at: navigationRequest.filePath)
     }
     .onKeyPress(.escape) {
       if hasUnsavedChanges {
@@ -417,6 +415,17 @@ public struct FileExplorerView: View {
       fileError = "Could not read file: \(error.localizedDescription)"
     }
     isLoadingFile = false
+  }
+
+  private func navigateToFile(at path: String) async {
+    let resolvedPath = URL(fileURLWithPath: path)
+      .standardizedFileURL
+      .resolvingSymlinksInPath()
+      .path
+    await expandToFile(resolvedPath)
+    await openFile(at: resolvedPath)
+    try? await Task.sleep(for: .milliseconds(100))
+    scrollToPath = resolvedPath
   }
 
   private func saveCurrentFile() {

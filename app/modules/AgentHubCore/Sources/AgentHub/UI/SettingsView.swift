@@ -20,9 +20,6 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
 
-  @AppStorage(AgentHubDefaults.fileExplorerAlwaysModal)
-  private var fileExplorerAlwaysModal: Bool = false
-
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
@@ -147,13 +144,6 @@ public struct SettingsView: View {
         )
       }
 
-      Section("Features") {
-        settingsToggle(
-          title: "File explorer always modal",
-          description: "Open file explorer as a floating window instead of a side panel",
-          isOn: $fileExplorerAlwaysModal
-        )
-      }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
@@ -237,7 +227,7 @@ public struct SettingsView: View {
       Section("Editor") {
         settingsToggle(
           title: "Show code editor minimap",
-          description: "Display the CodeEdit minimap in file explorer and web preview source editors",
+          description: "Display the CodeEdit minimap in the session editor and web preview source editors",
           isOn: $sourceEditorMinimapEnabled
         )
 

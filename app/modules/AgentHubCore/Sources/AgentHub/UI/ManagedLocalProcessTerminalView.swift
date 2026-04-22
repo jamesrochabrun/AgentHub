@@ -13,7 +13,7 @@ import SwiftTerm
 
 /// Preferred editor for opening files from Cmd+Click in the terminal.
 public enum FileOpenEditor: Int, CaseIterable {
-  /// Open in AgentHub's inline file viewer (default)
+  /// Open in AgentHub's embedded editor (default)
   case agentHub = 0
   /// Open in VS Code
   case vscode = 1
@@ -22,7 +22,7 @@ public enum FileOpenEditor: Int, CaseIterable {
 
   public var label: String {
     switch self {
-    case .agentHub: return "AgentHub"
+    case .agentHub: return "AgentHub Editor"
     case .vscode: return "VS Code"
     case .xcode: return "Xcode"
     }
@@ -139,7 +139,7 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
   /// The project path for resolving relative file paths. Set by TerminalContainerView.
   public var projectPath: String?
 
-  /// Called when user Cmd+clicks a file path. Set by parent view to route to the Files panel.
+  /// Called when user Cmd+clicks a file path. Set by parent view to route to the AgentHub editor.
   public var onOpenFile: ((String, Int?) -> Void)?
 
   public func requestOpenFile(source: TerminalView, path: String, lineNumber: Int?) {

@@ -112,7 +112,7 @@ public enum AgentHubDefaults {
   public static let terminalNewlineShortcut = "\(keyPrefix)terminal.newlineShortcut"
 
   /// Preferred editor for Cmd+Click file paths in the terminal
-  /// Type: Int (default: 0 = AgentHub inline)
+  /// Type: Int (default: 0 = AgentHub editor)
   /// See: FileOpenEditor enum in ManagedLocalProcessTerminalView.swift
   public static let terminalFileOpenEditor = "\(keyPrefix)terminal.fileOpenEditor"
 
@@ -150,10 +150,6 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let flatSessionLayout = "\(keyPrefix)hub.flatSessionLayout"
 
-  /// Whether file explorer always opens as a modal (never as side panel)
-  /// Type: Bool (default: false)
-  public static let fileExplorerAlwaysModal = "\(keyPrefix)features.fileExplorerAlwaysModal"
-
   /// Whether debug-only web preview design tools are enabled
   /// Type: Bool (default: true in debug)
   public static let webPreviewAdvancedEditingEnabled = "\(keyPrefix)developer.webPreviewAdvancedEditingEnabled"
@@ -162,7 +158,7 @@ public enum AgentHubDefaults {
   /// Type: String (default: "regular")
   public static let webPreviewInspectorDataLevel = "\(keyPrefix)developer.webPreviewInspectorDataLevel"
 
-  /// Width of the side panel (diff, plan, web preview, file explorer) in the single-session layout
+  /// Width of the side panel (diff, plan, web preview, GitHub) in the single-session layout
   /// Type: Double (default: 700)
   public static let sidePanelWidth = "\(keyPrefix)ui.sidePanelWidth"
 
