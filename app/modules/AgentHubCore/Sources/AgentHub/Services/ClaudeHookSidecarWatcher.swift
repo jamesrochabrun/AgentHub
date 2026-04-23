@@ -24,6 +24,11 @@ public protocol ClaudeHookSidecarWatcherProtocol: AnyObject, Sendable {
   func startWatching(sessionId: String) async
   func stopWatching(sessionId: String) async
   func pendingInfo(for sessionId: String) async -> SessionJSONLParser.PendingToolInfo?
+  /// Remove every sidecar file on disk and drop all in-memory state. Called
+  /// at app launch and termination so stale `pending` entries left behind by
+  /// an approval the user resolved while AgentHub was down can't be replayed
+  /// as false `awaitingApproval` state on the next launch.
+  func wipeAll() async
 }
 
 // MARK: - ClaudeHookSidecarWatcher
@@ -82,10 +87,31 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
     fileSources.removeValue(forKey: sessionId)
     filePositions.removeValue(forKey: sessionId)
     currentInfo.removeValue(forKey: sessionId)
+
+    // Delete the sidecar file so a future watch of the same sessionId doesn't
+    // replay stale `pending` events that were resolved while this watcher
+    // wasn't running.
+    let fileURL = approvalsDirectory.appendingPathComponent("\(sessionId).jsonl")
+    try? fileManager.removeItem(at: fileURL)
   }
 
   public func pendingInfo(for sessionId: String) async -> SessionJSONLParser.PendingToolInfo? {
     currentInfo[sessionId]
+  }
+
+  public func wipeAll() async {
+    directorySource?.cancel()
+    directorySource = nil
+    for (_, source) in fileSources { source.cancel() }
+    fileSources.removeAll()
+    filePositions.removeAll()
+    currentInfo.removeAll()
+    watchedSessions.removeAll()
+
+    if fileManager.fileExists(atPath: approvalsDirectory.path) {
+      try? fileManager.removeItem(at: approvalsDirectory)
+    }
+    ensureDirectory()
   }
 
   // MARK: - Internals

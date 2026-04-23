@@ -78,6 +78,48 @@ struct ClaudeHookSidecarWatcherTests {
     #expect(info == nil)
   }
 
+  @Test("wipeAll drops sidecar files so stale pending lines can't be replayed")
+  func wipeAllDropsStaleFiles() async throws {
+    let (watcher, dir) = makeWatcher()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let sid = "sess-stale"
+    let file = dir.appendingPathComponent("\(sid).jsonl")
+    let stale: [String: Any] = [
+      "event": "pending", "toolName": "Edit",
+      "toolUseId": "tu-stale", "timestamp": "2026-04-23T00:00:00Z",
+      "input": ["file_path": "/tmp/x.swift", "old_string": "a", "new_string": "b"],
+    ]
+    var data = try JSONSerialization.data(withJSONObject: stale)
+    data.append(0x0A)
+    try data.write(to: file)
+
+    await watcher.wipeAll()
+
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+
+    // A fresh watch of the same sessionId must not surface the old pending.
+    await watcher.startWatching(sessionId: sid)
+    let info = await watcher.pendingInfo(for: sid)
+    #expect(info == nil)
+  }
+
+  @Test("stopWatching deletes the session's sidecar file")
+  func stopWatchingDeletesSidecar() async throws {
+    let (watcher, dir) = makeWatcher()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let sid = "sess-stop"
+    let file = dir.appendingPathComponent("\(sid).jsonl")
+    FileManager.default.createFile(atPath: file.path, contents: nil)
+
+    await watcher.startWatching(sessionId: sid)
+    #expect(FileManager.default.fileExists(atPath: file.path))
+
+    await watcher.stopWatching(sessionId: sid)
+    #expect(!FileManager.default.fileExists(atPath: file.path))
+  }
+
   @Test("publisher emits SidecarUpdate when a new pending line is appended")
   func publishesOnAppend() async throws {
     let (watcher, dir) = makeWatcher()

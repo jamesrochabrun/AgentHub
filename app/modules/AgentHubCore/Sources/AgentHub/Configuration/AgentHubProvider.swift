@@ -309,16 +309,30 @@ public final class AgentHubProvider {
     TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
   }
 
-  /// Sweeps any previously-installed approval hooks and wipes stale claim
-  /// files. Call this on app launch before sessions start restoring — gives
-  /// us a clean slate so external Claude Code sessions opened between a
-  /// previous crash and this launch run vanilla.
-  public func reconcileClaudeHooksOnLaunch() {
+  /// Sweeps any previously-installed approval hooks, wipes stale claim files,
+  /// and drops stale approval sidecar files. Call this on app launch before
+  /// sessions start restoring.
+  ///
+  /// **Blocks** the calling thread until cleanup completes. This is
+  /// deliberate: the lazy `claudeSessionsViewModel` triggers
+  /// `setupSubscriptions`, which can fire `syncInstalledPaths` on first
+  /// repository emission. If the reconcile is still in flight at that point,
+  /// the sync can install freshly and then the late-arriving reconcile sweeps
+  /// those same paths back out as "stale", leaving approval hooks unregistered
+  /// until the next repository change. Blocking here removes the race.
+  public func reconcileClaudeHooksOnLaunch(timeout: TimeInterval = 3.0) {
     let claimStore = approvalClaimStore
     let installer = claudeHookInstaller
-    Task {
+    let sidecar = claudeHookSidecarWatcher
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached(priority: .userInitiated) {
       await claimStore.resetAll()
+      await sidecar.wipeAll()
       await installer.reconcileOnLaunch(expectedPaths: [])
+      semaphore.signal()
+    }
+    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+      AppLogger.session.error("[ClaudeHook] reconcileClaudeHooksOnLaunch timed out after \(timeout)s — first session sync may race")
     }
   }
 
@@ -336,10 +350,12 @@ public final class AgentHubProvider {
   public func flushClaudeHooksOnTerminate(timeout: TimeInterval = 3.0) {
     let claimStore = approvalClaimStore
     let installer = claudeHookInstaller
+    let sidecar = claudeHookSidecarWatcher
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached(priority: .userInitiated) {
       await installer.flushAll()
       await claimStore.resetAll()
+      await sidecar.wipeAll()
       semaphore.signal()
     }
     let deadline = DispatchTime.now() + timeout
