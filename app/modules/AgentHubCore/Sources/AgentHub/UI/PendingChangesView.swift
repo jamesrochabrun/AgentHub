@@ -16,6 +16,7 @@ public struct PendingChangesView: View {
   let session: CLISession
   let pendingToolUse: PendingToolUse
   let onDismiss: () -> Void
+  var isEmbedded: Bool = false
   let onApprovalResponse: ((String, CLISession) -> Void)?
 
   @State private var previewResult: PendingChangesPreviewService.PreviewResult?
@@ -48,11 +49,13 @@ public struct PendingChangesView: View {
     session: CLISession,
     pendingToolUse: PendingToolUse,
     onDismiss: @escaping () -> Void,
+    isEmbedded: Bool = false,
     onApprovalResponse: ((String, CLISession) -> Void)? = nil
   ) {
     self.session = session
     self.pendingToolUse = pendingToolUse
     self.onDismiss = onDismiss
+    self.isEmbedded = isEmbedded
     self.onApprovalResponse = onApprovalResponse
   }
 
@@ -64,8 +67,10 @@ public struct PendingChangesView: View {
       Divider()
       actionBar
     }
-    .frame(minWidth: 1000, idealWidth: 1200, maxWidth: .infinity,
-           minHeight: 600, idealHeight: 800, maxHeight: .infinity)
+    .frame(
+      minWidth: isEmbedded ? 300 : 1000, idealWidth: isEmbedded ? .infinity : 1200, maxWidth: .infinity,
+      minHeight: isEmbedded ? 300 : 600, idealHeight: isEmbedded ? .infinity : 800, maxHeight: .infinity
+    )
     .task {
       await loadPreview()
     }
