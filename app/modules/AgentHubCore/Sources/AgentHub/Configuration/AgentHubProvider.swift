@@ -67,9 +67,29 @@ public final class AgentHubProvider {
     CodexSessionFileWatcher(codexPath: configuration.codexDataPath)
   }()
 
-  /// Claude file watcher for real-time monitoring
+  /// Claude file watcher for real-time monitoring. Wired to the approval hook
+  /// sidecar so pending-approval state can be surfaced while Claude Code CLI
+  /// buffers its JSONL writes.
   private lazy var claudeFileWatcher: SessionFileWatcher = {
-    SessionFileWatcher(claudePath: configuration.claudeDataPath)
+    SessionFileWatcher(
+      claudePath: configuration.claudeDataPath,
+      hookSidecarWatcher: claudeHookSidecarWatcher
+    )
+  }()
+
+  /// Shared claim store gating the approval hook script.
+  public private(set) lazy var approvalClaimStore: any ApprovalClaimStoreProtocol = {
+    ApprovalClaimStore()
+  }()
+
+  /// Watches the approval sidecar directory populated by the installed hook.
+  public private(set) lazy var claudeHookSidecarWatcher: any ClaudeHookSidecarWatcherProtocol = {
+    ClaudeHookSidecarWatcher()
+  }()
+
+  /// Installs/uninstalls the AgentHub approval hook per worktree.
+  public private(set) lazy var claudeHookInstaller: any ClaudeHookInstallerProtocol = {
+    ClaudeHookInstaller()
   }()
 
   /// Claude search service
@@ -260,6 +280,11 @@ public final class AgentHubProvider {
       }
     }()
 
+    // Claude sessions get the approval hook services wired in. Codex sessions
+    // pass nil (no Codex hook equivalent exists today — see plan).
+    let claimStore: (any ApprovalClaimStoreProtocol)? = providerKind == .claude ? approvalClaimStore : nil
+    let installer: (any ClaudeHookInstallerProtocol)? = providerKind == .claude ? claudeHookInstaller : nil
+
     let vm = CLISessionsViewModel(
       monitorService: selectedMonitor,
       fileWatcher: selectedWatcher,
@@ -267,7 +292,9 @@ public final class AgentHubProvider {
       cliConfiguration: cliConfiguration,
       providerKind: providerKind,
       metadataStore: metadataStore,
-      webPreviewCandidateService: webPreviewCandidateService
+      webPreviewCandidateService: webPreviewCandidateService,
+      approvalClaimStore: claimStore,
+      hookInstaller: installer
     )
     vm.agentHubProvider = self
     return vm
@@ -280,6 +307,31 @@ public final class AgentHubProvider {
   /// when the app crashed or was force-quit.
   public func cleanupOrphanedProcesses() {
     TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+  }
+
+  /// Sweeps any previously-installed approval hooks and wipes stale claim
+  /// files. Call this on app launch before sessions start restoring — gives
+  /// us a clean slate so external Claude Code sessions opened between a
+  /// previous crash and this launch run vanilla.
+  public func reconcileClaudeHooksOnLaunch() {
+    let claimStore = approvalClaimStore
+    let installer = claudeHookInstaller
+    Task {
+      await claimStore.resetAll()
+      await installer.reconcileOnLaunch(expectedPaths: [])
+    }
+  }
+
+  /// Removes every approval hook we've installed and releases claims. Call
+  /// from `NSApplicationDelegate.applicationWillTerminate` so external Claude
+  /// Code runs after quit see no trace of AgentHub.
+  public func flushClaudeHooksOnTerminate() {
+    let claimStore = approvalClaimStore
+    let installer = claudeHookInstaller
+    Task {
+      await installer.flushAll()
+      await claimStore.resetAll()
+    }
   }
 
   /// Terminates all active terminal processes.

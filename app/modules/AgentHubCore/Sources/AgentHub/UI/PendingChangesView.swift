@@ -71,7 +71,7 @@ public struct PendingChangesView: View {
       minWidth: isEmbedded ? 300 : 1000, idealWidth: isEmbedded ? .infinity : 1200, maxWidth: .infinity,
       minHeight: isEmbedded ? 300 : 600, idealHeight: isEmbedded ? .infinity : 800, maxHeight: .infinity
     )
-    .task {
+    .task(id: pendingToolUse.toolUseId) {
       await loadPreview()
     }
   }
@@ -363,6 +363,81 @@ public struct PendingChangesView: View {
         webViewOpacity = 1
       }
     }
+  }
+}
+
+// MARK: - PendingChangesWaitingView
+
+/// Placeholder shown inside the inline edits side panel when no pending
+/// approval exists for the current session. Keeps the panel open so that the
+/// next agent-proposed edit appears automatically without the user re-opening it.
+public struct PendingChangesWaitingView: View {
+  let session: CLISession
+  let onDismiss: () -> Void
+
+  public init(session: CLISession, onDismiss: @escaping () -> Void) {
+    self.session = session
+    self.onDismiss = onDismiss
+  }
+
+  public var body: some View {
+    VStack(spacing: 0) {
+      header
+      Divider()
+      placeholder
+    }
+    .frame(
+      minWidth: 300, idealWidth: .infinity, maxWidth: .infinity,
+      minHeight: 300, idealHeight: .infinity, maxHeight: .infinity
+    )
+  }
+
+  private var header: some View {
+    HStack {
+      HStack(spacing: 8) {
+        Image(systemName: "eye")
+          .font(.title3)
+          .foregroundColor(.orange)
+        Text("Pending Changes")
+          .font(.title3.weight(.semibold))
+      }
+
+      Spacer()
+
+      HStack(spacing: 8) {
+        Text(session.shortId)
+          .font(.system(.caption, design: .monospaced))
+          .foregroundColor(.secondary)
+        if let branch = session.branchName {
+          Text("[\(branch)]")
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+      }
+
+      Spacer()
+
+      Button("Close") { onDismiss() }
+    }
+    .padding()
+    .background(Color.surfaceElevated)
+  }
+
+  private var placeholder: some View {
+    VStack(spacing: 12) {
+      Image(systemName: "hourglass")
+        .font(.system(size: 36))
+        .foregroundStyle(.secondary)
+      Text("Waiting for the next pending edit…")
+        .font(.callout)
+        .foregroundStyle(.secondary)
+      Text("This panel will update automatically when the agent proposes a change.")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 32)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
 

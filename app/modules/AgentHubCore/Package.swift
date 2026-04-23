@@ -57,6 +57,7 @@ let package = Package(
       path: "Sources/AgentHub",
       resources: [
         .copy("Design/Theme/BundledThemes"),
+        .copy("Resources/ClaudeHook"),
       ],
       swiftSettings: [
         .swiftLanguageMode(.v5)

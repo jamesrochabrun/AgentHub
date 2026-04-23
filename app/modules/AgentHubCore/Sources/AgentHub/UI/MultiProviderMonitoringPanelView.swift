@@ -18,7 +18,7 @@ private enum SidePanelContent: Equatable {
   case webPreview(sessionId: String, session: CLISession, projectPath: String)
   case mermaid(sessionId: String, session: CLISession)
   case gitHub(sessionId: String, session: CLISession, projectPath: String)
-  case edits(sessionId: String, session: CLISession, pendingToolUse: PendingToolUse)
+  case edits(sessionId: String, session: CLISession)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -32,8 +32,8 @@ private enum SidePanelContent: Equatable {
       return id1 == id2
     case (.gitHub(let id1, _, let p1), .gitHub(let id2, _, let p2)):
       return id1 == id2 && p1 == p2
-    case (.edits(let id1, _, let t1), .edits(let id2, _, let t2)):
-      return id1 == id2 && t1.toolUseId == t2.toolUseId
+    case (.edits(let id1, _), .edits(let id2, _)):
+      return id1 == id2
     default: return false
     }
   }
@@ -634,9 +634,9 @@ public struct MultiProviderMonitoringPanelView: View {
                 forItemID: item.id
               )
             },
-            onShowPendingChanges: { session, pendingToolUse in
+            onShowPendingChanges: { session, _ in
               toggleSidePanel(
-                .edits(sessionId: session.id, session: session, pendingToolUse: pendingToolUse),
+                .edits(sessionId: session.id, session: session),
                 forItemID: item.id
               )
             },
@@ -785,16 +785,23 @@ public struct MultiProviderMonitoringPanelView: View {
           gitHubPopOutItem = GitHubPopOutItem(session: session, projectPath: projectPath)
         }
       )
-    case .edits(_, let session, let pendingToolUse):
-      PendingChangesView(
-        session: session,
-        pendingToolUse: pendingToolUse,
-        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
-        isEmbedded: true,
-        onApprovalResponse: { response, sess in
-          viewModel.showTerminalWithPrompt(for: sess, prompt: response)
-        }
-      )
+    case .edits(let sessionId, let session):
+      if let pendingToolUse = viewModel.monitorStates[sessionId]?.pendingToolUse {
+        PendingChangesView(
+          session: session,
+          pendingToolUse: pendingToolUse,
+          onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+          isEmbedded: true,
+          onApprovalResponse: { response, sess in
+            viewModel.showTerminalWithPrompt(for: sess, prompt: response)
+          }
+        )
+      } else {
+        PendingChangesWaitingView(
+          session: session,
+          onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } }
+        )
+      }
     }
   }
 
@@ -908,9 +915,9 @@ public struct MultiProviderMonitoringPanelView: View {
             forItemID: item.id
           )
         },
-        onShowPendingChanges: { session, pendingToolUse in
+        onShowPendingChanges: { session, _ in
           toggleSidePanel(
-            .edits(sessionId: session.id, session: session, pendingToolUse: pendingToolUse),
+            .edits(sessionId: session.id, session: session),
             forItemID: item.id
           )
         },
@@ -1098,9 +1105,9 @@ public struct MultiProviderMonitoringPanelView: View {
               forItemID: itemId
             )
           },
-          onShowPendingChanges: { session, pendingToolUse in
+          onShowPendingChanges: { session, _ in
             toggleSidePanel(
-              .edits(sessionId: session.id, session: session, pendingToolUse: pendingToolUse),
+              .edits(sessionId: session.id, session: session),
               forItemID: itemId
             )
           },
