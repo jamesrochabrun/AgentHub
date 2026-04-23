@@ -325,12 +325,26 @@ public final class AgentHubProvider {
   /// Removes every approval hook we've installed and releases claims. Call
   /// from `NSApplicationDelegate.applicationWillTerminate` so external Claude
   /// Code runs after quit see no trace of AgentHub.
-  public func flushClaudeHooksOnTerminate() {
+  ///
+  /// This method **blocks** the calling thread until the cleanup completes
+  /// (or `timeout` elapses). `applicationWillTerminate` is the last hook AppKit
+  /// offers before the process is killed, so an unstructured `Task` spawned
+  /// here will be torn down mid-flight and leave stale hook entries in
+  /// `settings.local.json` plus stray claim files behind. Filesystem ops are
+  /// fast (<100ms for a typical install set); a 3-second cap guards against
+  /// deadlock without punishing normal quits.
+  public func flushClaudeHooksOnTerminate(timeout: TimeInterval = 3.0) {
     let claimStore = approvalClaimStore
     let installer = claudeHookInstaller
-    Task {
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached(priority: .userInitiated) {
       await installer.flushAll()
       await claimStore.resetAll()
+      semaphore.signal()
+    }
+    let deadline = DispatchTime.now() + timeout
+    if semaphore.wait(timeout: deadline) == .timedOut {
+      AppLogger.session.error("[ClaudeHook] flushClaudeHooksOnTerminate timed out after \(timeout)s — shutdown may leave stale hook state behind")
     }
   }
 
