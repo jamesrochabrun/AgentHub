@@ -104,20 +104,37 @@ struct ClaudeHookSidecarWatcherTests {
     #expect(info == nil)
   }
 
-  @Test("stopWatching deletes the session's sidecar file")
-  func stopWatchingDeletesSidecar() async throws {
+  @Test("stopWatching preserves the sidecar so a resumed watch recovers pending state")
+  func stopWatchingPreservesSidecar() async throws {
     let (watcher, dir) = makeWatcher()
     defer { try? FileManager.default.removeItem(at: dir) }
 
     let sid = "sess-stop"
     let file = dir.appendingPathComponent("\(sid).jsonl")
-    FileManager.default.createFile(atPath: file.path, contents: nil)
 
+    // Seed a pending event, as if the hook wrote one before the user toggled
+    // monitoring off.
+    let pending: [String: Any] = [
+      "event": "pending", "toolName": "Edit",
+      "toolUseId": "tu-resume", "timestamp": "2026-04-23T00:00:00Z",
+      "input": ["file_path": "/tmp/x.swift", "old_string": "a", "new_string": "b"],
+    ]
+    var data = try JSONSerialization.data(withJSONObject: pending)
+    data.append(0x0A)
+    try data.write(to: file)
+
+    // First watch reads the pending entry.
     await watcher.startWatching(sessionId: sid)
+    #expect(await watcher.pendingInfo(for: sid)?.toolUseId == "tu-resume")
+
+    // User toggles monitoring off. Sidecar file must survive.
+    await watcher.stopWatching(sessionId: sid)
     #expect(FileManager.default.fileExists(atPath: file.path))
 
-    await watcher.stopWatching(sessionId: sid)
-    #expect(!FileManager.default.fileExists(atPath: file.path))
+    // User toggles monitoring back on while the tool is still pending.
+    // The resumed watch must recover the pending state.
+    await watcher.startWatching(sessionId: sid)
+    #expect(await watcher.pendingInfo(for: sid)?.toolUseId == "tu-resume")
   }
 
   @Test("publisher emits SidecarUpdate when a new pending line is appended")

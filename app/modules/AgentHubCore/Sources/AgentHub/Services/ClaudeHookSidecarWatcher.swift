@@ -88,11 +88,13 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
     filePositions.removeValue(forKey: sessionId)
     currentInfo.removeValue(forKey: sessionId)
 
-    // Delete the sidecar file so a future watch of the same sessionId doesn't
-    // replay stale `pending` events that were resolved while this watcher
-    // wasn't running.
-    let fileURL = approvalsDirectory.appendingPathComponent("\(sessionId).jsonl")
-    try? fileManager.removeItem(at: fileURL)
+    // Intentionally keep the sidecar file on disk. `stopWatching` is also
+    // called when a user toggles monitoring off mid-approval (the JSONL
+    // hasn't flushed the `tool_use` yet), so the sidecar is the only
+    // persisted record of the pending event. If monitoring is turned back
+    // on while the tool is still awaiting approval, `startWatching` needs
+    // to find it. Cross-restart staleness is handled by `wipeAll` at
+    // launch/terminate; see plans/parsed-weaving-nebula.md.
   }
 
   public func pendingInfo(for sessionId: String) async -> SessionJSONLParser.PendingToolInfo? {
