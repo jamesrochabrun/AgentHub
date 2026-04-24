@@ -272,6 +272,10 @@ public actor CodexSessionFileWatcher {
       sessionStartedAt: result.sessionStartedAt,
       model: result.model,
       gitBranch: nil,
+      // Codex has no hook mechanism equivalent to Claude Code's PreToolUse;
+      // during the approval window the Codex JSONL (like Claude's) doesn't
+      // include the pending tool_use. Until Codex ships hooks there is no
+      // way to surface approval-window state. See plans/parsed-weaving-nebula.md.
       pendingToolUse: nil,
       recentActivities: result.recentActivities,
       hasMermaidContent: result.hasMermaidContent,

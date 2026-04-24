@@ -67,9 +67,29 @@ public final class AgentHubProvider {
     CodexSessionFileWatcher(codexPath: configuration.codexDataPath)
   }()
 
-  /// Claude file watcher for real-time monitoring
+  /// Claude file watcher for real-time monitoring. Wired to the approval hook
+  /// sidecar so pending-approval state can be surfaced while Claude Code CLI
+  /// buffers its JSONL writes.
   private lazy var claudeFileWatcher: SessionFileWatcher = {
-    SessionFileWatcher(claudePath: configuration.claudeDataPath)
+    SessionFileWatcher(
+      claudePath: configuration.claudeDataPath,
+      hookSidecarWatcher: claudeHookSidecarWatcher
+    )
+  }()
+
+  /// Shared claim store gating the approval hook script.
+  public private(set) lazy var approvalClaimStore: any ApprovalClaimStoreProtocol = {
+    ApprovalClaimStore()
+  }()
+
+  /// Watches the approval sidecar directory populated by the installed hook.
+  public private(set) lazy var claudeHookSidecarWatcher: any ClaudeHookSidecarWatcherProtocol = {
+    ClaudeHookSidecarWatcher()
+  }()
+
+  /// Installs/uninstalls the AgentHub approval hook per worktree.
+  public private(set) lazy var claudeHookInstaller: any ClaudeHookInstallerProtocol = {
+    ClaudeHookInstaller()
   }()
 
   /// Claude search service
@@ -260,6 +280,11 @@ public final class AgentHubProvider {
       }
     }()
 
+    // Claude sessions get the approval hook services wired in. Codex sessions
+    // pass nil (no Codex hook equivalent exists today — see plan).
+    let claimStore: (any ApprovalClaimStoreProtocol)? = providerKind == .claude ? approvalClaimStore : nil
+    let installer: (any ClaudeHookInstallerProtocol)? = providerKind == .claude ? claudeHookInstaller : nil
+
     let vm = CLISessionsViewModel(
       monitorService: selectedMonitor,
       fileWatcher: selectedWatcher,
@@ -267,7 +292,9 @@ public final class AgentHubProvider {
       cliConfiguration: cliConfiguration,
       providerKind: providerKind,
       metadataStore: metadataStore,
-      webPreviewCandidateService: webPreviewCandidateService
+      webPreviewCandidateService: webPreviewCandidateService,
+      approvalClaimStore: claimStore,
+      hookInstaller: installer
     )
     vm.agentHubProvider = self
     return vm
@@ -280,6 +307,61 @@ public final class AgentHubProvider {
   /// when the app crashed or was force-quit.
   public func cleanupOrphanedProcesses() {
     TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+  }
+
+  /// Sweeps any previously-installed approval hooks, wipes stale claim files,
+  /// and drops stale approval sidecar files. Call this on app launch before
+  /// sessions start restoring.
+  ///
+  /// **Blocks** the calling thread until cleanup completes. This is
+  /// deliberate: the lazy `claudeSessionsViewModel` triggers
+  /// `setupSubscriptions`, which can fire `syncInstalledPaths` on first
+  /// repository emission. If the reconcile is still in flight at that point,
+  /// the sync can install freshly and then the late-arriving reconcile sweeps
+  /// those same paths back out as "stale", leaving approval hooks unregistered
+  /// until the next repository change. Blocking here removes the race.
+  public func reconcileClaudeHooksOnLaunch(timeout: TimeInterval = 3.0) {
+    let claimStore = approvalClaimStore
+    let installer = claudeHookInstaller
+    let sidecar = claudeHookSidecarWatcher
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached(priority: .userInitiated) {
+      await claimStore.resetAll()
+      await sidecar.wipeAll()
+      await installer.reconcileOnLaunch(expectedPaths: [])
+      semaphore.signal()
+    }
+    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+      AppLogger.session.error("[ClaudeHook] reconcileClaudeHooksOnLaunch timed out after \(timeout)s — first session sync may race")
+    }
+  }
+
+  /// Removes every approval hook we've installed and releases claims. Call
+  /// from `NSApplicationDelegate.applicationWillTerminate` so external Claude
+  /// Code runs after quit see no trace of AgentHub.
+  ///
+  /// This method **blocks** the calling thread until the cleanup completes
+  /// (or `timeout` elapses). `applicationWillTerminate` is the last hook AppKit
+  /// offers before the process is killed, so an unstructured `Task` spawned
+  /// here will be torn down mid-flight and leave stale hook entries in
+  /// `settings.local.json` plus stray claim files behind. Filesystem ops are
+  /// fast (<100ms for a typical install set); a 3-second cap guards against
+  /// deadlock without punishing normal quits.
+  public func flushClaudeHooksOnTerminate(timeout: TimeInterval = 3.0) {
+    let claimStore = approvalClaimStore
+    let installer = claudeHookInstaller
+    let sidecar = claudeHookSidecarWatcher
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached(priority: .userInitiated) {
+      await installer.flushAll()
+      await claimStore.resetAll()
+      await sidecar.wipeAll()
+      semaphore.signal()
+    }
+    let deadline = DispatchTime.now() + timeout
+    if semaphore.wait(timeout: deadline) == .timedOut {
+      AppLogger.session.error("[ClaudeHook] flushClaudeHooksOnTerminate timed out after \(timeout)s — shutdown may leave stale hook state behind")
+    }
   }
 
   /// Terminates all active terminal processes.

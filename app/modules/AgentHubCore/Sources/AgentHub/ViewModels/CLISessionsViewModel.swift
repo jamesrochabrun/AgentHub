@@ -32,6 +32,8 @@ public final class CLISessionsViewModel {
   private let fileWatcher: any SessionFileWatcherProtocol
   private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
   private let approvalNotificationService: any ApprovalNotificationServiceProtocol
+  private let approvalClaimStore: (any ApprovalClaimStoreProtocol)?
+  private let hookInstaller: (any ClaudeHookInstallerProtocol)?
   weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
@@ -177,10 +179,19 @@ public final class CLISessionsViewModel {
 
     monitoringCancellables[session.id] = cancellable
 
+    // Claude-only: claim the session so the installed hook will actually
+    // write approval events for it. The hook itself is installed at the
+    // repository level (see `syncClaudeHookInstalls`), so nothing happens
+    // here beyond the claim. Codex injects nil for the claim store.
+    let claimStore = approvalClaimStore
+    let sessionId = session.id
+    let projectPath = session.projectPath
+
     Task {
+      await claimStore?.claim(sessionId: sessionId)
       await fileWatcher.startMonitoring(
-        sessionId: session.id,
-        projectPath: session.projectPath,
+        sessionId: sessionId,
+        projectPath: projectPath,
         sessionFilePath: session.sessionFilePath
       )
     }
@@ -194,8 +205,11 @@ public final class CLISessionsViewModel {
     monitoringCancellables.removeValue(forKey: sessionId)
     monitorStates.removeValue(forKey: sessionId)
 
+    let claimStore = approvalClaimStore
+
     Task {
       await fileWatcher.stopMonitoring(sessionId: sessionId)
+      await claimStore?.release(sessionId: sessionId)
     }
     AppLogger.session.info("[Polling] Stopped polling for session: \(sessionId.prefix(8), privacy: .public)")
   }
@@ -545,7 +559,9 @@ public final class CLISessionsViewModel {
     providerKind: SessionProviderKind,
     metadataStore: SessionMetadataStore? = nil,
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
-    approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared
+    approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared,
+    approvalClaimStore: (any ApprovalClaimStoreProtocol)? = nil,
+    hookInstaller: (any ClaudeHookInstallerProtocol)? = nil
   ) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
@@ -554,6 +570,8 @@ public final class CLISessionsViewModel {
     self.fileWatcher = fileWatcher
     self.webPreviewCandidateService = webPreviewCandidateService
     self.approvalNotificationService = approvalNotificationService
+    self.approvalClaimStore = approvalClaimStore
+    self.hookInstaller = hookInstaller
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
@@ -719,8 +737,32 @@ public final class CLISessionsViewModel {
 
           // Progressively restore sessions from persistence as they become available
           self.processPendingSessionRestorations()
+
+          // Claude-only: make sure every repo/worktree path the user has
+          // added has the approval hook registered in its
+          // `.claude/settings.local.json`. Claude Code reads that file once
+          // at session start, so we install eagerly here rather than on
+          // per-session startup. Codex injects nil → no-op.
+          self.syncClaudeHookInstalls()
         }
       }
+    }
+  }
+
+  /// Computes the flat set of paths that should have the approval hook
+  /// registered and hands it to the installer. Safe to call repeatedly —
+  /// the installer is idempotent.
+  private func syncClaudeHookInstalls() {
+    guard let installer = hookInstaller else { return }
+    var paths: Set<String> = []
+    for repo in selectedRepositories {
+      paths.insert(repo.path)
+      for worktree in repo.worktrees {
+        paths.insert(worktree.path)
+      }
+    }
+    Task {
+      await installer.syncInstalledPaths(paths)
     }
   }
 

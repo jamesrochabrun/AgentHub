@@ -44,6 +44,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.pushNotificationsEnabled)
   private var pushNotificationsEnabled: Bool = true
 
+  @AppStorage(ClaudeHookInstaller.enabledKey)
+  private var claudeApprovalHooksEnabled: Bool = true
+
   @AppStorage(AgentHubDefaults.claudeCommand)
   private var claudeCommand: String = "claude"
 
@@ -144,6 +147,33 @@ public struct SettingsView: View {
         )
       }
 
+      Section("Claude Code integration") {
+        settingsToggle(
+          title: "Enable approval hooks",
+          description: "Detects pending Edit/Bash/etc. approvals in real time. Installs a hook into each monitored project's .claude/settings.local.json (gitignored) only while AgentHub is actively watching the session.",
+          isOn: $claudeApprovalHooksEnabled
+        )
+        .onChange(of: claudeApprovalHooksEnabled) { _, newValue in
+          guard let provider = agentHub else { return }
+          let installer = provider.claudeHookInstaller
+          let claudeVM = provider.claudeSessionsViewModel
+          Task {
+            await installer.setEnabled(newValue)
+            // Re-enable: trigger a fresh sync for the currently tracked repos
+            // (setEnabled intentionally doesn't know about the repo list).
+            if newValue {
+              await MainActor.run {
+                var paths: Set<String> = []
+                for repo in claudeVM.selectedRepositories {
+                  paths.insert(repo.path)
+                  for worktree in repo.worktrees { paths.insert(worktree.path) }
+                }
+                Task { await installer.syncInstalledPaths(paths) }
+              }
+            }
+          }
+        }
+      }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)

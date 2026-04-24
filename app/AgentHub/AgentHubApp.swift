@@ -24,6 +24,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
   func applicationDidFinishLaunching(_ notification: Notification) {
     UNUserNotificationCenter.current().delegate = self
     registerBundledFonts()
+    // Sweep any approval hooks left installed by a previous crash/force-quit
+    // before sessions start restoring. Re-installs happen naturally as each
+    // session begins monitoring.
+    provider.reconcileClaudeHooksOnLaunch()
   }
 
   /// Register all bundled fonts (Geist, GeistMono, JetBrains Mono)
@@ -56,6 +60,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     provider.terminateAllTerminals()
     // Stop all dev servers spawned for web preview
     DevServerManager.shared.stopAllServers()
+    // Remove every approval hook we installed and clear claims so external
+    // Claude Code sessions after quit run vanilla.
+    provider.flushClaudeHooksOnTerminate()
   }
 
   // MARK: - UNUserNotificationCenterDelegate

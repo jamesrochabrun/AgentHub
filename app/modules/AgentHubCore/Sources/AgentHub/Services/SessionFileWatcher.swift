@@ -25,6 +25,7 @@ public actor SessionFileWatcher {
   // MARK: - Properties
 
   private var watchedSessions: [String: FileWatcherInfo] = [:]
+  private var hookCancellables: [String: AnyCancellable] = [:]
   private nonisolated let stateSubject = PassthroughSubject<StateUpdate, Never>()
   private let claudePath: String
 
@@ -35,6 +36,7 @@ public actor SessionFileWatcher {
   private var approvalTimeoutSeconds: Int = 0
 
   private let approvalNotificationService: any ApprovalNotificationServiceProtocol
+  private let hookSidecarWatcher: (any ClaudeHookSidecarWatcherProtocol)?
 
   /// Publisher for state updates
   public nonisolated var statePublisher: AnyPublisher<StateUpdate, Never> {
@@ -45,10 +47,12 @@ public actor SessionFileWatcher {
 
   public init(
     claudePath: String = "~/.claude",
-    approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared
+    approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared,
+    hookSidecarWatcher: (any ClaudeHookSidecarWatcherProtocol)? = nil
   ) {
     self.claudePath = NSString(string: claudePath).expandingTildeInPath
     self.approvalNotificationService = approvalNotificationService
+    self.hookSidecarWatcher = hookSidecarWatcher
   }
 
   /// Set the approval timeout in seconds
@@ -84,7 +88,15 @@ public actor SessionFileWatcher {
 
     // Initial parse
     var parseResult = SessionJSONLParser.parseSessionFile(at: filePath, approvalTimeoutSeconds: approvalTimeoutSeconds)
-    let initialState = buildMonitorState(from: parseResult)
+
+    // Seed hook-sourced pending info (if the hook fired before we started).
+    var hookPendingInfo: SessionJSONLParser.PendingToolInfo?
+    if let hookSidecarWatcher {
+      await hookSidecarWatcher.startWatching(sessionId: sessionId)
+      hookPendingInfo = await hookSidecarWatcher.pendingInfo(for: sessionId)
+    }
+
+    let initialState = buildMonitorState(from: parseResult, hookPending: hookPendingInfo)
 
     // Emit initial state
     stateSubject.send(StateUpdate(sessionId: sessionId, state: initialState))
@@ -153,7 +165,7 @@ public actor SessionFileWatcher {
         // Keep lastEmittedStatus in sync to prevent redundant emissions from status timer
         lastEmittedStatus = parseResult.currentStatus
 
-        let updatedState = self.buildMonitorState(from: parseResult)
+        let updatedState = self.buildMonitorState(from: parseResult, hookPending: hookPendingInfo)
 
         // Emit update
         Task { @MainActor in
@@ -235,7 +247,7 @@ public actor SessionFileWatcher {
           }
 
           lastEmittedStatus = parseResult.currentStatus
-          let updatedState = self.buildMonitorState(from: parseResult)
+          let updatedState = self.buildMonitorState(from: parseResult, hookPending: hookPendingInfo)
 
           Task { @MainActor in
             self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
@@ -261,6 +273,49 @@ public actor SessionFileWatcher {
     rescheduleStatusTimer()
     statusTimer.resume()
 
+    // Subscribe to sidecar updates for this session. When a new hook-sourced
+    // pending arrives we push it through the same processingQueue so that
+    // `hookPendingInfo`, the local var captured by the DispatchSource event
+    // handlers, is updated without data races.
+    if let hookSidecarWatcher {
+      let approvalNotificationService = self.approvalNotificationService
+      let notifiedRef = Notified()
+      let cancellable = hookSidecarWatcher.updates
+        .filter { $0.sessionId == sessionId }
+        .sink { [weak self] update in
+          guard let self else { return }
+          self.processingQueue.async {
+            hookPendingInfo = update.info
+            let updatedState = self.buildMonitorState(
+              from: parseResult,
+              hookPending: hookPendingInfo
+            )
+            // Fire the approval notification when the hook signals a new
+            // pending tool (and only when we haven't already notified for it).
+            if let info = update.info, notifiedRef.lastNotifiedToolUseId != info.toolUseId {
+              notifiedRef.lastNotifiedToolUseId = info.toolUseId
+              let lastMessage = parseResult.recentActivities
+                .last(where: { if case .userMessage = $0.type { return true }; return false })?
+                .description
+              approvalNotificationService.sendApprovalNotification(
+                sessionId: sessionId,
+                toolName: info.toolName,
+                projectPath: filePath,
+                model: parseResult.model,
+                lastMessage: lastMessage
+              )
+            }
+            if update.info == nil {
+              notifiedRef.lastNotifiedToolUseId = nil
+            }
+            Task { @MainActor in
+              self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
+            }
+          }
+        }
+      hookCancellables[sessionId] = cancellable
+    }
+
     // Store watcher info
     watchedSessions[sessionId] = FileWatcherInfo(
       filePath: filePath,
@@ -283,6 +338,10 @@ public actor SessionFileWatcher {
 
     info.source.cancel()
     info.statusTimer.cancel()
+    hookCancellables.removeValue(forKey: sessionId)
+    if let hookSidecarWatcher {
+      await hookSidecarWatcher.stopWatching(sessionId: sessionId)
+    }
     AppLogger.watcher.info("[Polling] Cancelled file watcher and timer for: \(sessionId.prefix(8), privacy: .public)")
   }
 
@@ -399,23 +458,52 @@ public actor SessionFileWatcher {
     }
   }
 
-  private nonisolated func buildMonitorState(from result: SessionJSONLParser.ParseResult) -> SessionMonitorState {
-    // Convert pending tool uses
+  private nonisolated func buildMonitorState(
+    from result: SessionJSONLParser.ParseResult,
+    hookPending: SessionJSONLParser.PendingToolInfo? = nil
+  ) -> SessionMonitorState {
+    // JSONL is authoritative when it has a pending entry; otherwise fall back
+    // to the hook-sourced entry (Claude Code CLI doesn't flush tool_use blocks
+    // to JSONL until the turn commits, so the hook is the only signal during
+    // the approval window). See `HookPendingStalenessFilter` for the
+    // "already-resolved" guard.
+    let effectiveHookPending = HookPendingStalenessFilter.filter(
+      hookPending: hookPending,
+      lastActivityAt: result.lastActivityAt
+    )
+
+    let chosenPending: SessionJSONLParser.PendingToolInfo?
+    if let (_, jsonlPending) = result.pendingToolUses.first {
+      chosenPending = jsonlPending
+    } else {
+      chosenPending = effectiveHookPending
+    }
+
     let pendingToolUse: PendingToolUse?
-    if let (_, pending) = result.pendingToolUses.first {
+    if let p = chosenPending {
       pendingToolUse = PendingToolUse(
-        toolName: pending.toolName,
-        toolUseId: pending.toolUseId,
-        timestamp: pending.timestamp,
-        input: pending.input,
-        codeChangeInput: pending.codeChangeInput
+        toolName: p.toolName,
+        toolUseId: p.toolUseId,
+        timestamp: p.timestamp,
+        input: p.input,
+        codeChangeInput: p.codeChangeInput
       )
     } else {
       pendingToolUse = nil
     }
 
+    // If the JSONL parser had no activity to derive status from but the hook
+    // reports a pending tool, override to awaitingApproval so the sidebar
+    // reflects reality.
+    let derivedStatus: SessionStatus = {
+      if result.pendingToolUses.isEmpty, let p = effectiveHookPending {
+        return .awaitingApproval(tool: p.toolName)
+      }
+      return result.currentStatus
+    }()
+
     return SessionMonitorState(
-      status: result.currentStatus,
+      status: derivedStatus,
       currentTool: extractCurrentTool(from: result),
       lastActivityAt: result.lastActivityAt ?? Date(),
       inputTokens: result.lastInputTokens,          // Last input (context window)
@@ -460,6 +548,12 @@ private struct FileWatcherInfo {
   // Health check tracking
   var lastFileEventTime: Date
   var lastKnownFileSize: UInt64
+}
+
+/// Reference-type scratch used inside the sidecar-subscription closure to
+/// dedupe approval notifications by `toolUseId`. Kept private to this file.
+private final class Notified: @unchecked Sendable {
+  var lastNotifiedToolUseId: String?
 }
 
 // MARK: - Protocol Conformance
