@@ -56,21 +56,36 @@ struct HookPendingStalenessFilterTests {
     #expect(result == nil)
   }
 
-  @Test("preserves hook pending when JSONL activity is within the epsilon window")
-  func sameSecondClockSkewStillLive() {
-    // Legacy whole-second hook timestamp truncates to 10:30:45.000Z while
-    // JSONL's millisecond-precision lastActivityAt is 10:30:45.400Z. Without
-    // the epsilon this would incorrectly drop a live pending.
+  @Test("preserves hook pending within cross-process clock skew")
+  func smallClockSkewPreserved() {
+    // Cross-process skew between the Python hook and Claude's Node process
+    // is typically in the low-ms range. 50ms is safely inside the epsilon;
+    // a live pending must not be dropped for that.
     let decisionTime = Date()
     let pending = makePending(at: decisionTime)
     let result = HookPendingStalenessFilter.filter(
       hookPending: pending,
-      lastActivityAt: decisionTime.addingTimeInterval(0.4)
+      lastActivityAt: decisionTime.addingTimeInterval(0.05)
     )
     #expect(result?.toolUseId == "tu-1")
   }
 
-  @Test("drops hook pending once JSONL has advanced past the epsilon window")
+  @Test("drops hook pending for fast-turn resolution just past the epsilon")
+  func fastTurnResolutionIsDetected() {
+    // A user can approve and a tool can commit inside a few hundred ms.
+    // Once JSONL activity has advanced beyond the epsilon, the sidecar's
+    // pending must be treated as stale — this is exactly the "fast Bash
+    // turn leaves the UI stuck on pending" case.
+    let decisionTime = Date()
+    let pending = makePending(at: decisionTime)
+    let result = HookPendingStalenessFilter.filter(
+      hookPending: pending,
+      lastActivityAt: decisionTime.addingTimeInterval(0.3)
+    )
+    #expect(result == nil)
+  }
+
+  @Test("drops hook pending when JSONL is seconds past the hook decision")
   func beyondEpsilonIsStale() {
     let decisionTime = Date()
     let pending = makePending(at: decisionTime)

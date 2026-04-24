@@ -27,17 +27,23 @@ import Foundation
 ///
 /// ## Why the epsilon
 ///
-/// Wall-clock timestamps drift between processes. The hook runs in a
-/// separate Python process; Claude writes JSONL from Node. Even now that
-/// the hook emits millisecond precision there's still genuine skew on the
-/// order of tens of milliseconds. We also need to absorb legacy sidecar
-/// lines from earlier builds that were written with whole-second
-/// truncation. A one-second grace window covers both cleanly without
-/// making the stale-detection meaningfully slower to kick in (a turn that
-/// actually resolved will have JSONL activity at least that far past the
-/// hook timestamp once the result block lands).
+/// Wall-clock timestamps drift between the Python hook process and
+/// Claude's Node process. In practice both resolve to the same
+/// `gettimeofday` source, so genuine skew is in the low-ms range. The
+/// epsilon exists to absorb that and nothing more — **not** to serve as a
+/// debounce window. A larger value (e.g. one second) would keep an already
+/// resolved approval visible as pending long enough for a fast turn to
+/// commit entirely within the grace period, leaving the UI stuck on
+/// stale state until some unrelated JSONL activity arrived. 100ms is
+/// comfortably above realistic cross-process skew and well below the
+/// minimum duration a user can perceive a false pending flash.
+///
+/// Legacy whole-second sidecar lines from pre-millisecond builds used to
+/// motivate a larger window, but `wipeAll` clears the approvals directory
+/// at every launch/terminate, so those entries don't survive past one
+/// app restart.
 public enum HookPendingStalenessFilter {
-  public static let stalenessEpsilon: TimeInterval = 1.0
+  public static let stalenessEpsilon: TimeInterval = 0.1
 
   public static func filter(
     hookPending: SessionJSONLParser.PendingToolInfo?,
