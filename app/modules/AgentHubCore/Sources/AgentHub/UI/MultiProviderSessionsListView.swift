@@ -108,18 +108,18 @@ private enum SidebarGroupMode: String, CaseIterable {
 // MARK: - StatusGroupCategory
 
 private enum StatusGroupCategory: String, CaseIterable, Identifiable {
+  case needsAttention = "Needs Attention"
   case working = "Working"
   case ready = "Ready"
-  case needsAttention = "Needs Attention"
   case idle = "Idle"
 
   var id: String { rawValue }
 
   var color: Color {
     switch self {
+    case .needsAttention: return .yellow
     case .working: return .blue
     case .ready: return .green
-    case .needsAttention: return .yellow
     case .idle: return .gray
     }
   }
