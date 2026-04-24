@@ -243,14 +243,14 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     var entries = result[event] as? [[String: Any]] ?? []
     entries.removeAll { entry in
       guard let inner = entry["hooks"] as? [[String: Any]] else { return false }
-      return inner.contains { ($0["command"] as? String) == scriptPath }
+      return inner.contains { isOurCommand($0["command"] as? String, scriptPath: scriptPath) }
     }
     entries.append([
       "matcher": "*",
       "hooks": [
         [
           "type": "command",
-          "command": scriptPath,
+          "command": Self.shellQuoted(scriptPath),
         ] as [String: Any],
       ],
     ])
@@ -267,7 +267,7 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     guard var entries = result[event] as? [[String: Any]] else { return result }
     entries.removeAll { entry in
       guard let inner = entry["hooks"] as? [[String: Any]] else { return false }
-      return inner.contains { ($0["command"] as? String) == scriptPath }
+      return inner.contains { isOurCommand($0["command"] as? String, scriptPath: scriptPath) }
     }
     if entries.isEmpty {
       result.removeValue(forKey: event)
@@ -275,6 +275,20 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
       result[event] = entries
     }
     return result
+  }
+
+  /// Matches both the current shell-quoted form and the legacy unquoted form
+  /// so that older installations get cleanly upgraded on the next sync.
+  private func isOurCommand(_ command: String?, scriptPath: String) -> Bool {
+    guard let command else { return false }
+    return command == scriptPath || command == Self.shellQuoted(scriptPath)
+  }
+
+  /// Wraps a path in single quotes so `/bin/sh -c` doesn't word-split on
+  /// embedded spaces (e.g. `~/Library/Application Support/...`). Embedded
+  /// single quotes are escaped as `'\''`.
+  static func shellQuoted(_ path: String) -> String {
+    "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
   }
 
   private func writeJSON(_ object: [String: Any], to url: URL) throws {

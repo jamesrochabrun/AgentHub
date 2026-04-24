@@ -71,9 +71,13 @@ struct ClaudeHookInstallerTests {
     }
 
     func hasAgentHubEntry(in entries: [[String: Any]], scriptPath: String) -> Bool {
-      entries.contains { entry in
+      let quoted = ClaudeHookInstaller.shellQuoted(scriptPath)
+      return entries.contains { entry in
         let inner = entry["hooks"] as? [[String: Any]] ?? []
-        return inner.contains { ($0["command"] as? String) == scriptPath }
+        return inner.contains {
+          let cmd = $0["command"] as? String
+          return cmd == scriptPath || cmd == quoted
+        }
       }
     }
   }
@@ -148,9 +152,13 @@ struct ClaudeHookInstallerTests {
 
     let settings = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
     let entries = fx.preEntries(in: settings)
+    let quoted = ClaudeHookInstaller.shellQuoted(fx.sharedScriptURL.path)
     let matches = entries.filter { entry in
       let inner = entry["hooks"] as? [[String: Any]] ?? []
-      return inner.contains { ($0["command"] as? String) == fx.sharedScriptURL.path }
+      return inner.contains {
+        let cmd = $0["command"] as? String
+        return cmd == fx.sharedScriptURL.path || cmd == quoted
+      }
     }
     #expect(matches.count == 1)
   }
@@ -232,6 +240,80 @@ struct ClaudeHookInstallerTests {
     #expect(FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectA).path))
 
     await fx.installer.reconcileOnLaunch(expectedPaths: [])
+
+    let url = fx.settingsLocal(for: fx.projectA)
+    if FileManager.default.fileExists(atPath: url.path) {
+      let settings = try fx.readSettings(at: url)
+      #expect(!fx.hasAgentHubEntry(in: fx.preEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
+    }
+  }
+
+  @Test("written command is shell-quoted so /bin/sh -c doesn't word-split on spaces in the path")
+  func writtenCommandIsShellQuoted() async throws {
+    let fx = try Fixture(name: "shellQuoted")
+    defer { fx.teardown() }
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    let settings = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
+    let entries = fx.preEntries(in: settings)
+    let inner = entries.first?["hooks"] as? [[String: Any]] ?? []
+    let cmd = inner.first?["command"] as? String
+    #expect(cmd == ClaudeHookInstaller.shellQuoted(fx.sharedScriptURL.path))
+    #expect(cmd?.hasPrefix("'") == true)
+    #expect(cmd?.hasSuffix("'") == true)
+  }
+
+  @Test("sync replaces a legacy unquoted entry with the quoted form")
+  func syncReplacesLegacyUnquotedEntry() async throws {
+    let fx = try Fixture(name: "migrateUnquoted")
+    defer { fx.teardown() }
+
+    let legacy: [String: Any] = [
+      "hooks": [
+        "PreToolUse": [
+          ["matcher": "*", "hooks": [["type": "command", "command": fx.sharedScriptURL.path]]]
+        ]
+      ],
+    ]
+    try FileManager.default.createDirectory(
+      at: fx.settingsLocal(for: fx.projectA).deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try JSONSerialization.data(withJSONObject: legacy).write(to: fx.settingsLocal(for: fx.projectA))
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    let entries = fx.preEntries(in: try fx.readSettings(at: fx.settingsLocal(for: fx.projectA)))
+    #expect(entries.count == 1)
+    let cmd = (entries.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String
+    #expect(cmd == ClaudeHookInstaller.shellQuoted(fx.sharedScriptURL.path))
+  }
+
+  @Test("uninstall removes a legacy unquoted entry")
+  func uninstallRemovesLegacyUnquotedEntry() async throws {
+    let fx = try Fixture(name: "uninstallUnquoted")
+    defer { fx.teardown() }
+
+    let legacy: [String: Any] = [
+      "hooks": [
+        "PreToolUse": [
+          ["matcher": "*", "hooks": [["type": "command", "command": fx.sharedScriptURL.path]]]
+        ],
+        "PostToolUse": [
+          ["matcher": "*", "hooks": [["type": "command", "command": fx.sharedScriptURL.path]]]
+        ],
+      ],
+    ]
+    try FileManager.default.createDirectory(
+      at: fx.settingsLocal(for: fx.projectA).deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try JSONSerialization.data(withJSONObject: legacy).write(to: fx.settingsLocal(for: fx.projectA))
+    // Pretend installer had previously written this path so uninstall sees it.
+    fx.defaults.set([fx.projectA.path], forKey: ClaudeHookInstaller.installedPathsKey)
+
+    await fx.installer.syncInstalledPaths([])
 
     let url = fx.settingsLocal(for: fx.projectA)
     if FileManager.default.fileExists(atPath: url.path) {
