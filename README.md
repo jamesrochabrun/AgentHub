@@ -235,6 +235,16 @@ AgentHub maps Codex defaults to the current interactive CLI flags:
 
 These mappings are verified in unit tests against the current CLI surface exposed by `codex --help` and `claude --help`.
 
+### Claude Code approval hook
+
+AgentHub detects pending `Edit` / `Write` / `MultiEdit` / `Bash` / etc. approvals in real time by installing a small **Claude Code PreToolUse hook**. Without it, Claude Code's CLI only writes the pending `tool_use` block to disk after the turn commits — which means AgentHub can't surface an "Awaiting Approval" state (or preview a pending diff) until *after* you've answered the prompt. Enabling the hook is what makes the `eye` / Edits button and the `awaitingApproval` sidebar status appear *during* the approval window.
+
+**What gets written to your repo.** Exactly one key inside **`{project}/.claude/settings.local.json`**, which Claude Code treats as personal/gitignored by default. We never touch `.claude/settings.json` (the shared, checked-in file), never add files under `.claude/hooks/`, and never modify your `.gitignore`. The hook script itself lives outside your repo at `~/Library/Application Support/AgentHub/hooks/agenthub-approval.sh`.
+
+**What we promise to preserve.** Every other key in `settings.local.json` — `permissions`, `env`, `mcpServers`, and any hook entries you or other tools have added — stays byte-for-byte. Our entry is identified by the absolute path of the installed script, so uninstall removes only that entry and leaves everything else alone.
+
+**Lifecycle.** Hooks install per worktree when a repo is added to AgentHub, stay installed while the repo is tracked, and are removed when you remove the repo, toggle the feature off in **Settings → General → Enable approval hooks**, or quit the app. External Claude Code sessions in the same worktree (e.g. started from Terminal.app) run the hook but it exits silently — a small ~50ms claim-file check makes sure AgentHub only observes sessions it's actively tracking.
+
 ### Session Data
 
 AgentHub reads Claude Code session data from:

@@ -68,6 +68,16 @@ protocol SessionSearchServiceProtocol {
 - If an agent-provided localhost preview fails to load, fall back to static HTML in this order: root `index.html`, then other discovered HTML files
 - Changes to web preview precedence or fallback behavior must include unit tests
 
+## Claude Code Approval Hook Invariants
+
+AgentHub installs a `PreToolUse` hook to surface pending approvals in real time (see `CLAUDE.md` → "Approval Detection"). When modifying `ClaudeHookInstaller`, `ClaudeHookSidecarWatcher`, `ApprovalClaimStore`, or `HookPendingStalenessFilter`, these invariants must hold:
+
+- The **only** file written inside a user's repo is `{project}/.claude/settings.local.json`. Never create files under `.claude/hooks/`, never touch `.claude/settings.json`, never modify `.gitignore`.
+- Merge must preserve every unrelated key and every non-AgentHub hook entry. Our entry is identified by the absolute path to the shared script.
+- The hook script stays claim-gated so external Terminal sessions in tracked worktrees remain silent no-ops.
+- Install is driven by the repositories subscription, not per-session — Claude Code reads `settings.local.json` once at session start.
+- Launch reconcile and terminate flush must run synchronously (blocking `applicationDidFinishLaunching` / `applicationWillTerminate` via semaphore) so AppKit can't kill cleanup mid-flight.
+
 ## SwiftUI View Guidelines
 
 - Views must be **small, focused, and composable** — one responsibility per view

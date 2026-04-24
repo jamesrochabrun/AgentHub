@@ -249,7 +249,21 @@ xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHu
 - Codex sessions: `~/.codex/sessions/{date-path}/`
 - Codex history: `~/.codex/history.jsonl`
 - Custom themes: `~/Library/Application Support/AgentHub/Themes/`
+- Approval hook script: `~/Library/Application Support/AgentHub/hooks/agenthub-approval.sh`
+- Approval sidecars: `~/Library/Application Support/AgentHub/approvals/{sessionId}.jsonl`
+- Session claims: `~/Library/Application Support/AgentHub/claims/{sessionId}`
 - Session metadata DB: managed by `SessionMetadataStore` via GRDB
+
+## Approval Detection (Claude only)
+
+Claude Code buffers `tool_use` blocks until the turn commits, so JSONL alone can't surface pending approvals during the prompt. A `PreToolUse` hook writes to a sidecar directory we watch; JSONL stays primary and the hook fills the gap. Codex has no equivalent mechanism — `CodexSessionFileWatcher` hardcodes `pendingToolUse: nil`.
+
+- `ClaudeHookInstaller` — writes our hook entry into `{project}/.claude/settings.local.json`. Driven by the repositories subscription (Claude Code reads settings once at session start). Preserves every other key and every non-AgentHub hook entry.
+- `ClaudeHookSidecarWatcher` — per-session kqueue watcher over `approvals/`, merges into `ParseResult.pendingToolUses` at `buildMonitorState`.
+- `ApprovalClaimStore` — claim markers gate the script so external Terminal sessions in tracked worktrees are silent no-ops.
+- `HookPendingStalenessFilter` — drops hook entries that JSONL has already moved past (100ms epsilon).
+
+**Invariants when editing this area:** only `.claude/settings.local.json` is ever written inside a user's repo (never `.claude/hooks/`, never `.gitignore`); our merge identifies its own entry by the absolute script path; launch reconcile and terminate flush both block on a semaphore so AppKit can't kill cleanup mid-flight.
 
 ## Important Patterns
 
