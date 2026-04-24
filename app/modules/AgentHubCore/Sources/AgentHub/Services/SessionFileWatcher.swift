@@ -465,12 +465,18 @@ public actor SessionFileWatcher {
     // JSONL is authoritative when it has a pending entry; otherwise fall back
     // to the hook-sourced entry (Claude Code CLI doesn't flush tool_use blocks
     // to JSONL until the turn commits, so the hook is the only signal during
-    // the approval window).
+    // the approval window). See `HookPendingStalenessFilter` for the
+    // "already-resolved" guard.
+    let effectiveHookPending = HookPendingStalenessFilter.filter(
+      hookPending: hookPending,
+      lastActivityAt: result.lastActivityAt
+    )
+
     let chosenPending: SessionJSONLParser.PendingToolInfo?
     if let (_, jsonlPending) = result.pendingToolUses.first {
       chosenPending = jsonlPending
     } else {
-      chosenPending = hookPending
+      chosenPending = effectiveHookPending
     }
 
     let pendingToolUse: PendingToolUse?
@@ -490,8 +496,8 @@ public actor SessionFileWatcher {
     // reports a pending tool, override to awaitingApproval so the sidebar
     // reflects reality.
     let derivedStatus: SessionStatus = {
-      if result.pendingToolUses.isEmpty, let hookPending {
-        return .awaitingApproval(tool: hookPending.toolName)
+      if result.pendingToolUses.isEmpty, let p = effectiveHookPending {
+        return .awaitingApproval(tool: p.toolName)
       }
       return result.currentStatus
     }()
