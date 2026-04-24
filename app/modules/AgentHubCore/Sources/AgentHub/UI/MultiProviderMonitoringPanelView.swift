@@ -552,8 +552,38 @@ public struct MultiProviderMonitoringPanelView: View {
             onCopySessionId: { },
             onOpenSessionFile: { },
             onRefreshTerminal: { },
+            onShowDiff: { session, projectPath in
+              toggleSidePanel(
+                .diff(sessionId: session.id, session: session, projectPath: projectPath),
+                forItemID: item.id
+              )
+            },
+            onShowPlan: { session, planState in
+              toggleSidePanel(
+                .plan(sessionId: session.id, session: session, planState: planState),
+                forItemID: item.id
+              )
+            },
             onShowWebPreview: { session, projectPath in
               presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+            },
+            onShowMermaid: { session in
+              toggleSidePanel(
+                .mermaid(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
+            },
+            onShowGitHub: { session, projectPath in
+              toggleSidePanel(
+                .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
+                forItemID: item.id
+              )
+            },
+            onShowPendingChanges: { session, _ in
+              toggleSidePanel(
+                .edits(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
             },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
             onRequestShowEditor: { setContentMode(.editor, for: item) },
@@ -833,8 +863,38 @@ public struct MultiProviderMonitoringPanelView: View {
         onCopySessionId: { },
         onOpenSessionFile: { },
         onRefreshTerminal: { },
+        onShowDiff: { session, projectPath in
+          toggleSidePanel(
+            .diff(sessionId: session.id, session: session, projectPath: projectPath),
+            forItemID: item.id
+          )
+        },
+        onShowPlan: { session, planState in
+          toggleSidePanel(
+            .plan(sessionId: session.id, session: session, planState: planState),
+            forItemID: item.id
+          )
+        },
         onShowWebPreview: { session, projectPath in
           presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+        },
+        onShowMermaid: { session in
+          toggleSidePanel(
+            .mermaid(sessionId: session.id, session: session),
+            forItemID: item.id
+          )
+        },
+        onShowGitHub: { session, projectPath in
+          toggleSidePanel(
+            .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
+            forItemID: item.id
+          )
+        },
+        onShowPendingChanges: { session, _ in
+          toggleSidePanel(
+            .edits(sessionId: session.id, session: session),
+            forItemID: item.id
+          )
         },
         onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
         onRequestShowEditor: { setContentMode(.editor, for: item) },
@@ -1022,8 +1082,38 @@ public struct MultiProviderMonitoringPanelView: View {
           onCopySessionId: { },
           onOpenSessionFile: { },
           onRefreshTerminal: { },
+          onShowDiff: { session, projectPath in
+            toggleSidePanel(
+              .diff(sessionId: session.id, session: session, projectPath: projectPath),
+              forItemID: itemId
+            )
+          },
+          onShowPlan: { session, planState in
+            toggleSidePanel(
+              .plan(sessionId: session.id, session: session, planState: planState),
+              forItemID: itemId
+            )
+          },
           onShowWebPreview: { session, projectPath in
             presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
+          },
+          onShowMermaid: { session in
+            toggleSidePanel(
+              .mermaid(sessionId: session.id, session: session),
+              forItemID: itemId
+            )
+          },
+          onShowGitHub: { session, projectPath in
+            toggleSidePanel(
+              .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
+              forItemID: itemId
+            )
+          },
+          onShowPendingChanges: { session, _ in
+            toggleSidePanel(
+              .edits(sessionId: session.id, session: session),
+              forItemID: itemId
+            )
           },
           onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
           onRequestShowEditor: { setContentMode(.editor, for: item) },
