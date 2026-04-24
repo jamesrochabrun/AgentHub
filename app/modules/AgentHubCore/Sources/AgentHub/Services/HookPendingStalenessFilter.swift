@@ -24,13 +24,29 @@ import Foundation
 /// activity timestamp is newer than the hook's `pending` timestamp, the
 /// corresponding approval must have been answered: the sidecar is stale
 /// and should be ignored.
+///
+/// ## Why the epsilon
+///
+/// Wall-clock timestamps drift between processes. The hook runs in a
+/// separate Python process; Claude writes JSONL from Node. Even now that
+/// the hook emits millisecond precision there's still genuine skew on the
+/// order of tens of milliseconds. We also need to absorb legacy sidecar
+/// lines from earlier builds that were written with whole-second
+/// truncation. A one-second grace window covers both cleanly without
+/// making the stale-detection meaningfully slower to kick in (a turn that
+/// actually resolved will have JSONL activity at least that far past the
+/// hook timestamp once the result block lands).
 public enum HookPendingStalenessFilter {
+  public static let stalenessEpsilon: TimeInterval = 1.0
+
   public static func filter(
     hookPending: SessionJSONLParser.PendingToolInfo?,
-    lastActivityAt: Date?
+    lastActivityAt: Date?,
+    epsilon: TimeInterval = stalenessEpsilon
   ) -> SessionJSONLParser.PendingToolInfo? {
     guard let hookPending else { return nil }
-    if let lastActivityAt, lastActivityAt > hookPending.timestamp {
+    if let lastActivityAt,
+       lastActivityAt.timeIntervalSince(hookPending.timestamp) > epsilon {
       return nil
     }
     return hookPending

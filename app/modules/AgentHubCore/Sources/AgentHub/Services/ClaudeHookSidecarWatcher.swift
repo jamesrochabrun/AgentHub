@@ -269,9 +269,25 @@ private struct SidecarLine: Decodable {
 
   var parsedTimestamp: Date? {
     guard let timestamp else { return nil }
-    let formatter = ISO8601DateFormatter()
-    return formatter.date(from: timestamp)
+    // The hook script now emits millisecond precision; older sidecar lines on
+    // disk may still be whole-second. Accept both.
+    if let date = SidecarLine.iso8601WithFractional.date(from: timestamp) {
+      return date
+    }
+    return SidecarLine.iso8601.date(from: timestamp)
   }
+
+  private static let iso8601WithFractional: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return f
+  }()
+
+  private static let iso8601: ISO8601DateFormatter = {
+    let f = ISO8601DateFormatter()
+    f.formatOptions = [.withInternetDateTime]
+    return f
+  }()
 
   var inputPreview: String? {
     guard let input else { return nil }

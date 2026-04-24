@@ -66,7 +66,7 @@ try:
 except Exception:
     sys.exit(0)
 
-ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 line = {
     "event": kind,
     "toolName": tool,

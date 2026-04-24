@@ -55,4 +55,29 @@ struct HookPendingStalenessFilterTests {
     )
     #expect(result == nil)
   }
+
+  @Test("preserves hook pending when JSONL activity is within the epsilon window")
+  func sameSecondClockSkewStillLive() {
+    // Legacy whole-second hook timestamp truncates to 10:30:45.000Z while
+    // JSONL's millisecond-precision lastActivityAt is 10:30:45.400Z. Without
+    // the epsilon this would incorrectly drop a live pending.
+    let decisionTime = Date()
+    let pending = makePending(at: decisionTime)
+    let result = HookPendingStalenessFilter.filter(
+      hookPending: pending,
+      lastActivityAt: decisionTime.addingTimeInterval(0.4)
+    )
+    #expect(result?.toolUseId == "tu-1")
+  }
+
+  @Test("drops hook pending once JSONL has advanced past the epsilon window")
+  func beyondEpsilonIsStale() {
+    let decisionTime = Date()
+    let pending = makePending(at: decisionTime)
+    let result = HookPendingStalenessFilter.filter(
+      hookPending: pending,
+      lastActivityAt: decisionTime.addingTimeInterval(1.5)
+    )
+    #expect(result == nil)
+  }
 }
