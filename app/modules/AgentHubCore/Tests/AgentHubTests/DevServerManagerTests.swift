@@ -90,6 +90,26 @@ struct DevServerManagerTests {
     #expect(DevServerManager.shared.isExternalServer(for: key) == false)
   }
 
+  @Test("Storybook server uses compound key with :storybook suffix")
+  func storybookServerUsesCompoundKey() {
+    let sessionId = "test-\(UUID().uuidString)"
+    let storybookKey = "\(sessionId):storybook"
+
+    #expect(DevServerManager.shared.state(for: storybookKey) == .idle)
+
+    let url = URL(string: "http://localhost:6006")!
+    DevServerManager.shared.connectToExistingServer(for: storybookKey, url: url)
+    defer { DevServerManager.shared.stopServer(for: storybookKey) }
+
+    guard case .ready(let readyURL) = DevServerManager.shared.storybookState(for: sessionId) else {
+      Issue.record("Expected ready storybook server state")
+      return
+    }
+    #expect(readyURL.absoluteString == "http://localhost:6006")
+
+    #expect(DevServerManager.shared.state(for: sessionId) == .idle)
+  }
+
   private func makeProjectFixture(packageJSON: String) throws -> URL {
     let rootURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("DevServerManagerTests-\(UUID().uuidString)", isDirectory: true)

@@ -121,7 +121,12 @@ public struct WebPreviewView: View {
   var onInspectSubmit: ((String, CLISession) -> Void)?
   var onQueuedSubmit: ((String, CLISession) -> Bool)?
   let viewModel: CLISessionsViewModel?
+  /// Which server this preview is targeting. `.app` honors the agent-detected localhost URL
+  /// and the primary dev server. `.storybook` resolves only against the Storybook compound key.
+  let mode: WebPreviewMode
   /// Reactive localhost URL from the agent's session. When this changes, the preview updates.
+  /// Only consulted when `mode == .app` — Storybook ignores agent URLs because they target
+  /// the primary app server.
   var agentLocalhostURL: URL?
   var monitorState: SessionMonitorState?
   /// Reachability probe used before connecting to an agent-advertised URL.
@@ -164,8 +169,9 @@ public struct WebPreviewView: View {
     Color.adaptiveExpandedContentBackground(for: colorScheme, theme: runtimeTheme)
   }
 
-  /// Uses session ID as key for DevServerManager to support multiple sessions
-  private var serverKey: String { session.id }
+  /// Server key for `DevServerManager`. App mode uses the plain session ID;
+  /// Storybook uses the compound key so it can coexist with the app server.
+  private var serverKey: String { mode.serverKey(for: session.id) }
 
   private var serverState: DevServerState {
     DevServerManager.shared.state(for: serverKey)
@@ -183,6 +189,7 @@ public struct WebPreviewView: View {
     onInspectSubmit: ((String, CLISession) -> Void)? = nil,
     onQueuedSubmit: ((String, CLISession) -> Bool)? = nil,
     viewModel: CLISessionsViewModel? = nil,
+    mode: WebPreviewMode = .app,
     agentLocalhostURL: URL? = nil,
     monitorState: SessionMonitorState? = nil,
     reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe()
@@ -194,6 +201,7 @@ public struct WebPreviewView: View {
     self.onInspectSubmit = onInspectSubmit
     self.onQueuedSubmit = onQueuedSubmit
     self.viewModel = viewModel
+    self.mode = mode
     self.agentLocalhostURL = agentLocalhostURL
     self.monitorState = monitorState
     self.reachabilityProbe = reachabilityProbe
@@ -292,7 +300,9 @@ public struct WebPreviewView: View {
       await loadPreview()
     }
     .onChange(of: agentLocalhostURL) { _, newURL in
-      guard let newURL else { return }
+      // Storybook mode is pinned to its own server — don't follow the agent's
+      // app-server URL changes.
+      guard mode == .app, let newURL else { return }
       Task {
         await connectToAgentServer(newURL, logChange: true)
       }
@@ -886,6 +896,15 @@ public struct WebPreviewView: View {
 
   @MainActor
   private func loadPreview() async {
+    // Storybook mode bypasses agent URL recovery entirely — the agent's
+    // detected URL is for the primary app server, not Storybook.
+    if mode == .storybook {
+      await applyResolution(.devServer(projectPath: projectPath))
+      AppLogger.devServer.info("[WebPreview] Session \(session.id): starting Storybook server")
+      await DevServerManager.shared.startStorybookServer(for: session.id, projectPath: projectPath)
+      return
+    }
+
     if let agentURL = await WebPreviewAgentURLResolver.resolve(
       for: session,
       detectedLocalhostURL: agentLocalhostURL

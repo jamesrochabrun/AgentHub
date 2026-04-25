@@ -68,6 +68,10 @@ protocol SessionSearchServiceProtocol {
 - If an agent-provided localhost preview fails to load, fall back to static HTML in this order: root `index.html`, then other discovered HTML files
 - Changes to web preview precedence or fallback behavior must include unit tests
 
+### Storybook Mode
+
+Storybook-enabled projects swap the Preview button for a Storybook button (never both). `WebPreviewMode { .app, .storybook }` routes the preview pane; the storybook server runs at compound key `"{sessionId}:storybook"` in `DevServerManager` so it coexists with the primary app server. Read **Storybook** in `README.md` before editing this area.
+
 ## Claude Code Approval Hook Invariants
 
 AgentHub installs a `PreToolUse` hook to surface pending approvals in real time (see `CLAUDE.md` → "Approval Detection"). When modifying `ClaudeHookInstaller`, `ClaudeHookSidecarWatcher`, `ApprovalClaimStore`, or `HookPendingStalenessFilter`, these invariants must hold:

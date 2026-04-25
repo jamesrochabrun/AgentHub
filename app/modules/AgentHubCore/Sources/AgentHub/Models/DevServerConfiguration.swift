@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Storybook
 
 // MARK: - ProjectFramework
 
@@ -17,17 +18,25 @@ enum ProjectFramework: String, Sendable {
   case angular
   case vueCLI
   case astro
+  case storybook
   case staticHTML
   case unknown
 
   /// Whether this framework requires a dev server for transpilation/bundling
   var requiresDevServer: Bool {
     switch self {
-    case .vite, .nextjs, .createReactApp, .angular, .vueCLI, .astro:
+    case .vite, .nextjs, .createReactApp, .angular, .vueCLI, .astro, .storybook:
       return true
     case .staticHTML, .unknown:
       return false
     }
+  }
+
+  /// Whether the project at the given path has Storybook configured.
+  /// Detected in parallel with the primary framework — a project can have
+  /// both (e.g. Vite + Storybook).
+  static func hasStorybook(at projectPath: String) -> Bool {
+    StorybookDetector.hasStorybook(at: projectPath)
   }
 
   /// Fast synchronous detection of project framework from package.json
@@ -91,6 +100,11 @@ struct DetectedProject: Sendable {
   let defaultPort: Int
   /// Stdout/stderr patterns that indicate the server is ready
   let readinessPatterns: [String]
+  /// Pre-fed stdin used to auto-accept interactive prompts (e.g. Storybook
+  /// asking "Port 6006 is not available. Run on 6008 instead? [y/N]"). When
+  /// non-nil, a stdin pipe is attached and this string is written then closed
+  /// immediately after spawn. Tools that don't read stdin discard the bytes.
+  var stdinPrefill: String? = nil
 }
 
 // MARK: - DevServerState

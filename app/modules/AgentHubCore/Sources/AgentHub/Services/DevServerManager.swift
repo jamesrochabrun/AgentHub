@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Storybook
 
 // MARK: - DevServerManager
 
@@ -69,6 +70,11 @@ public final class DevServerManager {
   /// Starts a dev server for the given key (typically session ID) at the specified project path.
   /// Idempotent: if already running or ready, returns immediately.
   public func startServer(for key: String, projectPath: String) async {
+    await startServer(for: key, projectPath: projectPath, forceFramework: nil)
+  }
+
+  /// Internal overload that allows bypassing framework auto-detection (used for Storybook).
+  func startServer(for key: String, projectPath: String, forceFramework: ProjectFramework?) async {
     // Guard: already in an active state
     switch servers[key] {
     case .ready, .starting, .waitingForReady, .detecting:
@@ -80,8 +86,11 @@ public final class DevServerManager {
     servers[key] = .detecting
 
     // 1. Detect project type (off main thread for file I/O)
-    let detected = await Task.detached { [projectPath] in
-      DevServerManager.detectProject(at: projectPath)
+    let detected = await Task.detached { [projectPath, forceFramework] in
+      if let framework = forceFramework {
+        return DevServerManager.detectProject(at: projectPath, framework: framework)
+      }
+      return DevServerManager.detectProject(at: projectPath)
     }.value
 
     // 2. Find executable
@@ -97,10 +106,19 @@ public final class DevServerManager {
       return
     }
 
-    // 3. Find available port
-    let port = await Task.detached {
-      DevServerManager.findAvailablePort(preferring: detected.defaultPort)
-    }.value
+    // 3. Find available port. We only scan when the args end with a `-p`/`--port`
+    // placeholder we can fill — otherwise the dev server's bind port is fixed
+    // by its own config (e.g. an npm script that pins `-p 6006`) and scanning
+    // would just desync our tracked port from the actual one.
+    let canOverridePort = detected.arguments.last == "-p" || detected.arguments.last == "--port"
+    let port: Int
+    if canOverridePort {
+      port = await Task.detached {
+        DevServerManager.findAvailablePort(preferring: detected.defaultPort)
+      }.value
+    } else {
+      port = detected.defaultPort
+    }
 
     assignedPorts[key] = port
 
@@ -160,6 +178,25 @@ public final class DevServerManager {
     disposeManagedServer(for: key, finalState: .failed(error: error), logAction: "Failing")
   }
 
+  // MARK: - Storybook
+
+  /// Starts a Storybook server alongside the main dev server.
+  /// Uses a compound key `"{sessionId}:storybook"` to coexist with the primary server.
+  public func startStorybookServer(for sessionId: String, projectPath: String) async {
+    let key = "\(sessionId):storybook"
+    await startServer(for: key, projectPath: projectPath, forceFramework: .storybook)
+  }
+
+  /// Stops the Storybook server for a given session.
+  public func stopStorybookServer(for sessionId: String) {
+    stopServer(for: "\(sessionId):storybook")
+  }
+
+  /// Current state of the Storybook server for a given session.
+  public func storybookState(for sessionId: String) -> DevServerState {
+    state(for: "\(sessionId):storybook")
+  }
+
   /// Stops all running servers. Called on app quit.
   public func stopAllServers() {
     for key in Array(servers.keys) {
@@ -214,12 +251,21 @@ public final class DevServerManager {
 
   // MARK: - Project Detection
 
+  /// Returns a `DetectedProject` for a specific framework, bypassing auto-detection.
+  /// Used when the caller already knows the framework (e.g. Storybook launched explicitly).
+  nonisolated static func detectProject(at projectPath: String, framework: ProjectFramework) -> DetectedProject {
+    mapFrameworkToProject(framework, projectPath: projectPath)
+  }
+
   /// Detects the project framework from package.json and returns the appropriate server config.
   /// Uses shared `ProjectFramework.detect(at:)` for framework identification, then maps to
   /// the full `DetectedProject` with command, args, port, and readiness patterns.
   nonisolated static func detectProject(at projectPath: String) -> DetectedProject {
     let framework = ProjectFramework.detect(at: projectPath)
+    return mapFrameworkToProject(framework, projectPath: projectPath)
+  }
 
+  private nonisolated static func mapFrameworkToProject(_ framework: ProjectFramework, projectPath: String) -> DetectedProject {
     switch framework {
     case .vite:
       return DetectedProject(
@@ -272,6 +318,30 @@ public final class DevServerManager {
         // Avoid matching npm's echoed command line (`astro dev --port ...`)
         // before Astro prints its real ready banner or localhost URL.
         readinessPatterns: ["ready in", "localhost:"]
+      )
+    case .storybook:
+      let scriptName = StorybookDetector.storybookScript(at: projectPath) ?? "storybook"
+      // If the npm script already pins a port (e.g. `storybook dev -p 6006`),
+      // honor it — npm appends our extra args AFTER the script's, and storybook
+      // only respects the first `-p`, so adding our own would leave the actual
+      // bind port out of sync with our tracked port.
+      if let scriptPort = StorybookDetector.storybookScriptPort(at: projectPath) {
+        return DetectedProject(
+          framework: .storybook,
+          command: "npm",
+          arguments: ["run", scriptName],
+          defaultPort: scriptPort,
+          readinessPatterns: StorybookDetector.readinessPatterns,
+          stdinPrefill: "y\n"
+        )
+      }
+      return DetectedProject(
+        framework: .storybook,
+        command: "npm",
+        arguments: ["run", scriptName, "--", "-p"],
+        defaultPort: StorybookDetector.defaultPort,
+        readinessPatterns: StorybookDetector.readinessPatterns,
+        stdinPrefill: "y\n"
       )
     case .unknown:
       // Has package.json with scripts but no recognized framework
@@ -423,6 +493,16 @@ public final class DevServerManager {
     process.standardOutput = stdoutPipe
     process.standardError = stderrPipe
 
+    // Pre-feed stdin for tools that gate on interactive prompts (e.g. Storybook
+    // asking to use an alternate port). The bytes sit in the pipe; tools that
+    // never call `read()` simply ignore them.
+    if let prefill = detected.stdinPrefill, let prefillData = prefill.data(using: .utf8) {
+      let stdinPipe = Pipe()
+      process.standardInput = stdinPipe
+      try? stdinPipe.fileHandleForWriting.write(contentsOf: prefillData)
+      try? stdinPipe.fileHandleForWriting.close()
+    }
+
     outputPipes[key] = (stdoutPipe, stderrPipe)
 
     // Set up readiness handlers BEFORE starting the process
@@ -525,6 +605,32 @@ public final class DevServerManager {
     if let pipes = outputPipes[key] {
       pipes.stdout.fileHandleForReading.readabilityHandler = nil
       pipes.stderr.fileHandleForReading.readabilityHandler = nil
+    }
+  }
+}
+
+// MARK: - StorybookService Conformance
+
+extension DevServerManager: StorybookService {
+  public func start(for sessionId: String, projectPath: String) async {
+    await startStorybookServer(for: sessionId, projectPath: projectPath)
+  }
+
+  public func stop(for sessionId: String) {
+    stopStorybookServer(for: sessionId)
+  }
+
+  public func state(for sessionId: String) -> StorybookServerState {
+    let key = "\(sessionId):storybook"
+    switch servers[key] {
+    case .idle, .detecting, .stopping, nil:
+      return .idle
+    case .starting, .waitingForReady:
+      return .starting
+    case .ready(let url):
+      return .ready(url: url)
+    case .failed(let error):
+      return .failed(error: error)
     }
   }
 }

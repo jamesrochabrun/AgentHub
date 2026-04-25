@@ -183,6 +183,10 @@ In Single layout, a side panel can show: `GitDiffView` (split-pane diff), `PlanV
 - If that external localhost preview fails to load, fall back to static HTML: root `index.html` first, then other discovered HTML files
 - Changes to this behavior require unit tests
 
+### Storybook Mode
+
+When a project has Storybook configured, the Preview button is replaced with a Storybook button — never both. Routing is gated by `WebPreviewMode { .app, .storybook }`; the storybook server runs under the compound `DevServerManager` key `"{sessionId}:storybook"` alongside the primary app server. Detection lives in the standalone `Storybook` Swift module (`app/modules/Storybook/`, pure Foundation). See **Storybook** in `README.md` for detection rules, script-port handling, and the prompt auto-accept.
+
 ### Command Palette
 
 `CommandPaletteView` — Cmd+K for quick session/repository/action access.
