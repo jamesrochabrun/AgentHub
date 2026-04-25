@@ -35,7 +35,7 @@ public struct MonitoringCardView: View {
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
   let onShowDiff: ((CLISession, String) -> Void)?
   let onShowPlan: ((CLISession, PlanState) -> Void)?
-  let onShowWebPreview: ((CLISession, String) -> Void)?
+  let onShowWebPreview: ((CLISession, String, WebPreviewMode) -> Void)?
   let onShowMermaid: ((CLISession) -> Void)?
   let onShowGitHub: ((CLISession, String) -> Void)?
   let onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)?
@@ -85,7 +85,7 @@ public struct MonitoringCardView: View {
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
     onShowDiff: ((CLISession, String) -> Void)? = nil,
     onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
-    onShowWebPreview: ((CLISession, String) -> Void)? = nil,
+    onShowWebPreview: ((CLISession, String, WebPreviewMode) -> Void)? = nil,
     onShowMermaid: ((CLISession) -> Void)? = nil,
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)? = nil,
@@ -417,8 +417,51 @@ public struct MonitoringCardView: View {
     }
   }
 
-  private func presentWebPreview() {
-    onShowWebPreview?(session, session.projectPath)
+  private func presentWebPreview(mode: WebPreviewMode = .app) {
+    onShowWebPreview?(session, session.projectPath, mode)
+  }
+
+  // MARK: - Web Preview Controls
+
+  /// Storybook takes precedence when present — it's the richer surface for
+  /// component-driven projects, and showing both buttons routes the same pane
+  /// to two different URLs in confusing ways.
+  @ViewBuilder
+  private var webPreviewControls: some View {
+    if ProjectFramework.hasStorybook(at: session.projectPath) {
+      Button(action: {
+        Task {
+          await DevServerManager.shared.startStorybookServer(
+            for: session.id,
+            projectPath: session.projectPath
+          )
+        }
+        presentWebPreview(mode: .storybook)
+      }) {
+        HStack(spacing: 4) {
+          Image(systemName: "book.pages")
+            .font(.caption2)
+          Text("Storybook")
+        }
+      }
+      .buttonStyle(.agentHubOutlined)
+      .help("Browse Storybook components")
+    } else if shouldShowWebPreviewButton {
+      Button(action: { presentWebPreview(mode: .app) }) {
+        HStack(spacing: 4) {
+          Image(systemName: "globe")
+            .font(.caption2)
+          Text("Preview")
+          if queuedPreviewContextCount > 0 {
+            previewContextBadge
+          }
+        }
+      }
+      .buttonStyle(.agentHubOutlined)
+      .help(queuedPreviewContextCount > 0
+        ? "Preview localhost web app (\(queuedPreviewContextCount) queued updates pending next send)"
+        : "Preview localhost web app")
+    }
   }
 
   @MainActor
@@ -522,24 +565,9 @@ public struct MonitoringCardView: View {
         .buttonStyle(.agentHubOutlined)
         .help("View git unstaged changes")
 
-        // Web preview button — visible when the project looks like a web project
-        // or the agent has already detected a running localhost server
-        if shouldShowWebPreviewButton {
-          Button(action: presentWebPreview) {
-            HStack(spacing: 4) {
-              Image(systemName: "globe")
-                .font(.caption2)
-              Text("Preview")
-              if queuedPreviewContextCount > 0 {
-                previewContextBadge
-              }
-            }
-          }
-          .buttonStyle(.agentHubOutlined)
-          .help(queuedPreviewContextCount > 0
-            ? "Preview localhost web app (\(queuedPreviewContextCount) queued updates pending next send)"
-            : "Preview localhost web app")
-        }
+        // Web preview controls — segmented App | Storybook when Storybook is
+        // detected, otherwise a single Preview button.
+        webPreviewControls
 
         // Mermaid diagram button (only visible when mermaid content is detected)
         if state?.hasMermaidContent == true {

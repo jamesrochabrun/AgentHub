@@ -15,7 +15,7 @@ import SwiftUI
 private enum SidePanelContent: Equatable {
   case diff(sessionId: String, session: CLISession, projectPath: String)
   case plan(sessionId: String, session: CLISession, planState: PlanState)
-  case webPreview(sessionId: String, session: CLISession, projectPath: String)
+  case webPreview(sessionId: String, session: CLISession, projectPath: String, mode: WebPreviewMode)
   case mermaid(sessionId: String, session: CLISession)
   case gitHub(sessionId: String, session: CLISession, projectPath: String)
   case edits(sessionId: String, session: CLISession)
@@ -26,8 +26,8 @@ private enum SidePanelContent: Equatable {
       return id1 == id2 && p1 == p2
     case (.plan(let id1, _, _), .plan(let id2, _, _)):
       return id1 == id2
-    case (.webPreview(let id1, _, let p1), .webPreview(let id2, _, let p2)):
-      return id1 == id2 && p1 == p2
+    case (.webPreview(let id1, _, let p1, let m1), .webPreview(let id2, _, let p2, let m2)):
+      return id1 == id2 && p1 == p2 && m1 == m2
     case (.mermaid(let id1, _), .mermaid(let id2, _)):
       return id1 == id2
     case (.gitHub(let id1, _, let p1), .gitHub(let id2, _, let p2)):
@@ -360,7 +360,7 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: effectivePrimarySessionId) { _, newId in
       guard let currentSidePanelContent = sidePanelContent else { return }
-      if case .webPreview(let sessionId, _, let projectPath) = currentSidePanelContent,
+      if case .webPreview(let sessionId, _, let projectPath, let mode) = currentSidePanelContent,
          sessionId.hasPrefix("pending-"),
          let newId,
          let item = allItems.first(where: { $0.id == newId }),
@@ -369,7 +369,8 @@ public struct MultiProviderMonitoringPanelView: View {
         sidePanelContent = .webPreview(
           sessionId: session.id,
           session: session,
-          projectPath: session.projectPath
+          projectPath: session.projectPath,
+          mode: mode
         )
       } else {
         sidePanelContent = nil
@@ -564,8 +565,8 @@ public struct MultiProviderMonitoringPanelView: View {
                 forItemID: item.id
               )
             },
-            onShowWebPreview: { session, projectPath in
-              presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+            onShowWebPreview: { session, projectPath, mode in
+              presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath, mode: mode)
             },
             onShowMermaid: { session in
               toggleSidePanel(
@@ -649,8 +650,8 @@ public struct MultiProviderMonitoringPanelView: View {
                 forItemID: item.id
               )
             },
-            onShowWebPreview: { session, projectPath in
-              presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+            onShowWebPreview: { session, projectPath, mode in
+              presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath, mode: mode)
             },
             onShowMermaid: { session in
               toggleSidePanel(
@@ -715,9 +716,9 @@ public struct MultiProviderMonitoringPanelView: View {
     .animation(.easeInOut(duration: 0.25), value: isEmbeddedSidePanelVisible)
   }
 
-  private func presentWebPreviewInSidePanel(forItemID itemID: String, session: CLISession, projectPath: String) {
+  private func presentWebPreviewInSidePanel(forItemID itemID: String, session: CLISession, projectPath: String, mode: WebPreviewMode) {
     toggleSidePanel(
-      .webPreview(sessionId: session.id, session: session, projectPath: projectPath),
+      .webPreview(sessionId: session.id, session: session, projectPath: projectPath, mode: mode),
       forItemID: itemID
     )
   }
@@ -779,7 +780,7 @@ public struct MultiProviderMonitoringPanelView: View {
           viewModel.showTerminalWithPrompt(for: sess, prompt: feedback)
         }
       )
-    case .webPreview(let sessionId, let session, let projectPath):
+    case .webPreview(let sessionId, let session, let projectPath, let mode):
       WebPreviewView(
         session: session,
         projectPath: projectPath,
@@ -794,6 +795,7 @@ public struct MultiProviderMonitoringPanelView: View {
           viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt)
         },
         viewModel: viewModel,
+        mode: mode,
         agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL,
         monitorState: viewModel.monitorStates[sessionId]
       )
@@ -875,8 +877,8 @@ public struct MultiProviderMonitoringPanelView: View {
             forItemID: item.id
           )
         },
-        onShowWebPreview: { session, projectPath in
-          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+        onShowWebPreview: { session, projectPath, mode in
+          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath, mode: mode)
         },
         onShowMermaid: { session in
           toggleSidePanel(
@@ -960,8 +962,8 @@ public struct MultiProviderMonitoringPanelView: View {
             forItemID: item.id
           )
         },
-        onShowWebPreview: { session, projectPath in
-          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath)
+        onShowWebPreview: { session, projectPath, mode in
+          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath, mode: mode)
         },
         onShowMermaid: { session in
           toggleSidePanel(
@@ -1094,8 +1096,8 @@ public struct MultiProviderMonitoringPanelView: View {
               forItemID: itemId
             )
           },
-          onShowWebPreview: { session, projectPath in
-            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
+          onShowWebPreview: { session, projectPath, mode in
+            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath, mode: mode)
           },
           onShowMermaid: { session in
             toggleSidePanel(
@@ -1180,8 +1182,8 @@ public struct MultiProviderMonitoringPanelView: View {
               forItemID: itemId
             )
           },
-          onShowWebPreview: { session, projectPath in
-            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath)
+          onShowWebPreview: { session, projectPath, mode in
+            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath, mode: mode)
           },
           onShowMermaid: { session in
             toggleSidePanel(

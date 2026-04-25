@@ -39,6 +39,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
 - **Web preview** — Prefers agent-started localhost servers, recovers recent localhost URLs from session files when needed, and falls back to static HTML (`index.html` first) when no live preview is available
 - **Web preview batch updates** — Inspect elements or crop regions in the live web preview, queue multiple requested updates with structured context, and attach the batch to your next terminal message — no copy-paste needed
+- **Storybook support** — Auto-detects Storybook-enabled projects (`.storybook/` config, `storybook` npm script, or `@storybook/*` devDependencies) and replaces the Preview button with a one-click Storybook launcher; the dev server is started under a compound key so it can run alongside your primary app server
 - **iOS Simulator run destination** — Build, install, and launch your app on any booted iOS Simulator directly from a session card; cancel at any phase (Building / Installing / Launching) via a stop button; boot-readiness check times out after 90 seconds to prevent hangs
 - **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting; switch to Review mode to annotate individual lines and send batch feedback directly to Claude's interactive plan prompt
 - **Global search** — Search across all session files with ranked results
@@ -90,6 +91,27 @@ AgentHub includes a built-in file explorer and editor for supported text files. 
 File explorer, quick open, and built-in editor
 
 https://github.com/user-attachments/assets/6d263d11-6648-42e7-9335-04aa51a33296
+
+## Storybook
+
+When AgentHub detects a Storybook configuration in a project, the regular **Preview** button on each session card is replaced by a dedicated **Storybook** button. Clicking it spawns the Storybook dev server (via `npm run storybook`) and opens the web preview pane pinned to the Storybook URL — independently of any other dev server the agent has running.
+
+### Detection
+
+A project is treated as Storybook-enabled if **any** of these is true:
+
+- A `.storybook/` directory exists at the project root
+- `package.json` has a `"storybook"` or `"storybook:dev"` script entry
+- `package.json` devDependencies contains any `@storybook/*` package
+
+Detection lives in the standalone `Storybook` Swift module (`app/modules/Storybook/`), which has zero dependencies and can be reused outside `AgentHubCore`.
+
+### How it runs
+
+- The Storybook server is keyed by `"{sessionId}:storybook"` in `DevServerManager`, so it coexists with your primary dev server (Vite, Next, etc.) under the plain `sessionId` key.
+- If your `storybook` npm script already pins a port (e.g. `storybook dev -p 6006`), AgentHub honors that port instead of trying to override it — npm appends extra args after the script's, and Storybook only respects the first `-p`, so passing our own would desync the bind port from the tracked port.
+- If port 6006 is in use and Storybook prompts to use an alternate port, AgentHub auto-accepts; the actual port is captured from Storybook's `Local: http://localhost:N/` ready banner.
+- The web preview pane in Storybook mode resolves URLs from the storybook server slot only; it does not follow the agent's app-server URL changes, so the Storybook view stays pinned even if the agent restarts the primary dev server.
 
 ## Requirements
 
