@@ -1,61 +1,61 @@
 {
   "images" : [
     {
-      "filename" : "ahub 9.png",
+      "filename" : "ahub_final 9.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "16x16"
     },
     {
-      "filename" : "ahub 8.png",
+      "filename" : "ahub_final 8.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "16x16"
     },
     {
-      "filename" : "ahub 7.png",
+      "filename" : "ahub_final 7.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "32x32"
     },
     {
-      "filename" : "ahub 6.png",
+      "filename" : "ahub_final 6.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "32x32"
     },
     {
-      "filename" : "ahub 5.png",
+      "filename" : "ahub_final 5.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "128x128"
     },
     {
-      "filename" : "ahub 4.png",
+      "filename" : "ahub_final 4.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "128x128"
     },
     {
-      "filename" : "ahub 3.png",
+      "filename" : "ahub_final 3.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "256x256"
     },
     {
-      "filename" : "ahub 2.png",
+      "filename" : "ahub_final 2.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "256x256"
     },
     {
-      "filename" : "ahub 1.png",
+      "filename" : "ahub_final 1.png",
       "idiom" : "mac",
       "scale" : "1x",
       "size" : "512x512"
     },
     {
-      "filename" : "ahub.png",
+      "filename" : "ahub_final.png",
       "idiom" : "mac",
       "scale" : "2x",
       "size" : "512x512"
