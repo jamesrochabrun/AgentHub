@@ -20,10 +20,13 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   private var pidRegistrationTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
   private var localEventMonitor: Any?
   private var projectPath: String = ""
+  private var isRestoringWorkspace = false
+  private var lastWorkspaceSnapshot: TerminalWorkspaceSnapshot?
 
   var onUserInteraction: (() -> Void)?
   var onRequestShowEditor: (() -> Void)?
   var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+  var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
   private var terminalSessionKey: String?
   private weak var sessionViewModel: CLISessionsViewModel?
   var terminateProcessCallCount = 0
@@ -219,6 +222,93 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     activeController?.focusTerminal()
   }
 
+  func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
+    guard let terminalSession else { return nil }
+
+    let panels = terminalSession.panels.map { panel in
+      let tabs = panel.tabs.map { tab in
+        TerminalWorkspaceTabSnapshot(
+          role: isProtectedAgentTab(tab, in: panel.id) ? .agent : .shell,
+          name: Self.nonEmpty(tab.name),
+          title: Self.nonEmpty(tab.title),
+          workingDirectory: Self.nonEmpty(
+            tab.controller.workingDirectory
+              ?? tab.controller.configuration.workingDirectory
+              ?? resolvedProjectPath
+          )
+        )
+      }
+      let activeTabIndex = panel.tabs.firstIndex { $0.id == panel.activeTabID } ?? 0
+      return TerminalWorkspacePanelSnapshot(
+        role: panel.id == terminalSession.primaryPanelID ? .primary : .auxiliary,
+        tabs: tabs,
+        activeTabIndex: activeTabIndex
+      )
+    }
+
+    return TerminalWorkspaceSnapshot(
+      panels: panels,
+      activePanelIndex: terminalSession.panels.firstIndex { $0.id == terminalSession.activePanelID } ?? 0
+    )
+  }
+
+  func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {
+    guard let terminalSession else { return }
+    guard !snapshot.panels.isEmpty else { return }
+
+    isRestoringWorkspace = true
+    defer {
+      isRestoringWorkspace = false
+      lastWorkspaceSnapshot = captureWorkspaceSnapshot()
+    }
+
+    resetToPrimaryAgentTab(in: terminalSession)
+
+    let panelSnapshots = normalizedPanelSnapshots(snapshot.panels)
+    var restoredPanelIDs: [TerminalPanelID] = [terminalSession.primaryPanelID]
+    var restoredTabIDs: [[TerminalTabID]] = [[protectedAgentTabID ?? terminalSession.primaryPanel.activeTabID]]
+
+    if let primarySnapshot = panelSnapshots.first {
+      restoredTabIDs[0] = restoreShellTabs(
+        from: primarySnapshot,
+        in: terminalSession.primaryPanelID,
+        existingTabIDs: restoredTabIDs[0]
+      )
+    }
+
+    for panelSnapshot in panelSnapshots.dropFirst() {
+      guard terminalSession.canOpenPanel else { break }
+      guard let firstShellTab = panelSnapshot.tabs.first(where: { $0.role == .shell }) else { continue }
+
+      do {
+        let panel = try terminalSession.openPanel(
+          named: restoredTabName(for: firstShellTab),
+          configuration: shellConfiguration(forRestoredWorkingDirectory: firstShellTab.workingDirectory)
+        )
+        configureControllerHooks(for: panel.activeTab?.controller)
+        restoredPanelIDs.append(panel.id)
+
+        var tabIDs = panel.activeTab.map { [$0.id] } ?? []
+        tabIDs = restoreShellTabs(
+          from: panelSnapshot,
+          in: panel.id,
+          existingTabIDs: tabIDs,
+          skippingFirstShellTab: true
+        )
+        restoredTabIDs.append(tabIDs)
+      } catch {
+        AppLogger.session.error("Failed to restore Ghostty shell pane: \(error.localizedDescription)")
+      }
+    }
+
+    terminalSession.showPrimaryAndAuxiliaries()
+    restoreActiveSelection(
+      from: snapshot,
+      panelIDs: restoredPanelIDs,
+      tabIDs: restoredTabIDs
+    )
+  }
+
   private var resolvedProjectPath: String {
     projectPath.isEmpty ? NSHomeDirectory() : projectPath
   }
@@ -273,6 +363,12 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
         },
         tabClosePolicy: { [weak self] panel, tab in
           self?.canCloseGhosttyTab(tab, in: panel) ?? false
+        },
+        onActivatePanel: { [weak self] panel in
+          self?.activateGhosttyPanel(panel)
+        },
+        onSelectTab: { [weak self] panel, tab in
+          self?.selectGhosttyTab(tab, in: panel)
         },
         onClosePanel: { [weak self] panel in
           self?.closeGhosttyPanel(panel)
@@ -348,9 +444,116 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     )
   }
 
+  private func shellConfiguration(forRestoredWorkingDirectory workingDirectory: String?) -> GhosttySurfaceConfiguration {
+    let restoredPath = resolvedExistingDirectory(workingDirectory)
+    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: restoredPath)
+    return makeGhosttyConfiguration(
+      command: launch.ghosttyCommand,
+      environment: launch.environment,
+      initialInput: nil,
+      workingDirectory: restoredPath
+    )
+  }
+
+  private func resolvedExistingDirectory(_ path: String?) -> String {
+    guard let path = Self.nonEmpty(path) else { return resolvedProjectPath }
+    let expandedPath = (path as NSString).expandingTildeInPath
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory),
+          isDirectory.boolValue else {
+      return resolvedProjectPath
+    }
+    return expandedPath
+  }
+
+  private func normalizedPanelSnapshots(
+    _ panels: [TerminalWorkspacePanelSnapshot]
+  ) -> [TerminalWorkspacePanelSnapshot] {
+    let primary = panels.first { $0.role == .primary } ?? panels.first
+    let auxiliaries = panels.filter { $0.role == .auxiliary }
+    return ([primary].compactMap { $0 } + auxiliaries).prefix(4).map { $0 }
+  }
+
+  private func resetToPrimaryAgentTab(in terminalSession: TerminalSession) {
+    for panel in terminalSession.auxiliaryPanels {
+      requestClose(panel)
+      _ = terminalSession.closePanel(panel.id)
+    }
+
+    for tab in terminalSession.primaryPanel.tabs where !isProtectedAgentTab(tab, in: terminalSession.primaryPanelID) {
+      requestClose(tab)
+      _ = terminalSession.closeTab(tab.id, in: terminalSession.primaryPanelID)
+    }
+
+    focusProtectedAgentTab()
+  }
+
+  private func restoreShellTabs(
+    from panelSnapshot: TerminalWorkspacePanelSnapshot,
+    in panelID: TerminalPanelID,
+    existingTabIDs: [TerminalTabID],
+    skippingFirstShellTab: Bool = false
+  ) -> [TerminalTabID] {
+    guard let terminalSession else { return existingTabIDs }
+    var restoredTabIDs = existingTabIDs
+    var hasSkippedFirstShellTab = false
+
+    for tabSnapshot in panelSnapshot.tabs where tabSnapshot.role == .shell {
+      if skippingFirstShellTab && !hasSkippedFirstShellTab {
+        hasSkippedFirstShellTab = true
+        continue
+      }
+
+      do {
+        let tab = try terminalSession.openTab(
+          in: panelID,
+          named: restoredTabName(for: tabSnapshot),
+          configuration: shellConfiguration(forRestoredWorkingDirectory: tabSnapshot.workingDirectory)
+        )
+        configureControllerHooks(for: tab.controller)
+        restoredTabIDs.append(tab.id)
+      } catch {
+        AppLogger.session.error("Failed to restore Ghostty shell tab: \(error.localizedDescription)")
+      }
+    }
+
+    return restoredTabIDs
+  }
+
+  private func restoreActiveSelection(
+    from snapshot: TerminalWorkspaceSnapshot,
+    panelIDs: [TerminalPanelID],
+    tabIDs: [[TerminalTabID]]
+  ) {
+    guard let terminalSession else { return }
+    guard !panelIDs.isEmpty else { return }
+
+    let panelIndex = min(max(snapshot.activePanelIndex, 0), panelIDs.count - 1)
+    let panelID = panelIDs[panelIndex]
+    let savedPanel = snapshot.panels.indices.contains(panelIndex) ? snapshot.panels[panelIndex] : nil
+    let savedActiveTabIndex = savedPanel?.activeTabIndex ?? 0
+    let panelTabIDs = tabIDs.indices.contains(panelIndex) ? tabIDs[panelIndex] : []
+    guard !panelTabIDs.isEmpty else {
+      _ = terminalSession.focusPanel(panelID)
+      return
+    }
+
+    let tabIndex = min(max(savedActiveTabIndex, 0), panelTabIDs.count - 1)
+    _ = terminalSession.selectTab(panelTabIDs[tabIndex], in: panelID)
+  }
+
+  private func restoredTabName(for tab: TerminalWorkspaceTabSnapshot) -> String? {
+    Self.nonEmpty(tab.name) ?? Self.nonEmpty(tab.title) ?? "Shell"
+  }
+
   private func resolvedFontSize() -> Float {
     let fontSize = Float(UserDefaults.standard.double(forKey: AgentHubDefaults.terminalFontSize))
     return fontSize > 0 ? fontSize : 12
+  }
+
+  private static func nonEmpty(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed?.isEmpty == false ? trimmed : nil
   }
 
   private static func submitDelay(forByteCount count: Int) -> Duration {
@@ -469,9 +672,13 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     case .closePanel:
       closeActiveOrLastAuxiliaryPanel()
     case .focusPanel(let direction):
-      _ = terminalSession?.focusPanel(direction: direction)
+      if terminalSession?.focusPanel(direction: direction) == true {
+        notifyWorkspaceChanged()
+      }
     case .selectTab(let direction):
-      _ = terminalSession?.selectTab(direction: direction)
+      if terminalSession?.selectTab(direction: direction) == true {
+        notifyWorkspaceChanged()
+      }
     }
   }
 
@@ -483,6 +690,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
         configuration: shellConfigurationForNewTerminal()
       )
       configureControllerHooks(for: tab.controller)
+      notifyWorkspaceChanged()
     } catch {
       AppLogger.session.error("Failed to open Ghostty shell tab: \(error.localizedDescription)")
     }
@@ -496,6 +704,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
         configuration: shellConfigurationForNewTerminal()
       )
       configureControllerHooks(for: panel.activeTab?.controller)
+      notifyWorkspaceChanged()
     } catch {
       AppLogger.session.error("Failed to open Ghostty shell pane: \(error.localizedDescription)")
     }
@@ -520,16 +729,34 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     !isProtectedAgentTab(tab, in: panel.id)
   }
 
+  private func activateGhosttyPanel(_ panel: TerminalPanel) {
+    guard let terminalSession else { return }
+    if terminalSession.focusPanel(panel.id) {
+      notifyWorkspaceChanged()
+    }
+  }
+
+  private func selectGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
+    guard let terminalSession else { return }
+    if terminalSession.selectTab(tab.id, in: panel.id) {
+      notifyWorkspaceChanged()
+    }
+  }
+
   private func closeGhosttyPanel(_ panel: TerminalPanel) {
     guard let terminalSession, canCloseGhosttyPanel(panel) else { return }
     requestClose(panel)
-    _ = terminalSession.closePanel(panel.id)
+    if terminalSession.closePanel(panel.id) {
+      notifyWorkspaceChanged()
+    }
   }
 
   private func closeGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
     guard let terminalSession, canCloseGhosttyTab(tab, in: panel) else { return }
     requestClose(tab)
-    _ = terminalSession.closeTab(tab.id, in: panel.id)
+    if terminalSession.closeTab(tab.id, in: panel.id) {
+      notifyWorkspaceChanged()
+    }
   }
 
   private func requestClose(_ panel: TerminalPanel) {
@@ -560,10 +787,14 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     controller.onClose = { [weak self, weak controller] _ in
       guard let self, let controller else { return }
       self.unregisterPID(for: controller)
+      self.notifyWorkspaceChanged()
     }
     controller.onCloseWindow = { [weak self, weak controller] in
       guard let self, let controller else { return }
       self.closeControllerIfAllowed(controller)
+    }
+    controller.onStateChange = { [weak self] _ in
+      self?.notifyWorkspaceChanged()
     }
     controller.onOpenURL = { [weak self] url in
       self?.handleOpenURL(url) ?? false
@@ -580,7 +811,9 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     }
     guard !isProtectedAgentTab(located.tab, in: located.panel.id) else { return }
     requestClose(located.tab)
-    _ = terminalSession.closeTab(located.tab.id, in: located.panel.id)
+    if terminalSession.closeTab(located.tab.id, in: located.panel.id) {
+      notifyWorkspaceChanged()
+    }
   }
 
   private func focusedTab(in window: NSWindow) -> TerminalTab? {
@@ -617,6 +850,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     guard let terminalSession, let located = locateTab(tab) else { return }
     if terminalSession.activePanelID != located.panel.id || located.panel.activeTabID != tab.id {
       _ = terminalSession.selectTab(tab.id, in: located.panel.id)
+      notifyWorkspaceChanged()
     }
   }
 
@@ -657,6 +891,14 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     flags
       .intersection(.deviceIndependentFlagsMask)
       .subtracting([.numericPad, .function, .capsLock])
+  }
+
+  private func notifyWorkspaceChanged() {
+    guard !isRestoringWorkspace else { return }
+    guard let snapshot = captureWorkspaceSnapshot() else { return }
+    guard snapshot != lastWorkspaceSnapshot else { return }
+    lastWorkspaceSnapshot = snapshot
+    onWorkspaceChanged?(snapshot)
   }
 
   private func registerPIDWhenAvailable(for controller: GhosttyTerminalController) {

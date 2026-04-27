@@ -301,7 +301,8 @@ public final class AgentHubProvider {
       webPreviewCandidateService: webPreviewCandidateService,
       approvalClaimStore: claimStore,
       hookInstaller: installer,
-      terminalBackend: terminalBackend
+      terminalBackend: terminalBackend,
+      terminalWorkspaceStore: metadataStore
     )
     vm.agentHubProvider = self
     return vm

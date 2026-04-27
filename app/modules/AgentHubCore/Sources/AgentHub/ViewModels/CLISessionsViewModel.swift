@@ -29,6 +29,7 @@ public final class CLISessionsViewModel {
   public let providerKind: SessionProviderKind
   private let worktreeService = GitWorktreeService()
   private let metadataStore: SessionMetadataStore?
+  private let terminalWorkspaceStore: (any TerminalWorkspaceStoreProtocol)?
   private let fileWatcher: any SessionFileWatcherProtocol
   private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
   private let approvalNotificationService: any ApprovalNotificationServiceProtocol
@@ -36,6 +37,7 @@ public final class CLISessionsViewModel {
   private let hookInstaller: (any ClaudeHookInstallerProtocol)?
   private let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
   private let terminalBackend: EmbeddedTerminalBackend
+  @ObservationIgnored private var terminalWorkspaceSaveTasks: [String: Task<Void, Never>] = [:]
   weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
@@ -417,6 +419,102 @@ public final class CLISessionsViewModel {
     newTerminal.consumeQueuedWebPreviewContextOnSubmit = oldTerminal?.consumeQueuedWebPreviewContextOnSubmit
   }
 
+  private func persistableWorkspaceSessionId(key: String, sessionId: String?) -> String? {
+    let candidate = sessionId ?? key
+    guard !candidate.isEmpty, !candidate.hasPrefix("pending-") else { return nil }
+    return candidate
+  }
+
+  private func loadTerminalWorkspaceSnapshot(sessionId: String?) -> TerminalWorkspaceSnapshot? {
+    guard let sessionId, !sessionId.hasPrefix("pending-") else { return nil }
+    return terminalWorkspaceStore?.loadTerminalWorkspace(
+      provider: providerKind,
+      sessionId: sessionId,
+      backend: terminalBackend
+    )
+  }
+
+  private func configureTerminalWorkspacePersistence(
+    for terminal: any EmbeddedTerminalSurface,
+    key: String,
+    sessionId: String?
+  ) {
+    guard let sessionId = persistableWorkspaceSessionId(key: key, sessionId: sessionId) else {
+      terminal.onWorkspaceChanged = nil
+      return
+    }
+
+    terminal.onWorkspaceChanged = { [weak self] snapshot in
+      self?.scheduleTerminalWorkspaceSave(snapshot, sessionId: sessionId)
+    }
+  }
+
+  private func persistCurrentWorkspaceIfNeeded(
+    for terminal: any EmbeddedTerminalSurface,
+    key: String,
+    sessionId: String?,
+    debounce: Bool = true
+  ) {
+    guard
+      let sessionId = persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      let snapshot = terminal.captureWorkspaceSnapshot()
+    else {
+      return
+    }
+
+    scheduleTerminalWorkspaceSave(snapshot, sessionId: sessionId, debounce: debounce)
+  }
+
+  private func scheduleTerminalWorkspaceSave(
+    _ snapshot: TerminalWorkspaceSnapshot,
+    sessionId: String,
+    debounce: Bool = true
+  ) {
+    guard let store = terminalWorkspaceStore else { return }
+
+    terminalWorkspaceSaveTasks[sessionId]?.cancel()
+    if !debounce {
+      terminalWorkspaceSaveTasks.removeValue(forKey: sessionId)
+      let providerKind = providerKind
+      let terminalBackend = terminalBackend
+      Task { [store, snapshot, sessionId, providerKind, terminalBackend] in
+        do {
+          try await store.saveTerminalWorkspace(
+            snapshot,
+            provider: providerKind,
+            sessionId: sessionId,
+            backend: terminalBackend
+          )
+        } catch {
+          AppLogger.session.error("Failed to save terminal workspace: \(error.localizedDescription)")
+        }
+      }
+      return
+    }
+
+    let providerKind = providerKind
+    let terminalBackend = terminalBackend
+    terminalWorkspaceSaveTasks[sessionId] = Task { [weak self, store, snapshot, sessionId, providerKind, terminalBackend] in
+      try? await Task.sleep(for: .milliseconds(250))
+      guard !Task.isCancelled else { return }
+
+      do {
+        try await store.saveTerminalWorkspace(
+          snapshot,
+          provider: providerKind,
+          sessionId: sessionId,
+          backend: terminalBackend
+        )
+      } catch {
+        AppLogger.session.error("Failed to save terminal workspace: \(error.localizedDescription)")
+      }
+
+      await MainActor.run {
+        self?.terminalWorkspaceSaveTasks[sessionId] = nil
+      }
+    }
+  }
+
   /// Gets an existing terminal or creates a new one for the given key.
   /// Key should be session ID for real sessions, or "pending-{pendingId}" for pending sessions.
   /// This preserves the terminal PTY across pending → real session transitions.
@@ -463,6 +561,7 @@ public final class CLISessionsViewModel {
         existing.typeInitialTextIfNeeded(inputText)
       }
       existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
+      configureTerminalWorkspacePersistence(for: existing, key: key, sessionId: sessionId)
       return existing
     }
 
@@ -482,6 +581,10 @@ public final class CLISessionsViewModel {
     )
     activeTerminalDescriptors[key] = createDescriptor
     let terminal = makeTerminalSurface(forKey: key, descriptor: createDescriptor)
+    configureTerminalWorkspacePersistence(for: terminal, key: key, sessionId: sessionId)
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)) {
+      terminal.restoreWorkspaceSnapshot(workspaceSnapshot)
+    }
     activeTerminals[key] = terminal
     return terminal
   }
@@ -516,10 +619,13 @@ public final class CLISessionsViewModel {
   /// Removes the terminal for a given key and terminates its process
   public func removeTerminal(forKey key: String) {
     if let terminal = activeTerminals[key] {
+      persistCurrentWorkspaceIfNeeded(for: terminal, key: key, sessionId: key, debounce: false)
       terminal.terminateProcess()
     }
     activeTerminals.removeValue(forKey: key)
     activeTerminalDescriptors.removeValue(forKey: key)
+    terminalWorkspaceSaveTasks[key]?.cancel()
+    terminalWorkspaceSaveTasks.removeValue(forKey: key)
   }
 
   /// Transfers terminal from pending key to real session ID (for pending → real transition)
@@ -528,6 +634,8 @@ public final class CLISessionsViewModel {
     if let terminal = activeTerminals.removeValue(forKey: pendingKey) {
       activeTerminals[sessionId] = terminal
       terminal.updateContext(terminalSessionKey: sessionId, sessionViewModel: self)
+      configureTerminalWorkspacePersistence(for: terminal, key: sessionId, sessionId: sessionId)
+      persistCurrentWorkspaceIfNeeded(for: terminal, key: sessionId, sessionId: sessionId, debounce: false)
     }
     if let descriptor = activeTerminalDescriptors.removeValue(forKey: pendingKey) {
       activeTerminalDescriptors[sessionId] = descriptor.transferred(toSessionId: sessionId)
@@ -575,6 +683,10 @@ public final class CLISessionsViewModel {
     oldTerminal.terminateProcess()
     let newTerminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
     copyTerminalCallbacks(from: oldTerminal, to: newTerminal)
+    configureTerminalWorkspacePersistence(for: newTerminal, key: key, sessionId: sessionId)
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)) {
+      newTerminal.restoreWorkspaceSnapshot(workspaceSnapshot)
+    }
     activeTerminals[key] = newTerminal
   }
 
@@ -697,12 +809,14 @@ public final class CLISessionsViewModel {
     approvalClaimStore: (any ApprovalClaimStoreProtocol)? = nil,
     hookInstaller: (any ClaudeHookInstallerProtocol)? = nil,
     terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
-    terminalBackend: EmbeddedTerminalBackend = .storedPreference
+    terminalBackend: EmbeddedTerminalBackend = .storedPreference,
+    terminalWorkspaceStore: (any TerminalWorkspaceStoreProtocol)? = nil
   ) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
     self.searchService = searchService
     self.metadataStore = metadataStore
+    self.terminalWorkspaceStore = terminalWorkspaceStore ?? metadataStore
     self.fileWatcher = fileWatcher
     self.webPreviewCandidateService = webPreviewCandidateService
     self.approvalNotificationService = approvalNotificationService

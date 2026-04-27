@@ -13,6 +13,7 @@ public protocol EmbeddedTerminalSurface: AnyObject {
   var onUserInteraction: (() -> Void)? { get set }
   var onRequestShowEditor: (() -> Void)? { get set }
   var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)? { get set }
+  var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)? { get set }
 
   func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?)
   func configure(
@@ -37,6 +38,21 @@ public protocol EmbeddedTerminalSurface: AnyObject {
   func typeInitialTextIfNeeded(_ text: String)
   func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?)
   func focus()
+  func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot?
+  func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot)
+}
+
+public extension EmbeddedTerminalSurface {
+  var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)? {
+    get { nil }
+    set {}
+  }
+
+  func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
+    nil
+  }
+
+  func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {}
 }
 
 public protocol EmbeddedTerminalSurfaceFactory {

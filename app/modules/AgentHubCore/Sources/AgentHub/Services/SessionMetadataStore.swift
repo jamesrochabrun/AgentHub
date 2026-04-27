@@ -10,7 +10,7 @@ import GRDB
 
 /// Actor-based service for persisting session metadata to SQLite
 /// Uses GRDB for database operations with async/await support
-public actor SessionMetadataStore {
+public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
 
   // MARK: - Properties
 
@@ -82,6 +82,17 @@ public actor SessionMetadataStore {
     migrator.registerMigration("v4_add_pinned") { db in
       try db.alter(table: "session_metadata") { t in
         t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
+      }
+    }
+
+    migrator.registerMigration("v5_create_terminal_workspaces") { db in
+      try db.create(table: "terminal_workspaces") { t in
+        t.column("provider", .text).notNull()
+        t.column("sessionId", .text).notNull()
+        t.column("backend", .integer).notNull()
+        t.column("snapshotData", .blob).notNull()
+        t.column("updatedAt", .datetime).notNull()
+        t.primaryKey(["provider", "sessionId", "backend"], onConflict: .replace)
       }
     }
 
@@ -170,6 +181,9 @@ public actor SessionMetadataStore {
   /// Deletes metadata for a session
   public func deleteMetadata(for sessionId: String) throws {
     try dbQueue.write { db in
+      _ = try TerminalWorkspaceRecord
+        .filter(Column("sessionId") == sessionId)
+        .deleteAll(db)
       _ = try SessionMetadata.deleteOne(db, key: sessionId)
     }
   }
@@ -177,6 +191,7 @@ public actor SessionMetadataStore {
   /// Clears all metadata (for testing/reset)
   public func clearAll() throws {
     try dbQueue.write { db in
+      _ = try TerminalWorkspaceRecord.deleteAll(db)
       _ = try AIConfigRecord.deleteAll(db)
       _ = try SessionRepoMapping.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
@@ -247,6 +262,60 @@ public actor SessionMetadataStore {
       var record = record
       record.updatedAt = Date()
       try record.save(db)
+    }
+  }
+
+  // MARK: - Terminal Workspaces
+
+  public nonisolated func loadTerminalWorkspace(
+    provider: SessionProviderKind,
+    sessionId: String,
+    backend: EmbeddedTerminalBackend
+  ) -> TerminalWorkspaceSnapshot? {
+    try? dbQueue.read { db in
+      guard let record = try TerminalWorkspaceRecord
+        .filter(Column("provider") == provider.rawValue)
+        .filter(Column("sessionId") == sessionId)
+        .filter(Column("backend") == backend.rawValue)
+        .fetchOne(db)
+      else {
+        return nil
+      }
+
+      return try JSONDecoder().decode(TerminalWorkspaceSnapshot.self, from: record.snapshotData)
+    }
+  }
+
+  public func saveTerminalWorkspace(
+    _ snapshot: TerminalWorkspaceSnapshot,
+    provider: SessionProviderKind,
+    sessionId: String,
+    backend: EmbeddedTerminalBackend
+  ) async throws {
+    let data = try JSONEncoder().encode(snapshot)
+    let record = TerminalWorkspaceRecord(
+      provider: provider.rawValue,
+      sessionId: sessionId,
+      backend: backend.rawValue,
+      snapshotData: data
+    )
+
+    try await dbQueue.write { db in
+      try record.save(db)
+    }
+  }
+
+  public func deleteTerminalWorkspace(
+    provider: SessionProviderKind,
+    sessionId: String,
+    backend: EmbeddedTerminalBackend
+  ) async throws {
+    try await dbQueue.write { db in
+      _ = try TerminalWorkspaceRecord
+        .filter(Column("provider") == provider.rawValue)
+        .filter(Column("sessionId") == sessionId)
+        .filter(Column("backend") == backend.rawValue)
+        .deleteAll(db)
     }
   }
 }
