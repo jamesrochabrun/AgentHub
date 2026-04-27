@@ -388,6 +388,9 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
         },
         onCloseTab: { [weak self] panel, tab in
           self?.closeGhosttyTab(tab, in: panel)
+        },
+        onOpenTab: { [weak self] panel in
+          self?.openShellTab(in: panel.id)
         }
       )
     )
@@ -452,9 +455,12 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     )
   }
 
-  private func shellConfigurationForNewTerminal() -> GhosttySurfaceConfiguration {
-    let workingDirectory = activeController?.workingDirectory
-      ?? activeController?.configuration.workingDirectory
+  private func shellConfigurationForNewTerminal(in panelID: TerminalPanelID? = nil) -> GhosttySurfaceConfiguration {
+    let sourceController = panelID
+      .flatMap { terminalSession?.panel(for: $0)?.activeTab?.controller }
+      ?? activeController
+    let workingDirectory = sourceController?.workingDirectory
+      ?? sourceController?.configuration.workingDirectory
       ?? resolvedProjectPath
     let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: workingDirectory)
     return makeGhosttyConfiguration(
@@ -710,12 +716,13 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     }
   }
 
-  private func openShellTab() {
+  private func openShellTab(in panelID: TerminalPanelID? = nil) {
     guard let terminalSession else { return }
     do {
       let tab = try terminalSession.openTab(
+        in: panelID,
         named: "Shell",
-        configuration: shellConfigurationForNewTerminal()
+        configuration: shellConfigurationForNewTerminal(in: panelID)
       )
       configureControllerHooks(for: tab.controller)
       notifyWorkspaceChanged()
