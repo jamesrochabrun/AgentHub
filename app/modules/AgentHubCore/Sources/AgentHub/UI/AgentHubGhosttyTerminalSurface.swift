@@ -183,7 +183,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
       return
     }
 
-    protectedAgentController?.sendText(prompt)
+    sendBracketedPasteText(prompt, to: protectedAgentController)
     Task { @MainActor [weak self] in
       try? await Task.sleep(for: .milliseconds(100))
       self?.protectedAgentController?.sendReturnKey()
@@ -193,7 +193,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   func submitPromptImmediately(_ prompt: String) -> Bool {
     guard protectedAgentController != nil else { return false }
     focusProtectedAgentTab()
-    protectedAgentController?.sendText(prompt)
+    sendBracketedPasteText(prompt, to: protectedAgentController)
     let delay = Self.submitDelay(forByteCount: prompt.utf8.count)
     Task { @MainActor [weak self] in
       try? await Task.sleep(for: delay)
@@ -564,6 +564,13 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     }
   }
 
+  private func sendBracketedPasteText(
+    _ text: String,
+    to controller: GhosttyTerminalController?
+  ) {
+    controller?.sendBytes(TerminalPromptSubmissionPayload.bracketedPasteTextBytes(prompt: text))
+  }
+
   private func installInteractionMonitorIfNeeded() {
     guard localEventMonitor == nil else { return }
     localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseUp]) { [weak self] event in
@@ -637,7 +644,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
       return true
     case .appendContextAndSubmit(let queuedContextPrompt):
       let fullText = "\n\n\(queuedContextPrompt)"
-      protectedAgentController?.sendText(fullText)
+      sendBracketedPasteText(fullText, to: protectedAgentController)
       let delay = Self.submitDelay(forByteCount: fullText.utf8.count)
       Task { @MainActor [weak self] in
         try? await Task.sleep(for: delay)
