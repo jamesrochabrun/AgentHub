@@ -8,6 +8,10 @@
 import SwiftUI
 import Canvas
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 public struct SettingsView: View {
   @Environment(\.agentHub) private var agentHub
   @State private var aiConfigViewModel = AIConfigSettingsViewModel()
@@ -30,6 +34,9 @@ public struct SettingsView: View {
 
   @AppStorage(AgentHubDefaults.terminalBackend)
   private var terminalBackendRawValue: Int = EmbeddedTerminalBackend.ghostty.rawValue
+
+  @AppStorage(AgentHubDefaults.terminalGhosttyConfigPath)
+  private var terminalGhosttyConfigPath: String = ""
 
   @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
   private var sourceEditorMinimapEnabled: Bool = false
@@ -255,6 +262,8 @@ public struct SettingsView: View {
             Text(backend.label).tag(backend.rawValue)
           }
         }
+
+        ghosttyConfigFileSetting
 
         Picker("Font", selection: $terminalFontFamily) {
           ForEach(terminalFontFamilies, id: \.self) { family in
@@ -486,6 +495,49 @@ public struct SettingsView: View {
         showTerminalBackendRelaunchAlert = true
       }
     )
+  }
+
+  private var ghosttyConfigFileSetting: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Ghostty config file")
+
+      HStack(spacing: 8) {
+        TextField("Optional config file path", text: $terminalGhosttyConfigPath)
+          .textFieldStyle(.roundedBorder)
+
+        Button("Choose…", action: chooseGhosttyConfigFile)
+
+        Button("Clear") {
+          terminalGhosttyConfigPath = ""
+        }
+        .disabled(terminalGhosttyConfigPath.isEmpty)
+      }
+
+      Text("Applied when creating new Ghostty terminal sessions.")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+  }
+
+  private func chooseGhosttyConfigFile() {
+    #if canImport(AppKit)
+    let panel = NSOpenPanel()
+    panel.title = "Choose Ghostty Config"
+    panel.message = "Choose a Ghostty configuration file for embedded Ghostty terminals."
+    panel.prompt = "Choose"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+
+    let expandedPath = (terminalGhosttyConfigPath as NSString).expandingTildeInPath
+    if !expandedPath.isEmpty {
+      panel.directoryURL = URL(fileURLWithPath: expandedPath).deletingLastPathComponent()
+    }
+
+    if panel.runModal() == .OK, let url = panel.url {
+      terminalGhosttyConfigPath = url.path
+    }
+    #endif
   }
 
   private func ensureSupportedThemeSelection() async {

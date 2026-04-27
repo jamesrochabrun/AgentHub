@@ -102,6 +102,10 @@ public enum AgentHubDefaults {
   /// Type: Int (default: 0 = Ghostty)
   public static let terminalBackend = "\(keyPrefix)terminal.backend"
 
+  /// Custom Ghostty config file path for embedded Ghostty terminals
+  /// Type: String (default: "")
+  public static let terminalGhosttyConfigPath = "\(keyPrefix)terminal.ghosttyConfigPath"
+
   /// Whether source editors show the CodeEdit minimap
   /// Type: Bool (default: false)
   public static let sourceEditorMinimapEnabled = "\(keyPrefix)editor.minimapEnabled"

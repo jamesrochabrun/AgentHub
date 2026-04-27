@@ -37,6 +37,18 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     protectedAgentController?.foregroundProcessID ?? activeController?.foregroundProcessID
   }
 
+  override var isOpaque: Bool { false }
+
+  override init(frame frameRect: NSRect) {
+    super.init(frame: frameRect)
+    makeViewTransparent(self)
+  }
+
+  required init?(coder: NSCoder) {
+    super.init(coder: coder)
+    makeViewTransparent(self)
+  }
+
   override func performKeyEquivalent(with event: NSEvent) -> Bool {
     if handleKeyDown(event) {
       return true
@@ -334,6 +346,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   ) {
     do {
       let session = try TerminalSession(
+        configPath: GhosttyConfigPathResolver.configuredPath(),
         primaryConfiguration: primaryConfiguration,
         primaryName: protectsPrimaryTab ? "Agent" : "Shell"
       )
@@ -378,11 +391,13 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
         }
       )
     )
+    makeViewTransparent(host)
     mount(host)
     hostingView = host
   }
 
   private func mount(_ child: NSView) {
+    makeViewTransparent(child)
     child.translatesAutoresizingMaskIntoConstraints = false
     addSubview(child)
     NSLayoutConstraint.activate([
@@ -391,6 +406,12 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
       child.topAnchor.constraint(equalTo: topAnchor),
       child.bottomAnchor.constraint(equalTo: bottomAnchor)
     ])
+  }
+
+  private func makeViewTransparent(_ view: NSView) {
+    view.wantsLayer = true
+    view.layer?.backgroundColor = NSColor.clear.cgColor
+    view.layer?.isOpaque = false
   }
 
   private func removeMountedContent() {
