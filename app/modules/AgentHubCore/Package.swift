@@ -77,7 +77,11 @@ let package = Package(
     ),
     .testTarget(
       name: "AgentHubTests",
-      dependencies: ["AgentHubCore", "ClaudeCodeClient"],
+      dependencies: [
+        "AgentHubCore",
+        "ClaudeCodeClient",
+        .product(name: "GhosttySwift", package: "GhosttySwift"),
+      ],
       path: "Tests/AgentHubTests",
       swiftSettings: [
         .swiftLanguageMode(.v5)

@@ -9,12 +9,15 @@ import SwiftUI
 
 @MainActor
 final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
-  private var controller: GhosttyTerminalController?
-  private var containerView: GhosttySwift.GhosttyTerminalContainerView?
+  private var terminalSession: TerminalSession?
+  private var hostingView: NSHostingView<TerminalSurfaceView>?
+  private var protectedAgentPanelID: TerminalPanelID?
+  private var protectedAgentTabID: TerminalTabID?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
-  private var registeredPID: pid_t?
+  private var registeredPIDs: [ObjectIdentifier: pid_t] = [:]
+  private var pidRegistrationTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
   private var localEventMonitor: Any?
   private var projectPath: String = ""
 
@@ -28,7 +31,14 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   var view: NSView { self }
 
   var currentProcessPID: Int32? {
-    controller?.foregroundProcessID
+    protectedAgentController?.foregroundProcessID ?? activeController?.foregroundProcessID
+  }
+
+  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+    if handleKeyDown(event) {
+      return true
+    }
+    return super.performKeyEquivalent(with: event)
   }
 
   deinit {
@@ -36,8 +46,9 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
       NSEvent.removeMonitor(localEventMonitor)
     }
     MainActor.assumeIsolated {
-      controller?.requestClose()
-      unregisterPID()
+      terminalSession?.requestCloseAll()
+      cancelPIDRegistrationTasks()
+      unregisterAllPIDs()
     }
   }
 
@@ -75,7 +86,15 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
 
     switch launch {
     case .success(let launch):
-      mountGhostty(command: launch.ghosttyCommand, environment: launch.environment, initialInputText: initialInputText)
+      mountGhosttySession(
+        primaryConfiguration: makeGhosttyConfiguration(
+          command: launch.ghosttyCommand,
+          environment: launch.environment,
+          initialInput: initialInputText,
+          workingDirectory: resolvedProjectPath
+        ),
+        protectsPrimaryTab: true
+      )
     case .failure(let error):
       mountError(error.localizedDescription)
     }
@@ -90,14 +109,23 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
       projectPath: projectPath,
       shellPath: shellPath
     )
-    mountGhostty(command: launch.ghosttyCommand, environment: launch.environment, initialInputText: nil)
+    mountGhosttySession(
+      primaryConfiguration: makeGhosttyConfiguration(
+        command: launch.ghosttyCommand,
+        environment: launch.environment,
+        initialInput: nil,
+        workingDirectory: resolvedProjectPath
+      ),
+      protectsPrimaryTab: false
+    )
   }
 
   func restart(sessionId: String?, projectPath: String, cliConfiguration: CLICommandConfiguration) {
     terminateProcess()
-    containerView?.removeFromSuperview()
-    containerView = nil
-    controller = nil
+    removeMountedContent()
+    terminalSession = nil
+    protectedAgentPanelID = nil
+    protectedAgentTabID = nil
     isConfigured = false
     hasDeliveredInitialPrompt = false
     hasPrefilledInitialInputText = false
@@ -117,8 +145,9 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
 
   func terminateProcess() {
     terminateProcessCallCount += 1
-    controller?.requestClose()
-    unregisterPID()
+    terminalSession?.requestCloseAll()
+    cancelPIDRegistrationTasks()
+    unregisterAllPIDs()
   }
 
   func resetPromptDeliveryFlag() {
@@ -128,55 +157,58 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   func sendPromptIfNeeded(_ prompt: String) {
     guard !hasDeliveredInitialPrompt else { return }
     hasDeliveredInitialPrompt = true
+    focusProtectedAgentTab()
 
     let planFeedbackPrefix = "\u{1B}[B\u{1B}[B\u{1B}[B\r"
     if prompt.hasPrefix(planFeedbackPrefix) {
       let feedback = String(prompt.dropFirst(planFeedbackPrefix.count))
       Task { @MainActor [weak self] in
-        self?.controller?.sendArrowDownKey()
+        self?.protectedAgentController?.sendArrowDownKey()
         try? await Task.sleep(for: .milliseconds(80))
-        self?.controller?.sendArrowDownKey()
+        self?.protectedAgentController?.sendArrowDownKey()
         try? await Task.sleep(for: .milliseconds(80))
-        self?.controller?.sendArrowDownKey()
+        self?.protectedAgentController?.sendArrowDownKey()
         try? await Task.sleep(for: .milliseconds(80))
-        self?.controller?.sendReturnKey()
+        self?.protectedAgentController?.sendReturnKey()
         try? await Task.sleep(for: .milliseconds(150))
         if !feedback.isEmpty {
-          self?.controller?.sendText(feedback)
+          self?.protectedAgentController?.sendText(feedback)
           try? await Task.sleep(for: .milliseconds(100))
         }
-        self?.controller?.sendReturnKey()
+        self?.protectedAgentController?.sendReturnKey()
       }
       return
     }
 
-    controller?.sendText(prompt)
+    protectedAgentController?.sendText(prompt)
     Task { @MainActor [weak self] in
       try? await Task.sleep(for: .milliseconds(100))
-      self?.controller?.sendReturnKey()
+      self?.protectedAgentController?.sendReturnKey()
     }
   }
 
   func submitPromptImmediately(_ prompt: String) -> Bool {
-    guard controller != nil else { return false }
-    controller?.sendText(prompt)
+    guard protectedAgentController != nil else { return false }
+    focusProtectedAgentTab()
+    protectedAgentController?.sendText(prompt)
     let delay = Self.submitDelay(forByteCount: prompt.utf8.count)
     Task { @MainActor [weak self] in
       try? await Task.sleep(for: delay)
-      self?.controller?.sendReturnKey()
+      self?.protectedAgentController?.sendReturnKey()
     }
     return true
   }
 
   func typeText(_ text: String) {
-    controller?.sendText(text)
+    activeController?.sendText(text)
   }
 
   func typeInitialTextIfNeeded(_ text: String) {
     guard !text.isEmpty else { return }
     guard !hasPrefilledInitialInputText else { return }
     hasPrefilledInitialInputText = true
-    typeText(text)
+    focusProtectedAgentTab()
+    protectedAgentController?.sendText(text)
   }
 
   func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {
@@ -184,37 +216,74 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   }
 
   func focus() {
-    controller?.focusTerminal()
+    activeController?.focusTerminal()
   }
 
-  private func mountGhostty(command: String, environment: [String: String], initialInputText: String?) {
+  private var resolvedProjectPath: String {
+    projectPath.isEmpty ? NSHomeDirectory() : projectPath
+  }
+
+  private var activeController: GhosttyTerminalController? {
+    terminalSession?.activeTab?.controller
+  }
+
+  private var protectedAgentController: GhosttyTerminalController? {
+    guard
+      let terminalSession,
+      let protectedAgentPanelID,
+      let protectedAgentTabID
+    else {
+      return nil
+    }
+    return terminalSession.controller(for: protectedAgentTabID, in: protectedAgentPanelID)
+  }
+
+  private func mountGhosttySession(
+    primaryConfiguration: GhosttySurfaceConfiguration,
+    protectsPrimaryTab: Bool
+  ) {
     do {
-      let fontSize = Float(UserDefaults.standard.double(forKey: AgentHubDefaults.terminalFontSize))
-      let resolvedFontSize = fontSize > 0 ? fontSize : 12
-      let controller = try GhosttyTerminalController(
-        configuration: GhosttySurfaceConfiguration(
-          workingDirectory: projectPath.isEmpty ? NSHomeDirectory() : projectPath,
-          command: command,
-          environment: environment,
-          initialInput: initialInputText,
-          fontSize: resolvedFontSize
-        )
+      let session = try TerminalSession(
+        primaryConfiguration: primaryConfiguration,
+        primaryName: protectsPrimaryTab ? "Agent" : "Shell"
       )
-      controller.onClose = { [weak self] _ in
-        self?.unregisterPID()
+      if protectsPrimaryTab, let primaryTab = session.primaryPanel.activeTab {
+        protectedAgentPanelID = session.primaryPanelID
+        protectedAgentTabID = primaryTab.id
       }
-      controller.onOpenURL = { [weak self] url in
-        self?.handleOpenURL(url) ?? false
-      }
-      let container = try GhosttySwift.GhosttyTerminalContainerView(controller: controller)
-      mount(container)
-      self.controller = controller
-      self.containerView = container
+      configureControllerHooks(for: session.primaryPanel.activeTab?.controller)
+      mount(session)
+      terminalSession = session
       installInteractionMonitorIfNeeded()
-      registerPIDWhenAvailable()
     } catch {
       mountError(error.localizedDescription)
     }
+  }
+
+  private func mount(_ session: TerminalSession) {
+    let host = NSHostingView(
+      rootView: TerminalSurfaceView(
+        session: session,
+        showsPaneLabels: false,
+        showsTabBar: true,
+        allowsClosingPanels: true,
+        allowsClosingTabs: true,
+        panelClosePolicy: { [weak self] panel in
+          self?.canCloseGhosttyPanel(panel) ?? false
+        },
+        tabClosePolicy: { [weak self] panel, tab in
+          self?.canCloseGhosttyTab(tab, in: panel) ?? false
+        },
+        onClosePanel: { [weak self] panel in
+          self?.closeGhosttyPanel(panel)
+        },
+        onCloseTab: { [weak self] panel, tab in
+          self?.closeGhosttyTab(tab, in: panel)
+        }
+      )
+    )
+    mount(host)
+    hostingView = host
   }
 
   private func mount(_ child: NSView) {
@@ -228,7 +297,16 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     ])
   }
 
+  private func removeMountedContent() {
+    hostingView?.removeFromSuperview()
+    hostingView = nil
+    for subview in subviews {
+      subview.removeFromSuperview()
+    }
+  }
+
   private func mountError(_ message: String) {
+    removeMountedContent()
     let label = NSTextField(wrappingLabelWithString: "\nError: \(message)\nPlease ensure the CLI is installed.")
     label.translatesAutoresizingMaskIntoConstraints = false
     label.alignment = .center
@@ -242,6 +320,39 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     ])
   }
 
+  private func makeGhosttyConfiguration(
+    command: String,
+    environment: [String: String],
+    initialInput: String?,
+    workingDirectory: String
+  ) -> GhosttySurfaceConfiguration {
+    GhosttySurfaceConfiguration(
+      workingDirectory: workingDirectory,
+      command: command,
+      environment: environment,
+      initialInput: initialInput,
+      fontSize: resolvedFontSize()
+    )
+  }
+
+  private func shellConfigurationForNewTerminal() -> GhosttySurfaceConfiguration {
+    let workingDirectory = activeController?.workingDirectory
+      ?? activeController?.configuration.workingDirectory
+      ?? resolvedProjectPath
+    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: workingDirectory)
+    return makeGhosttyConfiguration(
+      command: launch.ghosttyCommand,
+      environment: launch.environment,
+      initialInput: nil,
+      workingDirectory: workingDirectory
+    )
+  }
+
+  private func resolvedFontSize() -> Float {
+    let fontSize = Float(UserDefaults.standard.double(forKey: AgentHubDefaults.terminalFontSize))
+    return fontSize > 0 ? fontSize : 12
+  }
+
   private static func submitDelay(forByteCount count: Int) -> Duration {
     switch count {
     case ..<500:   return .milliseconds(100)
@@ -253,81 +364,13 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   private func installInteractionMonitorIfNeeded() {
     guard localEventMonitor == nil else { return }
     localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseUp]) { [weak self] event in
-      guard let self, let surfaceView = self.containerView?.surfaceView else { return event }
+      guard let self else { return event }
 
       switch event.type {
       case .keyDown:
-        guard let window = surfaceView.window, event.window === window else { break }
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let isTerminalVisible = surfaceView.superview != nil && !surfaceView.isHidden && surfaceView.alphaValue > 0
-
-        if isTerminalVisible,
-           self.isTerminalResponderActive(window: window, terminal: surfaceView),
-           flags == .control,
-           event.keyCode == 50,
-           self.onRequestShowEditor != nil {
-          self.onRequestShowEditor?()
-          self.onUserInteraction?()
-          return nil
-        }
-
-        if isTerminalVisible,
-           self.isTerminalResponderActive(window: window, terminal: surfaceView),
-           flags == .command,
-           event.charactersIgnoringModifiers == "f" {
-          _ = self.controller?.performBindingAction("search:")
-          self.onUserInteraction?()
-          return nil
-        }
-
-        guard isTerminalResponderActive(window: window, terminal: surfaceView) else { break }
-
-        let shortcut = NewlineShortcut(
-          rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalNewlineShortcut)
-        ) ?? .system
-        let action = TerminalSubmitInterception.keyAction(
-          shortcut: shortcut,
-          isReturn: event.keyCode == 36,
-          flags: flags
-        )
-        let queuedContextPrompt: String?
-        switch action {
-        case .submit, .systemSubmit:
-          queuedContextPrompt = self.consumeQueuedWebPreviewContextOnSubmit?()
-        case .passthrough, .newline:
-          queuedContextPrompt = nil
-        }
-
-        switch TerminalSubmitInterception.dispatch(for: action, queuedContextPrompt: queuedContextPrompt) {
-        case .passthrough:
-          self.onUserInteraction?()
-        case .newline:
-          self.controller?.sendText("\n")
-          self.onUserInteraction?()
-          return nil
-        case .submit:
-          self.controller?.sendReturnKey()
-          self.onUserInteraction?()
-          return nil
-        case .appendContextAndSubmit(let queuedContextPrompt):
-          let fullText = "\n\n\(queuedContextPrompt)"
-          self.controller?.sendText(fullText)
-          let delay = Self.submitDelay(forByteCount: fullText.utf8.count)
-          Task { @MainActor [weak self] in
-            try? await Task.sleep(for: delay)
-            self?.controller?.sendReturnKey()
-          }
-          self.onUserInteraction?()
-          return nil
-        }
+        return handleKeyDown(event) ? nil : event
       case .leftMouseUp:
-        guard let window = surfaceView.window, event.window === window else { return event }
-        let locationInTerminal = surfaceView.convert(event.locationInWindow, from: nil)
-        if surfaceView.bounds.contains(locationInTerminal) {
-          DispatchQueue.main.async { [weak self] in
-            self?.onUserInteraction?()
-          }
-        }
+        handleMouseUp(event)
       default:
         break
       }
@@ -336,34 +379,326 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     }
   }
 
-  private func isTerminalResponderActive(window: NSWindow, terminal: NSView) -> Bool {
-    guard let responder = window.firstResponder else { return false }
-    if responder === terminal { return true }
-    if let responderView = responder as? NSView {
-      return responderView.isDescendant(of: terminal)
+  private func handleKeyDown(_ event: NSEvent) -> Bool {
+    guard let window = event.window ?? self.window, window === self.window else { return false }
+    guard let focusedTab = focusedTab(in: window) else { return false }
+    syncSessionSelection(to: focusedTab)
+
+    if let shortcut = AgentHubGhosttyTerminalShortcut.action(for: event) {
+      handleShortcut(shortcut)
+      onUserInteraction?()
+      return true
     }
-    return false
+
+    let flags = normalizedModifierFlags(event.modifierFlags)
+    if flags == .control,
+       event.keyCode == 50,
+       onRequestShowEditor != nil {
+      onRequestShowEditor?()
+      onUserInteraction?()
+      return true
+    }
+
+    guard isProtectedAgentTab(focusedTab) else {
+      onUserInteraction?()
+      return false
+    }
+
+    let shortcut = NewlineShortcut(
+      rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalNewlineShortcut)
+    ) ?? .system
+    let action = TerminalSubmitInterception.keyAction(
+      shortcut: shortcut,
+      isReturn: event.keyCode == 36,
+      flags: flags
+    )
+    let queuedContextPrompt: String?
+    switch action {
+    case .submit, .systemSubmit:
+      queuedContextPrompt = consumeQueuedWebPreviewContextOnSubmit?()
+    case .passthrough, .newline:
+      queuedContextPrompt = nil
+    }
+
+    switch TerminalSubmitInterception.dispatch(for: action, queuedContextPrompt: queuedContextPrompt) {
+    case .passthrough:
+      onUserInteraction?()
+      return false
+    case .newline:
+      protectedAgentController?.sendText("\n")
+      onUserInteraction?()
+      return true
+    case .submit:
+      protectedAgentController?.sendReturnKey()
+      onUserInteraction?()
+      return true
+    case .appendContextAndSubmit(let queuedContextPrompt):
+      let fullText = "\n\n\(queuedContextPrompt)"
+      protectedAgentController?.sendText(fullText)
+      let delay = Self.submitDelay(forByteCount: fullText.utf8.count)
+      Task { @MainActor [weak self] in
+        try? await Task.sleep(for: delay)
+        self?.protectedAgentController?.sendReturnKey()
+      }
+      onUserInteraction?()
+      return true
+    }
   }
 
-  private func registerPIDWhenAvailable() {
-    Task { @MainActor [weak self] in
+  private func handleMouseUp(_ event: NSEvent) {
+    guard let window = event.window, window === self.window else { return }
+    guard let tab = tab(containingMouseEvent: event) else { return }
+    syncSessionSelection(to: tab)
+    DispatchQueue.main.async { [weak self] in
+      self?.onUserInteraction?()
+    }
+  }
+
+  private func handleShortcut(_ shortcut: AgentHubGhosttyTerminalShortcut) {
+    switch shortcut {
+    case .startSearch:
+      _ = activeController?.startSearch()
+    case .searchNext:
+      _ = activeController?.navigateSearchNext()
+    case .searchPrevious:
+      _ = activeController?.navigateSearchPrevious()
+    case .openTab:
+      openShellTab()
+    case .openPane:
+      openShellPane()
+    case .closePanel:
+      closeActiveOrLastAuxiliaryPanel()
+    case .focusPanel(let direction):
+      _ = terminalSession?.focusPanel(direction: direction)
+    case .selectTab(let direction):
+      _ = terminalSession?.selectTab(direction: direction)
+    }
+  }
+
+  private func openShellTab() {
+    guard let terminalSession else { return }
+    do {
+      let tab = try terminalSession.openTab(
+        named: "Shell",
+        configuration: shellConfigurationForNewTerminal()
+      )
+      configureControllerHooks(for: tab.controller)
+    } catch {
+      AppLogger.session.error("Failed to open Ghostty shell tab: \(error.localizedDescription)")
+    }
+  }
+
+  private func openShellPane() {
+    guard let terminalSession, terminalSession.canOpenPanel else { return }
+    do {
+      let panel = try terminalSession.openPanel(
+        named: "Shell",
+        configuration: shellConfigurationForNewTerminal()
+      )
+      configureControllerHooks(for: panel.activeTab?.controller)
+    } catch {
+      AppLogger.session.error("Failed to open Ghostty shell pane: \(error.localizedDescription)")
+    }
+  }
+
+  private func closeActiveOrLastAuxiliaryPanel() {
+    guard let terminalSession else { return }
+    let targetPanel = terminalSession.activePanelID == terminalSession.primaryPanelID
+      ? terminalSession.visiblePanels.reversed().first { $0.id != terminalSession.primaryPanelID }
+      : terminalSession.panel(for: terminalSession.activePanelID)
+
+    guard let targetPanel, targetPanel.id != terminalSession.primaryPanelID else { return }
+    closeGhosttyPanel(targetPanel)
+  }
+
+  private func canCloseGhosttyPanel(_ panel: TerminalPanel) -> Bool {
+    guard let terminalSession else { return false }
+    return panel.id != terminalSession.primaryPanelID
+  }
+
+  private func canCloseGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) -> Bool {
+    !isProtectedAgentTab(tab, in: panel.id)
+  }
+
+  private func closeGhosttyPanel(_ panel: TerminalPanel) {
+    guard let terminalSession, canCloseGhosttyPanel(panel) else { return }
+    requestClose(panel)
+    _ = terminalSession.closePanel(panel.id)
+  }
+
+  private func closeGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
+    guard let terminalSession, canCloseGhosttyTab(tab, in: panel) else { return }
+    requestClose(tab)
+    _ = terminalSession.closeTab(tab.id, in: panel.id)
+  }
+
+  private func requestClose(_ panel: TerminalPanel) {
+    for tab in panel.tabs {
+      requestClose(tab)
+    }
+  }
+
+  private func requestClose(_ tab: TerminalTab) {
+    tab.controller.requestClose()
+    unregisterPID(for: tab.controller)
+  }
+
+  private func focusProtectedAgentTab() {
+    guard
+      let terminalSession,
+      let protectedAgentPanelID,
+      let protectedAgentTabID
+    else {
+      return
+    }
+    _ = terminalSession.selectTab(protectedAgentTabID, in: protectedAgentPanelID)
+  }
+
+  private func configureControllerHooks(for controller: GhosttyTerminalController?) {
+    guard let controller else { return }
+    controller.closesHostWindowOnClose = false
+    controller.onClose = { [weak self, weak controller] _ in
+      guard let self, let controller else { return }
+      self.unregisterPID(for: controller)
+    }
+    controller.onCloseWindow = { [weak self, weak controller] in
+      guard let self, let controller else { return }
+      self.closeControllerIfAllowed(controller)
+    }
+    controller.onOpenURL = { [weak self] url in
+      self?.handleOpenURL(url) ?? false
+    }
+    registerPIDWhenAvailable(for: controller)
+  }
+
+  private func closeControllerIfAllowed(_ controller: GhosttyTerminalController) {
+    guard
+      let terminalSession,
+      let located = locateController(controller)
+    else {
+      return
+    }
+    guard !isProtectedAgentTab(located.tab, in: located.panel.id) else { return }
+    requestClose(located.tab)
+    _ = terminalSession.closeTab(located.tab.id, in: located.panel.id)
+  }
+
+  private func focusedTab(in window: NSWindow) -> TerminalTab? {
+    guard let responder = window.firstResponder else { return nil }
+    if let focusedTab = allTabs().first(where: { tab in
+      guard let responderView = responder as? NSView else {
+        return responder === tab.containerView.surfaceView
+      }
+
+      return responderView === tab.containerView
+        || responderView === tab.containerView.surfaceView
+        || responderView.isDescendant(of: tab.containerView)
+    }) {
+      return focusedTab
+    }
+
+    guard let responderView = responder as? NSView else { return nil }
+    if responderView === self || responderView.isDescendant(of: self) {
+      return terminalSession?.activeTab
+    }
+
+    return nil
+  }
+
+  private func tab(containingMouseEvent event: NSEvent) -> TerminalTab? {
+    allTabs().first { tab in
+      guard event.window === tab.containerView.window else { return false }
+      let location = tab.containerView.convert(event.locationInWindow, from: nil)
+      return tab.containerView.bounds.contains(location)
+    }
+  }
+
+  private func syncSessionSelection(to tab: TerminalTab) {
+    guard let terminalSession, let located = locateTab(tab) else { return }
+    if terminalSession.activePanelID != located.panel.id || located.panel.activeTabID != tab.id {
+      _ = terminalSession.selectTab(tab.id, in: located.panel.id)
+    }
+  }
+
+  private func isProtectedAgentTab(_ tab: TerminalTab) -> Bool {
+    guard let located = locateTab(tab) else { return false }
+    return isProtectedAgentTab(tab, in: located.panel.id)
+  }
+
+  private func isProtectedAgentTab(_ tab: TerminalTab, in panelID: TerminalPanelID) -> Bool {
+    panelID == protectedAgentPanelID && tab.id == protectedAgentTabID
+  }
+
+  private func locateTab(_ tab: TerminalTab) -> (panel: TerminalPanel, tab: TerminalTab)? {
+    for panel in terminalSession?.panels ?? [] {
+      if let matchedTab = panel.tabs.first(where: { $0.id == tab.id }) {
+        return (panel, matchedTab)
+      }
+    }
+    return nil
+  }
+
+  private func locateController(
+    _ controller: GhosttyTerminalController
+  ) -> (panel: TerminalPanel, tab: TerminalTab)? {
+    for panel in terminalSession?.panels ?? [] {
+      if let tab = panel.tabs.first(where: { $0.controller === controller }) {
+        return (panel, tab)
+      }
+    }
+    return nil
+  }
+
+  private func allTabs() -> [TerminalTab] {
+    terminalSession?.panels.flatMap(\.tabs) ?? []
+  }
+
+  private func normalizedModifierFlags(_ flags: NSEvent.ModifierFlags) -> NSEvent.ModifierFlags {
+    flags
+      .intersection(.deviceIndependentFlagsMask)
+      .subtracting([.numericPad, .function, .capsLock])
+  }
+
+  private func registerPIDWhenAvailable(for controller: GhosttyTerminalController) {
+    let id = ObjectIdentifier(controller)
+    pidRegistrationTasks[id]?.cancel()
+    pidRegistrationTasks[id] = Task { @MainActor [weak self, weak controller] in
       for _ in 0..<10 {
-        guard let self else { return }
-        if let pid = self.currentProcessPID, pid > 0 {
-          self.registeredPID = pid
+        guard let self, let controller else { return }
+        guard self.locateController(controller) != nil else { return }
+        if let pid = controller.foregroundProcessID, pid > 0 {
+          self.registeredPIDs[id] = pid
           TerminalProcessRegistry.shared.register(pid: pid)
+          self.pidRegistrationTasks[id] = nil
           return
         }
         try? await Task.sleep(for: .milliseconds(100))
       }
+      self?.pidRegistrationTasks[id] = nil
     }
   }
 
-  private func unregisterPID() {
-    if let registeredPID {
+  private func unregisterPID(for controller: GhosttyTerminalController) {
+    let id = ObjectIdentifier(controller)
+    pidRegistrationTasks[id]?.cancel()
+    pidRegistrationTasks[id] = nil
+    if let registeredPID = registeredPIDs.removeValue(forKey: id) {
       TerminalProcessRegistry.shared.unregister(pid: registeredPID)
-      self.registeredPID = nil
     }
+  }
+
+  private func cancelPIDRegistrationTasks() {
+    for task in pidRegistrationTasks.values {
+      task.cancel()
+    }
+    pidRegistrationTasks.removeAll()
+  }
+
+  private func unregisterAllPIDs() {
+    for pid in registeredPIDs.values {
+      TerminalProcessRegistry.shared.unregister(pid: pid)
+    }
+    registeredPIDs.removeAll()
   }
 
   private func handleOpenURL(_ value: String) -> Bool {
