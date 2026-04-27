@@ -1,3 +1,4 @@
+import AppKit
 import Canvas
 import Combine
 import Foundation
@@ -32,18 +33,92 @@ private actor AuxiliaryShellStubFileWatcher: SessionFileWatcherProtocol {
 }
 
 @MainActor
-private func makeAuxiliaryShellViewModel() -> CLISessionsViewModel {
+private func makeAuxiliaryShellViewModel(
+  terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
+  terminalBackend: EmbeddedTerminalBackend = .storedPreference
+) -> CLISessionsViewModel {
   CLISessionsViewModel(
     monitorService: AuxiliaryShellStubMonitorService(),
     fileWatcher: AuxiliaryShellStubFileWatcher(),
     searchService: nil,
     cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
     providerKind: .claude,
-    approvalNotificationService: NoOpApprovalNotificationService()
+    approvalNotificationService: NoOpApprovalNotificationService(),
+    terminalSurfaceFactory: terminalSurfaceFactory,
+    terminalBackend: terminalBackend
   )
 }
 
-@Suite("Auxiliary shell terminal management")
+@MainActor
+private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
+  var view: NSView { self }
+  var currentProcessPID: Int32?
+  var onUserInteraction: (() -> Void)?
+  var onRequestShowEditor: (() -> Void)?
+  var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+  private(set) var configuredProjectPath: String?
+  private(set) var configuredShellPath: String?
+  private(set) var configureCallCount = 0
+  private(set) var terminateCallCount = 0
+
+  func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?) {}
+
+  func configure(
+    sessionId: String?,
+    projectPath: String,
+    cliConfiguration: CLICommandConfiguration,
+    initialPrompt: String?,
+    initialInputText: String?,
+    isDark: Bool,
+    dangerouslySkipPermissions: Bool,
+    permissionModePlan: Bool,
+    worktreeName: String?,
+    metadataStore: SessionMetadataStore?
+  ) {
+    configuredProjectPath = projectPath
+    configureCallCount += 1
+  }
+
+  func configureShell(projectPath: String, isDark: Bool, shellPath: String?) {
+    configuredProjectPath = projectPath
+    configuredShellPath = shellPath
+    configureCallCount += 1
+  }
+
+  func restart(sessionId: String?, projectPath: String, cliConfiguration: CLICommandConfiguration) {}
+
+  func terminateProcess() {
+    terminateCallCount += 1
+  }
+
+  func resetPromptDeliveryFlag() {}
+  func sendPromptIfNeeded(_ prompt: String) {}
+  func submitPromptImmediately(_ prompt: String) -> Bool { true }
+  func typeText(_ text: String) {}
+  func typeInitialTextIfNeeded(_ text: String) {}
+  func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {}
+  func focus() {}
+}
+
+@MainActor
+private final class RecordingTerminalSurfaceFactory: EmbeddedTerminalSurfaceFactory {
+  private let surfaces: [TestTerminalSurface]
+  private var nextSurfaceIndex = 0
+  private(set) var requestedBackends: [EmbeddedTerminalBackend] = []
+
+  init(surfaces: [TestTerminalSurface]) {
+    self.surfaces = surfaces
+  }
+
+  func makeSurface(for backend: EmbeddedTerminalBackend) -> any EmbeddedTerminalSurface {
+    requestedBackends.append(backend)
+    let surface = surfaces[nextSurfaceIndex]
+    nextSurfaceIndex += 1
+    return surface
+  }
+}
+
+@Suite("Auxiliary shell terminal management", .serialized)
 struct AuxiliaryShellTerminalManagementTests {
 
   @Test("Transfers auxiliary shell terminal from pending key to resolved session ID")
@@ -58,7 +133,7 @@ struct AuxiliaryShellTerminalManagementTests {
     viewModel.transferAuxiliaryShellTerminal(fromPendingId: pendingID, toSessionId: "session-123")
 
     #expect(viewModel.auxiliaryShellTerminals[pendingKey] == nil)
-    #expect(viewModel.auxiliaryShellTerminals["session-123"] === terminal)
+    #expect(viewModel.auxiliaryShellTerminals["session-123"]?.view === terminal)
   }
 
   @Test("Resolving pending session transfers queued web preview context")
@@ -136,6 +211,71 @@ struct AuxiliaryShellTerminalManagementTests {
     #expect(viewModel.auxiliaryShellTerminals[session.id] == nil)
     #expect(agentTerminal.terminateProcessCallCount == 1)
     #expect(shellTerminal.terminateProcessCallCount == 1)
+  }
+
+  @Test("View model creates terminals through injected surface factory")
+  @MainActor
+  func createsTerminalThroughInjectedFactory() {
+    let surface = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [surface])
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalSurfaceFactory: factory,
+      terminalBackend: .regular
+    )
+
+    let terminal = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      initialPrompt: nil
+    )
+
+    #expect(terminal.view === surface)
+    #expect(surface.configuredProjectPath == "/tmp/project")
+    #expect(factory.requestedBackends == [.regular])
+  }
+
+  @Test("Changing terminal backend preference does not recreate cached terminal surfaces")
+  @MainActor
+  func changingTerminalBackendPreferenceRequiresRestart() {
+    let oldBackend = UserDefaults.standard.object(forKey: AgentHubDefaults.terminalBackend)
+    defer {
+      if let oldBackend {
+        UserDefaults.standard.set(oldBackend, forKey: AgentHubDefaults.terminalBackend)
+      } else {
+        UserDefaults.standard.removeObject(forKey: AgentHubDefaults.terminalBackend)
+      }
+    }
+
+    UserDefaults.standard.set(EmbeddedTerminalBackend.ghostty.rawValue, forKey: AgentHubDefaults.terminalBackend)
+    let firstSurface = TestTerminalSurface()
+    let secondSurface = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [firstSurface, secondSurface])
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalSurfaceFactory: factory,
+      terminalBackend: .ghostty
+    )
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      initialPrompt: nil
+    )
+
+    UserDefaults.standard.set(EmbeddedTerminalBackend.regular.rawValue, forKey: AgentHubDefaults.terminalBackend)
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-456",
+      sessionId: "session-456",
+      projectPath: "/tmp/another-project",
+      initialPrompt: nil
+    )
+
+    #expect(firstSurface.terminateCallCount == 0)
+    #expect(secondSurface.configuredProjectPath == "/tmp/another-project")
+    #expect(viewModel.activeTerminals["session-123"]?.view === firstSurface)
+    #expect(viewModel.activeTerminals["session-456"]?.view === secondSurface)
+    #expect(factory.requestedBackends == [.ghostty, .ghostty])
   }
 }
 

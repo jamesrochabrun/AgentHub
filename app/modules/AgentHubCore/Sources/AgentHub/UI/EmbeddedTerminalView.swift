@@ -133,12 +133,41 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     self.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
   }
 
-  public func makeNSView(context: Context) -> TerminalContainerView {
-    let isDark = colorScheme == .dark
+  public final class Coordinator {
+    var standaloneTerminal: (any EmbeddedTerminalSurface)?
+  }
 
-    // Use shared terminal storage if viewModel is provided
-    if let viewModel = viewModel {
-      let terminalContainer = viewModel.getOrCreateTerminal(
+  public func makeCoordinator() -> Coordinator {
+    Coordinator()
+  }
+
+  public func makeNSView(context: Context) -> EmbeddedTerminalHostView {
+    let hostView = EmbeddedTerminalHostView()
+    let isDark = colorScheme == .dark
+    let terminal = resolveTerminal(context: context, isDark: isDark)
+    applyCallbacks(to: terminal)
+    hostView.mount(terminal, key: terminalKey)
+    return hostView
+  }
+
+  public func updateNSView(_ nsView: EmbeddedTerminalHostView, context: Context) {
+    let terminal = resolveTerminal(context: context, isDark: colorScheme == .dark)
+    applyCallbacks(to: terminal)
+    nsView.mount(terminal, key: terminalKey)
+    terminal.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), fontFamily: terminalFontFamily, theme: runtimeTheme)
+
+    // If there's a pending prompt in the viewModel, send it (and clear it)
+    // Use terminalKey (not sessionId) since it works for both pending and real sessions
+    if let prompt = viewModel?.pendingPrompt(for: terminalKey) {
+      terminal.resetPromptDeliveryFlag()
+      terminal.sendPromptIfNeeded(prompt)
+      viewModel?.clearPendingPrompt(for: terminalKey)
+    }
+  }
+
+  private func resolveTerminal(context: Context, isDark: Bool) -> any EmbeddedTerminalSurface {
+    if let viewModel {
+      let terminal = viewModel.getOrCreateTerminal(
         forKey: terminalKey,
         sessionId: sessionId,
         projectPath: projectPath,
@@ -150,17 +179,16 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         permissionModePlan: permissionModePlan,
         worktreeName: worktreeName
       )
-      terminalContainer.onUserInteraction = onUserInteraction
-      terminalContainer.onRequestShowEditor = onRequestShowEditor
-      terminalContainer.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
-      terminalContainer.terminalSessionKey = terminalKey
-      terminalContainer.sessionViewModel = viewModel
-      return terminalContainer
+      terminal.updateContext(terminalSessionKey: terminalKey, sessionViewModel: viewModel)
+      return terminal
     }
 
-    // Fallback: create standalone terminal (for previews)
-    let containerView = TerminalContainerView()
-    containerView.configure(
+    if let existing = context.coordinator.standaloneTerminal {
+      return existing
+    }
+
+    let terminal = DefaultEmbeddedTerminalSurfaceFactory().makeSurface(for: .storedPreference)
+    terminal.configure(
       sessionId: sessionId,
       projectPath: projectPath,
       cliConfiguration: cliConfiguration,
@@ -172,25 +200,14 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       worktreeName: worktreeName,
       metadataStore: agentHub?.metadataStore
     )
-    containerView.onUserInteraction = onUserInteraction
-    containerView.onRequestShowEditor = onRequestShowEditor
-    containerView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
-    return containerView
+    context.coordinator.standaloneTerminal = terminal
+    return terminal
   }
 
-  public func updateNSView(_ nsView: TerminalContainerView, context: Context) {
-    nsView.onUserInteraction = onUserInteraction
-    nsView.onRequestShowEditor = onRequestShowEditor
-    nsView.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
-    nsView.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), fontFamily: terminalFontFamily, theme: runtimeTheme)
-
-    // If there's a pending prompt in the viewModel, send it (and clear it)
-    // Use terminalKey (not sessionId) since it works for both pending and real sessions
-    if let prompt = viewModel?.pendingPrompt(for: terminalKey) {
-      nsView.resetPromptDeliveryFlag()
-      nsView.sendPromptIfNeeded(prompt)
-      viewModel?.clearPendingPrompt(for: terminalKey)
-    }
+  private func applyCallbacks(to terminal: any EmbeddedTerminalSurface) {
+    terminal.onUserInteraction = onUserInteraction
+    terminal.onRequestShowEditor = onRequestShowEditor
+    terminal.consumeQueuedWebPreviewContextOnSubmit = consumeQueuedWebPreviewContextOnSubmit
   }
 }
 
@@ -244,7 +261,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// Restarts the terminal by terminating the current process and starting a new one.
   /// Use this to reload session history after external changes.
-  func restart(
+  public func restart(
     sessionId: String?,
     projectPath: String,
     cliConfiguration: CLICommandConfiguration
@@ -258,7 +275,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     configure(sessionId: sessionId, projectPath: projectPath, cliConfiguration: cliConfiguration)
   }
 
-  func configure(
+  public func configure(
     sessionId: String?,
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
@@ -305,7 +322,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
   }
 
-  func configureShell(
+  public func configureShell(
     projectPath: String,
     isDark: Bool = true,
     shellPath: String? = nil
@@ -326,12 +343,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// Resets the prompt delivery flag so a new prompt can be sent.
   /// Call this before sendPromptIfNeeded when sending a follow-up prompt (e.g., from inline editor).
-  func resetPromptDeliveryFlag() {
+  public func resetPromptDeliveryFlag() {
     hasDeliveredInitialPrompt = false
   }
 
   /// Sends a prompt to the terminal (only once per terminal instance unless reset)
-  func sendPromptIfNeeded(_ prompt: String) {
+  public func sendPromptIfNeeded(_ prompt: String) {
     guard let terminal = terminalView else { return }
     guard !hasDeliveredInitialPrompt else { return }
     hasDeliveredInitialPrompt = true
@@ -370,7 +387,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// Sends a follow-up prompt directly to the running CLI and submits it.
   /// This path is for explicit user actions and must not be gated by initial
   /// prompt delivery state.
-  func submitPromptImmediately(_ prompt: String) -> Bool {
+  public func submitPromptImmediately(_ prompt: String) -> Bool {
     guard let terminal = terminalView else { return false }
     terminal.send(TerminalPromptSubmissionPayload.textBytes(
       prompt: prompt,
@@ -638,75 +655,37 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     permissionModePlan: Bool = false,
     worktreeName: String? = nil
   ) {
-    // Find the CLI executable using just the executable name (first word of command)
-    let command = cliConfiguration.command
-    let additionalPaths = cliConfiguration.additionalPaths
+    let launch = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: sessionId,
+      projectPath: projectPath,
+      cliConfiguration: cliConfiguration,
+      initialPrompt: initialPrompt,
+      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      permissionModePlan: permissionModePlan,
+      worktreeName: worktreeName,
+      metadataStore: metadataStore
+    )
 
-    let executablePath: String?
-    switch cliConfiguration.mode {
-    case .codex:
-      executablePath = TerminalLauncher.findCodexExecutable(
-        command: cliConfiguration.executableName,
-        additionalPaths: additionalPaths
-      )
-    case .claude:
-      executablePath = TerminalLauncher.findExecutable(
-        command: cliConfiguration.executableName,
-        additionalPaths: additionalPaths
-      )
-    }
-
-    guard let executablePath else {
+    guard case .success(let launch) = launch else {
       // Show error in terminal
-      terminal.feed(text: "\r\n\u{001B}[31mError: Could not find '\(command)' command.\u{001B}[0m\r\n")
+      let message = "Could not find '\(cliConfiguration.command)' command."
+      terminal.feed(text: "\r\n\u{001B}[31mError: \(message)\u{001B}[0m\r\n")
       terminal.feed(text: "Please ensure the CLI is installed.\r\n")
       return
     }
 
-    let environment = makeProcessEnvironment(additionalPaths: additionalPaths)
-
-    // Build the shell command with working directory
-    // Since SwiftTerm's Mac API doesn't support currentDirectory directly,
-    // we use bash -c to cd first then run claude
-    let workingDirectory = projectPath.isEmpty ? NSHomeDirectory() : projectPath
-    let escapedPath = workingDirectory.replacingOccurrences(of: "'", with: "'\\''")
-    let escapedCLIPath = executablePath.replacingOccurrences(of: "'", with: "'\\''")
 #if DEBUG
-    let homeEnv = environment["HOME"] ?? "<nil>"
+    let workingDirectory = projectPath.isEmpty ? NSHomeDirectory() : projectPath
+    let homeEnv = launch.environment["HOME"] ?? "<nil>"
     AppLogger.session.debug(
-      "[ClaudeProcess] workingDirectory=\(workingDirectory, privacy: .public) homeEnv=\(homeEnv, privacy: .public) command=\(command, privacy: .public)"
+      "[ClaudeProcess] workingDirectory=\(workingDirectory, privacy: .public) homeEnv=\(homeEnv, privacy: .public) command=\(cliConfiguration.command, privacy: .public)"
     )
 #endif
 
-    // Read AI configuration defaults for this provider from SQLite
-    let aiConfig = metadataStore?.getAIConfigSync(for: cliConfiguration.mode.rawValue)
-    let allowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.allowedTools)
-    let disallowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.disallowedTools)
-
-    // Build command: resume existing session or start new session
-    let args = cliConfiguration.argumentsForSession(
-      sessionId: sessionId,
-      prompt: initialPrompt,
-      dangerouslySkipPermissions: dangerouslySkipPermissions,
-      worktreeName: worktreeName,
-      permissionModePlan: permissionModePlan,
-      model: aiConfig?.defaultModel,
-      effortLevel: aiConfig?.effortLevel,
-      allowedTools: allowedTools.isEmpty ? nil : allowedTools,
-      disallowedTools: disallowedTools.isEmpty ? nil : disallowedTools,
-      codexApprovalPolicy: aiConfig?.approvalPolicy
-    )
-    let escapedArgs = args.map { $0.replacingOccurrences(of: "'", with: "'\\''") }
-    let joinedArgs = escapedArgs.map { "'\($0)'" }.joined(separator: " ")
-    let shellCommand = joinedArgs.isEmpty
-      ? "cd '\(escapedPath)' && exec '\(escapedCLIPath)'"
-      : "cd '\(escapedPath)' && exec '\(escapedCLIPath)' \(joinedArgs)"
-
-    // Start bash with the command
     terminal.startProcess(
-      executable: "/bin/bash",
-      args: ["-c", shellCommand],
-      environment: environment.map { "\($0.key)=\($0.value)" }
+      executable: launch.swiftTermExecutable,
+      args: launch.swiftTermArguments,
+      environment: launch.swiftTermEnvironment
     )
   }
 
@@ -715,46 +694,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     projectPath: String,
     shellPath: String? = nil
   ) {
-    let environment = makeProcessEnvironment(additionalPaths: [])
-    let shellExecutable = resolveShellExecutablePath(shellPath)
-    let escapedPath = shellEscape(projectPath.isEmpty ? NSHomeDirectory() : projectPath)
-    let escapedShellPath = shellEscape(shellExecutable)
-    let shellCommand = "cd '\(escapedPath)' && exec '\(escapedShellPath)' -l"
+    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(
+      projectPath: projectPath,
+      shellPath: shellPath
+    )
 
     terminal.startProcess(
-      executable: "/bin/bash",
-      args: ["-c", shellCommand],
-      environment: environment.map { "\($0.key)=\($0.value)" }
+      executable: launch.swiftTermExecutable,
+      args: launch.swiftTermArguments,
+      environment: launch.swiftTermEnvironment
     )
-  }
-
-  private func makeProcessEnvironment(additionalPaths: [String]) -> [String: String] {
-    var environment = ProcessInfo.processInfo.environment
-    environment["TERM"] = "xterm-256color"
-    environment["COLORTERM"] = "truecolor"
-    environment["LANG"] = "en_US.UTF-8"
-    environment["TERM_PROGRAM"] = "SwiftTerm"
-
-    let paths = CLIPathResolver.executableSearchPaths(additionalPaths: additionalPaths)
-    let pathString = paths.joined(separator: ":")
-    if let existingPath = environment["PATH"] {
-      environment["PATH"] = "\(pathString):\(existingPath)"
-    } else {
-      environment["PATH"] = pathString
-    }
-    return environment
-  }
-
-  private func resolveShellExecutablePath(_ shellPath: String?) -> String {
-    let candidate = shellPath ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-    if FileManager.default.isExecutableFile(atPath: candidate) {
-      return candidate
-    }
-    return "/bin/zsh"
-  }
-
-  private func shellEscape(_ value: String) -> String {
-    value.replacingOccurrences(of: "'", with: "'\\''")
   }
 
   private func registerProcessIfNeeded(for terminal: SafeLocalProcessTerminalView) {

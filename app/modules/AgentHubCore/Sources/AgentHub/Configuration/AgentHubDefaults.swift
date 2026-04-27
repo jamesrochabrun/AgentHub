@@ -98,6 +98,10 @@ public enum AgentHubDefaults {
   /// Type: String (default: "SF Mono")
   public static let terminalFontFamily = "\(keyPrefix)terminal.fontFamily"
 
+  /// Embedded terminal backend
+  /// Type: Int (default: 0 = Ghostty)
+  public static let terminalBackend = "\(keyPrefix)terminal.backend"
+
   /// Whether source editors show the CodeEdit minimap
   /// Type: Bool (default: false)
   public static let sourceEditorMinimapEnabled = "\(keyPrefix)editor.minimapEnabled"

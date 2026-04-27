@@ -13,6 +13,8 @@ public struct SettingsView: View {
   @State private var aiConfigViewModel = AIConfigSettingsViewModel()
   @State private var isClaudeConfigurationExpanded = true
   @State private var isCodexConfigurationExpanded = true
+  @State private var pendingTerminalBackend: EmbeddedTerminalBackend?
+  @State private var showTerminalBackendRelaunchAlert = false
 
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
@@ -25,6 +27,9 @@ public struct SettingsView: View {
 
   @AppStorage(AgentHubDefaults.terminalFontFamily)
   private var terminalFontFamily: String = "SF Mono"
+
+  @AppStorage(AgentHubDefaults.terminalBackend)
+  private var terminalBackendRawValue: Int = EmbeddedTerminalBackend.ghostty.rawValue
 
   @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
   private var sourceEditorMinimapEnabled: Bool = false
@@ -84,6 +89,10 @@ public struct SettingsView: View {
   ]
   private let webPreviewInspectorDataLevels: [ElementInspectorDataLevel] = [.regular, .full]
 
+  private var activeTerminalBackend: EmbeddedTerminalBackend {
+    agentHub?.terminalBackend ?? .storedPreference
+  }
+
   public init() {}
 
   public var body: some View {
@@ -119,6 +128,24 @@ public struct SettingsView: View {
     .task {
       await ensureSupportedThemeSelection()
       await aiConfigViewModel.load(service: agentHub?.aiConfigService)
+    }
+    .alert(
+      "Relaunch AgentHub?",
+      isPresented: $showTerminalBackendRelaunchAlert,
+      presenting: pendingTerminalBackend
+    ) { backend in
+      Button("Cancel", role: .cancel) {
+        pendingTerminalBackend = nil
+      }
+      Button("Relaunch") {
+        terminalBackendRawValue = backend.rawValue
+        pendingTerminalBackend = nil
+        agentHub?.relaunchApplication()
+      }
+    } message: { backend in
+      Text(
+        "Switching to \(backend.label) requires relaunching AgentHub. Running terminals will be closed during relaunch."
+      )
     }
   }
 
@@ -223,6 +250,12 @@ public struct SettingsView: View {
       }
 
       Section("Terminal") {
+        Picker("Terminal", selection: terminalBackendSelectionBinding) {
+          ForEach(EmbeddedTerminalBackend.allCases, id: \.rawValue) { backend in
+            Text(backend.label).tag(backend.rawValue)
+          }
+        }
+
         Picker("Font", selection: $terminalFontFamily) {
           ForEach(terminalFontFamilies, id: \.self) { family in
             Text(family)
@@ -434,6 +467,23 @@ public struct SettingsView: View {
         Task {
           await applyThemeSelection(newValue)
         }
+      }
+    )
+  }
+
+  private var terminalBackendSelectionBinding: Binding<Int> {
+    Binding(
+      get: { terminalBackendRawValue },
+      set: { newValue in
+        let requestedBackend = EmbeddedTerminalBackend(rawValue: newValue) ?? .ghostty
+        guard requestedBackend != activeTerminalBackend else {
+          terminalBackendRawValue = requestedBackend.rawValue
+          pendingTerminalBackend = nil
+          return
+        }
+
+        pendingTerminalBackend = requestedBackend
+        showTerminalBackendRelaunchAlert = true
       }
     )
   }

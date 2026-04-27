@@ -5,37 +5,43 @@
 
 import AppKit
 
-public final class AuxiliaryShellTerminalHostView: NSView {
+public final class EmbeddedTerminalHostView: NSView {
   public private(set) var mountedTerminalKey: String?
-  private weak var mountedTerminal: TerminalContainerView?
+  private weak var mountedTerminalView: NSView?
 
-  public func mount(_ terminal: TerminalContainerView, key: String) {
-    guard mountedTerminal !== terminal else {
+  public func mount(_ terminal: any EmbeddedTerminalSurface, key: String) {
+    mountView(terminal.view, key: key)
+  }
+
+  private func mountView(_ terminalView: NSView, key: String) {
+    guard mountedTerminalView !== terminalView else {
       mountedTerminalKey = key
       return
     }
 
-    mountedTerminal?.removeFromSuperview()
+    mountedTerminalView?.removeFromSuperview()
 
-    if terminal.superview !== self {
-      terminal.removeFromSuperview()
-      terminal.translatesAutoresizingMaskIntoConstraints = false
-      addSubview(terminal)
+    if terminalView.superview !== self {
+      terminalView.removeFromSuperview()
+      terminalView.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(terminalView)
       NSLayoutConstraint.activate([
-        terminal.leadingAnchor.constraint(equalTo: leadingAnchor),
-        terminal.trailingAnchor.constraint(equalTo: trailingAnchor),
-        terminal.topAnchor.constraint(equalTo: topAnchor),
-        terminal.bottomAnchor.constraint(equalTo: bottomAnchor)
+        terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
+        terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
+        terminalView.topAnchor.constraint(equalTo: topAnchor),
+        terminalView.bottomAnchor.constraint(equalTo: bottomAnchor)
       ])
     }
 
-    mountedTerminal = terminal
+    mountedTerminalView = terminalView
     mountedTerminalKey = key
   }
 
   public func unmountTerminal() {
-    mountedTerminal?.removeFromSuperview()
-    mountedTerminal = nil
+    mountedTerminalView?.removeFromSuperview()
+    mountedTerminalView = nil
     mountedTerminalKey = nil
   }
 }
+
+public typealias AuxiliaryShellTerminalHostView = EmbeddedTerminalHostView

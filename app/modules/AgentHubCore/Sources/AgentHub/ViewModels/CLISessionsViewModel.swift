@@ -34,6 +34,8 @@ public final class CLISessionsViewModel {
   private let approvalNotificationService: any ApprovalNotificationServiceProtocol
   private let approvalClaimStore: (any ApprovalClaimStoreProtocol)?
   private let hookInstaller: (any ClaudeHookInstallerProtocol)?
+  private let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
+  private let terminalBackend: EmbeddedTerminalBackend
   weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
@@ -321,6 +323,100 @@ public final class CLISessionsViewModel {
     )
   }
 
+  private enum TerminalSurfaceDescriptor {
+    case cli(
+      sessionId: String?,
+      projectPath: String,
+      cliConfiguration: CLICommandConfiguration,
+      initialPrompt: String?,
+      initialInputText: String?,
+      isDark: Bool,
+      dangerouslySkipPermissions: Bool,
+      permissionModePlan: Bool,
+      worktreeName: String?
+    )
+    case shell(projectPath: String, isDark: Bool, shellPath: String?)
+
+    @MainActor
+    func configure(_ surface: any EmbeddedTerminalSurface, metadataStore: SessionMetadataStore?) {
+      switch self {
+      case let .cli(
+        sessionId,
+        projectPath,
+        cliConfiguration,
+        initialPrompt,
+        initialInputText,
+        isDark,
+        dangerouslySkipPermissions,
+        permissionModePlan,
+        worktreeName
+      ):
+        surface.configure(
+          sessionId: sessionId,
+          projectPath: projectPath,
+          cliConfiguration: cliConfiguration,
+          initialPrompt: initialPrompt,
+          initialInputText: initialInputText,
+          isDark: isDark,
+          dangerouslySkipPermissions: dangerouslySkipPermissions,
+          permissionModePlan: permissionModePlan,
+          worktreeName: worktreeName,
+          metadataStore: metadataStore
+        )
+      case let .shell(projectPath, isDark, shellPath):
+        surface.configureShell(projectPath: projectPath, isDark: isDark, shellPath: shellPath)
+      }
+    }
+
+    func transferred(toSessionId sessionId: String) -> TerminalSurfaceDescriptor {
+      switch self {
+      case let .cli(
+        _,
+        projectPath,
+        cliConfiguration,
+        _,
+        _,
+        isDark,
+        dangerouslySkipPermissions,
+        permissionModePlan,
+        worktreeName
+      ):
+        return .cli(
+          sessionId: sessionId,
+          projectPath: projectPath,
+          cliConfiguration: cliConfiguration,
+          initialPrompt: nil,
+          initialInputText: nil,
+          isDark: isDark,
+          dangerouslySkipPermissions: dangerouslySkipPermissions,
+          permissionModePlan: permissionModePlan,
+          worktreeName: worktreeName
+        )
+      case .shell:
+        return self
+      }
+    }
+  }
+
+  private func makeTerminalSurface(
+    forKey key: String,
+    descriptor: TerminalSurfaceDescriptor
+  ) -> any EmbeddedTerminalSurface {
+    let terminal = terminalSurfaceFactory.makeSurface(for: terminalBackend)
+    terminal.updateContext(terminalSessionKey: key, sessionViewModel: self)
+    descriptor.configure(terminal, metadataStore: metadataStore)
+    return terminal
+  }
+
+  private func copyTerminalCallbacks(
+    from oldTerminal: (any EmbeddedTerminalSurface)?,
+    to newTerminal: any EmbeddedTerminalSurface
+  ) {
+    newTerminal.onUserInteraction = oldTerminal?.onUserInteraction
+    newTerminal.onRequestShowEditor = oldTerminal?.onRequestShowEditor
+    newTerminal.consumeQueuedWebPreviewContextOnSubmit = oldTerminal?.consumeQueuedWebPreviewContextOnSubmit
+  }
+
   /// Gets an existing terminal or creates a new one for the given key.
   /// Key should be session ID for real sessions, or "pending-{pendingId}" for pending sessions.
   /// This preserves the terminal PTY across pending → real session transitions.
@@ -335,11 +431,24 @@ public final class CLISessionsViewModel {
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil
-  ) -> TerminalContainerView {
+  ) -> any EmbeddedTerminalSurface {
+    let config = cliConfiguration ?? self.currentCLIConfiguration
+    let descriptor = TerminalSurfaceDescriptor.cli(
+      sessionId: sessionId,
+      projectPath: projectPath,
+      cliConfiguration: config,
+      initialPrompt: key.hasPrefix("pending-") ? initialPrompt : nil,
+      initialInputText: key.hasPrefix("pending-") ? initialInputText : nil,
+      isDark: isDark,
+      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      permissionModePlan: permissionModePlan,
+      worktreeName: worktreeName
+    )
+
     if let existing = activeTerminals[key] {
-      #if DEBUG
-      AppLogger.session.debug("[Terminal] REUSING existing terminal for key: \(key, privacy: .public)")
-      #endif
+      if activeTerminalDescriptors[key] == nil {
+        activeTerminalDescriptors[key] = descriptor
+      }
       // Send prompt to existing terminal if provided
       if let prompt = initialPrompt {
         if !key.hasPrefix("pending-") {
@@ -353,15 +462,14 @@ public final class CLISessionsViewModel {
       if let inputText = initialInputText, !inputText.isEmpty {
         existing.typeInitialTextIfNeeded(inputText)
       }
+      existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
       return existing
     }
 
     #if DEBUG
     AppLogger.session.debug("[Terminal] CREATING new terminal for key: \(key, privacy: .public)")
     #endif
-    let terminal = TerminalContainerView()
-    let config = cliConfiguration ?? self.currentCLIConfiguration
-    terminal.configure(
+    let createDescriptor = TerminalSurfaceDescriptor.cli(
       sessionId: sessionId,
       projectPath: projectPath,
       cliConfiguration: config,
@@ -370,9 +478,10 @@ public final class CLISessionsViewModel {
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
-      worktreeName: worktreeName,
-      metadataStore: metadataStore
+      worktreeName: worktreeName
     )
+    activeTerminalDescriptors[key] = createDescriptor
+    let terminal = makeTerminalSurface(forKey: key, descriptor: createDescriptor)
     activeTerminals[key] = terminal
     return terminal
   }
@@ -384,22 +493,22 @@ public final class CLISessionsViewModel {
     forKey key: String,
     projectPath: String,
     isDark: Bool = true
-  ) -> TerminalContainerView {
+  ) -> any EmbeddedTerminalSurface {
+    let descriptor = TerminalSurfaceDescriptor.shell(projectPath: projectPath, isDark: isDark, shellPath: nil)
+
     if let existing = auxiliaryShellTerminals[key] {
-      #if DEBUG
-      AppLogger.session.debug("[AuxShell] REUSING auxiliary shell for key: \(key, privacy: .public)")
-      #endif
+      if auxiliaryShellTerminalDescriptors[key] == nil {
+        auxiliaryShellTerminalDescriptors[key] = descriptor
+      }
+      existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
       return existing
     }
 
     #if DEBUG
     AppLogger.session.debug("[AuxShell] CREATING auxiliary shell for key: \(key, privacy: .public)")
     #endif
-    let terminal = TerminalContainerView()
-    terminal.configureShell(
-      projectPath: projectPath,
-      isDark: isDark
-    )
+    auxiliaryShellTerminalDescriptors[key] = descriptor
+    let terminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
     auxiliaryShellTerminals[key] = terminal
     return terminal
   }
@@ -410,6 +519,7 @@ public final class CLISessionsViewModel {
       terminal.terminateProcess()
     }
     activeTerminals.removeValue(forKey: key)
+    activeTerminalDescriptors.removeValue(forKey: key)
   }
 
   /// Transfers terminal from pending key to real session ID (for pending → real transition)
@@ -417,6 +527,10 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pendingId.uuidString)"
     if let terminal = activeTerminals.removeValue(forKey: pendingKey) {
       activeTerminals[sessionId] = terminal
+      terminal.updateContext(terminalSessionKey: sessionId, sessionViewModel: self)
+    }
+    if let descriptor = activeTerminalDescriptors.removeValue(forKey: pendingKey) {
+      activeTerminalDescriptors[sessionId] = descriptor.transferred(toSessionId: sessionId)
     }
     transferQueuedWebPreviewContext(from: pendingKey, to: sessionId)
   }
@@ -427,6 +541,7 @@ public final class CLISessionsViewModel {
       terminal.terminateProcess()
     }
     auxiliaryShellTerminals.removeValue(forKey: key)
+    auxiliaryShellTerminalDescriptors.removeValue(forKey: key)
   }
 
   /// Transfers the auxiliary shell terminal from pending key to real session ID.
@@ -434,14 +549,33 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pendingId.uuidString)"
     if let terminal = auxiliaryShellTerminals.removeValue(forKey: pendingKey) {
       auxiliaryShellTerminals[sessionId] = terminal
+      terminal.updateContext(terminalSessionKey: sessionId, sessionViewModel: self)
+    }
+    if let descriptor = auxiliaryShellTerminalDescriptors.removeValue(forKey: pendingKey) {
+      auxiliaryShellTerminalDescriptors[sessionId] = descriptor
     }
   }
 
   /// Refreshes the terminal for a session by restarting it.
   /// This reloads the session history from the JSONL file (useful when session was updated externally).
   public func refreshTerminal(forKey key: String, sessionId: String?, projectPath: String) {
-    guard let terminal = activeTerminals[key] else { return }
-    terminal.restart(sessionId: sessionId, projectPath: projectPath, cliConfiguration: currentCLIConfiguration)
+    guard let oldTerminal = activeTerminals[key] else { return }
+    let descriptor = TerminalSurfaceDescriptor.cli(
+      sessionId: sessionId,
+      projectPath: projectPath,
+      cliConfiguration: currentCLIConfiguration,
+      initialPrompt: nil,
+      initialInputText: nil,
+      isDark: true,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil
+    )
+    activeTerminalDescriptors[key] = descriptor
+    oldTerminal.terminateProcess()
+    let newTerminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
+    copyTerminalCallbacks(from: oldTerminal, to: newTerminal)
+    activeTerminals[key] = newTerminal
   }
 
   /// Types text into the terminal for a given key without pressing Enter.
@@ -456,10 +590,7 @@ public final class CLISessionsViewModel {
   public func focusTerminal(forKey key: String) {
     Task { @MainActor in
       try? await Task.sleep(for: .milliseconds(100))
-      guard let terminal = activeTerminals[key],
-            let terminalView = terminal.terminalView,
-            let window = terminalView.window else { return }
-      window.makeFirstResponder(terminalView)
+      activeTerminals[key]?.focus()
     }
   }
 
@@ -467,11 +598,12 @@ public final class CLISessionsViewModel {
   public func focusAuxiliaryShellTerminal(forKey key: String) {
     Task { @MainActor in
       try? await Task.sleep(for: .milliseconds(100))
-      guard let terminal = auxiliaryShellTerminals[key],
-            let terminalView = terminal.terminalView,
-            let window = terminalView.window else { return }
-      window.makeFirstResponder(terminalView)
+      auxiliaryShellTerminals[key]?.focus()
     }
+  }
+
+  public func recreateTerminalsForSelectedBackend() {
+    AppLogger.session.info("Terminal backend changes require app restart; keeping existing terminals alive")
   }
 
   /// Sessions being started in Hub's embedded terminal (no session ID yet)
@@ -487,13 +619,15 @@ public final class CLISessionsViewModel {
 
   /// Active agent terminal views keyed by session key.
   /// Preserves terminal PTY across pending → real session transition.
-  public var activeTerminals: [String: TerminalContainerView] = [:]
+  public var activeTerminals: [String: any EmbeddedTerminalSurface] = [:]
+  @ObservationIgnored private var activeTerminalDescriptors: [String: TerminalSurfaceDescriptor] = [:]
 
   /// Active auxiliary shell terminals keyed by session key.
   /// Preserves shell PTY across session selection changes and pending → real transitions.
-  public var auxiliaryShellTerminals: [String: TerminalContainerView] = [:]
+  public var auxiliaryShellTerminals: [String: any EmbeddedTerminalSurface] = [:]
+  @ObservationIgnored private var auxiliaryShellTerminalDescriptors: [String: TerminalSurfaceDescriptor] = [:]
 
-  public var managedTerminalEntries: [(key: String, terminal: TerminalContainerView)] {
+  public var managedTerminalEntries: [(key: String, terminal: any EmbeddedTerminalSurface)] {
     activeTerminals.map { ($0.key, $0.value) }
       + auxiliaryShellTerminals.map { ("shell:\($0.key)", $0.value) }
   }
@@ -561,7 +695,9 @@ public final class CLISessionsViewModel {
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
     approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared,
     approvalClaimStore: (any ApprovalClaimStoreProtocol)? = nil,
-    hookInstaller: (any ClaudeHookInstallerProtocol)? = nil
+    hookInstaller: (any ClaudeHookInstallerProtocol)? = nil,
+    terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
+    terminalBackend: EmbeddedTerminalBackend = .storedPreference
   ) {
     // [CLISessionsVM] init called")
     self.monitorService = monitorService
@@ -572,6 +708,8 @@ public final class CLISessionsViewModel {
     self.approvalNotificationService = approvalNotificationService
     self.approvalClaimStore = approvalClaimStore
     self.hookInstaller = hookInstaller
+    self.terminalSurfaceFactory = terminalSurfaceFactory
+    self.terminalBackend = terminalBackend
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
