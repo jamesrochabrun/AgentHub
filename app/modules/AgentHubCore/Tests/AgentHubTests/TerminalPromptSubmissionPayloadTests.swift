@@ -76,4 +76,16 @@ struct TerminalPromptSubmissionPayloadTests {
     #expect(payload == expected)
     #expect(!payload.contains(0x0D))
   }
+
+  @Test("bracketedPasteTextBytes always wraps and omits carriage return")
+  func bracketedPasteTextBytesAlwaysWraps() {
+    let prompt = "Queued update\nwith multiple lines"
+    let start: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E]
+    let end: [UInt8] = [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]
+
+    let payload = TerminalPromptSubmissionPayload.bracketedPasteTextBytes(prompt: prompt)
+
+    #expect(payload == start + Array(prompt.utf8) + end)
+    #expect(!payload.contains(0x0D))
+  }
 }

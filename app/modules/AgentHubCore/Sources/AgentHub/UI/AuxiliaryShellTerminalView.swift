@@ -7,7 +7,9 @@ import SwiftUI
 
 public struct AuxiliaryShellTerminalView: NSViewRepresentable {
   @Environment(\.colorScheme) private var colorScheme
+  @Environment(\.runtimeTheme) private var runtimeTheme
   @AppStorage(AgentHubDefaults.terminalFontSize) private var terminalFontSize: Double = 12
+  @AppStorage(AgentHubDefaults.terminalFontFamily) private var terminalFontFamily: String = "SF Mono"
 
   let terminalKey: String
   let projectPath: String
@@ -35,14 +37,14 @@ public struct AuxiliaryShellTerminalView: NSViewRepresentable {
   public func updateNSView(_ nsView: AuxiliaryShellTerminalHostView, context: Context) {
     let terminal = resolveTerminal()
     nsView.mount(terminal, key: terminalKey)
-    terminal.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize))
+    terminal.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), fontFamily: terminalFontFamily, theme: runtimeTheme)
   }
 
   public static func dismantleNSView(_ nsView: AuxiliaryShellTerminalHostView, coordinator: ()) {
     nsView.unmountTerminal()
   }
 
-  private func resolveTerminal() -> TerminalContainerView {
+  private func resolveTerminal() -> any EmbeddedTerminalSurface {
     viewModel.getOrCreateAuxiliaryShellTerminal(
       forKey: terminalKey,
       projectPath: projectPath,

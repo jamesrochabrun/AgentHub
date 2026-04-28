@@ -230,6 +230,8 @@ public struct MonitoringCardView: View {
       await loadWebPreviewCandidateIfNeeded()
     }
     .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
+      try? await Task.sleep(for: .seconds(2))
+      guard !Task.isCancelled else { return }
       await sessionGitHubQuickAccessViewModel.load(
         projectPath: session.projectPath,
         branchName: session.branchName,

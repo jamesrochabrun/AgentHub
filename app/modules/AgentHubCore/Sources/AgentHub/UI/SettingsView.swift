@@ -8,11 +8,17 @@
 import SwiftUI
 import Canvas
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 public struct SettingsView: View {
   @Environment(\.agentHub) private var agentHub
   @State private var aiConfigViewModel = AIConfigSettingsViewModel()
   @State private var isClaudeConfigurationExpanded = true
   @State private var isCodexConfigurationExpanded = true
+  @State private var pendingTerminalBackend: EmbeddedTerminalBackend?
+  @State private var showTerminalBackendRelaunchAlert = false
 
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
@@ -25,6 +31,12 @@ public struct SettingsView: View {
 
   @AppStorage(AgentHubDefaults.terminalFontFamily)
   private var terminalFontFamily: String = "SF Mono"
+
+  @AppStorage(AgentHubDefaults.terminalBackend)
+  private var terminalBackendRawValue: Int = EmbeddedTerminalBackend.ghostty.rawValue
+
+  @AppStorage(AgentHubDefaults.terminalGhosttyConfigPath)
+  private var terminalGhosttyConfigPath: String = ""
 
   @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
   private var sourceEditorMinimapEnabled: Bool = false
@@ -84,6 +96,10 @@ public struct SettingsView: View {
   ]
   private let webPreviewInspectorDataLevels: [ElementInspectorDataLevel] = [.regular, .full]
 
+  private var activeTerminalBackend: EmbeddedTerminalBackend {
+    agentHub?.terminalBackend ?? .storedPreference
+  }
+
   public init() {}
 
   public var body: some View {
@@ -119,6 +135,24 @@ public struct SettingsView: View {
     .task {
       await ensureSupportedThemeSelection()
       await aiConfigViewModel.load(service: agentHub?.aiConfigService)
+    }
+    .alert(
+      "Relaunch AgentHub?",
+      isPresented: $showTerminalBackendRelaunchAlert,
+      presenting: pendingTerminalBackend
+    ) { backend in
+      Button("Cancel", role: .cancel) {
+        pendingTerminalBackend = nil
+      }
+      Button("Relaunch") {
+        terminalBackendRawValue = backend.rawValue
+        pendingTerminalBackend = nil
+        agentHub?.relaunchApplication()
+      }
+    } message: { backend in
+      Text(
+        "Switching to \(backend.label) requires relaunching AgentHub. Running terminals will be closed during relaunch."
+      )
     }
   }
 
@@ -223,6 +257,14 @@ public struct SettingsView: View {
       }
 
       Section("Terminal") {
+        Picker("Terminal", selection: terminalBackendSelectionBinding) {
+          ForEach(EmbeddedTerminalBackend.allCases, id: \.rawValue) { backend in
+            Text(backend.label).tag(backend.rawValue)
+          }
+        }
+
+        ghosttyConfigFileSetting
+
         Picker("Font", selection: $terminalFontFamily) {
           ForEach(terminalFontFamilies, id: \.self) { family in
             Text(family)
@@ -436,6 +478,66 @@ public struct SettingsView: View {
         }
       }
     )
+  }
+
+  private var terminalBackendSelectionBinding: Binding<Int> {
+    Binding(
+      get: { terminalBackendRawValue },
+      set: { newValue in
+        let requestedBackend = EmbeddedTerminalBackend(rawValue: newValue) ?? .ghostty
+        guard requestedBackend != activeTerminalBackend else {
+          terminalBackendRawValue = requestedBackend.rawValue
+          pendingTerminalBackend = nil
+          return
+        }
+
+        pendingTerminalBackend = requestedBackend
+        showTerminalBackendRelaunchAlert = true
+      }
+    )
+  }
+
+  private var ghosttyConfigFileSetting: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Ghostty config file")
+
+      HStack(spacing: 8) {
+        TextField("Optional config file path", text: $terminalGhosttyConfigPath)
+          .textFieldStyle(.roundedBorder)
+
+        Button("Choose…", action: chooseGhosttyConfigFile)
+
+        Button("Clear") {
+          terminalGhosttyConfigPath = ""
+        }
+        .disabled(terminalGhosttyConfigPath.isEmpty)
+      }
+
+      Text("Applied when creating new Ghostty terminal sessions.")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+  }
+
+  private func chooseGhosttyConfigFile() {
+    #if canImport(AppKit)
+    let panel = NSOpenPanel()
+    panel.title = "Choose Ghostty Config"
+    panel.message = "Choose a Ghostty configuration file for embedded Ghostty terminals."
+    panel.prompt = "Choose"
+    panel.canChooseFiles = true
+    panel.canChooseDirectories = false
+    panel.allowsMultipleSelection = false
+
+    let expandedPath = (terminalGhosttyConfigPath as NSString).expandingTildeInPath
+    if !expandedPath.isEmpty {
+      panel.directoryURL = URL(fileURLWithPath: expandedPath).deletingLastPathComponent()
+    }
+
+    if panel.runModal() == .OK, let url = panel.url {
+      terminalGhosttyConfigPath = url.path
+    }
+    #endif
   }
 
   private func ensureSupportedThemeSelection() async {

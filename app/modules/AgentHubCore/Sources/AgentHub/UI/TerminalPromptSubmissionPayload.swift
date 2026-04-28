@@ -32,4 +32,8 @@ enum TerminalPromptSubmissionPayload {
     }
     return payload
   }
+
+  static func bracketedPasteTextBytes(prompt: String) -> [UInt8] {
+    textBytes(prompt: prompt, bracketedPasteMode: true)
+  }
 }

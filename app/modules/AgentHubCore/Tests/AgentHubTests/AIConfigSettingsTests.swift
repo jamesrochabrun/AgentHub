@@ -254,12 +254,26 @@ struct AIConfigServicePersistenceTests {
     try await store.saveAIConfig(
       AIConfigRecord(provider: "claude", defaultModel: "opus")
     )
+    try await store.saveTerminalWorkspace(
+      TerminalWorkspaceSnapshot(
+        panels: [
+          TerminalWorkspacePanelSnapshot(
+            role: .primary,
+            tabs: [TerminalWorkspaceTabSnapshot(role: .agent)]
+          )
+        ]
+      ),
+      provider: .claude,
+      sessionId: "session-1",
+      backend: .ghostty
+    )
 
     try await store.clearAll()
 
     #expect(try await store.getCustomName(for: "session-1") == nil)
     #expect(try await store.getRepoMapping(for: "session-1") == nil)
     #expect(try await store.getAIConfig(for: "claude") == nil)
+    #expect(store.loadTerminalWorkspace(provider: .claude, sessionId: "session-1", backend: .ghostty) == nil)
   }
 
   @Test("Pinned session IDs round-trip through async and sync reads")
@@ -276,6 +290,49 @@ struct AIConfigServicePersistenceTests {
 
     #expect(try await store.getPinnedSessionIds().isEmpty)
     #expect(store.getPinnedSessionIdsSync().isEmpty)
+  }
+
+  @Test("Terminal workspace snapshots are scoped by provider session and backend")
+  func terminalWorkspaceRoundTrip() async throws {
+    let dbPath = temporaryDatabasePath()
+    let store = try SessionMetadataStore(path: dbPath)
+    let snapshot = TerminalWorkspaceSnapshot(
+      panels: [
+        TerminalWorkspacePanelSnapshot(
+          role: .primary,
+          tabs: [
+            TerminalWorkspaceTabSnapshot(
+              role: .agent,
+              name: "Agent",
+              title: "Claude",
+              workingDirectory: "/tmp/project"
+            ),
+            TerminalWorkspaceTabSnapshot(
+              role: .shell,
+              name: "Shell",
+              title: "zsh",
+              workingDirectory: "/tmp/project"
+            )
+          ],
+          activeTabIndex: 1
+        )
+      ]
+    )
+
+    try await store.saveTerminalWorkspace(
+      snapshot,
+      provider: .claude,
+      sessionId: "session-1",
+      backend: .ghostty
+    )
+
+    #expect(store.loadTerminalWorkspace(provider: .claude, sessionId: "session-1", backend: .ghostty) == snapshot)
+    #expect(store.loadTerminalWorkspace(provider: .codex, sessionId: "session-1", backend: .ghostty) == nil)
+    #expect(store.loadTerminalWorkspace(provider: .claude, sessionId: "session-1", backend: .regular) == nil)
+
+    try await store.deleteTerminalWorkspace(provider: .claude, sessionId: "session-1", backend: .ghostty)
+
+    #expect(store.loadTerminalWorkspace(provider: .claude, sessionId: "session-1", backend: .ghostty) == nil)
   }
 }
 

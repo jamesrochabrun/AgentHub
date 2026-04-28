@@ -10,6 +10,10 @@ import Foundation
 import os
 import ClaudeCodeClient
 
+#if canImport(AppKit)
+import AppKit
+#endif
+
 /// Central service provider that manages all AgentHub services
 ///
 /// `AgentHubProvider` provides lazy initialization of services and a single
@@ -34,6 +38,7 @@ public final class AgentHubProvider {
 
   /// The configuration used by this provider
   public let configuration: AgentHubConfiguration
+  public let terminalBackend: EmbeddedTerminalBackend
 
   // MARK: - Lazy Services
 
@@ -187,6 +192,7 @@ public final class AgentHubProvider {
   /// - Parameter configuration: Configuration for services. Defaults to `.default`
   public init(configuration: AgentHubConfiguration = .default) {
     self.configuration = configuration
+    self.terminalBackend = .storedPreference
 
     // Persist developer-provided commands to UserDefaults
     let defaults = UserDefaults.standard
@@ -294,7 +300,9 @@ public final class AgentHubProvider {
       metadataStore: metadataStore,
       webPreviewCandidateService: webPreviewCandidateService,
       approvalClaimStore: claimStore,
-      hookInstaller: installer
+      hookInstaller: installer,
+      terminalBackend: terminalBackend,
+      terminalWorkspaceStore: metadataStore
     )
     vm.agentHubProvider = self
     return vm
@@ -326,9 +334,10 @@ public final class AgentHubProvider {
     let sidecar = claudeHookSidecarWatcher
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached(priority: .userInitiated) {
-      await claimStore.resetAll()
-      await sidecar.wipeAll()
-      await installer.reconcileOnLaunch(expectedPaths: [])
+      async let resetClaims: Void = claimStore.resetAll()
+      async let wipeSidecars: Void = sidecar.wipeAll()
+      async let reconcileHooks: Void = installer.reconcileOnLaunch(expectedPaths: [])
+      _ = await (resetClaims, wipeSidecars, reconcileHooks)
       semaphore.signal()
     }
     if semaphore.wait(timeout: .now() + timeout) == .timedOut {
@@ -353,9 +362,10 @@ public final class AgentHubProvider {
     let sidecar = claudeHookSidecarWatcher
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached(priority: .userInitiated) {
-      await installer.flushAll()
-      await claimStore.resetAll()
-      await sidecar.wipeAll()
+      async let flushHooks: Void = installer.flushAll()
+      async let resetClaims: Void = claimStore.resetAll()
+      async let wipeSidecars: Void = sidecar.wipeAll()
+      _ = await (flushHooks, resetClaims, wipeSidecars)
       semaphore.signal()
     }
     let deadline = DispatchTime.now() + timeout
@@ -374,5 +384,33 @@ public final class AgentHubProvider {
       AppLogger.session.info("Terminating terminal for key: \(key)")
       terminal.terminateProcess()
     }
+  }
+
+  public func recreateEmbeddedTerminalsForSelectedBackend() {
+    AppLogger.session.info("Terminal backend changes require app restart; keeping existing terminals alive")
+  }
+
+  public func relaunchApplication() {
+    #if canImport(AppKit)
+    let bundlePath = Bundle.main.bundlePath
+    let escapedBundlePath = shellEscapedPath(bundlePath)
+    let script = "sleep 1; /usr/bin/open -n \(escapedBundlePath)"
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sh")
+    process.arguments = ["-c", script]
+
+    do {
+      try process.run()
+      NSApplication.shared.terminate(nil)
+    } catch {
+      AppLogger.session.error("Failed to relaunch AgentHub: \(error.localizedDescription)")
+    }
+    #else
+    AppLogger.session.error("Relaunch is unavailable outside AppKit")
+    #endif
+  }
+
+  private func shellEscapedPath(_ path: String) -> String {
+    "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
   }
 }

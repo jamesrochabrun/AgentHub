@@ -112,8 +112,9 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     let previouslyInstalled = Set(loadInstalledPaths())
     let stale = previouslyInstalled.subtracting(expected)
     for path in stale {
-      uninstall(atProjectPath: path)
+      uninstall(atProjectPath: path, updatesInstalledPaths: false)
     }
+    saveInstalledPaths(Array(previouslyInstalled.subtracting(stale)))
   }
 
   // MARK: - Install / uninstall mechanics
@@ -129,14 +130,16 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     }
   }
 
-  private func uninstall(atProjectPath path: String) {
+  private func uninstall(atProjectPath path: String, updatesInstalledPaths: Bool = true) {
     let settingsURL = ClaudeHookPaths.settingsLocalURL(inProjectAt: path)
     do {
       migrateLegacyPerProjectScript(atProjectPath: path, settingsURL: settingsURL)
       if fileManager.fileExists(atPath: settingsURL.path) {
         try unmergeSettingsLocal(at: settingsURL, scriptPath: sharedScriptURL.path)
       }
-      forgetInstalled(path: path)
+      if updatesInstalledPaths {
+        forgetInstalled(path: path)
+      }
     } catch {
       AppLogger.watcher.error("[ClaudeHookInstaller] uninstall failed for \(path): \(error.localizedDescription)")
     }
