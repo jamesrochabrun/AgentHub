@@ -1,5 +1,5 @@
 {
-  "originHash" : "13aed19909ebcecf9b53ec458c34bd9403660f196f661ce384495b288c73164c",
+  "originHash" : "048fdc7eabbe5ec84600004f7df71198287fc1f04fda1b094732ae52d9cf8ebb",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -62,6 +62,15 @@
       "state" : {
         "revision" : "92efb78b73a8b665ee74bacfb0f1f5b17bbe1b38",
         "version" : "0.1.0"
+      }
+    },
+    {
+      "identity" : "ghosttyswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jamesrochabrun/GhosttySwift",
+      "state" : {
+        "revision" : "09013e66d2ee1854519367824bdf0197a81e4e2e",
+        "version" : "1.0.3"
       }
     },
     {
