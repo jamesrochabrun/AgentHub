@@ -334,9 +334,10 @@ public final class AgentHubProvider {
     let sidecar = claudeHookSidecarWatcher
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached(priority: .userInitiated) {
-      await claimStore.resetAll()
-      await sidecar.wipeAll()
-      await installer.reconcileOnLaunch(expectedPaths: [])
+      async let resetClaims: Void = claimStore.resetAll()
+      async let wipeSidecars: Void = sidecar.wipeAll()
+      async let reconcileHooks: Void = installer.reconcileOnLaunch(expectedPaths: [])
+      _ = await (resetClaims, wipeSidecars, reconcileHooks)
       semaphore.signal()
     }
     if semaphore.wait(timeout: .now() + timeout) == .timedOut {
@@ -361,9 +362,10 @@ public final class AgentHubProvider {
     let sidecar = claudeHookSidecarWatcher
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached(priority: .userInitiated) {
-      await installer.flushAll()
-      await claimStore.resetAll()
-      await sidecar.wipeAll()
+      async let flushHooks: Void = installer.flushAll()
+      async let resetClaims: Void = claimStore.resetAll()
+      async let wipeSidecars: Void = sidecar.wipeAll()
+      _ = await (flushHooks, resetClaims, wipeSidecars)
       semaphore.signal()
     }
     let deadline = DispatchTime.now() + timeout
