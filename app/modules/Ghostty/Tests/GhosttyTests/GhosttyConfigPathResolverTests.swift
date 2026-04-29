@@ -1,7 +1,8 @@
+import AgentHubCore
 import Foundation
 import Testing
 
-@testable import AgentHubCore
+@testable import Ghostty
 
 @Suite("Ghostty config path resolver")
 struct GhosttyConfigPathResolverTests {

@@ -187,7 +187,8 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       return existing
     }
 
-    let terminal = DefaultEmbeddedTerminalSurfaceFactory().makeSurface(for: .storedPreference)
+    let factory = agentHub?.terminalSurfaceFactory ?? DefaultEmbeddedTerminalSurfaceFactory()
+    let terminal = factory.makeSurface(for: .storedPreference)
     terminal.configure(
       sessionId: sessionId,
       projectPath: projectPath,

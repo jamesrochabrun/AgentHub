@@ -8,8 +8,8 @@
 import Darwin
 import Foundation
 
-final class TerminalProcessRegistry {
-  static let shared = TerminalProcessRegistry()
+public final class TerminalProcessRegistry {
+  public static let shared = TerminalProcessRegistry()
 
   private let lock = NSLock()
   private let storageKey = "AgentHub.TerminalProcessRegistry"
@@ -19,7 +19,7 @@ final class TerminalProcessRegistry {
     load()
   }
 
-  func register(pid: pid_t) {
+  public func register(pid: pid_t) {
     guard pid > 0 else { return }
     lock.lock()
     entries[pid] = Date().timeIntervalSince1970
@@ -28,7 +28,7 @@ final class TerminalProcessRegistry {
     lock.unlock()
   }
 
-  func unregister(pid: pid_t) {
+  public func unregister(pid: pid_t) {
     guard pid > 0 else { return }
     lock.lock()
     entries.removeValue(forKey: pid)

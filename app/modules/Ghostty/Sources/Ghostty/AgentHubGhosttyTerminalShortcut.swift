@@ -6,7 +6,7 @@
 import AppKit
 import GhosttySwift
 
-enum AgentHubGhosttyTerminalShortcut: Equatable {
+public enum AgentHubGhosttyTerminalShortcut: Equatable {
   case startSearch
   case searchNext
   case searchPrevious
@@ -16,7 +16,7 @@ enum AgentHubGhosttyTerminalShortcut: Equatable {
   case focusPanel(TerminalPanelNavigationDirection)
   case selectTab(TerminalTabNavigationDirection)
 
-  static func action(for event: NSEvent) -> AgentHubGhosttyTerminalShortcut? {
+  public static func action(for event: NSEvent) -> AgentHubGhosttyTerminalShortcut? {
     action(
       keyCode: event.keyCode,
       charactersIgnoringModifiers: event.charactersIgnoringModifiers,
@@ -24,7 +24,7 @@ enum AgentHubGhosttyTerminalShortcut: Equatable {
     )
   }
 
-  static func action(
+  public static func action(
     keyCode: UInt16,
     charactersIgnoringModifiers: String?,
     modifierFlags: NSEvent.ModifierFlags

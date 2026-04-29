@@ -40,6 +40,12 @@ public final class AgentHubProvider {
   public let configuration: AgentHubConfiguration
   public let terminalBackend: EmbeddedTerminalBackend
 
+  /// Factory used to construct embedded terminal surfaces for the chosen backend.
+  /// The app target injects a Ghostty-aware factory; tests and standalone uses
+  /// of `AgentHubCore` get the default factory which falls back to the regular
+  /// SwiftTerm surface when `.ghostty` is selected.
+  public let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
+
   // MARK: - Lazy Services
 
   /// Monitor service for tracking CLI sessions
@@ -189,10 +195,19 @@ public final class AgentHubProvider {
   // MARK: - Initialization
 
   /// Creates a provider with the specified configuration
-  /// - Parameter configuration: Configuration for services. Defaults to `.default`
-  public init(configuration: AgentHubConfiguration = .default) {
+  /// - Parameters:
+  ///   - configuration: Configuration for services. Defaults to `.default`
+  ///   - terminalSurfaceFactory: Optional factory override. Defaults to a
+  ///     parameterless `DefaultEmbeddedTerminalSurfaceFactory()` which falls
+  ///     back to the regular backend when `.ghostty` is selected. The app
+  ///     target should pass a Ghostty-aware factory.
+  public init(
+    configuration: AgentHubConfiguration = .default,
+    terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory()
+  ) {
     self.configuration = configuration
     self.terminalBackend = .storedPreference
+    self.terminalSurfaceFactory = terminalSurfaceFactory
 
     // Persist developer-provided commands to UserDefaults
     let defaults = UserDefaults.standard
@@ -301,6 +316,7 @@ public final class AgentHubProvider {
       webPreviewCandidateService: webPreviewCandidateService,
       approvalClaimStore: claimStore,
       hookInstaller: installer,
+      terminalSurfaceFactory: terminalSurfaceFactory,
       terminalBackend: terminalBackend,
       terminalWorkspaceStore: metadataStore
     )

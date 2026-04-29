@@ -61,12 +61,24 @@ public protocol EmbeddedTerminalSurfaceFactory {
 }
 
 public struct DefaultEmbeddedTerminalSurfaceFactory: EmbeddedTerminalSurfaceFactory {
-  public init() {}
+  private let ghosttyProvider: (@MainActor () -> any EmbeddedTerminalSurface)?
+
+  /// - Parameter ghosttyProvider: Closure that builds a Ghostty-backed surface.
+  ///   Wired by the app target after importing the `Ghostty` module. When
+  ///   omitted (e.g. unit tests, or builds where the Ghostty module is absent),
+  ///   selecting `.ghostty` silently falls back to the regular SwiftTerm
+  ///   surface so core code keeps functioning standalone.
+  public init(ghosttyProvider: (@MainActor () -> any EmbeddedTerminalSurface)? = nil) {
+    self.ghosttyProvider = ghosttyProvider
+  }
 
   public func makeSurface(for backend: EmbeddedTerminalBackend) -> any EmbeddedTerminalSurface {
     switch backend {
     case .ghostty:
-      return AgentHubGhosttyTerminalSurface()
+      if let ghosttyProvider {
+        return ghosttyProvider()
+      }
+      return TerminalContainerView()
     case .regular:
       return TerminalContainerView()
     }
