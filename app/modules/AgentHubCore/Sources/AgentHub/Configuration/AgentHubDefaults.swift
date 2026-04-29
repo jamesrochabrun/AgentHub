@@ -190,6 +190,10 @@ public enum AgentHubDefaults {
   /// Type: String (default: "neutral")
   public static let selectedTheme = "\(keyPrefix)theme.selected"
 
+  /// Last non-Ghostty color theme selected before switching to the Ghostty terminal backend
+  /// Type: String (default: unset)
+  public static let previousNonGhosttyTheme = "\(keyPrefix)theme.previousNonGhostty"
+
   /// Custom primary color hex value
   /// Type: String (default: "#7C3AED")
   public static let customPrimaryHex = "\(keyPrefix)theme.customPrimaryHex"

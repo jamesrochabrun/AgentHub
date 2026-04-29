@@ -1,0 +1,36 @@
+name: "Ghostty"
+version: "1.2"
+author: "AgentHub"
+description: "Ghostty-only theme with Singularity highlights and soft app backgrounds"
+
+colors:
+  brand:
+    primary: "#A0AEC0"
+    secondary: "#2D3748"
+    tertiary: "#CBD5E0"
+
+  backgrounds:
+    dark: "#040F16"
+    light: "#FBFBFF"
+
+  terminal:
+    background: "#040F16"
+    foreground: "#E2E8F0"
+    cursor: "#A0AEC0"
+    ansi:
+      black: "#0D0D0D"
+      red: "#E06C75"
+      green: "#98C379"
+      yellow: "#ECC94B"
+      blue: "#61AFEF"
+      magenta: "#C678DD"
+      cyan: "#56B6C2"
+      white: "#E2E8F0"
+      brightBlack: "#718096"
+      brightRed: "#E88A91"
+      brightGreen: "#B5D4A1"
+      brightYellow: "#F6E05E"
+      brightBlue: "#8CC8F5"
+      brightMagenta: "#D8A0E8"
+      brightCyan: "#7DCBD5"
+      brightWhite: "#F7FAFC"
