@@ -2,7 +2,7 @@ import AppKit
 import GhosttySwift
 import Testing
 
-@testable import AgentHubCore
+@testable import Ghostty
 
 @Suite("AgentHub Ghostty terminal shortcuts")
 struct AgentHubGhosttyTerminalShortcutTests {

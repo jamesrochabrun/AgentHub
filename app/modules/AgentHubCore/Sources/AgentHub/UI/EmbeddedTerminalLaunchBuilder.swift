@@ -5,19 +5,24 @@
 
 import Foundation
 
-struct EmbeddedTerminalLaunch {
-  let shellCommand: String
-  let environment: [String: String]
+public struct EmbeddedTerminalLaunch {
+  public let shellCommand: String
+  public let environment: [String: String]
 
-  var swiftTermExecutable: String { "/bin/bash" }
-  var swiftTermArguments: [String] { ["-c", shellCommand] }
-  var swiftTermEnvironment: [String] {
+  public init(shellCommand: String, environment: [String: String]) {
+    self.shellCommand = shellCommand
+    self.environment = environment
+  }
+
+  public var swiftTermExecutable: String { "/bin/bash" }
+  public var swiftTermArguments: [String] { ["-c", shellCommand] }
+  public var swiftTermEnvironment: [String] {
     var swiftTermEnvironment = environment
     swiftTermEnvironment["TERM_PROGRAM"] = "SwiftTerm"
     return swiftTermEnvironment.map { "\($0.key)=\($0.value)" }
   }
 
-  var ghosttyCommand: String {
+  public var ghosttyCommand: String {
     "/bin/bash -c \(Self.shellEscapeSingleQuotedAllowingNewlines(shellCommand))"
   }
 
@@ -27,10 +32,10 @@ struct EmbeddedTerminalLaunch {
   }
 }
 
-enum EmbeddedTerminalLaunchError: LocalizedError, Equatable {
+public enum EmbeddedTerminalLaunchError: LocalizedError, Equatable {
   case executableNotFound(String)
 
-  var errorDescription: String? {
+  public var errorDescription: String? {
     switch self {
     case .executableNotFound(let command):
       return "Could not find '\(command)' command."
@@ -38,8 +43,8 @@ enum EmbeddedTerminalLaunchError: LocalizedError, Equatable {
   }
 }
 
-enum EmbeddedTerminalLaunchBuilder {
-  static func cliLaunch(
+public enum EmbeddedTerminalLaunchBuilder {
+  public static func cliLaunch(
     sessionId: String?,
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
@@ -97,7 +102,7 @@ enum EmbeddedTerminalLaunchBuilder {
     return .success(EmbeddedTerminalLaunch(shellCommand: shellCommand, environment: environment))
   }
 
-  static func shellLaunch(
+  public static func shellLaunch(
     projectPath: String,
     shellPath: String? = nil
   ) -> EmbeddedTerminalLaunch {

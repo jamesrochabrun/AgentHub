@@ -3,10 +3,11 @@
 //  AgentHub
 //
 
+import AgentHubCore
 import Foundation
 
-enum GhosttyConfigPathResolver {
-  static func configuredPath(
+public enum GhosttyConfigPathResolver {
+  public static func configuredPath(
     defaults: UserDefaults = .standard,
     fileManager: FileManager = .default
   ) -> String? {

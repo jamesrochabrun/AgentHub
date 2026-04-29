@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AgentHubCore
+import Ghostty
 import UserNotifications
 import CoreText
 
@@ -15,8 +16,14 @@ import CoreText
 /// Handles app lifecycle events for process cleanup
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
-  /// Shared provider instance - created here so it's available for lifecycle events
-  let provider = AgentHubProvider()
+  /// Shared provider instance - created here so it's available for lifecycle events.
+  /// Wires the Ghostty-aware terminal surface factory; `AgentHubCore` falls back
+  /// to the regular SwiftTerm surface when no provider is supplied.
+  let provider = AgentHubProvider(
+    terminalSurfaceFactory: DefaultEmbeddedTerminalSurfaceFactory(
+      ghosttyProvider: { AgentHubGhosttyTerminalSurface() }
+    )
+  )
 
   /// Update controller for Sparkle auto-updates
   let updateController = UpdateController()

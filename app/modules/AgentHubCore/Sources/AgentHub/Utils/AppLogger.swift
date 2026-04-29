@@ -15,39 +15,39 @@ import os
 /// AppLogger.git.info("Found \(count) changed files")
 /// AppLogger.watcher.warning("Stale watcher detected")
 /// ```
-enum AppLogger {
+public enum AppLogger {
   private static let subsystem = "com.agenthub"
 
   /// Session-related logging (parsing, monitoring, lifecycle)
-  static let session = Logger(subsystem: subsystem, category: "Session")
+  public static let session = Logger(subsystem: subsystem, category: "Session")
 
   /// Git operations (diff, worktree, commands)
-  static let git = Logger(subsystem: subsystem, category: "Git")
+  public static let git = Logger(subsystem: subsystem, category: "Git")
 
   /// Intelligence/AI stream processing
-  static let intelligence = Logger(subsystem: subsystem, category: "Intelligence")
+  public static let intelligence = Logger(subsystem: subsystem, category: "Intelligence")
 
   /// Orchestration and worktree execution
-  static let orchestration = Logger(subsystem: subsystem, category: "Orchestration")
+  public static let orchestration = Logger(subsystem: subsystem, category: "Orchestration")
 
   /// Stats and metrics collection
-  static let stats = Logger(subsystem: subsystem, category: "Stats")
+  public static let stats = Logger(subsystem: subsystem, category: "Stats")
 
   /// Search and indexing
-  static let search = Logger(subsystem: subsystem, category: "Search")
+  public static let search = Logger(subsystem: subsystem, category: "Search")
 
   /// File watching and monitoring
-  static let watcher = Logger(subsystem: subsystem, category: "Watcher")
+  public static let watcher = Logger(subsystem: subsystem, category: "Watcher")
 
   /// UI-related logging
-  static let ui = Logger(subsystem: subsystem, category: "UI")
+  public static let ui = Logger(subsystem: subsystem, category: "UI")
 
   /// Dev server lifecycle and output
-  static let devServer = Logger(subsystem: subsystem, category: "DevServer")
+  public static let devServer = Logger(subsystem: subsystem, category: "DevServer")
 
   /// iOS Simulator management
-  static let simulator = Logger(subsystem: subsystem, category: "Simulator")
+  public static let simulator = Logger(subsystem: subsystem, category: "Simulator")
 
   /// GitHub CLI operations (PRs, issues, reviews, checks)
-  static let github = Logger(subsystem: subsystem, category: "GitHub")
+  public static let github = Logger(subsystem: subsystem, category: "GitHub")
 }

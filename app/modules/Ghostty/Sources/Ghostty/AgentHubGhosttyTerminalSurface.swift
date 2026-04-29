@@ -3,12 +3,13 @@
 //  AgentHub
 //
 
+import AgentHubCore
 import AppKit
 import GhosttySwift
 import SwiftUI
 
 @MainActor
-final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
+public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   private struct PendingMount {
     let command: String
     let environment: [String: String]
@@ -35,45 +36,45 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
   private static let terminalPaneDividerSize: CGFloat = 1
   private static let terminalTabStripHeight: CGFloat = 24
 
-  var onUserInteraction: (() -> Void)?
-  var onRequestShowEditor: (() -> Void)?
-  var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
-  var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
+  public var onUserInteraction: (() -> Void)?
+  public var onRequestShowEditor: (() -> Void)?
+  public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+  public var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
   private var terminalSessionKey: String?
   private weak var sessionViewModel: CLISessionsViewModel?
   var terminateProcessCallCount = 0
 
-  var view: NSView { self }
+  public var view: NSView { self }
 
-  var currentProcessPID: Int32? {
+  public var currentProcessPID: Int32? {
     protectedAgentController?.foregroundProcessID ?? activeController?.foregroundProcessID
   }
 
-  override var isOpaque: Bool { false }
+  public override var isOpaque: Bool { false }
 
-  override init(frame frameRect: NSRect) {
+  public override init(frame frameRect: NSRect) {
     super.init(frame: frameRect)
     makeViewTransparent(self)
   }
 
-  required init?(coder: NSCoder) {
+  public required init?(coder: NSCoder) {
     super.init(coder: coder)
     makeViewTransparent(self)
   }
 
-  override func performKeyEquivalent(with event: NSEvent) -> Bool {
+  public override func performKeyEquivalent(with event: NSEvent) -> Bool {
     if handleKeyDown(event) {
       return true
     }
     return super.performKeyEquivalent(with: event)
   }
 
-  override func viewDidMoveToWindow() {
+  public override func viewDidMoveToWindow() {
     super.viewDidMoveToWindow()
     mountPendingGhosttySessionIfReady()
   }
 
-  override func layout() {
+  public override func layout() {
     super.layout()
     mountPendingGhosttySessionIfReady()
   }
@@ -89,12 +90,12 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     }
   }
 
-  func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?) {
+  public func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?) {
     self.terminalSessionKey = terminalSessionKey
     self.sessionViewModel = sessionViewModel
   }
 
-  func configure(
+  public func configure(
     sessionId: String?,
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
@@ -137,7 +138,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     }
   }
 
-  func configureShell(projectPath: String, isDark: Bool, shellPath: String?) {
+  public func configureShell(projectPath: String, isDark: Bool, shellPath: String?) {
     guard !isConfigured else { return }
     isConfigured = true
     self.projectPath = projectPath
@@ -157,7 +158,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     )
   }
 
-  func restart(sessionId: String?, projectPath: String, cliConfiguration: CLICommandConfiguration) {
+  public func restart(sessionId: String?, projectPath: String, cliConfiguration: CLICommandConfiguration) {
     terminateProcess()
     removeMountedContent()
     terminalSession = nil
@@ -182,18 +183,18 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     )
   }
 
-  func terminateProcess() {
+  public func terminateProcess() {
     terminateProcessCallCount += 1
     terminalSession?.requestCloseAll()
     cancelPIDRegistrationTasks()
     unregisterAllPIDs()
   }
 
-  func resetPromptDeliveryFlag() {
+  public func resetPromptDeliveryFlag() {
     hasDeliveredInitialPrompt = false
   }
 
-  func sendPromptIfNeeded(_ prompt: String) {
+  public func sendPromptIfNeeded(_ prompt: String) {
     guard !hasDeliveredInitialPrompt else { return }
     hasDeliveredInitialPrompt = true
     focusProtectedAgentTab()
@@ -226,7 +227,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     }
   }
 
-  func submitPromptImmediately(_ prompt: String) -> Bool {
+  public func submitPromptImmediately(_ prompt: String) -> Bool {
     guard protectedAgentController != nil else { return false }
     focusProtectedAgentTab()
     sendBracketedPasteText(prompt, to: protectedAgentController)
@@ -238,11 +239,11 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     return true
   }
 
-  func typeText(_ text: String) {
+  public func typeText(_ text: String) {
     activeController?.sendText(text)
   }
 
-  func typeInitialTextIfNeeded(_ text: String) {
+  public func typeInitialTextIfNeeded(_ text: String) {
     guard !text.isEmpty else { return }
     guard !hasPrefilledInitialInputText else { return }
     hasPrefilledInitialInputText = true
@@ -250,15 +251,15 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     protectedAgentController?.sendText(text)
   }
 
-  func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {
+  public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {
     // Ghostty owns live appearance through its config. Font size is applied at surface creation.
   }
 
-  func focus() {
+  public func focus() {
     activeController?.focusTerminal()
   }
 
-  func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
+  public func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
     guard let terminalSession else { return nil }
 
     let panels = terminalSession.panels.map { panel in
@@ -288,7 +289,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     )
   }
 
-  func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {
+  public func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {
     guard let terminalSession else {
       pendingWorkspaceSnapshot = snapshot
       return
@@ -372,6 +373,7 @@ final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
     protectsPrimaryTab: Bool
   ) {
     do {
+      AgentHubGhosttyRuntimeLogging.applyQuietDefault()
       let session = try TerminalSession(
         configPath: GhosttyConfigPathResolver.configuredPath(),
         primaryConfiguration: primaryConfiguration,
