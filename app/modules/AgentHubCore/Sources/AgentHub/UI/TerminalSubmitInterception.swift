@@ -7,22 +7,22 @@
 
 import AppKit
 
-enum TerminalReturnKeyAction: Equatable {
+public enum TerminalReturnKeyAction: Equatable {
   case passthrough
   case newline
   case submit
   case systemSubmit
 }
 
-enum TerminalSubmitDispatch: Equatable {
+public enum TerminalSubmitDispatch: Equatable {
   case passthrough
   case newline
   case submit
   case appendContextAndSubmit(String)
 }
 
-enum TerminalSubmitInterception {
-  static func keyAction(
+public enum TerminalSubmitInterception {
+  public static func keyAction(
     shortcut: NewlineShortcut,
     isReturn: Bool,
     flags: NSEvent.ModifierFlags
@@ -43,7 +43,7 @@ enum TerminalSubmitInterception {
     }
   }
 
-  static func dispatch(
+  public static func dispatch(
     for action: TerminalReturnKeyAction,
     queuedContextPrompt: String?
   ) -> TerminalSubmitDispatch {

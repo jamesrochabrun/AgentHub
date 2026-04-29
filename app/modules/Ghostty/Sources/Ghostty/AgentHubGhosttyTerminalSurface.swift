@@ -373,6 +373,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     protectsPrimaryTab: Bool
   ) {
     do {
+      AgentHubGhosttyRuntimeLogging.applyQuietDefault()
       let session = try TerminalSession(
         configPath: GhosttyConfigPathResolver.configuredPath(),
         primaryConfiguration: primaryConfiguration,
