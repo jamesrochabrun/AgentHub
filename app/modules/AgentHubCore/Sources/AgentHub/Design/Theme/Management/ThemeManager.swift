@@ -89,6 +89,45 @@ public final class ThemeManager {
       expandedContentDark: "#080808"
   """
 
+  private static let bundledGhosttyYAML = """
+  name: "Ghostty"
+  version: "1.2"
+  author: "AgentHub"
+  description: "Ghostty-only theme with Singularity highlights and soft app backgrounds"
+
+  colors:
+    brand:
+      primary: "#A0AEC0"
+      secondary: "#2D3748"
+      tertiary: "#CBD5E0"
+
+    backgrounds:
+      dark: "#040F16"
+      light: "#FBFBFF"
+
+    terminal:
+      background: "#040F16"
+      foreground: "#E2E8F0"
+      cursor: "#A0AEC0"
+      ansi:
+        black: "#0D0D0D"
+        red: "#E06C75"
+        green: "#98C379"
+        yellow: "#ECC94B"
+        blue: "#61AFEF"
+        magenta: "#C678DD"
+        cyan: "#56B6C2"
+        white: "#E2E8F0"
+        brightBlack: "#718096"
+        brightRed: "#E88A91"
+        brightGreen: "#B5D4A1"
+        brightYellow: "#F6E05E"
+        brightBlue: "#8CC8F5"
+        brightMagenta: "#D8A0E8"
+        brightCyan: "#7DCBD5"
+        brightWhite: "#F7FAFC"
+  """
+
   private static let bundledAntaresYAML = """
   name: "Antares"
   version: "1.0"
@@ -150,7 +189,7 @@ public final class ThemeManager {
 
   public init() {
     // Load the correct built-in theme synchronously to avoid flash on launch
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "singularity.yaml"
+    let saved = ThemeSelectionPolicy.coercePersistedThemeSelection()
     if let appTheme = AppTheme(rawValue: saved) {
       self.currentTheme = Self.loadBuiltInTheme(appTheme)
     } else {
@@ -312,11 +351,11 @@ public final class ThemeManager {
   // MARK: - Persistence
 
   private func saveCurrentThemeSelection(_ themeId: String) {
-    UserDefaults.standard.set(themeId, forKey: AgentHubDefaults.selectedTheme)
+    ThemeSelectionPolicy.persistThemeSelection(themeId)
   }
 
   public func loadSavedTheme() async {
-    let saved = UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "singularity.yaml"
+    let saved = ThemeSelectionPolicy.coercePersistedThemeSelection()
 
     // Check if it's a built-in theme
     if let appTheme = AppTheme(rawValue: saved) {
@@ -331,9 +370,10 @@ public final class ThemeManager {
     if FileManager.default.fileExists(atPath: fileURL.path) {
       try? await loadTheme(fileURL: fileURL)
     } else {
-      // Fallback: try singularity, then neutral
-      let fallbackURL = themesDir.appendingPathComponent("singularity.yaml")
-      if FileManager.default.fileExists(atPath: fallbackURL.path) {
+      // Fallback: try the backend default, then neutral
+      let fallbackThemeId = ThemeSelectionPolicy.defaultThemeId(for: .storedPreference)
+      let fallbackURL = themesDir.appendingPathComponent(fallbackThemeId)
+      if fallbackThemeId != saved, FileManager.default.fileExists(atPath: fallbackURL.path) {
         try? await loadTheme(fileURL: fallbackURL)
       } else {
         loadBuiltInTheme(.neutral)
@@ -370,6 +410,7 @@ public final class ThemeManager {
     ("vela", bundledVelaYAML),
     ("antares", bundledAntaresYAML),
     ("singularity", bundledSingularityYAML),
+    ("ghostty", bundledGhosttyYAML),
     ("nebula", bundledNebulaYAML),
     ("helios", bundledHeliosYAML),
   ]

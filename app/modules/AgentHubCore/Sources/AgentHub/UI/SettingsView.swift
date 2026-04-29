@@ -81,8 +81,6 @@ public struct SettingsView: View {
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "singularity.yaml"
-  private let defaultThemeId = "singularity.yaml"
-  private let bundledYAMLThemeFileIds = ["sentry.yaml", "rigel.yaml", "vela.yaml", "antares.yaml", "singularity.yaml", "nebula.yaml", "helios.yaml"]
   private let terminalFontFamilies = [
     "SF Mono",
     "JetBrains Mono",
@@ -98,6 +96,14 @@ public struct SettingsView: View {
 
   private var activeTerminalBackend: EmbeddedTerminalBackend {
     agentHub?.terminalBackend ?? .storedPreference
+  }
+
+  private var defaultThemeId: String {
+    ThemeSelectionPolicy.defaultThemeId(for: activeTerminalBackend)
+  }
+
+  private var bundledYAMLThemeFileIds: [String] {
+    ThemeSelectionPolicy.bundledYAMLThemeFileIds(for: activeTerminalBackend)
   }
 
   public init() {}
@@ -467,7 +473,7 @@ public struct SettingsView: View {
         if let matchedFileId = matchingBundledYAMLFileId(for: selectedThemeId) {
           return matchedFileId
         }
-        if let appTheme = AppTheme(rawValue: selectedThemeId) {
+        if activeTerminalBackend == .regular, let appTheme = AppTheme(rawValue: selectedThemeId) {
           return appTheme.rawValue
         }
         return defaultThemeId
@@ -541,22 +547,19 @@ public struct SettingsView: View {
   }
 
   private func ensureSupportedThemeSelection() async {
-    if matchingBundledYAMLFileId(for: selectedThemeId) != nil {
-      await applyThemeSelection(selectedThemeId)
-      return
-    }
-
-    if AppTheme(rawValue: selectedThemeId) != nil {
-      return
-    }
-
-    selectedThemeId = defaultThemeId
-    themeManager.loadBuiltInTheme(.neutral)
+    let themeId = ThemeSelectionPolicy.coercePersistedThemeSelection(backend: activeTerminalBackend)
+    selectedThemeId = themeId
+    await applyThemeSelection(themeId)
   }
 
   private func applyThemeSelection(_ selection: String) async {
+    let selection = ThemeSelectionPolicy.canonicalThemeId(
+      for: selection,
+      backend: activeTerminalBackend
+    ) ?? defaultThemeId
+
     // Handle built-in themes
-    if let appTheme = AppTheme(rawValue: selection) {
+    if activeTerminalBackend == .regular, let appTheme = AppTheme(rawValue: selection) {
       selectedThemeId = appTheme.rawValue
       themeManager.loadBuiltInTheme(appTheme)
       return
@@ -580,16 +583,13 @@ public struct SettingsView: View {
       return
     }
 
-    selectedThemeId = defaultThemeId
     themeManager.loadBuiltInTheme(.neutral)
+    ThemeSelectionPolicy.persistThemeSelection(defaultThemeId, backend: activeTerminalBackend)
+    selectedThemeId = defaultThemeId
   }
 
   private func matchingBundledYAMLFileId(for value: String) -> String? {
-    let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    return bundledYAMLThemeFileIds.first { fileId in
-      let baseName = fileId.replacingOccurrences(of: ".yaml", with: "").replacingOccurrences(of: ".yml", with: "")
-      return normalized == baseName || normalized == fileId || normalized == baseName + ".yml"
-    }
+    ThemeSelectionPolicy.matchingBundledYAMLFileId(for: value, in: bundledYAMLThemeFileIds)
   }
 
   private func yamlThemeDisplayName(_ fileId: String) -> String {
