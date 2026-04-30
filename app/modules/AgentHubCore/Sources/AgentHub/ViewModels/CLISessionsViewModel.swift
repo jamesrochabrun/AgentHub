@@ -1265,24 +1265,19 @@ public final class CLISessionsViewModel {
   // MARK: - Repository Management
 
   /// Opens a directory picker and adds the selected repository.
-  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
-  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
+  /// Schedules NSOpenPanel presentation on the run loop to avoid AppKit's
+  /// HIRunLoopSemaphore wait during main-dispatch-queue draining.
   public func showAddRepositoryPicker() {
     #if canImport(AppKit)
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-      MainActor.assumeIsolated {
-        let panel = NSOpenPanel()
-        panel.title = "Select Repository"
-        panel.message = "Choose a git repository to monitor CLI sessions"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
-
-        if panel.runModal() == .OK, let url = panel.url {
-          self.addRepository(at: url.path)
-        }
-      }
+    NativeOpenPanelPresenter.present { panel in
+      panel.title = "Select Repository"
+      panel.message = "Choose a git repository to monitor CLI sessions"
+      panel.canChooseFiles = false
+      panel.canChooseDirectories = true
+      panel.allowsMultipleSelection = false
+      panel.canCreateDirectories = false
+    } onSelection: { [weak self] url in
+      self?.addRepository(at: url.path)
     }
     #endif
   }
@@ -2527,27 +2522,22 @@ public final class CLISessionsViewModel {
   // MARK: - Search Filter
 
   /// Opens a folder picker to select a repository for filtering search results.
-  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
-  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
+  /// Schedules NSOpenPanel presentation on the run loop to avoid AppKit's
+  /// HIRunLoopSemaphore wait during main-dispatch-queue draining.
   public func showSearchFilterPicker() {
     #if canImport(AppKit)
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-      MainActor.assumeIsolated {
-        let panel = NSOpenPanel()
-        panel.title = "Filter by Repository"
-        panel.message = "Select a repository to filter search results"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
-
-        if panel.runModal() == .OK, let url = panel.url {
-          self.searchFilterPath = url.path
-          // Re-run search with new filter if there's an active query
-          if !self.searchQuery.isEmpty {
-            self.performSearch()
-          }
-        }
+    NativeOpenPanelPresenter.present { panel in
+      panel.title = "Filter by Repository"
+      panel.message = "Select a repository to filter search results"
+      panel.canChooseFiles = false
+      panel.canChooseDirectories = true
+      panel.allowsMultipleSelection = false
+      panel.canCreateDirectories = false
+    } onSelection: { [weak self] url in
+      guard let self else { return }
+      self.searchFilterPath = url.path
+      if !self.searchQuery.isEmpty {
+        self.performSearch()
       }
     }
     #endif

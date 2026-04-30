@@ -529,20 +529,19 @@ public struct SettingsView: View {
 
   private func chooseGhosttyConfigFile() {
     #if canImport(AppKit)
-    let panel = NSOpenPanel()
-    panel.title = "Choose Ghostty Config"
-    panel.message = "Choose a Ghostty configuration file for embedded Ghostty terminals."
-    panel.prompt = "Choose"
-    panel.canChooseFiles = true
-    panel.canChooseDirectories = false
-    panel.allowsMultipleSelection = false
+    NativeOpenPanelPresenter.present { panel in
+      panel.title = "Choose Ghostty Config"
+      panel.message = "Choose a Ghostty configuration file for embedded Ghostty terminals."
+      panel.prompt = "Choose"
+      panel.canChooseFiles = true
+      panel.canChooseDirectories = false
+      panel.allowsMultipleSelection = false
 
-    let expandedPath = (terminalGhosttyConfigPath as NSString).expandingTildeInPath
-    if !expandedPath.isEmpty {
-      panel.directoryURL = URL(fileURLWithPath: expandedPath).deletingLastPathComponent()
-    }
-
-    if panel.runModal() == .OK, let url = panel.url {
+      let expandedPath = (terminalGhosttyConfigPath as NSString).expandingTildeInPath
+      if !expandedPath.isEmpty {
+        panel.directoryURL = URL(fileURLWithPath: expandedPath).deletingLastPathComponent()
+      }
+    } onSelection: { url in
       terminalGhosttyConfigPath = url.path
     }
     #endif

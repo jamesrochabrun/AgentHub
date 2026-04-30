@@ -1261,23 +1261,18 @@ public struct MultiProviderSessionsListView: View {
 
   // MARK: - Actions
 
-  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
-  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
+  /// Schedules NSOpenPanel presentation on the run loop to avoid AppKit's
+  /// HIRunLoopSemaphore wait during main-dispatch-queue draining.
   private func showAddRepositoryPicker() {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-      MainActor.assumeIsolated {
-        let panel = NSOpenPanel()
-        panel.title = "Select Repository"
-        panel.message = "Choose a git repository to monitor CLI sessions"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
-
-        if panel.runModal() == .OK, let url = panel.url {
-          self.addRepository(at: url.path)
-        }
-      }
+    NativeOpenPanelPresenter.present { panel in
+      panel.title = "Select Repository"
+      panel.message = "Choose a git repository to monitor CLI sessions"
+      panel.canChooseFiles = false
+      panel.canChooseDirectories = true
+      panel.allowsMultipleSelection = false
+      panel.canCreateDirectories = false
+    } onSelection: { url in
+      addRepository(at: url.path)
     }
   }
 
