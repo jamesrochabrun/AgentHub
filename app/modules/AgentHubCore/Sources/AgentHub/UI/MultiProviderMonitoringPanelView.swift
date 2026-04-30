@@ -410,6 +410,22 @@ public struct MultiProviderMonitoringPanelView: View {
     accessibilityReduceMotion ? .easeInOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.9)
   }
 
+  private var projectLandingAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeInOut(duration: 0.15)
+      : .spring(response: 0.4, dampingFraction: 0.86)
+  }
+
+  private var projectLandingTransition: AnyTransition {
+    if accessibilityReduceMotion {
+      return .opacity
+    }
+    return .asymmetric(
+      insertion: .scale(scale: 0.97).combined(with: .opacity),
+      removal: .opacity
+    )
+  }
+
   private var auxiliaryShellDockTransition: AnyTransition {
     accessibilityReduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
   }
@@ -423,6 +439,7 @@ public struct MultiProviderMonitoringPanelView: View {
     } else {
       mainContentBody
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(projectLandingAnimation, value: projectLandingPath)
     }
   }
 
@@ -430,12 +447,17 @@ public struct MultiProviderMonitoringPanelView: View {
   private var mainContentBody: some View {
     if let projectLandingPath {
       projectLandingState(for: projectLandingPath)
+        .id("project-landing-\(projectLandingPath)")
+        .transition(projectLandingTransition)
     } else if isLoading {
       loadingState
+        .transition(.opacity)
     } else if allItems.isEmpty {
       emptyState
+        .transition(.opacity)
     } else {
       monitoredSessionsList
+        .transition(.opacity)
     }
   }
 

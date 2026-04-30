@@ -532,6 +532,12 @@ public struct MultiProviderSessionsListView: View {
       : .spring(response: 0.35, dampingFraction: 0.88)
   }
 
+  private var projectLandingAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeInOut(duration: 0.15)
+      : .spring(response: 0.38, dampingFraction: 0.86)
+  }
+
   private var sidePanelView: some View {
     VStack(spacing: 0) {
       ScrollViewReader { proxy in
@@ -1306,35 +1312,27 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func activateRecentlyAddedProjectLanding(for addedPath: String) {
-    let resolvedPath = ProjectLandingResolver.landingPath(
+    guard let repository = ProjectLandingResolver.resolvedRepository(
       for: addedPath,
       repositories: allRepositories
-    )
-    recentlyAddedProjectLandingPath = resolvedPath
-    pendingProjectLandingPath = ProjectLandingResolver.resolvedRepository(
-      for: addedPath,
-      repositories: allRepositories
-    ) == nil ? addedPath : nil
-    primarySessionId = nil
-    setAuxiliaryShellVisible(false)
+    ) else {
+      pendingProjectLandingPath = addedPath
+      return
+    }
+
+    pendingProjectLandingPath = nil
+    showRecentlyAddedProjectLanding(repository.path)
   }
 
   private func reconcileRecentlyAddedProjectLanding() {
     if let pendingProjectLandingPath {
-      let resolvedPath = ProjectLandingResolver.landingPath(
+      guard let repository = ProjectLandingResolver.resolvedRepository(
         for: pendingProjectLandingPath,
         repositories: allRepositories
-      )
-      recentlyAddedProjectLandingPath = resolvedPath
-      primarySessionId = nil
-      setAuxiliaryShellVisible(false)
+      ) else { return }
 
-      if ProjectLandingResolver.resolvedRepository(
-        for: pendingProjectLandingPath,
-        repositories: allRepositories
-      ) != nil {
-        self.pendingProjectLandingPath = nil
-      }
+      self.pendingProjectLandingPath = nil
+      showRecentlyAddedProjectLanding(repository.path)
       return
     }
 
@@ -1348,9 +1346,19 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  private func showRecentlyAddedProjectLanding(_ path: String) {
+    withAnimation(projectLandingAnimation) {
+      recentlyAddedProjectLandingPath = path
+      primarySessionId = nil
+    }
+    setAuxiliaryShellVisible(false)
+  }
+
   private func clearRecentlyAddedProjectLanding() {
-    pendingProjectLandingPath = nil
-    recentlyAddedProjectLandingPath = nil
+    withAnimation(projectLandingAnimation) {
+      pendingProjectLandingPath = nil
+      recentlyAddedProjectLandingPath = nil
+    }
   }
 
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {

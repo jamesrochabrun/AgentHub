@@ -12,6 +12,8 @@ struct ProjectLandingView: View {
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
+  @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+  @State private var hasAppeared = false
 
   var body: some View {
     VStack(spacing: 16) {
@@ -60,8 +62,17 @@ struct ProjectLandingView: View {
       .padding(.top, 2)
     }
     .padding(28)
+    .opacity(hasAppeared ? 1 : 0)
+    .offset(y: accessibilityReduceMotion || hasAppeared ? 0 : 10)
+    .scaleEffect(accessibilityReduceMotion || hasAppeared ? 1 : 0.98)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(backgroundColor)
+    .onAppear {
+      hasAppeared = false
+      withAnimation(appearanceAnimation) {
+        hasAppeared = true
+      }
+    }
   }
 
   private var backgroundColor: some View {
@@ -70,5 +81,11 @@ struct ProjectLandingView: View {
     } else {
       colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.96)
     }
+  }
+
+  private var appearanceAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeInOut(duration: 0.12)
+      : .spring(response: 0.42, dampingFraction: 0.88)
   }
 }
