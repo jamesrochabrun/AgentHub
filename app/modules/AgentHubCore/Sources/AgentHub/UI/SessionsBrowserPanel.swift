@@ -195,16 +195,10 @@ public struct SessionsBrowserPanel: View {
   }
 
   private func findModulePath(for item: ProviderMonitoringItem) -> String {
-    let itemPath = item.projectPath
-
-    for repo in allSelectedRepositories {
-      for worktree in repo.worktrees {
-        if worktree.path == itemPath {
-          return repo.path
-        }
-      }
-    }
-    return itemPath
+    return ProjectHierarchyResolver.rootProjectPath(
+      for: item.projectPath,
+      repositories: allSelectedRepositories
+    )
   }
 
   // MARK: - Focus/Selection Logic

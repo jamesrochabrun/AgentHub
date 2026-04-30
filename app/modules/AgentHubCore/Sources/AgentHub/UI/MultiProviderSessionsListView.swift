@@ -839,13 +839,10 @@ public struct MultiProviderSessionsListView: View {
   /// "path is the repo root" and "path is a worktree under the repo". Falls back
   /// to the original path when no tracked repo matches (used for the orphan group).
   private func findParentRepoPath(for itemPath: String) -> String {
-    for repo in orderedTrackedRepos {
-      if repo.path == itemPath { return repo.path }
-      if repo.worktrees.contains(where: { $0.path == itemPath }) {
-        return repo.path
-      }
-    }
-    return itemPath
+    return ProjectHierarchyResolver.rootProjectPath(
+      for: itemPath,
+      repositories: orderedTrackedRepos
+    )
   }
 
   private var pinnedSessionSnapshot: ProviderScopedPinnedSessions {

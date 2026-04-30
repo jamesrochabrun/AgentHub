@@ -59,17 +59,18 @@ public actor CLISessionMonitorService {
   /// - Returns: The created SelectedRepository with detected worktrees
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
-    // Check if already added
     guard !selectedRepositories.contains(where: { $0.path == path }) else {
       return selectedRepositories.first { $0.path == path }
     }
 
-    // Detect worktrees for this repository
-    let worktrees = await detectWorktrees(at: path)
+    let detection = await RepositoryWorktreeResolver.detectRepository(at: path)
+    if let existing = selectedRepositories.first(where: { $0.path == detection.rootPath }) {
+      return existing
+    }
 
     let repository = SelectedRepository(
-      path: path,
-      worktrees: worktrees,
+      path: detection.rootPath,
+      worktrees: detection.worktrees,
       isExpanded: true
     )
 
@@ -93,13 +94,13 @@ public actor CLISessionMonitorService {
     guard !newPaths.isEmpty else { return }
 
     // Detect worktrees for all new repos in parallel
-    let allWorktrees = await detectWorktreesBatch(repoPaths: newPaths)
+    let detections = await detectRepositoriesBatch(paths: newPaths)
+    var selectedRootPaths = Set(selectedRepositories.map(\.path))
 
-    for path in newPaths {
-      let worktrees = allWorktrees[path] ?? []
+    for detection in detections where selectedRootPaths.insert(detection.rootPath).inserted {
       let repository = SelectedRepository(
-        path: path,
-        worktrees: worktrees,
+        path: detection.rootPath,
+        worktrees: detection.worktrees,
         isExpanded: true
       )
       selectedRepositories.append(repository)
@@ -282,7 +283,11 @@ public actor CLISessionMonitorService {
           // (e.g., session in /repo/subfolder should match worktree at /repo)
           // This must check the CURRENT worktree path, not all repo paths,
           // otherwise sessions from other worktrees would be incorrectly assigned
-          let pathIsSubdirectory = summary.project.hasPrefix(worktreePath + "/")
+          let pathMatchesCurrentWorktree = ProjectHierarchyResolver.isSameOrDescendant(
+            summary.project,
+            of: worktreePath
+          )
+          let pathIsSubdirectory = pathMatchesCurrentWorktree && summary.project != worktreePath
           guard pathIsSubdirectory else { continue }
 
           // Get session's metadata from session file
@@ -369,30 +374,26 @@ public actor CLISessionMonitorService {
   // MARK: - Worktree Detection
 
   private func detectWorktrees(at repoPath: String) async -> [WorktreeBranch] {
-    // Use GitWorktreeDetector to list all worktrees
-    let worktrees = await GitWorktreeDetector.listWorktrees(at: repoPath)
+    await RepositoryWorktreeResolver.detectWorktrees(at: repoPath)
+  }
 
-    if worktrees.isEmpty {
-      // If no worktrees detected, just use the main repo with current branch
-      let info = await GitWorktreeDetector.detectWorktreeInfo(for: repoPath)
+  private func detectRepositoriesBatch(paths: [String]) async -> [RepositoryWorktreeSnapshot] {
+    await withTaskGroup(of: (Int, RepositoryWorktreeSnapshot).self) { group in
+      for (index, path) in paths.enumerated() {
+        group.addTask {
+          let snapshot = await RepositoryWorktreeResolver.detectRepository(at: path)
+          return (index, snapshot)
+        }
+      }
 
-      return [
-        WorktreeBranch(
-          name: info?.branch ?? "main",
-          path: repoPath,
-          isWorktree: false,
-          sessions: []
-        )
-      ]
-    }
+      var results: [(Int, RepositoryWorktreeSnapshot)] = []
+      for await result in group {
+        results.append(result)
+      }
 
-    return worktrees.map { info in
-      WorktreeBranch(
-        name: info.branch ?? URL(fileURLWithPath: info.path).lastPathComponent,
-        path: info.path,
-        isWorktree: info.isWorktree,
-        sessions: []
-      )
+      return results
+        .sorted { $0.0 < $1.0 }
+        .map { $0.1 }
     }
   }
 
@@ -664,7 +665,7 @@ public actor CLISessionMonitorService {
 
   static func matchesMonitoredPath(_ project: String, monitoredPaths: Set<String>) -> Bool {
     monitoredPaths.contains { path in
-      project == path || project.hasPrefix(path + "/")
+      ProjectHierarchyResolver.isSameOrDescendant(project, of: path)
     }
   }
 

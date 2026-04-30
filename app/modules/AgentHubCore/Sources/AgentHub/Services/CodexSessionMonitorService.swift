@@ -41,16 +41,40 @@ public actor CodexSessionMonitorService {
       return selectedRepositories.first { $0.path == path }
     }
 
-    let worktrees = await detectWorktrees(at: path)
+    let detection = await RepositoryWorktreeResolver.detectRepository(at: path)
+    if let existing = selectedRepositories.first(where: { $0.path == detection.rootPath }) {
+      return existing
+    }
+
     let repository = SelectedRepository(
-      path: path,
-      worktrees: worktrees,
+      path: detection.rootPath,
+      worktrees: detection.worktrees,
       isExpanded: true
     )
 
     selectedRepositories.append(repository)
     await refreshSessions(skipWorktreeRedetection: true)
     return repository
+  }
+
+  public func addRepositories(_ paths: [String]) async {
+    let newPaths = paths.filter { path in
+      !selectedRepositories.contains(where: { $0.path == path })
+    }
+    guard !newPaths.isEmpty else { return }
+
+    let detections = await detectRepositoriesBatch(paths: newPaths)
+    var selectedRootPaths = Set(selectedRepositories.map(\.path))
+
+    for detection in detections where selectedRootPaths.insert(detection.rootPath).inserted {
+      selectedRepositories.append(SelectedRepository(
+        path: detection.rootPath,
+        worktrees: detection.worktrees,
+        isExpanded: true
+      ))
+    }
+
+    await refreshSessions(skipWorktreeRedetection: true)
   }
 
   public func removeRepository(_ path: String) async {
@@ -115,7 +139,7 @@ public actor CodexSessionMonitorService {
 
         for meta in sessionMetas {
           guard !assignedSessionIds.contains(meta.sessionId) else { continue }
-          let matchesPath = meta.projectPath == worktree.path || meta.projectPath.hasPrefix(worktree.path + "/")
+          let matchesPath = ProjectHierarchyResolver.isSameOrDescendant(meta.projectPath, of: worktree.path)
           guard matchesPath else { continue }
 
           let entries = historyBySession[meta.sessionId] ?? []
@@ -210,7 +234,7 @@ public actor CodexSessionMonitorService {
       guard let meta = CodexSessionFileScanner.readSessionMeta(from: path) else { continue }
 
       let matchesPath = paths.contains { p in
-        meta.projectPath == p || meta.projectPath.hasPrefix(p + "/")
+        ProjectHierarchyResolver.isSameOrDescendant(meta.projectPath, of: p)
       }
       guard matchesPath else { continue }
 
@@ -244,27 +268,26 @@ public actor CodexSessionMonitorService {
   // MARK: - Worktree Detection
 
   private func detectWorktrees(at repoPath: String) async -> [WorktreeBranch] {
-    let worktrees = await GitWorktreeDetector.listWorktrees(at: repoPath)
+    await RepositoryWorktreeResolver.detectWorktrees(at: repoPath)
+  }
 
-    if worktrees.isEmpty {
-      let info = await GitWorktreeDetector.detectWorktreeInfo(for: repoPath)
-      return [
-        WorktreeBranch(
-          name: info?.branch ?? "main",
-          path: repoPath,
-          isWorktree: false,
-          sessions: []
-        )
-      ]
-    }
+  private func detectRepositoriesBatch(paths: [String]) async -> [RepositoryWorktreeSnapshot] {
+    await withTaskGroup(of: (Int, RepositoryWorktreeSnapshot).self) { group in
+      for (index, path) in paths.enumerated() {
+        group.addTask {
+          let snapshot = await RepositoryWorktreeResolver.detectRepository(at: path)
+          return (index, snapshot)
+        }
+      }
 
-    return worktrees.map { info in
-      WorktreeBranch(
-        name: info.branch ?? URL(fileURLWithPath: info.path).lastPathComponent,
-        path: info.path,
-        isWorktree: info.isWorktree,
-        sessions: []
-      )
+      var results: [(Int, RepositoryWorktreeSnapshot)] = []
+      for await result in group {
+        results.append(result)
+      }
+
+      return results
+        .sorted { $0.0 < $1.0 }
+        .map { $0.1 }
     }
   }
 

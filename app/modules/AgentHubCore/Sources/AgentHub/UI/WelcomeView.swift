@@ -283,7 +283,10 @@ public struct WelcomeView: View {
 
   private func hasActiveSessions(for repo: SelectedRepository) -> Bool {
     viewModel.monitoredSessions.contains { monitored in
-      repo.worktrees.contains { $0.path == monitored.session.projectPath }
+      ProjectHierarchyResolver.rootProjectPath(
+        for: monitored.session.projectPath,
+        repositories: [repo]
+      ) == repo.path
     }
   }
 

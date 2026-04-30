@@ -1305,7 +1305,12 @@ public final class CLISessionsViewModel {
   /// Removes a repository from monitoring
   public func removeRepository(_ repository: SelectedRepository) {
     // Cancel any pending hub sessions in this repository
-    let pendingToCancel = pendingHubSessions.filter { $0.worktree.path.hasPrefix(repository.path) }
+    let pendingToCancel = pendingHubSessions.filter {
+      ProjectHierarchyResolver.rootProjectPath(
+        for: $0.worktree.path,
+        repositories: [repository]
+      ) == repository.path
+    }
     for pending in pendingToCancel {
       cancelPendingSession(pending)
     }
@@ -2251,7 +2256,7 @@ public final class CLISessionsViewModel {
   }
 
   private func codexSessionMatchesWorktree(_ meta: CodexSessionMeta, worktree: WorktreeBranch) -> Bool {
-    meta.projectPath == worktree.path || meta.projectPath.hasPrefix(worktree.path + "/")
+    ProjectHierarchyResolver.isSameOrDescendant(meta.projectPath, of: worktree.path)
   }
 
   private func fileModificationDate(_ path: String) -> Date? {
@@ -2462,7 +2467,10 @@ public final class CLISessionsViewModel {
 
       // Find the repository containing this project path
       guard let repoIndex = selectedRepositories.firstIndex(where: {
-        $0.path == projectPath || $0.worktrees.contains { $0.path == projectPath }
+        ProjectHierarchyResolver.rootProjectPath(
+          for: projectPath,
+          repositories: [$0]
+        ) == $0.path
       }) else {
         return
       }
