@@ -435,7 +435,7 @@ public final class AgentHubProvider {
 
     let content = UNMutableNotificationContent()
     content.title = "AgentHub cache migration completed"
-    content.body = "Build caches now live in macOS Caches. The next build for each workspace may be slower once."
+    content.body = "Build caches now live in macOS Caches. The next AgentHub-started Xcode build for each workspace may be slower once."
     content.sound = .none
 
     let request = UNNotificationRequest(

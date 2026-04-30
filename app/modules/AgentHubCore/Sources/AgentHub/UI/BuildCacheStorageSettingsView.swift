@@ -168,7 +168,7 @@ public struct BuildCacheStorageSettingsView: View {
       } header: {
         Text("Usage")
       } footer: {
-        Text("These are rebuildable files AgentHub creates while running Xcode and Swift builds for your projects. This is disk space, not memory, and it does not include source code. The cleanup target is not a live hard limit; cleanup uses it to decide which caches can be removed.")
+        Text("These are rebuildable files AgentHub creates while running Xcode builds for your projects. This is disk space, not memory, and it does not include source code. The cleanup target is not a live hard limit; cleanup uses it to decide which caches can be removed.")
       }
 
       Section("Cleanup") {
@@ -204,7 +204,7 @@ public struct BuildCacheStorageSettingsView: View {
           if showAdvancedCleanup {
             StorageActionRow(
               title: "Delete Every Cache",
-              description: "Use this only when you want the maximum disk-space reclaim. It removes all AgentHub build caches and shared SwiftPM cache data. Nothing in your projects is deleted, but every project will rebuild cold the next time AgentHub builds or tests it.",
+              description: "Use this only when you want the maximum disk-space reclaim. It removes all AgentHub build caches and package cache data. Nothing in your projects is deleted, but every project will rebuild cold the next time AgentHub builds it.",
               systemImage: "trash",
               isLoading: false,
               isDestructive: true,
@@ -288,7 +288,7 @@ public struct BuildCacheStorageSettingsView: View {
         Task { await viewModel.clearAll(provider: agentHub) }
       }
     } message: {
-      Text("This removes only rebuildable AgentHub build caches, not source code. The next build or test may be slower while caches are recreated.")
+      Text("This removes only rebuildable AgentHub build caches, not source code. The next AgentHub-started Xcode build may be slower while caches are recreated.")
     }
   }
 
