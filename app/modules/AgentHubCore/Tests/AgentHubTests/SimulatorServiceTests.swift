@@ -177,8 +177,17 @@ struct BuildHelperTests {
 
     #expect(first == second)
     #expect(first != other)
-    #expect(first.contains("/Library/Caches/AgentHub/Builds/"))
-    #expect(first.hasSuffix("/xcode"))
+    #expect(first.contains("/Library/Application Support/AgentHub/Builds/"))
+  }
+
+  @Test func buildOutputAccumulatorKeepsBoundedTail() throws {
+    let accumulator = BuildOutputAccumulator(maxBytes: 5)
+
+    accumulator.append(Data("abc".utf8))
+    accumulator.append(Data("defg".utf8))
+
+    let output = try #require(String(data: accumulator.combinedData(), encoding: .utf8))
+    #expect(output == "cdefg")
   }
 
   @Test func preferredAppBundlePathPrefersSchemeMatchOverTestRunner() throws {

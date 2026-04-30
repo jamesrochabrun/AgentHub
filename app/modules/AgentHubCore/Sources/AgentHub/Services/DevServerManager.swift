@@ -463,6 +463,7 @@ public final class DevServerManager {
 
     // Environment: PATH with NVM/homebrew paths + framework-specific vars
     let homeDir = NSHomeDirectory()
+    var environment = ProcessInfo.processInfo.environment
     let extraPaths = [
       "/usr/local/bin",
       "/opt/homebrew/bin",
@@ -473,10 +474,11 @@ public final class DevServerManager {
       "\(homeDir)/.bun/bin",
       "/usr/bin"
     ]
-    var environment = AgentHubProcessEnvironment.environment(
-      additionalPaths: extraPaths,
-      workspacePath: projectPath
-    )
+    if let existingPath = environment["PATH"] {
+      environment["PATH"] = extraPaths.joined(separator: ":") + ":" + existingPath
+    } else {
+      environment["PATH"] = extraPaths.joined(separator: ":")
+    }
 
     // CRA reads PORT env var; BROWSER=none prevents auto-opening
     environment["PORT"] = String(port)

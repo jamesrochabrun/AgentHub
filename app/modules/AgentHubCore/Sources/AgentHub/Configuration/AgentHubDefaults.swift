@@ -184,24 +184,6 @@ public enum AgentHubDefaults {
   /// Type: String (default: "")
   public static let worktreeBranchPrefix = "\(keyPrefix)worktree.generatedBranchPrefix"
 
-  // MARK: - Build Cache Settings
-
-  /// Build cache size cap in GB.
-  /// Type: Int (default: 10)
-  public static let buildCacheSizeLimitGB = "\(keyPrefix)buildCache.sizeLimitGB"
-
-  /// Build cache workspace IDs excluded from LRU eviction.
-  /// Type: [String] (default: [])
-  public static let buildCachePinnedWorkspaceIDs = "\(keyPrefix)buildCache.pinnedWorkspaceIDs"
-
-  /// One-time sentinel for first launch cache migration.
-  /// Type: Bool (default: false)
-  public static let buildCacheMigrationCompleted = "\(keyPrefix)buildCache.migrationCompleted"
-
-  /// One-time sentinel for migration completion notification.
-  /// Type: Bool (default: false)
-  public static let buildCacheMigrationNotificationShown = "\(keyPrefix)buildCache.migrationNotificationShown"
-
   // MARK: - Theme Settings
 
   /// Selected color theme name

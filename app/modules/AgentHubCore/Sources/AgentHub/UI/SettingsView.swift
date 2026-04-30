@@ -125,11 +125,6 @@ public struct SettingsView: View {
           Label("Worktrees", systemImage: "arrow.triangle.branch")
         }
 
-      BuildCacheStorageSettingsView()
-        .tabItem {
-          Label("Storage", systemImage: "internaldrive")
-        }
-
       appearanceSettingsForm
         .tabItem {
           Label("Appearance", systemImage: "paintpalette")

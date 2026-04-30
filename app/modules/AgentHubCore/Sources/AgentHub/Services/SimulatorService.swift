@@ -7,6 +7,7 @@
 //  with UDID-keyed state and Task.detached for all process execution.
 //
 
+import CryptoKit
 import Foundation
 
 // MARK: - Private Build Helpers
@@ -24,20 +25,34 @@ private final class ProcessRef: @unchecked Sendable {
   }
 }
 
-private final class DataAccumulator: @unchecked Sendable {
+final class BuildOutputAccumulator: @unchecked Sendable {
   private let lock = NSLock()
-  private var chunks: [Data] = []
+  private let maxBytes: Int
+  private var buffer = Data()
+
+  init(maxBytes: Int = 1_048_576) {
+    self.maxBytes = Swift.max(0, maxBytes)
+  }
 
   func append(_ chunk: Data) {
+    guard !chunk.isEmpty, maxBytes > 0 else { return }
     lock.lock()
-    chunks.append(chunk)
-    lock.unlock()
+    defer { lock.unlock() }
+    if chunk.count >= maxBytes {
+      buffer = Data(chunk.suffix(maxBytes))
+    } else {
+      buffer.append(chunk)
+      let overflow = buffer.count - maxBytes
+      if overflow > 0 {
+        buffer.removeFirst(overflow)
+      }
+    }
   }
 
   func combinedData() -> Data {
     lock.lock()
     defer { lock.unlock() }
-    return chunks.reduce(Data(), +)
+    return buffer
   }
 }
 
@@ -48,8 +63,6 @@ private struct BuildSetup: Sendable {
   let scheme: String
   let xcodebuild: String
   let derivedDataPath: String
-  let clonedSourcePackagesPath: String
-  let packageCachePath: String
 }
 
 private struct BuiltAppInfo: Sendable {
@@ -248,9 +261,7 @@ public final class SimulatorService {
       "-quiet",
       "-scheme", setup.scheme,
       "-destination", "platform=macOS,arch=arm64",
-      "-derivedDataPath", setup.derivedDataPath,
-      "-clonedSourcePackagesDirPath", setup.clonedSourcePackagesPath,
-      "-packageCachePath", setup.packageCachePath
+      "-derivedDataPath", setup.derivedDataPath
     ]
     if setup.isWorkspace {
       buildArgs += ["-workspace", setup.targetPath]
@@ -324,9 +335,7 @@ public final class SimulatorService {
       "-quiet",
       "-scheme", setup.scheme,
       "-destination", "generic/platform=iOS Simulator",
-      "-derivedDataPath", setup.derivedDataPath,
-      "-clonedSourcePackagesDirPath", setup.clonedSourcePackagesPath,
-      "-packageCachePath", setup.packageCachePath
+      "-derivedDataPath", setup.derivedDataPath
     ]
     if setup.isWorkspace {
       buildArgs += ["-workspace", setup.targetPath]
@@ -489,12 +498,9 @@ public final class SimulatorService {
       return .failure(NSError(domain: "SimulatorService", code: -4,
         userInfo: [NSLocalizedDescriptionKey: "No scheme found in project"]))
     }
-    let xcodePaths = BuildCachePaths.xcodePaths(for: projectPath)
+    let derivedDataPath = derivedDataPath(for: projectPath)
     do {
-      try ensureDirectoryExists(atPath: xcodePaths.derivedDataPath)
-      try ensureDirectoryExists(atPath: xcodePaths.clonedSourcePackagesPath)
-      try ensureDirectoryExists(atPath: xcodePaths.packageCachePath)
-      BuildCachePaths.recordWorkspacePath(projectPath)
+      try ensureDirectoryExists(atPath: derivedDataPath)
     } catch {
       return .failure(error)
     }
@@ -503,9 +509,7 @@ public final class SimulatorService {
       isWorkspace: target.isWorkspace,
       scheme: scheme,
       xcodebuild: xcodebuild,
-      derivedDataPath: xcodePaths.derivedDataPath,
-      clonedSourcePackagesPath: xcodePaths.clonedSourcePackagesPath,
-      packageCachePath: xcodePaths.packageCachePath
+      derivedDataPath: derivedDataPath
     ))
   }
 
@@ -538,22 +542,32 @@ public final class SimulatorService {
     ref: ProcessRef,
     setup: BuildSetup
   ) -> Result<String, Error> {
-    let stdoutChunks = DataAccumulator()
+    let stdoutChunks = BuildOutputAccumulator()
+    let stderrChunks = BuildOutputAccumulator()
     ref.outputPipe.fileHandleForReading.readabilityHandler = { handle in
       let chunk = handle.availableData
       guard !chunk.isEmpty else { return }
       stdoutChunks.append(chunk)
+    }
+    ref.errorPipe.fileHandleForReading.readabilityHandler = { handle in
+      let chunk = handle.availableData
+      guard !chunk.isEmpty else { return }
+      stderrChunks.append(chunk)
     }
     do {
       try ref.process.run()
       ref.process.waitUntilExit()
     } catch {
       ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+      ref.errorPipe.fileHandleForReading.readabilityHandler = nil
       return .failure(error)
     }
     ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+    ref.errorPipe.fileHandleForReading.readabilityHandler = nil
     let tail = ref.outputPipe.fileHandleForReading.readDataToEndOfFile()
     if !tail.isEmpty { stdoutChunks.append(tail) }
+    let errorTail = ref.errorPipe.fileHandleForReading.readDataToEndOfFile()
+    if !errorTail.isEmpty { stderrChunks.append(errorTail) }
 
     guard ref.process.terminationStatus == 0 else {
       // Terminated by signal means the user cancelled — return a benign error
@@ -562,7 +576,7 @@ public final class SimulatorService {
           userInfo: [NSLocalizedDescriptionKey: "Build cancelled"]))
       }
       let outputText = String(data: stdoutChunks.combinedData(), encoding: .utf8) ?? ""
-      let stderrText = String(data: ref.errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let stderrText = String(data: stderrChunks.combinedData(), encoding: .utf8) ?? ""
       let msg = SimulatorService.extractBuildError(outputText: outputText, stderrText: stderrText, exitCode: ref.process.terminationStatus)
       return .failure(NSError(domain: "SimulatorService",
         code: Int(ref.process.terminationStatus),
@@ -596,22 +610,32 @@ public final class SimulatorService {
     }
 
     let buildStart = phaseTimestamp()
-    let stdoutChunks = DataAccumulator()
+    let stdoutChunks = BuildOutputAccumulator()
+    let stderrChunks = BuildOutputAccumulator()
     ref.outputPipe.fileHandleForReading.readabilityHandler = { handle in
       let chunk = handle.availableData
       guard !chunk.isEmpty else { return }
       stdoutChunks.append(chunk)
+    }
+    ref.errorPipe.fileHandleForReading.readabilityHandler = { handle in
+      let chunk = handle.availableData
+      guard !chunk.isEmpty else { return }
+      stderrChunks.append(chunk)
     }
     do {
       try ref.process.run()
       ref.process.waitUntilExit()
     } catch {
       ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+      ref.errorPipe.fileHandleForReading.readabilityHandler = nil
       return .failure(error)
     }
     ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+    ref.errorPipe.fileHandleForReading.readabilityHandler = nil
     let tail = ref.outputPipe.fileHandleForReading.readDataToEndOfFile()
     if !tail.isEmpty { stdoutChunks.append(tail) }
+    let errorTail = ref.errorPipe.fileHandleForReading.readDataToEndOfFile()
+    if !errorTail.isEmpty { stderrChunks.append(errorTail) }
 
     guard ref.process.terminationStatus == 0 else {
       if ref.process.terminationReason == .uncaughtSignal {
@@ -619,7 +643,7 @@ public final class SimulatorService {
           userInfo: [NSLocalizedDescriptionKey: "Build cancelled"]))
       }
       let outputText = String(data: stdoutChunks.combinedData(), encoding: .utf8) ?? ""
-      let stderrText = String(data: ref.errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let stderrText = String(data: stderrChunks.combinedData(), encoding: .utf8) ?? ""
       let msg = SimulatorService.extractBuildError(outputText: outputText, stderrText: stderrText, exitCode: ref.process.terminationStatus)
       return .failure(NSError(domain: "SimulatorService",
         code: Int(ref.process.terminationStatus),
@@ -815,7 +839,17 @@ public final class SimulatorService {
   }
 
   nonisolated static func derivedDataPath(for projectPath: String) -> String {
-    BuildCachePaths.xcodePaths(for: projectPath).derivedDataPath
+    let appSupport = FileManager.default.urls(
+      for: .applicationSupportDirectory,
+      in: .userDomainMask
+    ).first!
+    let buildsDirectory = appSupport
+      .appendingPathComponent("AgentHub", isDirectory: true)
+      .appendingPathComponent("Builds", isDirectory: true)
+    let digest = SHA256.hash(data: Data(projectPath.utf8))
+      .map { String(format: "%02x", $0) }
+      .joined()
+    return buildsDirectory.appendingPathComponent(digest, isDirectory: true).path
   }
 
   nonisolated static func preferredAppBundlePath(
