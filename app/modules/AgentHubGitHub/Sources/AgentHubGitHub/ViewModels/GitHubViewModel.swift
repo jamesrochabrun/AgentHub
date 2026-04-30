@@ -74,6 +74,15 @@ public enum GitHubLoadingState: Equatable, Sendable {
   case error(String)
 }
 
+// MARK: - Setup State
+
+public enum GitHubSetupState: Equatable, Sendable {
+  case checking
+  case ghNotInstalled
+  case notAuthenticated
+  case ready
+}
+
 // MARK: - Checkout State
 
 public enum CheckoutState: Equatable, Sendable {
@@ -96,6 +105,9 @@ public final class GitHubViewModel {
 
   /// Whether user is authenticated
   public var isAuthenticated: Bool = false
+
+  /// Current setup state for gh availability, authentication, and repository metadata.
+  public var setupState: GitHubSetupState = .checking
 
   /// Repository info
   public var repoInfo: GitHubRepoInfo?
@@ -174,18 +186,29 @@ public final class GitHubViewModel {
   /// Initializes the GitHub integration for a repository path
   public func setup(repoPath: String) async {
     currentRepoPath = repoPath
+    setupState = .checking
+    repoInfo = nil
 
     isGHInstalled = await service.isInstalled()
-    guard isGHInstalled else { return }
+    guard isGHInstalled else {
+      isAuthenticated = false
+      setupState = .ghNotInstalled
+      return
+    }
 
     isAuthenticated = await service.isAuthenticated(at: repoPath)
-    guard isAuthenticated else { return }
+    guard isAuthenticated else {
+      setupState = .notAuthenticated
+      return
+    }
 
     do {
       repoInfo = try await service.getRepoInfo(at: repoPath)
     } catch {
       GitHubLogger.github.error("Failed to get repo info: \(error.localizedDescription)")
     }
+
+    setupState = .ready
   }
 
   // MARK: - Pull Requests
