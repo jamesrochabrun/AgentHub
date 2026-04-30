@@ -58,12 +58,16 @@ public actor CodexSessionMonitorService {
   }
 
   public func addRepositories(_ paths: [String]) async {
+    let startedAt = Date()
     let newPaths = paths.filter { path in
       !selectedRepositories.contains(where: { $0.path == path })
     }
+    AppLogger.startup.info("[Startup][CodexMonitor] addRepositories requested=\(paths.count) new=\(newPaths.count) existing=\(self.selectedRepositories.count)")
     guard !newPaths.isEmpty else { return }
 
+    let detectionStartedAt = Date()
     let detections = await detectRepositoriesBatch(paths: newPaths)
+    AppLogger.startup.info("[Startup][CodexMonitor] addRepositories detectRepositoryBatch count=\(detections.count) elapsedMs=\(Self.elapsedMilliseconds(since: detectionStartedAt))")
     var selectedRootPaths = Set(selectedRepositories.map(\.path))
 
     for detection in detections where selectedRootPaths.insert(detection.rootPath).inserted {
@@ -75,6 +79,7 @@ public actor CodexSessionMonitorService {
     }
 
     await refreshSessions(skipWorktreeRedetection: true)
+    AppLogger.startup.info("[Startup][CodexMonitor] addRepositories end repos=\(self.selectedRepositories.count) elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
   }
 
   public func removeRepository(_ path: String) async {
@@ -94,15 +99,20 @@ public actor CodexSessionMonitorService {
   // MARK: - Session Scanning
 
   public func refreshSessions(skipWorktreeRedetection: Bool = false) async {
+    let refreshStartedAt = Date()
+    AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions start repos=\(self.selectedRepositories.count) skipWorktreeRedetection=\(skipWorktreeRedetection)")
     guard !selectedRepositories.isEmpty else {
       repositoriesSubject.send([])
+      AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions emitted empty repos elapsedMs=\(Self.elapsedMilliseconds(since: refreshStartedAt))")
       return
     }
 
     if !skipWorktreeRedetection {
+      let worktreeStartedAt = Date()
       let allWorktrees = await detectWorktreesBatch(
         repoPaths: selectedRepositories.map { $0.path }
       )
+      AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions worktreeDetection repos=\(self.selectedRepositories.count) elapsedMs=\(Self.elapsedMilliseconds(since: worktreeStartedAt))")
 
       for index in selectedRepositories.indices {
         let repoPath = selectedRepositories[index].path
@@ -124,10 +134,14 @@ public actor CodexSessionMonitorService {
 
     let allPaths = getAllMonitoredPaths()
 
+    let historyStartedAt = Date()
     let historyEntries = parseHistory()
     let historyBySession = Dictionary(grouping: historyEntries) { $0.sessionId }
+    AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions parseHistory entries=\(historyEntries.count) elapsedMs=\(Self.elapsedMilliseconds(since: historyStartedAt))")
 
+    let scanStartedAt = Date()
     let sessionMetas = scanSessions(for: allPaths)
+    AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions scanSessions paths=\(allPaths.count) sessions=\(sessionMetas.count) elapsedMs=\(Self.elapsedMilliseconds(since: scanStartedAt))")
 
     var updatedRepositories = selectedRepositories
     var assignedSessionIds: Set<String> = []
@@ -176,6 +190,11 @@ public actor CodexSessionMonitorService {
 
     selectedRepositories = updatedRepositories
     repositoriesSubject.send(selectedRepositories)
+    let worktreeCount = updatedRepositories.reduce(0) { $0 + $1.worktrees.count }
+    let sessionCount = updatedRepositories.reduce(0) { total, repo in
+      total + repo.worktrees.reduce(0) { $0 + $1.sessions.count }
+    }
+    AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions end repos=\(updatedRepositories.count) worktrees=\(worktreeCount) sessions=\(sessionCount) elapsedMs=\(Self.elapsedMilliseconds(since: refreshStartedAt))")
   }
 
   // MARK: - Helpers
@@ -317,6 +336,10 @@ public actor CodexSessionMonitorService {
       }
     }
     return paths
+  }
+
+  private static func elapsedMilliseconds(since start: Date) -> Int {
+    Int(Date().timeIntervalSince(start) * 1000)
   }
 }
 

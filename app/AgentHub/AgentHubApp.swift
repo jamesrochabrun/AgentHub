@@ -10,6 +10,7 @@ import AgentHubCore
 import Ghostty
 import UserNotifications
 import CoreText
+import os
 
 // MARK: - App Delegate
 
@@ -29,12 +30,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
   let updateController = UpdateController()
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    let startupStartedAt = Date()
+    AppLogger.startup.info("[Startup][AppDelegate] applicationDidFinishLaunching start")
+
     UNUserNotificationCenter.current().delegate = self
+
+    let fontsStartedAt = Date()
     registerBundledFonts()
+    AppLogger.startup.info("[Startup][AppDelegate] fonts registered elapsedMs=\(Self.elapsedMilliseconds(since: fontsStartedAt))")
+
     // Sweep any approval hooks left installed by a previous crash/force-quit
     // before sessions start restoring. Re-installs happen naturally as each
     // session begins monitoring.
+    let hookStartedAt = Date()
     provider.reconcileClaudeHooksOnLaunch()
+    AppLogger.startup.info("[Startup][AppDelegate] launch hook reconcile returned elapsedMs=\(Self.elapsedMilliseconds(since: hookStartedAt))")
+    AppLogger.startup.info("[Startup][AppDelegate] applicationDidFinishLaunching end elapsedMs=\(Self.elapsedMilliseconds(since: startupStartedAt))")
   }
 
   /// Register all bundled fonts (Geist, GeistMono, JetBrains Mono)
@@ -60,6 +71,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
       }
     }
+  }
+
+  private static func elapsedMilliseconds(since start: Date) -> Int {
+    Int(Date().timeIntervalSince(start) * 1000)
   }
 
   func applicationWillTerminate(_ notification: Notification) {

@@ -21,6 +21,9 @@ public enum AppLogger {
   /// Session-related logging (parsing, monitoring, lifecycle)
   public static let session = Logger(subsystem: subsystem, category: "Session")
 
+  /// Startup and persistence restoration logging
+  public static let startup = Logger(subsystem: subsystem, category: "Startup")
+
   /// Git operations (diff, worktree, commands)
   public static let git = Logger(subsystem: subsystem, category: "Git")
 

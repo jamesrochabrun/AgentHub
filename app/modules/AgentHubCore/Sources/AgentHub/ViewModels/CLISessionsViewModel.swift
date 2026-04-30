@@ -116,6 +116,13 @@ public final class CLISessionsViewModel {
   private var existingSessionIdsBeforeTerminal: Set<String> = []
   /// Session IDs awaiting progressive restoration on app launch
   private var pendingRestorationSessionIds: Set<String> = []
+  /// Repository paths captured synchronously from UserDefaults before subscribing
+  /// to the monitor service. This prevents the service's initial empty emission
+  /// from erasing saved repositories before restore reads them.
+  private var persistedRepositoryPathsOnLaunch: [String] = []
+  private var hasFinishedInitialRepositoryRestore = true
+  private var isRestoringPersistedRepositories = false
+  private var hasObservedNonEmptyRepositoryEmissionSinceLaunch = false
 
   /// Maps session IDs to prompts that should be sent to the terminal when it becomes ready.
   ///
@@ -795,6 +802,9 @@ public final class CLISessionsViewModel {
   private var monitoredSessionsKey: String {
     AgentHubDefaults.monitoredSessionIds + "." + providerDefaultsSuffix
   }
+  private var providerRepositoryMigrationKey: String {
+    AgentHubDefaults.keyPrefix + "sessions.selectedRepositories.providerMigration." + providerDefaultsSuffix
+  }
   // MARK: - Initialization
 
   public init(
@@ -832,10 +842,13 @@ public final class CLISessionsViewModel {
     let savedTimeout = UserDefaults.standard.integer(forKey: "CLISessionsApprovalTimeout")
     self.approvalTimeoutSeconds = savedTimeout > 0 ? savedTimeout : 5
 
+    persistedRepositoryPathsOnLaunch = loadPersistedRepositoryPathsForLaunch()
+    hasFinishedInitialRepositoryRestore = persistedRepositoryPathsOnLaunch.isEmpty
+    isRestoringPersistedRepositories = !persistedRepositoryPathsOnLaunch.isEmpty
+    AppLogger.startup.info("[Startup][\(providerKind.rawValue, privacy: .public)] ViewModel init persistedRepos=\(self.persistedRepositoryPathsOnLaunch.count) restorePending=\(!self.hasFinishedInitialRepositoryRestore)")
+
     // Set loading state synchronously so the UI never shows empty state during restoration
-    if let data = UserDefaults.standard.data(forKey: persistenceKey),
-       let paths = try? JSONDecoder().decode([String].self, from: data),
-       !paths.isEmpty {
+    if !persistedRepositoryPathsOnLaunch.isEmpty {
       loadingState = .restoringRepositories
     }
 
@@ -971,6 +984,10 @@ public final class CLISessionsViewModel {
 
         await MainActor.run { [weak self] in
           guard let self = self else { return }
+          let totalSessionCount = repositories.reduce(0) { total, repo in
+            total + repo.worktrees.reduce(0) { $0 + $1.sessions.count }
+          }
+          AppLogger.startup.info("[Startup][\(self.providerKind.rawValue, privacy: .public)] repository emission repos=\(repositories.count) sessions=\(totalSessionCount) restoring=\(self.isRestoringPersistedRepositories) restoreDone=\(self.hasFinishedInitialRepositoryRestore)")
 
           // Preserve expanded state from current repositories
           self.selectedRepositories = self.mergePreservingExpandedState(
@@ -978,8 +995,19 @@ public final class CLISessionsViewModel {
             updated: repositories
           )
 
-          // Persist after state is updated to ensure consistency
-          self.persistSelectedRepositories()
+          if Self.shouldPersistRepositoryEmission(
+            repositoryCount: repositories.count,
+            persistedRepositoryPathCountOnLaunch: self.persistedRepositoryPathsOnLaunch.count,
+            hasObservedNonEmptyRepositoryEmissionSinceLaunch: self.hasObservedNonEmptyRepositoryEmissionSinceLaunch
+          ) {
+            // Persist after state is updated to ensure consistency
+            self.persistSelectedRepositories()
+          } else {
+            AppLogger.startup.warning("[Startup][\(self.providerKind.rawValue, privacy: .public)] skipped persisting initial empty repository emission during restore")
+          }
+          if !repositories.isEmpty {
+            self.hasObservedNonEmptyRepositoryEmissionSinceLaunch = true
+          }
 
           // Sync backup with latest session data for monitored sessions
           self.syncMonitoredSessionBackup()
@@ -1052,29 +1080,82 @@ public final class CLISessionsViewModel {
 
   // MARK: - Persistence
 
+  nonisolated static func shouldPersistRepositoryEmission(
+    repositoryCount: Int,
+    persistedRepositoryPathCountOnLaunch: Int,
+    hasObservedNonEmptyRepositoryEmissionSinceLaunch: Bool
+  ) -> Bool {
+    !(repositoryCount == 0
+      && persistedRepositoryPathCountOnLaunch > 0
+      && !hasObservedNonEmptyRepositoryEmissionSinceLaunch)
+  }
+
+  private static func decodePersistedRepositoryPaths(forKey key: String) -> [String] {
+    guard let data = UserDefaults.standard.data(forKey: key),
+          let paths = try? JSONDecoder().decode([String].self, from: data) else {
+      return []
+    }
+    return paths
+  }
+
+  private static func elapsedMilliseconds(since start: Date) -> Int {
+    Int(Date().timeIntervalSince(start) * 1000)
+  }
+
+  private func loadPersistedRepositoryPathsForLaunch() -> [String] {
+    let providerPaths = Self.decodePersistedRepositoryPaths(forKey: persistenceKey)
+    if !providerPaths.isEmpty {
+      AppLogger.startup.info("[Startup][\(self.providerKind.rawValue, privacy: .public)] loaded provider-specific persisted repos count=\(providerPaths.count)")
+      return providerPaths
+    }
+
+    let legacyPaths = Self.decodePersistedRepositoryPaths(forKey: AgentHubDefaults.selectedRepositories)
+    let hasMigratedProviderRepositories = UserDefaults.standard.bool(forKey: providerRepositoryMigrationKey)
+    if !legacyPaths.isEmpty && !hasMigratedProviderRepositories {
+      AppLogger.startup.warning("[Startup][\(self.providerKind.rawValue, privacy: .public)] using legacy persisted repos fallback count=\(legacyPaths.count)")
+      return legacyPaths
+    }
+
+    let providerKeyExists = UserDefaults.standard.object(forKey: persistenceKey) != nil
+    AppLogger.startup.info("[Startup][\(self.providerKind.rawValue, privacy: .public)] no persisted repos providerKeyExists=\(providerKeyExists) legacyCount=\(legacyPaths.count) migrationComplete=\(hasMigratedProviderRepositories)")
+    return []
+  }
+
   private func restorePersistedRepositories() {
+    let paths = persistedRepositoryPathsOnLaunch
+    guard !paths.isEmpty else {
+      hasFinishedInitialRepositoryRestore = true
+      isRestoringPersistedRepositories = false
+      return
+    }
+
     Task {
-      // Load persisted repository paths
-      guard let data = UserDefaults.standard.data(forKey: persistenceKey),
-            let paths = try? JSONDecoder().decode([String].self, from: data),
-            !paths.isEmpty else {
-        return
-      }
+      let restoreStartedAt = Date()
+      AppLogger.startup.info("[Startup][\(self.providerKind.rawValue, privacy: .public)] restorePersistedRepositories start paths=\(paths.count)")
 
       // Store persisted session IDs for progressive restoration
       let persistedSessionIds = loadPersistedSessionIds()
+      AppLogger.startup.info("[Startup][\(self.providerKind.rawValue, privacy: .public)] persisted monitored sessions count=\(persistedSessionIds.count)")
       if !persistedSessionIds.isEmpty {
         pendingRestorationSessionIds = persistedSessionIds
       }
 
       // Add repositories (triggers refreshSessions → setupSubscriptions)
       loadingState = .restoringRepositories
+      let addStartedAt = Date()
       await monitorService.addRepositories(paths)
+      AppLogger.startup.info("[Startup][\(self.providerKind.rawValue, privacy: .public)] monitor addRepositories returned elapsedMs=\(Self.elapsedMilliseconds(since: addStartedAt))")
       restoreExpansionState()
       loadingState = .idle
+      isRestoringPersistedRepositories = false
+      hasFinishedInitialRepositoryRestore = true
+      AppLogger.startup.info("[Startup][\(self.providerKind.rawValue, privacy: .public)] restorePersistedRepositories end elapsedMs=\(Self.elapsedMilliseconds(since: restoreStartedAt)) repos=\(self.selectedRepositories.count) pendingSessionRestores=\(self.pendingRestorationSessionIds.count)")
 
       // Safety timeout: stop trying to restore after 10 seconds
       try? await Task.sleep(for: .seconds(10))
+      if !pendingRestorationSessionIds.isEmpty {
+        AppLogger.startup.warning("[Startup][\(self.providerKind.rawValue, privacy: .public)] clearing unrestored session ids after timeout count=\(self.pendingRestorationSessionIds.count)")
+      }
       pendingRestorationSessionIds.removeAll()
     }
   }
@@ -1095,6 +1176,7 @@ public final class CLISessionsViewModel {
   private func processPendingSessionRestorations() {
     guard !pendingRestorationSessionIds.isEmpty else { return }
 
+    let pendingBefore = pendingRestorationSessionIds.count
     var restoredIds: Set<String> = []
 
     for sessionId in pendingRestorationSessionIds {
@@ -1113,6 +1195,7 @@ public final class CLISessionsViewModel {
 
     if !restoredIds.isEmpty {
       pendingRestorationSessionIds.subtract(restoredIds)
+      AppLogger.startup.info("[Startup][\(self.providerKind.rawValue, privacy: .public)] restored monitored sessions restored=\(restoredIds.count) pendingBefore=\(pendingBefore) pendingAfter=\(self.pendingRestorationSessionIds.count)")
       expandItemsContainingMonitoredSessions()
       loadCustomNames()
       loadPinnedSessions()
@@ -1141,6 +1224,8 @@ public final class CLISessionsViewModel {
     let paths = selectedRepositories.map { $0.path }
     if let data = try? JSONEncoder().encode(paths) {
       UserDefaults.standard.set(data, forKey: persistenceKey)
+      UserDefaults.standard.set(true, forKey: providerRepositoryMigrationKey)
+      AppLogger.startup.debug("[Startup][\(self.providerKind.rawValue, privacy: .public)] persisted repository paths count=\(paths.count)")
     }
     persistExpansionState()
   }

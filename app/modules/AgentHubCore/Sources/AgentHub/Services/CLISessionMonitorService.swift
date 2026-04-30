@@ -87,14 +87,18 @@ public actor CLISessionMonitorService {
   /// Adds multiple repositories at once, detecting worktrees in parallel and
   /// calling refreshSessions only once at the end (instead of N times).
   public func addRepositories(_ paths: [String]) async {
+    let startedAt = Date()
     // Filter out already-added repos
     let newPaths = paths.filter { path in
       !selectedRepositories.contains(where: { $0.path == path })
     }
+    AppLogger.startup.info("[Startup][ClaudeMonitor] addRepositories requested=\(paths.count) new=\(newPaths.count) existing=\(self.selectedRepositories.count)")
     guard !newPaths.isEmpty else { return }
 
     // Detect worktrees for all new repos in parallel
+    let detectionStartedAt = Date()
     let detections = await detectRepositoriesBatch(paths: newPaths)
+    AppLogger.startup.info("[Startup][ClaudeMonitor] addRepositories detectRepositoryBatch count=\(detections.count) elapsedMs=\(Self.elapsedMilliseconds(since: detectionStartedAt))")
     var selectedRootPaths = Set(selectedRepositories.map(\.path))
 
     for detection in detections where selectedRootPaths.insert(detection.rootPath).inserted {
@@ -110,6 +114,7 @@ public actor CLISessionMonitorService {
 
     // Single refreshSessions call for all repos
     await refreshSessions(skipWorktreeRedetection: true)
+    AppLogger.startup.info("[Startup][ClaudeMonitor] addRepositories end repos=\(self.selectedRepositories.count) elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
   }
 
   /// Removes a repository from monitoring
@@ -137,8 +142,11 @@ public actor CLISessionMonitorService {
   /// Refreshes sessions for all selected repositories
   /// - Parameter skipWorktreeRedetection: When true, skips worktree re-detection (used after adding a new repo)
   public func refreshSessions(skipWorktreeRedetection: Bool = false) async {
+    let refreshStartedAt = Date()
+    AppLogger.startup.info("[Startup][ClaudeMonitor] refreshSessions start repos=\(self.selectedRepositories.count) skipWorktreeRedetection=\(skipWorktreeRedetection)")
     guard !selectedRepositories.isEmpty else {
       repositoriesSubject.send([])
+      AppLogger.startup.info("[Startup][ClaudeMonitor] refreshSessions emitted empty repos elapsedMs=\(Self.elapsedMilliseconds(since: refreshStartedAt))")
       return
     }
 
@@ -148,10 +156,12 @@ public actor CLISessionMonitorService {
       AppLogger.git.info("[MonitorService] refreshSessions worktree re-detection start repos=\(repoCount)")
       // Detect worktrees for all repos in parallel (invalidate cache for full refresh)
       worktreeCache.removeAll()
+      let worktreeStartedAt = Date()
       let allWorktrees = await detectWorktreesBatch(
         repoPaths: selectedRepositories.map { $0.path }
       )
       AppLogger.git.info("[MonitorService] refreshSessions worktree re-detection end repos=\(repoCount)")
+      AppLogger.startup.info("[Startup][ClaudeMonitor] refreshSessions worktreeDetection repos=\(repoCount) elapsedMs=\(Self.elapsedMilliseconds(since: worktreeStartedAt))")
 
       // Merge detected worktrees with existing state
       for index in selectedRepositories.indices {
@@ -179,10 +189,14 @@ public actor CLISessionMonitorService {
     let allPaths = getAllMonitoredPaths()
 
     // Parse history for selected paths only
+    let historyStartedAt = Date()
     let sessionSummaries = await parseHistoryForPaths(allPaths)
+    AppLogger.startup.info("[Startup][ClaudeMonitor] refreshSessions parseHistory paths=\(allPaths.count) sessions=\(sessionSummaries.count) elapsedMs=\(Self.elapsedMilliseconds(since: historyStartedAt))")
 
     // Build a map of session ID -> (gitBranch, slug) (read from session files in parallel)
+    let metadataStartedAt = Date()
     let sessionMetadata = await readSessionMetadataBatch(sessionSummaries: sessionSummaries)
+    AppLogger.startup.info("[Startup][ClaudeMonitor] refreshSessions readMetadata requested=\(sessionSummaries.count) found=\(sessionMetadata.count) elapsedMs=\(Self.elapsedMilliseconds(since: metadataStartedAt))")
 
     // Build sessions and assign to worktrees
     var updatedRepositories = selectedRepositories
@@ -361,6 +375,11 @@ public actor CLISessionMonitorService {
 
     selectedRepositories = updatedRepositories
     repositoriesSubject.send(selectedRepositories)
+    let worktreeCount = updatedRepositories.reduce(0) { $0 + $1.worktrees.count }
+    let sessionCount = updatedRepositories.reduce(0) { total, repo in
+      total + repo.worktrees.reduce(0) { $0 + $1.sessions.count }
+    }
+    AppLogger.startup.info("[Startup][ClaudeMonitor] refreshSessions end repos=\(updatedRepositories.count) worktrees=\(worktreeCount) sessions=\(sessionCount) elapsedMs=\(Self.elapsedMilliseconds(since: refreshStartedAt))")
   }
 
   // MARK: - Message Utilities
@@ -705,6 +724,9 @@ public actor CLISessionMonitorService {
     sessionMetadataCache = sessionMetadataCache.filter { sessionIds.contains($0.key) }
   }
 
+  private static func elapsedMilliseconds(since start: Date) -> Int {
+    Int(Date().timeIntervalSince(start) * 1000)
+  }
 }
 
 // MARK: - Protocol Conformance
