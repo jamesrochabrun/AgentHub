@@ -7,7 +7,6 @@
 //  with UDID-keyed state and Task.detached for all process execution.
 //
 
-import CryptoKit
 import Foundation
 
 // MARK: - Private Build Helpers
@@ -49,6 +48,8 @@ private struct BuildSetup: Sendable {
   let scheme: String
   let xcodebuild: String
   let derivedDataPath: String
+  let clonedSourcePackagesPath: String
+  let packageCachePath: String
 }
 
 private struct BuiltAppInfo: Sendable {
@@ -247,7 +248,9 @@ public final class SimulatorService {
       "-quiet",
       "-scheme", setup.scheme,
       "-destination", "platform=macOS,arch=arm64",
-      "-derivedDataPath", setup.derivedDataPath
+      "-derivedDataPath", setup.derivedDataPath,
+      "-clonedSourcePackagesDirPath", setup.clonedSourcePackagesPath,
+      "-packageCachePath", setup.packageCachePath
     ]
     if setup.isWorkspace {
       buildArgs += ["-workspace", setup.targetPath]
@@ -321,7 +324,9 @@ public final class SimulatorService {
       "-quiet",
       "-scheme", setup.scheme,
       "-destination", "generic/platform=iOS Simulator",
-      "-derivedDataPath", setup.derivedDataPath
+      "-derivedDataPath", setup.derivedDataPath,
+      "-clonedSourcePackagesDirPath", setup.clonedSourcePackagesPath,
+      "-packageCachePath", setup.packageCachePath
     ]
     if setup.isWorkspace {
       buildArgs += ["-workspace", setup.targetPath]
@@ -484,9 +489,12 @@ public final class SimulatorService {
       return .failure(NSError(domain: "SimulatorService", code: -4,
         userInfo: [NSLocalizedDescriptionKey: "No scheme found in project"]))
     }
-    let derivedDataPath = derivedDataPath(for: projectPath)
+    let xcodePaths = BuildCachePaths.xcodePaths(for: projectPath)
     do {
-      try ensureDirectoryExists(atPath: derivedDataPath)
+      try ensureDirectoryExists(atPath: xcodePaths.derivedDataPath)
+      try ensureDirectoryExists(atPath: xcodePaths.clonedSourcePackagesPath)
+      try ensureDirectoryExists(atPath: xcodePaths.packageCachePath)
+      BuildCachePaths.recordWorkspacePath(projectPath)
     } catch {
       return .failure(error)
     }
@@ -495,7 +503,9 @@ public final class SimulatorService {
       isWorkspace: target.isWorkspace,
       scheme: scheme,
       xcodebuild: xcodebuild,
-      derivedDataPath: derivedDataPath
+      derivedDataPath: xcodePaths.derivedDataPath,
+      clonedSourcePackagesPath: xcodePaths.clonedSourcePackagesPath,
+      packageCachePath: xcodePaths.packageCachePath
     ))
   }
 
@@ -805,17 +815,7 @@ public final class SimulatorService {
   }
 
   nonisolated static func derivedDataPath(for projectPath: String) -> String {
-    let appSupport = FileManager.default.urls(
-      for: .applicationSupportDirectory,
-      in: .userDomainMask
-    ).first!
-    let buildsDirectory = appSupport
-      .appendingPathComponent("AgentHub", isDirectory: true)
-      .appendingPathComponent("Builds", isDirectory: true)
-    let digest = SHA256.hash(data: Data(projectPath.utf8))
-      .map { String(format: "%02x", $0) }
-      .joined()
-    return buildsDirectory.appendingPathComponent(digest, isDirectory: true).path
+    BuildCachePaths.xcodePaths(for: projectPath).derivedDataPath
   }
 
   nonisolated static func preferredAppBundlePath(

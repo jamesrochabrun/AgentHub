@@ -177,7 +177,8 @@ struct BuildHelperTests {
 
     #expect(first == second)
     #expect(first != other)
-    #expect(first.contains("/Library/Application Support/AgentHub/Builds/"))
+    #expect(first.contains("/Library/Caches/AgentHub/Builds/"))
+    #expect(first.hasSuffix("/xcode"))
   }
 
   @Test func preferredAppBundlePathPrefersSchemeMatchOverTestRunner() throws {

@@ -35,6 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // before sessions start restoring. Re-installs happen naturally as each
     // session begins monitoring.
     provider.reconcileClaudeHooksOnLaunch()
+    provider.startBuildCacheMaintenance()
   }
 
   /// Register all bundled fonts (Geist, GeistMono, JetBrains Mono)
@@ -67,6 +68,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     provider.terminateAllTerminals()
     // Stop all dev servers spawned for web preview
     DevServerManager.shared.stopAllServers()
+    provider.stopBuildCacheMaintenance()
     // Remove every approval hook we installed and clear claims so external
     // Claude Code sessions after quit run vanilla.
     provider.flushClaudeHooksOnTerminate()

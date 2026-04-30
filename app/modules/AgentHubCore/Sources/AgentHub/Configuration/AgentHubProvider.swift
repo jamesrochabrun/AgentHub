@@ -9,6 +9,7 @@ import AgentHubGitHub
 import Foundation
 import os
 import ClaudeCodeClient
+import UserNotifications
 
 #if canImport(AppKit)
 import AppKit
@@ -151,6 +152,11 @@ public final class AgentHubProvider {
     WorktreeSuccessSoundService()
   }()
 
+  /// Build cache migration, cleanup, and storage reporting.
+  public private(set) lazy var buildCacheService: any BuildCacheServiceProtocol = {
+    BuildCacheService()
+  }()
+
   // MARK: - GitHub Integration
 
   /// GitHub CLI service for PR/issue operations
@@ -193,6 +199,8 @@ public final class AgentHubProvider {
   }()
 
   // MARK: - Initialization
+
+  private var buildCacheMaintenanceTask: Task<Void, Never>?
 
   /// Creates a provider with the specified configuration
   /// - Parameters:
@@ -359,6 +367,83 @@ public final class AgentHubProvider {
     if semaphore.wait(timeout: .now() + timeout) == .timedOut {
       AppLogger.session.error("[ClaudeHook] reconcileClaudeHooksOnLaunch timed out after \(timeout)s — first session sync may race")
     }
+  }
+
+  /// Starts build-cache migration and periodic garbage collection. Safe to call
+  /// repeatedly; only one maintenance task is kept alive.
+  public func startBuildCacheMaintenance() {
+    guard buildCacheMaintenanceTask == nil else { return }
+    let service = buildCacheService
+    buildCacheMaintenanceTask = Task { [weak self] in
+      guard let self else { return }
+
+      let launchPaths = await self.knownBuildCacheWorkspacePaths()
+      let launchReport = await service.prepareForLaunch(knownWorkspacePaths: launchPaths)
+      await self.notifyIfBuildCacheMigrationCompleted(launchReport)
+
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(6 * 60 * 60))
+        guard !Task.isCancelled else { break }
+        let paths = await self.knownBuildCacheWorkspacePaths()
+        _ = await service.runGarbageCollection(knownWorkspacePaths: paths)
+      }
+    }
+  }
+
+  public func stopBuildCacheMaintenance() {
+    buildCacheMaintenanceTask?.cancel()
+    buildCacheMaintenanceTask = nil
+  }
+
+  public func knownBuildCacheWorkspacePaths() async -> [String] {
+    var paths = Set(persistedRepositoryPaths())
+
+    let claudeRepositories = await monitorService.getSelectedRepositories()
+    let codexRepositories = await codexMonitorService.getSelectedRepositories()
+    for repository in claudeRepositories + codexRepositories {
+      paths.insert(repository.path)
+      for worktree in repository.worktrees {
+        paths.insert(worktree.path)
+      }
+    }
+
+    return Array(paths).sorted()
+  }
+
+  private func persistedRepositoryPaths() -> [String] {
+    let defaults = UserDefaults.standard
+    let keys = [
+      AgentHubDefaults.selectedRepositories + ".claude",
+      AgentHubDefaults.selectedRepositories + ".codex"
+    ]
+    var paths = Set<String>()
+    for key in keys {
+      guard let data = defaults.data(forKey: key),
+            let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+        continue
+      }
+      paths.formUnion(decoded)
+    }
+    return Array(paths)
+  }
+
+  private func notifyIfBuildCacheMigrationCompleted(_ report: BuildCacheCleanupReport) async {
+    guard report.didMigrateOrCleanLegacyCaches else { return }
+    let defaults = UserDefaults.standard
+    guard !defaults.bool(forKey: AgentHubDefaults.buildCacheMigrationNotificationShown) else { return }
+    defaults.set(true, forKey: AgentHubDefaults.buildCacheMigrationNotificationShown)
+
+    let content = UNMutableNotificationContent()
+    content.title = "AgentHub cache migration completed"
+    content.body = "Build caches now live in macOS Caches. The next build for each workspace may be slower once."
+    content.sound = .none
+
+    let request = UNNotificationRequest(
+      identifier: "build-cache-migration-\(UUID().uuidString)",
+      content: content,
+      trigger: UNTimeIntervalNotificationTrigger(timeInterval: 0.1, repeats: false)
+    )
+    try? await UNUserNotificationCenter.current().add(request)
   }
 
   /// Removes every approval hook we've installed and releases claims. Call

@@ -72,7 +72,10 @@ public enum EmbeddedTerminalLaunchBuilder {
       return .failure(.executableNotFound(cliConfiguration.command))
     }
 
-    let environment = makeProcessEnvironment(additionalPaths: cliConfiguration.additionalPaths)
+    let environment = makeProcessEnvironment(
+      additionalPaths: cliConfiguration.additionalPaths,
+      workspacePath: projectPath
+    )
     let workingDirectory = projectPath.isEmpty ? NSHomeDirectory() : projectPath
     let escapedPath = shellEscape(workingDirectory)
     let escapedCLIPath = shellEscape(executablePath)
@@ -106,7 +109,7 @@ public enum EmbeddedTerminalLaunchBuilder {
     projectPath: String,
     shellPath: String? = nil
   ) -> EmbeddedTerminalLaunch {
-    let environment = makeProcessEnvironment(additionalPaths: [])
+    let environment = makeProcessEnvironment(additionalPaths: [], workspacePath: projectPath)
     let shellExecutable = resolveShellExecutablePath(shellPath)
     let escapedPath = shellEscape(projectPath.isEmpty ? NSHomeDirectory() : projectPath)
     let escapedShellPath = shellEscape(shellExecutable)
@@ -114,21 +117,14 @@ public enum EmbeddedTerminalLaunchBuilder {
     return EmbeddedTerminalLaunch(shellCommand: shellCommand, environment: environment)
   }
 
-  static func makeProcessEnvironment(additionalPaths: [String]) -> [String: String] {
-    var environment = ProcessInfo.processInfo.environment
-    environment["TERM"] = "xterm-256color"
-    environment["COLORTERM"] = "truecolor"
-    environment["LANG"] = "en_US.UTF-8"
-    environment.removeValue(forKey: "TERM_PROGRAM")
-
-    let paths = CLIPathResolver.executableSearchPaths(additionalPaths: additionalPaths)
-    let pathString = paths.joined(separator: ":")
-    if let existingPath = environment["PATH"] {
-      environment["PATH"] = "\(pathString):\(existingPath)"
-    } else {
-      environment["PATH"] = pathString
-    }
-    return environment
+  static func makeProcessEnvironment(
+    additionalPaths: [String],
+    workspacePath: String? = nil
+  ) -> [String: String] {
+    AgentHubProcessEnvironment.environment(
+      additionalPaths: additionalPaths,
+      workspacePath: workspacePath
+    )
   }
 
   static func shellEscape(_ value: String) -> String {

@@ -76,18 +76,10 @@ public struct TerminalLauncher {
         process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
       }
 
-      // Set up environment with PATH for child processes
-      var environment = ProcessInfo.processInfo.environment
-      let additionalPaths = CLIPathResolver.executableSearchPaths(additionalPaths: cliConfiguration.additionalPaths)
-        .joined(separator: ":")
-      if !additionalPaths.isEmpty {
-        if let existingPath = environment["PATH"] {
-          environment["PATH"] = "\(additionalPaths):\(existingPath)"
-        } else {
-          environment["PATH"] = additionalPaths
-        }
-      }
-      process.environment = environment
+      process.environment = AgentHubProcessEnvironment.environment(
+        additionalPaths: cliConfiguration.additionalPaths,
+        workspacePath: projectPath
+      )
 
       let stdoutPipe = Pipe()
       let stderrPipe = Pipe()
@@ -197,7 +189,14 @@ public struct TerminalLauncher {
       command = "\(escapedExecPath) \(joinedArgs)"
     }
 
-    return launchTerminalScript(command: command, scriptPrefix: "cli_resume")
+    return launchTerminalScript(
+      command: command,
+      scriptPrefix: "cli_resume",
+      environmentExports: AgentHubProcessEnvironment.shellExports(
+        additionalPaths: cliConfiguration.additionalPaths,
+        workspacePath: projectPath
+      )
+    )
   }
 
   /// Launches Terminal with a new Claude session in the specified path
@@ -263,16 +262,33 @@ public struct TerminalLauncher {
         : "cd \(escapedPath) && git checkout \(escapedBranch) && \(escapedClaudePath) \(joinedArgs)"
     }
 
-    return launchTerminalScript(command: command, scriptPrefix: "claude_open")
+    return launchTerminalScript(
+      command: command,
+      scriptPrefix: "claude_open",
+      environmentExports: AgentHubProcessEnvironment.shellExports(
+        additionalPaths: cliConfiguration.additionalPaths,
+        workspacePath: path
+      )
+    )
   }
 
   /// Creates and executes a terminal script using secure temp-file creation.
   /// Uses O_CREAT | O_EXCL to atomically create the file, eliminating TOCTOU races.
-  private static func launchTerminalScript(command: String, scriptPrefix: String) -> Error? {
+  private static func launchTerminalScript(
+    command: String,
+    scriptPrefix: String,
+    environmentExports: String? = nil
+  ) -> Error? {
     let tempDir = NSTemporaryDirectory()
     let scriptPath = (tempDir as NSString).appendingPathComponent("\(scriptPrefix)_\(UUID().uuidString).command")
 
-    let scriptContent = "#!/bin/bash\n\(command)\n"
+    let scriptContent = [
+      "#!/bin/bash",
+      environmentExports,
+      command
+    ]
+      .compactMap { $0 }
+      .joined(separator: "\n") + "\n"
 
     // Atomically create the file with O_CREAT | O_EXCL (fails if path exists)
     // and set permissions to 0o700 at creation time — no separate chmod step.

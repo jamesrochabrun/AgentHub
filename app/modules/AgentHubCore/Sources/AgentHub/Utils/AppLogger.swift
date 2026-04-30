@@ -50,4 +50,7 @@ public enum AppLogger {
 
   /// GitHub CLI operations (PRs, issues, reviews, checks)
   public static let github = Logger(subsystem: subsystem, category: "GitHub")
+
+  /// Build cache migration, garbage collection, and storage UI
+  public static let buildCache = Logger(subsystem: subsystem, category: "BuildCache")
 }

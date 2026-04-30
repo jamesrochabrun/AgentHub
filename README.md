@@ -34,6 +34,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, and send GitHub context back into a session
 - **File explorer and built-in editor** — Browse the project tree, jump to files with Cmd+P, edit files in-app with syntax highlighting, and save changes without leaving AgentHub
 - **Git worktree management** — Create and delete worktrees from the UI; launch sessions on new branches
+- **Managed build cache storage** — AgentHub-started Xcode and Swift builds write rebuildable cache data under `~/Library/Caches/AgentHub`, with a Settings panel to inspect and clear disk usage
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
 - **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
@@ -216,11 +217,14 @@ When active, a teal indicator appears below the prompt.
 
 ## Configuration
 
-AgentHub's settings window is organized into three tabs:
+AgentHub's settings window includes tabs for:
 
 - **General** — Notifications and app-wide behavior such as opening the file explorer in a modal window
 - **Configuration** — Claude and Codex CLI commands, provider-specific defaults, and Smart mode
+- **Worktrees** — Defaults for creating and cleaning up git worktrees
+- **Storage** — AgentHub build-cache usage, cleanup target, per-workspace cache controls, and advanced cache deletion
 - **Appearance** — Flat session layout, terminal preferences, and theme selection
+- **Developer** — Debug-only development controls
 
 ### Display Mode
 
@@ -230,6 +234,18 @@ AgentHub supports two display modes:
 - **Popover Mode** — Stats appear as a toolbar button in the app window
 
 Toggle between modes in the app settings.
+
+### Storage
+
+AgentHub redirects build cache data it creates while running Xcode and Swift builds to:
+
+```
+~/Library/Caches/AgentHub
+```
+
+This cache contains rebuildable build products, SwiftPM package data, and per-workspace intermediates. It is disk usage, not memory usage, and it does not include your source code.
+
+Open **Settings → Storage** to see total usage, the cache folder, the cleanup target, and per-workspace cache rows. **Keep** protects a workspace cache from size-based cleanup, **Delete Cache** removes one workspace cache, and **Free Up Disk Space** removes eligible caches that AgentHub can recreate. The advanced **Delete Every Cache** action reclaims the most disk space; the tradeoff is that the next build or test for affected projects may be slower while Xcode and SwiftPM recreate packages and build intermediates.
 
 ### Provider Defaults
 
