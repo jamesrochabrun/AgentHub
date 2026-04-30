@@ -33,7 +33,7 @@ public struct SettingsView: View {
   private var terminalFontFamily: String = "SF Mono"
 
   @AppStorage(AgentHubDefaults.terminalBackend)
-  private var terminalBackendRawValue: Int = EmbeddedTerminalBackend.ghostty.rawValue
+  private var terminalBackendRawValue: Int = EmbeddedTerminalBackend.regular.rawValue
 
   @AppStorage(AgentHubDefaults.terminalGhosttyConfigPath)
   private var terminalGhosttyConfigPath: String = ""
@@ -263,6 +263,7 @@ public struct SettingsView: View {
       }
 
       Section("Terminal") {
+        #if DEBUG
         Picker("Terminal", selection: terminalBackendSelectionBinding) {
           ForEach(EmbeddedTerminalBackend.allCases, id: \.rawValue) { backend in
             Text(backend.label).tag(backend.rawValue)
@@ -270,6 +271,7 @@ public struct SettingsView: View {
         }
 
         ghosttyConfigFileSetting
+        #endif
 
         Picker("Font", selection: $terminalFontFamily) {
           ForEach(terminalFontFamilies, id: \.self) { family in

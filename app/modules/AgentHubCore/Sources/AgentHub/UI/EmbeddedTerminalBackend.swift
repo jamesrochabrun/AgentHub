@@ -18,7 +18,7 @@ public enum EmbeddedTerminalBackend: Int, CaseIterable, Sendable {
 
   public static var storedPreference: EmbeddedTerminalBackend {
     let rawValue = UserDefaults.standard.object(forKey: AgentHubDefaults.terminalBackend) as? Int
-      ?? EmbeddedTerminalBackend.ghostty.rawValue
-    return EmbeddedTerminalBackend(rawValue: rawValue) ?? .ghostty
+      ?? EmbeddedTerminalBackend.regular.rawValue
+    return EmbeddedTerminalBackend(rawValue: rawValue) ?? .regular
   }
 }
