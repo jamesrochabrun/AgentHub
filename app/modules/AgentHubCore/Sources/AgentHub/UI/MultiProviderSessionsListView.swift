@@ -1118,12 +1118,10 @@ public struct MultiProviderSessionsListView: View {
             primarySessionId = item.id
           }
         )
-        .transition(.opacity)
         .id(item.id)
       }
     }
     .padding(.top, 2)
-    .animation(.easeInOut(duration: 0.25), value: pinnedSessionSnapshot)
   }
 
   @ViewBuilder
