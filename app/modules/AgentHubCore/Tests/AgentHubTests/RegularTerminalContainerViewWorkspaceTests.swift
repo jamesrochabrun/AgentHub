@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import AgentHubCore
+@testable import AgentHubTerminalUI
 
 @Suite("Regular terminal workspace")
 struct RegularTerminalContainerViewWorkspaceTests {
@@ -116,7 +117,11 @@ struct RegularTerminalContainerViewWorkspaceTests {
 private func makeShellTerminal() -> TerminalContainerView {
   let terminal = TerminalContainerView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
   terminal._testingDisableProcessLaunch()
-  terminal.configureShell(projectPath: "/tmp", isDark: true)
+  terminal.configureShell(
+    launch: EmbeddedTerminalLaunch.shellLaunch(projectPath: "/tmp"),
+    projectPath: "/tmp",
+    isDark: true
+  )
   return terminal
 }
 
@@ -125,9 +130,9 @@ private func makeAgentTerminal() -> TerminalContainerView {
   let terminal = TerminalContainerView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
   terminal._testingDisableProcessLaunch()
   terminal.configure(
-    sessionId: "session-1",
+    launch: .success(EmbeddedTerminalLaunch.shellLaunch(projectPath: "/tmp")),
     projectPath: "/tmp",
-    cliConfiguration: CLICommandConfiguration(command: "__agenthub_missing_cli__", mode: .claude),
+    initialInputText: nil,
     isDark: true
   )
   return terminal

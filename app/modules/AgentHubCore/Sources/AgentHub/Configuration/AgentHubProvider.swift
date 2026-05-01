@@ -6,6 +6,7 @@
 //
 
 import AgentHubGitHub
+import AgentHubTerminalUI
 import Foundation
 import os
 import ClaudeCodeClient

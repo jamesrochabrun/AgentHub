@@ -3,13 +3,14 @@
 //  AgentHub
 //
 
+import AgentHubTerminalUI
 import SwiftUI
 
 public struct AuxiliaryShellTerminalView: NSViewRepresentable {
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
-  @AppStorage(AgentHubDefaults.terminalFontSize) private var terminalFontSize: Double = 12
-  @AppStorage(AgentHubDefaults.terminalFontFamily) private var terminalFontFamily: String = "SF Mono"
+  @AppStorage(TerminalUserDefaultsKeys.terminalFontSize) private var terminalFontSize: Double = 12
+  @AppStorage(TerminalUserDefaultsKeys.terminalFontFamily) private var terminalFontFamily: String = "SF Mono"
 
   let terminalKey: String
   let projectPath: String
@@ -37,7 +38,12 @@ public struct AuxiliaryShellTerminalView: NSViewRepresentable {
   public func updateNSView(_ nsView: AuxiliaryShellTerminalHostView, context: Context) {
     let terminal = resolveTerminal()
     nsView.mount(terminal, key: terminalKey)
-    terminal.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), fontFamily: terminalFontFamily, theme: runtimeTheme)
+    terminal.syncAppearance(
+      isDark: colorScheme == .dark,
+      fontSize: CGFloat(terminalFontSize),
+      fontFamily: terminalFontFamily,
+      theme: runtimeTheme.map(TerminalAppearanceTheme.init)
+    )
   }
 
   public static func dismantleNSView(_ nsView: AuxiliaryShellTerminalHostView, coordinator: ()) {

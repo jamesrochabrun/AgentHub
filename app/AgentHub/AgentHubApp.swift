@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AgentHubCore
+import AgentHubTerminalUI
 import Ghostty
 import UserNotifications
 import CoreText

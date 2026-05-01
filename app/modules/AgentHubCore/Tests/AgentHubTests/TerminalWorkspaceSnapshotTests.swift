@@ -1,6 +1,7 @@
 import Testing
 
 @testable import AgentHubCore
+@testable import AgentHubTerminalUI
 
 @Suite("Terminal workspace snapshots")
 struct TerminalWorkspaceSnapshotTests {

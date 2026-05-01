@@ -3,7 +3,7 @@
 //  AgentHub
 //
 
-import AgentHubCore
+import AgentHubTerminalUI
 import AppKit
 import GhosttySwift
 import SwiftUI
@@ -40,8 +40,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   public var onRequestShowEditor: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
   public var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
+  public var onOpenFile: ((String, Int?) -> Void)?
   private var terminalSessionKey: String?
-  private weak var sessionViewModel: CLISessionsViewModel?
   var terminateProcessCallCount = 0
 
   public var view: NSView { self }
@@ -90,37 +90,19 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
   }
 
-  public func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?) {
+  public func updateContext(terminalSessionKey: String?) {
     self.terminalSessionKey = terminalSessionKey
-    self.sessionViewModel = sessionViewModel
   }
 
   public func configure(
-    sessionId: String?,
+    launch: Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError>,
     projectPath: String,
-    cliConfiguration: CLICommandConfiguration,
-    initialPrompt: String?,
     initialInputText: String?,
-    isDark: Bool,
-    dangerouslySkipPermissions: Bool,
-    permissionModePlan: Bool,
-    worktreeName: String?,
-    metadataStore: SessionMetadataStore?
+    isDark: Bool
   ) {
     guard !isConfigured else { return }
     isConfigured = true
     self.projectPath = projectPath
-
-    let launch = EmbeddedTerminalLaunchBuilder.cliLaunch(
-      sessionId: sessionId,
-      projectPath: projectPath,
-      cliConfiguration: cliConfiguration,
-      initialPrompt: initialPrompt,
-      dangerouslySkipPermissions: dangerouslySkipPermissions,
-      permissionModePlan: permissionModePlan,
-      worktreeName: worktreeName,
-      metadataStore: metadataStore
-    )
 
     switch launch {
     case .success(let launch):
@@ -138,15 +120,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
   }
 
-  public func configureShell(projectPath: String, isDark: Bool, shellPath: String?) {
+  public func configureShell(launch: EmbeddedTerminalLaunch, projectPath: String, isDark: Bool) {
     guard !isConfigured else { return }
     isConfigured = true
     self.projectPath = projectPath
 
-    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(
-      projectPath: projectPath,
-      shellPath: shellPath
-    )
     queueOrMountGhosttySession(
       PendingMount(
         command: launch.ghosttyCommand,
@@ -158,7 +136,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     )
   }
 
-  public func restart(sessionId: String?, projectPath: String, cliConfiguration: CLICommandConfiguration) {
+  public func restart(launch: Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError>, projectPath: String) {
     terminateProcess()
     removeMountedContent()
     terminalSession = nil
@@ -170,16 +148,10 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     hasDeliveredInitialPrompt = false
     hasPrefilledInitialInputText = false
     configure(
-      sessionId: sessionId,
+      launch: launch,
       projectPath: projectPath,
-      cliConfiguration: cliConfiguration,
-      initialPrompt: nil,
       initialInputText: nil,
-      isDark: true,
-      dangerouslySkipPermissions: false,
-      permissionModePlan: false,
-      worktreeName: nil,
-      metadataStore: nil
+      isDark: true
     )
   }
 
@@ -251,7 +223,12 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     protectedAgentController?.sendText(text)
   }
 
-  public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {
+  public func syncAppearance(
+    isDark: Bool,
+    fontSize: CGFloat,
+    fontFamily: String,
+    theme: TerminalAppearanceTheme?
+  ) {
     // Ghostty owns live appearance through its config. Font size is applied at surface creation.
   }
 
@@ -337,7 +314,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         )
         restoredTabIDs.append(tabIDs)
       } catch {
-        AppLogger.session.error("Failed to restore Ghostty shell pane: \(error.localizedDescription)")
+        TerminalUILogger.terminal.error("Failed to restore Ghostty shell pane: \(error.localizedDescription)")
       }
     }
 
@@ -533,7 +510,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     let workingDirectory = sourceController?.workingDirectory
       ?? sourceController?.configuration.workingDirectory
       ?? resolvedProjectPath
-    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: workingDirectory)
+    let launch = EmbeddedTerminalLaunch.shellLaunch(projectPath: workingDirectory)
     return makeGhosttyConfiguration(
       command: launch.ghosttyCommand,
       environment: launch.environment,
@@ -548,7 +525,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     in panelID: TerminalPanelID? = nil
   ) -> GhosttySurfaceConfiguration {
     let restoredPath = resolvedExistingDirectory(workingDirectory)
-    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: restoredPath)
+    let launch = EmbeddedTerminalLaunch.shellLaunch(projectPath: restoredPath)
     return makeGhosttyConfiguration(
       command: launch.ghosttyCommand,
       environment: launch.environment,
@@ -659,7 +636,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         configureControllerHooks(for: tab.controller)
         restoredTabIDs.append(tab.id)
       } catch {
-        AppLogger.session.error("Failed to restore Ghostty shell tab: \(error.localizedDescription)")
+        TerminalUILogger.terminal.error("Failed to restore Ghostty shell tab: \(error.localizedDescription)")
       }
     }
 
@@ -693,7 +670,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func resolvedFontSize() -> Float {
-    let fontSize = Float(UserDefaults.standard.double(forKey: AgentHubDefaults.terminalFontSize))
+    let fontSize = Float(UserDefaults.standard.double(forKey: TerminalUserDefaultsKeys.terminalFontSize))
     return fontSize > 0 ? fontSize : 12
   }
 
@@ -761,7 +738,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     let shortcut = NewlineShortcut(
-      rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalNewlineShortcut)
+      rawValue: UserDefaults.standard.integer(forKey: TerminalUserDefaultsKeys.terminalNewlineShortcut)
     ) ?? .system
     let action = TerminalSubmitInterception.keyAction(
       shortcut: shortcut,
@@ -846,7 +823,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       configureControllerHooks(for: tab.controller)
       notifyWorkspaceChanged()
     } catch {
-      AppLogger.session.error("Failed to open Ghostty shell tab: \(error.localizedDescription)")
+      TerminalUILogger.terminal.error("Failed to open Ghostty shell tab: \(error.localizedDescription)")
     }
   }
 
@@ -863,7 +840,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       configureControllerHooks(for: panel.activeTab?.controller)
       notifyWorkspaceChanged()
     } catch {
-      AppLogger.session.error("Failed to open Ghostty shell pane: \(error.localizedDescription)")
+      TerminalUILogger.terminal.error("Failed to open Ghostty shell pane: \(error.localizedDescription)")
     }
   }
 
@@ -1228,13 +1205,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     let editor = FileOpenEditor(
-      rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalFileOpenEditor)
+      rawValue: UserDefaults.standard.integer(forKey: TerminalUserDefaultsKeys.terminalFileOpenEditor)
     ) ?? .agentHub
     switch editor {
     case .agentHub:
-      if let vm = sessionViewModel, let key = terminalSessionKey {
-        vm.pendingFileOpen = (sessionId: key, filePath: resolvedPath, lineNumber: lineNumber)
-      }
+      onOpenFile?(resolvedPath, lineNumber)
     case .vscode:
       openInVSCode(path: resolvedPath, line: lineNumber)
     case .xcode:

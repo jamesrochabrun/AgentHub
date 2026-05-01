@@ -3,7 +3,7 @@
 //  AgentHub
 //
 
-import AgentHubCore
+import AgentHubTerminalUI
 import Foundation
 
 public enum GhosttyConfigPathResolver {
@@ -11,7 +11,7 @@ public enum GhosttyConfigPathResolver {
     defaults: UserDefaults = .standard,
     fileManager: FileManager = .default
   ) -> String? {
-    guard let rawPath = defaults.string(forKey: AgentHubDefaults.terminalGhosttyConfigPath) else {
+    guard let rawPath = defaults.string(forKey: TerminalUserDefaultsKeys.terminalGhosttyConfigPath) else {
       return nil
     }
 

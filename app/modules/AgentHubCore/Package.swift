@@ -16,6 +16,10 @@ let package = Package(
       name: "AgentHubCore",
       targets: ["AgentHubCore"]
     ),
+    .library(
+      name: "AgentHubTerminalUI",
+      targets: ["AgentHubTerminalUI"]
+    ),
   ],
   dependencies: [
     .package(path: "../AgentHubGitHub"),
@@ -40,14 +44,24 @@ let package = Package(
       ]
     ),
     .target(
+      name: "AgentHubTerminalUI",
+      dependencies: [
+        .product(name: "SwiftTerm", package: "SwiftTerm"),
+      ],
+      path: "Sources/AgentHubTerminalUI",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .target(
       name: "AgentHubCore",
       dependencies: [
         "ClaudeCodeClient",
+        "AgentHubTerminalUI",
         .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
         .product(name: "Storybook", package: "Storybook"),
         .product(name: "Canvas", package: "Canvas"),
         .product(name: "PierreDiffsSwift", package: "PierreDiffsSwift"),
-        .product(name: "SwiftTerm", package: "SwiftTerm"),
         .product(name: "MarkdownUI", package: "swift-markdown-ui"),
         .product(name: "GRDB", package: "GRDB.swift"),
         .product(name: "HighlightSwift", package: "HighlightSwift"),
@@ -77,6 +91,7 @@ let package = Package(
       name: "AgentHubTests",
       dependencies: [
         "AgentHubCore",
+        "AgentHubTerminalUI",
         "ClaudeCodeClient",
       ],
       path: "Tests/AgentHubTests",

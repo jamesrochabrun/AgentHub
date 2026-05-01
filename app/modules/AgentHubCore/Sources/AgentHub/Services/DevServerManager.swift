@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import AgentHubTerminalUI
 import Storybook
 
 // MARK: - DevServerManager

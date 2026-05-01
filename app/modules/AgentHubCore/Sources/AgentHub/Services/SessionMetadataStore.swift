@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AgentHubTerminalUI
 import GRDB
 
 /// Actor-based service for persisting session metadata to SQLite

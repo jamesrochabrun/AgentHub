@@ -37,7 +37,7 @@ public final class TerminalProcessRegistry {
   }
 
   /// Returns a snapshot of currently registered PIDs that are still alive and are Claude processes.
-  func getAliveRegisteredPIDs() -> Set<Int32> {
+  public func getAliveRegisteredPIDs() -> Set<Int32> {
     let snapshot = snapshotEntries()
     var alivePIDs: Set<Int32> = []
 
@@ -52,7 +52,7 @@ public final class TerminalProcessRegistry {
   }
 
   /// Kills only processes previously spawned by the app.
-  func cleanupRegisteredProcesses() {
+  public func cleanupRegisteredProcesses() {
     let snapshot = snapshotEntries()
     guard !snapshot.isEmpty else { return }
 

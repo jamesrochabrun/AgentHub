@@ -162,7 +162,7 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
       return
     }
 
-    let rawEditor = UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalFileOpenEditor)
+    let rawEditor = UserDefaults.standard.integer(forKey: TerminalUserDefaultsKeys.terminalFileOpenEditor)
     let editor = FileOpenEditor(
       rawValue: rawEditor
     ) ?? .agentHub
@@ -271,7 +271,7 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
     guard graceSeconds > 0 else { return }
     DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + graceSeconds) { [weak self] in
       guard let self, self.process.running else { return }
-      AppLogger.session.warning("Process group PID=\(pid) still alive; sending SIGKILL")
+      TerminalUILogger.terminal.warning("Process group PID=\(pid) still alive; sending SIGKILL")
       _ = killpg(pid, SIGKILL)
     }
   }

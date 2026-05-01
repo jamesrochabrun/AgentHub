@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import AgentHubCore
+@testable import AgentHubTerminalUI
 
 private actor AuxiliaryShellStubMonitorService: SessionMonitorServiceProtocol {
   nonisolated var repositoriesPublisher: AnyPublisher<[SelectedRepository], Never> {
@@ -59,6 +60,7 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   var onRequestShowEditor: (() -> Void)?
   var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
   var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
+  var onOpenFile: ((String, Int?) -> Void)?
   private(set) var configuredProjectPath: String?
   private(set) var configuredShellPath: String?
   private(set) var configuredInitialInputText: String?
@@ -69,32 +71,25 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   private(set) var configureCallCount = 0
   private(set) var terminateCallCount = 0
 
-  func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?) {}
+  func updateContext(terminalSessionKey: String?) {}
 
   func configure(
-    sessionId: String?,
+    launch: Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError>,
     projectPath: String,
-    cliConfiguration: CLICommandConfiguration,
-    initialPrompt: String?,
     initialInputText: String?,
-    isDark: Bool,
-    dangerouslySkipPermissions: Bool,
-    permissionModePlan: Bool,
-    worktreeName: String?,
-    metadataStore: SessionMetadataStore?
+    isDark: Bool
   ) {
     configuredProjectPath = projectPath
     configuredInitialInputText = initialInputText
     configureCallCount += 1
   }
 
-  func configureShell(projectPath: String, isDark: Bool, shellPath: String?) {
+  func configureShell(launch: EmbeddedTerminalLaunch, projectPath: String, isDark: Bool) {
     configuredProjectPath = projectPath
-    configuredShellPath = shellPath
     configureCallCount += 1
   }
 
-  func restart(sessionId: String?, projectPath: String, cliConfiguration: CLICommandConfiguration) {}
+  func restart(launch: Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError>, projectPath: String) {}
 
   func terminateProcess() {
     terminateCallCount += 1
@@ -109,7 +104,7 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   func typeInitialTextIfNeeded(_ text: String) {
     initialTypedTexts.append(text)
   }
-  func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {}
+  func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: TerminalAppearanceTheme?) {}
   func focus() {}
   func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
     workspaceSnapshotToCapture

@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AgentHubTerminalUI
 import Combine
 import Canvas
 import CoreGraphics
@@ -370,19 +371,26 @@ public final class CLISessionsViewModel {
         worktreeName
       ):
         surface.configure(
-          sessionId: sessionId,
+          launch: EmbeddedTerminalLaunchBuilder.cliLaunch(
+            sessionId: sessionId,
+            projectPath: projectPath,
+            cliConfiguration: cliConfiguration,
+            initialPrompt: initialPrompt,
+            dangerouslySkipPermissions: dangerouslySkipPermissions,
+            permissionModePlan: permissionModePlan,
+            worktreeName: worktreeName,
+            metadataStore: metadataStore
+          ),
           projectPath: projectPath,
-          cliConfiguration: cliConfiguration,
-          initialPrompt: initialPrompt,
           initialInputText: initialInputText,
-          isDark: isDark,
-          dangerouslySkipPermissions: dangerouslySkipPermissions,
-          permissionModePlan: permissionModePlan,
-          worktreeName: worktreeName,
-          metadataStore: metadataStore
+          isDark: isDark
         )
       case let .shell(projectPath, isDark, shellPath):
-        surface.configureShell(projectPath: projectPath, isDark: isDark, shellPath: shellPath)
+        surface.configureShell(
+          launch: EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: projectPath, shellPath: shellPath),
+          projectPath: projectPath,
+          isDark: isDark
+        )
       }
     }
 
@@ -421,9 +429,16 @@ public final class CLISessionsViewModel {
     descriptor: TerminalSurfaceDescriptor
   ) -> any EmbeddedTerminalSurface {
     let terminal = terminalSurfaceFactory.makeSurface(for: terminalBackend)
-    terminal.updateContext(terminalSessionKey: key, sessionViewModel: self)
+    configureTerminalContext(terminal, key: key)
     descriptor.configure(terminal, metadataStore: metadataStore)
     return terminal
+  }
+
+  private func configureTerminalContext(_ terminal: any EmbeddedTerminalSurface, key: String) {
+    terminal.updateContext(terminalSessionKey: key)
+    terminal.onOpenFile = { [weak self] path, line in
+      self?.pendingFileOpen = (sessionId: key, filePath: path, lineNumber: line)
+    }
   }
 
   private func copyTerminalCallbacks(
@@ -433,6 +448,7 @@ public final class CLISessionsViewModel {
     newTerminal.onUserInteraction = oldTerminal?.onUserInteraction
     newTerminal.onRequestShowEditor = oldTerminal?.onRequestShowEditor
     newTerminal.consumeQueuedWebPreviewContextOnSubmit = oldTerminal?.consumeQueuedWebPreviewContextOnSubmit
+    newTerminal.onOpenFile = oldTerminal?.onOpenFile
   }
 
   private func persistableWorkspaceSessionId(key: String, sessionId: String?) -> String? {
@@ -591,7 +607,7 @@ public final class CLISessionsViewModel {
       if let queuedInputText, !queuedInputText.isEmpty {
         existing.typeText(queuedInputText)
       }
-      existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
+      configureTerminalContext(existing, key: key)
       configureTerminalWorkspacePersistence(for: existing, key: key, sessionId: sessionId)
       return existing
     }
@@ -634,7 +650,7 @@ public final class CLISessionsViewModel {
       if auxiliaryShellTerminalDescriptors[key] == nil {
         auxiliaryShellTerminalDescriptors[key] = descriptor
       }
-      existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
+      configureTerminalContext(existing, key: key)
       return existing
     }
 
@@ -664,7 +680,7 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pendingId.uuidString)"
     if let terminal = activeTerminals.removeValue(forKey: pendingKey) {
       activeTerminals[sessionId] = terminal
-      terminal.updateContext(terminalSessionKey: sessionId, sessionViewModel: self)
+      configureTerminalContext(terminal, key: sessionId)
       configureTerminalWorkspacePersistence(for: terminal, key: sessionId, sessionId: sessionId)
       persistCurrentWorkspaceIfNeeded(for: terminal, key: sessionId, sessionId: sessionId, debounce: false)
     }
@@ -688,7 +704,7 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pendingId.uuidString)"
     if let terminal = auxiliaryShellTerminals.removeValue(forKey: pendingKey) {
       auxiliaryShellTerminals[sessionId] = terminal
-      terminal.updateContext(terminalSessionKey: sessionId, sessionViewModel: self)
+      configureTerminalContext(terminal, key: sessionId)
     }
     if let descriptor = auxiliaryShellTerminalDescriptors.removeValue(forKey: pendingKey) {
       auxiliaryShellTerminalDescriptors[sessionId] = descriptor
