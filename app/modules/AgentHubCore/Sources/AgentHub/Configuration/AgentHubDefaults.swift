@@ -44,15 +44,6 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true)
   public static let pushNotificationsEnabled = "\(keyPrefix)notifications.pushEnabled"
 
-  /// Persisted selected repositories (JSON-encoded array of paths)
-  /// Type: Data (JSON-encoded [String])
-  /// Note: Used with provider suffix (e.g., `.claude` or `.codex`) for provider-specific storage
-  public static let selectedRepositories = "\(keyPrefix)sessions.selectedRepositories"
-
-  /// Persisted monitored session IDs (JSON-encoded array of session IDs)
-  /// Type: Data (JSON-encoded [String])
-  public static let monitoredSessionIds = "\(keyPrefix)sessions.monitoredSessionIds"
-
   // MARK: - Provider Settings
 
   /// Base key for enabled providers
@@ -231,7 +222,6 @@ public enum AgentHubDefaults {
   private static let legacyKeyMappings: [String: String] = [
     "CLISessionsShowLastMessage": showLastMessage,
     "CLISessionsApprovalTimeout": approvalTimeout,
-    "CLISessionsSelectedRepositories": selectedRepositories,
     "selectedTheme": selectedTheme,
     "customPrimaryHex": customPrimaryHex,
     "customSecondaryHex": customSecondaryHex,

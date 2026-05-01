@@ -45,6 +45,7 @@ public final class AgentHubProvider {
   /// of `AgentHubCore` get the default factory which falls back to the regular
   /// SwiftTerm surface when `.ghostty` is selected.
   public let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
+  private let metadataStoreOverride: SessionMetadataStore?
 
   // MARK: - Lazy Services
 
@@ -125,6 +126,9 @@ public final class AgentHubProvider {
 
   /// Session metadata store for user-provided session names
   public private(set) lazy var metadataStore: SessionMetadataStore? = {
+    if let metadataStoreOverride {
+      return metadataStoreOverride
+    }
     do {
       return try SessionMetadataStore()
     } catch {
@@ -203,11 +207,13 @@ public final class AgentHubProvider {
   ///     target should pass a Ghostty-aware factory.
   public init(
     configuration: AgentHubConfiguration = .default,
-    terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory()
+    terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
+    metadataStore: SessionMetadataStore? = nil
   ) {
     self.configuration = configuration
     self.terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
+    self.metadataStoreOverride = metadataStore
 
     // Persist developer-provided commands to UserDefaults
     let defaults = UserDefaults.standard

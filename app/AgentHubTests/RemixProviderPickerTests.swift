@@ -250,10 +250,11 @@ struct RemixSessionProviderRoutingTests {
     let fixture = try RemixTestGitFixture.create()
     defer { fixture.cleanup() }
 
+    let metadataStore = try SessionMetadataStore(path: fixture.parentDir + "/session-metadata.sqlite")
     let hub = AgentHubProvider(configuration: AgentHubConfiguration(
       claudeDataPath: fixture.parentDir + "/claude",
       codexDataPath: fixture.parentDir + "/codex"
-    ))
+    ), metadataStore: metadataStore)
     let claudeVM = hub.claudeSessionsViewModel
     let codexVM = hub.codexSessionsViewModel
 

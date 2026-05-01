@@ -258,10 +258,10 @@ public struct MonitoringCardView: View {
       }
     }
     .onDrop(
-      of: [.fileURL, .png, .tiff, .image, .pdf],
+      of: [.agentHubGitHubContextItem, .fileURL, .png, .tiff, .image, .pdf],
       isTargeted: $isDragging
     ) { providers in
-      handleDroppedFiles(providers)
+      handleDroppedItems(providers)
       return true
     }
     .sheet(item: $simulatorSheetSession) { session in
@@ -309,10 +309,47 @@ public struct MonitoringCardView: View {
 
   // MARK: - Drag and Drop
 
-  /// Handles dropped file providers by extracting paths and typing them into terminal
-  private func handleDroppedFiles(_ providers: [NSItemProvider]) {
+  /// Handles dropped providers by typing context into the terminal without submitting.
+  private func handleDroppedItems(_ providers: [NSItemProvider]) {
     guard let key = terminalKey, let viewModel = viewModel else { return }
 
+    if handleDroppedGitHubContext(providers, key: key, viewModel: viewModel) {
+      return
+    }
+
+    handleDroppedFiles(providers, key: key, viewModel: viewModel)
+  }
+
+  private func handleDroppedGitHubContext(
+    _ providers: [NSItemProvider],
+    key: String,
+    viewModel: CLISessionsViewModel
+  ) -> Bool {
+    guard let provider = providers.first(where: {
+      $0.hasItemConformingToTypeIdentifier(GitHubContextDragPayload.typeIdentifier)
+    }) else {
+      return false
+    }
+
+    GitHubContextDragPayload.load(from: provider) { payload in
+      guard let payload else { return }
+
+      Task { @MainActor in
+        contentMode = .terminal
+        viewModel.typeToTerminal(forKey: key, text: payload.commandText + " ")
+        viewModel.focusTerminal(forKey: key)
+      }
+    }
+
+    return true
+  }
+
+  /// Handles dropped file providers by extracting paths and typing them into terminal.
+  private func handleDroppedFiles(
+    _ providers: [NSItemProvider],
+    key: String,
+    viewModel: CLISessionsViewModel
+  ) {
     for provider in providers {
       // Handle file URLs (files dragged from Finder)
       if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {

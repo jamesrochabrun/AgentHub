@@ -129,6 +129,13 @@ public final class CLISessionsViewModel {
   ///   with the terminal's input buffer (see `EmbeddedTerminalView.sendPromptIfNeeded`).
   public var pendingTerminalPrompts: [String: String] = [:]
 
+  /// Maps terminal keys to text that should be typed without submitting once the terminal exists.
+  ///
+  /// This is used for contextual prefill flows such as dragging files or GitHub items onto a
+  /// session card while the terminal surface has not been mounted yet.
+  @ObservationIgnored
+  public var pendingTerminalInputTexts: [String: String] = [:]
+
   /// Pending file open request from Cmd+Click in terminal.
   /// Set by TerminalContainerView, consumed by MultiProviderMonitoringPanelView.
   public var pendingFileOpen: (sessionId: String, filePath: String, lineNumber: Int?)? = nil
@@ -239,6 +246,15 @@ public final class CLISessionsViewModel {
   /// Clears the pending prompt after terminal has started (call from onAppear)
   public func clearPendingPrompt(for sessionId: String) {
     pendingTerminalPrompts.removeValue(forKey: sessionId)
+  }
+
+  /// Returns and clears pending terminal input text for a terminal key.
+  public func consumePendingTerminalInputText(for key: String) -> String? {
+    guard let text = pendingTerminalInputTexts[key], !text.isEmpty else {
+      return nil
+    }
+    pendingTerminalInputTexts.removeValue(forKey: key)
+    return text
   }
 
   public func sendPromptToActiveTerminal(forKey key: String, prompt: String) -> Bool {
@@ -515,6 +531,15 @@ public final class CLISessionsViewModel {
     }
   }
 
+  private func combinedInputText(_ first: String?, _ second: String?) -> String? {
+    let combined = [first, second]
+      .compactMap { $0 }
+      .filter { !$0.isEmpty }
+      .joined()
+
+    return combined.isEmpty ? nil : combined
+  }
+
   /// Gets an existing terminal or creates a new one for the given key.
   /// Key should be session ID for real sessions, or "pending-{pendingId}" for pending sessions.
   /// This preserves the terminal PTY across pending → real session transitions.
@@ -531,12 +556,15 @@ public final class CLISessionsViewModel {
     worktreeName: String? = nil
   ) -> any EmbeddedTerminalSurface {
     let config = cliConfiguration ?? self.currentCLIConfiguration
+    let queuedInputText = consumePendingTerminalInputText(for: key)
+    let descriptorInputText = key.hasPrefix("pending-") ? combinedInputText(initialInputText, queuedInputText) : queuedInputText
+    let createInputText = combinedInputText(initialInputText, queuedInputText)
     let descriptor = TerminalSurfaceDescriptor.cli(
       sessionId: sessionId,
       projectPath: projectPath,
       cliConfiguration: config,
       initialPrompt: key.hasPrefix("pending-") ? initialPrompt : nil,
-      initialInputText: key.hasPrefix("pending-") ? initialInputText : nil,
+      initialInputText: descriptorInputText,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
@@ -560,6 +588,9 @@ public final class CLISessionsViewModel {
       if let inputText = initialInputText, !inputText.isEmpty {
         existing.typeInitialTextIfNeeded(inputText)
       }
+      if let queuedInputText, !queuedInputText.isEmpty {
+        existing.typeText(queuedInputText)
+      }
       existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
       configureTerminalWorkspacePersistence(for: existing, key: key, sessionId: sessionId)
       return existing
@@ -573,7 +604,7 @@ public final class CLISessionsViewModel {
       projectPath: projectPath,
       cliConfiguration: config,
       initialPrompt: initialPrompt,
-      initialInputText: initialInputText,
+      initialInputText: createInputText,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
@@ -693,7 +724,11 @@ public final class CLISessionsViewModel {
   /// Types text into the terminal for a given key without pressing Enter.
   /// Used for drag-and-drop file paths where user adds context before submitting.
   public func typeToTerminal(forKey key: String, text: String) {
-    guard let terminal = activeTerminals[key] else { return }
+    guard !text.isEmpty else { return }
+    guard let terminal = activeTerminals[key] else {
+      pendingTerminalInputTexts[key, default: ""] += text
+      return
+    }
     terminal.typeText(text)
   }
 
@@ -783,18 +818,6 @@ public final class CLISessionsViewModel {
   // MARK: - Private
 
   private var subscriptionTask: Task<Void, Never>?
-  private var persistenceKey: String {
-    AgentHubDefaults.selectedRepositories + "." + providerDefaultsSuffix
-  }
-  private var expansionStateKey: String {
-    AgentHubDefaults.keyPrefix + "sessions.expansionState." + providerDefaultsSuffix
-  }
-  private var providerDefaultsSuffix: String {
-    providerKind == .claude ? "claude" : "codex"
-  }
-  private var monitoredSessionsKey: String {
-    AgentHubDefaults.monitoredSessionIds + "." + providerDefaultsSuffix
-  }
   // MARK: - Initialization
 
   public init(
@@ -833,9 +856,7 @@ public final class CLISessionsViewModel {
     self.approvalTimeoutSeconds = savedTimeout > 0 ? savedTimeout : 5
 
     // Set loading state synchronously so the UI never shows empty state during restoration
-    if let data = UserDefaults.standard.data(forKey: persistenceKey),
-       let paths = try? JSONDecoder().decode([String].self, from: data),
-       !paths.isEmpty {
+    if metadataStore?.getWorkspaceStateSync(for: providerKind).selectedRepositoryPaths.isEmpty == false {
       loadingState = .restoringRepositories
     }
 
@@ -1054,15 +1075,14 @@ public final class CLISessionsViewModel {
 
   private func restorePersistedRepositories() {
     Task {
-      // Load persisted repository paths
-      guard let data = UserDefaults.standard.data(forKey: persistenceKey),
-            let paths = try? JSONDecoder().decode([String].self, from: data),
-            !paths.isEmpty else {
+      let workspaceState = metadataStore?.getWorkspaceStateSync(for: providerKind) ?? SessionWorkspaceState()
+      let paths = workspaceState.selectedRepositoryPaths
+      guard !paths.isEmpty else {
         return
       }
 
       // Store persisted session IDs for progressive restoration
-      let persistedSessionIds = loadPersistedSessionIds()
+      let persistedSessionIds = Set(workspaceState.monitoredSessionIds)
       if !persistedSessionIds.isEmpty {
         pendingRestorationSessionIds = persistedSessionIds
       }
@@ -1070,7 +1090,7 @@ public final class CLISessionsViewModel {
       // Add repositories (triggers refreshSessions → setupSubscriptions)
       loadingState = .restoringRepositories
       await monitorService.addRepositories(paths)
-      restoreExpansionState()
+      restoreExpansionState(workspaceState.expansionState)
       loadingState = .idle
 
       // Safety timeout: stop trying to restore after 10 seconds
@@ -1078,16 +1098,6 @@ public final class CLISessionsViewModel {
       pendingRestorationSessionIds.removeAll()
     }
   }
-
-  /// Loads persisted session IDs from UserDefaults
-  private func loadPersistedSessionIds() -> Set<String> {
-    guard let data = UserDefaults.standard.data(forKey: monitoredSessionsKey),
-          let sessionIds = try? JSONDecoder().decode([String].self, from: data) else {
-      return []
-    }
-    return Set(sessionIds)
-  }
-
 
   /// Progressively restores sessions as they become available via setupSubscriptions.
   /// Called each time selectedRepositories is updated. Populates monitoring state directly
@@ -1119,12 +1129,7 @@ public final class CLISessionsViewModel {
     }
   }
 
-  private func restoreExpansionState() {
-    guard let data = UserDefaults.standard.data(forKey: expansionStateKey),
-          let state = try? JSONDecoder().decode([String: Bool].self, from: data) else {
-      return
-    }
-
+  private func restoreExpansionState(_ state: [String: Bool]) {
     for i in selectedRepositories.indices {
       if let expanded = state["repo:" + selectedRepositories[i].path] {
         selectedRepositories[i].isExpanded = expanded
@@ -1138,14 +1143,10 @@ public final class CLISessionsViewModel {
   }
 
   private func persistSelectedRepositories() {
-    let paths = selectedRepositories.map { $0.path }
-    if let data = try? JSONEncoder().encode(paths) {
-      UserDefaults.standard.set(data, forKey: persistenceKey)
-    }
-    persistExpansionState()
+    persistWorkspaceState()
   }
 
-  private func persistExpansionState() {
+  private func currentWorkspaceState() -> SessionWorkspaceState {
     var state: [String: Bool] = [:]
     for repo in selectedRepositories {
       state["repo:" + repo.path] = repo.isExpanded
@@ -1153,17 +1154,33 @@ public final class CLISessionsViewModel {
         state["wt:" + worktree.path] = worktree.isExpanded
       }
     }
-    if let data = try? JSONEncoder().encode(state) {
-      UserDefaults.standard.set(data, forKey: expansionStateKey)
+
+    let sessionIdsToPersist = monitoredSessionIds.union(pendingRestorationSessionIds)
+
+    return SessionWorkspaceState(
+      selectedRepositoryPaths: selectedRepositories.map(\.path),
+      monitoredSessionIds: Array(sessionIdsToPersist).sorted(),
+      expansionState: state
+    )
+  }
+
+  private func persistWorkspaceState() {
+    guard let metadataStore else { return }
+    let state = currentWorkspaceState()
+    let providerKind = providerKind
+
+    Task {
+      do {
+        try await metadataStore.saveWorkspaceState(state, for: providerKind)
+      } catch {
+        AppLogger.session.error("Failed to save workspace state: \(error.localizedDescription)")
+      }
     }
   }
 
-  /// Persists the currently monitored session IDs to UserDefaults
+  /// Persists the currently monitored session IDs to SQLite-backed workspace state.
   private func persistMonitoredSessions() {
-    let sessionIds = Array(monitoredSessionIds)
-    if let data = try? JSONEncoder().encode(sessionIds) {
-      UserDefaults.standard.set(data, forKey: monitoredSessionsKey)
-    }
+    persistWorkspaceState()
   }
 
   /// Syncs the backup store with latest session data from allSessions.
@@ -1494,6 +1511,7 @@ public final class CLISessionsViewModel {
   public func toggleRepositoryExpanded(_ repository: SelectedRepository) {
     guard let index = selectedRepositories.firstIndex(where: { $0.id == repository.id }) else { return }
     selectedRepositories[index].isExpanded.toggle()
+    persistWorkspaceState()
   }
 
   /// Toggles the expanded state of a worktree/branch
@@ -1503,6 +1521,7 @@ public final class CLISessionsViewModel {
       return
     }
     selectedRepositories[repoIndex].worktrees[worktreeIndex].isExpanded.toggle()
+    persistWorkspaceState()
   }
 
   // MARK: - Session Actions

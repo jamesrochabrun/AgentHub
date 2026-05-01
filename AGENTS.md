@@ -44,7 +44,11 @@ Concrete types: `CLISessionMonitorService` / `CodexSessionMonitorService`, `Sess
 
 - AI override flags are applied only when starting a new CLI session, never when resuming an existing one
 - Empty or unsupported saved provider settings must fall back to the CLI's own defaults instead of emitting override flags
-- Session metadata is stored in SQLite via GRDB; schema changes must be added as new `DatabaseMigrator` migrations rather than rewriting existing migrations
+- UserDefaults is only for app/UI preferences. Session/workspace management state must live in SQLite via `SessionMetadataStore`.
+- Never add `AgentHubDefaults` keys for selected repositories, monitored session IDs, session restore state, repo mappings, or terminal workspace state.
+- Schema changes must append a new `DatabaseMigrator` migration. Never edit, rename, reorder, or delete existing migration identifiers or bodies.
+- Production migrations must be additive or explicit data transforms. Do not use broad `delete`, `drop table`, `clearAll()`, or `eraseDatabaseOnSchemaChange` in app migrations.
+- Every `SessionMetadataStore` schema change must include a migration-preservation test that seeds the current baseline DB and proves existing rows survive migration.
 
 ```swift
 protocol SessionSearchServiceProtocol {
@@ -99,7 +103,7 @@ AgentHub installs a `PreToolUse` hook to surface pending approvals in real time 
 - `@Observable` macro — never `ObservableObject`
 - `async/await` and actors — never completion handlers
 - `@MainActor` on ViewModels and UI-bound classes
-- UserDefaults keys namespaced under `com.agenthub.`
+- UserDefaults preference keys namespaced under `com.agenthub.`
 
 ## Git Commits
 

@@ -56,7 +56,7 @@ public struct GitHubPanelView: View {
     .background(panelBackground)
     .task {
       await viewModel.setup(repoPath: projectPath)
-      if viewModel.isGHInstalled && viewModel.isAuthenticated {
+      if viewModel.setupState == .ready {
         await viewModel.loadPullRequests()
         await viewModel.loadCurrentBranchPR()
       }
@@ -126,11 +126,14 @@ public struct GitHubPanelView: View {
 
   @ViewBuilder
   private var content: some View {
-    if !viewModel.isGHInstalled {
+    switch viewModel.setupState {
+    case .checking:
+      loadingView("Checking GitHub setup...")
+    case .ghNotInstalled:
       ghNotInstalledView
-    } else if !viewModel.isAuthenticated {
+    case .notAuthenticated:
       ghNotAuthenticatedView
-    } else {
+    case .ready:
       mainContent
     }
   }
@@ -757,6 +760,9 @@ struct GitHubPRRow: View {
     }
     .buttonStyle(.plain)
     .agentHubFlatRow(isHighlighted: isCurrentBranch)
+    .onDrag {
+      GitHubContextDragPayload(pullRequest: pr).makeItemProvider()
+    }
     .contextMenu {
       Button {
         if let url = URL(string: pr.url) {
@@ -884,6 +890,9 @@ struct GitHubIssueRow: View {
     }
     .buttonStyle(.plain)
     .agentHubFlatRow()
+    .onDrag {
+      GitHubContextDragPayload(issue: issue).makeItemProvider()
+    }
   }
 }
 

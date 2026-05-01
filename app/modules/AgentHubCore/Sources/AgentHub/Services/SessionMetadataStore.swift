@@ -14,6 +14,24 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
 
   // MARK: - Properties
 
+  enum MigrationID {
+    static let createSessionMetadata = "v1_create_session_metadata"
+    static let createSessionRepoMapping = "v2_create_session_repo_mapping"
+    static let createAIConfig = "v3_create_ai_config"
+    static let addPinned = "v4_add_pinned"
+    static let createTerminalWorkspaces = "v5_create_terminal_workspaces"
+    static let createSessionWorkspaceState = "v6_create_session_workspace_state"
+  }
+
+  static let migrationIdentifiers = [
+    MigrationID.createSessionMetadata,
+    MigrationID.createSessionRepoMapping,
+    MigrationID.createAIConfig,
+    MigrationID.addPinned,
+    MigrationID.createTerminalWorkspaces,
+    MigrationID.createSessionWorkspaceState
+  ]
+
   private let dbQueue: DatabaseQueue
 
   // MARK: - Initialization
@@ -49,7 +67,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
   private nonisolated var migrator: DatabaseMigrator {
     var migrator = DatabaseMigrator()
 
-    migrator.registerMigration("v1_create_session_metadata") { db in
+    migrator.registerMigration(MigrationID.createSessionMetadata) { db in
       try db.create(table: "session_metadata") { t in
         t.column("sessionId", .text).primaryKey()
         t.column("customName", .text)
@@ -58,7 +76,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       }
     }
 
-    migrator.registerMigration("v2_create_session_repo_mapping") { db in
+    migrator.registerMigration(MigrationID.createSessionRepoMapping) { db in
       try db.create(table: "session_repo_mapping") { t in
         t.column("sessionId", .text).primaryKey()
         t.column("parentRepoPath", .text).notNull().indexed()
@@ -67,7 +85,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       }
     }
 
-    migrator.registerMigration("v3_create_ai_config") { db in
+    migrator.registerMigration(MigrationID.createAIConfig) { db in
       try db.create(table: "ai_config") { t in
         t.column("provider", .text).primaryKey()
         t.column("defaultModel", .text).notNull().defaults(to: "")
@@ -79,13 +97,13 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       }
     }
 
-    migrator.registerMigration("v4_add_pinned") { db in
+    migrator.registerMigration(MigrationID.addPinned) { db in
       try db.alter(table: "session_metadata") { t in
         t.add(column: "isPinned", .boolean).notNull().defaults(to: false)
       }
     }
 
-    migrator.registerMigration("v5_create_terminal_workspaces") { db in
+    migrator.registerMigration(MigrationID.createTerminalWorkspaces) { db in
       try db.create(table: "terminal_workspaces") { t in
         t.column("provider", .text).notNull()
         t.column("sessionId", .text).notNull()
@@ -93,6 +111,16 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
         t.column("snapshotData", .blob).notNull()
         t.column("updatedAt", .datetime).notNull()
         t.primaryKey(["provider", "sessionId", "backend"], onConflict: .replace)
+      }
+    }
+
+    migrator.registerMigration(MigrationID.createSessionWorkspaceState) { db in
+      try db.create(table: "session_workspace_state") { t in
+        t.column("provider", .text).primaryKey()
+        t.column("selectedRepositoryPathsData", .blob).notNull()
+        t.column("monitoredSessionIdsData", .blob).notNull()
+        t.column("expansionStateData", .blob).notNull()
+        t.column("updatedAt", .datetime).notNull()
       }
     }
 
@@ -192,9 +220,28 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
   public func clearAll() throws {
     try dbQueue.write { db in
       _ = try TerminalWorkspaceRecord.deleteAll(db)
+      _ = try SessionWorkspaceStateRecord.deleteAll(db)
       _ = try AIConfigRecord.deleteAll(db)
       _ = try SessionRepoMapping.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
+    }
+  }
+
+  // MARK: - Workspace State
+
+  public nonisolated func getWorkspaceStateSync(for provider: SessionProviderKind) -> SessionWorkspaceState {
+    (try? dbQueue.read { db in
+      try SessionWorkspaceStateRecord
+        .filter(Column("provider") == provider.rawValue)
+        .fetchOne(db)?
+        .decodedState()
+    }) ?? SessionWorkspaceState()
+  }
+
+  public func saveWorkspaceState(_ state: SessionWorkspaceState, for provider: SessionProviderKind) async throws {
+    let record = try SessionWorkspaceStateRecord(provider: provider.rawValue, state: state)
+    try await dbQueue.write { db in
+      try record.save(db)
     }
   }
 

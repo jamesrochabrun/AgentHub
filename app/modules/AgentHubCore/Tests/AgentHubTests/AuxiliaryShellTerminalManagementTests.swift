@@ -61,6 +61,9 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
   private(set) var configuredProjectPath: String?
   private(set) var configuredShellPath: String?
+  private(set) var configuredInitialInputText: String?
+  private(set) var typedTexts: [String] = []
+  private(set) var initialTypedTexts: [String] = []
   private(set) var restoredWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   var workspaceSnapshotToCapture: TerminalWorkspaceSnapshot?
   private(set) var configureCallCount = 0
@@ -81,6 +84,7 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
     metadataStore: SessionMetadataStore?
   ) {
     configuredProjectPath = projectPath
+    configuredInitialInputText = initialInputText
     configureCallCount += 1
   }
 
@@ -99,8 +103,12 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   func resetPromptDeliveryFlag() {}
   func sendPromptIfNeeded(_ prompt: String) {}
   func submitPromptImmediately(_ prompt: String) -> Bool { true }
-  func typeText(_ text: String) {}
-  func typeInitialTextIfNeeded(_ text: String) {}
+  func typeText(_ text: String) {
+    typedTexts.append(text)
+  }
+  func typeInitialTextIfNeeded(_ text: String) {
+    initialTypedTexts.append(text)
+  }
   func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {}
   func focus() {}
   func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
@@ -192,6 +200,45 @@ private final class RecordingTerminalSurfaceFactory: EmbeddedTerminalSurfaceFact
 
 @Suite("Auxiliary shell terminal management", .serialized)
 struct AuxiliaryShellTerminalManagementTests {
+
+  @Test("Typing to an active terminal sends text immediately")
+  @MainActor
+  func typeToTerminalUsesActiveTerminal() {
+    let viewModel = makeAuxiliaryShellViewModel()
+    let terminal = TestTerminalSurface()
+    viewModel.activeTerminals["session-123"] = terminal
+
+    viewModel.typeToTerminal(forKey: "session-123", text: "/review https://github.com/example/repo/pull/1 ")
+
+    #expect(terminal.typedTexts == ["/review https://github.com/example/repo/pull/1 "])
+    #expect(viewModel.pendingTerminalInputTexts["session-123"] == nil)
+  }
+
+  @Test("Typing to a missing terminal queues text for creation")
+  @MainActor
+  func typeToTerminalQueuesUntilTerminalCreation() {
+    let terminal = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [terminal])
+    let viewModel = makeAuxiliaryShellViewModel(terminalSurfaceFactory: factory, terminalBackend: .swiftTerm)
+    let command = "fix https://github.com/example/repo/issues/7 "
+
+    viewModel.typeToTerminal(forKey: "session-123", text: command)
+
+    #expect(viewModel.pendingTerminalInputTexts["session-123"] == command)
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/repo",
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      initialPrompt: nil,
+      initialInputText: nil,
+      isDark: true
+    )
+
+    #expect(terminal.configuredInitialInputText == command)
+    #expect(viewModel.pendingTerminalInputTexts["session-123"] == nil)
+  }
 
   @Test("Transfers auxiliary shell terminal from pending key to resolved session ID")
   @MainActor

@@ -96,6 +96,16 @@ private func makeCheck(
 @Suite("GitHubViewModel Setup")
 struct GitHubViewModelSetupTests {
 
+  @Test("initial setup state checks GitHub setup")
+  @MainActor
+  func initialSetupStateChecksGitHubSetup() {
+    let vm = GitHubViewModel(service: MockGitHubCLIService())
+
+    #expect(vm.setupState == .checking)
+    #expect(vm.isGHInstalled == false)
+    #expect(vm.isAuthenticated == false)
+  }
+
   @Test("setup detects gh installation and authentication")
   @MainActor
   func setupDetectsInstallAndAuth() async {
@@ -107,6 +117,7 @@ struct GitHubViewModelSetupTests {
 
     #expect(vm.isGHInstalled == true)
     #expect(vm.isAuthenticated == true)
+    #expect(vm.setupState == .ready)
     #expect(vm.repoInfo?.fullName == "testowner/testrepo")
     #expect(mock.getRepoInfoCalled == true)
   }
@@ -122,6 +133,7 @@ struct GitHubViewModelSetupTests {
 
     #expect(vm.isGHInstalled == false)
     #expect(vm.isAuthenticated == false)
+    #expect(vm.setupState == .ghNotInstalled)
     #expect(vm.repoInfo == nil)
   }
 
@@ -136,6 +148,7 @@ struct GitHubViewModelSetupTests {
 
     #expect(vm.isGHInstalled == true)
     #expect(vm.isAuthenticated == false)
+    #expect(vm.setupState == .notAuthenticated)
     #expect(vm.repoInfo == nil)
   }
 }
