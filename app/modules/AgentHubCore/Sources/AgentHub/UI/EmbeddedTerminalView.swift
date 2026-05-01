@@ -216,13 +216,91 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
 
 /// Container view that manages the terminal lifecycle
 public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDelegate {
-  var terminalView: SafeLocalProcessTerminalView?
+  fileprivate final class WorkspaceTab {
+    let id: UUID
+    let role: TerminalWorkspaceTabRole
+    var name: String?
+    var title: String?
+    var workingDirectory: String?
+    let terminal: SafeLocalProcessTerminalView
+
+    init(
+      id: UUID = UUID(),
+      role: TerminalWorkspaceTabRole,
+      name: String?,
+      title: String?,
+      workingDirectory: String?,
+      terminal: SafeLocalProcessTerminalView
+    ) {
+      self.id = id
+      self.role = role
+      self.name = name
+      self.title = title
+      self.workingDirectory = workingDirectory
+      self.terminal = terminal
+    }
+  }
+
+  fileprivate final class WorkspacePane {
+    let id: UUID
+    var role: TerminalWorkspacePanelRole
+    var tabs: [WorkspaceTab]
+    var activeTabID: UUID
+
+    init(
+      id: UUID = UUID(),
+      role: TerminalWorkspacePanelRole,
+      tabs: [WorkspaceTab],
+      activeTabID: UUID? = nil
+    ) {
+      self.id = id
+      self.role = role
+      self.tabs = tabs
+      self.activeTabID = activeTabID ?? tabs.first?.id ?? UUID()
+    }
+
+    var activeTab: WorkspaceTab? {
+      tabs.first { $0.id == activeTabID } ?? tabs.first
+    }
+  }
+
+  fileprivate indirect enum WorkspaceLayoutNode: Equatable {
+    case pane(UUID)
+    case split(axis: TerminalWorkspaceSplitAxis, children: [WorkspaceLayoutNode])
+  }
+
+  private enum WorkspaceMode {
+    case cli
+    case shell
+  }
+
+  private static let maxPaneCount = 4
+  private static let paneDividerSpacing: CGFloat = 1
+  private static let paneHeaderHeight: CGFloat = 28
+
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
   private var lastAppliedFontSize: CGFloat?
   private var lastAppliedFontFamily: String?
   private var lastAppliedIsDark: Bool?
+  private var lastAppliedThemeId: String?
+  private var currentIsDark = true
+  private var currentFontSize: CGFloat = 12
+  private var currentFontFamily = "SF Mono"
+  private var currentTheme: RuntimeTheme?
+  private var configuredProjectPath = ""
+  private var workspaceMode: WorkspaceMode?
+  private var panes: [WorkspacePane] = []
+  private var layoutNode: WorkspaceLayoutNode?
+  private var activePaneID: UUID?
+  private var protectedAgentPaneID: UUID?
+  private var protectedAgentTabID: UUID?
+  private var rootWorkspaceView: NSView?
+  private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
+  private var isRestoringWorkspace = false
+  private var lastWorkspaceSnapshot: TerminalWorkspaceSnapshot?
+  private var terminatedWorkspaceTabCount = 0
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
   private var localEventMonitor: Any?
   public var onUserInteraction: (() -> Void)?
@@ -232,10 +310,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   weak var sessionViewModel: CLISessionsViewModel?
   var metadataStore: SessionMetadataStore?
   var terminateProcessCallCount = 0
+  var startsTerminalProcesses = true
+
+  var terminalView: SafeLocalProcessTerminalView? {
+    activeTab?.terminal
+  }
 
   /// The PID of the current terminal process, if running
   public var currentProcessPID: Int32? {
-    terminalView?.currentProcessId
+    protectedAgentTab?.terminal.currentProcessId ?? activeTab?.terminal.currentProcessId
   }
 
   // MARK: - Lifecycle
@@ -253,9 +336,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// Safe to call multiple times - subsequent calls are no-ops.
   public func terminateProcess() {
     terminateProcessCallCount += 1
-    // Stop data reception FIRST to prevent DispatchIO race condition crash
-    terminalView?.stopReceivingData()
-    terminalView?.terminateProcessTree()
+    for tab in allTabs() {
+      terminate(tab)
+    }
   }
 
   // MARK: - Configuration
@@ -268,12 +351,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     cliConfiguration: CLICommandConfiguration
   ) {
     terminateProcess()
-    terminalView?.removeFromSuperview()
-    terminalView = nil
+    resetWorkspace()
     isConfigured = false
     hasDeliveredInitialPrompt = false  // Reset for fresh start
     hasPrefilledInitialInputText = false
-    configure(sessionId: sessionId, projectPath: projectPath, cliConfiguration: cliConfiguration)
+    configure(
+      sessionId: sessionId,
+      projectPath: projectPath,
+      cliConfiguration: cliConfiguration,
+      isDark: currentIsDark
+    )
   }
 
   public func configure(
@@ -293,17 +380,28 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
     guard !isConfigured else { return }
     isConfigured = true
+    workspaceMode = .cli
+    configuredProjectPath = projectPath
+    currentIsDark = isDark
 
-    let terminal = prepareTerminalView(isDark: isDark)
-    terminal.projectPath = projectPath
-    terminal.onOpenFile = { [weak self] path, line in
-      if let self, let vm = self.sessionViewModel, let key = self.terminalSessionKey {
-        vm.pendingFileOpen = (sessionId: key, filePath: path, lineNumber: line)
-      }
-    }
+    let terminal = makeTerminalView(isDark: isDark)
+    let primaryTab = WorkspaceTab(
+      role: .agent,
+      name: "Agent",
+      title: nil,
+      workingDirectory: resolvedProjectPath,
+      terminal: terminal
+    )
+    let primaryPane = WorkspacePane(role: .primary, tabs: [primaryTab])
+    panes = [primaryPane]
+    layoutNode = .pane(primaryPane.id)
+    activePaneID = primaryPane.id
+    protectedAgentPaneID = primaryPane.id
+    protectedAgentTabID = primaryTab.id
+
     installInteractionMonitorIfNeeded()
+    rebuildWorkspaceViews()
 
-    // Start the CLI process
     startCLIProcess(
       terminal: terminal,
       sessionId: sessionId,
@@ -321,6 +419,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         self?.typeInitialTextIfNeeded(initialInputText)
       }
     }
+
+    restorePendingWorkspaceSnapshotIfNeeded()
+    lastWorkspaceSnapshot = captureWorkspaceSnapshot()
   }
 
   public func configureShell(
@@ -330,9 +431,25 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   ) {
     guard !isConfigured else { return }
     isConfigured = true
+    workspaceMode = .shell
+    configuredProjectPath = projectPath
+    currentIsDark = isDark
 
-    let terminal = prepareTerminalView(isDark: isDark)
+    let terminal = makeTerminalView(isDark: isDark)
+    let primaryTab = WorkspaceTab(
+      role: .shell,
+      name: "Shell",
+      title: nil,
+      workingDirectory: resolvedProjectPath,
+      terminal: terminal
+    )
+    let primaryPane = WorkspacePane(role: .primary, tabs: [primaryTab])
+    panes = [primaryPane]
+    layoutNode = .pane(primaryPane.id)
+    activePaneID = primaryPane.id
+
     installInteractionMonitorIfNeeded()
+    rebuildWorkspaceViews()
 
     startShellProcess(
       terminal: terminal,
@@ -340,6 +457,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       shellPath: shellPath
     )
     registerProcessIfNeeded(for: terminal)
+
+    restorePendingWorkspaceSnapshotIfNeeded()
+    lastWorkspaceSnapshot = captureWorkspaceSnapshot()
   }
 
   /// Resets the prompt delivery flag so a new prompt can be sent.
@@ -350,7 +470,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// Sends a prompt to the terminal (only once per terminal instance unless reset)
   public func sendPromptIfNeeded(_ prompt: String) {
-    guard let terminal = terminalView else { return }
+    guard let terminal = promptTargetTerminal else { return }
     guard !hasDeliveredInitialPrompt else { return }
     hasDeliveredInitialPrompt = true
 
@@ -389,7 +509,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// This path is for explicit user actions and must not be gated by initial
   /// prompt delivery state.
   public func submitPromptImmediately(_ prompt: String) -> Bool {
-    guard let terminal = terminalView else { return false }
+    guard let terminal = promptTargetTerminal else { return false }
     terminal.send(TerminalPromptSubmissionPayload.textBytes(
       prompt: prompt,
       bracketedPasteMode: terminal.terminal?.bracketedPasteMode ?? false
@@ -415,7 +535,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// Types text into the terminal WITHOUT pressing Enter.
   /// Used for drag-and-drop file paths where user adds context before submitting.
   public func typeText(_ text: String) {
-    guard let terminal = terminalView else { return }
+    guard let terminal = activeTab?.terminal ?? promptTargetTerminal else { return }
     terminal.send(txt: text)
   }
 
@@ -424,96 +544,124 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard !text.isEmpty else { return }
     guard !hasPrefilledInitialInputText else { return }
     hasPrefilledInitialInputText = true
-    typeText(text)
+    promptTargetTerminal?.send(txt: text)
   }
 
   public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String = "SF Mono", theme: RuntimeTheme? = nil) {
+    currentIsDark = isDark
+    currentFontSize = fontSize
+    currentFontFamily = fontFamily
+    currentTheme = theme
     updateColors(isDark: isDark, theme: theme)
     updateFont(size: fontSize, family: fontFamily)
   }
 
   /// Updates terminal font size and family.
   public func updateFont(size: CGFloat, family: String = "SF Mono") {
-    guard let terminal = terminalView else { return }
     let resolvedSize = max(size, 8)
     guard lastAppliedFontSize != resolvedSize || lastAppliedFontFamily != family else { return }
 
     let font = NSFont(name: family, size: resolvedSize)
       ?? NSFont(name: "SF Mono", size: resolvedSize)
       ?? NSFont.monospacedSystemFont(ofSize: resolvedSize, weight: .regular)
-    terminal.font = font
+    for terminal in allTerminalViews() {
+      terminal.font = font
+    }
     lastAppliedFontSize = resolvedSize
     lastAppliedFontFamily = family
   }
-
-  private var lastAppliedThemeId: String?
 
   /// Updates terminal colors from theme or falls back to default dark/light.
   /// Only background and cursor are themed — foreground and ANSI colors are left
   /// untouched to preserve Claude Code / Codex syntax highlighting.
   public func updateColors(isDark: Bool, theme: RuntimeTheme? = nil) {
-    guard let terminal = terminalView else { return }
-
     let themeId = theme?.id
     let needsUpdate = lastAppliedIsDark != isDark || lastAppliedThemeId != themeId
     guard needsUpdate else { return }
 
-    // Theme terminal colors only apply in dark mode
-    if isDark, let bg = theme?.terminalBackground {
-      terminal.nativeBackgroundColor = bg
-    } else if isDark {
-      terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
-    } else {
-      // Match app light background
-      terminal.nativeBackgroundColor = NSColor(Color.backgroundLight)
-    }
-
-    if isDark {
-      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
-    } else {
-      terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
-    }
-
-    if isDark, let cursor = theme?.terminalCursor {
-      terminal.caretColor = cursor
-    } else {
-      terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
+    for terminal in allTerminalViews() {
+      applyColors(to: terminal, isDark: isDark, theme: theme)
+      terminal.needsDisplay = true
     }
 
     lastAppliedIsDark = isDark
     lastAppliedThemeId = themeId
-    terminal.needsDisplay = true
   }
 
   private func applyInitialAppearance(to terminal: TerminalView, isDark: Bool) {
     let fontSize: CGFloat = 12
-    lastAppliedFontSize = fontSize
     let font = NSFont(name: "SF Mono", size: fontSize)
       ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     terminal.font = font
 
-    if isDark {
-      terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
-      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
-    } else {
-      terminal.nativeBackgroundColor = NSColor(Color.backgroundLight)
-      terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
-    }
-
-    lastAppliedIsDark = isDark
+    applyColors(to: terminal, isDark: isDark, theme: currentTheme)
   }
 
   private func installInteractionMonitorIfNeeded() {
     guard localEventMonitor == nil else { return }
     localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseUp]) { [weak self] event in
-      guard let self, let terminal = self.terminalView else { return event }
+      guard let self else { return event }
 
       switch event.type {
       case .keyDown:
+        guard let window = event.window ?? self.window, window === self.window else { break }
+        guard let terminal = self.focusedTerminal(in: window) else { break }
+
+        self.syncActiveSelection(to: terminal)
+
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        if flags == .command, event.charactersIgnoringModifiers?.lowercased() == "t" {
+          self.openShellTab()
+          self.onUserInteraction?()
+          return nil
+        }
+
+        if flags == .command, event.charactersIgnoringModifiers?.lowercased() == "d" {
+          self.openShellPane(axis: .vertical)
+          self.onUserInteraction?()
+          return nil
+        }
+
+        if flags == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "d" {
+          self.openShellPane(axis: .horizontal)
+          self.onUserInteraction?()
+          return nil
+        }
+
+        if flags == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "w" {
+          self.closeActiveShellTabOrPane()
+          self.onUserInteraction?()
+          return nil
+        }
+
+        if flags == [.command, .shift], event.keyCode == 123 {
+          self.selectAdjacentTab(direction: -1)
+          self.onUserInteraction?()
+          return nil
+        }
+
+        if flags == [.command, .shift], event.keyCode == 124 {
+          self.selectAdjacentTab(direction: 1)
+          self.onUserInteraction?()
+          return nil
+        }
+
+        if flags == .command, event.keyCode == 123 {
+          self.focusAdjacentPane(delta: -1)
+          self.onUserInteraction?()
+          return nil
+        }
+
+        if flags == .command, event.keyCode == 124 {
+          self.focusAdjacentPane(delta: 1)
+          self.onUserInteraction?()
+          return nil
+        }
+
         guard let window = terminal.window,
               event.window === window else { break }
 
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isTerminalVisible = terminal.superview != nil && !terminal.isHidden && terminal.alphaValue > 0
 
         if isTerminalVisible,
@@ -541,6 +689,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
         // Typing shortcuts (require terminal to be first responder)
         guard isTerminalResponderActive(window: window, terminal: terminal) else { break }
+        guard isProtectedAgentTerminal(terminal) else {
+          self.onUserInteraction?()
+          break
+        }
 
         let shortcut = NewlineShortcut(
           rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalNewlineShortcut)
@@ -590,7 +742,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         guard !ResizeInteractionSuppression.shared.shouldSuppressSelection else {
           return event
         }
-        guard let window = terminal.window, event.window === window else { return event }
+        guard let terminal = self.terminal(containingMouseEvent: event) else { return event }
+        self.syncActiveSelection(to: terminal)
         let locationInTerminal = terminal.convert(event.locationInWindow, from: nil)
         if terminal.bounds.contains(locationInTerminal) {
           // Defer selection updates until after mouse handling completes.
@@ -622,7 +775,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
   }
 
-  private func prepareTerminalView(isDark: Bool) -> SafeLocalProcessTerminalView {
+  private func makeTerminalView(isDark: Bool) -> SafeLocalProcessTerminalView {
     // Use a sensible fallback frame when bounds is zero (view not yet laid out by SwiftUI).
     // SwiftTerm calculates column/row count from the initial frame — a zero frame produces a
     // ~2-column terminal that wraps every character. Auto Layout will correct the size on the
@@ -631,18 +784,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let terminal = SafeLocalProcessTerminalView(frame: initialFrame)
     terminal.translatesAutoresizingMaskIntoConstraints = false
     terminal.processDelegate = self
+    terminal.projectPath = configuredProjectPath
+    terminal.onOpenFile = { [weak self] path, line in
+      if let self, let vm = self.sessionViewModel, let key = self.terminalSessionKey {
+        vm.pendingFileOpen = (sessionId: key, filePath: path, lineNumber: line)
+      }
+    }
 
     configureTerminalAppearance(terminal, isDark: isDark)
-
-    addSubview(terminal)
-    NSLayoutConstraint.activate([
-      terminal.leadingAnchor.constraint(equalTo: leadingAnchor),
-      terminal.trailingAnchor.constraint(equalTo: trailingAnchor),
-      terminal.topAnchor.constraint(equalTo: topAnchor),
-      terminal.bottomAnchor.constraint(equalTo: bottomAnchor)
-    ])
-
-    self.terminalView = terminal
+    terminal.font = resolvedFont()
+    applyColors(to: terminal, isDark: currentIsDark, theme: currentTheme)
     return terminal
   }
 
@@ -683,6 +834,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
 #endif
 
+    guard startsTerminalProcesses else { return }
+
     terminal.startProcess(
       executable: launch.swiftTermExecutable,
       args: launch.swiftTermArguments,
@@ -699,6 +852,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       projectPath: projectPath,
       shellPath: shellPath
     )
+
+    guard startsTerminalProcesses else { return }
 
     terminal.startProcess(
       executable: launch.swiftTermExecutable,
@@ -718,15 +873,745 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   public func sizeChanged(source: ManagedLocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
-  public func setTerminalTitle(source: ManagedLocalProcessTerminalView, title: String) {}
+  public func setTerminalTitle(source: ManagedLocalProcessTerminalView, title: String) {
+    guard let tab = tab(for: source) else { return }
+    tab.title = Self.nonEmpty(title)
+    rebuildWorkspaceViews()
+    notifyWorkspaceChanged()
+  }
 
-  public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+  public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+    guard let tab = tab(for: source) else { return }
+    tab.workingDirectory = Self.nonEmpty(directory) ?? tab.workingDirectory
+    notifyWorkspaceChanged()
+  }
 
   public func processTerminated(source: TerminalView, exitCode: Int32?) {
     let key = ObjectIdentifier(source)
     if let pid = terminalPidMap[key] {
       TerminalProcessRegistry.shared.unregister(pid: pid)
       terminalPidMap.removeValue(forKey: key)
+    }
+  }
+
+  // MARK: - Workspace Snapshots
+
+  public func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
+    guard !panes.isEmpty else { return nil }
+
+    let panels = panes.map { pane in
+      TerminalWorkspacePanelSnapshot(
+        role: pane.role,
+        tabs: pane.tabs.map { tab in
+          TerminalWorkspaceTabSnapshot(
+            role: tab.role,
+            name: tab.name,
+            title: tab.title,
+            workingDirectory: tab.workingDirectory
+          )
+        },
+        activeTabIndex: pane.tabs.firstIndex { $0.id == pane.activeTabID } ?? 0
+      )
+    }
+
+    let indexByPaneID = Dictionary(uniqueKeysWithValues: panes.enumerated().map { ($0.element.id, $0.offset) })
+    return TerminalWorkspaceSnapshot(
+      schemaVersion: 2,
+      panels: panels,
+      activePanelIndex: panes.firstIndex { $0.id == activePaneID } ?? 0,
+      layout: layoutNode?.snapshot(indexByPaneID: indexByPaneID)
+    )
+  }
+
+  public func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {
+    guard isConfigured else {
+      pendingWorkspaceSnapshot = snapshot
+      return
+    }
+    guard !snapshot.panels.isEmpty else { return }
+
+    isRestoringWorkspace = true
+    defer {
+      isRestoringWorkspace = false
+      lastWorkspaceSnapshot = captureWorkspaceSnapshot()
+    }
+
+    resetToPrimaryPaneForRestore()
+
+    let panelSnapshots = normalizedPanelSnapshots(snapshot.panels)
+    var restoredPaneIDs: [UUID] = []
+
+    if let primaryPane = panes.first, let primarySnapshot = panelSnapshots.first {
+      primaryPane.role = .primary
+      restoreTabs(from: primarySnapshot, in: primaryPane, isPrimaryPane: true)
+      restoredPaneIDs.append(primaryPane.id)
+    }
+
+    for panelSnapshot in panelSnapshots.dropFirst() {
+      guard panes.count < Self.maxPaneCount else { break }
+      guard let firstShellTab = panelSnapshot.tabs.first(where: { $0.role == .shell }) else { continue }
+      let pane = makeShellPane(from: firstShellTab)
+      panes.append(pane)
+      if let tab = pane.tabs.first {
+        startShellProcess(terminal: tab.terminal, projectPath: tab.workingDirectory ?? resolvedProjectPath)
+        registerProcessIfNeeded(for: tab.terminal)
+      }
+      restoreTabs(from: panelSnapshot, in: pane, isPrimaryPane: false, skippingFirstShellTab: true)
+      restoredPaneIDs.append(pane.id)
+    }
+
+    layoutNode = snapshot.layout.flatMap { layout(from: $0, paneIDs: restoredPaneIDs) }
+      ?? flatLayout(for: restoredPaneIDs, axis: .vertical)
+    restoreActiveSelection(from: snapshot, paneIDs: restoredPaneIDs)
+    rebuildWorkspaceViews()
+  }
+
+  // MARK: - Workspace Actions
+
+  private func openShellTab() {
+    guard let pane = activePane else { return }
+    openShellTab(in: pane)
+  }
+
+  private func openShellTab(in pane: WorkspacePane, from snapshot: TerminalWorkspaceTabSnapshot? = nil) {
+    let workingDirectory = resolvedDirectoryForNewShell(snapshot?.workingDirectory ?? pane.activeTab?.workingDirectory)
+    let tab = makeShellTab(
+      name: Self.nonEmpty(snapshot?.name) ?? "Shell",
+      title: Self.nonEmpty(snapshot?.title),
+      workingDirectory: workingDirectory
+    )
+    pane.tabs.append(tab)
+    pane.activeTabID = tab.id
+    activePaneID = pane.id
+    startShellProcess(terminal: tab.terminal, projectPath: workingDirectory)
+    registerProcessIfNeeded(for: tab.terminal)
+    rebuildWorkspaceViews()
+    notifyWorkspaceChanged()
+  }
+
+  private func openShellPane(axis: TerminalWorkspaceSplitAxis) {
+    guard panes.count < Self.maxPaneCount, let activePaneID else { return }
+    let workingDirectory = resolvedDirectoryForNewShell(activePane?.activeTab?.workingDirectory)
+    let pane = makeShellPane(
+      from: TerminalWorkspaceTabSnapshot(role: .shell, name: "Shell", workingDirectory: workingDirectory)
+    )
+    panes.append(pane)
+    layoutNode = layoutNode?.replacingPane(activePaneID, withSplitAxis: axis, newPaneID: pane.id)
+      ?? flatLayout(for: panes.map(\.id), axis: axis)
+    self.activePaneID = pane.id
+    startShellProcess(terminal: pane.tabs[0].terminal, projectPath: workingDirectory)
+    registerProcessIfNeeded(for: pane.tabs[0].terminal)
+    rebuildWorkspaceViews()
+    notifyWorkspaceChanged()
+  }
+
+  private func selectTab(_ tabID: UUID, in paneID: UUID) {
+    guard let pane = pane(for: paneID), pane.tabs.contains(where: { $0.id == tabID }) else { return }
+    pane.activeTabID = tabID
+    activePaneID = paneID
+    rebuildWorkspaceViews()
+    notifyWorkspaceChanged()
+    focus()
+  }
+
+  private func closeTab(_ tabID: UUID, in paneID: UUID) {
+    guard let pane = pane(for: paneID),
+          let index = pane.tabs.firstIndex(where: { $0.id == tabID }),
+          canCloseTab(pane.tabs[index], in: pane)
+    else {
+      return
+    }
+
+    let tab = pane.tabs.remove(at: index)
+    terminate(tab)
+
+    if pane.tabs.isEmpty {
+      closePane(pane)
+      return
+    }
+
+    if pane.activeTabID == tabID {
+      pane.activeTabID = pane.tabs[min(index, pane.tabs.count - 1)].id
+    }
+    activePaneID = pane.id
+    rebuildWorkspaceViews()
+    notifyWorkspaceChanged()
+  }
+
+  private func closePane(_ pane: WorkspacePane) {
+    guard canClosePane(pane) else { return }
+    for tab in pane.tabs {
+      terminate(tab)
+    }
+    panes.removeAll { $0.id == pane.id }
+    layoutNode = layoutNode?.removingPane(pane.id)
+    if activePaneID == pane.id {
+      activePaneID = firstPaneID(in: layoutNode) ?? panes.first?.id
+    }
+    rebuildWorkspaceViews()
+    notifyWorkspaceChanged()
+  }
+
+  private func closeActiveShellTabOrPane() {
+    guard let pane = activePane, let tab = pane.activeTab else { return }
+    if canCloseTab(tab, in: pane) {
+      closeTab(tab.id, in: pane.id)
+    } else if canClosePane(pane) {
+      closePane(pane)
+    }
+  }
+
+  private func selectAdjacentTab(direction: Int) {
+    guard let pane = activePane, !pane.tabs.isEmpty else { return }
+    let currentIndex = pane.tabs.firstIndex { $0.id == pane.activeTabID } ?? 0
+    let nextIndex = (currentIndex + direction + pane.tabs.count) % pane.tabs.count
+    selectTab(pane.tabs[nextIndex].id, in: pane.id)
+  }
+
+  private func focusAdjacentPane(delta: Int) {
+    guard !panes.isEmpty else { return }
+    let currentIndex = panes.firstIndex { $0.id == activePaneID } ?? 0
+    let nextIndex = (currentIndex + delta + panes.count) % panes.count
+    activePaneID = panes[nextIndex].id
+    rebuildWorkspaceViews()
+    notifyWorkspaceChanged()
+    focus()
+  }
+
+  // MARK: - Workspace View Tree
+
+  private func rebuildWorkspaceViews() {
+    for terminal in allTerminalViews() {
+      terminal.removeFromSuperview()
+    }
+    rootWorkspaceView?.removeFromSuperview()
+    rootWorkspaceView = nil
+
+    guard let layoutNode else { return }
+    let rootView = makeLayoutView(for: layoutNode)
+    rootView.translatesAutoresizingMaskIntoConstraints = false
+    addSubview(rootView)
+    NSLayoutConstraint.activate([
+      rootView.leadingAnchor.constraint(equalTo: leadingAnchor),
+      rootView.trailingAnchor.constraint(equalTo: trailingAnchor),
+      rootView.topAnchor.constraint(equalTo: topAnchor),
+      rootView.bottomAnchor.constraint(equalTo: bottomAnchor)
+    ])
+    rootWorkspaceView = rootView
+  }
+
+  private func makeLayoutView(for node: WorkspaceLayoutNode) -> NSView {
+    switch node {
+    case .pane(let paneID):
+      return makePaneView(for: paneID)
+    case .split(let axis, let children):
+      let stack = NSStackView()
+      stack.orientation = axis == .vertical ? .horizontal : .vertical
+      stack.distribution = .fillEqually
+      stack.spacing = Self.paneDividerSpacing
+      stack.translatesAutoresizingMaskIntoConstraints = false
+      stack.wantsLayer = true
+      stack.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
+      for child in children {
+        stack.addArrangedSubview(makeLayoutView(for: child))
+      }
+      return stack
+    }
+  }
+
+  private func makePaneView(for paneID: UUID) -> NSView {
+    guard let pane = pane(for: paneID), let tab = pane.activeTab else {
+      return NSView()
+    }
+
+    let container = NSView()
+    container.translatesAutoresizingMaskIntoConstraints = false
+
+    let header = NSHostingView(rootView: RegularTerminalPaneHeader(
+      state: headerState(for: pane),
+      onSelectTab: { [weak self] tabID in self?.selectTab(tabID, in: paneID) },
+      onCloseTab: { [weak self] tabID in self?.closeTab(tabID, in: paneID) },
+      onNewTab: { [weak self] in
+        guard let pane = self?.pane(for: paneID) else { return }
+        self?.openShellTab(in: pane)
+      },
+      onSplitVertical: { [weak self] in self?.splitFromPane(paneID, axis: .vertical) },
+      onSplitHorizontal: { [weak self] in self?.splitFromPane(paneID, axis: .horizontal) }
+    ))
+    header.translatesAutoresizingMaskIntoConstraints = false
+
+    let terminalHost = NSView()
+    terminalHost.translatesAutoresizingMaskIntoConstraints = false
+
+    container.addSubview(header)
+    container.addSubview(terminalHost)
+    NSLayoutConstraint.activate([
+      header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      header.topAnchor.constraint(equalTo: container.topAnchor),
+      header.heightAnchor.constraint(equalToConstant: Self.paneHeaderHeight),
+      terminalHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      terminalHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      terminalHost.topAnchor.constraint(equalTo: header.bottomAnchor),
+      terminalHost.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+    ])
+
+    let terminal = tab.terminal
+    terminal.removeFromSuperview()
+    terminal.translatesAutoresizingMaskIntoConstraints = false
+    terminalHost.addSubview(terminal)
+    NSLayoutConstraint.activate([
+      terminal.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
+      terminal.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
+      terminal.topAnchor.constraint(equalTo: terminalHost.topAnchor),
+      terminal.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor)
+    ])
+
+    return container
+  }
+
+  private func headerState(for pane: WorkspacePane) -> RegularTerminalPaneHeaderState {
+    RegularTerminalPaneHeaderState(
+      tabs: pane.tabs.map { tab in
+        RegularTerminalPaneHeaderTabState(
+          id: tab.id,
+          title: displayTitle(for: tab),
+          isActive: tab.id == pane.activeTabID,
+          isCloseable: canCloseTab(tab, in: pane)
+        )
+      },
+      canSplit: panes.count < Self.maxPaneCount,
+      isActivePane: pane.id == activePaneID
+    )
+  }
+
+  private func splitFromPane(_ paneID: UUID, axis: TerminalWorkspaceSplitAxis) {
+    activePaneID = paneID
+    openShellPane(axis: axis)
+  }
+
+  // MARK: - Workspace Model Helpers
+
+  private var resolvedProjectPath: String {
+    configuredProjectPath.isEmpty ? NSHomeDirectory() : configuredProjectPath
+  }
+
+  private var activePane: WorkspacePane? {
+    pane(for: activePaneID)
+  }
+
+  private var activeTab: WorkspaceTab? {
+    activePane?.activeTab
+  }
+
+  private var protectedAgentTab: WorkspaceTab? {
+    guard let protectedAgentPaneID, let protectedAgentTabID else { return nil }
+    return pane(for: protectedAgentPaneID)?.tabs.first { $0.id == protectedAgentTabID }
+  }
+
+  private var promptTargetTerminal: SafeLocalProcessTerminalView? {
+    protectedAgentTab?.terminal ?? activeTab?.terminal
+  }
+
+  private func pane(for id: UUID?) -> WorkspacePane? {
+    guard let id else { return nil }
+    return panes.first { $0.id == id }
+  }
+
+  private func allTabs() -> [WorkspaceTab] {
+    panes.flatMap(\.tabs)
+  }
+
+  private func allTerminalViews() -> [SafeLocalProcessTerminalView] {
+    allTabs().map(\.terminal)
+  }
+
+  private func tab(for source: TerminalView) -> WorkspaceTab? {
+    allTabs().first { $0.terminal === source }
+  }
+
+  private func makeShellPane(from snapshot: TerminalWorkspaceTabSnapshot) -> WorkspacePane {
+    let tab = makeShellTab(
+      name: Self.nonEmpty(snapshot.name) ?? "Shell",
+      title: Self.nonEmpty(snapshot.title),
+      workingDirectory: resolvedDirectoryForNewShell(snapshot.workingDirectory)
+    )
+    return WorkspacePane(role: .auxiliary, tabs: [tab])
+  }
+
+  private func makeShellTab(
+    name: String?,
+    title: String?,
+    workingDirectory: String
+  ) -> WorkspaceTab {
+    WorkspaceTab(
+      role: .shell,
+      name: name,
+      title: title,
+      workingDirectory: workingDirectory,
+      terminal: makeTerminalView(isDark: currentIsDark)
+    )
+  }
+
+  private func canCloseTab(_ tab: WorkspaceTab, in pane: WorkspacePane) -> Bool {
+    if isProtectedAgentTab(tab) {
+      return false
+    }
+    if pane.tabs.count > 1 {
+      return true
+    }
+    return canClosePane(pane)
+  }
+
+  private func canClosePane(_ pane: WorkspacePane) -> Bool {
+    guard panes.count > 1 else { return false }
+    return !pane.tabs.contains(where: isProtectedAgentTab)
+  }
+
+  private func isProtectedAgentTab(_ tab: WorkspaceTab) -> Bool {
+    tab.id == protectedAgentTabID
+  }
+
+  private func isProtectedAgentTerminal(_ terminal: SafeLocalProcessTerminalView) -> Bool {
+    protectedAgentTab?.terminal === terminal
+  }
+
+  private func terminate(_ tab: WorkspaceTab) {
+    terminatedWorkspaceTabCount += 1
+    let key = ObjectIdentifier(tab.terminal)
+    if let pid = terminalPidMap.removeValue(forKey: key) {
+      TerminalProcessRegistry.shared.unregister(pid: pid)
+    }
+    tab.terminal.stopReceivingData()
+    tab.terminal.terminateProcessTree()
+    tab.terminal.removeFromSuperview()
+  }
+
+  private func resetWorkspace() {
+    rootWorkspaceView?.removeFromSuperview()
+    rootWorkspaceView = nil
+    panes.removeAll()
+    layoutNode = nil
+    activePaneID = nil
+    protectedAgentPaneID = nil
+    protectedAgentTabID = nil
+    terminalPidMap.removeAll()
+    pendingWorkspaceSnapshot = nil
+    lastWorkspaceSnapshot = nil
+  }
+
+  private func resetToPrimaryPaneForRestore() {
+    guard let primaryPane = panes.first(where: { $0.role == .primary }) ?? panes.first else { return }
+    let keepTab = protectedAgentTab ?? primaryPane.tabs.first
+
+    for pane in panes where pane.id != primaryPane.id {
+      for tab in pane.tabs {
+        terminate(tab)
+      }
+    }
+
+    if let keepTab {
+      for tab in primaryPane.tabs where tab.id != keepTab.id {
+        terminate(tab)
+      }
+      primaryPane.tabs = [keepTab]
+      primaryPane.activeTabID = keepTab.id
+    }
+
+    panes = [primaryPane]
+    primaryPane.role = .primary
+    layoutNode = .pane(primaryPane.id)
+    activePaneID = primaryPane.id
+  }
+
+  private func restoreTabs(
+    from panelSnapshot: TerminalWorkspacePanelSnapshot,
+    in pane: WorkspacePane,
+    isPrimaryPane: Bool,
+    skippingFirstShellTab: Bool = false
+  ) {
+    var shouldSkipFirstShell = skippingFirstShellTab
+
+    if isPrimaryPane,
+       protectedAgentTabID == nil,
+       let firstShell = panelSnapshot.tabs.first(where: { $0.role == .shell }),
+       let existingTab = pane.tabs.first {
+      existingTab.name = Self.nonEmpty(firstShell.name) ?? "Shell"
+      existingTab.title = Self.nonEmpty(firstShell.title)
+      existingTab.workingDirectory = resolvedDirectoryForNewShell(firstShell.workingDirectory)
+      shouldSkipFirstShell = true
+    }
+
+    for tabSnapshot in panelSnapshot.tabs where tabSnapshot.role == .shell {
+      if shouldSkipFirstShell {
+        shouldSkipFirstShell = false
+        continue
+      }
+      openShellTab(in: pane, from: tabSnapshot)
+    }
+  }
+
+  private func restoreActiveSelection(from snapshot: TerminalWorkspaceSnapshot, paneIDs: [UUID]) {
+    guard !paneIDs.isEmpty else { return }
+    let paneIndex = min(max(snapshot.activePanelIndex, 0), paneIDs.count - 1)
+    let paneID = paneIDs[paneIndex]
+    activePaneID = paneID
+
+    guard let pane = pane(for: paneID), !pane.tabs.isEmpty else { return }
+    let savedPanel = snapshot.panels.indices.contains(paneIndex) ? snapshot.panels[paneIndex] : nil
+    let tabIndex = min(max(savedPanel?.activeTabIndex ?? 0, 0), pane.tabs.count - 1)
+    pane.activeTabID = pane.tabs[tabIndex].id
+  }
+
+  private func restorePendingWorkspaceSnapshotIfNeeded() {
+    guard let snapshot = pendingWorkspaceSnapshot else { return }
+    pendingWorkspaceSnapshot = nil
+    restoreWorkspaceSnapshot(snapshot)
+  }
+
+  private func normalizedPanelSnapshots(_ panels: [TerminalWorkspacePanelSnapshot]) -> [TerminalWorkspacePanelSnapshot] {
+    let primary = panels.first { $0.role == .primary } ?? panels.first
+    let auxiliaries = panels.filter { $0.role == .auxiliary }
+    return ([primary].compactMap { $0 } + auxiliaries).prefix(Self.maxPaneCount).map { $0 }
+  }
+
+  private func layout(
+    from snapshotNode: TerminalWorkspaceLayoutNode,
+    paneIDs: [UUID]
+  ) -> WorkspaceLayoutNode? {
+    switch snapshotNode {
+    case .panel(let index):
+      guard paneIDs.indices.contains(index) else { return nil }
+      return .pane(paneIDs[index])
+    case .split(let axis, let children):
+      let restoredChildren = children.compactMap { layout(from: $0, paneIDs: paneIDs) }
+      switch restoredChildren.count {
+      case 0: return nil
+      case 1: return restoredChildren[0]
+      default: return .split(axis: axis, children: restoredChildren)
+      }
+    }
+  }
+
+  private func flatLayout(for paneIDs: [UUID], axis: TerminalWorkspaceSplitAxis) -> WorkspaceLayoutNode? {
+    guard !paneIDs.isEmpty else { return nil }
+    if paneIDs.count == 1 {
+      return .pane(paneIDs[0])
+    }
+    return .split(axis: axis, children: paneIDs.map { .pane($0) })
+  }
+
+  private func firstPaneID(in node: WorkspaceLayoutNode?) -> UUID? {
+    switch node {
+    case .pane(let paneID):
+      return paneID
+    case .split(_, let children):
+      return children.lazy.compactMap { self.firstPaneID(in: $0) }.first
+    case nil:
+      return nil
+    }
+  }
+
+  private func resolvedDirectoryForNewShell(_ candidate: String?) -> String {
+    guard let candidate = Self.nonEmpty(candidate) else { return resolvedProjectPath }
+    let expanded = (candidate as NSString).expandingTildeInPath
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory),
+          isDirectory.boolValue else {
+      return resolvedProjectPath
+    }
+    return expanded
+  }
+
+  private func displayTitle(for tab: WorkspaceTab) -> String {
+    if tab.role == .agent {
+      return "Agent"
+    }
+    if let title = Self.nonEmpty(tab.title) {
+      return title
+    }
+    if let name = Self.nonEmpty(tab.name) {
+      return name
+    }
+    return "Shell"
+  }
+
+  private func resolvedFont() -> NSFont {
+    let resolvedSize = max(currentFontSize, 8)
+    return NSFont(name: currentFontFamily, size: resolvedSize)
+      ?? NSFont(name: "SF Mono", size: resolvedSize)
+      ?? NSFont.monospacedSystemFont(ofSize: resolvedSize, weight: .regular)
+  }
+
+  private func applyColors(to terminal: TerminalView, isDark: Bool, theme: RuntimeTheme?) {
+    if isDark, let bg = theme?.terminalBackground {
+      terminal.nativeBackgroundColor = bg
+    } else if isDark {
+      terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+    } else {
+      terminal.nativeBackgroundColor = NSColor(Color.backgroundLight)
+    }
+
+    if isDark {
+      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
+    } else {
+      terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+    }
+
+    if isDark, let cursor = theme?.terminalCursor {
+      terminal.caretColor = cursor
+    } else {
+      terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
+    }
+  }
+
+  private static func nonEmpty(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed?.isEmpty == false ? trimmed : nil
+  }
+
+  // MARK: - Interaction Helpers
+
+  private func focusedTerminal(in window: NSWindow) -> SafeLocalProcessTerminalView? {
+    guard let responder = window.firstResponder else { return nil }
+    for terminal in visibleTerminalViews() {
+      if responder === terminal { return terminal }
+      if let responderView = responder as? NSView, responderView.isDescendant(of: terminal) {
+        return terminal
+      }
+    }
+    return nil
+  }
+
+  private func terminal(containingMouseEvent event: NSEvent) -> SafeLocalProcessTerminalView? {
+    visibleTerminalViews().first { terminal in
+      guard event.window === terminal.window else { return false }
+      let location = terminal.convert(event.locationInWindow, from: nil)
+      return terminal.bounds.contains(location)
+    }
+  }
+
+  private func visibleTerminalViews() -> [SafeLocalProcessTerminalView] {
+    panes.compactMap { $0.activeTab?.terminal }
+  }
+
+  private func syncActiveSelection(to terminal: SafeLocalProcessTerminalView) {
+    for pane in panes {
+      guard let tab = pane.tabs.first(where: { $0.terminal === terminal }) else { continue }
+      pane.activeTabID = tab.id
+      activePaneID = pane.id
+      return
+    }
+  }
+
+  private func notifyWorkspaceChanged() {
+    guard !isRestoringWorkspace else { return }
+    guard let snapshot = captureWorkspaceSnapshot() else { return }
+    guard snapshot != lastWorkspaceSnapshot else { return }
+    lastWorkspaceSnapshot = snapshot
+    onWorkspaceChanged?(snapshot)
+  }
+
+  // MARK: - Test Hooks
+
+  func _testingDisableProcessLaunch() {
+    startsTerminalProcesses = false
+  }
+
+  var _testingPaneCount: Int {
+    panes.count
+  }
+
+  var _testingTabCounts: [Int] {
+    panes.map(\.tabs.count)
+  }
+
+  var _testingTerminatedTabCount: Int {
+    terminatedWorkspaceTabCount
+  }
+
+  var _testingActiveTabRole: TerminalWorkspaceTabRole? {
+    activeTab?.role
+  }
+
+  var _testingPromptTargetRole: TerminalWorkspaceTabRole? {
+    protectedAgentTab?.role ?? activeTab?.role
+  }
+
+  func _testingOpenShellTab() {
+    openShellTab()
+  }
+
+  func _testingOpenVerticalSplit() {
+    openShellPane(axis: .vertical)
+  }
+
+  func _testingOpenHorizontalSplit() {
+    openShellPane(axis: .horizontal)
+  }
+
+  func _testingSelectTab(panelIndex: Int, tabIndex: Int) {
+    guard panes.indices.contains(panelIndex) else { return }
+    let pane = panes[panelIndex]
+    guard pane.tabs.indices.contains(tabIndex) else { return }
+    selectTab(pane.tabs[tabIndex].id, in: pane.id)
+  }
+
+  func _testingCloseTab(panelIndex: Int, tabIndex: Int) {
+    guard panes.indices.contains(panelIndex) else { return }
+    let pane = panes[panelIndex]
+    guard pane.tabs.indices.contains(tabIndex) else { return }
+    closeTab(pane.tabs[tabIndex].id, in: pane.id)
+  }
+}
+
+private extension TerminalContainerView.WorkspaceLayoutNode {
+  func replacingPane(
+    _ targetPaneID: UUID,
+    withSplitAxis axis: TerminalWorkspaceSplitAxis,
+    newPaneID: UUID
+  ) -> TerminalContainerView.WorkspaceLayoutNode {
+    switch self {
+    case .pane(let paneID) where paneID == targetPaneID:
+      return .split(axis: axis, children: [.pane(paneID), .pane(newPaneID)])
+    case .pane:
+      return self
+    case .split(let existingAxis, let children):
+      return .split(
+        axis: existingAxis,
+        children: children.map {
+          $0.replacingPane(targetPaneID, withSplitAxis: axis, newPaneID: newPaneID)
+        }
+      )
+    }
+  }
+
+  func removingPane(_ targetPaneID: UUID) -> TerminalContainerView.WorkspaceLayoutNode? {
+    switch self {
+    case .pane(let paneID):
+      return paneID == targetPaneID ? nil : self
+    case .split(let axis, let children):
+      let remaining = children.compactMap { $0.removingPane(targetPaneID) }
+      switch remaining.count {
+      case 0:
+        return nil
+      case 1:
+        return remaining[0]
+      default:
+        return .split(axis: axis, children: remaining)
+      }
+    }
+  }
+
+  func snapshot(indexByPaneID: [UUID: Int]) -> TerminalWorkspaceLayoutNode? {
+    switch self {
+    case .pane(let paneID):
+      guard let index = indexByPaneID[paneID] else { return nil }
+      return .panel(index: index)
+    case .split(let axis, let children):
+      let snapshotChildren = children.compactMap { $0.snapshot(indexByPaneID: indexByPaneID) }
+      guard !snapshotChildren.isEmpty else { return nil }
+      return .split(axis: axis, children: snapshotChildren)
     }
   }
 }

@@ -11,16 +11,70 @@ public struct TerminalWorkspaceSnapshot: Codable, Equatable, Sendable {
   public var schemaVersion: Int
   public var panels: [TerminalWorkspacePanelSnapshot]
   public var activePanelIndex: Int
+  public var layout: TerminalWorkspaceLayoutNode?
 
   public init(
     schemaVersion: Int = 1,
     panels: [TerminalWorkspacePanelSnapshot],
-    activePanelIndex: Int = 0
+    activePanelIndex: Int = 0,
+    layout: TerminalWorkspaceLayoutNode? = nil
   ) {
     self.schemaVersion = schemaVersion
     self.panels = panels
     self.activePanelIndex = activePanelIndex
+    self.layout = layout
   }
+}
+
+public indirect enum TerminalWorkspaceLayoutNode: Codable, Equatable, Sendable {
+  case panel(index: Int)
+  case split(axis: TerminalWorkspaceSplitAxis, children: [TerminalWorkspaceLayoutNode])
+
+  private enum CodingKeys: String, CodingKey {
+    case type
+    case index
+    case axis
+    case children
+  }
+
+  private enum NodeType: String, Codable {
+    case panel
+    case split
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    let type = try container.decode(NodeType.self, forKey: .type)
+    switch type {
+    case .panel:
+      self = .panel(index: try container.decode(Int.self, forKey: .index))
+    case .split:
+      self = .split(
+        axis: try container.decode(TerminalWorkspaceSplitAxis.self, forKey: .axis),
+        children: try container.decode([TerminalWorkspaceLayoutNode].self, forKey: .children)
+      )
+    }
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    switch self {
+    case .panel(let index):
+      try container.encode(NodeType.panel, forKey: .type)
+      try container.encode(index, forKey: .index)
+    case .split(let axis, let children):
+      try container.encode(NodeType.split, forKey: .type)
+      try container.encode(axis, forKey: .axis)
+      try container.encode(children, forKey: .children)
+    }
+  }
+}
+
+public enum TerminalWorkspaceSplitAxis: String, Codable, Equatable, Sendable {
+  /// Places panes side-by-side with a vertical divider.
+  case vertical
+  /// Places panes above and below each other with a horizontal divider.
+  case horizontal
 }
 
 public struct TerminalWorkspacePanelSnapshot: Codable, Equatable, Sendable {

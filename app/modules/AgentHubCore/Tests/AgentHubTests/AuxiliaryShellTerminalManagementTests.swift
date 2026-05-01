@@ -422,6 +422,31 @@ struct AuxiliaryShellTerminalManagementTests {
     #expect(surface.restoredWorkspaceSnapshot == snapshot)
   }
 
+  @Test("Restores persisted workspace for regular backend")
+  @MainActor
+  func restoresPersistedWorkspaceForRegularBackend() {
+    let snapshot = makeWorkspaceSnapshot()
+    let store = RecordingTerminalWorkspaceStore(snapshots: [
+      "Claude|session-123|\(EmbeddedTerminalBackend.regular.rawValue)": snapshot
+    ])
+    let surface = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [surface])
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalSurfaceFactory: factory,
+      terminalBackend: .regular,
+      terminalWorkspaceStore: store
+    )
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      initialPrompt: nil
+    )
+
+    #expect(surface.restoredWorkspaceSnapshot == snapshot)
+  }
+
   @Test("Saves terminal workspace changes through injected store")
   @MainActor
   func savesTerminalWorkspaceChanges() async throws {
@@ -446,6 +471,32 @@ struct AuxiliaryShellTerminalManagementTests {
     try await Task.sleep(for: .milliseconds(350))
 
     #expect(store.savedSnapshot(provider: .claude, sessionId: "session-123", backend: .ghostty) == snapshot)
+  }
+
+  @Test("Saves regular terminal workspace changes through injected store")
+  @MainActor
+  func savesRegularTerminalWorkspaceChanges() async throws {
+    let snapshot = makeWorkspaceSnapshot(activePanelIndex: 1)
+    let store = RecordingTerminalWorkspaceStore()
+    let surface = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [surface])
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalSurfaceFactory: factory,
+      terminalBackend: .regular,
+      terminalWorkspaceStore: store
+    )
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      initialPrompt: nil
+    )
+    surface.onWorkspaceChanged?(snapshot)
+
+    try await Task.sleep(for: .milliseconds(350))
+
+    #expect(store.savedSnapshot(provider: .claude, sessionId: "session-123", backend: .regular) == snapshot)
   }
 
   @Test("Pending terminal workspace is saved when session resolves")
