@@ -161,6 +161,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var protectedAgentPaneID: UUID?
   private var protectedAgentTabID: UUID?
   private var rootWorkspaceView: NSView?
+  private var paneHeaderViews: [UUID: NSHostingView<RegularTerminalPaneHeader>] = [:]
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   private var isRestoringWorkspace = false
   private var lastWorkspaceSnapshot: TerminalWorkspaceSnapshot?
@@ -701,9 +702,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   public func sizeChanged(source: ManagedLocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
   public func setTerminalTitle(source: ManagedLocalProcessTerminalView, title: String) {
-    guard let tab = tab(for: source) else { return }
+    guard let (pane, tab) = paneAndTab(for: source) else { return }
     tab.title = Self.nonEmpty(title)
-    rebuildWorkspaceViews()
+    updatePaneHeader(for: pane.id)
     notifyWorkspaceChanged()
   }
 
@@ -813,13 +814,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     pane.tabs.append(tab)
     pane.activeTabID = tab.id
     activePaneID = pane.id
+    rebuildWorkspaceViews()
+    layoutSubtreeIfNeeded()
     startShellProcess(
       terminal: tab.terminal,
       launch: EmbeddedTerminalLaunch.shellLaunch(projectPath: workingDirectory)
     )
     registerProcessIfNeeded(for: tab.terminal)
-    rebuildWorkspaceViews()
     notifyWorkspaceChanged()
+    focus()
   }
 
   private func openShellPane(axis: TerminalWorkspaceSplitAxis) {
@@ -832,13 +835,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     layoutNode = layoutNode?.replacingPane(activePaneID, withSplitAxis: axis, newPaneID: pane.id)
       ?? flatLayout(for: panes.map(\.id), axis: axis)
     self.activePaneID = pane.id
+    rebuildWorkspaceViews()
+    layoutSubtreeIfNeeded()
     startShellProcess(
       terminal: pane.tabs[0].terminal,
       launch: EmbeddedTerminalLaunch.shellLaunch(projectPath: workingDirectory)
     )
     registerProcessIfNeeded(for: pane.tabs[0].terminal)
-    rebuildWorkspaceViews()
     notifyWorkspaceChanged()
+    focus()
   }
 
   private func selectTab(_ tabID: UUID, in paneID: UUID) {
@@ -909,7 +914,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let currentIndex = panes.firstIndex { $0.id == activePaneID } ?? 0
     let nextIndex = (currentIndex + delta + panes.count) % panes.count
     activePaneID = panes[nextIndex].id
-    rebuildWorkspaceViews()
+    updateAllPaneHeaders()
     notifyWorkspaceChanged()
     focus()
   }
@@ -920,6 +925,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     for terminal in allTerminalViews() {
       terminal.removeFromSuperview()
     }
+    paneHeaderViews.removeAll()
     rootWorkspaceView?.removeFromSuperview()
     rootWorkspaceView = nil
 
@@ -944,12 +950,18 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       let stack = NSStackView()
       stack.orientation = axis == .vertical ? .horizontal : .vertical
       stack.distribution = .fillEqually
+      stack.alignment = axis == .vertical ? .height : .width
       stack.spacing = Self.paneDividerSpacing
       stack.translatesAutoresizingMaskIntoConstraints = false
       stack.wantsLayer = true
       stack.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
       for child in children {
-        stack.addArrangedSubview(makeLayoutView(for: child))
+        let childView = makeLayoutView(for: child)
+        childView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        childView.setContentHuggingPriority(.defaultLow, for: .vertical)
+        childView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        childView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        stack.addArrangedSubview(childView)
       }
       return stack
     }
@@ -963,18 +975,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let container = NSView()
     container.translatesAutoresizingMaskIntoConstraints = false
 
-    let header = NSHostingView(rootView: RegularTerminalPaneHeader(
-      state: headerState(for: pane),
-      onSelectTab: { [weak self] tabID in self?.selectTab(tabID, in: paneID) },
-      onCloseTab: { [weak self] tabID in self?.closeTab(tabID, in: paneID) },
-      onNewTab: { [weak self] in
-        guard let pane = self?.pane(for: paneID) else { return }
-        self?.openShellTab(in: pane)
-      },
-      onSplitVertical: { [weak self] in self?.splitFromPane(paneID, axis: .vertical) },
-      onSplitHorizontal: { [weak self] in self?.splitFromPane(paneID, axis: .horizontal) }
-    ))
+    let header = NSHostingView(rootView: paneHeader(for: pane))
     header.translatesAutoresizingMaskIntoConstraints = false
+    paneHeaderViews[pane.id] = header
 
     let terminalHost = NSView()
     terminalHost.translatesAutoresizingMaskIntoConstraints = false
@@ -1021,6 +1024,35 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
   }
 
+  private func paneHeader(for pane: WorkspacePane) -> RegularTerminalPaneHeader {
+    let paneID = pane.id
+    return RegularTerminalPaneHeader(
+      state: headerState(for: pane),
+      onSelectTab: { [weak self] tabID in self?.selectTab(tabID, in: paneID) },
+      onCloseTab: { [weak self] tabID in self?.closeTab(tabID, in: paneID) },
+      onNewTab: { [weak self] in
+        guard let pane = self?.pane(for: paneID) else { return }
+        self?.openShellTab(in: pane)
+      },
+      onSplitVertical: { [weak self] in self?.splitFromPane(paneID, axis: .vertical) },
+      onSplitHorizontal: { [weak self] in self?.splitFromPane(paneID, axis: .horizontal) }
+    )
+  }
+
+  private func updatePaneHeader(for paneID: UUID) {
+    guard let pane = pane(for: paneID),
+          let header = paneHeaderViews[paneID] else {
+      return
+    }
+    header.rootView = paneHeader(for: pane)
+  }
+
+  private func updateAllPaneHeaders() {
+    for pane in panes {
+      updatePaneHeader(for: pane.id)
+    }
+  }
+
   private func splitFromPane(_ paneID: UUID, axis: TerminalWorkspaceSplitAxis) {
     activePaneID = paneID
     openShellPane(axis: axis)
@@ -1063,7 +1095,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   private func tab(for source: TerminalView) -> WorkspaceTab? {
-    allTabs().first { $0.terminal === source }
+    paneAndTab(for: source)?.tab
+  }
+
+  private func paneAndTab(for source: TerminalView) -> (pane: WorkspacePane, tab: WorkspaceTab)? {
+    for pane in panes {
+      if let tab = pane.tabs.first(where: { $0.terminal === source }) {
+        return (pane, tab)
+      }
+    }
+    return nil
   }
 
   private func makeShellPane(from snapshot: TerminalWorkspaceTabSnapshot) -> WorkspacePane {
@@ -1334,8 +1375,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private func syncActiveSelection(to terminal: SafeLocalProcessTerminalView) {
     for pane in panes {
       guard let tab = pane.tabs.first(where: { $0.terminal === terminal }) else { continue }
+      let changed = pane.activeTabID != tab.id || activePaneID != pane.id
       pane.activeTabID = tab.id
       activePaneID = pane.id
+      if changed {
+        updateAllPaneHeaders()
+        notifyWorkspaceChanged()
+      }
       return
     }
   }
