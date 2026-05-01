@@ -1098,7 +1098,7 @@ public final class CLISessionsViewModel {
     return paths
   }
 
-  private static func elapsedMilliseconds(since start: Date) -> Int {
+  nonisolated private static func elapsedMilliseconds(since start: Date) -> Int {
     Int(Date().timeIntervalSince(start) * 1000)
   }
 
@@ -1379,6 +1379,32 @@ public final class CLISessionsViewModel {
       // [CLISessionsVM] monitorService.addRepository completed")
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
+    }
+  }
+
+  /// Adds a repository shell first, then refreshes sessions after the UI can show the project row.
+  /// Intended for fresh picker adds where the landing page is the primary experience.
+  public func addRepositoryShellFirst(at path: String) {
+    let repoName = URL(fileURLWithPath: path).lastPathComponent
+    Task {
+      loadingState = .addingRepository(name: repoName)
+      let repository = await monitorService.addRepositoryShell(path)
+      loadingState = .idle
+
+      guard repository != nil else { return }
+      scheduleDeferredSessionRefresh(afterAdding: path)
+    }
+  }
+
+  private func scheduleDeferredSessionRefresh(afterAdding path: String) {
+    let providerKind = self.providerKind
+    let monitorService = self.monitorService
+    Task.detached(priority: .utility) {
+      try? await Task.sleep(for: .milliseconds(250))
+      let startedAt = Date()
+      AppLogger.startup.info("[Startup][\(providerKind.rawValue, privacy: .public)] deferred session refresh start path=\(path, privacy: .public)")
+      await monitorService.refreshSessions(skipWorktreeRedetection: true)
+      AppLogger.startup.info("[Startup][\(providerKind.rawValue, privacy: .public)] deferred session refresh end elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
     }
   }
 

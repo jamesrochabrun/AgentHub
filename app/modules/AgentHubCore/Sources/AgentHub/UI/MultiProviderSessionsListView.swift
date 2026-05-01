@@ -1307,8 +1307,8 @@ public struct MultiProviderSessionsListView: View {
 
   private func addRepository(at path: String) {
     activateRecentlyAddedProjectLanding(for: path)
-    claudeViewModel.addRepository(at: path)
-    codexViewModel.addRepository(at: path)
+    claudeViewModel.addRepositoryShellFirst(at: path)
+    codexViewModel.addRepositoryShellFirst(at: path)
   }
 
   private func activateRecentlyAddedProjectLanding(for addedPath: String) {

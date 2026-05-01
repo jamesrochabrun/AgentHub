@@ -21,6 +21,23 @@ struct SessionMonitorRepositoryRootTests {
     #expect(repositories.first?.worktrees.contains { $0.path == worktreePath } == true)
   }
 
+  @Test("Claude monitor shell add stores the root repository when adding a linked worktree")
+  func claudeMonitorShellAddStoresRootRepositoryForLinkedWorktree() async throws {
+    let fixture = try GitRepositoryRootFixture.create()
+    defer { fixture.cleanUp() }
+    let worktreePath = try fixture.addWorktree(branch: "feature/root-header-shell")
+    let dataPath = try fixture.makeDataPath(named: "claude-shell")
+
+    let service = CLISessionMonitorService(claudeDataPath: dataPath.path)
+    let returnedRepository = await service.addRepositoryShell(worktreePath)
+    let repositories = await service.getSelectedRepositories()
+
+    #expect(returnedRepository?.path == fixture.repoPath)
+    #expect(repositories.map(\.path) == [fixture.repoPath])
+    #expect(repositories.first?.worktrees.contains { $0.path == worktreePath } == true)
+    #expect(repositories.first?.worktrees.flatMap(\.sessions).isEmpty == true)
+  }
+
   @Test("Codex monitor stores the root repository when adding a linked worktree")
   func codexMonitorStoresRootRepositoryForLinkedWorktree() async throws {
     let fixture = try GitRepositoryRootFixture.create()
@@ -35,6 +52,23 @@ struct SessionMonitorRepositoryRootTests {
     #expect(returnedRepository?.path == fixture.repoPath)
     #expect(repositories.map(\.path) == [fixture.repoPath])
     #expect(repositories.first?.worktrees.contains { $0.path == worktreePath } == true)
+  }
+
+  @Test("Codex monitor shell add stores the root repository when adding a linked worktree")
+  func codexMonitorShellAddStoresRootRepositoryForLinkedWorktree() async throws {
+    let fixture = try GitRepositoryRootFixture.create()
+    defer { fixture.cleanUp() }
+    let worktreePath = try fixture.addWorktree(branch: "feature/root-header-shell")
+    let dataPath = try fixture.makeDataPath(named: "codex-shell")
+
+    let service = CodexSessionMonitorService(codexDataPath: dataPath.path)
+    let returnedRepository = await service.addRepositoryShell(worktreePath)
+    let repositories = await service.getSelectedRepositories()
+
+    #expect(returnedRepository?.path == fixture.repoPath)
+    #expect(repositories.map(\.path) == [fixture.repoPath])
+    #expect(repositories.first?.worktrees.contains { $0.path == worktreePath } == true)
+    #expect(repositories.first?.worktrees.flatMap(\.sessions).isEmpty == true)
   }
 }
 
