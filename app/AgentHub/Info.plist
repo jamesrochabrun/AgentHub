@@ -4,6 +4,20 @@
 <dict>
   <key>ATSApplicationFontsPath</key>
   <string>Fonts</string>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.json</string>
+        <string>public.data</string>
+      </array>
+      <key>UTTypeDescription</key>
+      <string>AgentHub GitHub Context Item</string>
+      <key>UTTypeIdentifier</key>
+      <string>com.agenthub.github.context-item</string>
+    </dict>
+  </array>
   <key>NSUserNotificationsUsageDescription</key>
   <string>AgentHub sends notifications when a Claude or Codex session requires tool approval.</string>
   <key>NSScreenCaptureUsageDescription</key>

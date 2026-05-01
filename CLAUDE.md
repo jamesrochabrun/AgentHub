@@ -8,7 +8,7 @@ Native macOS app for monitoring and managing Claude Code and Codex CLI sessions 
 - **Language:** Swift (Swift 6.0 tools version, `.v5` language mode)
 - **State management:** `@Observable` macro — never use `ObservableObject`
 - **Concurrency:** Swift actors, `async/await`, `Task`, `withTaskGroup`
-- **Persistence:** UserDefaults (settings), SQLite via GRDB (session metadata)
+- **Persistence:** UserDefaults (app/UI preferences only), SQLite via GRDB (`SessionMetadataStore` for session/workspace state)
 - **File watching:** kqueue-based `DispatchSource` — no polling
 
 ## Project Structure
@@ -111,6 +111,14 @@ final class MockSessionMonitorService: SessionMonitorServiceProtocol { ... }
 - Use `async` test methods for testing actor-based services
 - Prefer deterministic tests — inject controlled data rather than relying on file system state
 
+### Database Migration Rules
+
+- Session/workspace management state belongs in `SessionMetadataStore` / SQLite, not UserDefaults.
+- Do not add `AgentHubDefaults` keys for selected repositories, monitored session IDs, session restore state, repo mappings, or terminal workspace state.
+- Never edit, rename, reorder, or delete existing `DatabaseMigrator` migrations. Add a new `vN_*` migration for every schema change.
+- Production migrations must preserve existing rows. Do not use broad `delete`, `drop table`, `clearAll()`, or `eraseDatabaseOnSchemaChange` in migrations.
+- Any `SessionMetadataStore` schema change must add or update migration-preservation tests that seed the current baseline database and verify all existing metadata still reads back after migration.
+
 ## SwiftUI View Guidelines
 
 ### Composability
@@ -151,7 +159,7 @@ struct MonitoringCardView: View {
 - Use `async/await` and actors — never completion handlers
 - Services that do I/O are Swift actors (e.g., `CLISessionMonitorService`, `SessionFileWatcher`)
 - Use `@MainActor` on ViewModels and UI-bound classes
-- UserDefaults keys are namespaced under `com.agenthub.` (see `AgentHubDefaults`)
+- UserDefaults preference keys are namespaced under `com.agenthub.` (see `AgentHubDefaults`)
 
 ## UI/UX Patterns
 
@@ -256,7 +264,7 @@ xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHu
 - Approval hook script: `~/Library/Application Support/AgentHub/hooks/agenthub-approval.sh`
 - Approval sidecars: `~/Library/Application Support/AgentHub/approvals/{sessionId}.jsonl`
 - Session claims: `~/Library/Application Support/AgentHub/claims/{sessionId}`
-- Session metadata DB: managed by `SessionMetadataStore` via GRDB
+- Session metadata/workspace DB: managed by `SessionMetadataStore` via GRDB
 
 ## Approval Detection (Claude only)
 
