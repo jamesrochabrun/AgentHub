@@ -941,61 +941,34 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     for node: TerminalSplitLayout.Node,
     in rect: CGRect
   ) -> [TerminalPanelID: CGRect] {
+    TerminalSplitFrameCalculator.frames(
+      for: sharedSplitTree(from: node),
+      in: rect,
+      dividerSize: terminalPaneDividerSize
+    )
+  }
+
+  private static func sharedSplitTree(
+    from node: TerminalSplitLayout.Node
+  ) -> TerminalSplitLayoutTree<TerminalPanelID> {
     switch node {
     case .panel(let panelID):
-      return [panelID: rect]
+      return .pane(panelID)
     case .split(let axis, let children):
-      return splitPanelFrames(axis: axis, children: children, in: rect)
+      return .split(
+        axis: workspaceSplitAxis(for: axis),
+        children: children.map(sharedSplitTree)
+      )
     }
   }
 
-  private static func splitPanelFrames(
-    axis: TerminalSplitAxis,
-    children: [TerminalSplitLayout.Node],
-    in rect: CGRect
-  ) -> [TerminalPanelID: CGRect] {
-    guard !children.isEmpty else { return [:] }
-
-    var result: [TerminalPanelID: CGRect] = [:]
-    let childCount = CGFloat(children.count)
-
+  private static func workspaceSplitAxis(for axis: TerminalSplitAxis) -> TerminalWorkspaceSplitAxis {
     switch axis {
     case .horizontal:
-      let totalDividerWidth = terminalPaneDividerSize * CGFloat(max(children.count - 1, 0))
-      let childWidth = max(0, rect.width - totalDividerWidth) / childCount
-      var nextX = rect.minX
-
-      for (index, child) in children.enumerated() {
-        if index > 0 {
-          nextX += terminalPaneDividerSize
-        }
-        let childRect = CGRect(x: nextX, y: rect.minY, width: childWidth, height: rect.height)
-        result.merge(
-          panelFrames(for: child, in: childRect),
-          uniquingKeysWith: { current, _ in current }
-        )
-        nextX += childWidth
-      }
-
+      return .vertical
     case .vertical:
-      let totalDividerHeight = terminalPaneDividerSize * CGFloat(max(children.count - 1, 0))
-      let childHeight = max(0, rect.height - totalDividerHeight) / childCount
-      var nextY = rect.minY
-
-      for (index, child) in children.enumerated() {
-        if index > 0 {
-          nextY += terminalPaneDividerSize
-        }
-        let childRect = CGRect(x: rect.minX, y: nextY, width: rect.width, height: childHeight)
-        result.merge(
-          panelFrames(for: child, in: childRect),
-          uniquingKeysWith: { current, _ in current }
-        )
-        nextY += childHeight
-      }
+      return .horizontal
     }
-
-    return result
   }
 
   private func requestClose(_ tab: TerminalTab) {

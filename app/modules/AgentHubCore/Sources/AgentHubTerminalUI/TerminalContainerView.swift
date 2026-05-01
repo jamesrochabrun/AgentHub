@@ -929,8 +929,21 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     rootWorkspaceView?.removeFromSuperview()
     rootWorkspaceView = nil
 
-    guard let layoutNode else { return }
-    let rootView = makeLayoutView(for: layoutNode)
+    guard let layoutNode,
+          let splitTree = splitTree(from: layoutNode) else {
+      return
+    }
+    let paneViews = Dictionary(
+      uniqueKeysWithValues: splitTree.paneIDs.compactMap { paneID -> (UUID, NSView)? in
+        guard pane(for: paneID) != nil else { return nil }
+        return (paneID, makePaneView(for: paneID))
+      }
+    )
+    let rootView = TerminalSplitContainerView(
+      tree: splitTree,
+      dividerSize: Self.paneDividerSpacing,
+      paneViews: paneViews
+    )
     rootView.translatesAutoresizingMaskIntoConstraints = false
     addSubview(rootView)
     NSLayoutConstraint.activate([
@@ -942,28 +955,17 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     rootWorkspaceView = rootView
   }
 
-  private func makeLayoutView(for node: WorkspaceLayoutNode) -> NSView {
+  private func splitTree(from node: WorkspaceLayoutNode) -> TerminalSplitLayoutTree<UUID>? {
     switch node {
     case .pane(let paneID):
-      return makePaneView(for: paneID)
+      return pane(for: paneID) == nil ? nil : .pane(paneID)
     case .split(let axis, let children):
-      let stack = NSStackView()
-      stack.orientation = axis == .vertical ? .horizontal : .vertical
-      stack.distribution = .fillEqually
-      stack.alignment = axis == .vertical ? .height : .width
-      stack.spacing = Self.paneDividerSpacing
-      stack.translatesAutoresizingMaskIntoConstraints = false
-      stack.wantsLayer = true
-      stack.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.35).cgColor
-      for child in children {
-        let childView = makeLayoutView(for: child)
-        childView.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        childView.setContentHuggingPriority(.defaultLow, for: .vertical)
-        childView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        childView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        stack.addArrangedSubview(childView)
+      let childTrees = children.compactMap(splitTree)
+      switch childTrees.count {
+      case 0: return nil
+      case 1: return childTrees[0]
+      default: return .split(axis: axis, children: childTrees)
       }
-      return stack
     }
   }
 
