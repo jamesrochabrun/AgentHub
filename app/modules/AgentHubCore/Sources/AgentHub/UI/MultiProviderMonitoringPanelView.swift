@@ -176,6 +176,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @AppStorage(AgentHubDefaults.auxiliaryShellVisible) var isAuxiliaryShellVisible: Bool = false
   let onEmbeddedSidePanelVisibilityChange: (Bool) -> Void
   let onRequestStartSession: (String?) -> Void
+  let onRequestProjectStartSession: (String) -> Void
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
@@ -183,6 +184,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var editorStates: [String: MonitoringEditorState] = [:]
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
+  @Binding var projectLandingPath: String?
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @AppStorage(AgentHubDefaults.hubPreviousLayoutMode)
@@ -238,14 +240,18 @@ public struct MultiProviderMonitoringPanelView: View {
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
     primarySessionId: Binding<String?>,
+    projectLandingPath: Binding<String?>,
     onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
-    onRequestStartSession: @escaping (String?) -> Void
+    onRequestStartSession: @escaping (String?) -> Void,
+    onRequestProjectStartSession: @escaping (String) -> Void
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self._primarySessionId = primarySessionId
+    self._projectLandingPath = projectLandingPath
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onRequestStartSession = onRequestStartSession
+    self.onRequestProjectStartSession = onRequestProjectStartSession
   }
 
   public var body: some View {
@@ -404,6 +410,22 @@ public struct MultiProviderMonitoringPanelView: View {
     accessibilityReduceMotion ? .easeInOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.9)
   }
 
+  private var projectLandingAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeInOut(duration: 0.15)
+      : .spring(response: 0.4, dampingFraction: 0.86)
+  }
+
+  private var projectLandingTransition: AnyTransition {
+    if accessibilityReduceMotion {
+      return .opacity
+    }
+    return .asymmetric(
+      insertion: .scale(scale: 0.97).combined(with: .opacity),
+      removal: .opacity
+    )
+  }
+
   private var auxiliaryShellDockTransition: AnyTransition {
     accessibilityReduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
   }
@@ -417,17 +439,25 @@ public struct MultiProviderMonitoringPanelView: View {
     } else {
       mainContentBody
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .animation(projectLandingAnimation, value: projectLandingPath)
     }
   }
 
   @ViewBuilder
   private var mainContentBody: some View {
-    if isLoading {
+    if let projectLandingPath {
+      projectLandingState(for: projectLandingPath)
+        .id("project-landing-\(projectLandingPath)")
+        .transition(projectLandingTransition)
+    } else if isLoading {
       loadingState
+        .transition(.opacity)
     } else if allItems.isEmpty {
       emptyState
+        .transition(.opacity)
     } else {
       monitoredSessionsList
+        .transition(.opacity)
     }
   }
 
@@ -454,6 +484,18 @@ public struct MultiProviderMonitoringPanelView: View {
     WelcomeView(
       viewModel: emptyStateViewModel,
       onStartSession: onRequestStartSession
+    )
+  }
+
+  private func projectLandingState(for projectPath: String) -> some View {
+    let repository = projectLandingRepository(for: projectPath)
+    let resolvedPath = repository?.path ?? projectPath
+    return ProjectLandingView(
+      projectName: repository?.name ?? URL(fileURLWithPath: resolvedPath).lastPathComponent,
+      projectPath: resolvedPath,
+      onStartSession: {
+        onRequestProjectStartSession(resolvedPath)
+      }
     )
   }
 
@@ -728,6 +770,7 @@ public struct MultiProviderMonitoringPanelView: View {
   private func toggleSidePanel(_ content: SidePanelContent, forItemID itemID: String) {
     withAnimation(.easeInOut(duration: 0.25)) {
       if primarySessionId != itemID {
+        projectLandingPath = nil
         primarySessionId = itemID
       }
       if layoutMode != .single {
@@ -1036,6 +1079,7 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private var effectivePrimarySessionId: String? {
+    if projectLandingPath != nil { return nil }
     if let current = primarySessionId, allItems.contains(where: { $0.id == current }) {
       return current
     }
@@ -1290,6 +1334,13 @@ public struct MultiProviderMonitoringPanelView: View {
     return map.values.sorted { $0.path < $1.path }
   }
 
+  private func projectLandingRepository(for projectPath: String) -> SelectedRepository? {
+    ProjectLandingResolver.resolvedRepository(
+      for: projectPath,
+      repositories: allSelectedRepositories
+    )
+  }
+
   private var emptyStateViewModel: CLISessionsViewModel {
     if !claudeViewModel.selectedRepositories.isEmpty { return claudeViewModel }
     if !codexViewModel.selectedRepositories.isEmpty { return codexViewModel }
@@ -1297,16 +1348,10 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func findModulePath(for item: ProviderMonitoringItem) -> String {
-    let itemPath = item.projectPath
-
-    for repo in allSelectedRepositories {
-      for worktree in repo.worktrees {
-        if worktree.path == itemPath {
-          return repo.path
-        }
-      }
-    }
-    return itemPath
+    return ProjectHierarchyResolver.rootProjectPath(
+      for: item.projectPath,
+      repositories: allSelectedRepositories
+    )
   }
 
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {
@@ -1373,6 +1418,11 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func ensurePrimarySelection() {
+    guard projectLandingPath == nil else {
+      primarySessionId = nil
+      return
+    }
+
     guard !allItems.isEmpty else {
       primarySessionId = nil
       return
@@ -1387,6 +1437,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
   private func setPrimarySessionIfNeeded(_ sessionId: String) {
     guard primarySessionId != sessionId else { return }
+    projectLandingPath = nil
     primarySessionId = sessionId
   }
 
@@ -1543,6 +1594,7 @@ public struct MultiProviderMonitoringPanelView: View {
     )
     editorStates = result.states
     if let primaryItemID = result.primaryItemID {
+      projectLandingPath = nil
       primarySessionId = primaryItemID
     }
   }

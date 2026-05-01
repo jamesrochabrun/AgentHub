@@ -241,32 +241,28 @@ public final class MultiSessionLaunchViewModel {
   // MARK: - Actions
 
   /// Opens an NSOpenPanel to select a repository directory.
-  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
-  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
+  /// Schedules presentation on the run loop to avoid AppKit's HIRunLoopSemaphore
+  /// wait during main-dispatch-queue draining.
   public func selectRepository() {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-      MainActor.assumeIsolated {
-        let panel = NSOpenPanel()
-        panel.title = "Select Repository"
-        panel.message = "Choose a git repository"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
-
-        if panel.runModal() == .OK, let url = panel.url {
-          let path = url.path
-          let name = url.lastPathComponent
-          self.selectedRepository = SelectedRepository(
-            path: path,
-            name: name,
-            worktrees: [],
-            isExpanded: true
-          )
-          Task {
-            await self.loadBranches()
-          }
-        }
+    NativeOpenPanelPresenter.present { panel in
+      panel.title = "Select Repository"
+      panel.message = "Choose a git repository"
+      panel.canChooseFiles = false
+      panel.canChooseDirectories = true
+      panel.allowsMultipleSelection = false
+      panel.canCreateDirectories = false
+    } onSelection: { [weak self] url in
+      guard let self else { return }
+      let path = url.path
+      let name = url.lastPathComponent
+      self.selectedRepository = SelectedRepository(
+        path: path,
+        name: name,
+        worktrees: [],
+        isExpanded: true
+      )
+      Task {
+        await self.loadBranches()
       }
     }
   }

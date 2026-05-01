@@ -205,6 +205,9 @@ public final class AgentHubProvider {
     configuration: AgentHubConfiguration = .default,
     terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory()
   ) {
+    AgentHubDefaults.migrateIfNeeded()
+    AppLogger.startup.info("[Startup][Provider] init start")
+
     self.configuration = configuration
     self.terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
@@ -228,6 +231,8 @@ public final class AgentHubProvider {
     } else if defaults.string(forKey: AgentHubDefaults.codexCommand) == nil {
       defaults.set("codex", forKey: AgentHubDefaults.codexCommand)
     }
+
+    AppLogger.startup.info("[Startup][Provider] init end")
   }
 
   /// Creates a provider with default configuration
@@ -345,6 +350,8 @@ public final class AgentHubProvider {
   /// those same paths back out as "stale", leaving approval hooks unregistered
   /// until the next repository change. Blocking here removes the race.
   public func reconcileClaudeHooksOnLaunch(timeout: TimeInterval = 3.0) {
+    let startedAt = Date()
+    AppLogger.startup.info("[Startup][ClaudeHook] reconcileOnLaunch start timeout=\(timeout)")
     let claimStore = approvalClaimStore
     let installer = claudeHookInstaller
     let sidecar = claudeHookSidecarWatcher
@@ -357,7 +364,10 @@ public final class AgentHubProvider {
       semaphore.signal()
     }
     if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+      AppLogger.startup.error("[Startup][ClaudeHook] reconcileOnLaunch timed out elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
       AppLogger.session.error("[ClaudeHook] reconcileClaudeHooksOnLaunch timed out after \(timeout)s — first session sync may race")
+    } else {
+      AppLogger.startup.info("[Startup][ClaudeHook] reconcileOnLaunch end elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
     }
   }
 
@@ -373,6 +383,8 @@ public final class AgentHubProvider {
   /// fast (<100ms for a typical install set); a 3-second cap guards against
   /// deadlock without punishing normal quits.
   public func flushClaudeHooksOnTerminate(timeout: TimeInterval = 3.0) {
+    let startedAt = Date()
+    AppLogger.startup.info("[Startup][ClaudeHook] flushOnTerminate start timeout=\(timeout)")
     let claimStore = approvalClaimStore
     let installer = claudeHookInstaller
     let sidecar = claudeHookSidecarWatcher
@@ -386,8 +398,15 @@ public final class AgentHubProvider {
     }
     let deadline = DispatchTime.now() + timeout
     if semaphore.wait(timeout: deadline) == .timedOut {
+      AppLogger.startup.error("[Startup][ClaudeHook] flushOnTerminate timed out elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
       AppLogger.session.error("[ClaudeHook] flushClaudeHooksOnTerminate timed out after \(timeout)s — shutdown may leave stale hook state behind")
+    } else {
+      AppLogger.startup.info("[Startup][ClaudeHook] flushOnTerminate end elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
     }
+  }
+
+  private static func elapsedMilliseconds(since start: Date) -> Int {
+    Int(Date().timeIntervalSince(start) * 1000)
   }
 
   /// Terminates all active terminal processes.

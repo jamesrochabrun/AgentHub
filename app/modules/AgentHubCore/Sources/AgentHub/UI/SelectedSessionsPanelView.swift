@@ -141,12 +141,10 @@ public struct SelectedSessionsPanelView: View {
   }
 
   private func findModulePath(for itemPath: String) -> String {
-    for repo in viewModel.selectedRepositories {
-      for worktree in repo.worktrees where worktree.path == itemPath {
-        return repo.path
-      }
-    }
-    return itemPath
+    return ProjectHierarchyResolver.rootProjectPath(
+      for: itemPath,
+      repositories: viewModel.selectedRepositories
+    )
   }
 
   private func ensurePrimarySelection() {
@@ -336,12 +334,10 @@ public struct MultiProviderSelectedSessionsPanelView: View {
   }
 
   private func findModulePath(for itemPath: String) -> String {
-    for repo in allSelectedRepositories {
-      for worktree in repo.worktrees where worktree.path == itemPath {
-        return repo.path
-      }
-    }
-    return itemPath
+    return ProjectHierarchyResolver.rootProjectPath(
+      for: itemPath,
+      repositories: allSelectedRepositories
+    )
   }
 
   private func customName(for item: SelectedSessionItem) -> String? {

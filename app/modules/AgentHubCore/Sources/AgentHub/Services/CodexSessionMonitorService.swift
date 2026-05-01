@@ -37,20 +37,76 @@ public actor CodexSessionMonitorService {
 
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
-    guard !selectedRepositories.contains(where: { $0.path == path }) else {
-      return selectedRepositories.first { $0.path == path }
+    let result = await appendRepositoryShellIfNeeded(path)
+    guard let repository = result.repository else { return nil }
+
+    if result.didAddRepository {
+      await refreshSessions(skipWorktreeRedetection: true)
     }
 
-    let worktrees = await detectWorktrees(at: path)
+    return repository
+  }
+
+  /// Adds a repository/worktree shell without scanning provider session files.
+  /// Used by fresh picker adds so the module row can appear before heavier session discovery.
+  @discardableResult
+  public func addRepositoryShell(_ path: String) async -> SelectedRepository? {
+    let startedAt = Date()
+    let result = await appendRepositoryShellIfNeeded(path)
+    guard let repository = result.repository else { return nil }
+    if result.didAddRepository {
+      repositoriesSubject.send(selectedRepositories)
+      AppLogger.startup.info("[Startup][CodexMonitor] addRepositoryShell emitted repo=\(repository.path, privacy: .public) worktrees=\(repository.worktrees.count) elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
+    }
+    return repository
+  }
+
+  public func addRepositories(_ paths: [String]) async {
+    let startedAt = Date()
+    let newPaths = paths.filter { path in
+      !selectedRepositories.contains(where: { $0.path == path })
+    }
+    AppLogger.startup.info("[Startup][CodexMonitor] addRepositories requested=\(paths.count) new=\(newPaths.count) existing=\(self.selectedRepositories.count)")
+    guard !newPaths.isEmpty else { return }
+
+    let detectionStartedAt = Date()
+    let detections = await detectRepositoriesBatch(paths: newPaths)
+    AppLogger.startup.info("[Startup][CodexMonitor] addRepositories detectRepositoryBatch count=\(detections.count) elapsedMs=\(Self.elapsedMilliseconds(since: detectionStartedAt))")
+    var selectedRootPaths = Set(selectedRepositories.map(\.path))
+
+    for detection in detections where selectedRootPaths.insert(detection.rootPath).inserted {
+      selectedRepositories.append(SelectedRepository(
+        path: detection.rootPath,
+        worktrees: detection.worktrees,
+        isExpanded: true
+      ))
+    }
+
+    await refreshSessions(skipWorktreeRedetection: true)
+    AppLogger.startup.info("[Startup][CodexMonitor] addRepositories end repos=\(self.selectedRepositories.count) elapsedMs=\(Self.elapsedMilliseconds(since: startedAt))")
+  }
+
+  private func appendRepositoryShellIfNeeded(_ path: String) async -> (
+    repository: SelectedRepository?,
+    didAddRepository: Bool
+  ) {
+    guard !selectedRepositories.contains(where: { $0.path == path }) else {
+      return (selectedRepositories.first { $0.path == path }, false)
+    }
+
+    let detection = await RepositoryWorktreeResolver.detectRepository(at: path)
+    if let existing = selectedRepositories.first(where: { $0.path == detection.rootPath }) {
+      return (existing, false)
+    }
+
     let repository = SelectedRepository(
-      path: path,
-      worktrees: worktrees,
+      path: detection.rootPath,
+      worktrees: detection.worktrees,
       isExpanded: true
     )
 
     selectedRepositories.append(repository)
-    await refreshSessions(skipWorktreeRedetection: true)
-    return repository
+    return (repository, true)
   }
 
   public func removeRepository(_ path: String) async {
@@ -70,15 +126,20 @@ public actor CodexSessionMonitorService {
   // MARK: - Session Scanning
 
   public func refreshSessions(skipWorktreeRedetection: Bool = false) async {
+    let refreshStartedAt = Date()
+    AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions start repos=\(self.selectedRepositories.count) skipWorktreeRedetection=\(skipWorktreeRedetection)")
     guard !selectedRepositories.isEmpty else {
       repositoriesSubject.send([])
+      AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions emitted empty repos elapsedMs=\(Self.elapsedMilliseconds(since: refreshStartedAt))")
       return
     }
 
     if !skipWorktreeRedetection {
+      let worktreeStartedAt = Date()
       let allWorktrees = await detectWorktreesBatch(
         repoPaths: selectedRepositories.map { $0.path }
       )
+      AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions worktreeDetection repos=\(self.selectedRepositories.count) elapsedMs=\(Self.elapsedMilliseconds(since: worktreeStartedAt))")
 
       for index in selectedRepositories.indices {
         let repoPath = selectedRepositories[index].path
@@ -100,10 +161,14 @@ public actor CodexSessionMonitorService {
 
     let allPaths = getAllMonitoredPaths()
 
+    let historyStartedAt = Date()
     let historyEntries = parseHistory()
     let historyBySession = Dictionary(grouping: historyEntries) { $0.sessionId }
+    AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions parseHistory entries=\(historyEntries.count) elapsedMs=\(Self.elapsedMilliseconds(since: historyStartedAt))")
 
+    let scanStartedAt = Date()
     let sessionMetas = scanSessions(for: allPaths)
+    AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions scanSessions paths=\(allPaths.count) sessions=\(sessionMetas.count) elapsedMs=\(Self.elapsedMilliseconds(since: scanStartedAt))")
 
     var updatedRepositories = selectedRepositories
     var assignedSessionIds: Set<String> = []
@@ -115,7 +180,7 @@ public actor CodexSessionMonitorService {
 
         for meta in sessionMetas {
           guard !assignedSessionIds.contains(meta.sessionId) else { continue }
-          let matchesPath = meta.projectPath == worktree.path || meta.projectPath.hasPrefix(worktree.path + "/")
+          let matchesPath = ProjectHierarchyResolver.isSameOrDescendant(meta.projectPath, of: worktree.path)
           guard matchesPath else { continue }
 
           let entries = historyBySession[meta.sessionId] ?? []
@@ -152,6 +217,11 @@ public actor CodexSessionMonitorService {
 
     selectedRepositories = updatedRepositories
     repositoriesSubject.send(selectedRepositories)
+    let worktreeCount = updatedRepositories.reduce(0) { $0 + $1.worktrees.count }
+    let sessionCount = updatedRepositories.reduce(0) { total, repo in
+      total + repo.worktrees.reduce(0) { $0 + $1.sessions.count }
+    }
+    AppLogger.startup.info("[Startup][CodexMonitor] refreshSessions end repos=\(updatedRepositories.count) worktrees=\(worktreeCount) sessions=\(sessionCount) elapsedMs=\(Self.elapsedMilliseconds(since: refreshStartedAt))")
   }
 
   // MARK: - Helpers
@@ -210,7 +280,7 @@ public actor CodexSessionMonitorService {
       guard let meta = CodexSessionFileScanner.readSessionMeta(from: path) else { continue }
 
       let matchesPath = paths.contains { p in
-        meta.projectPath == p || meta.projectPath.hasPrefix(p + "/")
+        ProjectHierarchyResolver.isSameOrDescendant(meta.projectPath, of: p)
       }
       guard matchesPath else { continue }
 
@@ -244,27 +314,26 @@ public actor CodexSessionMonitorService {
   // MARK: - Worktree Detection
 
   private func detectWorktrees(at repoPath: String) async -> [WorktreeBranch] {
-    let worktrees = await GitWorktreeDetector.listWorktrees(at: repoPath)
+    await RepositoryWorktreeResolver.detectWorktrees(at: repoPath)
+  }
 
-    if worktrees.isEmpty {
-      let info = await GitWorktreeDetector.detectWorktreeInfo(for: repoPath)
-      return [
-        WorktreeBranch(
-          name: info?.branch ?? "main",
-          path: repoPath,
-          isWorktree: false,
-          sessions: []
-        )
-      ]
-    }
+  private func detectRepositoriesBatch(paths: [String]) async -> [RepositoryWorktreeSnapshot] {
+    await withTaskGroup(of: (Int, RepositoryWorktreeSnapshot).self) { group in
+      for (index, path) in paths.enumerated() {
+        group.addTask {
+          let snapshot = await RepositoryWorktreeResolver.detectRepository(at: path)
+          return (index, snapshot)
+        }
+      }
 
-    return worktrees.map { info in
-      WorktreeBranch(
-        name: info.branch ?? URL(fileURLWithPath: info.path).lastPathComponent,
-        path: info.path,
-        isWorktree: info.isWorktree,
-        sessions: []
-      )
+      var results: [(Int, RepositoryWorktreeSnapshot)] = []
+      for await result in group {
+        results.append(result)
+      }
+
+      return results
+        .sorted { $0.0 < $1.0 }
+        .map { $0.1 }
     }
   }
 
@@ -294,6 +363,10 @@ public actor CodexSessionMonitorService {
       }
     }
     return paths
+  }
+
+  private static func elapsedMilliseconds(since start: Date) -> Int {
+    Int(Date().timeIntervalSince(start) * 1000)
   }
 }
 

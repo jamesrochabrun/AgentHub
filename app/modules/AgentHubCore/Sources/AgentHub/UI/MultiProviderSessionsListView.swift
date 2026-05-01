@@ -152,6 +152,9 @@ public struct MultiProviderSessionsListView: View {
   @State private var isBrowseExpanded: Bool = false
   @State private var multiLaunchViewModel: MultiSessionLaunchViewModel?
   @State private var primarySessionId: String?
+  @State private var recentlyAddedProjectLandingPath: String?
+  @State private var pendingProjectLandingPath: String?
+  @State private var isStartSessionSheetPresented = false
   @State private var showDeleteWorktreeAlert = false
   @State private var sessionToDeleteWorktree: CLISession? = nil
   @State private var showCommandPalette = false
@@ -227,9 +230,13 @@ public struct MultiProviderSessionsListView: View {
           claudeViewModel: claudeViewModel,
           codexViewModel: codexViewModel,
           primarySessionId: $primarySessionId,
+          projectLandingPath: $recentlyAddedProjectLandingPath,
           onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
           onRequestStartSession: { preferredRepositoryPath in
             triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
+          },
+          onRequestProjectStartSession: { repositoryPath in
+            presentStartSessionSheet(for: repositoryPath)
           }
         )
         .padding(12)
@@ -269,13 +276,18 @@ public struct MultiProviderSessionsListView: View {
     .onChange(of: codexViewModel.resolvedPendingSessions) { _, newResolutions in
       handleResolvedSessions(newResolutions, provider: .codex, viewModel: codexViewModel)
     }
+    .onChange(of: repositoryLandingSnapshot) { _, _ in
+      reconcileRecentlyAddedProjectLanding()
+    }
     .onChange(of: claudeViewModel.lastCreatedPendingId) { _, newId in
       guard let newId else { return }
+      clearRecentlyAddedProjectLanding()
       primarySessionId = "pending-claude-\(newId.uuidString)"
       claudeViewModel.lastCreatedPendingId = nil
     }
     .onChange(of: codexViewModel.lastCreatedPendingId) { _, newId in
       guard let newId else { return }
+      clearRecentlyAddedProjectLanding()
       primarySessionId = "pending-codex-\(newId.uuidString)"
       codexViewModel.lastCreatedPendingId = nil
     }
@@ -403,6 +415,15 @@ public struct MultiProviderSessionsListView: View {
         }
       )
     }
+    .sheet(isPresented: $isStartSessionSheetPresented) {
+      if let multiLaunchViewModel {
+        StartSessionSheet(
+          launchViewModel: multiLaunchViewModel,
+          intelligenceViewModel: intelligenceViewModel,
+          onDismiss: { isStartSessionSheetPresented = false }
+        )
+      }
+    }
     .modifier(ArchiveConfirmationAlert(confirmation: $archiveConfirmation))
     .modifier(RemoveConfirmationAlert(confirmation: $removeConfirmation))
     }
@@ -509,6 +530,12 @@ public struct MultiProviderSessionsListView: View {
     accessibilityReduceMotion
       ? .easeInOut(duration: 0.15)
       : .spring(response: 0.35, dampingFraction: 0.88)
+  }
+
+  private var projectLandingAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeInOut(duration: 0.15)
+      : .spring(response: 0.38, dampingFraction: 0.86)
   }
 
   private var sidePanelView: some View {
@@ -839,13 +866,10 @@ public struct MultiProviderSessionsListView: View {
   /// "path is the repo root" and "path is a worktree under the repo". Falls back
   /// to the original path when no tracked repo matches (used for the orphan group).
   private func findParentRepoPath(for itemPath: String) -> String {
-    for repo in orderedTrackedRepos {
-      if repo.path == itemPath { return repo.path }
-      if repo.worktrees.contains(where: { $0.path == itemPath }) {
-        return repo.path
-      }
-    }
-    return itemPath
+    return ProjectHierarchyResolver.rootProjectPath(
+      for: itemPath,
+      repositories: orderedTrackedRepos
+    )
   }
 
   private var pinnedSessionSnapshot: ProviderScopedPinnedSessions {
@@ -924,8 +948,9 @@ public struct MultiProviderSessionsListView: View {
       SessionsSectionHeader(
         groupMode: $sidebarGroupMode,
         repos: orderedTrackedRepos,
-        launchViewModel: multiLaunchViewModel,
-        intelligenceViewModel: intelligenceViewModel,
+        onStartSession: { repositoryPath in
+          presentStartSessionSheet(for: repositoryPath)
+        },
         onAddFolder: { showAddRepositoryPicker() }
       )
 
@@ -968,9 +993,9 @@ public struct MultiProviderSessionsListView: View {
                   }
                 }
               },
-              repoPath: group.id,
-              launchViewModel: multiLaunchViewModel,
-              intelligenceViewModel: intelligenceViewModel,
+              onStartSession: {
+                presentStartSessionSheet(for: group.id)
+              },
               onOpenInFinder: {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: group.id)
               },
@@ -1089,15 +1114,14 @@ public struct MultiProviderSessionsListView: View {
             }
           }(),
           onSelect: {
+            clearRecentlyAddedProjectLanding()
             primarySessionId = item.id
           }
         )
-        .transition(.opacity)
         .id(item.id)
       }
     }
     .padding(.top, 2)
-    .animation(.easeInOut(duration: 0.25), value: pinnedSessionSnapshot)
   }
 
   @ViewBuilder
@@ -1264,29 +1288,75 @@ public struct MultiProviderSessionsListView: View {
 
   // MARK: - Actions
 
-  /// Uses asyncAfter to schedule NSOpenPanel creation on a future run loop iteration,
-  /// avoiding HIRunLoopSemaphore deadlock that occurs during GCD dispatch queue drain.
+  /// Schedules NSOpenPanel presentation on the run loop to avoid AppKit's
+  /// HIRunLoopSemaphore wait during main-dispatch-queue draining.
   private func showAddRepositoryPicker() {
-    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-      MainActor.assumeIsolated {
-        let panel = NSOpenPanel()
-        panel.title = "Select Repository"
-        panel.message = "Choose a git repository to monitor CLI sessions"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = false
-
-        if panel.runModal() == .OK, let url = panel.url {
-          self.addRepository(at: url.path)
-        }
-      }
+    NativeOpenPanelPresenter.present { panel in
+      panel.title = "Select Repository"
+      panel.message = "Choose a git repository to monitor CLI sessions"
+      panel.canChooseFiles = false
+      panel.canChooseDirectories = true
+      panel.allowsMultipleSelection = false
+      panel.canCreateDirectories = false
+    } onSelection: { url in
+      addRepository(at: url.path)
     }
   }
 
   private func addRepository(at path: String) {
-    claudeViewModel.addRepository(at: path)
-    codexViewModel.addRepository(at: path)
+    activateRecentlyAddedProjectLanding(for: path)
+    claudeViewModel.addRepositoryShellFirst(at: path)
+    codexViewModel.addRepositoryShellFirst(at: path)
+  }
+
+  private func activateRecentlyAddedProjectLanding(for addedPath: String) {
+    guard let repository = ProjectLandingResolver.resolvedRepository(
+      for: addedPath,
+      repositories: allRepositories
+    ) else {
+      pendingProjectLandingPath = addedPath
+      return
+    }
+
+    pendingProjectLandingPath = nil
+    showRecentlyAddedProjectLanding(repository.path)
+  }
+
+  private func reconcileRecentlyAddedProjectLanding() {
+    if let pendingProjectLandingPath {
+      guard let repository = ProjectLandingResolver.resolvedRepository(
+        for: pendingProjectLandingPath,
+        repositories: allRepositories
+      ) else { return }
+
+      self.pendingProjectLandingPath = nil
+      showRecentlyAddedProjectLanding(repository.path)
+      return
+    }
+
+    guard let recentlyAddedProjectLandingPath else { return }
+    if ProjectLandingResolver.resolvedRepository(
+      for: recentlyAddedProjectLandingPath,
+      repositories: allRepositories
+    ) == nil {
+      clearRecentlyAddedProjectLanding()
+      ensurePrimarySelection()
+    }
+  }
+
+  private func showRecentlyAddedProjectLanding(_ path: String) {
+    withAnimation(projectLandingAnimation) {
+      recentlyAddedProjectLandingPath = path
+      primarySessionId = nil
+    }
+    setAuxiliaryShellVisible(false)
+  }
+
+  private func clearRecentlyAddedProjectLanding() {
+    withAnimation(projectLandingAnimation) {
+      pendingProjectLandingPath = nil
+      recentlyAddedProjectLandingPath = nil
+    }
   }
 
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {
@@ -1349,11 +1419,17 @@ public struct MultiProviderSessionsListView: View {
           let realSessionId = resolutions[pendingUUID] else { return }
     let newPrimaryId = "\(provider.rawValue.lowercased())-\(realSessionId)"
     AppLogger.session.info("[PrimarySelection] Resolved: \(currentPrimary.prefix(20), privacy: .public) -> \(newPrimaryId.prefix(20), privacy: .public)")
+    clearRecentlyAddedProjectLanding()
     primarySessionId = newPrimaryId
     viewModel.resolvedPendingSessions.removeValue(forKey: pendingUUID)
   }
 
   private func ensurePrimarySelection() {
+    guard recentlyAddedProjectLandingPath == nil else {
+      primarySessionId = nil
+      return
+    }
+
     let items = selectedSessionItems
     guard !items.isEmpty else {
       primarySessionId = nil
@@ -1390,6 +1466,13 @@ public struct MultiProviderSessionsListView: View {
     return map.values.sorted { $0.path < $1.path }
   }
 
+  private var repositoryLandingSnapshot: [String] {
+    allRepositories.flatMap { repository in
+      [repository.path] + repository.worktrees.map(\.path)
+    }
+    .sorted()
+  }
+
   private var totalSessionCount: Int {
     claudeViewModel.totalSessionCount + codexViewModel.totalSessionCount
   }
@@ -1423,6 +1506,7 @@ public struct MultiProviderSessionsListView: View {
 
     case .switchToSession(let id, _, _, _):
       if let item = selectedSessionItems.first(where: { $0.id == id }) {
+        clearRecentlyAddedProjectLanding()
         primarySessionId = item.id
         scrollToSessionId = item.id
       }
@@ -1494,6 +1578,26 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  private func presentStartSessionSheet(for repositoryPath: String) {
+    guard let multiLaunchViewModel else { return }
+    let resolvedPath = ProjectLandingResolver.landingPath(
+      for: repositoryPath,
+      repositories: allRepositories
+    )
+
+    isStartSessionSheetPresented = false
+    multiLaunchViewModel.reset()
+
+    Task { @MainActor in
+      let didPreselect = await multiLaunchViewModel.preselectRepository(path: resolvedPath)
+      if didPreselect {
+        isStartSessionSheetPresented = true
+      } else {
+        multiLaunchViewModel.selectRepository()
+      }
+    }
+  }
+
   private func toggleFocusMode() {
     let singleRaw = 0
     if layoutModeRawValue != singleRaw {
@@ -1511,6 +1615,7 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func toggleAuxiliaryShellDock() {
+    guard recentlyAddedProjectLandingPath == nil else { return }
     ensurePrimarySelection()
     guard !selectedSessionItems.isEmpty else { return }
     withAnimation(auxiliaryShellToggleAnimation) {
@@ -1534,6 +1639,7 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func navigateSessionHistory(direction: NavigationDirection) {
+    clearRecentlyAddedProjectLanding()
     let items = selectedSessionItems
     guard !items.isEmpty else { return }
 
@@ -1562,16 +1668,13 @@ private struct ProjectGroupHeader: View {
   let isExpanded: Bool
   let canToggle: Bool
   let onToggle: () -> Void
-  let repoPath: String
-  let launchViewModel: MultiSessionLaunchViewModel?
-  let intelligenceViewModel: IntelligenceViewModel?
+  let onStartSession: () -> Void
   let onOpenInFinder: () -> Void
   let onOpenGitHub: () -> Void
   let onArchiveSessions: (() -> Void)?
   let onRemove: () -> Void
 
   @State private var isHovered: Bool = false
-  @State private var showStartSheet: Bool = false
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
@@ -1616,29 +1719,14 @@ private struct ProjectGroupHeader: View {
           Label("Remove", systemImage: "xmark")
         }
       }
-      .opacity(isHovered || showStartSheet ? 1 : 0)
+      .opacity(isHovered ? 1 : 0)
 
       HeaderIconButton(
         systemName: "square.and.pencil",
         size: 14,
         help: "Start a new session"
-      ) {
-        guard let vm = launchViewModel else { return }
-        Task { @MainActor in
-          _ = await vm.preselectRepository(path: repoPath)
-          showStartSheet = true
-        }
-      }
-      .opacity(isHovered || showStartSheet ? 1 : 0)
-      .sheet(isPresented: $showStartSheet) {
-        if let vm = launchViewModel {
-          StartSessionSheet(
-            launchViewModel: vm,
-            intelligenceViewModel: intelligenceViewModel,
-            onDismiss: { showStartSheet = false }
-          )
-        }
-      }
+      ) { onStartSession() }
+      .opacity(isHovered ? 1 : 0)
     }
     .padding(.vertical, 6)
     .padding(.horizontal, 4)
@@ -1808,12 +1896,10 @@ private struct StartSessionSheet: View {
 private struct SessionsSectionHeader: View {
   @Binding var groupMode: SidebarGroupMode
   let repos: [SelectedRepository]
-  let launchViewModel: MultiSessionLaunchViewModel?
-  let intelligenceViewModel: IntelligenceViewModel?
+  let onStartSession: (String) -> Void
   let onAddFolder: () -> Void
 
   @State private var showGroupPopover = false
-  @State private var showStartSheet = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -1847,26 +1933,13 @@ private struct SessionsSectionHeader: View {
           ) {
             ForEach(repos, id: \.path) { repo in
               Button {
-                guard let vm = launchViewModel else { return }
-                Task { @MainActor in
-                  _ = await vm.preselectRepository(path: repo.path)
-                  showStartSheet = true
-                }
+                onStartSession(repo.path)
               } label: {
                 Label(
                   URL(fileURLWithPath: repo.path).lastPathComponent,
                   systemImage: "folder"
                 )
               }
-            }
-          }
-          .sheet(isPresented: $showStartSheet) {
-            if let vm = launchViewModel {
-              StartSessionSheet(
-                launchViewModel: vm,
-                intelligenceViewModel: intelligenceViewModel,
-                onDismiss: { showStartSheet = false }
-              )
             }
           }
         }

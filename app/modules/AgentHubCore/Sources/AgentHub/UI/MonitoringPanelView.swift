@@ -105,15 +105,10 @@ public struct MonitoringPanelView: View {
     case .monitored(let s, _): itemPath = s.projectPath
     }
 
-    // Find which SelectedRepository contains this path
-    for repo in viewModel.selectedRepositories {
-      for worktree in repo.worktrees {
-        if worktree.path == itemPath {
-          return repo.path  // Return main module path
-        }
-      }
-    }
-    return itemPath  // Fallback to original path
+    return ProjectHierarchyResolver.rootProjectPath(
+      for: itemPath,
+      repositories: viewModel.selectedRepositories
+    )
   }
 
   private var allItems: [MonitoringItem] {
