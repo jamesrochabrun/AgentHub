@@ -827,12 +827,6 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private func openShellPane(axis: TerminalWorkspaceSplitAxis) {
     guard panes.count < Self.maxPaneCount, let activePaneID else { return }
-    let startedAt = TerminalUILogger.latencyTimestamp()
-    let panesBefore = panes.count
-    let sourcePaneID = activePaneID.uuidString
-    TerminalUILogger.terminal.info(
-      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=regular action=create phase=start axis=\(axis.rawValue, privacy: .public) sourcePane=\(sourcePaneID, privacy: .public) panesBefore=\(panesBefore, privacy: .public)"
-    )
 
     let workingDirectory = resolvedDirectoryForNewShell(activePane?.activeTab?.workingDirectory)
     let pane = makeShellPane(
@@ -842,25 +836,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     layoutNode = layoutNode?.replacingPane(activePaneID, withSplitAxis: axis, newPaneID: pane.id)
       ?? flatLayout(for: panes.map(\.id), axis: axis)
     self.activePaneID = pane.id
-    let modelReadyAt = TerminalUILogger.latencyTimestamp()
     rebuildWorkspaceViews()
     layoutSubtreeIfNeeded()
-    let layoutReadyAt = TerminalUILogger.latencyTimestamp()
-    let startProcessStartedAt = TerminalUILogger.latencyTimestamp()
     startShellProcess(
       terminal: pane.tabs[0].terminal,
       launch: EmbeddedTerminalLaunch.shellLaunch(projectPath: workingDirectory)
     )
-    let startProcessReadyAt = TerminalUILogger.latencyTimestamp()
     registerProcessIfNeeded(for: pane.tabs[0].terminal)
-    let processReadyAt = TerminalUILogger.latencyTimestamp()
     notifyWorkspaceChanged()
     focus()
-    let finishedAt = TerminalUILogger.latencyTimestamp()
-    let panesAfter = panes.count
-    TerminalUILogger.terminal.info(
-      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=regular action=create phase=end axis=\(axis.rawValue, privacy: .public) newPane=\(pane.id.uuidString, privacy: .public) panesAfter=\(panesAfter, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) model=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: modelReadyAt), privacy: .public) layout=\(TerminalUILogger.elapsedMilliseconds(from: modelReadyAt, to: layoutReadyAt), privacy: .public) process=\(TerminalUILogger.elapsedMilliseconds(from: layoutReadyAt, to: processReadyAt), privacy: .public) startProcess=\(TerminalUILogger.elapsedMilliseconds(from: startProcessStartedAt, to: startProcessReadyAt), privacy: .public) registry=\(TerminalUILogger.elapsedMilliseconds(from: startProcessReadyAt, to: processReadyAt), privacy: .public) notifyFocus=\(TerminalUILogger.elapsedMilliseconds(from: processReadyAt, to: finishedAt), privacy: .public)"
-    )
   }
 
   private func selectTab(_ tabID: UUID, in paneID: UUID) {
@@ -898,61 +882,32 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private func closePane(_ pane: WorkspacePane) {
     guard canClosePane(pane) else { return }
-    let startedAt = TerminalUILogger.latencyTimestamp()
-    let panesBefore = panes.count
-    let tabsBefore = pane.tabs.count
-    TerminalUILogger.terminal.info(
-      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=regular action=remove phase=start reason=close-pane pane=\(pane.id.uuidString, privacy: .public) tabsBefore=\(tabsBefore, privacy: .public) panesBefore=\(panesBefore, privacy: .public)"
-    )
 
-    let terminateStartedAt = TerminalUILogger.latencyTimestamp()
     for tab in pane.tabs {
       terminate(tab)
     }
-    let terminateReadyAt = TerminalUILogger.latencyTimestamp()
     panes.removeAll { $0.id == pane.id }
     layoutNode = layoutNode?.removingPane(pane.id)
     if activePaneID == pane.id {
       activePaneID = firstPaneID(in: layoutNode) ?? panes.first?.id
     }
-    let modelReadyAt = TerminalUILogger.latencyTimestamp()
     rebuildWorkspaceViews()
-    let layoutReadyAt = TerminalUILogger.latencyTimestamp()
     notifyWorkspaceChanged()
-    let finishedAt = TerminalUILogger.latencyTimestamp()
-    let panesAfter = panes.count
-    TerminalUILogger.terminal.info(
-      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=regular action=remove phase=end reason=close-pane pane=\(pane.id.uuidString, privacy: .public) panesAfter=\(panesAfter, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) terminate=\(TerminalUILogger.elapsedMilliseconds(from: terminateStartedAt, to: terminateReadyAt), privacy: .public) model=\(TerminalUILogger.elapsedMilliseconds(from: terminateReadyAt, to: modelReadyAt), privacy: .public) layout=\(TerminalUILogger.elapsedMilliseconds(from: modelReadyAt, to: layoutReadyAt), privacy: .public) notify=\(TerminalUILogger.elapsedMilliseconds(from: layoutReadyAt, to: finishedAt), privacy: .public)"
-    )
   }
 
   private func closeLastTabAndPane(tabIndex: Int, in pane: WorkspacePane) {
     guard pane.tabs.indices.contains(tabIndex), canClosePane(pane) else { return }
-    let startedAt = TerminalUILogger.latencyTimestamp()
     let paneID = pane.id
-    let panesBefore = panes.count
-    TerminalUILogger.terminal.info(
-      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=regular action=remove phase=start reason=last-tab-close pane=\(paneID.uuidString, privacy: .public) tabsBefore=1 panesBefore=\(panesBefore, privacy: .public)"
-    )
 
     let tab = pane.tabs.remove(at: tabIndex)
-    let terminateStartedAt = TerminalUILogger.latencyTimestamp()
     terminate(tab)
-    let terminateReadyAt = TerminalUILogger.latencyTimestamp()
     panes.removeAll { $0.id == paneID }
     layoutNode = layoutNode?.removingPane(paneID)
     if activePaneID == paneID {
       activePaneID = firstPaneID(in: layoutNode) ?? panes.first?.id
     }
-    let modelReadyAt = TerminalUILogger.latencyTimestamp()
     rebuildWorkspaceViews()
-    let layoutReadyAt = TerminalUILogger.latencyTimestamp()
     notifyWorkspaceChanged()
-    let finishedAt = TerminalUILogger.latencyTimestamp()
-    let panesAfter = panes.count
-    TerminalUILogger.terminal.info(
-      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=regular action=remove phase=end reason=last-tab-close pane=\(paneID.uuidString, privacy: .public) panesAfter=\(panesAfter, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) terminate=\(TerminalUILogger.elapsedMilliseconds(from: terminateStartedAt, to: terminateReadyAt), privacy: .public) model=\(TerminalUILogger.elapsedMilliseconds(from: terminateReadyAt, to: modelReadyAt), privacy: .public) layout=\(TerminalUILogger.elapsedMilliseconds(from: modelReadyAt, to: layoutReadyAt), privacy: .public) notify=\(TerminalUILogger.elapsedMilliseconds(from: layoutReadyAt, to: finishedAt), privacy: .public)"
-    )
   }
 
   private func closeActiveShellTabOrPane() {

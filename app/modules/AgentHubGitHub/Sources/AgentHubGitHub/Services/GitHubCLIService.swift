@@ -473,7 +473,6 @@ public actor GitHubCLIService {
     allowedExitCodes: Set<Int> = [0]
   ) async throws -> String {
     let cmdDescription = ([executable] + arguments).joined(separator: " ")
-    GitHubLogger.github.debug("[runCommand] START timeout=\(timeout)s cmd=\(cmdDescription)")
     let cmdStart = Date()
 
     let process = Process()
@@ -554,7 +553,6 @@ public actor GitHubCLIService {
     let output = String(data: outputData ?? Data(), encoding: .utf8) ?? ""
     let errorOutput = String(data: errorData ?? Data(), encoding: .utf8) ?? ""
     let cmdElapsed = Date().timeIntervalSince(cmdStart)
-    let outputBytes = outputData?.count ?? 0
 
     if didTimeout {
       GitHubLogger.github.error("[runCommand] TIMEOUT after \(cmdElapsed)s cmd=\(cmdDescription)")
@@ -579,7 +577,6 @@ public actor GitHubCLIService {
       throw GitHubCLIError.commandFailed(errMsg)
     }
 
-    GitHubLogger.github.debug("[runCommand] OK in \(cmdElapsed)s stdout=\(outputBytes) bytes cmd=\(cmdDescription)")
     return output
   }
 
