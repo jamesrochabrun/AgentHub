@@ -21,6 +21,7 @@ struct RegularTerminalPaneHeaderTabState: Identifiable, Equatable {
 struct RegularTerminalPaneHeaderState: Equatable {
   let tabs: [RegularTerminalPaneHeaderTabState]
   let canSplit: Bool
+  let canClosePane: Bool
   let isActivePane: Bool
 }
 
@@ -31,6 +32,7 @@ struct RegularTerminalPaneHeader: View {
   let onNewTab: () -> Void
   let onSplitVertical: () -> Void
   let onSplitHorizontal: () -> Void
+  let onClosePane: () -> Void
 
   var body: some View {
     HStack(spacing: 6) {
@@ -68,6 +70,15 @@ struct RegularTerminalPaneHeader: View {
           isDisabled: !state.canSplit,
           action: onSplitHorizontal
         )
+
+        if state.canClosePane {
+          headerIconButton(
+            title: "Close Pane",
+            systemImage: "xmark",
+            help: "Close terminal pane",
+            action: onClosePane
+          )
+        }
       }
       .font(.system(size: 12, weight: .medium))
       .foregroundStyle(.secondary)

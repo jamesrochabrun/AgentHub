@@ -1067,6 +1067,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         )
       },
       canSplit: panes.count < Self.maxPaneCount,
+      canClosePane: canClosePane(pane),
       isActivePane: pane.id == activePaneID
     )
   }
@@ -1082,7 +1083,11 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         self?.openShellTab(in: pane)
       },
       onSplitVertical: { [weak self] in self?.splitFromPane(paneID, axis: .vertical) },
-      onSplitHorizontal: { [weak self] in self?.splitFromPane(paneID, axis: .horizontal) }
+      onSplitHorizontal: { [weak self] in self?.splitFromPane(paneID, axis: .horizontal) },
+      onClosePane: { [weak self] in
+        guard let pane = self?.pane(for: paneID) else { return }
+        self?.closePane(pane)
+      }
     )
   }
 
@@ -1189,7 +1194,11 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private func canClosePane(_ pane: WorkspacePane) -> Bool {
     guard panes.count > 1 else { return false }
-    return !pane.tabs.contains(where: isProtectedAgentTab)
+    guard !pane.tabs.contains(where: isProtectedAgentTab) else { return false }
+    if workspaceMode == .shell {
+      return pane.role == .auxiliary
+    }
+    return true
   }
 
   private func isProtectedAgentTab(_ tab: WorkspaceTab) -> Bool {
@@ -1491,6 +1500,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let pane = panes[panelIndex]
     guard pane.tabs.indices.contains(tabIndex) else { return }
     closeTab(pane.tabs[tabIndex].id, in: pane.id)
+  }
+
+  func _testingCanClosePane(panelIndex: Int) -> Bool {
+    guard panes.indices.contains(panelIndex) else { return false }
+    return canClosePane(panes[panelIndex])
+  }
+
+  func _testingClosePane(panelIndex: Int) {
+    guard panes.indices.contains(panelIndex) else { return }
+    closePane(panes[panelIndex])
   }
 }
 

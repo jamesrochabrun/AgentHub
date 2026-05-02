@@ -63,6 +63,22 @@ struct RegularTerminalContainerViewWorkspaceTests {
     #expect(terminal._testingTerminatedTabCount == 1)
   }
 
+  @Test("Auxiliary shell panes can close from the pane control")
+  @MainActor
+  func auxiliaryShellPaneCanCloseFromPaneControl() {
+    let terminal = makeShellTerminal()
+    terminal._testingOpenVerticalSplit()
+
+    #expect(terminal._testingCanClosePane(panelIndex: 0) == false)
+    #expect(terminal._testingCanClosePane(panelIndex: 1) == true)
+
+    terminal._testingClosePane(panelIndex: 1)
+
+    #expect(terminal._testingPaneCount == 1)
+    #expect(terminal._testingTabCounts == [1])
+    #expect(terminal._testingTerminatedTabCount == 1)
+  }
+
   @Test("Prompt target remains protected agent after selecting shell tab")
   @MainActor
   func promptTargetRemainsProtectedAgentAfterSelectingShell() {
