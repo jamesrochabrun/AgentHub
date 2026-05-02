@@ -829,17 +829,33 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   private func openShellPane() {
     guard let terminalSession, terminalSession.canOpenPanel else { return }
+    let startedAt = TerminalUILogger.latencyTimestamp()
+    let panelsBefore = terminalSession.visiblePanels.count
+    TerminalUILogger.terminal.info(
+      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=create phase=start panelsBefore=\(panelsBefore, privacy: .public)"
+    )
+
     do {
+      let prepareStartedAt = TerminalUILogger.latencyTimestamp()
       prepareVisiblePanelsForPaneTransition(
         projectedPanelIDs: terminalSession.visiblePanels.map(\.id) + [TerminalPanelID()]
       )
+      let prepareReadyAt = TerminalUILogger.latencyTimestamp()
       let panel = try terminalSession.openPanel(
         named: "Shell",
         configuration: shellConfigurationForNewTerminal()
       )
+      let openReadyAt = TerminalUILogger.latencyTimestamp()
       configureControllerHooks(for: panel.activeTab?.controller)
       notifyWorkspaceChanged()
+      let finishedAt = TerminalUILogger.latencyTimestamp()
+      TerminalUILogger.terminal.info(
+        "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=create phase=end newPanel=\(panel.id.id.uuidString, privacy: .public) panelsAfter=\(terminalSession.visiblePanels.count, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) prepare=\(TerminalUILogger.elapsedMilliseconds(from: prepareStartedAt, to: prepareReadyAt), privacy: .public) open=\(TerminalUILogger.elapsedMilliseconds(from: prepareReadyAt, to: openReadyAt), privacy: .public) notify=\(TerminalUILogger.elapsedMilliseconds(from: openReadyAt, to: finishedAt), privacy: .public)"
+      )
     } catch {
+      TerminalUILogger.terminal.info(
+        "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=create phase=failed elapsed=\(TerminalUILogger.elapsedMilliseconds(since: startedAt), privacy: .public)"
+      )
       TerminalUILogger.terminal.error("Failed to open Ghostty shell pane: \(error.localizedDescription)")
     }
   }
@@ -879,13 +895,28 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   private func closeGhosttyPanel(_ panel: TerminalPanel) {
     guard let terminalSession, canCloseGhosttyPanel(panel) else { return }
+    let startedAt = TerminalUILogger.latencyTimestamp()
+    let panelsBefore = terminalSession.visiblePanels.count
+    TerminalUILogger.terminal.info(
+      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=remove phase=start panel=\(panel.id.id.uuidString, privacy: .public) tabsBefore=\(panel.tabs.count, privacy: .public) panelsBefore=\(panelsBefore, privacy: .public)"
+    )
+
+    let prepareStartedAt = TerminalUILogger.latencyTimestamp()
     prepareVisiblePanelsForPaneTransition(
       projectedPanelIDs: terminalSession.visiblePanels.map(\.id).filter { $0 != panel.id }
     )
+    let prepareReadyAt = TerminalUILogger.latencyTimestamp()
     requestClose(panel)
-    if terminalSession.closePanel(panel.id) {
+    let requestCloseReadyAt = TerminalUILogger.latencyTimestamp()
+    let didClose = terminalSession.closePanel(panel.id)
+    let modelReadyAt = TerminalUILogger.latencyTimestamp()
+    if didClose {
       notifyWorkspaceChanged()
     }
+    let finishedAt = TerminalUILogger.latencyTimestamp()
+    TerminalUILogger.terminal.info(
+      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=remove phase=end panel=\(panel.id.id.uuidString, privacy: .public) didClose=\(didClose, privacy: .public) panelsAfter=\(terminalSession.visiblePanels.count, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) prepare=\(TerminalUILogger.elapsedMilliseconds(from: prepareStartedAt, to: prepareReadyAt), privacy: .public) requestClose=\(TerminalUILogger.elapsedMilliseconds(from: prepareReadyAt, to: requestCloseReadyAt), privacy: .public) model=\(TerminalUILogger.elapsedMilliseconds(from: requestCloseReadyAt, to: modelReadyAt), privacy: .public) notify=\(TerminalUILogger.elapsedMilliseconds(from: modelReadyAt, to: finishedAt), privacy: .public)"
+    )
   }
 
   private func closeGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
