@@ -170,6 +170,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var protectedAgentTabID: UUID?
   private var rootWorkspaceView: NSView?
   private var paneHeaderViews: [UUID: NSHostingView<RegularTerminalPaneHeader>] = [:]
+  private var paneContainerViews: [UUID: RegularTerminalPaneContainerView] = [:]
   private var tabActivityTasks: [UUID: Task<Void, Never>] = [:]
   private var paneActivityTasks: [UUID: Task<Void, Never>] = [:]
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
@@ -1009,6 +1010,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       terminal.removeFromSuperview()
     }
     paneHeaderViews.removeAll()
+    paneContainerViews.removeAll()
     rootWorkspaceView?.removeFromSuperview()
     rootWorkspaceView = nil
 
@@ -1066,13 +1068,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let activityOverlayView = activity.map {
       RegularTerminalPaneActivityOverlayHostingView(rootView: RegularTerminalPaneActivityOverlay(activity: $0))
     }
-    return RegularTerminalPaneContainerView(
+    let container = RegularTerminalPaneContainerView(
       headerView: header,
       terminalView: terminal,
       activityOverlayView: activityOverlayView,
       headerHeight: Self.paneHeaderHeight,
       initialSize: fallbackPaneSize()
     )
+    paneContainerViews[pane.id] = container
+    return container
   }
 
   private func fallbackPaneSize() -> CGSize {
@@ -1224,11 +1228,18 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   private func refreshWorkspaceActivityPresentation(focusing shouldFocus: Bool) {
-    rebuildWorkspaceViews()
-    layoutSubtreeIfNeeded()
+    for pane in panes {
+      updatePaneActivityPresentation(for: pane.id)
+    }
     if shouldFocus {
       focus()
     }
+  }
+
+  private func updatePaneActivityPresentation(for paneID: UUID) {
+    guard let pane = pane(for: paneID) else { return }
+    updatePaneHeader(for: paneID)
+    paneContainerViews[paneID]?.updateActivity(pane.activity ?? pane.activeTab?.activity)
   }
 
   private func makeShellPane(from snapshot: TerminalWorkspaceTabSnapshot) -> WorkspacePane {

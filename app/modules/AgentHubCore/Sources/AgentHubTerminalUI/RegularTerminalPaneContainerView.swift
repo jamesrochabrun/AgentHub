@@ -8,7 +8,7 @@ import AppKit
 final class RegularTerminalPaneContainerView: NSView {
   private let headerView: NSView
   private let terminalView: NSView
-  private let activityOverlayView: NSView?
+  private var activityOverlayView: NSView?
   private let headerHeight: CGFloat
 
   override var isFlipped: Bool { true }
@@ -52,6 +52,17 @@ final class RegularTerminalPaneContainerView: NSView {
     layoutPaneSubviews(in: bounds)
   }
 
+  func updateActivity(_ activity: RegularTerminalPaneActivity?) {
+    activityOverlayView?.removeFromSuperview()
+    activityOverlayView = activity.map(Self.makeActivityOverlayView)
+    if let activityOverlayView {
+      activityOverlayView.translatesAutoresizingMaskIntoConstraints = true
+      activityOverlayView.autoresizingMask = []
+      addSubview(activityOverlayView)
+    }
+    layoutPaneSubviews(in: bounds)
+  }
+
   private func layoutPaneSubviews(in rect: CGRect) {
     let resolvedHeaderHeight = min(headerHeight, max(0, rect.height))
     headerView.frame = CGRect(
@@ -67,5 +78,9 @@ final class RegularTerminalPaneContainerView: NSView {
       height: max(0, rect.height - resolvedHeaderHeight)
     )
     activityOverlayView?.frame = terminalView.frame
+  }
+
+  private static func makeActivityOverlayView(for activity: RegularTerminalPaneActivity) -> NSView {
+    RegularTerminalPaneActivityOverlayHostingView(rootView: RegularTerminalPaneActivityOverlay(activity: activity))
   }
 }
