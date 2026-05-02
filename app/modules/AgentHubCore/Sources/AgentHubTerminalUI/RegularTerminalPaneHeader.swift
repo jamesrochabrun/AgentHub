@@ -46,21 +46,29 @@ struct RegularTerminalPaneHeader: View {
       Spacer(minLength: 4)
 
       HStack(spacing: 4) {
-        Button("New Tab", systemImage: "plus", action: onNewTab)
-          .labelStyle(.iconOnly)
-          .help("New terminal tab")
+        headerIconButton(
+          title: "New Tab",
+          systemImage: "plus",
+          help: "New terminal tab",
+          action: onNewTab
+        )
 
-        Button("Split Right", systemImage: "rectangle.split.2x1", action: onSplitVertical)
-          .labelStyle(.iconOnly)
-          .disabled(!state.canSplit)
-          .help("Split terminal to the right")
+        headerIconButton(
+          title: "Split Right",
+          systemImage: "rectangle.split.2x1",
+          help: "Split terminal to the right",
+          isDisabled: !state.canSplit,
+          action: onSplitVertical
+        )
 
-        Button("Split Below", systemImage: "rectangle.split.1x2", action: onSplitHorizontal)
-          .labelStyle(.iconOnly)
-          .disabled(!state.canSplit)
-          .help("Split terminal below")
+        headerIconButton(
+          title: "Split Below",
+          systemImage: "rectangle.split.1x2",
+          help: "Split terminal below",
+          isDisabled: !state.canSplit,
+          action: onSplitHorizontal
+        )
       }
-      .buttonStyle(.plain)
       .font(.system(size: 12, weight: .medium))
       .foregroundStyle(.secondary)
       .padding(.trailing, 6)
@@ -72,6 +80,22 @@ struct RegularTerminalPaneHeader: View {
         .fill(Color.secondary.opacity(state.isActivePane ? 0.28 : 0.18))
         .frame(height: 1)
     }
+  }
+
+  private func headerIconButton(
+    title: String,
+    systemImage: String,
+    help: String,
+    isDisabled: Bool = false,
+    action: @escaping () -> Void
+  ) -> some View {
+    Button(title, systemImage: systemImage, action: action)
+      .labelStyle(.iconOnly)
+      .buttonStyle(.plain)
+      .frame(width: 24, height: 24)
+      .contentShape(Rectangle())
+      .disabled(isDisabled)
+      .help(help)
   }
 
   private func tabButton(for tab: RegularTerminalPaneHeaderTabState) -> some View {
