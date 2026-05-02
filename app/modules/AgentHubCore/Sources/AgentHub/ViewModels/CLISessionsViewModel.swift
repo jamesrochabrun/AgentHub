@@ -508,25 +508,67 @@ public final class CLISessionsViewModel {
     return activeSnapshots + auxiliarySnapshots
   }
 
-  private func loadTerminalWorkspaceSnapshot(sessionId: String?) -> TerminalWorkspaceSnapshot? {
+  private func loadTerminalWorkspaceSnapshot(
+    sessionId: String?,
+    allowsCompatibleBackendFallback: Bool = false
+  ) -> TerminalWorkspaceSnapshot? {
     guard let sessionId, !sessionId.hasPrefix("pending-") else { return nil }
     let snapshot = terminalWorkspaceStore?.loadTerminalWorkspace(
       provider: providerKind,
       sessionId: sessionId,
       backend: terminalBackend
     )
+    let fallbackBackend: EmbeddedTerminalBackend?
+    let resolvedSnapshot: TerminalWorkspaceSnapshot?
+    if let snapshot {
+      fallbackBackend = nil
+      resolvedSnapshot = snapshot
+    } else if allowsCompatibleBackendFallback {
+      let fallback = compatibleTerminalWorkspaceSnapshot(sessionId: sessionId)
+      fallbackBackend = fallback?.backend
+      resolvedSnapshot = fallback?.snapshot
+    } else {
+      fallbackBackend = nil
+      resolvedSnapshot = nil
+    }
+
     if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
       let backendRawValue = terminalBackend.rawValue
+      let fallbackDescription = fallbackBackend.map { " fallbackBackend=\($0.rawValue)" } ?? ""
       logAuxiliaryShellRestore(
-        "load workspace sessionId=\(sessionId) backend=\(backendRawValue) found=\(snapshot != nil) panels=\(snapshot?.panels.count ?? 0) layout=\(snapshot?.layout != nil)"
+        "load workspace sessionId=\(sessionId) backend=\(backendRawValue)\(fallbackDescription) found=\(resolvedSnapshot != nil) panels=\(resolvedSnapshot?.panels.count ?? 0) layout=\(resolvedSnapshot?.layout != nil)"
       )
     }
-    return snapshot
+    return resolvedSnapshot
+  }
+
+  private func compatibleTerminalWorkspaceSnapshot(
+    sessionId: String
+  ) -> (backend: EmbeddedTerminalBackend, snapshot: TerminalWorkspaceSnapshot)? {
+    guard let store = terminalWorkspaceStore else { return nil }
+    let providerKind = self.providerKind
+    let terminalBackend = self.terminalBackend
+    for backend in EmbeddedTerminalBackend.allCases where backend != terminalBackend {
+      if let snapshot = store.loadTerminalWorkspace(
+        provider: providerKind,
+        sessionId: sessionId,
+        backend: backend
+      ) {
+        AppLogger.session.info(
+          "Loaded terminal workspace from compatible backend for session \(sessionId, privacy: .public) requestedBackend=\(terminalBackend.rawValue, privacy: .public) fallbackBackend=\(backend.rawValue, privacy: .public)"
+        )
+        return (backend, snapshot)
+      }
+    }
+    return nil
   }
 
   func hasPersistedAuxiliaryShellWorkspace(forKey key: String) -> Bool {
     guard let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key) else { return false }
-    return loadTerminalWorkspaceSnapshot(sessionId: workspaceSessionId) != nil
+    return loadTerminalWorkspaceSnapshot(
+      sessionId: workspaceSessionId,
+      allowsCompatibleBackendFallback: true
+    ) != nil
   }
 
   private func configureTerminalWorkspacePersistence(
@@ -726,7 +768,10 @@ public final class CLISessionsViewModel {
     activeTerminalDescriptors[key] = createDescriptor
     let terminal = makeTerminalSurface(forKey: key, descriptor: createDescriptor)
     configureTerminalWorkspacePersistence(for: terminal, key: key, sessionId: sessionId)
-    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)) {
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(
+      sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      allowsCompatibleBackendFallback: true
+    ) {
       terminal.restoreWorkspaceSnapshot(workspaceSnapshot)
     }
     activeTerminals[key] = terminal
@@ -763,7 +808,10 @@ public final class CLISessionsViewModel {
     auxiliaryShellTerminalDescriptors[key] = descriptor
     let terminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
     configureTerminalWorkspacePersistence(for: terminal, workspaceSessionId: workspaceSessionId)
-    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: workspaceSessionId) {
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(
+      sessionId: workspaceSessionId,
+      allowsCompatibleBackendFallback: true
+    ) {
       logAuxiliaryShellRestore(
         "restore terminal key=\(key) workspace=\(workspaceSessionId ?? "nil") panels=\(workspaceSnapshot.panels.count) active=\(workspaceSnapshot.activePanelIndex) layout=\(workspaceSnapshot.layout != nil)"
       )
@@ -871,7 +919,10 @@ public final class CLISessionsViewModel {
     let newTerminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
     copyTerminalCallbacks(from: oldTerminal, to: newTerminal)
     configureTerminalWorkspacePersistence(for: newTerminal, key: key, sessionId: sessionId)
-    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)) {
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(
+      sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      allowsCompatibleBackendFallback: true
+    ) {
       newTerminal.restoreWorkspaceSnapshot(workspaceSnapshot)
     }
     activeTerminals[key] = newTerminal

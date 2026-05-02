@@ -5,8 +5,23 @@
 
 import AgentHubTerminalUI
 import AppKit
+import CoreGraphics
 import GhosttySwift
 import SwiftUI
+
+enum AgentHubGhosttyMountGeometry {
+  static let stabilityTolerance: CGFloat = 0.5
+
+  static func isUsable(_ size: CGSize) -> Bool {
+    size.width > 0 && size.height > 0
+  }
+
+  static func isStable(previous: CGSize?, current: CGSize) -> Bool {
+    guard let previous else { return false }
+    return abs(previous.width - current.width) <= stabilityTolerance
+      && abs(previous.height - current.height) <= stabilityTolerance
+  }
+}
 
 @MainActor
 public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
@@ -23,6 +38,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var protectedAgentPanelID: TerminalPanelID?
   private var protectedAgentTabID: TerminalTabID?
   private var pendingMount: PendingMount?
+  private var pendingMountCandidateSize: CGSize?
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
@@ -141,6 +157,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     removeMountedContent()
     terminalSession = nil
     pendingMount = nil
+    pendingMountCandidateSize = nil
     pendingWorkspaceSnapshot = nil
     protectedAgentPanelID = nil
     protectedAgentTabID = nil
@@ -371,23 +388,37 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func queueOrMountGhosttySession(_ pendingMount: PendingMount) {
-    guard canMountGhosttySession else {
-      self.pendingMount = pendingMount
-      needsLayout = true
-      return
-    }
-
-    mountGhosttySession(pendingMount)
+    self.pendingMount = pendingMount
+    pendingMountCandidateSize = nil
+    mountPendingGhosttySessionIfReady()
   }
 
   private func mountPendingGhosttySessionIfReady() {
-    guard let pendingMount, canMountGhosttySession else { return }
+    guard let pendingMount else { return }
+    guard hasStableMountGeometry else { return }
     self.pendingMount = nil
+    pendingMountCandidateSize = nil
     mountGhosttySession(pendingMount)
   }
 
-  private var canMountGhosttySession: Bool {
-    window != nil && bounds.width > 0 && bounds.height > 0
+  private var hasStableMountGeometry: Bool {
+    guard window != nil, AgentHubGhosttyMountGeometry.isUsable(bounds.size) else {
+      pendingMountCandidateSize = nil
+      needsLayout = true
+      return false
+    }
+
+    let currentSize = bounds.size
+    guard AgentHubGhosttyMountGeometry.isStable(
+      previous: pendingMountCandidateSize,
+      current: currentSize
+    ) else {
+      pendingMountCandidateSize = currentSize
+      needsLayout = true
+      return false
+    }
+
+    return true
   }
 
   private func mountGhosttySession(_ pendingMount: PendingMount) {
