@@ -524,6 +524,11 @@ public final class CLISessionsViewModel {
     return snapshot
   }
 
+  func hasPersistedAuxiliaryShellWorkspace(forKey key: String) -> Bool {
+    guard let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key) else { return false }
+    return loadTerminalWorkspaceSnapshot(sessionId: workspaceSessionId) != nil
+  }
+
   private func configureTerminalWorkspacePersistence(
     for terminal: any EmbeddedTerminalSurface,
     key: String,

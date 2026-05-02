@@ -191,6 +191,7 @@ public struct MultiProviderMonitoringPanelView: View {
   private var flatSessionLayout: Bool = false
   @State private var showQuickFilePicker = false
   @State private var gitHubPopOutItem: GitHubPopOutItem?
+  @State private var attemptedAuxiliaryShellWorkspaceRestoreKeys: Set<String> = []
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -1402,13 +1403,20 @@ public struct MultiProviderMonitoringPanelView: View {
     Self.logAuxiliaryShellRestore(
       "dock sync visible=\(isAuxiliaryShellVisible) primary=\(primarySessionId ?? "nil") effective=\(effectivePrimarySessionId ?? "nil") items=\(allItems.count)"
     )
-    guard isAuxiliaryShellVisible else { return }
     guard let target = auxiliaryShellTarget else {
-      Self.logAuxiliaryShellRestore(
-        "dock visible waiting target primary=\(primarySessionId ?? "nil") items=\(allItems.count)"
-      )
+      if isAuxiliaryShellVisible {
+        Self.logAuxiliaryShellRestore(
+          "dock visible waiting target primary=\(primarySessionId ?? "nil") items=\(allItems.count)"
+        )
+      }
       return
     }
+
+    if !isAuxiliaryShellVisible {
+      restoreAuxiliaryShellDockIfNeeded(for: target)
+      return
+    }
+
     guard target.context.isLaunchable else {
       Self.logAuxiliaryShellRestore(
         "dock visible waiting launchable provider=\(target.context.providerKind.rawValue) key=\(target.context.terminalKey)"
@@ -1419,6 +1427,31 @@ public struct MultiProviderMonitoringPanelView: View {
       "dock focus provider=\(target.context.providerKind.rawValue) key=\(target.context.terminalKey)"
     )
     target.viewModel.focusAuxiliaryShellTerminal(forKey: target.context.terminalKey)
+  }
+
+  private func restoreAuxiliaryShellDockIfNeeded(for target: HubAuxiliaryShellTarget) {
+    let restoreKey = "\(target.context.providerKind.rawValue):\(target.context.terminalKey)"
+    guard !attemptedAuxiliaryShellWorkspaceRestoreKeys.contains(restoreKey) else { return }
+    attemptedAuxiliaryShellWorkspaceRestoreKeys.insert(restoreKey)
+
+    guard target.context.isLaunchable else {
+      Self.logAuxiliaryShellRestore(
+        "dock restore skipped waiting launchable provider=\(target.context.providerKind.rawValue) key=\(target.context.terminalKey)"
+      )
+      return
+    }
+
+    guard target.viewModel.hasPersistedAuxiliaryShellWorkspace(forKey: target.context.terminalKey) else {
+      Self.logAuxiliaryShellRestore(
+        "dock restore miss provider=\(target.context.providerKind.rawValue) key=\(target.context.terminalKey)"
+      )
+      return
+    }
+
+    Self.logAuxiliaryShellRestore(
+      "dock auto-show provider=\(target.context.providerKind.rawValue) key=\(target.context.terminalKey)"
+    )
+    isAuxiliaryShellVisible = true
   }
 
   private static func logAuxiliaryShellRestore(_ message: String) {

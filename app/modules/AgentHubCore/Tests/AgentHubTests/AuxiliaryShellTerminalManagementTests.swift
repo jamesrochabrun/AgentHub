@@ -517,6 +517,23 @@ struct AuxiliaryShellTerminalManagementTests {
     #expect(surface.restoredWorkspaceSnapshot == snapshot)
   }
 
+  @Test("Detects persisted auxiliary shell workspace under prefixed key")
+  @MainActor
+  func detectsPersistedAuxiliaryShellWorkspace() {
+    let snapshot = makeWorkspaceSnapshot(activePanelIndex: 1)
+    let store = RecordingTerminalWorkspaceStore(snapshots: [
+      "Claude|auxiliary-shell:session-123|\(EmbeddedTerminalBackend.regular.rawValue)": snapshot
+    ])
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalBackend: .regular,
+      terminalWorkspaceStore: store
+    )
+
+    #expect(viewModel.hasPersistedAuxiliaryShellWorkspace(forKey: "session-123"))
+    #expect(!viewModel.hasPersistedAuxiliaryShellWorkspace(forKey: "missing-session"))
+    #expect(!viewModel.hasPersistedAuxiliaryShellWorkspace(forKey: "pending-\(UUID().uuidString)"))
+  }
+
   @Test("Saves auxiliary shell workspace changes under prefixed key")
   @MainActor
   func savesAuxiliaryShellWorkspaceChanges() async throws {
