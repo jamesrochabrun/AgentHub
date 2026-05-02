@@ -494,6 +494,155 @@ struct AuxiliaryShellTerminalManagementTests {
     #expect(store.savedSnapshot(provider: .claude, sessionId: "session-123", backend: .regular) == snapshot)
   }
 
+  @Test("Restores persisted auxiliary shell workspace under prefixed key")
+  @MainActor
+  func restoresPersistedAuxiliaryShellWorkspace() {
+    let snapshot = makeWorkspaceSnapshot(activePanelIndex: 1)
+    let store = RecordingTerminalWorkspaceStore(snapshots: [
+      "Claude|auxiliary-shell:session-123|\(EmbeddedTerminalBackend.regular.rawValue)": snapshot
+    ])
+    let surface = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [surface])
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalSurfaceFactory: factory,
+      terminalBackend: .regular,
+      terminalWorkspaceStore: store
+    )
+
+    _ = viewModel.getOrCreateAuxiliaryShellTerminal(
+      forKey: "session-123",
+      projectPath: "/tmp/project"
+    )
+
+    #expect(surface.restoredWorkspaceSnapshot == snapshot)
+  }
+
+  @Test("Saves auxiliary shell workspace changes under prefixed key")
+  @MainActor
+  func savesAuxiliaryShellWorkspaceChanges() async throws {
+    let snapshot = makeWorkspaceSnapshot(activePanelIndex: 1)
+    let store = RecordingTerminalWorkspaceStore()
+    let surface = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [surface])
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalSurfaceFactory: factory,
+      terminalBackend: .regular,
+      terminalWorkspaceStore: store
+    )
+
+    _ = viewModel.getOrCreateAuxiliaryShellTerminal(
+      forKey: "session-123",
+      projectPath: "/tmp/project"
+    )
+    surface.onWorkspaceChanged?(snapshot)
+
+    try await Task.sleep(for: .milliseconds(350))
+
+    #expect(store.savedSnapshot(
+      provider: .claude,
+      sessionId: "auxiliary-shell:session-123",
+      backend: .regular
+    ) == snapshot)
+    #expect(store.savedSnapshot(provider: .claude, sessionId: "session-123", backend: .regular) == nil)
+  }
+
+  @Test("Auxiliary shell workspace does not collide with monitored terminal workspace")
+  @MainActor
+  func auxiliaryShellWorkspaceDoesNotCollideWithMonitoredWorkspace() {
+    let monitoredSnapshot = makeWorkspaceSnapshot(activePanelIndex: 0)
+    let auxiliarySnapshot = makeWorkspaceSnapshot(activePanelIndex: 1)
+    let store = RecordingTerminalWorkspaceStore(snapshots: [
+      "Claude|session-123|\(EmbeddedTerminalBackend.regular.rawValue)": monitoredSnapshot,
+      "Claude|auxiliary-shell:session-123|\(EmbeddedTerminalBackend.regular.rawValue)": auxiliarySnapshot
+    ])
+    let monitoredSurface = TestTerminalSurface()
+    let auxiliarySurface = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [monitoredSurface, auxiliarySurface])
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalSurfaceFactory: factory,
+      terminalBackend: .regular,
+      terminalWorkspaceStore: store
+    )
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      initialPrompt: nil
+    )
+    _ = viewModel.getOrCreateAuxiliaryShellTerminal(
+      forKey: "session-123",
+      projectPath: "/tmp/project"
+    )
+
+    #expect(monitoredSurface.restoredWorkspaceSnapshot == monitoredSnapshot)
+    #expect(auxiliarySurface.restoredWorkspaceSnapshot == auxiliarySnapshot)
+  }
+
+  @Test("Persists auxiliary shell workspace before removing terminal")
+  @MainActor
+  func persistsAuxiliaryShellWorkspaceBeforeRemovingTerminal() async throws {
+    let snapshot = makeWorkspaceSnapshot(activePanelIndex: 1)
+    let store = RecordingTerminalWorkspaceStore()
+    let surface = TestTerminalSurface()
+    surface.workspaceSnapshotToCapture = snapshot
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalBackend: .regular,
+      terminalWorkspaceStore: store
+    )
+    viewModel.auxiliaryShellTerminals["session-123"] = surface
+
+    viewModel.removeAuxiliaryShellTerminal(forKey: "session-123")
+
+    try await Task.sleep(for: .milliseconds(100))
+
+    #expect(viewModel.auxiliaryShellTerminals["session-123"] == nil)
+    #expect(surface.terminateCallCount == 1)
+    #expect(store.savedSnapshot(
+      provider: .claude,
+      sessionId: "auxiliary-shell:session-123",
+      backend: .regular
+    ) == snapshot)
+  }
+
+  @Test("Pending auxiliary shell workspace is saved under resolved session key")
+  @MainActor
+  func pendingAuxiliaryShellWorkspaceSavesAfterTransfer() async throws {
+    let snapshot = makeWorkspaceSnapshot(activePanelIndex: 1)
+    let updatedSnapshot = makeWorkspaceSnapshot(activePanelIndex: 0)
+    let store = RecordingTerminalWorkspaceStore()
+    let surface = TestTerminalSurface()
+    surface.workspaceSnapshotToCapture = snapshot
+    let pendingID = UUID()
+    let pendingKey = "pending-\(pendingID.uuidString)"
+    let viewModel = makeAuxiliaryShellViewModel(
+      terminalBackend: .regular,
+      terminalWorkspaceStore: store
+    )
+    viewModel.auxiliaryShellTerminals[pendingKey] = surface
+
+    viewModel.transferAuxiliaryShellTerminal(fromPendingId: pendingID, toSessionId: "session-123")
+
+    try await Task.sleep(for: .milliseconds(100))
+
+    #expect(viewModel.auxiliaryShellTerminals[pendingKey] == nil)
+    #expect(viewModel.auxiliaryShellTerminals["session-123"]?.view === surface)
+    #expect(store.savedSnapshot(
+      provider: .claude,
+      sessionId: "auxiliary-shell:session-123",
+      backend: .regular
+    ) == snapshot)
+
+    surface.onWorkspaceChanged?(updatedSnapshot)
+    try await Task.sleep(for: .milliseconds(350))
+
+    #expect(store.savedSnapshot(
+      provider: .claude,
+      sessionId: "auxiliary-shell:session-123",
+      backend: .regular
+    ) == updatedSnapshot)
+  }
+
   @Test("Pending terminal workspace is saved when session resolves")
   @MainActor
   func pendingTerminalWorkspaceSavesAfterTransfer() async throws {

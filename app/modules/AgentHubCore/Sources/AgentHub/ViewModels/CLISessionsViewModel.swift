@@ -21,6 +21,7 @@ import AppKit
 @MainActor
 @Observable
 public final class CLISessionsViewModel {
+  private static let auxiliaryShellWorkspacePrefix = "auxiliary-shell:"
 
   // MARK: - Dependencies
 
@@ -457,6 +458,11 @@ public final class CLISessionsViewModel {
     return candidate
   }
 
+  private func auxiliaryShellWorkspaceSessionId(for key: String) -> String? {
+    guard !key.isEmpty, !key.hasPrefix("pending-") else { return nil }
+    return Self.auxiliaryShellWorkspacePrefix + key
+  }
+
   private func loadTerminalWorkspaceSnapshot(sessionId: String?) -> TerminalWorkspaceSnapshot? {
     guard let sessionId, !sessionId.hasPrefix("pending-") else { return nil }
     return terminalWorkspaceStore?.loadTerminalWorkspace(
@@ -471,13 +477,23 @@ public final class CLISessionsViewModel {
     key: String,
     sessionId: String?
   ) {
-    guard let sessionId = persistableWorkspaceSessionId(key: key, sessionId: sessionId) else {
+    configureTerminalWorkspacePersistence(
+      for: terminal,
+      workspaceSessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)
+    )
+  }
+
+  private func configureTerminalWorkspacePersistence(
+    for terminal: any EmbeddedTerminalSurface,
+    workspaceSessionId: String?
+  ) {
+    guard let workspaceSessionId else {
       terminal.onWorkspaceChanged = nil
       return
     }
 
     terminal.onWorkspaceChanged = { [weak self] snapshot in
-      self?.scheduleTerminalWorkspaceSave(snapshot, sessionId: sessionId)
+      self?.scheduleTerminalWorkspaceSave(snapshot, sessionId: workspaceSessionId)
     }
   }
 
@@ -487,14 +503,26 @@ public final class CLISessionsViewModel {
     sessionId: String?,
     debounce: Bool = true
   ) {
+    persistCurrentWorkspaceIfNeeded(
+      for: terminal,
+      workspaceSessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      debounce: debounce
+    )
+  }
+
+  private func persistCurrentWorkspaceIfNeeded(
+    for terminal: any EmbeddedTerminalSurface,
+    workspaceSessionId: String?,
+    debounce: Bool = true
+  ) {
     guard
-      let sessionId = persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      let workspaceSessionId,
       let snapshot = terminal.captureWorkspaceSnapshot()
     else {
       return
     }
 
-    scheduleTerminalWorkspaceSave(snapshot, sessionId: sessionId, debounce: debounce)
+    scheduleTerminalWorkspaceSave(snapshot, sessionId: workspaceSessionId, debounce: debounce)
   }
 
   private func scheduleTerminalWorkspaceSave(
@@ -651,6 +679,10 @@ public final class CLISessionsViewModel {
         auxiliaryShellTerminalDescriptors[key] = descriptor
       }
       configureTerminalContext(existing, key: key)
+      configureTerminalWorkspacePersistence(
+        for: existing,
+        workspaceSessionId: auxiliaryShellWorkspaceSessionId(for: key)
+      )
       return existing
     }
 
@@ -659,6 +691,11 @@ public final class CLISessionsViewModel {
     #endif
     auxiliaryShellTerminalDescriptors[key] = descriptor
     let terminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
+    let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key)
+    configureTerminalWorkspacePersistence(for: terminal, workspaceSessionId: workspaceSessionId)
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: workspaceSessionId) {
+      terminal.restoreWorkspaceSnapshot(workspaceSnapshot)
+    }
     auxiliaryShellTerminals[key] = terminal
     return terminal
   }
@@ -693,10 +730,19 @@ public final class CLISessionsViewModel {
   /// Removes the auxiliary shell terminal for a given key and terminates its process.
   public func removeAuxiliaryShellTerminal(forKey key: String) {
     if let terminal = auxiliaryShellTerminals[key] {
+      persistCurrentWorkspaceIfNeeded(
+        for: terminal,
+        workspaceSessionId: auxiliaryShellWorkspaceSessionId(for: key),
+        debounce: false
+      )
       terminal.terminateProcess()
     }
     auxiliaryShellTerminals.removeValue(forKey: key)
     auxiliaryShellTerminalDescriptors.removeValue(forKey: key)
+    if let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key) {
+      terminalWorkspaceSaveTasks[workspaceSessionId]?.cancel()
+      terminalWorkspaceSaveTasks.removeValue(forKey: workspaceSessionId)
+    }
   }
 
   /// Transfers the auxiliary shell terminal from pending key to real session ID.
@@ -705,6 +751,15 @@ public final class CLISessionsViewModel {
     if let terminal = auxiliaryShellTerminals.removeValue(forKey: pendingKey) {
       auxiliaryShellTerminals[sessionId] = terminal
       configureTerminalContext(terminal, key: sessionId)
+      configureTerminalWorkspacePersistence(
+        for: terminal,
+        workspaceSessionId: auxiliaryShellWorkspaceSessionId(for: sessionId)
+      )
+      persistCurrentWorkspaceIfNeeded(
+        for: terminal,
+        workspaceSessionId: auxiliaryShellWorkspaceSessionId(for: sessionId),
+        debounce: false
+      )
     }
     if let descriptor = auxiliaryShellTerminalDescriptors.removeValue(forKey: pendingKey) {
       auxiliaryShellTerminalDescriptors[sessionId] = descriptor
