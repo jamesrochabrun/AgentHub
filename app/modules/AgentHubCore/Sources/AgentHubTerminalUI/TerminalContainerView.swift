@@ -141,6 +141,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private static let maxPaneCount = 4
   private static let paneDividerSpacing: CGFloat = 1
   private static let paneHeaderHeight: CGFloat = 28
+  private static let panelActivityBannerHeight: CGFloat = 30
+  private static let panelActivityMinimumVisibleDuration: TimeInterval = 0.35
 
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
@@ -162,6 +164,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var protectedAgentTabID: UUID?
   private var rootWorkspaceView: NSView?
   private var paneHeaderViews: [UUID: NSHostingView<RegularTerminalPaneHeader>] = [:]
+  private var panelActivityBannerView: TerminalPanelActivityBannerHostingView?
+  private var panelActivityHideTask: Task<Void, Never>?
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   private var isRestoringWorkspace = false
   private var lastWorkspaceSnapshot: TerminalWorkspaceSnapshot?
@@ -189,10 +193,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// Terminate process on deallocation (safety net)
   deinit {
+    panelActivityHideTask?.cancel()
     if let localEventMonitor {
       NSEvent.removeMonitor(localEventMonitor)
     }
     terminateProcess()
+  }
+
+  public override func layout() {
+    super.layout()
+    layoutPanelActivityBanner()
   }
 
   /// Explicitly terminates the terminal process and its children.
@@ -470,13 +480,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         }
 
         if flags == .command, event.charactersIgnoringModifiers?.lowercased() == "d" {
-          self.openShellPane(axis: .vertical)
+          self.scheduleOpenShellPane(axis: .vertical)
           self.onUserInteraction?()
           return nil
         }
 
         if flags == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "d" {
-          self.openShellPane(axis: .horizontal)
+          self.scheduleOpenShellPane(axis: .horizontal)
           self.onUserInteraction?()
           return nil
         }
@@ -863,6 +873,21 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
   }
 
+  private func scheduleOpenShellPane(axis: TerminalWorkspaceSplitAxis) {
+    guard panes.count < Self.maxPaneCount, let sourcePaneID = activePaneID else { return }
+    let activityStartedAt = showPanelActivityBanner(message: "Opening terminal...")
+    DispatchQueue.main.async { [weak self] in
+      guard let self else { return }
+      guard self.pane(for: sourcePaneID) != nil else {
+        self.finishPanelActivityBanner(startedAt: activityStartedAt)
+        return
+      }
+      self.activePaneID = sourcePaneID
+      self.openShellPane(axis: axis)
+      self.finishPanelActivityBanner(startedAt: activityStartedAt)
+    }
+  }
+
   private func selectTab(_ tabID: UUID, in paneID: UUID) {
     guard let pane = pane(for: paneID), pane.tabs.contains(where: { $0.id == tabID }) else { return }
     pane.activeTabID = tabID
@@ -1015,6 +1040,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       rootView.bottomAnchor.constraint(equalTo: bottomAnchor)
     ])
     rootWorkspaceView = rootView
+    bringPanelActivityBannerToFront()
   }
 
   private func splitTree(from node: WorkspaceLayoutNode) -> TerminalSplitLayoutTree<UUID>? {
@@ -1102,7 +1128,69 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private func splitFromPane(_ paneID: UUID, axis: TerminalWorkspaceSplitAxis) {
     activePaneID = paneID
-    openShellPane(axis: axis)
+    scheduleOpenShellPane(axis: axis)
+  }
+
+  private func showPanelActivityBanner(message: String) -> TimeInterval {
+    panelActivityHideTask?.cancel()
+    panelActivityHideTask = nil
+
+    let banner: TerminalPanelActivityBannerHostingView
+    if let existingBanner = panelActivityBannerView {
+      existingBanner.rootView = TerminalPanelActivityBanner(message: message)
+      banner = existingBanner
+    } else {
+      banner = TerminalPanelActivityBannerHostingView(rootView: TerminalPanelActivityBanner(message: message))
+      banner.translatesAutoresizingMaskIntoConstraints = true
+      panelActivityBannerView = banner
+    }
+
+    if banner.superview !== self {
+      addSubview(banner, positioned: .above, relativeTo: nil)
+    } else {
+      bringPanelActivityBannerToFront()
+    }
+    layoutPanelActivityBanner()
+    banner.needsDisplay = true
+    banner.displayIfNeeded()
+    return TerminalUILogger.latencyTimestamp()
+  }
+
+  private func finishPanelActivityBanner(startedAt: TimeInterval) {
+    panelActivityHideTask?.cancel()
+    let elapsed = TerminalUILogger.latencyTimestamp() - startedAt
+    let remaining = max(0, Self.panelActivityMinimumVisibleDuration - elapsed)
+    panelActivityHideTask = Task { @MainActor [weak self] in
+      if remaining > 0 {
+        try? await Task.sleep(for: .milliseconds(Int(remaining * 1_000)))
+      }
+      guard !Task.isCancelled else { return }
+      self?.panelActivityBannerView?.removeFromSuperview()
+      self?.panelActivityBannerView = nil
+      self?.panelActivityHideTask = nil
+    }
+  }
+
+  private func bringPanelActivityBannerToFront() {
+    guard let banner = panelActivityBannerView, banner.superview === self else { return }
+    banner.removeFromSuperview()
+    addSubview(banner, positioned: .above, relativeTo: nil)
+    layoutPanelActivityBanner()
+  }
+
+  private func layoutPanelActivityBanner() {
+    guard let banner = panelActivityBannerView else { return }
+    let horizontalInset: CGFloat = 12
+    let topInset: CGFloat = 9
+    let width = min(max(bounds.width - horizontalInset * 2, 0), 190)
+    guard width > 0, bounds.height > Self.panelActivityBannerHeight else { return }
+
+    banner.frame = CGRect(
+      x: max(horizontalInset, bounds.midX - width / 2),
+      y: max(topInset, bounds.maxY - topInset - Self.panelActivityBannerHeight),
+      width: width,
+      height: Self.panelActivityBannerHeight
+    )
   }
 
   // MARK: - Workspace Model Helpers
@@ -1212,6 +1300,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   private func resetWorkspace() {
+    panelActivityHideTask?.cancel()
+    panelActivityHideTask = nil
+    panelActivityBannerView?.removeFromSuperview()
+    panelActivityBannerView = nil
     rootWorkspaceView?.removeFromSuperview()
     rootWorkspaceView = nil
     panes.removeAll()
