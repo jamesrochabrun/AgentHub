@@ -1034,41 +1034,24 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       return NSView()
     }
 
-    let container = NSView()
-    container.translatesAutoresizingMaskIntoConstraints = false
-
     let header = NSHostingView(rootView: paneHeader(for: pane))
-    header.translatesAutoresizingMaskIntoConstraints = false
     paneHeaderViews[pane.id] = header
-
-    let terminalHost = NSView()
-    terminalHost.translatesAutoresizingMaskIntoConstraints = false
-
-    container.addSubview(header)
-    container.addSubview(terminalHost)
-    NSLayoutConstraint.activate([
-      header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-      header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-      header.topAnchor.constraint(equalTo: container.topAnchor),
-      header.heightAnchor.constraint(equalToConstant: Self.paneHeaderHeight),
-      terminalHost.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-      terminalHost.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-      terminalHost.topAnchor.constraint(equalTo: header.bottomAnchor),
-      terminalHost.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-    ])
 
     let terminal = tab.terminal
     terminal.removeFromSuperview()
-    terminal.translatesAutoresizingMaskIntoConstraints = false
-    terminalHost.addSubview(terminal)
-    NSLayoutConstraint.activate([
-      terminal.leadingAnchor.constraint(equalTo: terminalHost.leadingAnchor),
-      terminal.trailingAnchor.constraint(equalTo: terminalHost.trailingAnchor),
-      terminal.topAnchor.constraint(equalTo: terminalHost.topAnchor),
-      terminal.bottomAnchor.constraint(equalTo: terminalHost.bottomAnchor)
-    ])
+    return RegularTerminalPaneContainerView(
+      headerView: header,
+      terminalView: terminal,
+      headerHeight: Self.paneHeaderHeight,
+      initialSize: fallbackPaneSize()
+    )
+  }
 
-    return container
+  private func fallbackPaneSize() -> CGSize {
+    guard bounds.width > 0, bounds.height > Self.paneHeaderHeight else {
+      return CGSize(width: 800, height: 600)
+    }
+    return bounds.size
   }
 
   private func headerState(for pane: WorkspacePane) -> RegularTerminalPaneHeaderState {
