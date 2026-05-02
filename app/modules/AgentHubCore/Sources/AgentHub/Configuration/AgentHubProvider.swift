@@ -400,12 +400,43 @@ public final class AgentHubProvider {
   /// Terminates all active terminal processes.
   /// Call this on app termination to clean up all running Claude sessions.
   public func terminateAllTerminals() {
+    flushTerminalWorkspacesOnTerminate()
+
     let allTerminals = claudeSessionsViewModel.managedTerminalEntries
       + codexSessionsViewModel.managedTerminalEntries
 
     for (key, terminal) in allTerminals {
       AppLogger.session.info("Terminating terminal for key: \(key)")
       terminal.terminateProcess()
+    }
+  }
+
+  private func flushTerminalWorkspacesOnTerminate(timeout: TimeInterval = 3.0) {
+    guard let store = metadataStore else { return }
+
+    let snapshots = claudeSessionsViewModel.terminalWorkspaceSnapshotsForShutdown()
+      + codexSessionsViewModel.terminalWorkspaceSnapshotsForShutdown()
+    guard !snapshots.isEmpty else { return }
+
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached(priority: .userInitiated) { [store, snapshots] in
+      for snapshot in snapshots {
+        do {
+          try await store.saveTerminalWorkspace(
+            snapshot.snapshot,
+            provider: snapshot.provider,
+            sessionId: snapshot.sessionId,
+            backend: snapshot.backend
+          )
+        } catch {
+          AppLogger.session.error("Failed to flush terminal workspace on terminate: \(error.localizedDescription)")
+        }
+      }
+      semaphore.signal()
+    }
+
+    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+      AppLogger.session.error("Terminal workspace flush timed out after \(timeout)s")
     }
   }
 

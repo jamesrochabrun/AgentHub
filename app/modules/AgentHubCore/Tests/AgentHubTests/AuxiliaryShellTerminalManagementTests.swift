@@ -643,6 +643,30 @@ struct AuxiliaryShellTerminalManagementTests {
     ) == updatedSnapshot)
   }
 
+  @Test("Shutdown snapshots include auxiliary shell under prefixed key")
+  @MainActor
+  func shutdownSnapshotsIncludeAuxiliaryShellWorkspaceKey() {
+    let monitoredSnapshot = makeWorkspaceSnapshot(activePanelIndex: 0)
+    let auxiliarySnapshot = makeWorkspaceSnapshot(activePanelIndex: 1)
+    let viewModel = makeAuxiliaryShellViewModel(terminalBackend: .regular)
+    let monitoredSurface = TestTerminalSurface()
+    monitoredSurface.workspaceSnapshotToCapture = monitoredSnapshot
+    let auxiliarySurface = TestTerminalSurface()
+    auxiliarySurface.workspaceSnapshotToCapture = auxiliarySnapshot
+    viewModel.activeTerminals["session-123"] = monitoredSurface
+    viewModel.auxiliaryShellTerminals["session-123"] = auxiliarySurface
+
+    let snapshots = viewModel.terminalWorkspaceSnapshotsForShutdown()
+
+    #expect(snapshots.count == 2)
+    #expect(snapshots.first {
+      $0.sessionId == "session-123" && $0.snapshot == monitoredSnapshot && $0.backend == .regular
+    } != nil)
+    #expect(snapshots.first {
+      $0.sessionId == "auxiliary-shell:session-123" && $0.snapshot == auxiliarySnapshot && $0.backend == .regular
+    } != nil)
+  }
+
   @Test("Pending terminal workspace is saved when session resolves")
   @MainActor
   func pendingTerminalWorkspaceSavesAfterTransfer() async throws {

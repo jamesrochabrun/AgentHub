@@ -15,6 +15,13 @@ import CoreGraphics
 import AppKit
 #endif
 
+struct TerminalWorkspaceSnapshotForPersistence: Sendable {
+  let provider: SessionProviderKind
+  let sessionId: String
+  let backend: EmbeddedTerminalBackend
+  let snapshot: TerminalWorkspaceSnapshot
+}
+
 // MARK: - CLISessionsViewModel
 
 /// ViewModel for managing and displaying CLI sessions with repository-based filtering
@@ -461,6 +468,44 @@ public final class CLISessionsViewModel {
   private func auxiliaryShellWorkspaceSessionId(for key: String) -> String? {
     guard !key.isEmpty, !key.hasPrefix("pending-") else { return nil }
     return Self.auxiliaryShellWorkspacePrefix + key
+  }
+
+  func terminalWorkspaceSnapshotsForShutdown() -> [TerminalWorkspaceSnapshotForPersistence] {
+    let activeSnapshots = activeTerminals.compactMap { key, terminal -> TerminalWorkspaceSnapshotForPersistence? in
+      guard
+        let workspaceSessionId = persistableWorkspaceSessionId(key: key, sessionId: key),
+        let snapshot = terminal.captureWorkspaceSnapshot()
+      else {
+        return nil
+      }
+      terminalWorkspaceSaveTasks[workspaceSessionId]?.cancel()
+      terminalWorkspaceSaveTasks.removeValue(forKey: workspaceSessionId)
+      return TerminalWorkspaceSnapshotForPersistence(
+        provider: providerKind,
+        sessionId: workspaceSessionId,
+        backend: terminalBackend,
+        snapshot: snapshot
+      )
+    }
+
+    let auxiliarySnapshots = auxiliaryShellTerminals.compactMap { key, terminal -> TerminalWorkspaceSnapshotForPersistence? in
+      guard
+        let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key),
+        let snapshot = terminal.captureWorkspaceSnapshot()
+      else {
+        return nil
+      }
+      terminalWorkspaceSaveTasks[workspaceSessionId]?.cancel()
+      terminalWorkspaceSaveTasks.removeValue(forKey: workspaceSessionId)
+      return TerminalWorkspaceSnapshotForPersistence(
+        provider: providerKind,
+        sessionId: workspaceSessionId,
+        backend: terminalBackend,
+        snapshot: snapshot
+      )
+    }
+
+    return activeSnapshots + auxiliarySnapshots
   }
 
   private func loadTerminalWorkspaceSnapshot(sessionId: String?) -> TerminalWorkspaceSnapshot? {
