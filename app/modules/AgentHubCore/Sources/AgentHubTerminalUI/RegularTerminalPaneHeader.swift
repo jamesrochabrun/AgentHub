@@ -11,6 +11,7 @@ struct RegularTerminalPaneHeaderTabState: Identifiable, Equatable {
   let title: String
   let isActive: Bool
   let isCloseable: Bool
+  let activity: RegularTerminalPaneActivity?
 
   var displayTitle: String {
     let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -23,6 +24,7 @@ struct RegularTerminalPaneHeaderState: Equatable {
   let canSplit: Bool
   let canClosePane: Bool
   let isActivePane: Bool
+  let activity: RegularTerminalPaneActivity?
 }
 
 struct RegularTerminalPaneHeader: View {
@@ -52,6 +54,7 @@ struct RegularTerminalPaneHeader: View {
           title: "New Tab",
           systemImage: "plus",
           help: "New terminal tab",
+          isDisabled: state.activity != nil,
           action: onNewTab
         )
 
@@ -59,7 +62,7 @@ struct RegularTerminalPaneHeader: View {
           title: "Split Right",
           systemImage: "rectangle.split.2x1",
           help: "Split terminal to the right",
-          isDisabled: !state.canSplit,
+          isDisabled: !state.canSplit || state.activity != nil,
           action: onSplitVertical
         )
 
@@ -67,11 +70,16 @@ struct RegularTerminalPaneHeader: View {
           title: "Split Below",
           systemImage: "rectangle.split.1x2",
           help: "Split terminal below",
-          isDisabled: !state.canSplit,
+          isDisabled: !state.canSplit || state.activity != nil,
           action: onSplitHorizontal
         )
 
-        if state.canClosePane {
+        if state.activity == .closing {
+          ProgressView()
+            .controlSize(.small)
+            .frame(width: 24, height: 24)
+            .help("Closing terminal pane")
+        } else if state.canClosePane {
           headerIconButton(
             title: "Close Pane",
             systemImage: "xmark",
@@ -111,11 +119,18 @@ struct RegularTerminalPaneHeader: View {
 
   private func tabButton(for tab: RegularTerminalPaneHeaderTabState) -> some View {
     HStack(spacing: 5) {
+      if tab.activity != nil {
+        ProgressView()
+          .controlSize(.small)
+          .frame(width: 10, height: 10)
+      }
+
       Button(tab.displayTitle) {
         onSelectTab(tab.id)
       }
       .buttonStyle(.plain)
       .lineLimit(1)
+      .disabled(tab.activity == .closing)
 
       if tab.isCloseable {
         Button("Close \(tab.displayTitle)", systemImage: "xmark") {
@@ -129,6 +144,7 @@ struct RegularTerminalPaneHeader: View {
     }
     .font(.system(size: 12, weight: tab.isActive ? .semibold : .medium))
     .foregroundStyle(tab.isActive ? Color.primary : Color.secondary)
+    .opacity(tab.activity == .closing ? 0.62 : 1)
     .padding(.horizontal, 8)
     .frame(height: 23)
     .background(

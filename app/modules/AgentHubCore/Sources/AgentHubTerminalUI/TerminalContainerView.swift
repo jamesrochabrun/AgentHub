@@ -86,6 +86,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     var name: String?
     var title: String?
     var workingDirectory: String?
+    var activity: RegularTerminalPaneActivity?
     let terminal: SafeLocalProcessTerminalView
 
     init(
@@ -94,6 +95,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       name: String?,
       title: String?,
       workingDirectory: String?,
+      activity: RegularTerminalPaneActivity? = nil,
       terminal: SafeLocalProcessTerminalView
     ) {
       self.id = id
@@ -101,6 +103,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       self.name = name
       self.title = title
       self.workingDirectory = workingDirectory
+      self.activity = activity
       self.terminal = terminal
     }
   }
@@ -110,17 +113,20 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     var role: TerminalWorkspacePanelRole
     var tabs: [WorkspaceTab]
     var activeTabID: UUID
+    var activity: RegularTerminalPaneActivity?
 
     init(
       id: UUID = UUID(),
       role: TerminalWorkspacePanelRole,
       tabs: [WorkspaceTab],
-      activeTabID: UUID? = nil
+      activeTabID: UUID? = nil,
+      activity: RegularTerminalPaneActivity? = nil
     ) {
       self.id = id
       self.role = role
       self.tabs = tabs
       self.activeTabID = activeTabID ?? tabs.first?.id ?? UUID()
+      self.activity = activity
     }
 
     var activeTab: WorkspaceTab? {
@@ -141,6 +147,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private static let maxPaneCount = 4
   private static let paneDividerSpacing: CGFloat = 1
   private static let paneHeaderHeight: CGFloat = 28
+  private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
+  private static let closeActivityDelay: Duration = .milliseconds(140)
 
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
@@ -162,6 +170,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var protectedAgentTabID: UUID?
   private var rootWorkspaceView: NSView?
   private var paneHeaderViews: [UUID: NSHostingView<RegularTerminalPaneHeader>] = [:]
+  private var tabActivityTasks: [UUID: Task<Void, Never>] = [:]
+  private var paneActivityTasks: [UUID: Task<Void, Never>] = [:]
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   private var isRestoringWorkspace = false
   private var lastWorkspaceSnapshot: TerminalWorkspaceSnapshot?
@@ -189,6 +199,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// Terminate process on deallocation (safety net)
   deinit {
+    cancelAllActivityTasks()
     if let localEventMonitor {
       NSEvent.removeMonitor(localEventMonitor)
     }
@@ -814,6 +825,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     pane.tabs.append(tab)
     pane.activeTabID = tab.id
     activePaneID = pane.id
+    prepareShellTabForStartup(tab)
     rebuildWorkspaceViews()
     layoutSubtreeIfNeeded()
     startShellProcess(
@@ -833,6 +845,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       from: TerminalWorkspaceTabSnapshot(role: .shell, name: "Shell", workingDirectory: workingDirectory)
     )
     panes.append(pane)
+    if let tab = pane.tabs.first {
+      prepareShellTabForStartup(tab)
+    }
     layoutNode = layoutNode?.replacingPane(activePaneID, withSplitAxis: axis, newPaneID: pane.id)
       ?? flatLayout(for: panes.map(\.id), axis: axis)
     self.activePaneID = pane.id
@@ -848,7 +863,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   private func selectTab(_ tabID: UUID, in paneID: UUID) {
-    guard let pane = pane(for: paneID), pane.tabs.contains(where: { $0.id == tabID }) else { return }
+    guard let pane = pane(for: paneID),
+          pane.activity == nil,
+          pane.tabs.contains(where: { $0.id == tabID && $0.activity != .closing })
+    else { return }
     pane.activeTabID = tabID
     activePaneID = paneID
     rebuildWorkspaceViews()
@@ -880,8 +898,37 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     notifyWorkspaceChanged()
   }
 
+  private func requestCloseTab(_ tabID: UUID, in paneID: UUID) {
+    guard let pane = pane(for: paneID),
+          pane.activity == nil,
+          let index = pane.tabs.firstIndex(where: { $0.id == tabID }),
+          canCloseTab(pane.tabs[index], in: pane)
+    else {
+      return
+    }
+
+    if pane.tabs.count == 1 {
+      requestClosePane(pane)
+      return
+    }
+
+    let tab = pane.tabs[index]
+    guard tab.activity != .closing else { return }
+    tab.activity = .closing
+    refreshWorkspaceActivityPresentation(focusing: false)
+
+    tabActivityTasks[tabID]?.cancel()
+    tabActivityTasks[tabID] = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: Self.closeActivityDelay)
+      guard !Task.isCancelled else { return }
+      self?.tabActivityTasks[tabID] = nil
+      self?.closeTab(tabID, in: paneID)
+    }
+  }
+
   private func closePane(_ pane: WorkspacePane) {
     guard canClosePane(pane) else { return }
+    paneActivityTasks.removeValue(forKey: pane.id)?.cancel()
 
     for tab in pane.tabs {
       terminate(tab)
@@ -893,6 +940,25 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
     rebuildWorkspaceViews()
     notifyWorkspaceChanged()
+  }
+
+  private func requestClosePane(_ pane: WorkspacePane) {
+    guard canClosePane(pane), pane.activity != .closing else { return }
+    pane.activity = .closing
+    for tab in pane.tabs {
+      tab.activity = .closing
+    }
+    refreshWorkspaceActivityPresentation(focusing: false)
+
+    let paneID = pane.id
+    paneActivityTasks[paneID]?.cancel()
+    paneActivityTasks[paneID] = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: Self.closeActivityDelay)
+      guard !Task.isCancelled else { return }
+      self?.paneActivityTasks[paneID] = nil
+      guard let pane = self?.pane(for: paneID) else { return }
+      self?.closePane(pane)
+    }
   }
 
   private func closeLastTabAndPane(tabIndex: Int, in pane: WorkspacePane) {
@@ -913,9 +979,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private func closeActiveShellTabOrPane() {
     guard let pane = activePane, let tab = pane.activeTab else { return }
     if canCloseTab(tab, in: pane) {
-      closeTab(tab.id, in: pane.id)
+      requestCloseTab(tab.id, in: pane.id)
     } else if canClosePane(pane) {
-      closePane(pane)
+      requestClosePane(pane)
     }
   }
 
@@ -996,9 +1062,14 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
     let terminal = tab.terminal
     terminal.removeFromSuperview()
+    let activity = pane.activity ?? tab.activity
+    let activityOverlayView = activity.map {
+      RegularTerminalPaneActivityOverlayHostingView(rootView: RegularTerminalPaneActivityOverlay(activity: $0))
+    }
     return RegularTerminalPaneContainerView(
       headerView: header,
       terminalView: terminal,
+      activityOverlayView: activityOverlayView,
       headerHeight: Self.paneHeaderHeight,
       initialSize: fallbackPaneSize()
     )
@@ -1018,12 +1089,14 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
           id: tab.id,
           title: displayTitle(for: tab),
           isActive: tab.id == pane.activeTabID,
-          isCloseable: canCloseTab(tab, in: pane)
+          isCloseable: canCloseTab(tab, in: pane) && tab.activity != .closing,
+          activity: tab.activity
         )
       },
       canSplit: panes.count < Self.maxPaneCount,
       canClosePane: canClosePane(pane),
-      isActivePane: pane.id == activePaneID
+      isActivePane: pane.id == activePaneID,
+      activity: pane.activity
     )
   }
 
@@ -1032,7 +1105,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     return RegularTerminalPaneHeader(
       state: headerState(for: pane),
       onSelectTab: { [weak self] tabID in self?.selectTab(tabID, in: paneID) },
-      onCloseTab: { [weak self] tabID in self?.closeTab(tabID, in: paneID) },
+      onCloseTab: { [weak self] tabID in self?.requestCloseTab(tabID, in: paneID) },
       onNewTab: { [weak self] in
         guard let pane = self?.pane(for: paneID) else { return }
         self?.openShellTab(in: pane)
@@ -1041,7 +1114,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       onSplitHorizontal: { [weak self] in self?.splitFromPane(paneID, axis: .horizontal) },
       onClosePane: { [weak self] in
         guard let pane = self?.pane(for: paneID) else { return }
-        self?.closePane(pane)
+        self?.requestClosePane(pane)
       }
     )
   }
@@ -1114,6 +1187,50 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     return nil
   }
 
+  private func paneAndTab(for tabID: UUID) -> (pane: WorkspacePane, tab: WorkspaceTab)? {
+    for pane in panes {
+      if let tab = pane.tabs.first(where: { $0.id == tabID }) {
+        return (pane, tab)
+      }
+    }
+    return nil
+  }
+
+  private func prepareShellTabForStartup(_ tab: WorkspaceTab) {
+    guard startsTerminalProcesses, tab.role == .shell else { return }
+    tab.activity = .starting
+    tabActivityTasks[tab.id]?.cancel()
+
+    let tabID = tab.id
+    tab.terminal.onProcessReady = { [weak self] in
+      self?.finishShellTabStartup(tabID: tabID)
+    }
+    tabActivityTasks[tab.id] = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: Self.shellStartupFallbackDelay)
+      guard !Task.isCancelled else { return }
+      self?.finishShellTabStartup(tabID: tabID)
+    }
+  }
+
+  private func finishShellTabStartup(tabID: UUID) {
+    tabActivityTasks.removeValue(forKey: tabID)?.cancel()
+    guard let (pane, tab) = paneAndTab(for: tabID), tab.activity == .starting else { return }
+
+    tab.activity = nil
+    tab.terminal.onProcessReady = nil
+    refreshWorkspaceActivityPresentation(
+      focusing: pane.id == activePaneID && pane.activeTabID == tab.id
+    )
+  }
+
+  private func refreshWorkspaceActivityPresentation(focusing shouldFocus: Bool) {
+    rebuildWorkspaceViews()
+    layoutSubtreeIfNeeded()
+    if shouldFocus {
+      focus()
+    }
+  }
+
   private func makeShellPane(from snapshot: TerminalWorkspaceTabSnapshot) -> WorkspacePane {
     let tab = makeShellTab(
       name: Self.nonEmpty(snapshot.name) ?? "Shell",
@@ -1166,6 +1283,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private func terminate(_ tab: WorkspaceTab) {
     terminatedWorkspaceTabCount += 1
+    tabActivityTasks.removeValue(forKey: tab.id)?.cancel()
+    tab.activity = nil
     let key = ObjectIdentifier(tab.terminal)
     if let pid = terminalPidMap.removeValue(forKey: key) {
       TerminalProcessRegistry.shared.unregister(pid: pid)
@@ -1176,6 +1295,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   private func resetWorkspace() {
+    cancelAllActivityTasks()
     rootWorkspaceView?.removeFromSuperview()
     rootWorkspaceView = nil
     panes.removeAll()
@@ -1186,6 +1306,18 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminalPidMap.removeAll()
     pendingWorkspaceSnapshot = nil
     lastWorkspaceSnapshot = nil
+  }
+
+  private func cancelAllActivityTasks() {
+    for task in tabActivityTasks.values {
+      task.cancel()
+    }
+    tabActivityTasks.removeAll()
+
+    for task in paneActivityTasks.values {
+      task.cancel()
+    }
+    paneActivityTasks.removeAll()
   }
 
   private func resetToPrimaryPaneForRestore() {
