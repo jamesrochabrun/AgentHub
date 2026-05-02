@@ -517,8 +517,8 @@ public final class CLISessionsViewModel {
     )
     if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
       let backendRawValue = terminalBackend.rawValue
-      AppLogger.session.info(
-        "[AuxShellRestore] load workspace sessionId=\(sessionId, privacy: .public) backend=\(backendRawValue, privacy: .public) found=\(snapshot != nil, privacy: .public) panels=\(snapshot?.panels.count ?? 0, privacy: .public) layout=\(snapshot?.layout != nil, privacy: .public)"
+      logAuxiliaryShellRestore(
+        "load workspace sessionId=\(sessionId) backend=\(backendRawValue) found=\(snapshot != nil) panels=\(snapshot?.panels.count ?? 0) layout=\(snapshot?.layout != nil)"
       )
     }
     return snapshot
@@ -585,8 +585,8 @@ public final class CLISessionsViewModel {
     guard let store = terminalWorkspaceStore else { return }
 
     if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
-      AppLogger.session.info(
-        "[AuxShellRestore] save schedule sessionId=\(sessionId, privacy: .public) debounce=\(debounce, privacy: .public) panels=\(snapshot.panels.count, privacy: .public) layout=\(snapshot.layout != nil, privacy: .public)"
+      logAuxiliaryShellRestore(
+        "save schedule sessionId=\(sessionId) debounce=\(debounce) panels=\(snapshot.panels.count) layout=\(snapshot.layout != nil)"
       )
     }
 
@@ -604,9 +604,7 @@ public final class CLISessionsViewModel {
             backend: terminalBackend
           )
           if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
-            AppLogger.session.info(
-              "[AuxShellRestore] save complete sessionId=\(sessionId, privacy: .public) debounce=false"
-            )
+            Self.logAuxiliaryShellRestore("save complete sessionId=\(sessionId) debounce=false")
           }
         } catch {
           AppLogger.session.error("Failed to save terminal workspace: \(error.localizedDescription)")
@@ -629,9 +627,7 @@ public final class CLISessionsViewModel {
           backend: terminalBackend
         )
         if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
-          AppLogger.session.info(
-            "[AuxShellRestore] save complete sessionId=\(sessionId, privacy: .public) debounce=true"
-          )
+          Self.logAuxiliaryShellRestore("save complete sessionId=\(sessionId) debounce=true")
         }
       } catch {
         AppLogger.session.error("Failed to save terminal workspace: \(error.localizedDescription)")
@@ -752,9 +748,7 @@ public final class CLISessionsViewModel {
         for: existing,
         workspaceSessionId: workspaceSessionId
       )
-      AppLogger.session.info(
-        "[AuxShellRestore] reuse terminal key=\(key, privacy: .public) workspace=\(workspaceSessionId ?? "nil", privacy: .public)"
-      )
+      logAuxiliaryShellRestore("reuse terminal key=\(key) workspace=\(workspaceSessionId ?? "nil")")
       return existing
     }
 
@@ -765,17 +759,25 @@ public final class CLISessionsViewModel {
     let terminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
     configureTerminalWorkspacePersistence(for: terminal, workspaceSessionId: workspaceSessionId)
     if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: workspaceSessionId) {
-      AppLogger.session.info(
-        "[AuxShellRestore] restore terminal key=\(key, privacy: .public) workspace=\(workspaceSessionId ?? "nil", privacy: .public) panels=\(workspaceSnapshot.panels.count, privacy: .public) active=\(workspaceSnapshot.activePanelIndex, privacy: .public) layout=\(workspaceSnapshot.layout != nil, privacy: .public)"
+      logAuxiliaryShellRestore(
+        "restore terminal key=\(key) workspace=\(workspaceSessionId ?? "nil") panels=\(workspaceSnapshot.panels.count) active=\(workspaceSnapshot.activePanelIndex) layout=\(workspaceSnapshot.layout != nil)"
       )
       terminal.restoreWorkspaceSnapshot(workspaceSnapshot)
     } else {
-      AppLogger.session.info(
-        "[AuxShellRestore] restore miss key=\(key, privacy: .public) workspace=\(workspaceSessionId ?? "nil", privacy: .public)"
-      )
+      logAuxiliaryShellRestore("restore miss key=\(key) workspace=\(workspaceSessionId ?? "nil")")
     }
     auxiliaryShellTerminals[key] = terminal
     return terminal
+  }
+
+  private static func logAuxiliaryShellRestore(_ message: String) {
+    let line = "[AuxShellRestore] \(message)"
+    print(line)
+    AppLogger.session.info("\(line, privacy: .public)")
+  }
+
+  private func logAuxiliaryShellRestore(_ message: String) {
+    Self.logAuxiliaryShellRestore(message)
   }
 
   /// Removes the terminal for a given key and terminates its process

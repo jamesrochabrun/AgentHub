@@ -1399,6 +1399,9 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func syncAuxiliaryShellDockState() {
+    Self.logAuxiliaryShellRestore(
+      "dock sync visible=\(isAuxiliaryShellVisible) primary=\(primarySessionId ?? "nil") effective=\(effectivePrimarySessionId ?? "nil") items=\(allItems.count)"
+    )
     guard isAuxiliaryShellVisible else { return }
     guard let target = auxiliaryShellTarget else {
       Self.logAuxiliaryShellRestore(
@@ -1419,7 +1422,9 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private static func logAuxiliaryShellRestore(_ message: String) {
-    AppLogger.session.info("[AuxShellRestore] \(message, privacy: .public)")
+    let line = "[AuxShellRestore] \(message)"
+    print(line)
+    AppLogger.session.info("\(line, privacy: .public)")
   }
 
   @ViewBuilder
