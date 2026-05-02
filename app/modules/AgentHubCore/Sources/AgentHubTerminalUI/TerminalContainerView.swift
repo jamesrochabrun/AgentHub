@@ -846,10 +846,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     rebuildWorkspaceViews()
     layoutSubtreeIfNeeded()
     let layoutReadyAt = TerminalUILogger.latencyTimestamp()
+    let startProcessStartedAt = TerminalUILogger.latencyTimestamp()
     startShellProcess(
       terminal: pane.tabs[0].terminal,
       launch: EmbeddedTerminalLaunch.shellLaunch(projectPath: workingDirectory)
     )
+    let startProcessReadyAt = TerminalUILogger.latencyTimestamp()
     registerProcessIfNeeded(for: pane.tabs[0].terminal)
     let processReadyAt = TerminalUILogger.latencyTimestamp()
     notifyWorkspaceChanged()
@@ -857,7 +859,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     let finishedAt = TerminalUILogger.latencyTimestamp()
     let panesAfter = panes.count
     TerminalUILogger.terminal.info(
-      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=regular action=create phase=end axis=\(axis.rawValue, privacy: .public) newPane=\(pane.id.uuidString, privacy: .public) panesAfter=\(panesAfter, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) model=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: modelReadyAt), privacy: .public) layout=\(TerminalUILogger.elapsedMilliseconds(from: modelReadyAt, to: layoutReadyAt), privacy: .public) process=\(TerminalUILogger.elapsedMilliseconds(from: layoutReadyAt, to: processReadyAt), privacy: .public) notifyFocus=\(TerminalUILogger.elapsedMilliseconds(from: processReadyAt, to: finishedAt), privacy: .public)"
+      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=regular action=create phase=end axis=\(axis.rawValue, privacy: .public) newPane=\(pane.id.uuidString, privacy: .public) panesAfter=\(panesAfter, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) model=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: modelReadyAt), privacy: .public) layout=\(TerminalUILogger.elapsedMilliseconds(from: modelReadyAt, to: layoutReadyAt), privacy: .public) process=\(TerminalUILogger.elapsedMilliseconds(from: layoutReadyAt, to: processReadyAt), privacy: .public) startProcess=\(TerminalUILogger.elapsedMilliseconds(from: startProcessStartedAt, to: startProcessReadyAt), privacy: .public) registry=\(TerminalUILogger.elapsedMilliseconds(from: startProcessReadyAt, to: processReadyAt), privacy: .public) notifyFocus=\(TerminalUILogger.elapsedMilliseconds(from: processReadyAt, to: finishedAt), privacy: .public)"
     )
   }
 
