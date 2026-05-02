@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AgentHubTerminalUI
 import Combine
 import Canvas
 import CoreGraphics
@@ -14,12 +15,20 @@ import CoreGraphics
 import AppKit
 #endif
 
+struct TerminalWorkspaceSnapshotForPersistence: Sendable {
+  let provider: SessionProviderKind
+  let sessionId: String
+  let backend: EmbeddedTerminalBackend
+  let snapshot: TerminalWorkspaceSnapshot
+}
+
 // MARK: - CLISessionsViewModel
 
 /// ViewModel for managing and displaying CLI sessions with repository-based filtering
 @MainActor
 @Observable
 public final class CLISessionsViewModel {
+  private static let auxiliaryShellWorkspacePrefix = "auxiliary-shell:"
 
   // MARK: - Dependencies
 
@@ -370,19 +379,26 @@ public final class CLISessionsViewModel {
         worktreeName
       ):
         surface.configure(
-          sessionId: sessionId,
+          launch: EmbeddedTerminalLaunchBuilder.cliLaunch(
+            sessionId: sessionId,
+            projectPath: projectPath,
+            cliConfiguration: cliConfiguration,
+            initialPrompt: initialPrompt,
+            dangerouslySkipPermissions: dangerouslySkipPermissions,
+            permissionModePlan: permissionModePlan,
+            worktreeName: worktreeName,
+            metadataStore: metadataStore
+          ),
           projectPath: projectPath,
-          cliConfiguration: cliConfiguration,
-          initialPrompt: initialPrompt,
           initialInputText: initialInputText,
-          isDark: isDark,
-          dangerouslySkipPermissions: dangerouslySkipPermissions,
-          permissionModePlan: permissionModePlan,
-          worktreeName: worktreeName,
-          metadataStore: metadataStore
+          isDark: isDark
         )
       case let .shell(projectPath, isDark, shellPath):
-        surface.configureShell(projectPath: projectPath, isDark: isDark, shellPath: shellPath)
+        surface.configureShell(
+          launch: EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: projectPath, shellPath: shellPath),
+          projectPath: projectPath,
+          isDark: isDark
+        )
       }
     }
 
@@ -421,9 +437,16 @@ public final class CLISessionsViewModel {
     descriptor: TerminalSurfaceDescriptor
   ) -> any EmbeddedTerminalSurface {
     let terminal = terminalSurfaceFactory.makeSurface(for: terminalBackend)
-    terminal.updateContext(terminalSessionKey: key, sessionViewModel: self)
+    configureTerminalContext(terminal, key: key)
     descriptor.configure(terminal, metadataStore: metadataStore)
     return terminal
+  }
+
+  private func configureTerminalContext(_ terminal: any EmbeddedTerminalSurface, key: String) {
+    terminal.updateContext(terminalSessionKey: key)
+    terminal.onOpenFile = { [weak self] path, line in
+      self?.pendingFileOpen = (sessionId: key, filePath: path, lineNumber: line)
+    }
   }
 
   private func copyTerminalCallbacks(
@@ -433,6 +456,7 @@ public final class CLISessionsViewModel {
     newTerminal.onUserInteraction = oldTerminal?.onUserInteraction
     newTerminal.onRequestShowEditor = oldTerminal?.onRequestShowEditor
     newTerminal.consumeQueuedWebPreviewContextOnSubmit = oldTerminal?.consumeQueuedWebPreviewContextOnSubmit
+    newTerminal.onOpenFile = oldTerminal?.onOpenFile
   }
 
   private func persistableWorkspaceSessionId(key: String, sessionId: String?) -> String? {
@@ -441,13 +465,110 @@ public final class CLISessionsViewModel {
     return candidate
   }
 
-  private func loadTerminalWorkspaceSnapshot(sessionId: String?) -> TerminalWorkspaceSnapshot? {
+  private func auxiliaryShellWorkspaceSessionId(for key: String) -> String? {
+    guard !key.isEmpty, !key.hasPrefix("pending-") else { return nil }
+    return Self.auxiliaryShellWorkspacePrefix + key
+  }
+
+  func terminalWorkspaceSnapshotsForShutdown() -> [TerminalWorkspaceSnapshotForPersistence] {
+    let activeSnapshots = activeTerminals.compactMap { key, terminal -> TerminalWorkspaceSnapshotForPersistence? in
+      guard
+        let workspaceSessionId = persistableWorkspaceSessionId(key: key, sessionId: key),
+        let snapshot = terminal.captureWorkspaceSnapshot()
+      else {
+        return nil
+      }
+      terminalWorkspaceSaveTasks[workspaceSessionId]?.cancel()
+      terminalWorkspaceSaveTasks.removeValue(forKey: workspaceSessionId)
+      return TerminalWorkspaceSnapshotForPersistence(
+        provider: providerKind,
+        sessionId: workspaceSessionId,
+        backend: terminalBackend,
+        snapshot: snapshot
+      )
+    }
+
+    let auxiliarySnapshots = auxiliaryShellTerminals.compactMap { key, terminal -> TerminalWorkspaceSnapshotForPersistence? in
+      guard
+        let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key),
+        let snapshot = terminal.captureWorkspaceSnapshot()
+      else {
+        return nil
+      }
+      terminalWorkspaceSaveTasks[workspaceSessionId]?.cancel()
+      terminalWorkspaceSaveTasks.removeValue(forKey: workspaceSessionId)
+      return TerminalWorkspaceSnapshotForPersistence(
+        provider: providerKind,
+        sessionId: workspaceSessionId,
+        backend: terminalBackend,
+        snapshot: snapshot
+      )
+    }
+
+    return activeSnapshots + auxiliarySnapshots
+  }
+
+  private func loadTerminalWorkspaceSnapshot(
+    sessionId: String?,
+    allowsCompatibleBackendFallback: Bool = false
+  ) -> TerminalWorkspaceSnapshot? {
     guard let sessionId, !sessionId.hasPrefix("pending-") else { return nil }
-    return terminalWorkspaceStore?.loadTerminalWorkspace(
+    let snapshot = terminalWorkspaceStore?.loadTerminalWorkspace(
       provider: providerKind,
       sessionId: sessionId,
       backend: terminalBackend
     )
+    let fallbackBackend: EmbeddedTerminalBackend?
+    let resolvedSnapshot: TerminalWorkspaceSnapshot?
+    if let snapshot {
+      fallbackBackend = nil
+      resolvedSnapshot = snapshot
+    } else if allowsCompatibleBackendFallback {
+      let fallback = compatibleTerminalWorkspaceSnapshot(sessionId: sessionId)
+      fallbackBackend = fallback?.backend
+      resolvedSnapshot = fallback?.snapshot
+    } else {
+      fallbackBackend = nil
+      resolvedSnapshot = nil
+    }
+
+    if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
+      let backendRawValue = terminalBackend.rawValue
+      let fallbackDescription = fallbackBackend.map { " fallbackBackend=\($0.rawValue)" } ?? ""
+      logAuxiliaryShellRestore(
+        "load workspace sessionId=\(sessionId) backend=\(backendRawValue)\(fallbackDescription) found=\(resolvedSnapshot != nil) panels=\(resolvedSnapshot?.panels.count ?? 0) layout=\(resolvedSnapshot?.layout != nil)"
+      )
+    }
+    return resolvedSnapshot
+  }
+
+  private func compatibleTerminalWorkspaceSnapshot(
+    sessionId: String
+  ) -> (backend: EmbeddedTerminalBackend, snapshot: TerminalWorkspaceSnapshot)? {
+    guard let store = terminalWorkspaceStore else { return nil }
+    let providerKind = self.providerKind
+    let terminalBackend = self.terminalBackend
+    for backend in EmbeddedTerminalBackend.allCases where backend != terminalBackend {
+      if let snapshot = store.loadTerminalWorkspace(
+        provider: providerKind,
+        sessionId: sessionId,
+        backend: backend
+      ) {
+        AppLogger.session.info(
+          "Loaded terminal workspace from compatible backend for session \(sessionId, privacy: .public) requestedBackend=\(terminalBackend.rawValue, privacy: .public) fallbackBackend=\(backend.rawValue, privacy: .public)"
+        )
+        return (backend, snapshot)
+      }
+    }
+    return nil
+  }
+
+  func hasPersistedAuxiliaryShellWorkspace(forKey key: String) -> Bool {
+    guard let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key) else { return false }
+    return loadTerminalWorkspaceSnapshot(
+      sessionId: workspaceSessionId,
+      allowsCompatibleBackendFallback: true
+    ) != nil
   }
 
   private func configureTerminalWorkspacePersistence(
@@ -455,13 +576,23 @@ public final class CLISessionsViewModel {
     key: String,
     sessionId: String?
   ) {
-    guard let sessionId = persistableWorkspaceSessionId(key: key, sessionId: sessionId) else {
+    configureTerminalWorkspacePersistence(
+      for: terminal,
+      workspaceSessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)
+    )
+  }
+
+  private func configureTerminalWorkspacePersistence(
+    for terminal: any EmbeddedTerminalSurface,
+    workspaceSessionId: String?
+  ) {
+    guard let workspaceSessionId else {
       terminal.onWorkspaceChanged = nil
       return
     }
 
     terminal.onWorkspaceChanged = { [weak self] snapshot in
-      self?.scheduleTerminalWorkspaceSave(snapshot, sessionId: sessionId)
+      self?.scheduleTerminalWorkspaceSave(snapshot, sessionId: workspaceSessionId)
     }
   }
 
@@ -471,14 +602,26 @@ public final class CLISessionsViewModel {
     sessionId: String?,
     debounce: Bool = true
   ) {
+    persistCurrentWorkspaceIfNeeded(
+      for: terminal,
+      workspaceSessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      debounce: debounce
+    )
+  }
+
+  private func persistCurrentWorkspaceIfNeeded(
+    for terminal: any EmbeddedTerminalSurface,
+    workspaceSessionId: String?,
+    debounce: Bool = true
+  ) {
     guard
-      let sessionId = persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      let workspaceSessionId,
       let snapshot = terminal.captureWorkspaceSnapshot()
     else {
       return
     }
 
-    scheduleTerminalWorkspaceSave(snapshot, sessionId: sessionId, debounce: debounce)
+    scheduleTerminalWorkspaceSave(snapshot, sessionId: workspaceSessionId, debounce: debounce)
   }
 
   private func scheduleTerminalWorkspaceSave(
@@ -487,6 +630,12 @@ public final class CLISessionsViewModel {
     debounce: Bool = true
   ) {
     guard let store = terminalWorkspaceStore else { return }
+
+    if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
+      logAuxiliaryShellRestore(
+        "save schedule sessionId=\(sessionId) debounce=\(debounce) panels=\(snapshot.panels.count) layout=\(snapshot.layout != nil)"
+      )
+    }
 
     terminalWorkspaceSaveTasks[sessionId]?.cancel()
     if !debounce {
@@ -501,6 +650,9 @@ public final class CLISessionsViewModel {
             sessionId: sessionId,
             backend: terminalBackend
           )
+          if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
+            Self.logAuxiliaryShellRestore("save complete sessionId=\(sessionId) debounce=false")
+          }
         } catch {
           AppLogger.session.error("Failed to save terminal workspace: \(error.localizedDescription)")
         }
@@ -521,6 +673,9 @@ public final class CLISessionsViewModel {
           sessionId: sessionId,
           backend: terminalBackend
         )
+        if sessionId.hasPrefix(Self.auxiliaryShellWorkspacePrefix) {
+          Self.logAuxiliaryShellRestore("save complete sessionId=\(sessionId) debounce=true")
+        }
       } catch {
         AppLogger.session.error("Failed to save terminal workspace: \(error.localizedDescription)")
       }
@@ -591,7 +746,7 @@ public final class CLISessionsViewModel {
       if let queuedInputText, !queuedInputText.isEmpty {
         existing.typeText(queuedInputText)
       }
-      existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
+      configureTerminalContext(existing, key: key)
       configureTerminalWorkspacePersistence(for: existing, key: key, sessionId: sessionId)
       return existing
     }
@@ -613,7 +768,10 @@ public final class CLISessionsViewModel {
     activeTerminalDescriptors[key] = createDescriptor
     let terminal = makeTerminalSurface(forKey: key, descriptor: createDescriptor)
     configureTerminalWorkspacePersistence(for: terminal, key: key, sessionId: sessionId)
-    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)) {
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(
+      sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      allowsCompatibleBackendFallback: true
+    ) {
       terminal.restoreWorkspaceSnapshot(workspaceSnapshot)
     }
     activeTerminals[key] = terminal
@@ -629,12 +787,18 @@ public final class CLISessionsViewModel {
     isDark: Bool = true
   ) -> any EmbeddedTerminalSurface {
     let descriptor = TerminalSurfaceDescriptor.shell(projectPath: projectPath, isDark: isDark, shellPath: nil)
+    let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key)
 
     if let existing = auxiliaryShellTerminals[key] {
       if auxiliaryShellTerminalDescriptors[key] == nil {
         auxiliaryShellTerminalDescriptors[key] = descriptor
       }
-      existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
+      configureTerminalContext(existing, key: key)
+      configureTerminalWorkspacePersistence(
+        for: existing,
+        workspaceSessionId: workspaceSessionId
+      )
+      logAuxiliaryShellRestore("reuse terminal key=\(key) workspace=\(workspaceSessionId ?? "nil")")
       return existing
     }
 
@@ -643,8 +807,30 @@ public final class CLISessionsViewModel {
     #endif
     auxiliaryShellTerminalDescriptors[key] = descriptor
     let terminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
+    configureTerminalWorkspacePersistence(for: terminal, workspaceSessionId: workspaceSessionId)
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(
+      sessionId: workspaceSessionId,
+      allowsCompatibleBackendFallback: true
+    ) {
+      logAuxiliaryShellRestore(
+        "restore terminal key=\(key) workspace=\(workspaceSessionId ?? "nil") panels=\(workspaceSnapshot.panels.count) active=\(workspaceSnapshot.activePanelIndex) layout=\(workspaceSnapshot.layout != nil)"
+      )
+      terminal.restoreWorkspaceSnapshot(workspaceSnapshot)
+    } else {
+      logAuxiliaryShellRestore("restore miss key=\(key) workspace=\(workspaceSessionId ?? "nil")")
+    }
     auxiliaryShellTerminals[key] = terminal
     return terminal
+  }
+
+  private static func logAuxiliaryShellRestore(_ message: String) {
+    let line = "[AuxShellRestore] \(message)"
+    print(line)
+    AppLogger.session.info("\(line, privacy: .public)")
+  }
+
+  private func logAuxiliaryShellRestore(_ message: String) {
+    Self.logAuxiliaryShellRestore(message)
   }
 
   /// Removes the terminal for a given key and terminates its process
@@ -664,7 +850,7 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pendingId.uuidString)"
     if let terminal = activeTerminals.removeValue(forKey: pendingKey) {
       activeTerminals[sessionId] = terminal
-      terminal.updateContext(terminalSessionKey: sessionId, sessionViewModel: self)
+      configureTerminalContext(terminal, key: sessionId)
       configureTerminalWorkspacePersistence(for: terminal, key: sessionId, sessionId: sessionId)
       persistCurrentWorkspaceIfNeeded(for: terminal, key: sessionId, sessionId: sessionId, debounce: false)
     }
@@ -677,10 +863,19 @@ public final class CLISessionsViewModel {
   /// Removes the auxiliary shell terminal for a given key and terminates its process.
   public func removeAuxiliaryShellTerminal(forKey key: String) {
     if let terminal = auxiliaryShellTerminals[key] {
+      persistCurrentWorkspaceIfNeeded(
+        for: terminal,
+        workspaceSessionId: auxiliaryShellWorkspaceSessionId(for: key),
+        debounce: false
+      )
       terminal.terminateProcess()
     }
     auxiliaryShellTerminals.removeValue(forKey: key)
     auxiliaryShellTerminalDescriptors.removeValue(forKey: key)
+    if let workspaceSessionId = auxiliaryShellWorkspaceSessionId(for: key) {
+      terminalWorkspaceSaveTasks[workspaceSessionId]?.cancel()
+      terminalWorkspaceSaveTasks.removeValue(forKey: workspaceSessionId)
+    }
   }
 
   /// Transfers the auxiliary shell terminal from pending key to real session ID.
@@ -688,7 +883,16 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pendingId.uuidString)"
     if let terminal = auxiliaryShellTerminals.removeValue(forKey: pendingKey) {
       auxiliaryShellTerminals[sessionId] = terminal
-      terminal.updateContext(terminalSessionKey: sessionId, sessionViewModel: self)
+      configureTerminalContext(terminal, key: sessionId)
+      configureTerminalWorkspacePersistence(
+        for: terminal,
+        workspaceSessionId: auxiliaryShellWorkspaceSessionId(for: sessionId)
+      )
+      persistCurrentWorkspaceIfNeeded(
+        for: terminal,
+        workspaceSessionId: auxiliaryShellWorkspaceSessionId(for: sessionId),
+        debounce: false
+      )
     }
     if let descriptor = auxiliaryShellTerminalDescriptors.removeValue(forKey: pendingKey) {
       auxiliaryShellTerminalDescriptors[sessionId] = descriptor
@@ -715,7 +919,10 @@ public final class CLISessionsViewModel {
     let newTerminal = makeTerminalSurface(forKey: key, descriptor: descriptor)
     copyTerminalCallbacks(from: oldTerminal, to: newTerminal)
     configureTerminalWorkspacePersistence(for: newTerminal, key: key, sessionId: sessionId)
-    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)) {
+    if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(
+      sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId),
+      allowsCompatibleBackendFallback: true
+    ) {
       newTerminal.restoreWorkspaceSnapshot(workspaceSnapshot)
     }
     activeTerminals[key] = newTerminal

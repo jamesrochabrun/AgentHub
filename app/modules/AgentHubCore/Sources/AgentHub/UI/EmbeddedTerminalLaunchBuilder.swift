@@ -3,45 +3,8 @@
 //  AgentHub
 //
 
+import AgentHubTerminalUI
 import Foundation
-
-public struct EmbeddedTerminalLaunch {
-  public let shellCommand: String
-  public let environment: [String: String]
-
-  public init(shellCommand: String, environment: [String: String]) {
-    self.shellCommand = shellCommand
-    self.environment = environment
-  }
-
-  public var swiftTermExecutable: String { "/bin/bash" }
-  public var swiftTermArguments: [String] { ["-c", shellCommand] }
-  public var swiftTermEnvironment: [String] {
-    var swiftTermEnvironment = environment
-    swiftTermEnvironment["TERM_PROGRAM"] = "SwiftTerm"
-    return swiftTermEnvironment.map { "\($0.key)=\($0.value)" }
-  }
-
-  public var ghosttyCommand: String {
-    "/bin/bash -c \(Self.shellEscapeSingleQuotedAllowingNewlines(shellCommand))"
-  }
-
-  private static func shellEscapeSingleQuotedAllowingNewlines(_ value: String) -> String {
-    let escaped = value.replacingOccurrences(of: "'", with: "'\\''")
-    return "'\(escaped)'"
-  }
-}
-
-public enum EmbeddedTerminalLaunchError: LocalizedError, Equatable {
-  case executableNotFound(String)
-
-  public var errorDescription: String? {
-    switch self {
-    case .executableNotFound(let command):
-      return "Could not find '\(command)' command."
-    }
-  }
-}
 
 public enum EmbeddedTerminalLaunchBuilder {
   public static func cliLaunch(
@@ -106,12 +69,7 @@ public enum EmbeddedTerminalLaunchBuilder {
     projectPath: String,
     shellPath: String? = nil
   ) -> EmbeddedTerminalLaunch {
-    let environment = makeProcessEnvironment(additionalPaths: [])
-    let shellExecutable = resolveShellExecutablePath(shellPath)
-    let escapedPath = shellEscape(projectPath.isEmpty ? NSHomeDirectory() : projectPath)
-    let escapedShellPath = shellEscape(shellExecutable)
-    let shellCommand = "cd '\(escapedPath)' && exec '\(escapedShellPath)' -l"
-    return EmbeddedTerminalLaunch(shellCommand: shellCommand, environment: environment)
+    EmbeddedTerminalLaunch.shellLaunch(projectPath: projectPath, shellPath: shellPath)
   }
 
   static func makeProcessEnvironment(additionalPaths: [String]) -> [String: String] {
@@ -135,11 +93,4 @@ public enum EmbeddedTerminalLaunchBuilder {
     value.replacingOccurrences(of: "'", with: "'\\''")
   }
 
-  private static func resolveShellExecutablePath(_ shellPath: String?) -> String {
-    let candidate = shellPath ?? ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-    if FileManager.default.isExecutableFile(atPath: candidate) {
-      return candidate
-    }
-    return "/bin/zsh"
-  }
 }

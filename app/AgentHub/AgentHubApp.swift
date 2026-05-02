@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AgentHubCore
+import AgentHubTerminalUI
 import Ghostty
 import UserNotifications
 import CoreText
@@ -67,6 +68,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     provider.terminateAllTerminals()
     // Stop all dev servers spawned for web preview
     DevServerManager.shared.stopAllServers()
+    // Normal PID registry updates are async to keep terminal pane operations fast.
+    // Flush once during app shutdown so crash-recovery state stays accurate.
+    TerminalProcessRegistry.shared.flushPersistence()
     // Remove every approval hook we installed and clear claims so external
     // Claude Code sessions after quit run vanilla.
     provider.flushClaudeHooksOnTerminate()

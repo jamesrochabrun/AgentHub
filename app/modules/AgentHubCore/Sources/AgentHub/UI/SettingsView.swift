@@ -5,6 +5,7 @@
 //  Settings panel for app configuration.
 //
 
+import AgentHubTerminalUI
 import SwiftUI
 import Canvas
 
@@ -26,16 +27,16 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
 
-  @AppStorage(AgentHubDefaults.terminalFontSize)
+  @AppStorage(TerminalUserDefaultsKeys.terminalFontSize)
   private var terminalFontSize: Double = 12
 
-  @AppStorage(AgentHubDefaults.terminalFontFamily)
+  @AppStorage(TerminalUserDefaultsKeys.terminalFontFamily)
   private var terminalFontFamily: String = "SF Mono"
 
-  @AppStorage(AgentHubDefaults.terminalBackend)
+  @AppStorage(TerminalUserDefaultsKeys.terminalBackend)
   private var terminalBackendRawValue: Int = EmbeddedTerminalBackend.regular.rawValue
 
-  @AppStorage(AgentHubDefaults.terminalGhosttyConfigPath)
+  @AppStorage(TerminalUserDefaultsKeys.terminalGhosttyConfigPath)
   private var terminalGhosttyConfigPath: String = ""
 
   @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
@@ -44,10 +45,10 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.sourceEditorWrapLinesEnabled)
   private var sourceEditorWrapLinesEnabled: Bool = true
 
-  @AppStorage(AgentHubDefaults.terminalNewlineShortcut)
+  @AppStorage(TerminalUserDefaultsKeys.terminalNewlineShortcut)
   private var newlineShortcutRawValue: Int = NewlineShortcut.system.rawValue
 
-  @AppStorage(AgentHubDefaults.terminalFileOpenEditor)
+  @AppStorage(TerminalUserDefaultsKeys.terminalFileOpenEditor)
   private var fileOpenEditorRawValue: Int = FileOpenEditor.agentHub.rawValue
 
   @AppStorage(AgentHubDefaults.notificationSoundsEnabled)

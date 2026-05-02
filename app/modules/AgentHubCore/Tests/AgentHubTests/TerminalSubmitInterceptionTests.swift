@@ -2,6 +2,7 @@ import AppKit
 import Testing
 
 @testable import AgentHubCore
+@testable import AgentHubTerminalUI
 
 @Suite("TerminalSubmitInterception")
 struct TerminalSubmitInterceptionTests {

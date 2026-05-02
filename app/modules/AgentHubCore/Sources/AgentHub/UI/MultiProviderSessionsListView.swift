@@ -262,6 +262,9 @@ public struct MultiProviderSessionsListView: View {
         )
       }
       ensurePrimarySelection()
+      logAuxiliaryShellRestore(
+        "parent appear visible=\(isAuxiliaryShellVisible) selected=\(selectedSessionItems.count) loading=\(isLoading)"
+      )
     }
     .onChange(of: claudeViewModel.resolvedPendingSessions) { _, newResolutions in
       handleResolvedSessions(newResolutions, provider: .claude, viewModel: claudeViewModel)
@@ -281,9 +284,9 @@ public struct MultiProviderSessionsListView: View {
     }
     .onChange(of: selectedSessionItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
-      if selectedSessionItems.isEmpty {
-        setAuxiliaryShellVisible(false)
-      }
+      logAuxiliaryShellRestore(
+        "parent selected changed visible=\(isAuxiliaryShellVisible) selected=\(selectedSessionItems.count) loading=\(isLoading)"
+      )
     }
     .sheet(item: $sessionFileSheetItem) { item in
       SessionFileSheetView(
@@ -1520,9 +1523,18 @@ public struct MultiProviderSessionsListView: View {
 
   private func setAuxiliaryShellVisible(_ isVisible: Bool) {
     guard isAuxiliaryShellVisible != isVisible else { return }
+    logAuxiliaryShellRestore(
+      "parent set visible=\(isVisible) selected=\(selectedSessionItems.count) loading=\(isLoading)"
+    )
     withAnimation(auxiliaryShellToggleAnimation) {
       isAuxiliaryShellVisible = isVisible
     }
+  }
+
+  private func logAuxiliaryShellRestore(_ message: String) {
+    let line = "[AuxShellRestore] \(message)"
+    print(line)
+    AppLogger.session.info("\(line, privacy: .public)")
   }
 
   private var auxiliaryShellToggleAnimation: Animation {

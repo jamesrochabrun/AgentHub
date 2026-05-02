@@ -1,4 +1,5 @@
 import AppKit
+import AgentHubTerminalUI
 import Foundation
 import SwiftUI
 import Testing

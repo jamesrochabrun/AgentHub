@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import AgentHubTerminalUI
 
 enum ThemeSelectionPolicy {
   static let ghosttyThemeId = "ghostty.yaml"

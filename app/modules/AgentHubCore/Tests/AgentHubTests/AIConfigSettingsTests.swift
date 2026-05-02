@@ -8,6 +8,7 @@
 import Foundation
 import Testing
 @testable import AgentHubCore
+@testable import AgentHubTerminalUI
 
 @Suite("CLICommandConfiguration — Claude AI config flags")
 struct ClaudeAIConfigArgumentTests {

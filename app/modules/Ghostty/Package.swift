@@ -21,7 +21,7 @@ let package = Package(
     .target(
       name: "Ghostty",
       dependencies: [
-        .product(name: "AgentHubCore", package: "AgentHubCore"),
+        .product(name: "AgentHubTerminalUI", package: "AgentHubCore"),
         .product(name: "GhosttySwift", package: "GhosttySwift"),
       ],
       path: "Sources/Ghostty",
@@ -31,7 +31,10 @@ let package = Package(
     ),
     .testTarget(
       name: "GhosttyTests",
-      dependencies: ["Ghostty"],
+      dependencies: [
+        "Ghostty",
+        .product(name: "AgentHubTerminalUI", package: "AgentHubCore"),
+      ],
       path: "Tests/GhosttyTests",
       swiftSettings: [
         .swiftLanguageMode(.v5)

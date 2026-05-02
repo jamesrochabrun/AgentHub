@@ -1,4 +1,4 @@
-import AgentHubCore
+import AgentHubTerminalUI
 import Foundation
 import Testing
 
@@ -22,7 +22,7 @@ struct GhosttyConfigPathResolverTests {
     try "font-size = 14\n".write(to: configURL, atomically: true, encoding: .utf8)
     defer { try? FileManager.default.removeItem(at: configURL) }
 
-    defaults.set(configURL.path, forKey: AgentHubDefaults.terminalGhosttyConfigPath)
+    defaults.set(configURL.path, forKey: TerminalUserDefaultsKeys.terminalGhosttyConfigPath)
 
     #expect(GhosttyConfigPathResolver.configuredPath(defaults: defaults) == configURL.path)
   }
@@ -35,10 +35,10 @@ struct GhosttyConfigPathResolverTests {
     try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directoryURL) }
 
-    defaults.set(directoryURL.path, forKey: AgentHubDefaults.terminalGhosttyConfigPath)
+    defaults.set(directoryURL.path, forKey: TerminalUserDefaultsKeys.terminalGhosttyConfigPath)
     #expect(GhosttyConfigPathResolver.configuredPath(defaults: defaults) == nil)
 
-    defaults.set(directoryURL.appendingPathComponent("missing").path, forKey: AgentHubDefaults.terminalGhosttyConfigPath)
+    defaults.set(directoryURL.appendingPathComponent("missing").path, forKey: TerminalUserDefaultsKeys.terminalGhosttyConfigPath)
     #expect(GhosttyConfigPathResolver.configuredPath(defaults: defaults) == nil)
   }
 }

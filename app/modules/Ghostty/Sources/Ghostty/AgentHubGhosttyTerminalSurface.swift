@@ -3,10 +3,25 @@
 //  AgentHub
 //
 
-import AgentHubCore
+import AgentHubTerminalUI
 import AppKit
+import CoreGraphics
 import GhosttySwift
 import SwiftUI
+
+enum AgentHubGhosttyMountGeometry {
+  static let stabilityTolerance: CGFloat = 0.5
+
+  static func isUsable(_ size: CGSize) -> Bool {
+    size.width > 0 && size.height > 0
+  }
+
+  static func isStable(previous: CGSize?, current: CGSize) -> Bool {
+    guard let previous else { return false }
+    return abs(previous.width - current.width) <= stabilityTolerance
+      && abs(previous.height - current.height) <= stabilityTolerance
+  }
+}
 
 @MainActor
 public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurface {
@@ -23,6 +38,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var protectedAgentPanelID: TerminalPanelID?
   private var protectedAgentTabID: TerminalTabID?
   private var pendingMount: PendingMount?
+  private var pendingMountCandidateSize: CGSize?
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
@@ -40,8 +56,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   public var onRequestShowEditor: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
   public var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
+  public var onOpenFile: ((String, Int?) -> Void)?
   private var terminalSessionKey: String?
-  private weak var sessionViewModel: CLISessionsViewModel?
   var terminateProcessCallCount = 0
 
   public var view: NSView { self }
@@ -90,37 +106,19 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
   }
 
-  public func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?) {
+  public func updateContext(terminalSessionKey: String?) {
     self.terminalSessionKey = terminalSessionKey
-    self.sessionViewModel = sessionViewModel
   }
 
   public func configure(
-    sessionId: String?,
+    launch: Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError>,
     projectPath: String,
-    cliConfiguration: CLICommandConfiguration,
-    initialPrompt: String?,
     initialInputText: String?,
-    isDark: Bool,
-    dangerouslySkipPermissions: Bool,
-    permissionModePlan: Bool,
-    worktreeName: String?,
-    metadataStore: SessionMetadataStore?
+    isDark: Bool
   ) {
     guard !isConfigured else { return }
     isConfigured = true
     self.projectPath = projectPath
-
-    let launch = EmbeddedTerminalLaunchBuilder.cliLaunch(
-      sessionId: sessionId,
-      projectPath: projectPath,
-      cliConfiguration: cliConfiguration,
-      initialPrompt: initialPrompt,
-      dangerouslySkipPermissions: dangerouslySkipPermissions,
-      permissionModePlan: permissionModePlan,
-      worktreeName: worktreeName,
-      metadataStore: metadataStore
-    )
 
     switch launch {
     case .success(let launch):
@@ -138,15 +136,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
   }
 
-  public func configureShell(projectPath: String, isDark: Bool, shellPath: String?) {
+  public func configureShell(launch: EmbeddedTerminalLaunch, projectPath: String, isDark: Bool) {
     guard !isConfigured else { return }
     isConfigured = true
     self.projectPath = projectPath
 
-    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(
-      projectPath: projectPath,
-      shellPath: shellPath
-    )
     queueOrMountGhosttySession(
       PendingMount(
         command: launch.ghosttyCommand,
@@ -158,11 +152,12 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     )
   }
 
-  public func restart(sessionId: String?, projectPath: String, cliConfiguration: CLICommandConfiguration) {
+  public func restart(launch: Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError>, projectPath: String) {
     terminateProcess()
     removeMountedContent()
     terminalSession = nil
     pendingMount = nil
+    pendingMountCandidateSize = nil
     pendingWorkspaceSnapshot = nil
     protectedAgentPanelID = nil
     protectedAgentTabID = nil
@@ -170,16 +165,10 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     hasDeliveredInitialPrompt = false
     hasPrefilledInitialInputText = false
     configure(
-      sessionId: sessionId,
+      launch: launch,
       projectPath: projectPath,
-      cliConfiguration: cliConfiguration,
-      initialPrompt: nil,
       initialInputText: nil,
-      isDark: true,
-      dangerouslySkipPermissions: false,
-      permissionModePlan: false,
-      worktreeName: nil,
-      metadataStore: nil
+      isDark: true
     )
   }
 
@@ -251,7 +240,12 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     protectedAgentController?.sendText(text)
   }
 
-  public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {
+  public func syncAppearance(
+    isDark: Bool,
+    fontSize: CGFloat,
+    fontFamily: String,
+    theme: TerminalAppearanceTheme?
+  ) {
     // Ghostty owns live appearance through its config. Font size is applied at surface creation.
   }
 
@@ -337,7 +331,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         )
         restoredTabIDs.append(tabIDs)
       } catch {
-        AppLogger.session.error("Failed to restore Ghostty shell pane: \(error.localizedDescription)")
+        TerminalUILogger.terminal.error("Failed to restore Ghostty shell pane: \(error.localizedDescription)")
       }
     }
 
@@ -394,23 +388,37 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func queueOrMountGhosttySession(_ pendingMount: PendingMount) {
-    guard canMountGhosttySession else {
-      self.pendingMount = pendingMount
-      needsLayout = true
-      return
-    }
-
-    mountGhosttySession(pendingMount)
+    self.pendingMount = pendingMount
+    pendingMountCandidateSize = nil
+    mountPendingGhosttySessionIfReady()
   }
 
   private func mountPendingGhosttySessionIfReady() {
-    guard let pendingMount, canMountGhosttySession else { return }
+    guard let pendingMount else { return }
+    guard hasStableMountGeometry else { return }
     self.pendingMount = nil
+    pendingMountCandidateSize = nil
     mountGhosttySession(pendingMount)
   }
 
-  private var canMountGhosttySession: Bool {
-    window != nil && bounds.width > 0 && bounds.height > 0
+  private var hasStableMountGeometry: Bool {
+    guard window != nil, AgentHubGhosttyMountGeometry.isUsable(bounds.size) else {
+      pendingMountCandidateSize = nil
+      needsLayout = true
+      return false
+    }
+
+    let currentSize = bounds.size
+    guard AgentHubGhosttyMountGeometry.isStable(
+      previous: pendingMountCandidateSize,
+      current: currentSize
+    ) else {
+      pendingMountCandidateSize = currentSize
+      needsLayout = true
+      return false
+    }
+
+    return true
   }
 
   private func mountGhosttySession(_ pendingMount: PendingMount) {
@@ -533,7 +541,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     let workingDirectory = sourceController?.workingDirectory
       ?? sourceController?.configuration.workingDirectory
       ?? resolvedProjectPath
-    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: workingDirectory)
+    let launch = EmbeddedTerminalLaunch.shellLaunch(projectPath: workingDirectory)
     return makeGhosttyConfiguration(
       command: launch.ghosttyCommand,
       environment: launch.environment,
@@ -548,7 +556,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     in panelID: TerminalPanelID? = nil
   ) -> GhosttySurfaceConfiguration {
     let restoredPath = resolvedExistingDirectory(workingDirectory)
-    let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(projectPath: restoredPath)
+    let launch = EmbeddedTerminalLaunch.shellLaunch(projectPath: restoredPath)
     return makeGhosttyConfiguration(
       command: launch.ghosttyCommand,
       environment: launch.environment,
@@ -659,7 +667,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         configureControllerHooks(for: tab.controller)
         restoredTabIDs.append(tab.id)
       } catch {
-        AppLogger.session.error("Failed to restore Ghostty shell tab: \(error.localizedDescription)")
+        TerminalUILogger.terminal.error("Failed to restore Ghostty shell tab: \(error.localizedDescription)")
       }
     }
 
@@ -693,7 +701,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func resolvedFontSize() -> Float {
-    let fontSize = Float(UserDefaults.standard.double(forKey: AgentHubDefaults.terminalFontSize))
+    let fontSize = Float(UserDefaults.standard.double(forKey: TerminalUserDefaultsKeys.terminalFontSize))
     return fontSize > 0 ? fontSize : 12
   }
 
@@ -761,7 +769,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     let shortcut = NewlineShortcut(
-      rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalNewlineShortcut)
+      rawValue: UserDefaults.standard.integer(forKey: TerminalUserDefaultsKeys.terminalNewlineShortcut)
     ) ?? .system
     let action = TerminalSubmitInterception.keyAction(
       shortcut: shortcut,
@@ -846,24 +854,40 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       configureControllerHooks(for: tab.controller)
       notifyWorkspaceChanged()
     } catch {
-      AppLogger.session.error("Failed to open Ghostty shell tab: \(error.localizedDescription)")
+      TerminalUILogger.terminal.error("Failed to open Ghostty shell tab: \(error.localizedDescription)")
     }
   }
 
   private func openShellPane() {
     guard let terminalSession, terminalSession.canOpenPanel else { return }
+    let startedAt = TerminalUILogger.latencyTimestamp()
+    let panelsBefore = terminalSession.visiblePanels.count
+    TerminalUILogger.terminal.info(
+      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=create phase=start panelsBefore=\(panelsBefore, privacy: .public)"
+    )
+
     do {
+      let prepareStartedAt = TerminalUILogger.latencyTimestamp()
       prepareVisiblePanelsForPaneTransition(
         projectedPanelIDs: terminalSession.visiblePanels.map(\.id) + [TerminalPanelID()]
       )
+      let prepareReadyAt = TerminalUILogger.latencyTimestamp()
       let panel = try terminalSession.openPanel(
         named: "Shell",
         configuration: shellConfigurationForNewTerminal()
       )
+      let openReadyAt = TerminalUILogger.latencyTimestamp()
       configureControllerHooks(for: panel.activeTab?.controller)
       notifyWorkspaceChanged()
+      let finishedAt = TerminalUILogger.latencyTimestamp()
+      TerminalUILogger.terminal.info(
+        "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=create phase=end newPanel=\(panel.id.id.uuidString, privacy: .public) panelsAfter=\(terminalSession.visiblePanels.count, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) prepare=\(TerminalUILogger.elapsedMilliseconds(from: prepareStartedAt, to: prepareReadyAt), privacy: .public) open=\(TerminalUILogger.elapsedMilliseconds(from: prepareReadyAt, to: openReadyAt), privacy: .public) notify=\(TerminalUILogger.elapsedMilliseconds(from: openReadyAt, to: finishedAt), privacy: .public)"
+      )
     } catch {
-      AppLogger.session.error("Failed to open Ghostty shell pane: \(error.localizedDescription)")
+      TerminalUILogger.terminal.info(
+        "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=create phase=failed elapsed=\(TerminalUILogger.elapsedMilliseconds(since: startedAt), privacy: .public)"
+      )
+      TerminalUILogger.terminal.error("Failed to open Ghostty shell pane: \(error.localizedDescription)")
     }
   }
 
@@ -902,13 +926,28 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   private func closeGhosttyPanel(_ panel: TerminalPanel) {
     guard let terminalSession, canCloseGhosttyPanel(panel) else { return }
+    let startedAt = TerminalUILogger.latencyTimestamp()
+    let panelsBefore = terminalSession.visiblePanels.count
+    TerminalUILogger.terminal.info(
+      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=remove phase=start panel=\(panel.id.id.uuidString, privacy: .public) tabsBefore=\(panel.tabs.count, privacy: .public) panelsBefore=\(panelsBefore, privacy: .public)"
+    )
+
+    let prepareStartedAt = TerminalUILogger.latencyTimestamp()
     prepareVisiblePanelsForPaneTransition(
       projectedPanelIDs: terminalSession.visiblePanels.map(\.id).filter { $0 != panel.id }
     )
+    let prepareReadyAt = TerminalUILogger.latencyTimestamp()
     requestClose(panel)
-    if terminalSession.closePanel(panel.id) {
+    let requestCloseReadyAt = TerminalUILogger.latencyTimestamp()
+    let didClose = terminalSession.closePanel(panel.id)
+    let modelReadyAt = TerminalUILogger.latencyTimestamp()
+    if didClose {
       notifyWorkspaceChanged()
     }
+    let finishedAt = TerminalUILogger.latencyTimestamp()
+    TerminalUILogger.terminal.info(
+      "\(TerminalUILogger.panelLatencyPrefix, privacy: .public) backend=ghostty action=remove phase=end panel=\(panel.id.id.uuidString, privacy: .public) didClose=\(didClose, privacy: .public) panelsAfter=\(terminalSession.visiblePanels.count, privacy: .public) elapsed=\(TerminalUILogger.elapsedMilliseconds(from: startedAt, to: finishedAt), privacy: .public) prepare=\(TerminalUILogger.elapsedMilliseconds(from: prepareStartedAt, to: prepareReadyAt), privacy: .public) requestClose=\(TerminalUILogger.elapsedMilliseconds(from: prepareReadyAt, to: requestCloseReadyAt), privacy: .public) model=\(TerminalUILogger.elapsedMilliseconds(from: requestCloseReadyAt, to: modelReadyAt), privacy: .public) notify=\(TerminalUILogger.elapsedMilliseconds(from: modelReadyAt, to: finishedAt), privacy: .public)"
+    )
   }
 
   private func closeGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
@@ -964,61 +1003,34 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     for node: TerminalSplitLayout.Node,
     in rect: CGRect
   ) -> [TerminalPanelID: CGRect] {
+    TerminalSplitFrameCalculator.frames(
+      for: sharedSplitTree(from: node),
+      in: rect,
+      dividerSize: terminalPaneDividerSize
+    )
+  }
+
+  private static func sharedSplitTree(
+    from node: TerminalSplitLayout.Node
+  ) -> TerminalSplitLayoutTree<TerminalPanelID> {
     switch node {
     case .panel(let panelID):
-      return [panelID: rect]
+      return .pane(panelID)
     case .split(let axis, let children):
-      return splitPanelFrames(axis: axis, children: children, in: rect)
+      return .split(
+        axis: workspaceSplitAxis(for: axis),
+        children: children.map(sharedSplitTree)
+      )
     }
   }
 
-  private static func splitPanelFrames(
-    axis: TerminalSplitAxis,
-    children: [TerminalSplitLayout.Node],
-    in rect: CGRect
-  ) -> [TerminalPanelID: CGRect] {
-    guard !children.isEmpty else { return [:] }
-
-    var result: [TerminalPanelID: CGRect] = [:]
-    let childCount = CGFloat(children.count)
-
+  private static func workspaceSplitAxis(for axis: TerminalSplitAxis) -> TerminalWorkspaceSplitAxis {
     switch axis {
     case .horizontal:
-      let totalDividerWidth = terminalPaneDividerSize * CGFloat(max(children.count - 1, 0))
-      let childWidth = max(0, rect.width - totalDividerWidth) / childCount
-      var nextX = rect.minX
-
-      for (index, child) in children.enumerated() {
-        if index > 0 {
-          nextX += terminalPaneDividerSize
-        }
-        let childRect = CGRect(x: nextX, y: rect.minY, width: childWidth, height: rect.height)
-        result.merge(
-          panelFrames(for: child, in: childRect),
-          uniquingKeysWith: { current, _ in current }
-        )
-        nextX += childWidth
-      }
-
+      return .vertical
     case .vertical:
-      let totalDividerHeight = terminalPaneDividerSize * CGFloat(max(children.count - 1, 0))
-      let childHeight = max(0, rect.height - totalDividerHeight) / childCount
-      var nextY = rect.minY
-
-      for (index, child) in children.enumerated() {
-        if index > 0 {
-          nextY += terminalPaneDividerSize
-        }
-        let childRect = CGRect(x: rect.minX, y: nextY, width: rect.width, height: childHeight)
-        result.merge(
-          panelFrames(for: child, in: childRect),
-          uniquingKeysWith: { current, _ in current }
-        )
-        nextY += childHeight
-      }
+      return .horizontal
     }
-
-    return result
   }
 
   private func requestClose(_ tab: TerminalTab) {
@@ -1228,13 +1240,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     let editor = FileOpenEditor(
-      rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalFileOpenEditor)
+      rawValue: UserDefaults.standard.integer(forKey: TerminalUserDefaultsKeys.terminalFileOpenEditor)
     ) ?? .agentHub
     switch editor {
     case .agentHub:
-      if let vm = sessionViewModel, let key = terminalSessionKey {
-        vm.pendingFileOpen = (sessionId: key, filePath: resolvedPath, lineNumber: lineNumber)
-      }
+      onOpenFile?(resolvedPath, lineNumber)
     case .vscode:
       openInVSCode(path: resolvedPath, line: lineNumber)
     case .xcode:

@@ -1,6 +1,7 @@
 import Testing
 
 @testable import AgentHubCore
+@testable import AgentHubTerminalUI
 
 @Suite("TerminalPromptSubmissionPayload")
 struct TerminalPromptSubmissionPayloadTests {

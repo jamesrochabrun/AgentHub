@@ -5,6 +5,7 @@
 //  Persistence abstraction for embedded terminal workspace layouts.
 //
 
+import AgentHubTerminalUI
 import Foundation
 
 public protocol TerminalWorkspaceStoreProtocol: Sendable {

@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import AgentHubTerminalUI
 import SwiftUI
 
 enum ResizablePanelSide: Equatable {

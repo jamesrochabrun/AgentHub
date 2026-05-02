@@ -12,6 +12,10 @@ public final class TerminalProcessRegistry {
   public static let shared = TerminalProcessRegistry()
 
   private let lock = NSLock()
+  private let persistenceQueue = DispatchQueue(
+    label: "com.agenthub.terminal-process-registry.persistence",
+    qos: .utility
+  )
   private let storageKey = "AgentHub.TerminalProcessRegistry"
   private var entries: [Int32: TimeInterval] = [:]
 
@@ -24,20 +28,29 @@ public final class TerminalProcessRegistry {
     lock.lock()
     entries[pid] = Date().timeIntervalSince1970
     pruneTerminatedLocked()
-    persistLocked()
+    let snapshot = entries
     lock.unlock()
+    persistAsync(snapshot)
   }
 
   public func unregister(pid: pid_t) {
     guard pid > 0 else { return }
     lock.lock()
     entries.removeValue(forKey: pid)
-    persistLocked()
+    let snapshot = entries
     lock.unlock()
+    persistAsync(snapshot)
+  }
+
+  public func flushPersistence() {
+    let snapshot = snapshotEntries()
+    persistenceQueue.sync { [storageKey] in
+      Self.persist(snapshot, storageKey: storageKey)
+    }
   }
 
   /// Returns a snapshot of currently registered PIDs that are still alive and are Claude processes.
-  func getAliveRegisteredPIDs() -> Set<Int32> {
+  public func getAliveRegisteredPIDs() -> Set<Int32> {
     let snapshot = snapshotEntries()
     var alivePIDs: Set<Int32> = []
 
@@ -52,7 +65,7 @@ public final class TerminalProcessRegistry {
   }
 
   /// Kills only processes previously spawned by the app.
-  func cleanupRegisteredProcesses() {
+  public func cleanupRegisteredProcesses() {
     let snapshot = snapshotEntries()
     guard !snapshot.isEmpty else { return }
 
@@ -80,6 +93,8 @@ public final class TerminalProcessRegistry {
       // it will be re-detected on next getAliveRegisteredPIDs() call
       unregister(pid: pid)
     }
+
+    flushPersistence()
   }
 
   // MARK: - Private
@@ -103,9 +118,15 @@ public final class TerminalProcessRegistry {
     }
   }
 
-  private func persistLocked() {
+  private func persistAsync(_ snapshot: [Int32: TimeInterval]) {
+    persistenceQueue.async { [storageKey] in
+      Self.persist(snapshot, storageKey: storageKey)
+    }
+  }
+
+  private static func persist(_ snapshot: [Int32: TimeInterval], storageKey: String) {
     var dict: [String: Double] = [:]
-    for (pid, value) in entries {
+    for (pid, value) in snapshot {
       dict[String(pid)] = value
     }
     UserDefaults.standard.set(dict, forKey: storageKey)
