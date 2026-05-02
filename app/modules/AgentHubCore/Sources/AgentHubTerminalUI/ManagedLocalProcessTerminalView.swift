@@ -41,6 +41,9 @@ public protocol ManagedLocalProcessTerminalViewDelegate: AnyObject {
 open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, LocalProcessDelegate {
   private var process: LocalProcess!
   private static let fileOpenLogPrefix = "[AH-OPEN][AgentHub]"
+  private static let ptyResizeDebounceInterval: TimeInterval = 0.08
+  private var pendingPtyResize: (size: winsize, cols: Int, rows: Int)?
+  private var pendingPtyResizeWorkItem: DispatchWorkItem?
 
   /// Delegate for process-related events.
   public weak var processDelegate: ManagedLocalProcessTerminalViewDelegate?
@@ -83,9 +86,17 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
 
   public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
     guard process.running else { return }
-    var size = getWindowSize()
-    let _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: process.childfd, windowSize: &size)
-    processDelegate?.sizeChanged(source: self, newCols: newCols, newRows: newRows)
+    pendingPtyResize = (getWindowSize(), newCols, newRows)
+    pendingPtyResizeWorkItem?.cancel()
+
+    let workItem = DispatchWorkItem { [weak self] in
+      self?.flushPendingPtyResize()
+    }
+    pendingPtyResizeWorkItem = workItem
+    DispatchQueue.main.asyncAfter(
+      deadline: .now() + Self.ptyResizeDebounceInterval,
+      execute: workItem
+    )
   }
 
   public func clipboardCopy(source: TerminalView, content: Data) {
@@ -261,6 +272,7 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
   /// Terminates the process group for the running child.
   public func terminateProcessTree(graceSeconds: TimeInterval = 1.0) {
     guard process.running else { return }
+    cancelPendingPtyResize()
     let pid = process.shellPid
     guard pid > 0 else { return }
 
@@ -279,6 +291,7 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
   // MARK: - LocalProcessDelegate
 
   open func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+    cancelPendingPtyResize()
     processDelegate?.processTerminated(source: self, exitCode: exitCode)
   }
 
@@ -294,5 +307,32 @@ open class ManagedLocalProcessTerminalView: TerminalView, TerminalViewDelegate, 
       ws_xpixel: UInt16(f.width),
       ws_ypixel: UInt16(f.height)
     )
+  }
+
+  private func flushPendingPtyResize() {
+    guard process.running,
+          var pendingPtyResize
+    else {
+      cancelPendingPtyResize()
+      return
+    }
+
+    self.pendingPtyResize = nil
+    pendingPtyResizeWorkItem = nil
+    let _ = PseudoTerminalHelpers.setWinSize(
+      masterPtyDescriptor: process.childfd,
+      windowSize: &pendingPtyResize.size
+    )
+    processDelegate?.sizeChanged(
+      source: self,
+      newCols: pendingPtyResize.cols,
+      newRows: pendingPtyResize.rows
+    )
+  }
+
+  private func cancelPendingPtyResize() {
+    pendingPtyResizeWorkItem?.cancel()
+    pendingPtyResizeWorkItem = nil
+    pendingPtyResize = nil
   }
 }

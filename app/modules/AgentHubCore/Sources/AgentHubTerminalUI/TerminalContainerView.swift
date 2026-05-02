@@ -168,9 +168,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var activePaneID: UUID?
   private var protectedAgentPaneID: UUID?
   private var protectedAgentTabID: UUID?
-  private var rootWorkspaceView: NSView?
+  private var rootWorkspaceView: TerminalSplitContainerView?
   private var paneHeaderViews: [UUID: NSHostingView<RegularTerminalPaneHeader>] = [:]
   private var paneContainerViews: [UUID: RegularTerminalPaneContainerView] = [:]
+  private var paneActiveTabIDs: [UUID: UUID] = [:]
   private var tabActivityTasks: [UUID: Task<Void, Never>] = [:]
   private var paneActivityTasks: [UUID: Task<Void, Never>] = [:]
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
@@ -1006,38 +1007,44 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   // MARK: - Workspace View Tree
 
   private func rebuildWorkspaceViews() {
-    for terminal in allTerminalViews() {
-      terminal.removeFromSuperview()
-    }
-    paneHeaderViews.removeAll()
-    paneContainerViews.removeAll()
-    rootWorkspaceView?.removeFromSuperview()
-    rootWorkspaceView = nil
-
     guard let layoutNode,
           let splitTree = splitTree(from: layoutNode) else {
+      rootWorkspaceView?.removeFromSuperview()
+      rootWorkspaceView = nil
+      paneHeaderViews.removeAll()
+      paneContainerViews.removeAll()
+      paneActiveTabIDs.removeAll()
       return
     }
+
+    let paneIDs = Set(splitTree.paneIDs)
+    removeStalePaneViews(keeping: paneIDs)
+
     let paneViews = Dictionary(
       uniqueKeysWithValues: splitTree.paneIDs.compactMap { paneID -> (UUID, NSView)? in
         guard pane(for: paneID) != nil else { return nil }
         return (paneID, makePaneView(for: paneID))
       }
     )
-    let rootView = TerminalSplitContainerView(
-      tree: splitTree,
-      dividerSize: Self.paneDividerSpacing,
-      paneViews: paneViews
-    )
-    rootView.translatesAutoresizingMaskIntoConstraints = false
-    addSubview(rootView)
-    NSLayoutConstraint.activate([
-      rootView.leadingAnchor.constraint(equalTo: leadingAnchor),
-      rootView.trailingAnchor.constraint(equalTo: trailingAnchor),
-      rootView.topAnchor.constraint(equalTo: topAnchor),
-      rootView.bottomAnchor.constraint(equalTo: bottomAnchor)
-    ])
-    rootWorkspaceView = rootView
+
+    if let rootWorkspaceView {
+      rootWorkspaceView.update(tree: splitTree, paneViews: paneViews)
+    } else {
+      let rootView = TerminalSplitContainerView(
+        tree: splitTree,
+        dividerSize: Self.paneDividerSpacing,
+        paneViews: paneViews
+      )
+      rootView.translatesAutoresizingMaskIntoConstraints = false
+      addSubview(rootView)
+      NSLayoutConstraint.activate([
+        rootView.leadingAnchor.constraint(equalTo: leadingAnchor),
+        rootView.trailingAnchor.constraint(equalTo: trailingAnchor),
+        rootView.topAnchor.constraint(equalTo: topAnchor),
+        rootView.bottomAnchor.constraint(equalTo: bottomAnchor)
+      ])
+      rootWorkspaceView = rootView
+    }
   }
 
   private func splitTree(from node: WorkspaceLayoutNode) -> TerminalSplitLayoutTree<UUID>? {
@@ -1059,6 +1066,14 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       return NSView()
     }
 
+    if let container = paneContainerViews[pane.id], paneActiveTabIDs[pane.id] == tab.id {
+      updatePaneActivityPresentation(for: pane.id)
+      return container
+    }
+
+    paneContainerViews[pane.id]?.removeFromSuperview()
+    paneHeaderViews[pane.id] = nil
+
     let header = NSHostingView(rootView: paneHeader(for: pane))
     paneHeaderViews[pane.id] = header
 
@@ -1076,7 +1091,18 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       initialSize: fallbackPaneSize()
     )
     paneContainerViews[pane.id] = container
+    paneActiveTabIDs[pane.id] = tab.id
     return container
+  }
+
+  private func removeStalePaneViews(keeping paneIDs: Set<UUID>) {
+    let stalePaneIDs = Set(paneContainerViews.keys).subtracting(paneIDs)
+    for paneID in stalePaneIDs {
+      paneContainerViews[paneID]?.removeFromSuperview()
+      paneContainerViews[paneID] = nil
+      paneHeaderViews[paneID] = nil
+      paneActiveTabIDs[paneID] = nil
+    }
   }
 
   private func fallbackPaneSize() -> CGSize {
@@ -1309,6 +1335,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     cancelAllActivityTasks()
     rootWorkspaceView?.removeFromSuperview()
     rootWorkspaceView = nil
+    paneHeaderViews.removeAll()
+    paneContainerViews.removeAll()
+    paneActiveTabIDs.removeAll()
     panes.removeAll()
     layoutNode = nil
     activePaneID = nil
