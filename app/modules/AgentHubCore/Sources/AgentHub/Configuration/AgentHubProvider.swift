@@ -418,6 +418,11 @@ public final class AgentHubProvider {
       + codexSessionsViewModel.terminalWorkspaceSnapshotsForShutdown()
     guard !snapshots.isEmpty else { return }
 
+    let auxiliaryCount = snapshots.filter { $0.sessionId.hasPrefix("auxiliary-shell:") }.count
+    AppLogger.session.info(
+      "[AuxShellRestore] shutdown flush start snapshots=\(snapshots.count, privacy: .public) auxiliary=\(auxiliaryCount, privacy: .public)"
+    )
+
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached(priority: .userInitiated) { [store, snapshots] in
       for snapshot in snapshots {
@@ -432,6 +437,10 @@ public final class AgentHubProvider {
           AppLogger.session.error("Failed to flush terminal workspace on terminate: \(error.localizedDescription)")
         }
       }
+      let auxiliaryCount = snapshots.filter { $0.sessionId.hasPrefix("auxiliary-shell:") }.count
+      AppLogger.session.info(
+        "[AuxShellRestore] shutdown flush complete snapshots=\(snapshots.count, privacy: .public) auxiliary=\(auxiliaryCount, privacy: .public)"
+      )
       semaphore.signal()
     }
 

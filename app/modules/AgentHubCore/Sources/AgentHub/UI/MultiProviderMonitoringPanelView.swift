@@ -278,6 +278,7 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: allItems.map(\.id)) { _, _ in
       syncEditorStates()
+      syncAuxiliaryShellDockState()
     }
     .onChange(of: effectivePrimarySessionId) { _, _ in
       syncAuxiliaryShellDockState()
@@ -1400,13 +1401,25 @@ public struct MultiProviderMonitoringPanelView: View {
   private func syncAuxiliaryShellDockState() {
     guard isAuxiliaryShellVisible else { return }
     guard let target = auxiliaryShellTarget else {
-      withAnimation(auxiliaryShellToggleAnimation) {
-        isAuxiliaryShellVisible = false
-      }
+      Self.logAuxiliaryShellRestore(
+        "dock visible waiting target primary=\(primarySessionId ?? "nil") items=\(allItems.count)"
+      )
       return
     }
-    guard target.context.isLaunchable else { return }
+    guard target.context.isLaunchable else {
+      Self.logAuxiliaryShellRestore(
+        "dock visible waiting launchable provider=\(target.context.providerKind.rawValue) key=\(target.context.terminalKey)"
+      )
+      return
+    }
+    Self.logAuxiliaryShellRestore(
+      "dock focus provider=\(target.context.providerKind.rawValue) key=\(target.context.terminalKey)"
+    )
     target.viewModel.focusAuxiliaryShellTerminal(forKey: target.context.terminalKey)
+  }
+
+  private static func logAuxiliaryShellRestore(_ message: String) {
+    AppLogger.session.info("[AuxShellRestore] \(message, privacy: .public)")
   }
 
   @ViewBuilder
