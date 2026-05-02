@@ -8,6 +8,7 @@ import OSLog
 
 public enum TerminalUILogger {
   public static let terminal = Logger(subsystem: "com.agenthub", category: "Terminal")
+  // TODO: Remove panel latency logs before merging the regular terminal multiwindow PR.
   public static let panelLatencyPrefix = "[TerminalPanelLatency]"
 
   public static func latencyTimestamp() -> TimeInterval {
