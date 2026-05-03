@@ -11,7 +11,7 @@ public enum AgentHubGhosttyTerminalShortcut: Equatable {
   case searchNext
   case searchPrevious
   case openTab
-  case openPane
+  case openPane(axis: TerminalSplitAxis)
   case closePanel
   case focusPanel(TerminalPanelNavigationDirection)
   case selectTab(TerminalTabNavigationDirection)
@@ -46,7 +46,7 @@ public enum AgentHubGhosttyTerminalShortcut: Equatable {
       case "f": return .startSearch
       case "g": return .searchNext
       case "t": return .openTab
-      case "d": return .openPane
+      case "d": return .openPane(axis: .horizontal)
       default: return nil
       }
     }
@@ -60,6 +60,7 @@ public enum AgentHubGhosttyTerminalShortcut: Equatable {
       }
 
       switch key {
+      case "d": return .openPane(axis: .vertical)
       case "g": return .searchPrevious
       case "w": return .closePanel
       default: return nil
