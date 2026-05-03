@@ -87,7 +87,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
     Button(title, systemImage: systemImage, action: action)
       .labelStyle(.iconOnly)
       .buttonStyle(.plain)
-      .frame(width: 24, height: 24)
+      .frame(width: 32, height: 28)
       .contentShape(Rectangle())
       .disabled(isDisabled)
       .help(help)

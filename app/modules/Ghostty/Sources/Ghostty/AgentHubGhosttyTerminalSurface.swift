@@ -43,7 +43,6 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private static let terminalTabStripHeight: CGFloat = 28
   private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
   private static let pendingPaneRenderDelay: Duration = .milliseconds(16)
-  private static let closingPaneRenderDelay: Duration = .milliseconds(450)
 
   public var onUserInteraction: (() -> Void)?
   public var onRequestShowEditor: (() -> Void)?
@@ -1010,7 +1009,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     guard pendingPaneCloseTasks[panel.id] == nil else { return }
     markPaneClosingPanel(panel.id)
     pendingPaneCloseTasks[panel.id] = Task { @MainActor [weak self] in
-      try? await Task.sleep(for: Self.closingPaneRenderDelay)
+      await Task.yield()
       guard !Task.isCancelled else { return }
       self?.finishCloseGhosttyPanel(panel.id)
     }
@@ -1048,7 +1047,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     guard pendingTabCloseTasks[tab.id] == nil else { return }
     markPaneClosingTerminal(panel.id)
     pendingTabCloseTasks[tab.id] = Task { @MainActor [weak self] in
-      try? await Task.sleep(for: Self.closingPaneRenderDelay)
+      await Task.yield()
       guard !Task.isCancelled else { return }
       self?.finishCloseGhosttyTab(tab.id, in: panel.id)
     }
