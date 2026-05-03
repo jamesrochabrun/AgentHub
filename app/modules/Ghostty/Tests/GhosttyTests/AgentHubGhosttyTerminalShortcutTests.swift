@@ -10,7 +10,7 @@ struct AgentHubGhosttyTerminalShortcutTests {
   @Test("Command shortcuts match Ghostty terminal actions")
   func commandShortcuts() {
     expectAction(.openTab, key: "t", flags: .command)
-    expectAction(.openPane, key: "d", flags: .command)
+    expectAction(.openPane(axis: .horizontal), key: "d", flags: .command)
     expectAction(.startSearch, key: "f", flags: .command)
     expectAction(.searchNext, key: "g", flags: .command)
     expectNoAction(key: "w", flags: .command)
@@ -18,6 +18,7 @@ struct AgentHubGhosttyTerminalShortcutTests {
 
   @Test("Shift-command shortcuts match Ghostty terminal actions")
   func shiftedCommandShortcuts() {
+    expectAction(.openPane(axis: .vertical), key: "d", flags: [.command, .shift])
     expectAction(.searchPrevious, key: "g", flags: [.command, .shift])
     expectAction(.closePanel, key: "w", flags: [.command, .shift])
   }

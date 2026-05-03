@@ -19,9 +19,10 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private var terminalSession: TerminalSession?
-  private var hostingView: NSHostingView<TerminalSurfaceView>?
+  private var hostingView: NSHostingView<AgentHubGhosttyTerminalWorkspaceView>?
   private var protectedAgentPanelID: TerminalPanelID?
   private var protectedAgentTabID: TerminalTabID?
+  private var splitRoot: TerminalSplitLayout.Node?
   private var pendingMount: PendingMount?
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   private var isConfigured = false
@@ -29,12 +30,19 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var hasPrefilledInitialInputText = false
   private var registeredPIDs: [ObjectIdentifier: pid_t] = [:]
   private var pidRegistrationTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+  private var paneActivityRegistry = AgentHubGhosttyPaneActivityRegistry()
+  private var paneActivityTasks: [TerminalPanelID: Task<Void, Never>] = [:]
+  private var pendingPaneOpenTasks: [TerminalPanelID: Task<Void, Never>] = [:]
+  private var pendingPaneCloseTasks: [TerminalPanelID: Task<Void, Never>] = [:]
+  private var pendingTabCloseTasks: [TerminalTabID: Task<Void, Never>] = [:]
   private var localEventMonitor: Any?
   private var projectPath: String = ""
   private var isRestoringWorkspace = false
   private var lastWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   private static let terminalPaneDividerSize: CGFloat = 1
-  private static let terminalTabStripHeight: CGFloat = 24
+  private static let terminalTabStripHeight: CGFloat = 28
+  private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
+  private static let pendingPaneRenderDelay: Duration = .milliseconds(16)
 
   public var onUserInteraction: (() -> Void)?
   public var onRequestShowEditor: (() -> Void)?
@@ -85,6 +93,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
     MainActor.assumeIsolated {
       terminalSession?.requestCloseAll()
+      cancelPendingPaneOpenTasks()
+      cancelPendingCloseTasks()
+      cancelPaneActivityTasks()
       cancelPIDRegistrationTasks()
       unregisterAllPIDs()
     }
@@ -166,6 +177,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     pendingWorkspaceSnapshot = nil
     protectedAgentPanelID = nil
     protectedAgentTabID = nil
+    splitRoot = nil
+    resetPaneActivities()
     isConfigured = false
     hasDeliveredInitialPrompt = false
     hasPrefilledInitialInputText = false
@@ -186,6 +199,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   public func terminateProcess() {
     terminateProcessCallCount += 1
     terminalSession?.requestCloseAll()
+    cancelPendingPaneOpenTasks()
+    cancelPendingCloseTasks()
+    resetPaneActivities()
     cancelPIDRegistrationTasks()
     unregisterAllPIDs()
   }
@@ -342,6 +358,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     terminalSession.showPrimaryAndAuxiliaries()
+    splitRoot = terminalSession.splitLayout?.root ?? .panel(terminalSession.primaryPanelID)
+    refreshWorkspaceRootView()
     restoreActiveSelection(
       from: snapshot,
       panelIDs: restoredPanelIDs,
@@ -383,6 +401,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         protectedAgentPanelID = session.primaryPanelID
         protectedAgentTabID = primaryTab.id
       }
+      splitRoot = .panel(session.primaryPanelID)
       configureControllerHooks(for: session.primaryPanel.activeTab?.controller)
       mount(session)
       terminalSession = session
@@ -434,38 +453,50 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   private func mount(_ session: TerminalSession) {
     let host = NSHostingView(
-      rootView: TerminalSurfaceView(
-        session: session,
-        showsPaneLabels: false,
-        showsTabBar: true,
-        allowsClosingPanels: true,
-        allowsClosingTabs: true,
-        panelClosePolicy: { [weak self] panel in
-          self?.canCloseGhosttyPanel(panel) ?? false
-        },
-        tabClosePolicy: { [weak self] panel, tab in
-          self?.canCloseGhosttyTab(tab, in: panel) ?? false
-        },
-        onActivatePanel: { [weak self] panel in
-          self?.activateGhosttyPanel(panel)
-        },
-        onSelectTab: { [weak self] panel, tab in
-          self?.selectGhosttyTab(tab, in: panel)
-        },
-        onClosePanel: { [weak self] panel in
-          self?.closeGhosttyPanel(panel)
-        },
-        onCloseTab: { [weak self] panel, tab in
-          self?.closeGhosttyTab(tab, in: panel)
-        },
-        onOpenTab: { [weak self] panel in
-          self?.openShellTab(in: panel.id)
-        }
-      )
+      rootView: makeWorkspaceRootView(for: session)
     )
     makeViewTransparent(host)
     mount(host)
     hostingView = host
+  }
+
+  private func makeWorkspaceRootView(for session: TerminalSession) -> AgentHubGhosttyTerminalWorkspaceView {
+    AgentHubGhosttyTerminalWorkspaceView(
+      session: session,
+      splitRoot: splitRoot,
+      canClosePanel: { [weak self] panel in
+        self?.canCloseGhosttyPanel(panel) ?? false
+      },
+      canCloseTab: { [weak self] panel, tab in
+        self?.canCloseGhosttyTab(tab, in: panel) ?? false
+      },
+      onActivatePanel: { [weak self] panel in
+        self?.activateGhosttyPanel(panel)
+      },
+      onSelectTab: { [weak self] panel, tab in
+        self?.selectGhosttyTab(tab, in: panel)
+      },
+      onClosePanel: { [weak self] panel in
+        self?.closeGhosttyPanel(panel)
+      },
+      onCloseTab: { [weak self] panel, tab in
+        self?.closeGhosttyTab(tab, in: panel)
+      },
+      onOpenTab: { [weak self] panel in
+        self?.openShellTab(in: panel.id)
+      },
+      onSplitPanel: { [weak self] panel, axis in
+        self?.openShellPane(axis: axis, anchorPanelID: panel.id)
+      },
+      activityForPanel: { [weak self] panelID in
+        self?.paneActivityRegistry.activity(for: panelID)
+      }
+    )
+  }
+
+  private func refreshWorkspaceRootView() {
+    guard let terminalSession, let hostingView else { return }
+    hostingView.rootView = makeWorkspaceRootView(for: terminalSession)
   }
 
   private func mount(_ child: NSView) {
@@ -526,7 +557,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     )
   }
 
-  private func shellConfigurationForNewTerminal(in panelID: TerminalPanelID? = nil) -> GhosttySurfaceConfiguration {
+  private func shellConfigurationForNewTerminal(
+    in panelID: TerminalPanelID? = nil,
+    splitAxis: TerminalSplitAxis = .horizontal,
+    anchorPanelID: TerminalPanelID? = nil
+  ) -> GhosttySurfaceConfiguration {
     let sourceController = panelID
       .flatMap { terminalSession?.panel(for: $0)?.activeTab?.controller }
       ?? activeController
@@ -539,7 +574,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       environment: launch.environment,
       initialInput: nil,
       workingDirectory: workingDirectory,
-      initialSize: predictedInitialSizeForNewTerminal(in: panelID)
+      initialSize: predictedInitialSizeForNewTerminal(
+        in: panelID,
+        splitAxis: splitAxis,
+        anchorPanelID: anchorPanelID
+      )
     )
   }
 
@@ -559,10 +598,19 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func currentInitialSurfaceSize() -> GhosttySurfaceInitialSize? {
-    initialSurfaceSize(from: bounds.size)
+    initialSurfaceSize(
+      from: Self.terminalContentSize(
+        forPaneSize: bounds.size,
+        showsTabStrip: true
+      )
+    )
   }
 
-  private func predictedInitialSizeForNewTerminal(in panelID: TerminalPanelID? = nil) -> GhosttySurfaceInitialSize? {
+  private func predictedInitialSizeForNewTerminal(
+    in panelID: TerminalPanelID? = nil,
+    splitAxis: TerminalSplitAxis = .horizontal,
+    anchorPanelID: TerminalPanelID? = nil
+  ) -> GhosttySurfaceInitialSize? {
     guard let terminalSession else {
       return currentInitialSurfaceSize()
     }
@@ -577,10 +625,13 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     let newPanelID = TerminalPanelID()
-    let projectedPanelIDs = terminalSession.visiblePanels.map(\.id) + [newPanelID]
-    let projectedLayout = TerminalSplitLayout(axis: .horizontal, panelIDs: projectedPanelIDs)
+    let projectedRoot = projectedSplitRoot(
+      adding: newPanelID,
+      axis: splitAxis,
+      anchorPanelID: anchorPanelID ?? terminalSession.activePanelID
+    )
     let frames = Self.panelFrames(
-      for: projectedLayout.root,
+      for: projectedRoot,
       in: CGRect(origin: .zero, size: bounds.size)
     )
 
@@ -629,6 +680,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     focusProtectedAgentTab()
+    splitRoot = .panel(terminalSession.primaryPanelID)
   }
 
   private func restoreShellTabs(
@@ -820,8 +872,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       _ = activeController?.navigateSearchPrevious()
     case .openTab:
       openShellTab()
-    case .openPane:
-      openShellPane()
+    case .openPane(let axis):
+      openShellPane(axis: axis)
     case .closePanel:
       closeActiveOrLastAuxiliaryPanel()
     case .focusPanel(let direction):
@@ -844,25 +896,77 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         configuration: shellConfigurationForNewTerminal(in: panelID)
       )
       configureControllerHooks(for: tab.controller)
+      markPaneStarting(panelID ?? terminalSession.activePanelID)
+      refreshWorkspaceRootView()
       notifyWorkspaceChanged()
     } catch {
       AppLogger.session.error("Failed to open Ghostty shell tab: \(error.localizedDescription)")
     }
   }
 
-  private func openShellPane() {
+  private func openShellPane(
+    axis: TerminalSplitAxis = .horizontal,
+    anchorPanelID: TerminalPanelID? = nil
+  ) {
     guard let terminalSession, terminalSession.canOpenPanel else { return }
-    do {
-      prepareVisiblePanelsForPaneTransition(
-        projectedPanelIDs: terminalSession.visiblePanels.map(\.id) + [TerminalPanelID()]
+    let resolvedAnchorPanelID = anchorPanelID ?? terminalSession.activePanelID
+    let projectedPlaceholderID = TerminalPanelID()
+    let projectedRoot = projectedSplitRoot(
+      adding: projectedPlaceholderID,
+      axis: axis,
+      anchorPanelID: resolvedAnchorPanelID
+    )
+    prepareVisiblePanelsForPaneTransition(projectedRoot: projectedRoot)
+    splitRoot = projectedRoot
+    paneActivityRegistry.markStarting(projectedPlaceholderID)
+    refreshWorkspaceRootView()
+
+    pendingPaneOpenTasks[projectedPlaceholderID]?.cancel()
+    pendingPaneOpenTasks[projectedPlaceholderID] = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: Self.pendingPaneRenderDelay)
+      guard !Task.isCancelled else { return }
+      self?.pendingPaneOpenTasks[projectedPlaceholderID] = nil
+      self?.finishOpeningShellPane(
+        axis: axis,
+        anchorPanelID: resolvedAnchorPanelID,
+        placeholderPanelID: projectedPlaceholderID,
+        projectedRoot: projectedRoot
       )
+    }
+  }
+
+  private func finishOpeningShellPane(
+    axis: TerminalSplitAxis,
+    anchorPanelID: TerminalPanelID,
+    placeholderPanelID: TerminalPanelID,
+    projectedRoot: TerminalSplitLayout.Node
+  ) {
+    guard let terminalSession, terminalSession.canOpenPanel else {
+      removePendingShellPane(placeholderPanelID)
+      return
+    }
+    do {
+      _ = terminalSession.focusPanel(anchorPanelID)
       let panel = try terminalSession.openPanel(
         named: "Shell",
-        configuration: shellConfigurationForNewTerminal()
+        configuration: shellConfigurationForNewTerminal(
+          splitAxis: axis,
+          anchorPanelID: anchorPanelID
+        ),
+        axis: axis
       )
+      splitRoot = AgentHubGhosttySplitLayoutBuilder.replacingPanel(
+        placeholderPanelID,
+        with: panel.id,
+        in: splitRoot ?? projectedRoot
+      )
+      clearPaneActivity(placeholderPanelID)
       configureControllerHooks(for: panel.activeTab?.controller)
+      markPaneStarting(panel.id)
+      refreshWorkspaceRootView()
       notifyWorkspaceChanged()
     } catch {
+      removePendingShellPane(placeholderPanelID)
       AppLogger.session.error("Failed to open Ghostty shell pane: \(error.localizedDescription)")
     }
   }
@@ -901,21 +1005,79 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func closeGhosttyPanel(_ panel: TerminalPanel) {
-    guard let terminalSession, canCloseGhosttyPanel(panel) else { return }
-    prepareVisiblePanelsForPaneTransition(
-      projectedPanelIDs: terminalSession.visiblePanels.map(\.id).filter { $0 != panel.id }
-    )
+    guard terminalSession != nil, canCloseGhosttyPanel(panel) else { return }
+    guard pendingPaneCloseTasks[panel.id] == nil else { return }
+    markPaneClosingPanel(panel.id)
+    pendingPaneCloseTasks[panel.id] = Task { @MainActor [weak self] in
+      await Task.yield()
+      guard !Task.isCancelled else { return }
+      self?.finishCloseGhosttyPanel(panel.id)
+    }
+  }
+
+  private func finishCloseGhosttyPanel(_ panelID: TerminalPanelID) {
+    pendingPaneCloseTasks[panelID] = nil
+    guard
+      let terminalSession,
+      let panel = terminalSession.panel(for: panelID),
+      canCloseGhosttyPanel(panel)
+    else {
+      clearPaneActivity(panelID)
+      refreshWorkspaceRootView()
+      return
+    }
+    let projectedRoot = projectedSplitRoot(removing: panel.id)
+    if let projectedRoot {
+      prepareVisiblePanelsForPaneTransition(projectedRoot: projectedRoot)
+    }
     requestClose(panel)
     if terminalSession.closePanel(panel.id) {
+      clearPaneActivity(panel.id)
+      splitRoot = projectedRoot
+      refreshWorkspaceRootView()
       notifyWorkspaceChanged()
+    } else {
+      clearPaneActivity(panel.id)
+      refreshWorkspaceRootView()
     }
   }
 
   private func closeGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
-    guard let terminalSession, canCloseGhosttyTab(tab, in: panel) else { return }
+    guard terminalSession != nil, canCloseGhosttyTab(tab, in: panel) else { return }
+    guard pendingTabCloseTasks[tab.id] == nil else { return }
+    markPaneClosingTerminal(panel.id)
+    pendingTabCloseTasks[tab.id] = Task { @MainActor [weak self] in
+      await Task.yield()
+      guard !Task.isCancelled else { return }
+      self?.finishCloseGhosttyTab(tab.id, in: panel.id)
+    }
+  }
+
+  private func finishCloseGhosttyTab(_ tabID: TerminalTabID, in panelID: TerminalPanelID) {
+    pendingTabCloseTasks[tabID] = nil
+    guard
+      let terminalSession,
+      let panel = terminalSession.panel(for: panelID),
+      let tab = panel.tabs.first(where: { $0.id == tabID }),
+      canCloseGhosttyTab(tab, in: panel)
+    else {
+      clearPaneActivity(panelID)
+      refreshWorkspaceRootView()
+      return
+    }
+    let closesPanel = panel.tabs.count == 1
+    let projectedRoot = closesPanel ? projectedSplitRoot(removing: panel.id) : splitRoot
     requestClose(tab)
     if terminalSession.closeTab(tab.id, in: panel.id) {
+      clearPaneActivity(panel.id)
+      if closesPanel {
+        splitRoot = projectedRoot
+      }
+      refreshWorkspaceRootView()
       notifyWorkspaceChanged()
+    } else {
+      clearPaneActivity(panel.id)
+      refreshWorkspaceRootView()
     }
   }
 
@@ -925,13 +1087,10 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
   }
 
-  private func prepareVisiblePanelsForPaneTransition(projectedPanelIDs: [TerminalPanelID]) {
+  private func prepareVisiblePanelsForPaneTransition(projectedRoot: TerminalSplitLayout.Node) {
     guard let terminalSession, bounds.width > 0, bounds.height > 0 else { return }
-    guard !projectedPanelIDs.isEmpty else { return }
-
-    let layout = TerminalSplitLayout(axis: .horizontal, panelIDs: projectedPanelIDs)
     let frames = Self.panelFrames(
-      for: layout.root,
+      for: projectedRoot,
       in: CGRect(origin: .zero, size: bounds.size)
     )
 
@@ -950,7 +1109,33 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func shouldShowTabStrip(for panel: TerminalPanel) -> Bool {
-    panel.tabs.count > 1 || canCloseGhosttyPanel(panel)
+    true
+  }
+
+  private func currentSplitRoot() -> TerminalSplitLayout.Node? {
+    guard let terminalSession else { return nil }
+    return splitRoot ?? terminalSession.splitLayout?.root ?? .panel(terminalSession.primaryPanelID)
+  }
+
+  private func projectedSplitRoot(
+    adding newPanelID: TerminalPanelID,
+    axis: TerminalSplitAxis,
+    anchorPanelID: TerminalPanelID
+  ) -> TerminalSplitLayout.Node {
+    guard let root = currentSplitRoot() else {
+      return .panel(newPanelID)
+    }
+    return AgentHubGhosttySplitLayoutBuilder.addingPanel(
+      newPanelID,
+      to: root,
+      beside: anchorPanelID,
+      axis: axis
+    )
+  }
+
+  private func projectedSplitRoot(removing panelID: TerminalPanelID) -> TerminalSplitLayout.Node? {
+    guard let root = currentSplitRoot() else { return nil }
+    return AgentHubGhosttySplitLayoutBuilder.removingPanel(panelID, from: root)
   }
 
   private static func terminalContentSize(forPaneSize paneSize: CGSize, showsTabStrip: Bool) -> CGSize {
@@ -1049,8 +1234,10 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       guard let self, let controller else { return }
       self.closeControllerIfAllowed(controller)
     }
-    controller.onStateChange = { [weak self] _ in
-      self?.notifyWorkspaceChanged()
+    controller.onStateChange = { [weak self] controller in
+      guard let self else { return }
+      self.finishPaneStarting(for: controller)
+      self.notifyWorkspaceChanged()
     }
     controller.onOpenURL = { [weak self] url in
       self?.handleOpenURL(url) ?? false
@@ -1066,8 +1253,15 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       return
     }
     guard !isProtectedAgentTab(located.tab, in: located.panel.id) else { return }
+    let closesPanel = located.panel.tabs.count == 1
+    let projectedRoot = closesPanel ? projectedSplitRoot(removing: located.panel.id) : splitRoot
     requestClose(located.tab)
     if terminalSession.closeTab(located.tab.id, in: located.panel.id) {
+      if closesPanel {
+        clearPaneActivity(located.panel.id)
+        splitRoot = projectedRoot
+      }
+      refreshWorkspaceRootView()
       notifyWorkspaceChanged()
     }
   }
@@ -1157,17 +1351,123 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     onWorkspaceChanged?(snapshot)
   }
 
+  private func markPaneStarting(_ panelID: TerminalPanelID) {
+    paneActivityRegistry.markStarting(panelID)
+    schedulePaneActivityClear(panelID)
+    refreshWorkspaceRootView()
+    finishPaneStartingIfReady(panelID)
+  }
+
+  private func markPaneClosingPanel(_ panelID: TerminalPanelID) {
+    paneActivityTasks[panelID]?.cancel()
+    paneActivityTasks[panelID] = nil
+    paneActivityRegistry.markClosingPanel(panelID)
+    refreshWorkspaceRootView()
+  }
+
+  private func markPaneClosingTerminal(_ panelID: TerminalPanelID) {
+    paneActivityTasks[panelID]?.cancel()
+    paneActivityTasks[panelID] = nil
+    paneActivityRegistry.markClosingTerminal(panelID)
+    refreshWorkspaceRootView()
+  }
+
+  private func schedulePaneActivityClear(_ panelID: TerminalPanelID) {
+    paneActivityTasks[panelID]?.cancel()
+    paneActivityTasks[panelID] = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: Self.shellStartupFallbackDelay)
+      guard !Task.isCancelled else { return }
+      self?.finishPaneStarting(panelID)
+    }
+  }
+
+  private func clearPaneActivity(_ panelID: TerminalPanelID) {
+    paneActivityTasks[panelID]?.cancel()
+    paneActivityTasks[panelID] = nil
+    paneActivityRegistry.clear(panelID)
+  }
+
+  private func removePendingShellPane(_ panelID: TerminalPanelID) {
+    pendingPaneOpenTasks[panelID]?.cancel()
+    pendingPaneOpenTasks[panelID] = nil
+    clearPaneActivity(panelID)
+    if let root = currentSplitRoot() {
+      splitRoot = AgentHubGhosttySplitLayoutBuilder.removingPanel(panelID, from: root)
+    }
+    refreshWorkspaceRootView()
+  }
+
+  private func finishPaneStarting(_ panelID: TerminalPanelID) {
+    paneActivityTasks[panelID]?.cancel()
+    paneActivityTasks[panelID] = nil
+    guard paneActivityRegistry.clear(panelID) else { return }
+    refreshWorkspaceRootView()
+  }
+
+  private func finishPaneStarting(for controller: GhosttyTerminalController) {
+    guard let located = locateController(controller) else { return }
+    guard let foregroundProcessID = controller.foregroundProcessID, foregroundProcessID > 0 else {
+      return
+    }
+    finishPaneStarting(located.panel.id)
+  }
+
+  private func finishPaneStartingIfReady(_ panelID: TerminalPanelID) {
+    guard paneHasForegroundProcess(panelID) else { return }
+    finishPaneStarting(panelID)
+  }
+
+  private func paneHasForegroundProcess(_ panelID: TerminalPanelID) -> Bool {
+    guard let panel = terminalSession?.panel(for: panelID) else { return false }
+    return panel.tabs.contains { tab in
+      guard let foregroundProcessID = tab.controller.foregroundProcessID else { return false }
+      return foregroundProcessID > 0
+    }
+  }
+
+  private func resetPaneActivities() {
+    cancelPaneActivityTasks()
+    paneActivityRegistry.reset()
+  }
+
+  private func cancelPaneActivityTasks() {
+    for task in paneActivityTasks.values {
+      task.cancel()
+    }
+    paneActivityTasks.removeAll()
+  }
+
+  private func cancelPendingPaneOpenTasks() {
+    for task in pendingPaneOpenTasks.values {
+      task.cancel()
+    }
+    pendingPaneOpenTasks.removeAll()
+  }
+
+  private func cancelPendingCloseTasks() {
+    for task in pendingPaneCloseTasks.values {
+      task.cancel()
+    }
+    pendingPaneCloseTasks.removeAll()
+
+    for task in pendingTabCloseTasks.values {
+      task.cancel()
+    }
+    pendingTabCloseTasks.removeAll()
+  }
+
   private func registerPIDWhenAvailable(for controller: GhosttyTerminalController) {
     let id = ObjectIdentifier(controller)
     pidRegistrationTasks[id]?.cancel()
     pidRegistrationTasks[id] = Task { @MainActor [weak self, weak controller] in
       for _ in 0..<10 {
         guard let self, let controller else { return }
-        guard self.locateController(controller) != nil else { return }
+        guard let located = self.locateController(controller) else { return }
         if let pid = controller.foregroundProcessID, pid > 0 {
           self.registeredPIDs[id] = pid
           TerminalProcessRegistry.shared.register(pid: pid)
           self.pidRegistrationTasks[id] = nil
+          self.finishPaneStarting(located.panel.id)
           return
         }
         try? await Task.sleep(for: .milliseconds(100))
