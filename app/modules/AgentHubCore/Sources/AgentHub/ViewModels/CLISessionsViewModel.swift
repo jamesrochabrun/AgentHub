@@ -2575,14 +2575,17 @@ public final class CLISessionsViewModel {
 
   // MARK: - Orphaned Sessions Detection
 
-  /// Cached count of orphaned Claude processes (updated async, read sync)
+  /// Cached count of orphaned terminal processes for this provider (updated async, read sync)
   public private(set) var orphanedProcessCount: Int = 0
 
   /// Refreshes the orphaned process count asynchronously.
   /// Call this when the menu bar opens to update the cached value.
   public func refreshOrphanedProcessCount() {
-    Task { [weak self] in
-      let registeredPIDs = await TerminalProcessRegistry.shared.getAliveRegisteredPIDs()
+    let currentProvider = providerKind
+    Task { [weak self, currentProvider] in
+      let registeredPIDs = await TerminalProcessRegistry.shared.getAliveRegisteredPIDs(
+        provider: currentProvider
+      )
       guard let self else { return }
       let activePIDs = self.activeTerminalPIDs
       self.orphanedProcessCount = registeredPIDs.subtracting(activePIDs).count
@@ -2600,10 +2603,15 @@ public final class CLISessionsViewModel {
     return pids
   }
 
-  /// Kills all orphaned Claude processes and refreshes the count
+  /// Kills all orphaned terminal processes for this provider and refreshes the count
   public func killOrphanedProcesses() {
-    Task { [weak self] in
-      await TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+    let currentProvider = providerKind
+    let activePIDs = activeTerminalPIDs
+    Task { [weak self, currentProvider, activePIDs] in
+      await TerminalProcessRegistry.shared.cleanupOrphanedTerminalProcesses(
+        provider: currentProvider,
+        activePIDs: activePIDs
+      )
       self?.refreshOrphanedProcessCount()
     }
   }

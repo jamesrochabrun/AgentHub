@@ -81,24 +81,43 @@ struct DarwinProcessTerminator: ProcessTerminating {
   func terminate(pid: pid_t, processGroupId: pid_t?) async {
     guard pid > 0 else { return }
 
-    let groupId = processGroupId.flatMap { $0 > 0 ? $0 : nil } ?? pid
-    if killpg(groupId, SIGTERM) != 0 {
+    if let groupId = ownedProcessGroupId(pid: pid, processGroupId: processGroupId) {
+      if killpg(groupId, SIGTERM) != 0 {
+        _ = kill(pid, SIGTERM)
+      }
+    } else {
       _ = kill(pid, SIGTERM)
     }
 
     try? await Task.sleep(for: .milliseconds(300))
 
     guard kill(pid, 0) == 0 else { return }
-    if killpg(groupId, SIGKILL) != 0 {
+    if let groupId = ownedProcessGroupId(pid: pid, processGroupId: processGroupId) {
+      if killpg(groupId, SIGKILL) != 0 {
+        _ = kill(pid, SIGKILL)
+      }
+    } else {
       _ = kill(pid, SIGKILL)
     }
 
     try? await Task.sleep(for: .milliseconds(100))
   }
+
+  private func ownedProcessGroupId(pid: pid_t, processGroupId: pid_t?) -> pid_t? {
+    guard let processGroupId, processGroupId > 0, processGroupId == pid else {
+      return nil
+    }
+    return processGroupId
+  }
 }
 
 public actor TerminalProcessRegistry {
   public static let shared = TerminalProcessRegistry()
+
+  private enum CleanupScope {
+    case allRegistered
+    case orphanedTerminals(provider: SessionProviderKind?, activePIDs: Set<Int32>)
+  }
 
   private let processInspector: any ProcessInspecting
   private let processTerminator: any ProcessTerminating
@@ -143,7 +162,7 @@ public actor TerminalProcessRegistry {
 
     let record = ManagedProcessRecord(
       pid: pid,
-      processGroupId: identity.processGroupId > 0 ? identity.processGroupId : nil,
+      processGroupId: ownedProcessGroupId(for: identity),
       processStartTimeSeconds: identity.startTimeSeconds,
       kind: kind,
       provider: provider?.rawValue,
@@ -171,7 +190,7 @@ public actor TerminalProcessRegistry {
 
   /// Returns live terminal PIDs still owned by AgentHub. Dev-server rows are
   /// intentionally excluded because this count backs the terminal orphan UI.
-  public func getAliveRegisteredPIDs() async -> Set<Int32> {
+  public func getAliveRegisteredPIDs(provider: SessionProviderKind? = nil) async -> Set<Int32> {
     guard let store = await resolvedProcessStore() else { return [] }
 
     do {
@@ -179,7 +198,8 @@ public actor TerminalProcessRegistry {
       var stalePIDs: [Int32] = []
       var alivePIDs: Set<Int32> = []
 
-      for row in rows where row.processKind?.isTerminalProcess == true {
+      for row in rows where row.processKind?.isTerminalProcess == true
+        && matchesProvider(row, provider: provider) {
         guard let identity = await processInspector.identity(for: row.pid) else {
           stalePIDs.append(row.pid)
           continue
@@ -202,6 +222,22 @@ public actor TerminalProcessRegistry {
   /// Terminates every live process still matching its persisted app-spawned
   /// identity, and prunes stale rows without killing PID-reused processes.
   public func cleanupRegisteredProcesses() async {
+    await cleanupManagedProcesses(scope: .allRegistered)
+  }
+
+  /// Terminates terminal rows that are live, provider-scoped, and no longer
+  /// attached to active UI terminals. Dev servers and active terminal rows are
+  /// intentionally left alone because this backs the menu-bar orphan action.
+  public func cleanupOrphanedTerminalProcesses(
+    provider: SessionProviderKind? = nil,
+    activePIDs: Set<Int32>
+  ) async {
+    await cleanupManagedProcesses(
+      scope: .orphanedTerminals(provider: provider, activePIDs: activePIDs)
+    )
+  }
+
+  private func cleanupManagedProcesses(scope: CleanupScope) async {
     guard let store = await resolvedProcessStore() else { return }
 
     do {
@@ -209,7 +245,7 @@ public actor TerminalProcessRegistry {
       guard !rows.isEmpty else { return }
 
       var completedPIDs: [Int32] = []
-      for row in rows {
+      for row in rows where shouldCleanup(row, scope: scope) {
         guard row.processKind != nil else {
           completedPIDs.append(row.pid)
           continue
@@ -225,13 +261,27 @@ public actor TerminalProcessRegistry {
           continue
         }
 
-        await processTerminator.terminate(pid: row.pid, processGroupId: row.processGroupId)
+        await processTerminator.terminate(
+          pid: row.pid,
+          processGroupId: ownedProcessGroupId(for: row, identity: identity)
+        )
         completedPIDs.append(row.pid)
       }
 
       try await store.deleteManagedProcesses(pids: completedPIDs)
     } catch {
       AppLogger.session.error("Failed to clean up managed processes: \(error.localizedDescription)")
+    }
+  }
+
+  private func shouldCleanup(_ row: ManagedProcessRecord, scope: CleanupScope) -> Bool {
+    switch scope {
+    case .allRegistered:
+      return true
+    case .orphanedTerminals(let provider, let activePIDs):
+      guard row.processKind?.isTerminalProcess == true else { return false }
+      guard matchesProvider(row, provider: provider) else { return false }
+      return !activePIDs.contains(row.pid)
     }
   }
 
@@ -296,5 +346,27 @@ public actor TerminalProcessRegistry {
       return nil
     }
     return trimmed
+  }
+
+  private func matchesProvider(_ row: ManagedProcessRecord, provider: SessionProviderKind?) -> Bool {
+    guard let provider else { return true }
+    return row.provider == provider.rawValue
+  }
+
+  private func ownedProcessGroupId(for identity: ManagedProcessIdentity) -> pid_t? {
+    guard identity.processGroupId > 0, identity.processGroupId == identity.pid else {
+      return nil
+    }
+    return identity.processGroupId
+  }
+
+  private func ownedProcessGroupId(
+    for row: ManagedProcessRecord,
+    identity: ManagedProcessIdentity
+  ) -> pid_t? {
+    guard row.processGroupId == identity.processGroupId else {
+      return nil
+    }
+    return ownedProcessGroupId(for: identity)
   }
 }

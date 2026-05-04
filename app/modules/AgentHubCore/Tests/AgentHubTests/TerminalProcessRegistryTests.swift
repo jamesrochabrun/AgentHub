@@ -43,6 +43,24 @@ struct TerminalProcessRegistryTests {
     #expect(rows.first?.registeredAt == registeredAt)
   }
 
+  @Test("Register only persists owned process groups")
+  func registerOnlyPersistsOwnedProcessGroups() async throws {
+    let store = MockManagedProcessStore()
+    let registry = TerminalProcessRegistry(
+      store: store,
+      processInspector: MockProcessInspector(identities: [
+        123: identity(pid: 123, groupId: 999, startTime: 1_000)
+      ]),
+      processTerminator: MockProcessTerminator()
+    )
+
+    await registry.register(pid: 123)
+
+    let rows = try await store.getManagedProcesses()
+    #expect(rows.count == 1)
+    #expect(rows.first?.processGroupId == nil)
+  }
+
   @Test("Unregister removes persisted row")
   func unregisterRemovesPersistedRow() async throws {
     let store = MockManagedProcessStore()
@@ -106,6 +124,55 @@ struct TerminalProcessRegistryTests {
 
     #expect(await terminator.terminatedPIDs().sorted() == [111, 222])
     #expect(try await store.getManagedProcesses().isEmpty)
+  }
+
+  @Test("Cleanup terminates inherited process group rows by PID only")
+  func cleanupTerminatesInheritedProcessGroupRowsByPIDOnly() async throws {
+    let store = MockManagedProcessStore(records: [
+      processRow(pid: 111, kind: .agentTerminal, startTime: 10, processGroupId: 999)
+    ])
+    let terminator = MockProcessTerminator()
+    let registry = TerminalProcessRegistry(
+      store: store,
+      processInspector: MockProcessInspector(identities: [
+        111: identity(pid: 111, groupId: 999, startTime: 10)
+      ]),
+      processTerminator: terminator
+    )
+
+    await registry.cleanupRegisteredProcesses()
+
+    #expect(await terminator.terminationRequests() == [
+      TerminationRequest(pid: 111, processGroupId: nil)
+    ])
+    #expect(try await store.getManagedProcesses().isEmpty)
+  }
+
+  @Test("Orphan cleanup only terminates scoped inactive terminal rows")
+  func orphanCleanupOnlyTerminatesScopedInactiveTerminalRows() async throws {
+    let store = MockManagedProcessStore(records: [
+      processRow(pid: 111, kind: .agentTerminal, startTime: 10, provider: .claude),
+      processRow(pid: 222, kind: .auxiliaryShell, startTime: 20, provider: .claude),
+      processRow(pid: 333, kind: .devServer, startTime: 30, provider: .claude),
+      processRow(pid: 444, kind: .agentTerminal, startTime: 40, provider: .codex),
+      processRow(pid: 555, kind: .agentTerminal, startTime: 50, provider: .claude)
+    ])
+    let terminator = MockProcessTerminator()
+    let registry = TerminalProcessRegistry(
+      store: store,
+      processInspector: MockProcessInspector(identities: [
+        111: identity(pid: 111, groupId: 111, startTime: 10),
+        222: identity(pid: 222, groupId: 222, startTime: 20),
+        333: identity(pid: 333, groupId: 333, startTime: 30),
+        444: identity(pid: 444, groupId: 444, startTime: 40)
+      ]),
+      processTerminator: terminator
+    )
+
+    await registry.cleanupOrphanedTerminalProcesses(provider: .claude, activePIDs: [222])
+
+    #expect(await terminator.terminatedPIDs() == [111])
+    #expect(try await store.getManagedProcesses().map(\.pid).sorted() == [222, 333, 444])
   }
 
   @Test("Cleanup prunes PID reuse without terminating")
@@ -221,15 +288,24 @@ private actor MockProcessInspector: ProcessInspecting {
   }
 }
 
+private struct TerminationRequest: Equatable, Sendable {
+  let pid: pid_t
+  let processGroupId: pid_t?
+}
+
 private actor MockProcessTerminator: ProcessTerminating {
-  private var pids: [pid_t] = []
+  private var requests: [TerminationRequest] = []
 
   func terminate(pid: pid_t, processGroupId: pid_t?) async {
-    pids.append(pid)
+    requests.append(TerminationRequest(pid: pid, processGroupId: processGroupId))
   }
 
   func terminatedPIDs() -> [pid_t] {
-    pids
+    requests.map(\.pid)
+  }
+
+  func terminationRequests() -> [TerminationRequest] {
+    requests
   }
 }
 
@@ -245,14 +321,31 @@ private func identity(pid: pid_t, groupId: pid_t, startTime: Int64) -> ManagedPr
 private func processRow(
   pid: Int32,
   kind: ManagedProcessKind,
-  startTime: Int64
+  startTime: Int64,
+  provider: SessionProviderKind? = nil
+) -> ManagedProcessRecord {
+  processRow(
+    pid: pid,
+    kind: kind,
+    startTime: startTime,
+    processGroupId: pid,
+    provider: provider
+  )
+}
+
+private func processRow(
+  pid: Int32,
+  kind: ManagedProcessKind,
+  startTime: Int64,
+  processGroupId: Int32,
+  provider: SessionProviderKind? = nil
 ) -> ManagedProcessRecord {
   ManagedProcessRecord(
     pid: pid,
-    processGroupId: pid,
+    processGroupId: processGroupId,
     processStartTimeSeconds: startTime,
     kind: kind,
-    provider: nil,
+    provider: provider?.rawValue,
     terminalKey: nil,
     sessionId: nil,
     projectPath: nil,

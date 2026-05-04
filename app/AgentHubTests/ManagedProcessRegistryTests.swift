@@ -41,6 +41,55 @@ struct ManagedProcessRegistryTests {
     #expect(try await store.getManagedProcesses().isEmpty)
   }
 
+  @Test("Registry cleanup terminates inherited process group rows by PID only")
+  func registryCleanupTerminatesInheritedProcessGroupRowsByPIDOnly() async throws {
+    let store = RootMockManagedProcessStore(records: [
+      managedProcessRegistryRow(pid: 111, kind: .agentTerminal, startTime: 10, processGroupId: 999)
+    ])
+    let terminator = RootMockProcessTerminator()
+    let registry = TerminalProcessRegistry(
+      store: store,
+      processInspector: RootMockProcessInspector(identities: [
+        111: managedProcessIdentity(pid: 111, groupId: 999, startTime: 10)
+      ]),
+      processTerminator: terminator
+    )
+
+    await registry.cleanupRegisteredProcesses()
+
+    #expect(await terminator.terminationRequests() == [
+      RootTerminationRequest(pid: 111, processGroupId: nil)
+    ])
+    #expect(try await store.getManagedProcesses().isEmpty)
+  }
+
+  @Test("Orphan cleanup only terminates scoped inactive terminal rows")
+  func orphanCleanupOnlyTerminatesScopedInactiveTerminalRows() async throws {
+    let store = RootMockManagedProcessStore(records: [
+      managedProcessRegistryRow(pid: 111, kind: .agentTerminal, startTime: 10, provider: .claude),
+      managedProcessRegistryRow(pid: 222, kind: .auxiliaryShell, startTime: 20, provider: .claude),
+      managedProcessRegistryRow(pid: 333, kind: .devServer, startTime: 30, provider: .claude),
+      managedProcessRegistryRow(pid: 444, kind: .agentTerminal, startTime: 40, provider: .codex),
+      managedProcessRegistryRow(pid: 555, kind: .agentTerminal, startTime: 50, provider: .claude)
+    ])
+    let terminator = RootMockProcessTerminator()
+    let registry = TerminalProcessRegistry(
+      store: store,
+      processInspector: RootMockProcessInspector(identities: [
+        111: managedProcessIdentity(pid: 111, groupId: 111, startTime: 10),
+        222: managedProcessIdentity(pid: 222, groupId: 222, startTime: 20),
+        333: managedProcessIdentity(pid: 333, groupId: 333, startTime: 30),
+        444: managedProcessIdentity(pid: 444, groupId: 444, startTime: 40)
+      ]),
+      processTerminator: terminator
+    )
+
+    await registry.cleanupOrphanedTerminalProcesses(provider: .claude, activePIDs: [222])
+
+    #expect(await terminator.terminatedPIDs() == [111])
+    #expect(try await store.getManagedProcesses().map(\.pid).sorted() == [222, 333, 444])
+  }
+
   @Test("Registry cleanup prunes PID reuse without terminating")
   func registryCleanupPrunesPIDReuseWithoutTerminating() async throws {
     let store = RootMockManagedProcessStore(records: [
@@ -141,15 +190,24 @@ private actor RootMockProcessInspector: ProcessInspecting {
   }
 }
 
+private struct RootTerminationRequest: Equatable, Sendable {
+  let pid: pid_t
+  let processGroupId: pid_t?
+}
+
 private actor RootMockProcessTerminator: ProcessTerminating {
-  private var pids: [pid_t] = []
+  private var requests: [RootTerminationRequest] = []
 
   func terminate(pid: pid_t, processGroupId: pid_t?) async {
-    pids.append(pid)
+    requests.append(RootTerminationRequest(pid: pid, processGroupId: processGroupId))
   }
 
   func terminatedPIDs() -> [pid_t] {
-    pids
+    requests.map(\.pid)
+  }
+
+  func terminationRequests() -> [RootTerminationRequest] {
+    requests
   }
 }
 
@@ -165,14 +223,31 @@ private func managedProcessIdentity(pid: pid_t, groupId: pid_t, startTime: Int64
 private func managedProcessRegistryRow(
   pid: Int32,
   kind: ManagedProcessKind,
-  startTime: Int64
+  startTime: Int64,
+  provider: SessionProviderKind? = nil
+) -> ManagedProcessRecord {
+  managedProcessRegistryRow(
+    pid: pid,
+    kind: kind,
+    startTime: startTime,
+    processGroupId: pid,
+    provider: provider
+  )
+}
+
+private func managedProcessRegistryRow(
+  pid: Int32,
+  kind: ManagedProcessKind,
+  startTime: Int64,
+  processGroupId: Int32,
+  provider: SessionProviderKind? = nil
 ) -> ManagedProcessRecord {
   ManagedProcessRecord(
     pid: pid,
-    processGroupId: pid,
+    processGroupId: processGroupId,
     processStartTimeSeconds: startTime,
     kind: kind,
-    provider: nil,
+    provider: provider?.rawValue,
     terminalKey: nil,
     sessionId: nil,
     projectPath: nil,

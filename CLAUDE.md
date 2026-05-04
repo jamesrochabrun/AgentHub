@@ -121,6 +121,8 @@ final class MockSessionMonitorService: SessionMonitorServiceProtocol { ... }
 - Production migrations must preserve existing rows. Do not use broad `delete`, `drop table`, `clearAll()`, or `eraseDatabaseOnSchemaChange` in migrations.
 - Any `SessionMetadataStore` schema change must add or update migration-preservation tests that seed the current baseline database and verify all existing metadata still reads back after migration.
 - Process cleanup must verify persisted PID identity before terminating. If PID start time/process group no longer matches the row, delete the stale row without killing.
+- Process group cleanup is only allowed for groups AgentHub owns. Persist/use a process group only when the child is its own group leader (`pgid == pid`); inherited PGIDs must fall back to PID-only termination.
+- Keep launch/crash-recovery cleanup broad, but user-triggered orphan cleanup must be scoped to inactive terminal rows for the relevant provider/PIDs. It must not sweep dev-server rows or active terminals.
 
 ## SwiftUI View Guidelines
 
