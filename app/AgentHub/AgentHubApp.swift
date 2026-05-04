@@ -35,6 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // before sessions start restoring. Re-installs happen naturally as each
     // session begins monitoring.
     provider.reconcileClaudeHooksOnLaunch()
+    provider.cleanupOrphanedProcesses()
   }
 
   /// Register all bundled fonts (Geist, GeistMono, JetBrains Mono)

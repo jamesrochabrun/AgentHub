@@ -13,6 +13,15 @@ import Foundation
 public enum SessionProviderKind: String, CaseIterable, Sendable {
   case claude = "Claude"
   case codex = "Codex"
+
+  public init(cliMode: CLICommandMode) {
+    switch cliMode {
+    case .claude:
+      self = .claude
+    case .codex:
+      self = .codex
+    }
+  }
 }
 
 // MARK: - SessionMonitorServiceProtocol

@@ -141,7 +141,15 @@ public final class DevServerManager {
       )
 
       processes[key] = process
-      TerminalProcessRegistry.shared.register(pid: process.processIdentifier)
+      Task {
+        await TerminalProcessRegistry.shared.register(
+          pid: process.processIdentifier,
+          kind: .devServer,
+          terminalKey: key,
+          projectPath: projectPath,
+          expectedExecutable: URL(fileURLWithPath: executablePath).lastPathComponent
+        )
+      }
 
       servers[key] = .waitingForReady
 
@@ -243,7 +251,9 @@ public final class DevServerManager {
       }
     }
 
-    TerminalProcessRegistry.shared.unregister(pid: pid)
+    Task {
+      await TerminalProcessRegistry.shared.unregister(pid: pid)
+    }
     processes.removeValue(forKey: key)
     assignedPorts.removeValue(forKey: key)
     servers[key] = finalState

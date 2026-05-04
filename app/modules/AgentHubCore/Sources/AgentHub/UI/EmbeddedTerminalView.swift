@@ -314,7 +314,14 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName
     )
-    registerProcessIfNeeded(for: terminal)
+    registerProcessIfNeeded(
+      for: terminal,
+      kind: .agentTerminal,
+      provider: SessionProviderKind(cliMode: cliConfiguration.mode),
+      sessionId: sessionId,
+      projectPath: projectPath,
+      expectedExecutable: cliConfiguration.executableName
+    )
 
     if let initialInputText, !initialInputText.isEmpty {
       terminal.onProcessReady = { [weak self] in
@@ -339,7 +346,14 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       projectPath: projectPath,
       shellPath: shellPath
     )
-    registerProcessIfNeeded(for: terminal)
+    registerProcessIfNeeded(
+      for: terminal,
+      kind: .auxiliaryShell,
+      provider: sessionViewModel?.providerKind,
+      sessionId: terminalSessionKey,
+      projectPath: projectPath,
+      expectedExecutable: nil
+    )
   }
 
   /// Resets the prompt delivery flag so a new prompt can be sent.
@@ -707,11 +721,29 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
   }
 
-  private func registerProcessIfNeeded(for terminal: SafeLocalProcessTerminalView) {
+  private func registerProcessIfNeeded(
+    for terminal: SafeLocalProcessTerminalView,
+    kind: ManagedProcessKind,
+    provider: SessionProviderKind?,
+    sessionId: String?,
+    projectPath: String,
+    expectedExecutable: String?
+  ) {
     guard let pid = terminal.currentProcessId, pid > 0 else { return }
     let key = ObjectIdentifier(terminal)
     terminalPidMap[key] = pid
-    TerminalProcessRegistry.shared.register(pid: pid)
+    let terminalKey = terminalSessionKey
+    Task {
+      await TerminalProcessRegistry.shared.register(
+        pid: pid,
+        kind: kind,
+        provider: provider,
+        terminalKey: terminalKey,
+        sessionId: sessionId,
+        projectPath: projectPath,
+        expectedExecutable: expectedExecutable
+      )
+    }
   }
 
   // MARK: - ManagedLocalProcessTerminalViewDelegate
@@ -725,7 +757,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   public func processTerminated(source: TerminalView, exitCode: Int32?) {
     let key = ObjectIdentifier(source)
     if let pid = terminalPidMap[key] {
-      TerminalProcessRegistry.shared.unregister(pid: pid)
+      Task {
+        await TerminalProcessRegistry.shared.unregister(pid: pid)
+      }
       terminalPidMap.removeValue(forKey: key)
     }
   }

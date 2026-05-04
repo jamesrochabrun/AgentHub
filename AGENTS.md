@@ -45,10 +45,15 @@ Concrete types: `CLISessionMonitorService` / `CodexSessionMonitorService`, `Sess
 - AI override flags are applied only when starting a new CLI session, never when resuming an existing one
 - Empty or unsupported saved provider settings must fall back to the CLI's own defaults instead of emitting override flags
 - UserDefaults is only for app/UI preferences. Session/workspace management state must live in SQLite via `SessionMetadataStore`.
-- Never add `AgentHubDefaults` keys for selected repositories, monitored session IDs, session restore state, repo mappings, or terminal workspace state.
+- Never add `AgentHubDefaults` keys for selected repositories, monitored session IDs, session restore state, repo mappings, terminal workspace state, or terminal/dev-server process cleanup state.
+- `managed_processes` is the SQLite authority for app-spawned terminal/dev-server cleanup. Process rows must store only process identity/routing metadata needed for cleanup (PID, process group, process start time, kind/provider/session/project context), never prompts, full environment, terminal contents, or other sensitive runtime payloads.
 - Schema changes must append a new `DatabaseMigrator` migration. Never edit, rename, reorder, or delete existing migration identifiers or bodies.
+- Table versions are the ordered `vN_*` migration identifiers in `SessionMetadataStore`; do not add ad hoc per-table schema version columns unless a table-specific encoded payload requires one.
 - Production migrations must be additive or explicit data transforms. Do not use broad `delete`, `drop table`, `clearAll()`, or `eraseDatabaseOnSchemaChange` in app migrations.
 - Every `SessionMetadataStore` schema change must include a migration-preservation test that seeds the current baseline DB and proves existing rows survive migration.
+- Process cleanup must verify persisted PID identity before terminating. If PID start time/process group no longer matches the row, delete the stale row without killing.
+- Process group cleanup is only allowed for groups AgentHub owns. Persist/use a process group only when the child is its own group leader (`pgid == pid`); inherited PGIDs must fall back to PID-only termination.
+- Keep launch/crash-recovery cleanup broad, but user-triggered orphan cleanup must be scoped to inactive terminal rows for the relevant provider/PIDs. It must not sweep dev-server rows or active terminals.
 
 ```swift
 protocol SessionSearchServiceProtocol {
