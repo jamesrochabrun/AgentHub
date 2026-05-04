@@ -129,7 +129,10 @@ private func seedCurrentBaselineDatabase(at dbPath: String) throws -> MigrationS
       state: workspaceState
     ).insert(db)
 
-    for migrationIdentifier in SessionMetadataStore.migrationIdentifiers where migrationIdentifier != "v7_create_managed_processes" {
+    // Mark the database as fully migrated through v6 so opening
+    // SessionMetadataStore exercises only the v7 managed_processes migration.
+    for migrationIdentifier in SessionMetadataStore.migrationIdentifiers
+      where migrationIdentifier != SessionMetadataStore.MigrationID.createManagedProcesses {
       try db.execute(
         sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
         arguments: [migrationIdentifier]
