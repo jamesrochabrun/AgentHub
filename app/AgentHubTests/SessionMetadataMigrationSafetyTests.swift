@@ -52,6 +52,7 @@ struct SessionMetadataMigrationSafetyTests {
       ) == seed.terminalWorkspace
     )
     #expect(store.getWorkspaceStateSync(for: .claude) == seed.workspaceState)
+    #expect(try await store.getManagedProcesses().isEmpty)
   }
 }
 
@@ -128,7 +129,7 @@ private func seedCurrentBaselineDatabase(at dbPath: String) throws -> MigrationS
       state: workspaceState
     ).insert(db)
 
-    for migrationIdentifier in SessionMetadataStore.migrationIdentifiers {
+    for migrationIdentifier in SessionMetadataStore.migrationIdentifiers where migrationIdentifier != "v7_create_managed_processes" {
       try db.execute(
         sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
         arguments: [migrationIdentifier]

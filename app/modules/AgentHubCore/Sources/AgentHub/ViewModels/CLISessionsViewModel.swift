@@ -2581,14 +2581,11 @@ public final class CLISessionsViewModel {
   /// Refreshes the orphaned process count asynchronously.
   /// Call this when the menu bar opens to update the cached value.
   public func refreshOrphanedProcessCount() {
-    Task.detached { [weak self] in
-      let registeredPIDs = TerminalProcessRegistry.shared.getAliveRegisteredPIDs()
-
-      await MainActor.run { [weak self] in
-        guard let self else { return }
-        let activePIDs = self.activeTerminalPIDs
-        self.orphanedProcessCount = registeredPIDs.subtracting(activePIDs).count
-      }
+    Task { [weak self] in
+      let registeredPIDs = await TerminalProcessRegistry.shared.getAliveRegisteredPIDs()
+      guard let self else { return }
+      let activePIDs = self.activeTerminalPIDs
+      self.orphanedProcessCount = registeredPIDs.subtracting(activePIDs).count
     }
   }
 
@@ -2605,13 +2602,9 @@ public final class CLISessionsViewModel {
 
   /// Kills all orphaned Claude processes and refreshes the count
   public func killOrphanedProcesses() {
-    Task.detached { [weak self] in
-      TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
-
-      // Refresh count after killing
-      await MainActor.run { [weak self] in
-        self?.refreshOrphanedProcessCount()
-      }
+    Task { [weak self] in
+      await TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+      self?.refreshOrphanedProcessCount()
     }
   }
 }

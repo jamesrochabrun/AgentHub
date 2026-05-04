@@ -39,6 +39,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var projectPath: String = ""
   private var isRestoringWorkspace = false
   private var lastWorkspaceSnapshot: TerminalWorkspaceSnapshot?
+  private var configuredSessionId: String?
+  private var configuredProcessProvider: SessionProviderKind?
+  private var configuredExpectedExecutable: String?
   private static let terminalPaneDividerSize: CGFloat = 1
   private static let terminalTabStripHeight: CGFloat = 28
   private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
@@ -121,6 +124,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     guard !isConfigured else { return }
     isConfigured = true
     self.projectPath = projectPath
+    configuredSessionId = sessionId
+    configuredProcessProvider = SessionProviderKind(cliMode: cliConfiguration.mode)
+    configuredExpectedExecutable = cliConfiguration.executableName
 
     let launch = EmbeddedTerminalLaunchBuilder.cliLaunch(
       sessionId: sessionId,
@@ -153,6 +159,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     guard !isConfigured else { return }
     isConfigured = true
     self.projectPath = projectPath
+    configuredSessionId = nil
+    configuredProcessProvider = sessionViewModel?.providerKind
+    configuredExpectedExecutable = nil
 
     let launch = EmbeddedTerminalLaunchBuilder.shellLaunch(
       projectPath: projectPath,
@@ -182,6 +191,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     isConfigured = false
     hasDeliveredInitialPrompt = false
     hasPrefilledInitialInputText = false
+    configuredSessionId = sessionId
     configure(
       sessionId: sessionId,
       projectPath: projectPath,
@@ -1465,7 +1475,27 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         guard let located = self.locateController(controller) else { return }
         if let pid = controller.foregroundProcessID, pid > 0 {
           self.registeredPIDs[id] = pid
-          TerminalProcessRegistry.shared.register(pid: pid)
+          let kind: ManagedProcessKind = self.isProtectedAgentTab(located.tab, in: located.panel.id)
+            ? .agentTerminal
+            : .auxiliaryShell
+          let provider = self.sessionViewModel?.providerKind ?? self.configuredProcessProvider
+          let terminalKey = self.terminalSessionKey
+          let sessionId = kind == .agentTerminal
+            ? self.configuredSessionId ?? terminalKey
+            : terminalKey
+          let projectPath = self.projectPath
+          let expectedExecutable = kind == .agentTerminal ? self.configuredExpectedExecutable : nil
+          Task {
+            await TerminalProcessRegistry.shared.register(
+              pid: pid,
+              kind: kind,
+              provider: provider,
+              terminalKey: terminalKey,
+              sessionId: sessionId,
+              projectPath: projectPath,
+              expectedExecutable: expectedExecutable
+            )
+          }
           self.pidRegistrationTasks[id] = nil
           self.finishPaneStarting(located.panel.id)
           return
@@ -1481,7 +1511,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     pidRegistrationTasks[id]?.cancel()
     pidRegistrationTasks[id] = nil
     if let registeredPID = registeredPIDs.removeValue(forKey: id) {
-      TerminalProcessRegistry.shared.unregister(pid: registeredPID)
+      Task {
+        await TerminalProcessRegistry.shared.unregister(pid: registeredPID)
+      }
     }
   }
 
@@ -1494,7 +1526,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   private func unregisterAllPIDs() {
     for pid in registeredPIDs.values {
-      TerminalProcessRegistry.shared.unregister(pid: pid)
+      Task {
+        await TerminalProcessRegistry.shared.unregister(pid: pid)
+      }
     }
     registeredPIDs.removeAll()
   }

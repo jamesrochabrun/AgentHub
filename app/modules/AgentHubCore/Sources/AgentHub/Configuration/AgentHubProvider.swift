@@ -214,6 +214,11 @@ public final class AgentHubProvider {
     self.terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
     self.metadataStoreOverride = metadataStore
+    if let metadataStore {
+      Task {
+        await TerminalProcessRegistry.shared.configure(store: metadataStore)
+      }
+    }
 
     // Persist developer-provided commands to UserDefaults
     let defaults = UserDefaults.standard
@@ -336,7 +341,9 @@ public final class AgentHubProvider {
   /// Call this on app launch to terminate any Claude processes that were orphaned
   /// when the app crashed or was force-quit.
   public func cleanupOrphanedProcesses() {
-    TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+    Task(priority: .utility) {
+      await TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+    }
   }
 
   /// Sweeps any previously-installed approval hooks, wipes stale claim files,

@@ -21,6 +21,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     static let addPinned = "v4_add_pinned"
     static let createTerminalWorkspaces = "v5_create_terminal_workspaces"
     static let createSessionWorkspaceState = "v6_create_session_workspace_state"
+    static let createManagedProcesses = "v7_create_managed_processes"
   }
 
   static let migrationIdentifiers = [
@@ -29,7 +30,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     MigrationID.createAIConfig,
     MigrationID.addPinned,
     MigrationID.createTerminalWorkspaces,
-    MigrationID.createSessionWorkspaceState
+    MigrationID.createSessionWorkspaceState,
+    MigrationID.createManagedProcesses
   ]
 
   private let dbQueue: DatabaseQueue
@@ -122,6 +124,24 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
         t.column("expansionStateData", .blob).notNull()
         t.column("updatedAt", .datetime).notNull()
       }
+    }
+
+    migrator.registerMigration(MigrationID.createManagedProcesses) { db in
+      try db.create(table: "managed_processes") { t in
+        t.column("pid", .integer).primaryKey(onConflict: .replace)
+        t.column("processGroupId", .integer)
+        t.column("processStartTimeSeconds", .integer)
+        t.column("kind", .text).notNull()
+        t.column("provider", .text)
+        t.column("terminalKey", .text)
+        t.column("sessionId", .text)
+        t.column("projectPath", .text)
+        t.column("expectedExecutable", .text)
+        t.column("registeredAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+      }
+      try db.create(index: "idx_managed_processes_kind", on: "managed_processes", columns: ["kind"])
+      try db.create(index: "idx_managed_processes_session", on: "managed_processes", columns: ["provider", "sessionId"])
     }
 
     return migrator
@@ -221,6 +241,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     try dbQueue.write { db in
       _ = try TerminalWorkspaceRecord.deleteAll(db)
       _ = try SessionWorkspaceStateRecord.deleteAll(db)
+      _ = try ManagedProcessRecord.deleteAll(db)
       _ = try AIConfigRecord.deleteAll(db)
       _ = try SessionRepoMapping.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
@@ -363,6 +384,35 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
         .filter(Column("sessionId") == sessionId)
         .filter(Column("backend") == backend.rawValue)
         .deleteAll(db)
+    }
+  }
+}
+
+extension SessionMetadataStore: ManagedProcessStoreProtocol {
+  public func saveManagedProcess(_ record: ManagedProcessRecord) async throws {
+    try await dbQueue.write { db in
+      try record.save(db)
+    }
+  }
+
+  public func deleteManagedProcess(pid: Int32) async throws {
+    try await dbQueue.write { db in
+      _ = try ManagedProcessRecord.deleteOne(db, key: pid)
+    }
+  }
+
+  public func deleteManagedProcesses(pids: [Int32]) async throws {
+    guard !pids.isEmpty else { return }
+    try await dbQueue.write { db in
+      _ = try ManagedProcessRecord
+        .filter(pids.contains(Column("pid")))
+        .deleteAll(db)
+    }
+  }
+
+  public func getManagedProcesses() async throws -> [ManagedProcessRecord] {
+    try await dbQueue.read { db in
+      try ManagedProcessRecord.fetchAll(db)
     }
   }
 }
