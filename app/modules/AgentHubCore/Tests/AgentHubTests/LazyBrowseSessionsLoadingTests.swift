@@ -58,6 +58,63 @@ struct LazyBrowseSessionsLoadingTests {
     #expect(await watcher.startedSessionIds() == ["session-1"])
   }
 
+  @Test("Launch targeted restore skips sessions outside restored roots")
+  func launchTargetedRestoreSkipsSessionsOutsideRestoredRoots() async throws {
+    let store = try SessionMetadataStore(path: temporaryDatabasePath())
+    try await store.saveWorkspaceState(
+      SessionWorkspaceState(
+        selectedRepositoryPaths: ["/tmp/project"],
+        monitoredSessionIds: ["orphan-session", "session-1"]
+      ),
+      for: .claude
+    )
+
+    let session = CLISession(
+      id: "session-1",
+      projectPath: "/tmp/project",
+      branchName: "main",
+      firstMessage: "first",
+      sessionFilePath: "/tmp/session-1.jsonl"
+    )
+    let orphan = CLISession(
+      id: "orphan-session",
+      projectPath: "/tmp/deleted-worktree",
+      branchName: "feature",
+      firstMessage: "orphan",
+      sessionFilePath: "/tmp/orphan-session.jsonl"
+    )
+    let monitor = LazyBrowseMockMonitorService(
+      skeletonRepositories: [repository(path: "/tmp/project")],
+      browseRepositories: [repository(path: "/tmp/project", sessions: [session])],
+      sessionsById: [
+        "orphan-session": orphan,
+        "session-1": session
+      ]
+    )
+    let watcher = RecordingFileWatcher()
+
+    let viewModel = CLISessionsViewModel(
+      monitorService: monitor,
+      fileWatcher: watcher,
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      metadataStore: store,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await waitUntil {
+      viewModel.loadingState == .idle && viewModel.monitoredSessions.count == 1
+    }
+
+    let calls = await monitor.calls()
+    #expect(calls.loadSessionRequests == [Set(["orphan-session", "session-1"])])
+    #expect(viewModel.isMonitoring(sessionId: "session-1"))
+    #expect(!viewModel.isMonitoring(sessionId: "orphan-session"))
+    #expect(Set(viewModel.monitoredSessions.map(\.session.id)) == ["session-1"])
+    #expect(await watcher.startedSessionIds() == ["session-1"])
+  }
+
   @Test("Removing repository stops monitored sessions restored before browse load")
   func removingRepositoryStopsRestoredBackupSessionsBeforeBrowseLoad() async throws {
     let store = try SessionMetadataStore(path: temporaryDatabasePath())
@@ -195,6 +252,48 @@ struct LazyBrowseSessionsLoadingTests {
     #expect(calls.refreshCount == 2)
   }
 
+  @Test("Duplicate add keeps Browse not loaded")
+  func duplicateAddKeepsBrowseNotLoaded() async throws {
+    let store = try SessionMetadataStore(path: temporaryDatabasePath())
+    try await store.saveWorkspaceState(
+      SessionWorkspaceState(selectedRepositoryPaths: ["/tmp/project"]),
+      for: .codex
+    )
+
+    let session = CLISession(id: "session-1", projectPath: "/tmp/project")
+    let monitor = LazyBrowseMockMonitorService(
+      skeletonRepositories: [repository(path: "/tmp/project")],
+      browseRepositories: [repository(path: "/tmp/project", sessions: [session])]
+    )
+
+    let viewModel = CLISessionsViewModel(
+      monitorService: monitor,
+      fileWatcher: RecordingFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "codex", mode: .codex),
+      providerKind: .codex,
+      metadataStore: store,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await waitUntil {
+      viewModel.loadingState == .idle && viewModel.selectedRepositories.count == 1
+    }
+    #expect(viewModel.browseSessionsLoadState == .notLoaded)
+
+    viewModel.addRepository(at: "/tmp/project")
+    await waitUntilAsync {
+      let calls = await monitor.calls()
+      return calls.addRepositoriesCount == 1
+    }
+    await waitUntil { viewModel.loadingState == .idle }
+
+    let calls = await monitor.calls()
+    #expect(calls.refreshCount == 0)
+    #expect(viewModel.browseSessionsLoadState == .notLoaded)
+    #expect(viewModel.allSessions.isEmpty)
+  }
+
   @Test("Claude targeted restore ignores subagent files")
   func claudeTargetedRestoreIgnoresSubagents() async throws {
     let root = try temporaryDirectory()
@@ -229,7 +328,11 @@ struct LazyBrowseSessionsLoadingTests {
     #expect(sessions.count == 1)
     #expect(sessions.first?.projectPath == projectPath)
     #expect(sessions.first?.firstMessage == "main session")
-    #expect(sessions.first?.sessionFilePath == mainFile.path)
+    let sessionFilePath = try #require(sessions.first?.sessionFilePath)
+    #expect(
+      URL(fileURLWithPath: sessionFilePath).resolvingSymlinksInPath().path
+        == mainFile.resolvingSymlinksInPath().path
+    )
   }
 
   @Test("Codex targeted restore returns only requested sessions")
@@ -299,7 +402,16 @@ private actor LazyBrowseMockMonitorService: SessionMonitorServiceProtocol {
 
   func addRepository(_ path: String) async -> SelectedRepository? {
     addRepositoriesCount += 1
-    return nil
+    guard !repositories.contains(where: { $0.path == path }) else {
+      return nil
+    }
+
+    let repositoryToAdd = browseRepositories.first { $0.path == path }
+      ?? skeletonRepositories.first { $0.path == path }
+      ?? repository(path: path)
+    repositories.append(repositoryToAdd)
+    subject.send(repositories)
+    return repositoryToAdd
   }
 
   func addRepositories(_ paths: [String]) async {

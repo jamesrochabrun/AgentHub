@@ -29,6 +29,8 @@ public enum SessionProviderKind: String, CaseIterable, Sendable {
 public protocol SessionMonitorServiceProtocol: AnyObject, Sendable {
   var repositoriesPublisher: AnyPublisher<[SelectedRepository], Never> { get }
 
+  /// Adds a repository and returns it when a refresh was performed.
+  /// Returns nil for duplicate/no-op adds.
   @discardableResult
   func addRepository(_ path: String) async -> SelectedRepository?
   func addRepositories(_ paths: [String]) async

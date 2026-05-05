@@ -38,7 +38,7 @@ public actor CodexSessionMonitorService {
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
     guard !selectedRepositories.contains(where: { $0.path == path }) else {
-      return selectedRepositories.first { $0.path == path }
+      return nil
     }
 
     let worktrees = await detectWorktrees(at: path)

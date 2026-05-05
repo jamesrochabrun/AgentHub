@@ -1109,8 +1109,9 @@ public final class CLISessionsViewModel {
 
       if !persistedSessionIds.isEmpty {
         loadingState = .restoringMonitoredSessions
+        let restorableProjectRoots = projectRoots(from: selectedRepositories)
         let sessions = await monitorService.loadSessions(ids: persistedSessionIds)
-        restoreLoadedMonitoredSessions(sessions)
+        restoreLoadedMonitoredSessions(sessions, allowedProjectRoots: restorableProjectRoots)
       }
 
       loadingState = .idle
@@ -1123,11 +1124,22 @@ public final class CLISessionsViewModel {
     }
   }
 
-  private func restoreLoadedMonitoredSessions(_ sessions: [CLISession]) {
+  private func restoreLoadedMonitoredSessions(_ sessions: [CLISession], allowedProjectRoots: [String]) {
     guard !sessions.isEmpty else { return }
 
+    let restorableSessions = sessions.filter {
+      isProjectPath($0.projectPath, containedInAnyOf: allowedProjectRoots)
+    }
+    let rejectedIds = Set(sessions.map(\.id)).subtracting(restorableSessions.map(\.id))
+    if !rejectedIds.isEmpty {
+      pendingRestorationSessionIds.subtract(rejectedIds)
+      persistMonitoredSessions()
+    }
+
+    guard !restorableSessions.isEmpty else { return }
+
     var restoredIds: Set<String> = []
-    for session in sessions {
+    for session in restorableSessions {
       monitoredSessionIds.insert(session.id)
       monitoredSessionBackup[session.id] = session
       startPolling(session: session)
@@ -1135,7 +1147,7 @@ public final class CLISessionsViewModel {
     }
 
     pendingRestorationSessionIds.subtract(restoredIds)
-    expandItemsContainingLoadedSessions(sessions)
+    expandItemsContainingLoadedSessions(restorableSessions)
     loadCustomNames()
     loadPinnedSessions()
   }
@@ -1380,11 +1392,12 @@ public final class CLISessionsViewModel {
     Task {
       // [CLISessionsVM] loadingState = .addingRepository(\(repoName))")
       loadingState = .addingRepository(name: repoName)
+      let previousBrowseSessionsLoadState = browseSessionsLoadState
       browseSessionsLoadState = .loading
       // [CLISessionsVM] Calling monitorService.addRepository...")
-      await monitorService.addRepository(path)
+      let addedRepository = await monitorService.addRepository(path)
       // [CLISessionsVM] monitorService.addRepository completed")
-      browseSessionsLoadState = .loaded
+      browseSessionsLoadState = addedRepository == nil ? previousBrowseSessionsLoadState : .loaded
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
     }
@@ -1644,6 +1657,10 @@ public final class CLISessionsViewModel {
     var roots = [repository.path]
     roots.append(contentsOf: repository.worktrees.map(\.path))
     return Array(Set(roots))
+  }
+
+  private func projectRoots(from repositories: [SelectedRepository]) -> [String] {
+    Array(Set(repositories.flatMap { removableProjectRoots(for: $0) }))
   }
 
   private func isProjectPath(_ path: String, containedInAnyOf roots: [String]) -> Bool {

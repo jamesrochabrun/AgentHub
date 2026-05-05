@@ -56,12 +56,12 @@ public actor CLISessionMonitorService {
 
   /// Adds a repository to monitor and detects its worktrees
   /// - Parameter path: Path to the git repository
-  /// - Returns: The created SelectedRepository with detected worktrees
+  /// - Returns: The created SelectedRepository with detected worktrees, or nil for a duplicate add
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
     // Check if already added
     guard !selectedRepositories.contains(where: { $0.path == path }) else {
-      return selectedRepositories.first { $0.path == path }
+      return nil
     }
 
     // Detect worktrees for this repository
