@@ -44,7 +44,10 @@ public final class CLISessionsViewModel {
 
   public private(set) var selectedRepositories: [SelectedRepository] = []
   public private(set) var loadingState: CLILoadingState = .idle
+  public private(set) var browseSessionsLoadState: BrowseSessionsLoadState = .notLoaded
   public private(set) var error: Error?
+  @ObservationIgnored private var browseSessionsLoadTask: Task<Void, Never>?
+  @ObservationIgnored private var shouldLoadBrowseSessionsAfterRepositoryRestore = false
 
   // MARK: - Session Naming State
 
@@ -993,6 +996,11 @@ public final class CLISessionsViewModel {
         await MainActor.run { [weak self] in
           guard let self = self else { return }
 
+          if (self.loadingState == .restoringRepositories || self.loadingState == .restoringMonitoredSessions),
+             repositories.isEmpty {
+            return
+          }
+
           // Preserve expanded state from current repositories
           self.selectedRepositories = self.mergePreservingExpandedState(
             current: self.selectedRepositories,
@@ -1087,15 +1095,88 @@ public final class CLISessionsViewModel {
         pendingRestorationSessionIds = persistedSessionIds
       }
 
-      // Add repositories (triggers refreshSessions → setupSubscriptions)
+      // Restore repository/worktree shells first. Full all-session scanning is
+      // deferred until the Browse panel is opened.
       loadingState = .restoringRepositories
-      await monitorService.addRepositories(paths)
+      let restoredRepositories = await monitorService.restoreRepositoriesSkeleton(paths)
+      selectedRepositories = mergePreservingExpandedState(
+        current: selectedRepositories,
+        updated: restoredRepositories
+      )
       restoreExpansionState(workspaceState.expansionState)
+      persistSelectedRepositories()
+      syncClaudeHookInstalls()
+
+      if !persistedSessionIds.isEmpty {
+        loadingState = .restoringMonitoredSessions
+        let restorableProjectRoots = projectRoots(from: selectedRepositories)
+        let sessions = await monitorService.loadSessions(ids: persistedSessionIds)
+        restoreLoadedMonitoredSessions(sessions, allowedProjectRoots: restorableProjectRoots)
+      }
+
       loadingState = .idle
+      loadDeferredBrowseSessionsIfNeeded()
 
       // Safety timeout: stop trying to restore after 10 seconds
       try? await Task.sleep(for: .seconds(10))
       pendingRestorationSessionIds.removeAll()
+      persistMonitoredSessions()
+    }
+  }
+
+  private func restoreLoadedMonitoredSessions(_ sessions: [CLISession], allowedProjectRoots: [String]) {
+    guard !sessions.isEmpty else { return }
+
+    let restorableSessions = sessions.filter {
+      isProjectPath($0.projectPath, containedInAnyOf: allowedProjectRoots)
+    }
+    let rejectedIds = Set(sessions.map(\.id)).subtracting(restorableSessions.map(\.id))
+    if !rejectedIds.isEmpty {
+      pendingRestorationSessionIds.subtract(rejectedIds)
+      persistMonitoredSessions()
+    }
+
+    guard !restorableSessions.isEmpty else { return }
+
+    var restoredIds: Set<String> = []
+    for session in restorableSessions {
+      monitoredSessionIds.insert(session.id)
+      monitoredSessionBackup[session.id] = session
+      startPolling(session: session)
+      restoredIds.insert(session.id)
+    }
+
+    pendingRestorationSessionIds.subtract(restoredIds)
+    expandItemsContainingLoadedSessions(restorableSessions)
+    loadCustomNames()
+    loadPinnedSessions()
+  }
+
+  private func expandItemsContainingLoadedSessions(_ sessions: [CLISession]) {
+    guard !sessions.isEmpty else { return }
+    let paths = Set(sessions.map(\.projectPath))
+
+    for repoIndex in selectedRepositories.indices {
+      var shouldExpandRepo = paths.contains { path in
+        path == selectedRepositories[repoIndex].path ||
+        path.hasPrefix(selectedRepositories[repoIndex].path + "/")
+      }
+
+      for worktreeIndex in selectedRepositories[repoIndex].worktrees.indices {
+        let worktreePath = selectedRepositories[repoIndex].worktrees[worktreeIndex].path
+        let shouldExpandWorktree = paths.contains { path in
+          path == worktreePath || path.hasPrefix(worktreePath + "/")
+        }
+
+        if shouldExpandWorktree {
+          selectedRepositories[repoIndex].worktrees[worktreeIndex].isExpanded = true
+          shouldExpandRepo = true
+        }
+      }
+
+      if shouldExpandRepo {
+        selectedRepositories[repoIndex].isExpanded = true
+      }
     }
   }
 
@@ -1311,9 +1392,12 @@ public final class CLISessionsViewModel {
     Task {
       // [CLISessionsVM] loadingState = .addingRepository(\(repoName))")
       loadingState = .addingRepository(name: repoName)
+      let previousBrowseSessionsLoadState = browseSessionsLoadState
+      browseSessionsLoadState = .loading
       // [CLISessionsVM] Calling monitorService.addRepository...")
-      await monitorService.addRepository(path)
+      let addedRepository = await monitorService.addRepository(path)
       // [CLISessionsVM] monitorService.addRepository completed")
+      browseSessionsLoadState = addedRepository == nil ? previousBrowseSessionsLoadState : .loaded
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
     }
@@ -1321,19 +1405,20 @@ public final class CLISessionsViewModel {
 
   /// Removes a repository from monitoring
   public func removeRepository(_ repository: SelectedRepository) {
+    let repositoryPaths = removableProjectRoots(for: repository)
+
     // Cancel any pending hub sessions in this repository
-    let pendingToCancel = pendingHubSessions.filter { $0.worktree.path.hasPrefix(repository.path) }
+    let pendingToCancel = pendingHubSessions.filter {
+      isProjectPath($0.worktree.path, containedInAnyOf: repositoryPaths)
+    }
     for pending in pendingToCancel {
       cancelPendingSession(pending)
     }
 
     // Stop monitoring all sessions from this repository
-    for worktree in repository.worktrees {
-      for session in worktree.sessions {
-        if monitoredSessionIds.contains(session.id) {
-          stopMonitoring(sessionId: session.id)
-        }
-      }
+    let sessionIdsToStop = monitoredSessionIdsToStop(whenRemoving: repository, projectRoots: repositoryPaths)
+    for sessionId in sessionIdsToStop {
+      stopMonitoring(sessionId: sessionId)
     }
 
     Task {
@@ -1505,6 +1590,97 @@ public final class CLISessionsViewModel {
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
     }
+  }
+
+  public func ensureBrowseSessionsLoaded() {
+    guard browseSessionsLoadState == .notLoaded else { return }
+    refreshBrowseSessions()
+  }
+
+  public func refreshBrowseSessions() {
+    browseSessionsLoadTask?.cancel()
+
+    guard hasRepositories else {
+      if isRestoringPersistedWorkspace {
+        shouldLoadBrowseSessionsAfterRepositoryRestore = true
+        browseSessionsLoadState = .loading
+        return
+      }
+      browseSessionsLoadState = .loaded
+      return
+    }
+
+    shouldLoadBrowseSessionsAfterRepositoryRestore = false
+    browseSessionsLoadState = .loading
+    browseSessionsLoadTask = Task { [weak self] in
+      guard let self else { return }
+      await self.monitorService.refreshSessions()
+      guard !Task.isCancelled else { return }
+      await MainActor.run { [weak self] in
+        self?.browseSessionsLoadState = .loaded
+      }
+    }
+  }
+
+  private var isRestoringPersistedWorkspace: Bool {
+    switch loadingState {
+    case .restoringRepositories, .restoringMonitoredSessions:
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func loadDeferredBrowseSessionsIfNeeded() {
+    guard shouldLoadBrowseSessionsAfterRepositoryRestore else { return }
+    shouldLoadBrowseSessionsAfterRepositoryRestore = false
+    refreshBrowseSessions()
+  }
+
+  private func monitoredSessionIdsToStop(
+    whenRemoving repository: SelectedRepository,
+    projectRoots: [String]
+  ) -> Set<String> {
+    let worktreeSessionIds = repository.worktrees
+      .flatMap(\.sessions)
+      .map(\.id)
+
+    let restoredBackupSessionIds = monitoredSessionBackup.values
+      .filter { isProjectPath($0.projectPath, containedInAnyOf: projectRoots) }
+      .map(\.id)
+
+    return Set(worktreeSessionIds + restoredBackupSessionIds)
+      .intersection(monitoredSessionIds)
+  }
+
+  private func removableProjectRoots(for repository: SelectedRepository) -> [String] {
+    var roots = [repository.path]
+    roots.append(contentsOf: repository.worktrees.map(\.path))
+    return Array(Set(roots))
+  }
+
+  private func projectRoots(from repositories: [SelectedRepository]) -> [String] {
+    Array(Set(repositories.flatMap { removableProjectRoots(for: $0) }))
+  }
+
+  private func isProjectPath(_ path: String, containedInAnyOf roots: [String]) -> Bool {
+    roots.contains { root in
+      isProjectPath(path, containedIn: root)
+    }
+  }
+
+  private func isProjectPath(_ path: String, containedIn root: String) -> Bool {
+    let path = normalizedDirectoryPath(path)
+    let root = normalizedDirectoryPath(root)
+    return path == root || path.hasPrefix(root + "/")
+  }
+
+  private func normalizedDirectoryPath(_ path: String) -> String {
+    var normalized = path
+    while normalized.count > 1 && normalized.hasSuffix("/") {
+      normalized.removeLast()
+    }
+    return normalized
   }
 
   /// Toggles the expanded state of a repository

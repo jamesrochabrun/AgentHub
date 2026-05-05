@@ -219,7 +219,7 @@ struct AuxiliaryShellTerminalManagementTests {
   func typeToTerminalQueuesUntilTerminalCreation() {
     let terminal = TestTerminalSurface()
     let factory = RecordingTerminalSurfaceFactory(surfaces: [terminal])
-    let viewModel = makeAuxiliaryShellViewModel(terminalSurfaceFactory: factory, terminalBackend: .swiftTerm)
+    let viewModel = makeAuxiliaryShellViewModel(terminalSurfaceFactory: factory, terminalBackend: .regular)
     let command = "fix https://github.com/example/repo/issues/7 "
 
     viewModel.typeToTerminal(forKey: "session-123", text: command)
