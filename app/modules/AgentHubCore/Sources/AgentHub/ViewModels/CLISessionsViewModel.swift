@@ -47,6 +47,7 @@ public final class CLISessionsViewModel {
   public private(set) var browseSessionsLoadState: BrowseSessionsLoadState = .notLoaded
   public private(set) var error: Error?
   @ObservationIgnored private var browseSessionsLoadTask: Task<Void, Never>?
+  @ObservationIgnored private var shouldLoadBrowseSessionsAfterRepositoryRestore = false
 
   // MARK: - Session Naming State
 
@@ -1113,6 +1114,7 @@ public final class CLISessionsViewModel {
       }
 
       loadingState = .idle
+      loadDeferredBrowseSessionsIfNeeded()
 
       // Safety timeout: stop trying to restore after 10 seconds
       try? await Task.sleep(for: .seconds(10))
@@ -1390,19 +1392,20 @@ public final class CLISessionsViewModel {
 
   /// Removes a repository from monitoring
   public func removeRepository(_ repository: SelectedRepository) {
+    let repositoryPaths = removableProjectRoots(for: repository)
+
     // Cancel any pending hub sessions in this repository
-    let pendingToCancel = pendingHubSessions.filter { $0.worktree.path.hasPrefix(repository.path) }
+    let pendingToCancel = pendingHubSessions.filter {
+      isProjectPath($0.worktree.path, containedInAnyOf: repositoryPaths)
+    }
     for pending in pendingToCancel {
       cancelPendingSession(pending)
     }
 
     // Stop monitoring all sessions from this repository
-    for worktree in repository.worktrees {
-      for session in worktree.sessions {
-        if monitoredSessionIds.contains(session.id) {
-          stopMonitoring(sessionId: session.id)
-        }
-      }
+    let sessionIdsToStop = monitoredSessionIdsToStop(whenRemoving: repository, projectRoots: repositoryPaths)
+    for sessionId in sessionIdsToStop {
+      stopMonitoring(sessionId: sessionId)
     }
 
     Task {
@@ -1585,10 +1588,16 @@ public final class CLISessionsViewModel {
     browseSessionsLoadTask?.cancel()
 
     guard hasRepositories else {
+      if isRestoringPersistedWorkspace {
+        shouldLoadBrowseSessionsAfterRepositoryRestore = true
+        browseSessionsLoadState = .loading
+        return
+      }
       browseSessionsLoadState = .loaded
       return
     }
 
+    shouldLoadBrowseSessionsAfterRepositoryRestore = false
     browseSessionsLoadState = .loading
     browseSessionsLoadTask = Task { [weak self] in
       guard let self else { return }
@@ -1598,6 +1607,63 @@ public final class CLISessionsViewModel {
         self?.browseSessionsLoadState = .loaded
       }
     }
+  }
+
+  private var isRestoringPersistedWorkspace: Bool {
+    switch loadingState {
+    case .restoringRepositories, .restoringMonitoredSessions:
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func loadDeferredBrowseSessionsIfNeeded() {
+    guard shouldLoadBrowseSessionsAfterRepositoryRestore else { return }
+    shouldLoadBrowseSessionsAfterRepositoryRestore = false
+    refreshBrowseSessions()
+  }
+
+  private func monitoredSessionIdsToStop(
+    whenRemoving repository: SelectedRepository,
+    projectRoots: [String]
+  ) -> Set<String> {
+    let worktreeSessionIds = repository.worktrees
+      .flatMap(\.sessions)
+      .map(\.id)
+
+    let restoredBackupSessionIds = monitoredSessionBackup.values
+      .filter { isProjectPath($0.projectPath, containedInAnyOf: projectRoots) }
+      .map(\.id)
+
+    return Set(worktreeSessionIds + restoredBackupSessionIds)
+      .intersection(monitoredSessionIds)
+  }
+
+  private func removableProjectRoots(for repository: SelectedRepository) -> [String] {
+    var roots = [repository.path]
+    roots.append(contentsOf: repository.worktrees.map(\.path))
+    return Array(Set(roots))
+  }
+
+  private func isProjectPath(_ path: String, containedInAnyOf roots: [String]) -> Bool {
+    roots.contains { root in
+      isProjectPath(path, containedIn: root)
+    }
+  }
+
+  private func isProjectPath(_ path: String, containedIn root: String) -> Bool {
+    let path = normalizedDirectoryPath(path)
+    let root = normalizedDirectoryPath(root)
+    return path == root || path.hasPrefix(root + "/")
+  }
+
+  private func normalizedDirectoryPath(_ path: String) -> String {
+    var normalized = path
+    while normalized.count > 1 && normalized.hasSuffix("/") {
+      normalized.removeLast()
+    }
+    return normalized
   }
 
   /// Toggles the expanded state of a repository

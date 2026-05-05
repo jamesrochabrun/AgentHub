@@ -58,6 +58,96 @@ struct LazyBrowseSessionsLoadingTests {
     #expect(await watcher.startedSessionIds() == ["session-1"])
   }
 
+  @Test("Removing repository stops monitored sessions restored before browse load")
+  func removingRepositoryStopsRestoredBackupSessionsBeforeBrowseLoad() async throws {
+    let store = try SessionMetadataStore(path: temporaryDatabasePath())
+    try await store.saveWorkspaceState(
+      SessionWorkspaceState(
+        selectedRepositoryPaths: ["/tmp/project"],
+        monitoredSessionIds: ["session-1"]
+      ),
+      for: .claude
+    )
+
+    let session = CLISession(
+      id: "session-1",
+      projectPath: "/tmp/project",
+      branchName: "main",
+      firstMessage: "first",
+      sessionFilePath: "/tmp/session-1.jsonl"
+    )
+    let monitor = LazyBrowseMockMonitorService(
+      skeletonRepositories: [repository(path: "/tmp/project")],
+      browseRepositories: [repository(path: "/tmp/project", sessions: [session])],
+      sessionsById: ["session-1": session]
+    )
+    let watcher = RecordingFileWatcher()
+
+    let viewModel = CLISessionsViewModel(
+      monitorService: monitor,
+      fileWatcher: watcher,
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      metadataStore: store,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await waitUntil {
+      viewModel.loadingState == .idle && viewModel.monitoredSessions.count == 1
+    }
+
+    let repository = try #require(viewModel.selectedRepositories.first)
+    #expect(repository.totalSessionCount == 0)
+
+    viewModel.removeRepository(repository)
+
+    #expect(!viewModel.isMonitoring(sessionId: "session-1"))
+    await waitUntilAsync {
+      await watcher.stoppedSessionIds() == ["session-1"]
+    }
+  }
+
+  @Test("Browse request during repository restore scans after repositories arrive")
+  func browseRequestDuringRepositoryRestoreScansAfterRepositoriesArrive() async throws {
+    let store = try SessionMetadataStore(path: temporaryDatabasePath())
+    try await store.saveWorkspaceState(
+      SessionWorkspaceState(selectedRepositoryPaths: ["/tmp/project"]),
+      for: .codex
+    )
+
+    let session = CLISession(id: "session-1", projectPath: "/tmp/project")
+    let monitor = LazyBrowseMockMonitorService(
+      skeletonRepositories: [repository(path: "/tmp/project")],
+      browseRepositories: [repository(path: "/tmp/project", sessions: [session])],
+      restoreSkeletonDelay: .milliseconds(150)
+    )
+
+    let viewModel = CLISessionsViewModel(
+      monitorService: monitor,
+      fileWatcher: RecordingFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "codex", mode: .codex),
+      providerKind: .codex,
+      metadataStore: store,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    viewModel.ensureBrowseSessionsLoaded()
+    #expect(viewModel.browseSessionsLoadState == .loading)
+
+    try await Task.sleep(for: .milliseconds(50))
+    var calls = await monitor.calls()
+    #expect(calls.refreshCount == 0)
+
+    await waitUntil { viewModel.browseSessionsLoadState == .loaded }
+
+    calls = await monitor.calls()
+    #expect(calls.restoreSkeletonCount == 1)
+    #expect(calls.refreshCount == 1)
+    #expect(viewModel.allSessions.map(\.id) == ["session-1"])
+  }
+
   @Test("Browse load scans once, then manual refresh scans again")
   func browseLoadScansOnceThenManualRefreshScansAgain() async throws {
     let store = try SessionMetadataStore(path: temporaryDatabasePath())
@@ -189,6 +279,7 @@ private actor LazyBrowseMockMonitorService: SessionMonitorServiceProtocol {
   private let skeletonRepositories: [SelectedRepository]
   private let browseRepositories: [SelectedRepository]
   private let sessionsById: [String: CLISession]
+  private let restoreSkeletonDelay: Duration?
   private var restoreSkeletonCount = 0
   private var addRepositoriesCount = 0
   private var refreshCount = 0
@@ -197,11 +288,13 @@ private actor LazyBrowseMockMonitorService: SessionMonitorServiceProtocol {
   init(
     skeletonRepositories: [SelectedRepository],
     browseRepositories: [SelectedRepository],
-    sessionsById: [String: CLISession] = [:]
+    sessionsById: [String: CLISession] = [:],
+    restoreSkeletonDelay: Duration? = nil
   ) {
     self.skeletonRepositories = skeletonRepositories
     self.browseRepositories = browseRepositories
     self.sessionsById = sessionsById
+    self.restoreSkeletonDelay = restoreSkeletonDelay
   }
 
   func addRepository(_ path: String) async -> SelectedRepository? {
@@ -214,6 +307,9 @@ private actor LazyBrowseMockMonitorService: SessionMonitorServiceProtocol {
   }
 
   func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository] {
+    if let restoreSkeletonDelay {
+      try? await Task.sleep(for: restoreSkeletonDelay)
+    }
     restoreSkeletonCount += 1
     repositories = skeletonRepositories
     subject.send(repositories)
@@ -262,6 +358,7 @@ private struct LazyBrowseMockCalls: Sendable {
 private actor RecordingFileWatcher: SessionFileWatcherProtocol {
   nonisolated(unsafe) private let subject = PassthroughSubject<SessionFileWatcher.StateUpdate, Never>()
   private var started: [String] = []
+  private var stopped: [String] = []
 
   nonisolated var statePublisher: AnyPublisher<SessionFileWatcher.StateUpdate, Never> {
     subject.eraseToAnyPublisher()
@@ -271,13 +368,19 @@ private actor RecordingFileWatcher: SessionFileWatcherProtocol {
     started.append(sessionId)
   }
 
-  func stopMonitoring(sessionId: String) async {}
+  func stopMonitoring(sessionId: String) async {
+    stopped.append(sessionId)
+  }
   func getState(sessionId: String) async -> SessionMonitorState? { nil }
   func refreshState(sessionId: String) async {}
   func setApprovalTimeout(_ seconds: Int) async {}
 
   func startedSessionIds() -> [String] {
     started
+  }
+
+  func stoppedSessionIds() -> [String] {
+    stopped
   }
 }
 
@@ -300,6 +403,17 @@ private func waitUntil(
     try? await Task.sleep(for: .milliseconds(20))
   }
   #expect(condition())
+}
+
+private func waitUntilAsync(
+  timeout: Duration = .seconds(2),
+  condition: @escaping () async -> Bool
+) async {
+  let start = ContinuousClock.now
+  while !(await condition()), ContinuousClock.now - start < timeout {
+    try? await Task.sleep(for: .milliseconds(20))
+  }
+  #expect(await condition())
 }
 
 private func temporaryDatabasePath() -> String {
