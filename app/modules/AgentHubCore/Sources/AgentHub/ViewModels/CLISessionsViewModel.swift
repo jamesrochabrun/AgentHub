@@ -44,7 +44,9 @@ public final class CLISessionsViewModel {
 
   public private(set) var selectedRepositories: [SelectedRepository] = []
   public private(set) var loadingState: CLILoadingState = .idle
+  public private(set) var browseSessionsLoadState: BrowseSessionsLoadState = .notLoaded
   public private(set) var error: Error?
+  @ObservationIgnored private var browseSessionsLoadTask: Task<Void, Never>?
 
   // MARK: - Session Naming State
 
@@ -993,6 +995,11 @@ public final class CLISessionsViewModel {
         await MainActor.run { [weak self] in
           guard let self = self else { return }
 
+          if (self.loadingState == .restoringRepositories || self.loadingState == .restoringMonitoredSessions),
+             repositories.isEmpty {
+            return
+          }
+
           // Preserve expanded state from current repositories
           self.selectedRepositories = self.mergePreservingExpandedState(
             current: self.selectedRepositories,
@@ -1087,15 +1094,75 @@ public final class CLISessionsViewModel {
         pendingRestorationSessionIds = persistedSessionIds
       }
 
-      // Add repositories (triggers refreshSessions → setupSubscriptions)
+      // Restore repository/worktree shells first. Full all-session scanning is
+      // deferred until the Browse panel is opened.
       loadingState = .restoringRepositories
-      await monitorService.addRepositories(paths)
+      let restoredRepositories = await monitorService.restoreRepositoriesSkeleton(paths)
+      selectedRepositories = mergePreservingExpandedState(
+        current: selectedRepositories,
+        updated: restoredRepositories
+      )
       restoreExpansionState(workspaceState.expansionState)
+      persistSelectedRepositories()
+      syncClaudeHookInstalls()
+
+      if !persistedSessionIds.isEmpty {
+        loadingState = .restoringMonitoredSessions
+        let sessions = await monitorService.loadSessions(ids: persistedSessionIds)
+        restoreLoadedMonitoredSessions(sessions)
+      }
+
       loadingState = .idle
 
       // Safety timeout: stop trying to restore after 10 seconds
       try? await Task.sleep(for: .seconds(10))
       pendingRestorationSessionIds.removeAll()
+      persistMonitoredSessions()
+    }
+  }
+
+  private func restoreLoadedMonitoredSessions(_ sessions: [CLISession]) {
+    guard !sessions.isEmpty else { return }
+
+    var restoredIds: Set<String> = []
+    for session in sessions {
+      monitoredSessionIds.insert(session.id)
+      monitoredSessionBackup[session.id] = session
+      startPolling(session: session)
+      restoredIds.insert(session.id)
+    }
+
+    pendingRestorationSessionIds.subtract(restoredIds)
+    expandItemsContainingLoadedSessions(sessions)
+    loadCustomNames()
+    loadPinnedSessions()
+  }
+
+  private func expandItemsContainingLoadedSessions(_ sessions: [CLISession]) {
+    guard !sessions.isEmpty else { return }
+    let paths = Set(sessions.map(\.projectPath))
+
+    for repoIndex in selectedRepositories.indices {
+      var shouldExpandRepo = paths.contains { path in
+        path == selectedRepositories[repoIndex].path ||
+        path.hasPrefix(selectedRepositories[repoIndex].path + "/")
+      }
+
+      for worktreeIndex in selectedRepositories[repoIndex].worktrees.indices {
+        let worktreePath = selectedRepositories[repoIndex].worktrees[worktreeIndex].path
+        let shouldExpandWorktree = paths.contains { path in
+          path == worktreePath || path.hasPrefix(worktreePath + "/")
+        }
+
+        if shouldExpandWorktree {
+          selectedRepositories[repoIndex].worktrees[worktreeIndex].isExpanded = true
+          shouldExpandRepo = true
+        }
+      }
+
+      if shouldExpandRepo {
+        selectedRepositories[repoIndex].isExpanded = true
+      }
     }
   }
 
@@ -1311,9 +1378,11 @@ public final class CLISessionsViewModel {
     Task {
       // [CLISessionsVM] loadingState = .addingRepository(\(repoName))")
       loadingState = .addingRepository(name: repoName)
+      browseSessionsLoadState = .loading
       // [CLISessionsVM] Calling monitorService.addRepository...")
       await monitorService.addRepository(path)
       // [CLISessionsVM] monitorService.addRepository completed")
+      browseSessionsLoadState = .loaded
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
     }
@@ -1504,6 +1573,30 @@ public final class CLISessionsViewModel {
       // [CLISessionsVM] refreshSessions completed")
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
+    }
+  }
+
+  public func ensureBrowseSessionsLoaded() {
+    guard browseSessionsLoadState == .notLoaded else { return }
+    refreshBrowseSessions()
+  }
+
+  public func refreshBrowseSessions() {
+    browseSessionsLoadTask?.cancel()
+
+    guard hasRepositories else {
+      browseSessionsLoadState = .loaded
+      return
+    }
+
+    browseSessionsLoadState = .loading
+    browseSessionsLoadTask = Task { [weak self] in
+      guard let self else { return }
+      await self.monitorService.refreshSessions()
+      guard !Task.isCancelled else { return }
+      await MainActor.run { [weak self] in
+        self?.browseSessionsLoadState = .loaded
+      }
     }
   }
 

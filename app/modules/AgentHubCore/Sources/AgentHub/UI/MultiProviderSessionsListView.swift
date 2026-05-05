@@ -248,10 +248,6 @@ public struct MultiProviderSessionsListView: View {
       commandPaletteOverlay
     }
     .onAppear {
-      if hasRepositories {
-        claudeViewModel.refresh()
-        codexViewModel.refresh()
-      }
       if multiLaunchViewModel == nil {
         multiLaunchViewModel = MultiSessionLaunchViewModel(
           claudeViewModel: claudeViewModel,
@@ -1127,9 +1123,7 @@ public struct MultiProviderSessionsListView: View {
   private var browseHeaderView: some View {
     HStack(spacing: 8) {
       Button {
-        withAnimation(browseAnimation) {
-          isBrowseExpanded.toggle()
-        }
+        toggleBrowseExpanded()
       } label: {
         HStack(spacing: 6) {
           Image(systemName: isBrowseExpanded ? "chevron.down" : "chevron.up")
@@ -1164,6 +1158,18 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  private func toggleBrowseExpanded() {
+    let willExpand = !isBrowseExpanded
+    withAnimation(browseAnimation) {
+      isBrowseExpanded = willExpand
+    }
+
+    if willExpand {
+      claudeViewModel.ensureBrowseSessionsLoaded()
+      codexViewModel.ensureBrowseSessionsLoaded()
+    }
+  }
+
   /// Expandable content shown inside the scroll view when browse is expanded.
   private var browseExpandedContent: some View {
     VStack(spacing: 6) {
@@ -1180,22 +1186,80 @@ public struct MultiProviderSessionsListView: View {
         statusHeader
       }
 
-      if isSearchExpanded {
-        expandedSearchBar
-      } else {
-        collapsedSearchButton
-      }
+      switch currentViewModel.browseSessionsLoadState {
+      case .loading, .notLoaded:
+        browseLoadingView
 
-      LazyVStack(spacing: 16) {
-        selectedProviderContent
+      case .failed(let message):
+        browseErrorView(message: message)
+
+      case .loaded:
+        if isSearchExpanded {
+          expandedSearchBar
+        } else {
+          collapsedSearchButton
+        }
+
+        LazyVStack(spacing: 16) {
+          selectedProviderContent
+        }
+        .padding(.vertical, 4)
       }
-      .padding(.vertical, 4)
     }
+  }
+
+  private var browseLoadingView: some View {
+    HStack(spacing: 8) {
+      ProgressView()
+        .scaleEffect(0.7)
+      Text("Loading sessions...")
+        .font(.secondaryCaption)
+        .foregroundColor(.secondary)
+      Spacer()
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 12)
+    .background(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+        .fill(Color.surfaceOverlay)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+        .stroke(Color.borderSubtle, lineWidth: 1)
+    )
+  }
+
+  private func browseErrorView(message: String) -> some View {
+    HStack(spacing: 8) {
+      Image(systemName: "exclamationmark.triangle")
+        .font(.system(size: DesignTokens.IconSize.sm))
+        .foregroundColor(.orange)
+      Text(message)
+        .font(.secondaryCaption)
+        .foregroundColor(.secondary)
+        .lineLimit(2)
+      Spacer()
+      Button("Retry") {
+        currentViewModel.refreshBrowseSessions()
+      }
+      .buttonStyle(.borderless)
+      .font(.secondaryCaption)
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 12)
+    .background(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+        .fill(Color.surfaceOverlay)
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: DesignTokens.Radius.sm)
+        .stroke(Color.borderSubtle, lineWidth: 1)
+    )
   }
 
   private var statusHeader: some View {
     VStack(spacing: 8) {
-      if isLoading {
+      if currentViewModel.browseSessionsLoadState.isLoading {
         HStack(spacing: 8) {
           ProgressView().scaleEffect(0.7)
           Text("Refreshing sessions...")
@@ -1241,7 +1305,7 @@ public struct MultiProviderSessionsListView: View {
         .help(currentViewModel.showLastMessage ? "Showing last message" : "Showing first message")
 
         // Refresh button
-        Button(action: { currentViewModel.refresh() }) {
+        Button(action: { currentViewModel.refreshBrowseSessions() }) {
           Image(systemName: "arrow.clockwise")
             .font(.system(size: DesignTokens.IconSize.md))
             .frame(width: 28, height: 28)
@@ -1255,7 +1319,7 @@ public struct MultiProviderSessionsListView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isLoading)
+        .disabled(currentViewModel.browseSessionsLoadState.isLoading)
         .help("Refresh sessions")
       }
       .padding(.horizontal, 4)
@@ -1394,10 +1458,6 @@ public struct MultiProviderSessionsListView: View {
     claudeViewModel.totalSessionCount + codexViewModel.totalSessionCount
   }
 
-  private var isLoading: Bool {
-    claudeViewModel.isLoading || codexViewModel.isLoading
-  }
-
   // MARK: - Keyboard Shortcuts
 
   private func makeCommandPaletteSessions() -> [CommandPaletteSession] {
@@ -1475,6 +1535,8 @@ public struct MultiProviderSessionsListView: View {
     withAnimation(browseAnimation) {
       isBrowseExpanded = true
     }
+    claudeViewModel.ensureBrowseSessionsLoaded()
+    codexViewModel.ensureBrowseSessionsLoaded()
     launchExpandRequestID += 1
 
     guard let multiLaunchViewModel else { return }

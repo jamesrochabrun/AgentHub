@@ -53,6 +53,28 @@ public actor CodexSessionMonitorService {
     return repository
   }
 
+  public func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository] {
+    var seen: Set<String> = []
+    let uniquePaths = paths.filter { seen.insert($0).inserted }
+
+    guard !uniquePaths.isEmpty else {
+      selectedRepositories = []
+      repositoriesSubject.send([])
+      return []
+    }
+
+    let allWorktrees = await detectWorktreesBatch(repoPaths: uniquePaths)
+    selectedRepositories = uniquePaths.map { path in
+      SelectedRepository(
+        path: path,
+        worktrees: allWorktrees[path] ?? [],
+        isExpanded: true
+      )
+    }
+    repositoriesSubject.send(selectedRepositories)
+    return selectedRepositories
+  }
+
   public func removeRepository(_ path: String) async {
     selectedRepositories.removeAll { $0.path == path }
     repositoriesSubject.send(selectedRepositories)
@@ -65,6 +87,42 @@ public actor CodexSessionMonitorService {
   public func setSelectedRepositories(_ repositories: [SelectedRepository]) async {
     selectedRepositories = repositories
     await refreshSessions()
+  }
+
+  public func loadSessions(ids: Set<String>) async -> [CLISession] {
+    guard !ids.isEmpty else { return [] }
+    let files = CodexSessionFileScanner.listSessionFiles(codexDataPath: codexDataPath)
+    var sessions: [CLISession] = []
+
+    for path in files where ids.contains(where: { sessionId in
+      URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent.hasSuffix(sessionId)
+    }) {
+      guard let meta = CodexSessionFileScanner.readSessionMeta(from: path),
+            ids.contains(meta.sessionId) else {
+        continue
+      }
+
+      let parsed = CodexSessionJSONLParser.parseSessionFile(at: path)
+      let userMessages = Self.userMessagePreviews(from: path)
+      let worktree = worktreeInfo(containing: meta.projectPath)
+      let lastActivity = [parsed.lastActivityAt, fileModificationDate(path)].compactMap { $0 }.max()
+      let session = CLISession(
+        id: meta.sessionId,
+        projectPath: meta.projectPath,
+        branchName: meta.branch ?? worktree.branchName,
+        isWorktree: worktree.isWorktree,
+        lastActivityAt: lastActivity ?? meta.startedAt ?? Date(),
+        messageCount: parsed.messageCount,
+        isActive: isSessionFileActive(path),
+        firstMessage: userMessages.first,
+        lastMessage: userMessages.last,
+        slug: nil,
+        sessionFilePath: path
+      )
+      sessions.append(session)
+    }
+
+    return sessions.sorted { $0.lastActivityAt > $1.lastActivityAt }
   }
 
   // MARK: - Session Scanning
@@ -239,6 +297,46 @@ public actor CodexSessionMonitorService {
       return nil
     }
     return modDate
+  }
+
+  private func worktreeInfo(containing projectPath: String) -> (branchName: String?, isWorktree: Bool) {
+    let matchingWorktree = selectedRepositories
+      .flatMap(\.worktrees)
+      .filter { projectPath == $0.path || projectPath.hasPrefix($0.path + "/") }
+      .max { $0.path.count < $1.path.count }
+
+    return (matchingWorktree?.name, matchingWorktree?.isWorktree ?? false)
+  }
+
+  private static func userMessagePreviews(from path: String) -> (first: String?, last: String?) {
+    guard let data = FileManager.default.contents(atPath: path),
+          let content = String(data: data, encoding: .utf8) else {
+      return (nil, nil)
+    }
+
+    var first: String?
+    var last: String?
+
+    for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+      guard let lineData = line.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+            json["type"] as? String == "event_msg",
+            let payload = json["payload"] as? [String: Any],
+            payload["type"] as? String == "user_message",
+            let message = payload["message"] as? String else {
+        continue
+      }
+
+      let cleaned = message.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !cleaned.isEmpty else { continue }
+      let preview = String(cleaned.prefix(500))
+      if first == nil {
+        first = preview
+      }
+      last = preview
+    }
+
+    return (first, last)
   }
 
   // MARK: - Worktree Detection
