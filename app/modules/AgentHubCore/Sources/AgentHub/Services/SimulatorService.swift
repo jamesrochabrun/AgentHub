@@ -25,20 +25,34 @@ private final class ProcessRef: @unchecked Sendable {
   }
 }
 
-private final class DataAccumulator: @unchecked Sendable {
+final class BuildOutputAccumulator: @unchecked Sendable {
   private let lock = NSLock()
-  private var chunks: [Data] = []
+  private let maxBytes: Int
+  private var buffer = Data()
+
+  init(maxBytes: Int = 1_048_576) {
+    self.maxBytes = Swift.max(0, maxBytes)
+  }
 
   func append(_ chunk: Data) {
+    guard !chunk.isEmpty, maxBytes > 0 else { return }
     lock.lock()
-    chunks.append(chunk)
-    lock.unlock()
+    defer { lock.unlock() }
+    if chunk.count >= maxBytes {
+      buffer = Data(chunk.suffix(maxBytes))
+    } else {
+      buffer.append(chunk)
+      let overflow = buffer.count - maxBytes
+      if overflow > 0 {
+        buffer.removeFirst(overflow)
+      }
+    }
   }
 
   func combinedData() -> Data {
     lock.lock()
     defer { lock.unlock() }
-    return chunks.reduce(Data(), +)
+    return buffer
   }
 }
 
@@ -528,22 +542,32 @@ public final class SimulatorService {
     ref: ProcessRef,
     setup: BuildSetup
   ) -> Result<String, Error> {
-    let stdoutChunks = DataAccumulator()
+    let stdoutChunks = BuildOutputAccumulator()
+    let stderrChunks = BuildOutputAccumulator()
     ref.outputPipe.fileHandleForReading.readabilityHandler = { handle in
       let chunk = handle.availableData
       guard !chunk.isEmpty else { return }
       stdoutChunks.append(chunk)
+    }
+    ref.errorPipe.fileHandleForReading.readabilityHandler = { handle in
+      let chunk = handle.availableData
+      guard !chunk.isEmpty else { return }
+      stderrChunks.append(chunk)
     }
     do {
       try ref.process.run()
       ref.process.waitUntilExit()
     } catch {
       ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+      ref.errorPipe.fileHandleForReading.readabilityHandler = nil
       return .failure(error)
     }
     ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+    ref.errorPipe.fileHandleForReading.readabilityHandler = nil
     let tail = ref.outputPipe.fileHandleForReading.readDataToEndOfFile()
     if !tail.isEmpty { stdoutChunks.append(tail) }
+    let errorTail = ref.errorPipe.fileHandleForReading.readDataToEndOfFile()
+    if !errorTail.isEmpty { stderrChunks.append(errorTail) }
 
     guard ref.process.terminationStatus == 0 else {
       // Terminated by signal means the user cancelled — return a benign error
@@ -552,7 +576,7 @@ public final class SimulatorService {
           userInfo: [NSLocalizedDescriptionKey: "Build cancelled"]))
       }
       let outputText = String(data: stdoutChunks.combinedData(), encoding: .utf8) ?? ""
-      let stderrText = String(data: ref.errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let stderrText = String(data: stderrChunks.combinedData(), encoding: .utf8) ?? ""
       let msg = SimulatorService.extractBuildError(outputText: outputText, stderrText: stderrText, exitCode: ref.process.terminationStatus)
       return .failure(NSError(domain: "SimulatorService",
         code: Int(ref.process.terminationStatus),
@@ -586,22 +610,32 @@ public final class SimulatorService {
     }
 
     let buildStart = phaseTimestamp()
-    let stdoutChunks = DataAccumulator()
+    let stdoutChunks = BuildOutputAccumulator()
+    let stderrChunks = BuildOutputAccumulator()
     ref.outputPipe.fileHandleForReading.readabilityHandler = { handle in
       let chunk = handle.availableData
       guard !chunk.isEmpty else { return }
       stdoutChunks.append(chunk)
+    }
+    ref.errorPipe.fileHandleForReading.readabilityHandler = { handle in
+      let chunk = handle.availableData
+      guard !chunk.isEmpty else { return }
+      stderrChunks.append(chunk)
     }
     do {
       try ref.process.run()
       ref.process.waitUntilExit()
     } catch {
       ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+      ref.errorPipe.fileHandleForReading.readabilityHandler = nil
       return .failure(error)
     }
     ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+    ref.errorPipe.fileHandleForReading.readabilityHandler = nil
     let tail = ref.outputPipe.fileHandleForReading.readDataToEndOfFile()
     if !tail.isEmpty { stdoutChunks.append(tail) }
+    let errorTail = ref.errorPipe.fileHandleForReading.readDataToEndOfFile()
+    if !errorTail.isEmpty { stderrChunks.append(errorTail) }
 
     guard ref.process.terminationStatus == 0 else {
       if ref.process.terminationReason == .uncaughtSignal {
@@ -609,7 +643,7 @@ public final class SimulatorService {
           userInfo: [NSLocalizedDescriptionKey: "Build cancelled"]))
       }
       let outputText = String(data: stdoutChunks.combinedData(), encoding: .utf8) ?? ""
-      let stderrText = String(data: ref.errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let stderrText = String(data: stderrChunks.combinedData(), encoding: .utf8) ?? ""
       let msg = SimulatorService.extractBuildError(outputText: outputText, stderrText: stderrText, exitCode: ref.process.terminationStatus)
       return .failure(NSError(domain: "SimulatorService",
         code: Int(ref.process.terminationStatus),
