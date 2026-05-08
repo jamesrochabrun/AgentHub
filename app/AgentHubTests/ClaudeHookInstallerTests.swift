@@ -2,6 +2,19 @@ import Foundation
 import Testing
 @testable import AgentHubCore
 
+private final class CountingUserDefaults: UserDefaults, @unchecked Sendable {
+  private var setCounts: [String: Int] = [:]
+
+  override func set(_ value: Any?, forKey defaultName: String) {
+    setCounts[defaultName, default: 0] += 1
+    super.set(value, forKey: defaultName)
+  }
+
+  func setCount(forKey key: String) -> Int {
+    setCounts[key, default: 0]
+  }
+}
+
 @Suite("ClaudeHookInstaller")
 struct ClaudeHookInstallerTests {
 
@@ -13,7 +26,7 @@ struct ClaudeHookInstallerTests {
     let projectB: URL
     let bundledScriptURL: URL
     let sharedScriptURL: URL
-    let defaults: UserDefaults
+    let defaults: CountingUserDefaults
     let installer: ClaudeHookInstaller
     let suiteName: String
 
@@ -33,7 +46,7 @@ struct ClaudeHookInstallerTests {
       self.sharedScriptURL = base.appendingPathComponent("shared/hooks/agenthub-approval.sh")
 
       self.suiteName = "ClaudeHookInstallerTests.\(name).\(UUID().uuidString)"
-      guard let defaults = UserDefaults(suiteName: suiteName) else {
+      guard let defaults = CountingUserDefaults(suiteName: suiteName) else {
         throw NSError(domain: "fixture", code: 1)
       }
       self.defaults = defaults
@@ -70,6 +83,24 @@ struct ClaudeHookInstallerTests {
       return (hooks["PreToolUse"] as? [[String: Any]]) ?? []
     }
 
+    func postEntries(in settings: [String: Any]) -> [[String: Any]] {
+      let hooks = settings["hooks"] as? [String: Any] ?? [:]
+      return (hooks["PostToolUse"] as? [[String: Any]]) ?? []
+    }
+
+    func writeSettings(_ settings: [String: Any], for project: URL) throws {
+      let url = settingsLocal(for: project)
+      try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try JSONSerialization.data(withJSONObject: settings).write(to: url)
+    }
+
+    func modificationDate(of url: URL) throws -> Date {
+      try FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date ?? .distantPast
+    }
+
     func hasAgentHubEntry(in entries: [[String: Any]], scriptPath: String) -> Bool {
       let quoted = ClaudeHookInstaller.shellQuoted(scriptPath)
       return entries.contains { entry in
@@ -78,6 +109,17 @@ struct ClaudeHookInstallerTests {
           let cmd = $0["command"] as? String
           return cmd == scriptPath || cmd == quoted
         }
+      }
+    }
+
+    func agentHubEntryCount(in entries: [[String: Any]], scriptPath: String) -> Int {
+      let quoted = ClaudeHookInstaller.shellQuoted(scriptPath)
+      return entries.reduce(0) { count, entry in
+        let inner = entry["hooks"] as? [[String: Any]] ?? []
+        return count + inner.filter {
+          let cmd = $0["command"] as? String
+          return cmd == scriptPath || cmd == quoted
+        }.count
       }
     }
   }
@@ -163,6 +205,117 @@ struct ClaudeHookInstallerTests {
     #expect(matches.count == 1)
   }
 
+  @Test("same sync input twice does not rewrite settings or defaults")
+  func sameSyncInputTwiceDoesNotRewriteSettingsOrDefaults() async throws {
+    let fx = try Fixture(name: "sameInputNoRewrite")
+    defer { fx.teardown() }
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    let settingsURL = fx.settingsLocal(for: fx.projectA)
+    let modifiedAt = try fx.modificationDate(of: settingsURL)
+    let defaultsWrites = fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey)
+
+    try await Task.sleep(for: .milliseconds(20))
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    #expect(try fx.modificationDate(of: settingsURL) == modifiedAt)
+    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites)
+  }
+
+  @Test("adding one new path does not rewrite already-correct paths")
+  func addingNewPathDoesNotRewriteExistingPath() async throws {
+    let fx = try Fixture(name: "addOneNoRewriteExisting")
+    defer { fx.teardown() }
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    let settingsA = fx.settingsLocal(for: fx.projectA)
+    let modifiedA = try fx.modificationDate(of: settingsA)
+    let defaultsWrites = fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey)
+
+    try await Task.sleep(for: .milliseconds(20))
+    await fx.installer.syncInstalledPaths([fx.projectA.path, fx.projectB.path])
+
+    #expect(try fx.modificationDate(of: settingsA) == modifiedA)
+    #expect(FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectB).path))
+    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites + 1)
+  }
+
+  @Test("installed path with missing settings is repaired without rewriting defaults")
+  func missingSettingsForInstalledPathIsRepaired() async throws {
+    let fx = try Fixture(name: "repairMissingSettings")
+    defer { fx.teardown() }
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+    try FileManager.default.removeItem(at: fx.settingsLocal(for: fx.projectA))
+    let defaultsWrites = fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey)
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    let settings = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
+    #expect(fx.hasAgentHubEntry(in: fx.preEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
+    #expect(fx.hasAgentHubEntry(in: fx.postEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
+    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites)
+  }
+
+  @Test("installed path with duplicate hook entries is repaired")
+  func duplicateHookEntriesAreRepaired() async throws {
+    let fx = try Fixture(name: "repairDuplicateEntries")
+    defer { fx.teardown() }
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+    let quoted = ClaudeHookInstaller.shellQuoted(fx.sharedScriptURL.path)
+    let duplicated: [String: Any] = [
+      "hooks": [
+        "PreToolUse": [
+          ["matcher": "*", "hooks": [["type": "command", "command": quoted]]],
+          ["matcher": "*", "hooks": [["type": "command", "command": quoted]]],
+        ],
+        "PostToolUse": [
+          ["matcher": "*", "hooks": [["type": "command", "command": quoted]]],
+          ["matcher": "*", "hooks": [["type": "command", "command": quoted]]],
+        ],
+      ],
+    ]
+    try fx.writeSettings(duplicated, for: fx.projectA)
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    let settings = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
+    #expect(fx.agentHubEntryCount(in: fx.preEntries(in: settings), scriptPath: fx.sharedScriptURL.path) == 1)
+    #expect(fx.agentHubEntryCount(in: fx.postEntries(in: settings), scriptPath: fx.sharedScriptURL.path) == 1)
+  }
+
+  @Test("installed path with legacy per-project hook reference is repaired")
+  func legacyPerProjectHookReferenceIsRepaired() async throws {
+    let fx = try Fixture(name: "repairLegacyPerProject")
+    defer { fx.teardown() }
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+    let legacyScript = fx.projectHooksDir(for: fx.projectA)
+      .appendingPathComponent("agenthub-approval.sh")
+    let legacy: [String: Any] = [
+      "hooks": [
+        "PreToolUse": [
+          ["matcher": "*", "hooks": [["type": "command", "command": legacyScript.path]]]
+        ],
+        "PostToolUse": [
+          ["matcher": "*", "hooks": [["type": "command", "command": legacyScript.path]]]
+        ],
+      ],
+    ]
+    try fx.writeSettings(legacy, for: fx.projectA)
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    let settings = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
+    #expect(fx.hasAgentHubEntry(in: fx.preEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
+    #expect(fx.hasAgentHubEntry(in: fx.postEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
+    #expect(!fx.hasAgentHubEntry(in: fx.preEntries(in: settings), scriptPath: legacyScript.path))
+    #expect(!fx.hasAgentHubEntry(in: fx.postEntries(in: settings), scriptPath: legacyScript.path))
+  }
+
   @Test("sync removes entries from paths that dropped out of the set")
   func syncRemovesDroppedPaths() async throws {
     let fx = try Fixture(name: "removesDropped")
@@ -171,8 +324,10 @@ struct ClaudeHookInstallerTests {
     await fx.installer.syncInstalledPaths([fx.projectA.path, fx.projectB.path])
     #expect(FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectA).path))
     #expect(FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectB).path))
+    let defaultsWrites = fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey)
 
     await fx.installer.syncInstalledPaths([fx.projectA.path])
+    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites + 1)
 
     let a = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
     #expect(fx.hasAgentHubEntry(in: fx.preEntries(in: a), scriptPath: fx.sharedScriptURL.path))
@@ -182,6 +337,10 @@ struct ClaudeHookInstallerTests {
       let b = try fx.readSettings(at: bURL)
       #expect(!fx.hasAgentHubEntry(in: fx.preEntries(in: b), scriptPath: fx.sharedScriptURL.path))
     }
+
+    try await Task.sleep(for: .milliseconds(20))
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites + 1)
   }
 
   @Test("uninstall preserves unrelated user hooks")
@@ -336,5 +495,6 @@ struct ClaudeHookInstallerTests {
       let settings = try fx.readSettings(at: url)
       #expect(!fx.hasAgentHubEntry(in: fx.preEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
     }
+    #expect((fx.defaults.array(forKey: ClaudeHookInstaller.installedPathsKey) as? [String]) == [])
   }
 }

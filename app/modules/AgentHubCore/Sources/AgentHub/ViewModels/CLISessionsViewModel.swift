@@ -48,6 +48,9 @@ public final class CLISessionsViewModel {
   public private(set) var error: Error?
   @ObservationIgnored private var browseSessionsLoadTask: Task<Void, Never>?
   @ObservationIgnored private var shouldLoadBrowseSessionsAfterRepositoryRestore = false
+  @ObservationIgnored private var isLaunchRestoreInProgress = false
+  @ObservationIgnored private var skippedLaunchRestoreRepositoryHookSync = false
+  @ObservationIgnored private var pendingLaunchRestoreRepositoryHookSyncSkip: Set<String>?
 
   // MARK: - Session Naming State
 
@@ -993,8 +996,16 @@ public final class CLISessionsViewModel {
     subscriptionTask = Task { [weak self] in
       guard let self = self else { return }
 
+      var hasHandledInitialEmission = false
       for await repositories in self.monitorService.repositoriesPublisher.values {
         guard !Task.isCancelled else { break }
+
+        if !hasHandledInitialEmission {
+          hasHandledInitialEmission = true
+          if repositories.isEmpty {
+            continue
+          }
+        }
 
         await MainActor.run { [weak self] in
           guard let self = self else { return }
@@ -1027,7 +1038,10 @@ public final class CLISessionsViewModel {
           // `.claude/settings.local.json`. Claude Code reads that file once
           // at session start, so we install eagerly here rather than on
           // per-session startup. Codex injects nil → no-op.
-          self.syncClaudeHookInstalls()
+          let hookPaths = self.claudeHookInstallPaths(from: self.selectedRepositories)
+          if !self.shouldSkipRepositorySubscriptionHookSync(for: hookPaths) {
+            self.syncClaudeHookInstalls(paths: hookPaths)
+          }
         }
       }
     }
@@ -1037,17 +1051,41 @@ public final class CLISessionsViewModel {
   /// registered and hands it to the installer. Safe to call repeatedly —
   /// the installer is idempotent.
   private func syncClaudeHookInstalls() {
+    syncClaudeHookInstalls(paths: claudeHookInstallPaths(from: selectedRepositories))
+  }
+
+  private func syncClaudeHookInstalls(paths: Set<String>) {
     guard let installer = hookInstaller else { return }
+    Task {
+      await installer.syncInstalledPaths(paths)
+    }
+  }
+
+  private func claudeHookInstallPaths(from repositories: [SelectedRepository]) -> Set<String> {
     var paths: Set<String> = []
-    for repo in selectedRepositories {
+    for repo in repositories {
       paths.insert(repo.path)
       for worktree in repo.worktrees {
         paths.insert(worktree.path)
       }
     }
-    Task {
-      await installer.syncInstalledPaths(paths)
+    return paths
+  }
+
+  private func shouldSkipRepositorySubscriptionHookSync(for paths: Set<String>) -> Bool {
+    if isLaunchRestoreInProgress {
+      skippedLaunchRestoreRepositoryHookSync = true
+      pendingLaunchRestoreRepositoryHookSyncSkip = nil
+      return true
     }
+
+    if pendingLaunchRestoreRepositoryHookSyncSkip == paths {
+      pendingLaunchRestoreRepositoryHookSyncSkip = nil
+      return true
+    }
+
+    pendingLaunchRestoreRepositoryHookSyncSkip = nil
+    return false
   }
 
   /// Merges updated repositories while preserving expanded state from current repositories
@@ -1092,6 +1130,10 @@ public final class CLISessionsViewModel {
         return
       }
 
+      isLaunchRestoreInProgress = true
+      skippedLaunchRestoreRepositoryHookSync = false
+      pendingLaunchRestoreRepositoryHookSyncSkip = nil
+
       // Store persisted session IDs for progressive restoration
       let persistedSessionIds = Set(workspaceState.monitoredSessionIds)
       if !persistedSessionIds.isEmpty {
@@ -1102,13 +1144,17 @@ public final class CLISessionsViewModel {
       // deferred until the Browse panel is opened.
       loadingState = .restoringRepositories
       let restoredRepositories = await monitorService.restoreRepositoriesSkeleton(paths)
+      let restoredHookPaths = claudeHookInstallPaths(from: restoredRepositories)
+      if !skippedLaunchRestoreRepositoryHookSync {
+        pendingLaunchRestoreRepositoryHookSyncSkip = restoredHookPaths
+      }
       selectedRepositories = mergePreservingExpandedState(
         current: selectedRepositories,
         updated: restoredRepositories
       )
       restoreExpansionState(workspaceState.expansionState)
       persistSelectedRepositories()
-      syncClaudeHookInstalls()
+      syncClaudeHookInstalls(paths: restoredHookPaths)
 
       if !persistedSessionIds.isEmpty {
         loadingState = .restoringMonitoredSessions
@@ -1118,6 +1164,7 @@ public final class CLISessionsViewModel {
       }
 
       loadingState = .idle
+      isLaunchRestoreInProgress = false
       loadDeferredBrowseSessionsIfNeeded()
 
       // Safety timeout: stop trying to restore after 10 seconds

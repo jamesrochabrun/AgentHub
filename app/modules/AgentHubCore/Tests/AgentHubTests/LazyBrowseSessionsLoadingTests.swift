@@ -58,6 +58,83 @@ struct LazyBrowseSessionsLoadingTests {
     #expect(await watcher.startedSessionIds() == ["session-1"])
   }
 
+  @Test("Launch restore syncs Claude hooks once for restored repo and worktree paths")
+  func launchRestoreSyncsClaudeHooksOnce() async throws {
+    let store = try SessionMetadataStore(path: temporaryDatabasePath())
+    try await store.saveWorkspaceState(
+      SessionWorkspaceState(selectedRepositoryPaths: ["/tmp/project"]),
+      for: .claude
+    )
+
+    let restoredRepository = repositoryWithWorktree(
+      path: "/tmp/project",
+      worktreePath: "/tmp/project-feature"
+    )
+    let monitor = LazyBrowseMockMonitorService(
+      skeletonRepositories: [restoredRepository],
+      browseRepositories: [restoredRepository]
+    )
+    let hookInstaller = RecordingClaudeHookInstaller()
+
+    let viewModel = CLISessionsViewModel(
+      monitorService: monitor,
+      fileWatcher: RecordingFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      metadataStore: store,
+      approvalNotificationService: NoOpApprovalNotificationService(),
+      hookInstaller: hookInstaller
+    )
+
+    await waitUntil {
+      viewModel.loadingState == .idle && viewModel.selectedRepositories.count == 1
+    }
+    await waitUntilAsync {
+      await hookInstaller.syncRequests().count == 1
+    }
+
+    #expect(await hookInstaller.syncRequests() == [
+      Set(["/tmp/project", "/tmp/project-feature"])
+    ])
+  }
+
+  @Test("Idle repository changes still trigger Claude hook sync")
+  func idleRepositoryChangesTriggerClaudeHookSync() async throws {
+    let store = try SessionMetadataStore(path: temporaryDatabasePath())
+    let repository = repositoryWithWorktree(
+      path: "/tmp/project",
+      worktreePath: "/tmp/project-feature"
+    )
+    let monitor = LazyBrowseMockMonitorService(
+      skeletonRepositories: [],
+      browseRepositories: [repository]
+    )
+    let hookInstaller = RecordingClaudeHookInstaller()
+
+    let viewModel = CLISessionsViewModel(
+      monitorService: monitor,
+      fileWatcher: RecordingFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      metadataStore: store,
+      approvalNotificationService: NoOpApprovalNotificationService(),
+      hookInstaller: hookInstaller
+    )
+
+    try await Task.sleep(for: .milliseconds(50))
+    let baselineCount = await hookInstaller.syncRequests().count
+
+    await monitor.setSelectedRepositories([repository])
+
+    await waitUntilAsync {
+      await hookInstaller.syncRequests().count == baselineCount + 1
+    }
+    #expect(viewModel.selectedRepositories.map(\.path) == ["/tmp/project"])
+    #expect(await hookInstaller.syncRequests().last == Set(["/tmp/project", "/tmp/project-feature"]))
+  }
+
   @Test("Launch targeted restore skips sessions outside restored roots")
   func launchTargetedRestoreSkipsSessionsOutsideRestoredRoots() async throws {
     let store = try SessionMetadataStore(path: temporaryDatabasePath())
@@ -496,11 +573,46 @@ private actor RecordingFileWatcher: SessionFileWatcherProtocol {
   }
 }
 
+private actor RecordingClaudeHookInstaller: ClaudeHookInstallerProtocol {
+  private var requests: [Set<String>] = []
+  private var enabled = true
+
+  func isEnabled() async -> Bool {
+    enabled
+  }
+
+  func setEnabled(_ enabled: Bool) async {
+    self.enabled = enabled
+  }
+
+  func syncInstalledPaths(_ paths: Set<String>) async {
+    requests.append(paths)
+  }
+
+  func flushAll() async {}
+
+  func reconcileOnLaunch(expectedPaths: [String]) async {}
+
+  func syncRequests() -> [Set<String>] {
+    requests
+  }
+}
+
 private func repository(path: String, sessions: [CLISession] = []) -> SelectedRepository {
   SelectedRepository(
     path: path,
     worktrees: [
       WorktreeBranch(name: "main", path: path, isWorktree: false, sessions: sessions)
+    ]
+  )
+}
+
+private func repositoryWithWorktree(path: String, worktreePath: String) -> SelectedRepository {
+  SelectedRepository(
+    path: path,
+    worktrees: [
+      WorktreeBranch(name: "main", path: path, isWorktree: false),
+      WorktreeBranch(name: "feature", path: worktreePath, isWorktree: true),
     ]
   )
 }
