@@ -88,19 +88,38 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
       sweepAllInstalledPaths()
       return
     }
-    ensureSharedScript()
 
     let previously = Set(loadInstalledPaths())
     let toInstall = paths.subtracting(previously)
     let toUninstall = previously.subtracting(paths)
-    let toRepair = paths.intersection(previously) // ensure content is up to date
+    let toRepair = paths
+      .intersection(previously)
+      .filter { installNeedsRepair(atProjectPath: $0) }
 
+    if toInstall.isEmpty && toUninstall.isEmpty && toRepair.isEmpty {
+      saveInstalledPathsIfChanged(Array(previously))
+      return
+    }
+
+    if !toInstall.isEmpty || !toRepair.isEmpty {
+      ensureSharedScript()
+    }
+
+    var finalInstalled = previously
     for path in toUninstall {
-      uninstall(atProjectPath: path)
+      if uninstall(atProjectPath: path) {
+        finalInstalled.remove(path)
+      }
     }
-    for path in toInstall.union(toRepair) {
-      install(atProjectPath: path)
+    for path in toInstall {
+      if install(atProjectPath: path) {
+        finalInstalled.insert(path)
+      }
     }
+    for path in toRepair {
+      _ = install(atProjectPath: path)
+    }
+    saveInstalledPathsIfChanged(Array(finalInstalled))
   }
 
   public func flushAll() async {
@@ -111,37 +130,52 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     let expected = Set(expectedPaths)
     let previouslyInstalled = Set(loadInstalledPaths())
     let stale = previouslyInstalled.subtracting(expected)
+    var finalInstalled = previouslyInstalled
     for path in stale {
-      uninstall(atProjectPath: path, updatesInstalledPaths: false)
+      if uninstall(atProjectPath: path) {
+        finalInstalled.remove(path)
+      }
     }
-    saveInstalledPaths(Array(previouslyInstalled.subtracting(stale)))
+    saveInstalledPathsIfChanged(Array(finalInstalled))
   }
 
   // MARK: - Install / uninstall mechanics
 
-  private func install(atProjectPath path: String) {
+  @discardableResult
+  private func install(atProjectPath path: String) -> Bool {
     let settingsURL = ClaudeHookPaths.settingsLocalURL(inProjectAt: path)
     do {
-      migrateLegacyPerProjectScript(atProjectPath: path, settingsURL: settingsURL)
-      try mergeSettingsLocal(at: settingsURL, scriptPath: sharedScriptURL.path)
-      rememberInstalled(path: path)
+      removeLegacyPerProjectScriptIfPresent(atProjectPath: path)
+      try mergeSettingsLocal(
+        at: settingsURL,
+        scriptPath: sharedScriptURL.path,
+        legacyScriptPath: legacyPerProjectScriptURL(atProjectPath: path).path
+      )
+      return true
     } catch {
       AppLogger.watcher.error("[ClaudeHookInstaller] install failed for \(path): \(error.localizedDescription)")
+      return false
     }
   }
 
-  private func uninstall(atProjectPath path: String, updatesInstalledPaths: Bool = true) {
+  @discardableResult
+  private func uninstall(atProjectPath path: String) -> Bool {
     let settingsURL = ClaudeHookPaths.settingsLocalURL(inProjectAt: path)
     do {
-      migrateLegacyPerProjectScript(atProjectPath: path, settingsURL: settingsURL)
+      removeLegacyPerProjectScriptIfPresent(atProjectPath: path)
       if fileManager.fileExists(atPath: settingsURL.path) {
-        try unmergeSettingsLocal(at: settingsURL, scriptPath: sharedScriptURL.path)
+        try unmergeSettingsLocal(
+          at: settingsURL,
+          scriptPaths: [
+            sharedScriptURL.path,
+            legacyPerProjectScriptURL(atProjectPath: path).path,
+          ]
+        )
       }
-      if updatesInstalledPaths {
-        forgetInstalled(path: path)
-      }
+      return true
     } catch {
       AppLogger.watcher.error("[ClaudeHookInstaller] uninstall failed for \(path): \(error.localizedDescription)")
+      return false
     }
   }
 
@@ -150,25 +184,29 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
   /// directory. Removes the legacy script and any `settings.local.json` entry
   /// that still references it. Safe to run on every install/uninstall call
   /// because it only acts on our uniquely-named script.
-  private func migrateLegacyPerProjectScript(atProjectPath path: String, settingsURL: URL) {
-    let legacyScript = URL(fileURLWithPath: path, isDirectory: true)
+  private func legacyPerProjectScriptURL(atProjectPath path: String) -> URL {
+    URL(fileURLWithPath: path, isDirectory: true)
       .appendingPathComponent(".claude", isDirectory: true)
       .appendingPathComponent("hooks", isDirectory: true)
       .appendingPathComponent("agenthub-approval.sh", isDirectory: false)
+  }
+
+  private func removeLegacyPerProjectScriptIfPresent(atProjectPath path: String) {
+    let legacyScript = legacyPerProjectScriptURL(atProjectPath: path)
     if fileManager.fileExists(atPath: legacyScript.path) {
       try? fileManager.removeItem(at: legacyScript)
-    }
-    // Also strip any `settings.local.json` entry that still points at the old
-    // per-project path — we re-add ours pointing at the shared script next.
-    if fileManager.fileExists(atPath: settingsURL.path) {
-      try? unmergeSettingsLocal(at: settingsURL, scriptPath: legacyScript.path)
     }
   }
 
   private func sweepAllInstalledPaths() {
-    for path in loadInstalledPaths() {
-      uninstall(atProjectPath: path)
+    let previouslyInstalled = Set(loadInstalledPaths())
+    var finalInstalled = previouslyInstalled
+    for path in previouslyInstalled {
+      if uninstall(atProjectPath: path) {
+        finalInstalled.remove(path)
+      }
     }
+    saveInstalledPathsIfChanged(Array(finalInstalled))
   }
 
   // MARK: - Shared script management
@@ -204,27 +242,82 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
 
   // MARK: - settings.local.json merge
 
-  private func mergeSettingsLocal(at url: URL, scriptPath: String) throws {
+  private func installNeedsRepair(atProjectPath path: String) -> Bool {
+    let settingsURL = ClaudeHookPaths.settingsLocalURL(inProjectAt: path)
+    guard fileManager.fileExists(atPath: settingsURL.path),
+          let data = try? Data(contentsOf: settingsURL),
+          let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let hooks = root["hooks"] as? [String: Any] else {
+      return true
+    }
+
+    let legacyScriptPath = legacyPerProjectScriptURL(atProjectPath: path).path
+    let pre = inspectEventEntry(
+      hooks["PreToolUse"],
+      scriptPath: sharedScriptURL.path,
+      legacyScriptPath: legacyScriptPath
+    )
+    let post = inspectEventEntry(
+      hooks["PostToolUse"],
+      scriptPath: sharedScriptURL.path,
+      legacyScriptPath: legacyScriptPath
+    )
+
+    return !pre.hasCurrentEntry
+      || !post.hasCurrentEntry
+      || pre.hasDuplicateAgentHubEntries
+      || post.hasDuplicateAgentHubEntries
+      || pre.hasLegacyPerProjectReference
+      || post.hasLegacyPerProjectReference
+  }
+
+  private func mergeSettingsLocal(at url: URL, scriptPath: String, legacyScriptPath: String) throws {
     var root: [String: Any] = [:]
     if let data = try? Data(contentsOf: url),
        let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
       root = parsed
     }
     var hooks = root["hooks"] as? [String: Any] ?? [:]
-    hooks = upsertEventEntry(in: hooks, event: "PreToolUse", scriptPath: scriptPath)
-    hooks = upsertEventEntry(in: hooks, event: "PostToolUse", scriptPath: scriptPath)
+    var didChange = false
+    let pre = upsertEventEntry(
+      in: hooks,
+      event: "PreToolUse",
+      scriptPath: scriptPath,
+      legacyScriptPath: legacyScriptPath
+    )
+    hooks = pre.hooks
+    didChange = didChange || pre.didChange
+
+    let post = upsertEventEntry(
+      in: hooks,
+      event: "PostToolUse",
+      scriptPath: scriptPath,
+      legacyScriptPath: legacyScriptPath
+    )
+    hooks = post.hooks
+    didChange = didChange || post.didChange
+
+    guard didChange else { return }
     root["hooks"] = hooks
     try writeJSON(root, to: url)
   }
 
-  private func unmergeSettingsLocal(at url: URL, scriptPath: String) throws {
+  private func unmergeSettingsLocal(at url: URL, scriptPaths: [String]) throws {
     guard let data = try? Data(contentsOf: url),
           var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       return
     }
     guard var hooks = root["hooks"] as? [String: Any] else { return }
-    hooks = removeEventEntry(in: hooks, event: "PreToolUse", scriptPath: scriptPath)
-    hooks = removeEventEntry(in: hooks, event: "PostToolUse", scriptPath: scriptPath)
+    var didChange = false
+    let pre = removeEventEntry(in: hooks, event: "PreToolUse", scriptPaths: scriptPaths)
+    hooks = pre.hooks
+    didChange = didChange || pre.didChange
+
+    let post = removeEventEntry(in: hooks, event: "PostToolUse", scriptPaths: scriptPaths)
+    hooks = post.hooks
+    didChange = didChange || post.didChange
+
+    guard didChange else { return }
     if hooks.isEmpty {
       root.removeValue(forKey: "hooks")
     } else {
@@ -240,14 +333,28 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
   private func upsertEventEntry(
     in hooks: [String: Any],
     event: String,
-    scriptPath: String
-  ) -> [String: Any] {
+    scriptPath: String,
+    legacyScriptPath: String
+  ) -> (hooks: [String: Any], didChange: Bool) {
     var result = hooks
-    var entries = result[event] as? [[String: Any]] ?? []
-    entries.removeAll { entry in
-      guard let inner = entry["hooks"] as? [[String: Any]] else { return false }
-      return inner.contains { isOurCommand($0["command"] as? String, scriptPath: scriptPath) }
+    let eventValue = result[event]
+    let inspection = inspectEventEntry(
+      eventValue,
+      scriptPath: scriptPath,
+      legacyScriptPath: legacyScriptPath
+    )
+
+    if inspection.hasCurrentEntry,
+       !inspection.hasDuplicateAgentHubEntries,
+       !inspection.hasLegacyPerProjectReference {
+      return (result, false)
     }
+
+    var entries = (eventValue as? [[String: Any]]) ?? []
+    entries = removeAgentHubCommands(
+      from: entries,
+      scriptPaths: [scriptPath, legacyScriptPath]
+    )
     entries.append([
       "matcher": "*",
       "hooks": [
@@ -258,33 +365,108 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
       ],
     ])
     result[event] = entries
-    return result
+    return (result, true)
   }
 
   private func removeEventEntry(
     in hooks: [String: Any],
     event: String,
-    scriptPath: String
-  ) -> [String: Any] {
+    scriptPaths: [String]
+  ) -> (hooks: [String: Any], didChange: Bool) {
     var result = hooks
-    guard var entries = result[event] as? [[String: Any]] else { return result }
-    entries.removeAll { entry in
-      guard let inner = entry["hooks"] as? [[String: Any]] else { return false }
-      return inner.contains { isOurCommand($0["command"] as? String, scriptPath: scriptPath) }
+    guard let originalEntries = result[event] as? [[String: Any]] else {
+      return (result, false)
     }
+    let entries = removeAgentHubCommands(from: originalEntries, scriptPaths: scriptPaths)
+    let didChange = agentHubCommandCount(in: originalEntries, scriptPaths: scriptPaths) > 0
+    guard didChange else { return (result, false) }
     if entries.isEmpty {
       result.removeValue(forKey: event)
     } else {
       result[event] = entries
     }
-    return result
+    return (result, true)
+  }
+
+  private struct EventEntryInspection {
+    let hasCurrentEntry: Bool
+    let hasDuplicateAgentHubEntries: Bool
+    let hasLegacyPerProjectReference: Bool
+  }
+
+  private func inspectEventEntry(
+    _ eventValue: Any?,
+    scriptPath: String,
+    legacyScriptPath: String
+  ) -> EventEntryInspection {
+    guard let entries = eventValue as? [[String: Any]] else {
+      return EventEntryInspection(
+        hasCurrentEntry: false,
+        hasDuplicateAgentHubEntries: false,
+        hasLegacyPerProjectReference: false
+      )
+    }
+
+    var currentCount = 0
+    var agentHubCount = 0
+    var hasLegacy = false
+    let currentCommand = Self.shellQuoted(scriptPath)
+    let legacyCommands = Set([legacyScriptPath, Self.shellQuoted(legacyScriptPath)])
+
+    for entry in entries {
+      let inner = entry["hooks"] as? [[String: Any]] ?? []
+      for hook in inner {
+        guard let command = hook["command"] as? String else { continue }
+        if command == currentCommand {
+          currentCount += 1
+          agentHubCount += 1
+        } else if command == scriptPath || legacyCommands.contains(command) {
+          agentHubCount += 1
+          if legacyCommands.contains(command) {
+            hasLegacy = true
+          }
+        }
+      }
+    }
+
+    return EventEntryInspection(
+      hasCurrentEntry: currentCount == 1,
+      hasDuplicateAgentHubEntries: agentHubCount > 1,
+      hasLegacyPerProjectReference: hasLegacy
+    )
+  }
+
+  private func removeAgentHubCommands(
+    from entries: [[String: Any]],
+    scriptPaths: [String]
+  ) -> [[String: Any]] {
+    entries.compactMap { entry in
+      guard let inner = entry["hooks"] as? [[String: Any]] else { return entry }
+      var cleaned = entry
+      let filtered = inner.filter {
+        !isOurCommand($0["command"] as? String, scriptPaths: scriptPaths)
+      }
+      guard filtered.count != inner.count else { return entry }
+      guard !filtered.isEmpty else { return nil }
+      cleaned["hooks"] = filtered
+      return cleaned
+    }
+  }
+
+  private func agentHubCommandCount(in entries: [[String: Any]], scriptPaths: [String]) -> Int {
+    entries.reduce(0) { count, entry in
+      let inner = entry["hooks"] as? [[String: Any]] ?? []
+      return count + inner.filter {
+        isOurCommand($0["command"] as? String, scriptPaths: scriptPaths)
+      }.count
+    }
   }
 
   /// Matches both the current shell-quoted form and the legacy unquoted form
   /// so that older installations get cleanly upgraded on the next sync.
-  private func isOurCommand(_ command: String?, scriptPath: String) -> Bool {
+  private func isOurCommand(_ command: String?, scriptPaths: [String]) -> Bool {
     guard let command else { return false }
-    return command == scriptPath || command == Self.shellQuoted(scriptPath)
+    return scriptPaths.contains { command == $0 || command == Self.shellQuoted($0) }
   }
 
   /// Wraps a path in single quotes so `/bin/sh -c` doesn't word-split on
@@ -316,15 +498,9 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     defaults.set(paths.sorted(), forKey: Self.installedPathsKey)
   }
 
-  private func rememberInstalled(path: String) {
-    var set = Set(loadInstalledPaths())
-    set.insert(path)
-    saveInstalledPaths(Array(set))
-  }
-
-  private func forgetInstalled(path: String) {
-    var set = Set(loadInstalledPaths())
-    set.remove(path)
-    saveInstalledPaths(Array(set))
+  private func saveInstalledPathsIfChanged(_ paths: [String]) {
+    let sortedPaths = paths.sorted()
+    guard loadInstalledPaths().sorted() != sortedPaths else { return }
+    saveInstalledPaths(sortedPaths)
   }
 }
