@@ -22,6 +22,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     static let createTerminalWorkspaces = "v5_create_terminal_workspaces"
     static let createSessionWorkspaceState = "v6_create_session_workspace_state"
     static let createManagedProcesses = "v7_create_managed_processes"
+    static let createClaudeHookInstallations = "v8_create_claude_hook_installations"
   }
 
   static let migrationIdentifiers = [
@@ -31,7 +32,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     MigrationID.addPinned,
     MigrationID.createTerminalWorkspaces,
     MigrationID.createSessionWorkspaceState,
-    MigrationID.createManagedProcesses
+    MigrationID.createManagedProcesses,
+    MigrationID.createClaudeHookInstallations
   ]
 
   private let dbQueue: DatabaseQueue
@@ -144,6 +146,14 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       try db.create(index: "idx_managed_processes_session", on: "managed_processes", columns: ["provider", "sessionId"])
     }
 
+    migrator.registerMigration(MigrationID.createClaudeHookInstallations) { db in
+      try db.create(table: "claude_hook_installations") { t in
+        t.column("projectPath", .text).primaryKey()
+        t.column("installedAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+      }
+    }
+
     return migrator
   }
 
@@ -241,6 +251,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     try dbQueue.write { db in
       _ = try TerminalWorkspaceRecord.deleteAll(db)
       _ = try SessionWorkspaceStateRecord.deleteAll(db)
+      _ = try ClaudeHookInstallationRecord.deleteAll(db)
       _ = try ManagedProcessRecord.deleteAll(db)
       _ = try AIConfigRecord.deleteAll(db)
       _ = try SessionRepoMapping.deleteAll(db)
@@ -413,6 +424,36 @@ extension SessionMetadataStore: ManagedProcessStoreProtocol {
   public func getManagedProcesses() async throws -> [ManagedProcessRecord] {
     try await dbQueue.read { db in
       try ManagedProcessRecord.fetchAll(db)
+    }
+  }
+}
+
+extension SessionMetadataStore: ClaudeHookInstallStateStoreProtocol {
+  public func loadClaudeHookInstalledPaths() async throws -> Set<String> {
+    try await dbQueue.read { db in
+      let records = try ClaudeHookInstallationRecord.fetchAll(db)
+      return Set(records.map(\.projectPath))
+    }
+  }
+
+  public func replaceClaudeHookInstalledPaths(_ paths: Set<String>) async throws {
+    try await dbQueue.write { db in
+      let existingRecords = try ClaudeHookInstallationRecord.fetchAll(db)
+      let existingByPath = Dictionary(uniqueKeysWithValues: existingRecords.map { ($0.projectPath, $0) })
+      let pathsToDelete = Array(Set(existingByPath.keys).subtracting(paths))
+      let now = Date.now
+
+      if !pathsToDelete.isEmpty {
+        _ = try ClaudeHookInstallationRecord
+          .filter(pathsToDelete.contains(Column("projectPath")))
+          .deleteAll(db)
+      }
+
+      for path in paths.sorted() {
+        var record = existingByPath[path] ?? ClaudeHookInstallationRecord(projectPath: path, installedAt: now)
+        record.updatedAt = now
+        try record.save(db)
+      }
     }
   }
 }
