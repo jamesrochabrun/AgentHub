@@ -188,7 +188,7 @@ public final class CLISessionsViewModel {
       .filter { $0.sessionId == session.id }
       .receive(on: DispatchQueue.main)
       .sink { [weak self] update in
-        self?.monitorStates[session.id] = update.state
+        self?.updateMonitorState(update.state, for: session.id)
       }
 
     monitoringCancellables[session.id] = cancellable
@@ -217,7 +217,7 @@ public final class CLISessionsViewModel {
     AppLogger.session.info("[Polling] stopPolling called for session: \(sessionId.prefix(8), privacy: .public)")
 
     monitoringCancellables.removeValue(forKey: sessionId)
-    monitorStates.removeValue(forKey: sessionId)
+    removeMonitorState(for: sessionId)
 
     let claimStore = approvalClaimStore
 
@@ -789,6 +789,9 @@ public final class CLISessionsViewModel {
 
   /// Current monitoring states keyed by session ID
   public private(set) var monitorStates: [String: SessionMonitorState] = [:]
+
+  /// Per-session state models keyed by session ID.
+  private var monitorStateModels: [String: SessionMonitorStateModel] = [:]
 
   /// Cached project-level preview eligibility keyed by normalized project path.
   public private(set) var webPreviewCandidates: [String: WebPreviewCandidateStatus] = [:]
@@ -2534,7 +2537,7 @@ public final class CLISessionsViewModel {
   public func stopMonitoring(sessionId: String) {
     monitoredSessionIds.remove(sessionId)
     monitoredSessionBackup.removeValue(forKey: sessionId)
-    monitorStates.removeValue(forKey: sessionId)
+    removeMonitorState(for: sessionId)
     monitoringCancellables.removeValue(forKey: sessionId)
 
     // Remove and terminate the terminal process
@@ -2568,6 +2571,43 @@ public final class CLISessionsViewModel {
       // Session not found anywhere - should not happen, but handle gracefully
       return nil
     }
+  }
+
+  public func monitorStateModel(for sessionId: String) -> SessionMonitorStateModel {
+    if let stateModel = monitorStateModels[sessionId] {
+      return stateModel
+    }
+
+    let stateModel = SessionMonitorStateModel(
+      sessionId: sessionId,
+      state: monitorStates[sessionId]
+    )
+    monitorStateModels[sessionId] = stateModel
+    return stateModel
+  }
+
+  public func existingMonitorStateModel(for sessionId: String) -> SessionMonitorStateModel? {
+    monitorStateModels[sessionId]
+  }
+
+  public var monitoredSessionPresentations: [MonitoredSessionPresentation] {
+    monitoredSessions.map { item in
+      MonitoredSessionPresentation(
+        session: item.session,
+        stateModel: monitorStateModel(for: item.session.id)
+      )
+    }
+  }
+
+  private func updateMonitorState(_ state: SessionMonitorState, for sessionId: String) {
+    monitorStates[sessionId] = state
+    monitorStateModels[sessionId]?.update(state)
+  }
+
+  private func removeMonitorState(for sessionId: String) {
+    monitorStates.removeValue(forKey: sessionId)
+    monitorStateModels[sessionId]?.update(nil)
+    monitorStateModels.removeValue(forKey: sessionId)
   }
 
   // MARK: - Search
