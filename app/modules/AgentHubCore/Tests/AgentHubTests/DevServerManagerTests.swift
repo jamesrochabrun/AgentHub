@@ -65,7 +65,8 @@ struct DevServerManagerTests {
     DevServerManager.shared.connectToExistingServer(for: key, url: malformedURL)
     defer { DevServerManager.shared.stopServer(for: key) }
 
-    guard case .ready(let url) = DevServerManager.shared.state(for: key) else {
+    let state: DevServerState = DevServerManager.shared.state(for: key)
+    guard case .ready(let url) = state else {
       Issue.record("Expected ready server state")
       return
     }
@@ -81,7 +82,8 @@ struct DevServerManagerTests {
     DevServerManager.shared.failServer(for: key, error: "Connection refused")
     defer { DevServerManager.shared.stopServer(for: key) }
 
-    guard case .failed(let error) = DevServerManager.shared.state(for: key) else {
+    let state: DevServerState = DevServerManager.shared.state(for: key)
+    guard case .failed(let error) = state else {
       Issue.record("Expected failed server state")
       return
     }
@@ -95,7 +97,8 @@ struct DevServerManagerTests {
     let sessionId = "test-\(UUID().uuidString)"
     let storybookKey = "\(sessionId):storybook"
 
-    #expect(DevServerManager.shared.state(for: storybookKey) == .idle)
+    let initialStorybookState: DevServerState = DevServerManager.shared.state(for: storybookKey)
+    #expect(initialStorybookState == .idle)
 
     let url = URL(string: "http://localhost:6006")!
     DevServerManager.shared.connectToExistingServer(for: storybookKey, url: url)
@@ -107,7 +110,8 @@ struct DevServerManagerTests {
     }
     #expect(readyURL.absoluteString == "http://localhost:6006")
 
-    #expect(DevServerManager.shared.state(for: sessionId) == .idle)
+    let appState: DevServerState = DevServerManager.shared.state(for: sessionId)
+    #expect(appState == .idle)
   }
 
   private func makeProjectFixture(packageJSON: String) throws -> URL {

@@ -29,9 +29,13 @@ public enum SessionProviderKind: String, CaseIterable, Sendable {
 public protocol SessionMonitorServiceProtocol: AnyObject, Sendable {
   var repositoriesPublisher: AnyPublisher<[SelectedRepository], Never> { get }
 
+  /// Adds a repository and returns it when a refresh was performed.
+  /// Returns nil for duplicate/no-op adds.
   @discardableResult
   func addRepository(_ path: String) async -> SelectedRepository?
   func addRepositories(_ paths: [String]) async
+  func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository]
+  func loadSessions(ids: Set<String>) async -> [CLISession]
   func removeRepository(_ path: String) async
   func getSelectedRepositories() async -> [SelectedRepository]
   func setSelectedRepositories(_ repositories: [SelectedRepository]) async
@@ -50,6 +54,19 @@ public extension SessionMonitorServiceProtocol {
     for path in paths {
       await addRepository(path)
     }
+  }
+
+  func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository] {
+    await addRepositories(paths)
+    return await getSelectedRepositories()
+  }
+
+  func loadSessions(ids: Set<String>) async -> [CLISession] {
+    let repositories = await getSelectedRepositories()
+    return repositories
+      .flatMap { $0.worktrees }
+      .flatMap { $0.sessions }
+      .filter { ids.contains($0.id) }
   }
 }
 

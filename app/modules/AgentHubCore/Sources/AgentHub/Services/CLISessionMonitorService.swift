@@ -56,12 +56,12 @@ public actor CLISessionMonitorService {
 
   /// Adds a repository to monitor and detects its worktrees
   /// - Parameter path: Path to the git repository
-  /// - Returns: The created SelectedRepository with detected worktrees
+  /// - Returns: The created SelectedRepository with detected worktrees, or nil for a duplicate add
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
     // Check if already added
     guard !selectedRepositories.contains(where: { $0.path == path }) else {
-      return selectedRepositories.first { $0.path == path }
+      return nil
     }
 
     // Detect worktrees for this repository
@@ -111,6 +111,32 @@ public actor CLISessionMonitorService {
     await refreshSessions(skipWorktreeRedetection: true)
   }
 
+  /// Restores selected repositories and worktrees without scanning every session.
+  /// Used on app launch so the main monitored-session list can appear quickly.
+  public func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository] {
+    var seen: Set<String> = []
+    let uniquePaths = paths.filter { seen.insert($0).inserted }
+
+    guard !uniquePaths.isEmpty else {
+      selectedRepositories = []
+      invalidateHistoryCache()
+      repositoriesSubject.send([])
+      return []
+    }
+
+    let allWorktrees = await detectWorktreesBatch(repoPaths: uniquePaths)
+    selectedRepositories = uniquePaths.map { path in
+      SelectedRepository(
+        path: path,
+        worktrees: allWorktrees[path] ?? [],
+        isExpanded: true
+      )
+    }
+    invalidateHistoryCache()
+    repositoriesSubject.send(selectedRepositories)
+    return selectedRepositories
+  }
+
   /// Removes a repository from monitoring
   /// - Parameter path: Path to the repository to remove
   public func removeRepository(_ path: String) async {
@@ -129,6 +155,30 @@ public actor CLISessionMonitorService {
     selectedRepositories = repositories
     invalidateHistoryCache()
     await refreshSessions()
+  }
+
+  /// Loads only the requested Claude sessions from their JSONL files.
+  /// This avoids parsing the global history file during app launch.
+  public func loadSessions(ids: Set<String>) async -> [CLISession] {
+    guard !ids.isEmpty else { return [] }
+    let claudeDataPath = claudeDataPath
+    let filesBySessionId = await Task.detached(priority: .userInitiated) {
+      CLISessionMonitorService.findClaudeSessionFiles(
+        sessionIds: ids,
+        claudeDataPath: claudeDataPath
+      )
+    }.value
+
+    var sessions: [CLISession] = []
+    for sessionId in ids {
+      guard let filePath = filesBySessionId[sessionId],
+            let session = restoreSession(sessionId: sessionId, filePath: filePath) else {
+        continue
+      }
+      sessions.append(session)
+    }
+
+    return sessions.sorted { $0.lastActivityAt > $1.lastActivityAt }
   }
 
   // MARK: - Session Scanning
@@ -463,6 +513,156 @@ public actor CLISessionMonitorService {
       }
     }
     return paths
+  }
+
+  private func restoreSession(sessionId: String, filePath: String) -> CLISession? {
+    guard let data = FileManager.default.contents(atPath: filePath),
+          let content = String(data: data, encoding: .utf8) else {
+      return nil
+    }
+
+    var projectPath: String?
+    var branchName: String?
+    var slug: String?
+    var firstMessage: String?
+    var lastMessage: String?
+    var messageCount = 0
+    var lastActivityAt: Date?
+
+    for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+      guard let lineData = line.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
+        continue
+      }
+
+      if let lineSessionId = json["sessionId"] as? String, lineSessionId != sessionId {
+        return nil
+      }
+      if projectPath == nil, let cwd = json["cwd"] as? String {
+        projectPath = cwd
+      }
+      if branchName == nil, let gitBranch = json["gitBranch"] as? String {
+        branchName = gitBranch
+      }
+      if slug == nil, let sessionSlug = json["slug"] as? String {
+        slug = sessionSlug
+      }
+      if let timestamp = Self.parseISO8601Date(json["timestamp"] as? String),
+         lastActivityAt.map({ timestamp > $0 }) ?? true {
+        lastActivityAt = timestamp
+      }
+
+      guard let type = json["type"] as? String else { continue }
+      if type == "user" || type == "assistant" {
+        messageCount += 1
+      }
+      if type == "user",
+         let preview = Self.extractClaudeTextPreview(from: json),
+         !preview.isEmpty {
+        if firstMessage == nil {
+          firstMessage = preview
+        }
+        lastMessage = preview
+      }
+    }
+
+    guard let projectPath else { return nil }
+    let worktree = worktreeInfo(containing: projectPath)
+    let fileModifiedAt = fileModificationDate(filePath)
+    let activityAt = [lastActivityAt, fileModifiedAt].compactMap { $0 }.max() ?? Date()
+
+    return CLISession(
+      id: sessionId,
+      projectPath: projectPath,
+      branchName: branchName ?? worktree.branchName,
+      isWorktree: worktree.isWorktree,
+      lastActivityAt: activityAt,
+      messageCount: messageCount,
+      isActive: fileModifiedAt.map { Date().timeIntervalSince($0) < 60 } ?? false,
+      firstMessage: firstMessage,
+      lastMessage: lastMessage,
+      slug: slug,
+      sessionFilePath: filePath
+    )
+  }
+
+  private func worktreeInfo(containing projectPath: String) -> (branchName: String?, isWorktree: Bool) {
+    let matchingWorktree = selectedRepositories
+      .flatMap(\.worktrees)
+      .filter { projectPath == $0.path || projectPath.hasPrefix($0.path + "/") }
+      .max { $0.path.count < $1.path.count }
+
+    return (matchingWorktree?.name, matchingWorktree?.isWorktree ?? false)
+  }
+
+  private func fileModificationDate(_ path: String) -> Date? {
+    guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+          let modDate = attrs[.modificationDate] as? Date else {
+      return nil
+    }
+    return modDate
+  }
+
+  private static func findClaudeSessionFiles(
+    sessionIds: Set<String>,
+    claudeDataPath: String
+  ) -> [String: String] {
+    let projectsRoot = URL(fileURLWithPath: claudeDataPath).appendingPathComponent("projects")
+    guard let enumerator = FileManager.default.enumerator(
+      at: projectsRoot,
+      includingPropertiesForKeys: [.isRegularFileKey],
+      options: [.skipsHiddenFiles]
+    ) else {
+      return [:]
+    }
+
+    var results: [String: String] = [:]
+    let expectedFileNames = Dictionary(uniqueKeysWithValues: sessionIds.map { ("\($0).jsonl", $0) })
+
+    for case let url as URL in enumerator {
+      guard url.pathExtension == "jsonl",
+            !url.path.contains("/subagents/"),
+            let sessionId = expectedFileNames[url.lastPathComponent],
+            results[sessionId] == nil else {
+        continue
+      }
+      results[sessionId] = url.path
+    }
+
+    return results
+  }
+
+  private static func extractClaudeTextPreview(from json: [String: Any]) -> String? {
+    guard let message = json["message"] as? [String: Any] else { return nil }
+
+    if let text = message["content"] as? String {
+      return cleanPreview(text)
+    }
+
+    guard let blocks = message["content"] as? [[String: Any]] else { return nil }
+    let text = blocks.compactMap { block -> String? in
+      guard block["type"] as? String == "text" else { return nil }
+      return block["text"] as? String
+    }.joined(separator: " ")
+
+    return cleanPreview(text)
+  }
+
+  private static func cleanPreview(_ text: String) -> String? {
+    let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !cleaned.isEmpty else { return nil }
+    return String(cleaned.prefix(500))
+  }
+
+  private static func parseISO8601Date(_ string: String?) -> Date? {
+    guard let string else { return nil }
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = formatter.date(from: string) {
+      return date
+    }
+    formatter.formatOptions = [.withInternetDateTime]
+    return formatter.date(from: string)
   }
 
   // MARK: - Session File Parsing

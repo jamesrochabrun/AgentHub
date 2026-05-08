@@ -156,6 +156,30 @@ public enum CLILoadingState: Equatable, Sendable {
   }
 }
 
+public enum BrowseSessionsLoadState: Equatable, Sendable {
+  case notLoaded
+  case loading
+  case loaded
+  case failed(String)
+
+  public var isLoading: Bool {
+    self == .loading
+  }
+
+  public var isLoaded: Bool {
+    self == .loaded
+  }
+
+  public var message: String {
+    switch self {
+    case .notLoaded: return ""
+    case .loading: return "Loading sessions..."
+    case .loaded: return ""
+    case .failed(let message): return message
+    }
+  }
+}
+
 // MARK: - SelectedRepository
 
 /// A repository selected by the user for CLI session monitoring

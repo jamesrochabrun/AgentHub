@@ -45,13 +45,15 @@ struct WebPreviewModeTests {
 
     // The Storybook-mode key resolves to the running storybook server,
     // and the App-mode key for the same session stays idle.
-    guard case .ready(let storybookURL) = DevServerManager.shared.state(
+    let storybookState: DevServerState = DevServerManager.shared.state(
       for: WebPreviewMode.storybook.serverKey(for: sessionId)
-    ) else {
+    )
+    guard case .ready(let storybookURL) = storybookState else {
       Issue.record("Expected storybook key to be .ready")
       return
     }
     #expect(storybookURL.absoluteString == "http://localhost:6006")
-    #expect(DevServerManager.shared.state(for: WebPreviewMode.app.serverKey(for: sessionId)) == .idle)
+    let appState: DevServerState = DevServerManager.shared.state(for: WebPreviewMode.app.serverKey(for: sessionId))
+    #expect(appState == .idle)
   }
 }
