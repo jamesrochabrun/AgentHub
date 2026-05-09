@@ -237,6 +237,11 @@ public struct MultiProviderSessionsListView: View {
         .frame(minWidth: 300)
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
+        .background {
+          NSSplitViewAutosaveDisabler()
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+        }
       }
       .navigationSplitViewStyle(.balanced)
       .background(appBackground.ignoresSafeArea())
@@ -1516,9 +1521,7 @@ public struct MultiProviderSessionsListView: View {
       }
 
       sidebarVisibilityBeforeAutoHide = columnVisibility
-      withAnimation(.easeInOut(duration: 0.2)) {
-        columnVisibility = .detailOnly
-      }
+      columnVisibility = .detailOnly
       return
     }
 
@@ -1526,9 +1529,7 @@ public struct MultiProviderSessionsListView: View {
     sidebarVisibilityBeforeAutoHide = nil
 
     guard columnVisibility == .detailOnly else { return }
-    withAnimation(.easeInOut(duration: 0.2)) {
-      columnVisibility = previousVisibility
-    }
+    columnVisibility = previousVisibility
   }
 
   private func triggerNewSessionFlow(preferredRepositoryPath: String? = nil) {
