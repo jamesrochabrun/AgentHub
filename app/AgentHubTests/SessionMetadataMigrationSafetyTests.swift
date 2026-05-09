@@ -15,7 +15,9 @@ struct SessionMetadataMigrationSafetyTests {
       "v3_create_ai_config",
       "v4_add_pinned",
       "v5_create_terminal_workspaces",
-      "v6_create_session_workspace_state"
+      "v6_create_session_workspace_state",
+      "v7_create_managed_processes",
+      "v8_create_claude_hook_installations"
     ]
 
     #expect(Array(SessionMetadataStore.migrationIdentifiers.prefix(baseline.count)) == baseline)
@@ -52,7 +54,8 @@ struct SessionMetadataMigrationSafetyTests {
       ) == seed.terminalWorkspace
     )
     #expect(store.getWorkspaceStateSync(for: .claude) == seed.workspaceState)
-    #expect(try await store.getManagedProcesses().isEmpty)
+    #expect(try await store.getManagedProcesses() == [seed.managedProcess])
+    #expect(try await store.loadClaudeHookInstalledPaths().isEmpty)
   }
 }
 
@@ -62,6 +65,7 @@ private struct MigrationSafetySeed {
   let worktreePath: String
   let terminalWorkspace: TerminalWorkspaceSnapshot
   let workspaceState: SessionWorkspaceState
+  let managedProcess: ManagedProcessRecord
 }
 
 private func seedCurrentBaselineDatabase(at dbPath: String) throws -> MigrationSafetySeed {
@@ -90,6 +94,19 @@ private func seedCurrentBaselineDatabase(at dbPath: String) throws -> MigrationS
       "repo:\(parentRepoPath)": true,
       "wt:\(worktreePath)": true
     ]
+  )
+  let managedProcess = ManagedProcessRecord(
+    pid: 42,
+    processGroupId: 42,
+    processStartTimeSeconds: 1_700_000_000,
+    kind: .agentTerminal,
+    provider: SessionProviderKind.claude.rawValue,
+    terminalKey: "terminal-session-1",
+    sessionId: sessionId,
+    projectPath: parentRepoPath,
+    expectedExecutable: "/bin/zsh",
+    registeredAt: Date(timeIntervalSince1970: 1_700_000_010),
+    updatedAt: Date(timeIntervalSince1970: 1_700_000_020)
   )
 
   let queue = try DatabaseQueue(path: dbPath)
@@ -129,10 +146,12 @@ private func seedCurrentBaselineDatabase(at dbPath: String) throws -> MigrationS
       state: workspaceState
     ).insert(db)
 
-    // Mark the database as fully migrated through v6 so opening
-    // SessionMetadataStore exercises only the v7 managed_processes migration.
+    try managedProcess.insert(db)
+
+    // Mark the database as fully migrated through v7 so opening
+    // SessionMetadataStore exercises only the v8 claude_hook_installations migration.
     for migrationIdentifier in SessionMetadataStore.migrationIdentifiers
-      where migrationIdentifier != SessionMetadataStore.MigrationID.createManagedProcesses {
+      where migrationIdentifier != SessionMetadataStore.MigrationID.createClaudeHookInstallations {
       try db.execute(
         sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
         arguments: [migrationIdentifier]
@@ -145,7 +164,8 @@ private func seedCurrentBaselineDatabase(at dbPath: String) throws -> MigrationS
     parentRepoPath: parentRepoPath,
     worktreePath: worktreePath,
     terminalWorkspace: terminalWorkspace,
-    workspaceState: workspaceState
+    workspaceState: workspaceState,
+    managedProcess: managedProcess
   )
 }
 
@@ -191,6 +211,22 @@ private func createCurrentBaselineSchema(in db: Database) throws {
     t.column("expansionStateData", .blob).notNull()
     t.column("updatedAt", .datetime).notNull()
   }
+
+  try db.create(table: "managed_processes") { t in
+    t.column("pid", .integer).primaryKey(onConflict: .replace)
+    t.column("processGroupId", .integer)
+    t.column("processStartTimeSeconds", .integer)
+    t.column("kind", .text).notNull()
+    t.column("provider", .text)
+    t.column("terminalKey", .text)
+    t.column("sessionId", .text)
+    t.column("projectPath", .text)
+    t.column("expectedExecutable", .text)
+    t.column("registeredAt", .datetime).notNull()
+    t.column("updatedAt", .datetime).notNull()
+  }
+  try db.create(index: "idx_managed_processes_kind", on: "managed_processes", columns: ["kind"])
+  try db.create(index: "idx_managed_processes_session", on: "managed_processes", columns: ["provider", "sessionId"])
 
   try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
 }

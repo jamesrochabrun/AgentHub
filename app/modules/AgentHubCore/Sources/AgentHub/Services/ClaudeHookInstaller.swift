@@ -24,6 +24,11 @@ public protocol ClaudeHookInstallerProtocol: AnyObject, Sendable {
   func reconcileOnLaunch(expectedPaths: [String]) async
 }
 
+public protocol ClaudeHookInstallStateStoreProtocol: Sendable {
+  func loadClaudeHookInstalledPaths() async throws -> Set<String>
+  func replaceClaudeHookInstalledPaths(_ paths: Set<String>) async throws
+}
+
 // MARK: - ClaudeHookInstaller
 
 /// Registers the AgentHub approval hook in each monitored project's
@@ -36,10 +41,6 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
 
   // MARK: - Constants
 
-  /// UserDefaults key storing the set of paths where the hook entry has been
-  /// written, so `reconcileOnLaunch` and `flushAll` can sweep correctly.
-  public static let installedPathsKey = "com.agenthub.claudeHook.installedPaths"
-
   /// UserDefaults key for the master toggle. Default on.
   public static let enabledKey = "com.agenthub.claudeHook.enabled"
 
@@ -47,12 +48,14 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
 
   private let fileManager: FileManager
   private let defaults: UserDefaults
+  private let stateStore: any ClaudeHookInstallStateStoreProtocol
   private let bundledScriptURL: URL?
   private let sharedScriptURL: URL
 
   // MARK: - Initialization
 
   public init(
+    stateStore: any ClaudeHookInstallStateStoreProtocol,
     fileManager: FileManager = .default,
     defaults: UserDefaults = .standard,
     bundledScriptURL: URL? = ClaudeHookPaths.bundledScriptURL(),
@@ -60,6 +63,7 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
   ) {
     self.fileManager = fileManager
     self.defaults = defaults
+    self.stateStore = stateStore
     self.bundledScriptURL = bundledScriptURL
     self.sharedScriptURL = sharedScriptURL
   }
@@ -74,7 +78,7 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
   public func setEnabled(_ enabled: Bool) async {
     defaults.set(enabled, forKey: Self.enabledKey)
     if !enabled {
-      sweepAllInstalledPaths()
+      await sweepAllInstalledPaths()
     }
     // Re-enable is intentionally a no-op here; the next `syncInstalledPaths`
     // call from the repositories subscription will re-install wherever needed.
@@ -85,50 +89,58 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
   public func syncInstalledPaths(_ paths: Set<String>) async {
     guard await isEnabled() else {
       // Feature disabled: make sure nothing is installed anywhere.
-      sweepAllInstalledPaths()
+      await sweepAllInstalledPaths()
       return
     }
 
-    let previously = Set(loadInstalledPaths())
-    let toInstall = paths.subtracting(previously)
-    let toUninstall = previously.subtracting(paths)
+    guard var trackedPaths = await loadInstalledPaths() else { return }
+
+    let toInstall = paths.subtracting(trackedPaths)
+    let toUninstall = trackedPaths.subtracting(paths)
     let toRepair = paths
-      .intersection(previously)
+      .intersection(trackedPaths)
       .filter { installNeedsRepair(atProjectPath: $0) }
 
     if toInstall.isEmpty && toUninstall.isEmpty && toRepair.isEmpty {
-      saveInstalledPathsIfChanged(Array(previously))
       return
     }
+
+    if !toInstall.isEmpty {
+      let expandedPaths = trackedPaths.union(toInstall)
+      guard await replaceInstalledPaths(expandedPaths) else { return }
+      trackedPaths = expandedPaths
+    }
+
+    let persistedPaths = trackedPaths
 
     if !toInstall.isEmpty || !toRepair.isEmpty {
       ensureSharedScript()
     }
 
-    var finalInstalled = previously
     for path in toUninstall {
       if uninstall(atProjectPath: path) {
-        finalInstalled.remove(path)
+        trackedPaths.remove(path)
       }
     }
     for path in toInstall {
-      if install(atProjectPath: path) {
-        finalInstalled.insert(path)
-      }
+      _ = install(atProjectPath: path)
     }
     for path in toRepair {
       _ = install(atProjectPath: path)
     }
-    saveInstalledPathsIfChanged(Array(finalInstalled))
+
+    if trackedPaths != persistedPaths {
+      _ = await replaceInstalledPaths(trackedPaths)
+    }
   }
 
   public func flushAll() async {
-    sweepAllInstalledPaths()
+    await sweepAllInstalledPaths()
   }
 
   public func reconcileOnLaunch(expectedPaths: [String]) async {
     let expected = Set(expectedPaths)
-    let previouslyInstalled = Set(loadInstalledPaths())
+    guard let previouslyInstalled = await loadInstalledPaths() else { return }
     let stale = previouslyInstalled.subtracting(expected)
     var finalInstalled = previouslyInstalled
     for path in stale {
@@ -136,7 +148,9 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
         finalInstalled.remove(path)
       }
     }
-    saveInstalledPathsIfChanged(Array(finalInstalled))
+    if finalInstalled != previouslyInstalled {
+      _ = await replaceInstalledPaths(finalInstalled)
+    }
   }
 
   // MARK: - Install / uninstall mechanics
@@ -198,15 +212,17 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     }
   }
 
-  private func sweepAllInstalledPaths() {
-    let previouslyInstalled = Set(loadInstalledPaths())
+  private func sweepAllInstalledPaths() async {
+    guard let previouslyInstalled = await loadInstalledPaths() else { return }
     var finalInstalled = previouslyInstalled
     for path in previouslyInstalled {
       if uninstall(atProjectPath: path) {
         finalInstalled.remove(path)
       }
     }
-    saveInstalledPathsIfChanged(Array(finalInstalled))
+    if finalInstalled != previouslyInstalled {
+      _ = await replaceInstalledPaths(finalInstalled)
+    }
   }
 
   // MARK: - Shared script management
@@ -490,17 +506,43 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
 
   // MARK: - Persistence of installed paths
 
-  private func loadInstalledPaths() -> [String] {
-    (defaults.array(forKey: Self.installedPathsKey) as? [String]) ?? []
+  private func loadInstalledPaths() async -> Set<String>? {
+    do {
+      return try await stateStore.loadClaudeHookInstalledPaths()
+    } catch {
+      AppLogger.watcher.error("[ClaudeHookInstaller] failed to load installed paths; skipping hook changes: \(error.localizedDescription)")
+      return nil
+    }
   }
 
-  private func saveInstalledPaths(_ paths: [String]) {
-    defaults.set(paths.sorted(), forKey: Self.installedPathsKey)
+  private func replaceInstalledPaths(_ paths: Set<String>) async -> Bool {
+    do {
+      try await stateStore.replaceClaudeHookInstalledPaths(paths)
+      return true
+    } catch {
+      AppLogger.watcher.error("[ClaudeHookInstaller] failed to save installed paths; skipping hook changes: \(error.localizedDescription)")
+      return false
+    }
+  }
+}
+
+actor NoOpClaudeHookInstaller: ClaudeHookInstallerProtocol {
+  private let defaults: UserDefaults
+
+  init(defaults: UserDefaults = .standard) {
+    self.defaults = defaults
   }
 
-  private func saveInstalledPathsIfChanged(_ paths: [String]) {
-    let sortedPaths = paths.sorted()
-    guard loadInstalledPaths().sorted() != sortedPaths else { return }
-    saveInstalledPaths(sortedPaths)
+  func isEnabled() async -> Bool {
+    if defaults.object(forKey: ClaudeHookInstaller.enabledKey) == nil { return true }
+    return defaults.bool(forKey: ClaudeHookInstaller.enabledKey)
   }
+
+  func setEnabled(_ enabled: Bool) async {
+    defaults.set(enabled, forKey: ClaudeHookInstaller.enabledKey)
+  }
+
+  func syncInstalledPaths(_ paths: Set<String>) async {}
+  func flushAll() async {}
+  func reconcileOnLaunch(expectedPaths: [String]) async {}
 }

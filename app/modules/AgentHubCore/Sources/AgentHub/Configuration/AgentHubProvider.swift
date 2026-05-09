@@ -101,7 +101,11 @@ public final class AgentHubProvider {
 
   /// Installs/uninstalls the AgentHub approval hook per worktree.
   public private(set) lazy var claudeHookInstaller: any ClaudeHookInstallerProtocol = {
-    ClaudeHookInstaller()
+    guard let metadataStore else {
+      AppLogger.session.error("[ClaudeHook] SessionMetadataStore unavailable; approval hook installation disabled")
+      return NoOpClaudeHookInstaller()
+    }
+    return ClaudeHookInstaller(stateStore: metadataStore)
   }()
 
   /// Claude search service

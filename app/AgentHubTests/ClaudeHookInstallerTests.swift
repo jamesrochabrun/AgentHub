@@ -15,6 +15,53 @@ private final class CountingUserDefaults: UserDefaults, @unchecked Sendable {
   }
 }
 
+private actor RecordingClaudeHookInstallStateStore: ClaudeHookInstallStateStoreProtocol {
+  enum StoreError: Error {
+    case loadFailed
+    case replaceFailed
+  }
+
+  private var paths: Set<String> = []
+  private var replaceCount = 0
+  private var shouldFailLoads = false
+  private var shouldFailReplaces = false
+
+  func loadClaudeHookInstalledPaths() async throws -> Set<String> {
+    if shouldFailLoads {
+      throw StoreError.loadFailed
+    }
+    return paths
+  }
+
+  func replaceClaudeHookInstalledPaths(_ paths: Set<String>) async throws {
+    if shouldFailReplaces {
+      throw StoreError.replaceFailed
+    }
+    replaceCount += 1
+    self.paths = paths
+  }
+
+  func seedInstalledPaths(_ paths: Set<String>) {
+    self.paths = paths
+  }
+
+  func installedPaths() -> Set<String> {
+    paths
+  }
+
+  func replaceCallCount() -> Int {
+    replaceCount
+  }
+
+  func setLoadFailure(_ shouldFail: Bool) {
+    shouldFailLoads = shouldFail
+  }
+
+  func setReplaceFailure(_ shouldFail: Bool) {
+    shouldFailReplaces = shouldFail
+  }
+}
+
 @Suite("ClaudeHookInstaller")
 struct ClaudeHookInstallerTests {
 
@@ -27,6 +74,7 @@ struct ClaudeHookInstallerTests {
     let bundledScriptURL: URL
     let sharedScriptURL: URL
     let defaults: CountingUserDefaults
+    let stateStore: RecordingClaudeHookInstallStateStore
     let installer: ClaudeHookInstaller
     let suiteName: String
 
@@ -50,8 +98,10 @@ struct ClaudeHookInstallerTests {
         throw NSError(domain: "fixture", code: 1)
       }
       self.defaults = defaults
+      self.stateStore = RecordingClaudeHookInstallStateStore()
 
       self.installer = ClaudeHookInstaller(
+        stateStore: stateStore,
         fileManager: .default,
         defaults: defaults,
         bundledScriptURL: bundledScriptURL,
@@ -150,6 +200,32 @@ struct ClaudeHookInstallerTests {
     #expect(!FileManager.default.fileExists(atPath: fx.projectHooksDir(for: fx.projectA).path))
   }
 
+  @Test("sync skips filesystem changes when installed-path load fails")
+  func syncSkipsFilesystemChangesWhenStateLoadFails() async throws {
+    let fx = try Fixture(name: "stateLoadFailure")
+    defer { fx.teardown() }
+
+    await fx.stateStore.setLoadFailure(true)
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    #expect(!FileManager.default.fileExists(atPath: fx.sharedScriptURL.path))
+    #expect(!FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectA).path))
+  }
+
+  @Test("sync skips filesystem changes when install path persistence fails")
+  func syncSkipsFilesystemChangesWhenStateReplaceFails() async throws {
+    let fx = try Fixture(name: "stateReplaceFailure")
+    defer { fx.teardown() }
+
+    await fx.stateStore.setReplaceFailure(true)
+
+    await fx.installer.syncInstalledPaths([fx.projectA.path])
+
+    #expect(!FileManager.default.fileExists(atPath: fx.sharedScriptURL.path))
+    #expect(!FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectA).path))
+  }
+
   @Test("sync preserves unrelated keys in settings.local.json")
   func preservesExistingKeys() async throws {
     let fx = try Fixture(name: "preservesKeys")
@@ -205,8 +281,8 @@ struct ClaudeHookInstallerTests {
     #expect(matches.count == 1)
   }
 
-  @Test("same sync input twice does not rewrite settings or defaults")
-  func sameSyncInputTwiceDoesNotRewriteSettingsOrDefaults() async throws {
+  @Test("same sync input twice does not rewrite settings or state store")
+  func sameSyncInputTwiceDoesNotRewriteSettingsOrStateStore() async throws {
     let fx = try Fixture(name: "sameInputNoRewrite")
     defer { fx.teardown() }
 
@@ -214,13 +290,13 @@ struct ClaudeHookInstallerTests {
 
     let settingsURL = fx.settingsLocal(for: fx.projectA)
     let modifiedAt = try fx.modificationDate(of: settingsURL)
-    let defaultsWrites = fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey)
+    let stateStoreWrites = await fx.stateStore.replaceCallCount()
 
     try await Task.sleep(for: .milliseconds(20))
     await fx.installer.syncInstalledPaths([fx.projectA.path])
 
     #expect(try fx.modificationDate(of: settingsURL) == modifiedAt)
-    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites)
+    #expect(await fx.stateStore.replaceCallCount() == stateStoreWrites)
   }
 
   @Test("adding one new path does not rewrite already-correct paths")
@@ -232,31 +308,31 @@ struct ClaudeHookInstallerTests {
 
     let settingsA = fx.settingsLocal(for: fx.projectA)
     let modifiedA = try fx.modificationDate(of: settingsA)
-    let defaultsWrites = fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey)
+    let stateStoreWrites = await fx.stateStore.replaceCallCount()
 
     try await Task.sleep(for: .milliseconds(20))
     await fx.installer.syncInstalledPaths([fx.projectA.path, fx.projectB.path])
 
     #expect(try fx.modificationDate(of: settingsA) == modifiedA)
     #expect(FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectB).path))
-    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites + 1)
+    #expect(await fx.stateStore.replaceCallCount() == stateStoreWrites + 1)
   }
 
-  @Test("installed path with missing settings is repaired without rewriting defaults")
+  @Test("installed path with missing settings is repaired without rewriting state store")
   func missingSettingsForInstalledPathIsRepaired() async throws {
     let fx = try Fixture(name: "repairMissingSettings")
     defer { fx.teardown() }
 
     await fx.installer.syncInstalledPaths([fx.projectA.path])
     try FileManager.default.removeItem(at: fx.settingsLocal(for: fx.projectA))
-    let defaultsWrites = fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey)
+    let stateStoreWrites = await fx.stateStore.replaceCallCount()
 
     await fx.installer.syncInstalledPaths([fx.projectA.path])
 
     let settings = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
     #expect(fx.hasAgentHubEntry(in: fx.preEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
     #expect(fx.hasAgentHubEntry(in: fx.postEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
-    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites)
+    #expect(await fx.stateStore.replaceCallCount() == stateStoreWrites)
   }
 
   @Test("installed path with duplicate hook entries is repaired")
@@ -324,10 +400,10 @@ struct ClaudeHookInstallerTests {
     await fx.installer.syncInstalledPaths([fx.projectA.path, fx.projectB.path])
     #expect(FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectA).path))
     #expect(FileManager.default.fileExists(atPath: fx.settingsLocal(for: fx.projectB).path))
-    let defaultsWrites = fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey)
+    let stateStoreWrites = await fx.stateStore.replaceCallCount()
 
     await fx.installer.syncInstalledPaths([fx.projectA.path])
-    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites + 1)
+    #expect(await fx.stateStore.replaceCallCount() == stateStoreWrites + 1)
 
     let a = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
     #expect(fx.hasAgentHubEntry(in: fx.preEntries(in: a), scriptPath: fx.sharedScriptURL.path))
@@ -340,7 +416,7 @@ struct ClaudeHookInstallerTests {
 
     try await Task.sleep(for: .milliseconds(20))
     await fx.installer.syncInstalledPaths([fx.projectA.path])
-    #expect(fx.defaults.setCount(forKey: ClaudeHookInstaller.installedPathsKey) == defaultsWrites + 1)
+    #expect(await fx.stateStore.replaceCallCount() == stateStoreWrites + 1)
   }
 
   @Test("uninstall preserves unrelated user hooks")
@@ -470,7 +546,7 @@ struct ClaudeHookInstallerTests {
     )
     try JSONSerialization.data(withJSONObject: legacy).write(to: fx.settingsLocal(for: fx.projectA))
     // Pretend installer had previously written this path so uninstall sees it.
-    fx.defaults.set([fx.projectA.path], forKey: ClaudeHookInstaller.installedPathsKey)
+    await fx.stateStore.seedInstalledPaths([fx.projectA.path])
 
     await fx.installer.syncInstalledPaths([])
 
@@ -495,6 +571,6 @@ struct ClaudeHookInstallerTests {
       let settings = try fx.readSettings(at: url)
       #expect(!fx.hasAgentHubEntry(in: fx.preEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
     }
-    #expect((fx.defaults.array(forKey: ClaudeHookInstaller.installedPathsKey) as? [String]) == [])
+    #expect(await fx.stateStore.installedPaths().isEmpty)
   }
 }
