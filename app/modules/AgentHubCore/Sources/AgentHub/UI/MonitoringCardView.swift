@@ -57,6 +57,7 @@ public struct MonitoringCardView: View {
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
   @State private var showingRemixProviderPicker = false
+  @State private var isXcodeProject = false
   @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
 
@@ -228,6 +229,15 @@ public struct MonitoringCardView: View {
     .animation(.easeInOut(duration: 0.2), value: isDragging)
     .task(id: session.projectPath) {
       await loadWebPreviewCandidateIfNeeded()
+    }
+    .task(id: session.projectPath) {
+      let projectPath = session.projectPath
+      isXcodeProject = false
+      let detected = await Task.detached {
+        XcodeProjectDetector.isXcodeProject(at: projectPath)
+      }.value
+      guard !Task.isCancelled else { return }
+      isXcodeProject = detected
     }
     .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
       try? await Task.sleep(for: .seconds(2))
@@ -624,7 +634,7 @@ public struct MonitoringCardView: View {
         }
 
         // Simulator button (only visible for Xcode projects)
-        if XcodeProjectDetector.isXcodeProject(at: session.projectPath) {
+        if isXcodeProject {
           Button(action: {
             simulatorSheetSession = session
           }) {
@@ -746,53 +756,11 @@ public struct MonitoringCardView: View {
   // MARK: - Path Row
 
   private var pathRow: some View {
-    HStack(spacing: 8) {
-      // Folder icon and path
-      HStack(spacing: 4) {
-        Image(systemName: "folder")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-
-        Text(session.projectPath)
-          .font(.primaryCaption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
-      }
-      .layoutPriority(1)
-
-      // Branch name in brand color
-      if let branch = session.branchName {
-        Text(branch)
-          .font(.primaryCaption)
-          .foregroundStyle(Color.brandPrimary(for: providerKind))
-          .lineLimit(1)
-          .layoutPriority(1)
-      }
-
-      Spacer(minLength: 8)
-
-      contentModeToggle
-        .layoutPriority(2)
-    }
-    .frame(minHeight: 24)
-  }
-
-  // MARK: - Content Mode Toggle
-
-  private var contentModeToggle: some View {
-    BracketedSegmentedControl(
-      selection: $contentMode,
-      items: MonitoringCardContentMode.allCases.map { mode in
-        BracketedSegmentedControlItem(
-          value: mode,
-          title: mode.label.lowercased(),
-          helpText: mode.label
-        )
-      },
-      selectedColor: Color.brandPrimary(for: providerKind)
+    MonitoringCardPathRow(
+      session: session,
+      providerKind: providerKind,
+      contentMode: $contentMode
     )
-    .help("Switch between terminal and code")
   }
 
   // MARK: - Monitor Content
@@ -808,7 +776,7 @@ public struct MonitoringCardView: View {
   }
 
   private var terminalContent: some View {
-    EmbeddedTerminalView(
+    MonitoringCardTerminalContent(
       terminalKey: terminalKey ?? session.id,
       sessionId: session.id,
       projectPath: session.projectPath,
@@ -825,8 +793,6 @@ public struct MonitoringCardView: View {
         viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
       }
     )
-    .padding(DesignTokens.Spacing.sm)
-    .frame(minHeight: 300)
   }
 
   private var editorContent: some View {
@@ -852,6 +818,94 @@ public struct MonitoringCardView: View {
         Capsule()
           .fill(Color.secondary.opacity(0.15))
       )
+  }
+}
+
+private enum MonitoringCardContentModeItems {
+  static let items = MonitoringCardContentMode.allCases.map { mode in
+    BracketedSegmentedControlItem(
+      value: mode,
+      title: mode.label.lowercased(),
+      helpText: mode.label
+    )
+  }
+}
+
+private struct MonitoringCardPathRow: View {
+  let session: CLISession
+  let providerKind: SessionProviderKind
+  @Binding var contentMode: MonitoringCardContentMode
+
+  var body: some View {
+    HStack(spacing: 8) {
+      HStack(spacing: 4) {
+        Image(systemName: "folder")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        Text(session.projectPath)
+          .font(.primaryCaption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+      .layoutPriority(1)
+
+      if let branch = session.branchName {
+        Text(branch)
+          .font(.primaryCaption)
+          .foregroundStyle(Color.brandPrimary(for: providerKind))
+          .lineLimit(1)
+          .layoutPriority(1)
+      }
+
+      Spacer(minLength: 8)
+
+      BracketedSegmentedControl(
+        selection: $contentMode,
+        items: MonitoringCardContentModeItems.items,
+        selectedColor: Color.brandPrimary(for: providerKind)
+      )
+      .layoutPriority(2)
+      .help("Switch between terminal and code")
+    }
+    .frame(minHeight: 24)
+  }
+}
+
+private struct MonitoringCardTerminalContent: View {
+  let terminalKey: String
+  let sessionId: String?
+  let projectPath: String
+  let cliConfiguration: CLICommandConfiguration
+  let initialPrompt: String?
+  let initialInputText: String?
+  let viewModel: CLISessionsViewModel?
+  let dangerouslySkipPermissions: Bool
+  let permissionModePlan: Bool
+  let worktreeName: String?
+  let onUserInteraction: (() -> Void)?
+  let onRequestShowEditor: (() -> Void)?
+  let consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+
+  var body: some View {
+    EmbeddedTerminalView(
+      terminalKey: terminalKey,
+      sessionId: sessionId,
+      projectPath: projectPath,
+      cliConfiguration: cliConfiguration,
+      initialPrompt: initialPrompt,
+      initialInputText: initialInputText,
+      viewModel: viewModel,
+      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      permissionModePlan: permissionModePlan,
+      worktreeName: worktreeName,
+      onUserInteraction: onUserInteraction,
+      onRequestShowEditor: onRequestShowEditor,
+      consumeQueuedWebPreviewContextOnSubmit: consumeQueuedWebPreviewContextOnSubmit
+    )
+    .padding(DesignTokens.Spacing.sm)
+    .frame(minHeight: 300)
   }
 }
 

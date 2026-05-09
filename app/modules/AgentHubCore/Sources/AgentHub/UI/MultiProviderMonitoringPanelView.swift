@@ -216,11 +216,15 @@ public struct MultiProviderMonitoringPanelView: View {
     )
   }
 
-  private var wantsEmbeddedSidePanelPresentation: Bool {
+  private func wantsEmbeddedSidePanelPresentation(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> Bool {
     layoutMode == .single
       && maximizedSessionId == nil
       && sidePanelContent != nil
-      && !visibleItems.isEmpty
+      && !snapshot.visibleItems.isEmpty
+  }
+
+  private var wantsEmbeddedSidePanelPresentation: Bool {
+    wantsEmbeddedSidePanelPresentation(snapshot: makeItemSnapshot())
   }
 
   private var embeddedSidePanelTransition: AnyTransition {
@@ -249,12 +253,16 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   public var body: some View {
+    let snapshot = makeItemSnapshot()
+    let wantsSidePanelPresentation = wantsEmbeddedSidePanelPresentation(snapshot: snapshot)
+    let auxiliaryTarget = auxiliaryShellTarget(snapshot: snapshot)
+
     GeometryReader { geometry in
       VStack(spacing: 0) {
-        mainContent
+        mainContent(snapshot: snapshot)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-        if isAuxiliaryShellVisible, let target = auxiliaryShellTarget {
+        if isAuxiliaryShellVisible, let target = auxiliaryTarget {
           auxiliaryShellDock(
             for: target,
             availableHeight: geometry.size.height
@@ -269,17 +277,17 @@ public struct MultiProviderMonitoringPanelView: View {
     .background(monitorContainerBackgroundColor)
     .cornerRadius(8)
     .onAppear {
-      onEmbeddedSidePanelVisibilityChange(wantsEmbeddedSidePanelPresentation)
-      syncEditorStates()
-      syncAuxiliaryShellDockState()
+      onEmbeddedSidePanelVisibilityChange(wantsSidePanelPresentation)
+      syncEditorStates(snapshot: snapshot)
+      syncAuxiliaryShellDockState(target: auxiliaryTarget)
     }
-    .onChange(of: wantsEmbeddedSidePanelPresentation) { _, wantsPresentation in
+    .onChange(of: wantsSidePanelPresentation) { _, wantsPresentation in
       onEmbeddedSidePanelVisibilityChange(wantsPresentation)
     }
-    .onChange(of: allItems.map(\.id)) { _, _ in
+    .onChange(of: snapshot.itemIDs) { _, _ in
       syncEditorStates()
     }
-    .onChange(of: effectivePrimarySessionId) { _, _ in
+    .onChange(of: snapshot.effectivePrimaryItemID) { _, _ in
       syncAuxiliaryShellDockState()
     }
     .onChange(of: isAuxiliaryShellVisible) { _, _ in
@@ -306,7 +314,7 @@ public struct MultiProviderMonitoringPanelView: View {
       togglePrimarySessionContentMode()
     }
     .floatingPanel(isPresented: $showQuickFilePicker, defaultSize: CGSize(width: 680, height: 640)) {
-      if let primaryItem = effectivePrimaryItem {
+      if let primaryItem = snapshot.effectivePrimaryItem {
         QuickFilePickerView(
           isPresented: $showQuickFilePicker,
           projectPath: editorState(for: primaryItem).projectPath,
@@ -353,17 +361,18 @@ public struct MultiProviderMonitoringPanelView: View {
       return .ignored
     }
     .onAppear {
+      ensurePrimarySelection(snapshot: snapshot)
+    }
+    .onChange(of: snapshot.itemIDs) { _, _ in
       ensurePrimarySelection()
     }
-    .onChange(of: allItems.map(\.id)) { _, _ in
-      ensurePrimarySelection()
-    }
-    .onChange(of: effectivePrimarySessionId) { _, newId in
+    .onChange(of: snapshot.effectivePrimaryItemID) { _, newId in
       guard let currentSidePanelContent = sidePanelContent else { return }
+      let currentSnapshot = makeItemSnapshot()
       if case .webPreview(let sessionId, _, let projectPath, let mode) = currentSidePanelContent,
          sessionId.hasPrefix("pending-"),
          let newId,
-         let item = allItems.first(where: { $0.id == newId }),
+         let item = currentSnapshot.allItems.first(where: { $0.id == newId }),
          case .monitored(_, _, let session, _) = item,
          session.projectPath == projectPath {
         sidePanelContent = .webPreview(
@@ -378,7 +387,7 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: primarySessionId) { _, newId in
       guard let newId else { return }
-      if let item = allItems.first(where: { $0.id == newId }) {
+      if let item = makeItemSnapshot().allItems.first(where: { $0.id == newId }) {
         item.viewModel.focusTerminal(forKey: item.sessionId)
       }
     }
@@ -409,25 +418,25 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   @ViewBuilder
-  private var mainContent: some View {
+  private func mainContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
     if let maximizedId = maximizedSessionId {
-      maximizedCardContent(for: maximizedId)
+      maximizedCardContent(for: maximizedId, snapshot: snapshot)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(maximizedContainerBackgroundColor)
     } else {
-      mainContentBody
+      mainContentBody(snapshot: snapshot)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
   }
 
   @ViewBuilder
-  private var mainContentBody: some View {
+  private func mainContentBody(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
     if isLoading {
       loadingState
-    } else if allItems.isEmpty {
+    } else if snapshot.allItems.isEmpty {
       emptyState
     } else {
-      monitoredSessionsList
+      monitoredSessionsList(snapshot: snapshot)
     }
   }
 
@@ -460,9 +469,9 @@ public struct MultiProviderMonitoringPanelView: View {
   // MARK: - Monitored Sessions List
 
   @ViewBuilder
-  private var monitoredSessionsList: some View {
+  private func monitoredSessionsList(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
     if layoutMode == .single {
-      singleModeContent
+      singleModeContent(snapshot: snapshot)
         .background(
           GeometryReader { geometry in
             Color.clear
@@ -476,20 +485,20 @@ public struct MultiProviderMonitoringPanelView: View {
       ScrollViewReader { proxy in
         ScrollView {
           if layoutMode == .list {
-            listModeContent
+            listModeContent(snapshot: snapshot)
           } else {
             let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
             if flatSessionLayout {
               LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(flatSortedItems) { item in
-                  itemCardView(for: item)
+                ForEach(snapshot.flatSortedItems) { item in
+                  itemCardView(for: item, effectivePrimaryItemID: snapshot.effectivePrimaryItemID)
                 }
               }
               .padding(12)
               .transition(.opacity)
             } else {
               LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
-                monitoredSessionsGroupedContent
+                monitoredSessionsGroupedContent(snapshot: snapshot)
               }
               .padding(12)
               .transition(.opacity)
@@ -509,14 +518,14 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   @ViewBuilder
-  private var listModeContent: some View {
+  private func listModeContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
     VStack(spacing: 12) {
       if flatSessionLayout {
-        ForEach(flatSortedItems) { item in
-          listModeCard(for: item)
+        ForEach(snapshot.flatSortedItems) { item in
+          listModeCard(for: item, effectivePrimaryItemID: snapshot.effectivePrimaryItemID)
         }
       } else {
-        listModeGroupedContent
+        listModeGroupedContent(snapshot: snapshot)
       }
     }
     .padding(12)
@@ -526,8 +535,8 @@ public struct MultiProviderMonitoringPanelView: View {
   // MARK: - Single Mode Content
 
   @ViewBuilder
-  private var singleModeContent: some View {
-    if let item = visibleItems.first {
+  private func singleModeContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
+    if let item = snapshot.visibleItems.first {
       switch item {
       case .pending(_, let viewModel, let pending):
         let pendingId = "pending-\(pending.id.uuidString)"
@@ -840,8 +849,11 @@ public struct MultiProviderMonitoringPanelView: View {
   // MARK: - Single Card View
 
   @ViewBuilder
-  private func itemCardView(for item: ProviderMonitoringItem) -> some View {
-    let isPrimary = item.id == effectivePrimarySessionId
+  private func itemCardView(
+    for item: ProviderMonitoringItem,
+    effectivePrimaryItemID: String? = nil
+  ) -> some View {
+    let isPrimary = item.id == (effectivePrimaryItemID ?? effectivePrimarySessionId)
       switch item {
       case .pending(_, let viewModel, let pending):
         MonitoringCardView(
@@ -1004,9 +1016,9 @@ public struct MultiProviderMonitoringPanelView: View {
   // MARK: - Grouped Content by Module
 
   @ViewBuilder
-  private var listModeGroupedContent: some View {
+  private func listModeGroupedContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
     VStack(alignment: .leading, spacing: 18) {
-      ForEach(groupedMonitoredSessions, id: \.modulePath) { group in
+      ForEach(snapshot.groupedItems, id: \.modulePath) { group in
         VStack(alignment: .leading, spacing: 12) {
           ModuleSectionHeader(
             name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
@@ -1014,7 +1026,7 @@ public struct MultiProviderMonitoringPanelView: View {
           )
 
           ForEach(group.items) { item in
-            listModeCard(for: item)
+            listModeCard(for: item, effectivePrimaryItemID: snapshot.effectivePrimaryItemID)
           }
         }
       }
@@ -1022,40 +1034,46 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   @ViewBuilder
-  private var monitoredSessionsGroupedContent: some View {
-    ForEach(groupedMonitoredSessions, id: \.modulePath) { group in
+  private func monitoredSessionsGroupedContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
+    ForEach(snapshot.groupedItems, id: \.modulePath) { group in
       Section(header: ModuleSectionHeader(
         name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
         sessionCount: group.items.count
       )) {
         ForEach(group.items) { item in
-          itemCardView(for: item)
+          itemCardView(for: item, effectivePrimaryItemID: snapshot.effectivePrimaryItemID)
         }
       }
     }
   }
 
   private var effectivePrimarySessionId: String? {
-    if let current = primarySessionId, allItems.contains(where: { $0.id == current }) {
-      return current
-    }
-    return allItems.sorted { $0.timestamp > $1.timestamp }.first?.id
+    makeItemSnapshot().effectivePrimaryItemID
   }
 
   private var visibleItems: [ProviderMonitoringItem] {
-    if layoutMode == .single {
-      guard let selectedId = effectivePrimarySessionId else { return [] }
-      return allItems.filter { $0.id == selectedId }
-    }
-    return allItems
+    makeItemSnapshot().visibleItems
+  }
+
+  private func makeItemSnapshot() -> MonitoringItemsSnapshot<ProviderMonitoringItem> {
+    MonitoringItemsSnapshot(
+      items: allItems,
+      primaryItemID: primarySessionId,
+      layoutMode: layoutMode,
+      modulePath: { findModulePath(for: $0) },
+      timestamp: { $0.timestamp }
+    )
   }
 
   // MARK: - Helpers
 
   @ViewBuilder
-  private func maximizedCardContent(for itemId: String) -> some View {
-    if let item = allItems.first(where: { $0.id == itemId }) {
-      let isPrimary = item.id == effectivePrimarySessionId
+  private func maximizedCardContent(
+    for itemId: String,
+    snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>
+  ) -> some View {
+    if let item = snapshot.allItems.first(where: { $0.id == itemId }) {
+      let isPrimary = item.id == snapshot.effectivePrimaryItemID
       switch item {
       case .pending(_, let viewModel, let pending):
         MonitoringCardView(
@@ -1246,22 +1264,23 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private var groupedMonitoredSessions: [(modulePath: String, items: [ProviderMonitoringItem])] {
-    let grouped = Dictionary(grouping: visibleItems) { findModulePath(for: $0) }
-    return grouped.sorted { $0.key < $1.key }
-      .map { (modulePath: $0.key, items: $0.value.sorted { $0.timestamp > $1.timestamp }) }
+    makeItemSnapshot().groupedItems
   }
 
   private var flatSortedItems: [ProviderMonitoringItem] {
-    groupedMonitoredSessions.flatMap { $0.items }
+    makeItemSnapshot().flatSortedItems
   }
 
   private var effectivePrimaryItem: ProviderMonitoringItem? {
-    guard let selectedId = effectivePrimarySessionId else { return nil }
-    return allItems.first(where: { $0.id == selectedId })
+    makeItemSnapshot().effectivePrimaryItem
   }
 
   private var auxiliaryShellTarget: HubAuxiliaryShellTarget? {
-    guard let item = effectivePrimaryItem else { return nil }
+    auxiliaryShellTarget(snapshot: makeItemSnapshot())
+  }
+
+  private func auxiliaryShellTarget(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> HubAuxiliaryShellTarget? {
+    guard let item = snapshot.effectivePrimaryItem else { return nil }
 
     switch item {
     case .pending(let provider, let viewModel, let pending):
@@ -1372,17 +1391,18 @@ public struct MultiProviderMonitoringPanelView: View {
     print("[AH-OPEN][AgentHub] \(message())")
   }
 
-  private func ensurePrimarySelection() {
-    guard !allItems.isEmpty else {
+  private func ensurePrimarySelection(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>? = nil) {
+    let snapshot = snapshot ?? makeItemSnapshot()
+    guard !snapshot.allItems.isEmpty else {
       primarySessionId = nil
       return
     }
 
-    if let current = primarySessionId, allItems.contains(where: { $0.id == current }) {
+    if let current = primarySessionId, snapshot.allItems.contains(where: { $0.id == current }) {
       return
     }
 
-    primarySessionId = effectivePrimarySessionId
+    primarySessionId = snapshot.effectivePrimaryItemID
   }
 
   private func setPrimarySessionIfNeeded(_ sessionId: String) {
@@ -1397,9 +1417,9 @@ public struct MultiProviderMonitoringPanelView: View {
     }
   }
 
-  private func syncAuxiliaryShellDockState() {
+  private func syncAuxiliaryShellDockState(target: HubAuxiliaryShellTarget? = nil) {
     guard isAuxiliaryShellVisible else { return }
-    guard let target = auxiliaryShellTarget else {
+    guard let target = target ?? auxiliaryShellTarget else {
       withAnimation(auxiliaryShellToggleAnimation) {
         isAuxiliaryShellVisible = false
       }
@@ -1449,12 +1469,15 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   @ViewBuilder
-  private func listModeCard(for item: ProviderMonitoringItem) -> some View {
+  private func listModeCard(
+    for item: ProviderMonitoringItem,
+    effectivePrimaryItemID: String? = nil
+  ) -> some View {
     ResizableCardContainer(
       height: cardHeightBinding(for: item.id),
       metrics: listCardMetrics(for: item)
     ) {
-      itemCardView(for: item)
+      itemCardView(for: item, effectivePrimaryItemID: effectivePrimaryItemID)
     }
   }
 
@@ -1497,10 +1520,11 @@ public struct MultiProviderMonitoringPanelView: View {
     )
   }
 
-  private func syncEditorStates() {
+  private func syncEditorStates(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>? = nil) {
+    let snapshot = snapshot ?? makeItemSnapshot()
     editorStates = MonitoringEditorStateStore.prune(
       editorStates,
-      validItemIDs: Set(allItems.map(\.id))
+      validItemIDs: Set(snapshot.itemIDs)
     )
   }
 

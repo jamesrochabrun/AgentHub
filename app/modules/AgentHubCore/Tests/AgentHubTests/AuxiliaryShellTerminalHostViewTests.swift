@@ -39,6 +39,20 @@ struct AuxiliaryShellTerminalHostViewTests {
     #expect(hostView.mountedTerminalKey == "session-a")
   }
 
+  @Test("Mounted state matches the terminal instance and key")
+  @MainActor
+  func mountedStateRequiresSameTerminalAndKey() {
+    let hostView = AuxiliaryShellTerminalHostView(frame: NSRect(x: 0, y: 0, width: 800, height: 400))
+    let firstTerminal = TerminalContainerView()
+    let secondTerminal = TerminalContainerView()
+
+    hostView.mount(firstTerminal, key: "session-a")
+
+    #expect(hostView.isMounted(firstTerminal, key: "session-a"))
+    #expect(!hostView.isMounted(firstTerminal, key: "session-b"))
+    #expect(!hostView.isMounted(secondTerminal, key: "session-a"))
+  }
+
   @Test("Unmount removes the currently mounted terminal")
   @MainActor
   func unmountRemovesTerminal() {

@@ -153,7 +153,9 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   public func updateNSView(_ nsView: EmbeddedTerminalHostView, context: Context) {
     let terminal = resolveTerminal(context: context, isDark: colorScheme == .dark)
     applyCallbacks(to: terminal)
-    nsView.mount(terminal, key: terminalKey)
+    if !nsView.isMounted(terminal, key: terminalKey) {
+      nsView.mount(terminal, key: terminalKey)
+    }
     terminal.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), fontFamily: terminalFontFamily, theme: runtimeTheme)
 
     // If there's a pending prompt in the viewModel, send it (and clear it)

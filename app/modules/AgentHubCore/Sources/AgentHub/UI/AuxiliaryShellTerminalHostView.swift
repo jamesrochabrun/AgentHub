@@ -13,6 +13,10 @@ public final class EmbeddedTerminalHostView: NSView {
     mountView(terminal.view, key: key)
   }
 
+  public func isMounted(_ terminal: any EmbeddedTerminalSurface, key: String) -> Bool {
+    mountedTerminalKey == key && mountedTerminalView === terminal.view
+  }
+
   private func mountView(_ terminalView: NSView, key: String) {
     guard mountedTerminalView !== terminalView else {
       mountedTerminalKey = key
