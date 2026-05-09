@@ -89,6 +89,7 @@ extension TerminalContainerView: EmbeddedTerminalSurface {
   public var view: NSView { self }
 
   public func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?) {
+    guard self.terminalSessionKey != terminalSessionKey || self.sessionViewModel !== sessionViewModel else { return }
     self.terminalSessionKey = terminalSessionKey
     self.sessionViewModel = sessionViewModel
   }
