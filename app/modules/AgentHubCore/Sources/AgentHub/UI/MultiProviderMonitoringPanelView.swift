@@ -39,6 +39,12 @@ private enum SidePanelContent: Equatable {
   }
 }
 
+private struct SidePanelPayload: Equatable {
+  let itemID: String
+  let providerKind: SessionProviderKind
+  let content: SidePanelContent
+}
+
 // MARK: - GitHubPopOutItem
 
 private struct GitHubPopOutItem: Identifiable {
@@ -179,7 +185,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
-  @State private var sidePanelContent: SidePanelContent?
+  @State private var sidePanelPresentation = EmbeddedSidePanelPresentationState<SidePanelPayload>()
   @State private var editorStates: [String: MonitoringEditorState] = [:]
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
@@ -219,23 +225,12 @@ public struct MultiProviderMonitoringPanelView: View {
   private func wantsEmbeddedSidePanelPresentation(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> Bool {
     layoutMode == .single
       && maximizedSessionId == nil
-      && sidePanelContent != nil
+      && sidePanelPresentation.shellPayload != nil
       && !snapshot.visibleItems.isEmpty
   }
 
   private var wantsEmbeddedSidePanelPresentation: Bool {
     wantsEmbeddedSidePanelPresentation(snapshot: makeItemSnapshot())
-  }
-
-  private var embeddedSidePanelTransition: AnyTransition {
-    .asymmetric(
-      insertion: .move(edge: .trailing).combined(with: .opacity),
-      removal: .move(edge: .trailing).combined(with: .opacity)
-    )
-  }
-
-  private var isEmbeddedSidePanelVisible: Bool {
-    wantsEmbeddedSidePanelPresentation
   }
 
   public init(
@@ -367,22 +362,28 @@ public struct MultiProviderMonitoringPanelView: View {
       ensurePrimarySelection()
     }
     .onChange(of: snapshot.effectivePrimaryItemID) { _, newId in
-      guard let currentSidePanelContent = sidePanelContent else { return }
+      guard let currentSidePanelPayload = sidePanelPresentation.currentPayload else { return }
       let currentSnapshot = makeItemSnapshot()
-      if case .webPreview(let sessionId, _, let projectPath, let mode) = currentSidePanelContent,
+      if case .webPreview(let sessionId, _, let projectPath, let mode) = currentSidePanelPayload.content,
          sessionId.hasPrefix("pending-"),
          let newId,
          let item = currentSnapshot.allItems.first(where: { $0.id == newId }),
          case .monitored(_, _, let session, _) = item,
          session.projectPath == projectPath {
-        sidePanelContent = .webPreview(
-          sessionId: session.id,
-          session: session,
-          projectPath: session.projectPath,
-          mode: mode
+        openEmbeddedSidePanel(
+          SidePanelPayload(
+            itemID: item.id,
+            providerKind: item.providerKind,
+            content: .webPreview(
+              sessionId: session.id,
+              session: session,
+              projectPath: session.projectPath,
+              mode: mode
+            )
+          )
         )
       } else {
-        sidePanelContent = nil
+        closeEmbeddedSidePanel()
       }
     }
     .onChange(of: primarySessionId) { _, newId in
@@ -407,6 +408,24 @@ public struct MultiProviderMonitoringPanelView: View {
       return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
     }
     return defaultBackground
+  }
+
+  private var embeddedSidePanelContentAnimation: Animation {
+    accessibilityReduceMotion ? .easeOut(duration: 0.08) : .timingCurve(0.22, 1, 0.36, 1, duration: 0.26)
+  }
+
+  private var embeddedSidePanelCloseShellDelay: Duration {
+    accessibilityReduceMotion ? .milliseconds(50) : .milliseconds(120)
+  }
+
+  private var embeddedSidePanelContentTransition: AnyTransition {
+    if accessibilityReduceMotion {
+      return .opacity
+    }
+    return .asymmetric(
+      insertion: .move(edge: .trailing).combined(with: .opacity),
+      removal: .move(edge: .trailing).combined(with: .opacity)
+    )
   }
 
   private var auxiliaryShellToggleAnimation: Animation {
@@ -600,8 +619,7 @@ public struct MultiProviderMonitoringPanelView: View {
             isMaximized: false,
             onToggleMaximize: { },
             isPrimarySession: true,
-            showPrimaryIndicator: false,
-            isSidePanelOpen: sidePanelContent != nil
+            showPrimaryIndicator: false
           )
           .id(pendingId)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -688,8 +706,7 @@ public struct MultiProviderMonitoringPanelView: View {
             isMaximized: false,
             onToggleMaximize: { },
             isPrimarySession: true,
-            showPrimaryIndicator: false,
-            isSidePanelOpen: sidePanelContent != nil
+            showPrimaryIndicator: false
           )
           .id(session.id)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -708,7 +725,7 @@ public struct MultiProviderMonitoringPanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .blursWhileResizing()
 
-      if let panelContent = sidePanelContent {
+      if let shellPayload = sidePanelPresentation.shellPayload {
         ResizablePanelContainer(
           side: .trailing,
           minWidth: embeddedSidePanelMinWidth,
@@ -716,13 +733,21 @@ public struct MultiProviderMonitoringPanelView: View {
           defaultWidth: min(embeddedSidePanelDefaultWidth, allowedEmbeddedSidePanelWidth),
           userDefaultsKey: AgentHubDefaults.sidePanelWidth
         ) {
-          sidePanelView(for: panelContent, viewModel: viewModel)
+          ZStack {
+            if let mountedPayload = sidePanelPresentation.mountedPayload,
+               mountedPayload == shellPayload {
+              sidePanelView(for: mountedPayload, viewModel: viewModel)
+                .transition(embeddedSidePanelContentTransition)
+            } else {
+              Color.clear
+            }
+          }
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .clipped()
         }
-        .transition(embeddedSidePanelTransition)
+        .animation(embeddedSidePanelContentAnimation, value: sidePanelPresentation.mountedPayload)
       }
     }
-    .animation(.easeInOut(duration: 0.25), value: sidePanelContent)
-    .animation(.easeInOut(duration: 0.25), value: isEmbeddedSidePanelVisible)
   }
 
   private func presentWebPreviewInSidePanel(forItemID itemID: String, session: CLISession, projectPath: String, mode: WebPreviewMode) {
@@ -735,7 +760,13 @@ public struct MultiProviderMonitoringPanelView: View {
   /// Ensures the single-mode inline layout is active for `itemID`, then toggles the requested
   /// side panel content (open if not already presenting it; close if re-selected).
   private func toggleSidePanel(_ content: SidePanelContent, forItemID itemID: String) {
-    withAnimation(.easeInOut(duration: 0.25)) {
+    let payload = SidePanelPayload(
+      itemID: itemID,
+      providerKind: providerKind(forItemID: itemID),
+      content: content
+    )
+
+    performWithoutAnimation {
       if primarySessionId != itemID {
         primarySessionId = itemID
       }
@@ -746,35 +777,55 @@ public struct MultiProviderMonitoringPanelView: View {
         maximizedSessionId = nil
       }
     }
-    if sidePanelContent == content {
+
+    if sidePanelPresentation.currentPayload == payload {
       closeEmbeddedSidePanel()
     } else {
-      openEmbeddedSidePanel(content)
+      openEmbeddedSidePanel(payload)
     }
   }
 
-  private func openEmbeddedSidePanel(_ content: SidePanelContent) {
-    withAnimation(.easeInOut(duration: 0.25)) {
-      sidePanelContent = content
-    }
+  private func openEmbeddedSidePanel(_ payload: SidePanelPayload) {
+    let transitionID = sidePanelPresentation.open(payload)
+    completeDeferredSidePanelTransition(transitionID)
   }
 
   private func closeEmbeddedSidePanel() {
-    withAnimation(.easeInOut(duration: 0.25)) {
-      sidePanelContent = nil
+    let transitionID = sidePanelPresentation.close()
+    completeDeferredSidePanelTransition(transitionID, delay: embeddedSidePanelCloseShellDelay)
+  }
+
+  private func completeDeferredSidePanelTransition(_ transitionID: UInt64, delay: Duration? = nil) {
+    Task { @MainActor [sidePanelPresentation] in
+      if let delay {
+        try? await Task.sleep(for: delay)
+      } else {
+        await Task.yield()
+      }
+      sidePanelPresentation.completeDeferredTransition(id: transitionID)
     }
   }
 
+  private func providerKind(forItemID itemID: String) -> SessionProviderKind {
+    allItems.first(where: { $0.id == itemID })?.providerKind ?? .claude
+  }
+
+  private func performWithoutAnimation(_ updates: () -> Void) {
+    var transaction = Transaction()
+    transaction.disablesAnimations = true
+    withTransaction(transaction, updates)
+  }
+
   @ViewBuilder
-  private func sidePanelView(for content: SidePanelContent, viewModel: CLISessionsViewModel) -> some View {
-    switch content {
+  private func sidePanelView(for payload: SidePanelPayload, viewModel: CLISessionsViewModel) -> some View {
+    switch payload.content {
     case .diff(_, let session, let projectPath):
       GitDiffView(
         session: session,
         projectPath: projectPath,
-        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        onDismiss: closeEmbeddedSidePanel,
         cliConfiguration: viewModel.cliConfiguration,
-        providerKind: visibleItems.first?.providerKind ?? .claude,
+        providerKind: payload.providerKind,
         onInlineRequestSubmit: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) },
         isEmbedded: true
       )
@@ -782,9 +833,9 @@ public struct MultiProviderMonitoringPanelView: View {
       PlanView(
         session: session,
         planState: planState,
-        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        onDismiss: closeEmbeddedSidePanel,
         isEmbedded: true,
-        providerKind: visibleItems.first?.providerKind ?? .claude,
+        providerKind: payload.providerKind,
         onSendFeedback: { feedback, sess in
           viewModel.showTerminalWithPrompt(for: sess, prompt: feedback)
         }
@@ -793,7 +844,7 @@ public struct MultiProviderMonitoringPanelView: View {
       WebPreviewView(
         session: session,
         projectPath: projectPath,
-        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        onDismiss: closeEmbeddedSidePanel,
         isEmbedded: true,
         onInspectSubmit: { prompt, sess in
           if !viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) {
@@ -811,18 +862,18 @@ public struct MultiProviderMonitoringPanelView: View {
     case .mermaid(_, let session):
       MermaidDiagramView(
         session: session,
-        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        onDismiss: closeEmbeddedSidePanel,
         isEmbedded: true
       )
     case .gitHub(_, let session, let projectPath):
       GitHubPanelView(
         projectPath: projectPath,
-        onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+        onDismiss: closeEmbeddedSidePanel,
         isEmbedded: true,
         session: session,
         onSendToSession: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) },
         onPopOut: {
-          withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil }
+          closeEmbeddedSidePanel()
           gitHubPopOutItem = GitHubPopOutItem(session: session, projectPath: projectPath)
         }
       )
@@ -831,7 +882,7 @@ public struct MultiProviderMonitoringPanelView: View {
         PendingChangesView(
           session: session,
           pendingToolUse: pendingToolUse,
-          onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } },
+          onDismiss: closeEmbeddedSidePanel,
           isEmbedded: true,
           onApprovalResponse: { response, sess in
             viewModel.showTerminalWithPrompt(for: sess, prompt: response)
@@ -840,7 +891,7 @@ public struct MultiProviderMonitoringPanelView: View {
       } else {
         PendingChangesWaitingView(
           session: session,
-          onDismiss: { withAnimation(.easeInOut(duration: 0.25)) { sidePanelContent = nil } }
+          onDismiss: closeEmbeddedSidePanel
         )
       }
     }
