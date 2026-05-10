@@ -135,6 +135,13 @@ enum ProviderMonitoringItem: Identifiable {
     }
   }
 
+  var isPending: Bool {
+    if case .pending = self {
+      return true
+    }
+    return false
+  }
+
   var projectPath: String {
     switch self {
     case .pending(_, _, let pending):
@@ -905,29 +912,31 @@ public struct MultiProviderMonitoringPanelView: View {
     effectivePrimaryItemID: String? = nil
   ) -> some View {
     let isPrimary = item.id == (effectivePrimaryItemID ?? effectivePrimarySessionId)
-      switch item {
-      case .pending(_, let viewModel, let pending):
-        MonitoringCardView(
-          session: pending.placeholderSession,
-          state: nil,
-          cliConfiguration: viewModel.cliConfiguration,
-          providerKind: item.providerKind,
-          initialPrompt: pending.initialPrompt,
-          initialInputText: pending.initialInputText,
-          terminalKey: "pending-\(pending.id.uuidString)",
-          viewModel: viewModel,
-          contentMode: editorContentModeBinding(for: item),
-          selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
-          editorProjectPath: editorState(for: item).projectPath,
-          editorNavigationRequest: editorState(for: item).navigationRequest,
-          dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
-          permissionModePlan: pending.permissionModePlan,
-          worktreeName: pending.worktreeName,
+    switch item {
+    case .pending(_, let viewModel, let pending):
+      MonitoringCardView(
+        session: pending.placeholderSession,
+        state: nil,
+        cliConfiguration: viewModel.cliConfiguration,
+        providerKind: item.providerKind,
+        initialPrompt: pending.initialPrompt,
+        initialInputText: pending.initialInputText,
+        terminalKey: "pending-\(pending.id.uuidString)",
+        viewModel: viewModel,
+        contentMode: editorContentModeBinding(for: item),
+        selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+        editorProjectPath: editorState(for: item).projectPath,
+        editorNavigationRequest: editorState(for: item).navigationRequest,
+        dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
+        permissionModePlan: pending.permissionModePlan,
+        worktreeName: pending.worktreeName,
+        shouldMountTerminal: shouldMountTerminal(for: item, isPrimary: isPrimary),
         onStopMonitoring: { viewModel.cancelPendingSession(pending) },
         onConnect: { },
         onCopySessionId: { },
         onOpenSessionFile: { },
         onRefreshTerminal: { },
+        onRequestMountTerminal: { setPrimarySessionIfNeeded(item.id) },
         onShowDiff: { session, projectPath in
           toggleSidePanel(
             .diff(sessionId: session.id, session: session, projectPath: projectPath),
@@ -978,22 +987,23 @@ public struct MultiProviderMonitoringPanelView: View {
       let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
       let initialPrompt = viewModel.pendingPrompt(for: session.id)
 
-        MonitoringCardView(
-          session: session,
-          state: state,
-          planState: planState,
-          cliConfiguration: viewModel.cliConfiguration,
-          providerKind: item.providerKind,
-          initialPrompt: initialPrompt,
-          terminalKey: session.id,
-          viewModel: viewModel,
-          contentMode: editorContentModeBinding(for: item),
-          selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
-          editorProjectPath: editorState(for: item).projectPath,
-          editorNavigationRequest: editorState(for: item).navigationRequest,
-          onStopMonitoring: {
-            viewModel.stopMonitoring(session: session)
-          },
+      MonitoringCardView(
+        session: session,
+        state: state,
+        planState: planState,
+        cliConfiguration: viewModel.cliConfiguration,
+        providerKind: item.providerKind,
+        initialPrompt: initialPrompt,
+        terminalKey: session.id,
+        viewModel: viewModel,
+        contentMode: editorContentModeBinding(for: item),
+        selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+        editorProjectPath: editorState(for: item).projectPath,
+        editorNavigationRequest: editorState(for: item).navigationRequest,
+        shouldMountTerminal: shouldMountTerminal(for: item, isPrimary: isPrimary),
+        onStopMonitoring: {
+          viewModel.stopMonitoring(session: session)
+        },
         onConnect: {
           _ = viewModel.connectToSession(session)
         },
@@ -1010,6 +1020,7 @@ public struct MultiProviderMonitoringPanelView: View {
             projectPath: session.projectPath
           )
         },
+        onRequestMountTerminal: { setPrimarySessionIfNeeded(item.id) },
         onInlineRequestSubmit: { prompt, sess in
           viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
         },
@@ -1459,6 +1470,10 @@ public struct MultiProviderMonitoringPanelView: View {
   private func setPrimarySessionIfNeeded(_ sessionId: String) {
     guard primarySessionId != sessionId else { return }
     primarySessionId = sessionId
+  }
+
+  private func shouldMountTerminal(for item: ProviderMonitoringItem, isPrimary: Bool) -> Bool {
+    item.isPending || isPrimary || maximizedSessionId == item.id
   }
 
   private func toggleAuxiliaryShellDock() {

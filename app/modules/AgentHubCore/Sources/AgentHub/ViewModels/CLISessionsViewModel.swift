@@ -32,12 +32,15 @@ public final class CLISessionsViewModel {
   private let terminalWorkspaceStore: (any TerminalWorkspaceStoreProtocol)?
   private let fileWatcher: any SessionFileWatcherProtocol
   private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
+  private let projectCapabilityService: any ProjectCapabilityServiceProtocol
   private let approvalNotificationService: any ApprovalNotificationServiceProtocol
   private let approvalClaimStore: (any ApprovalClaimStoreProtocol)?
   private let hookInstaller: (any ClaudeHookInstallerProtocol)?
   private let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
   private let terminalBackend: EmbeddedTerminalBackend
   @ObservationIgnored private var terminalWorkspaceSaveTasks: [String: Task<Void, Never>] = [:]
+  @ObservationIgnored private var scheduledTerminalFocusKeys: Set<String> = []
+  @ObservationIgnored private var scheduledAuxiliaryShellFocusKeys: Set<String> = []
   weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
@@ -149,6 +152,30 @@ public final class CLISessionsViewModel {
 
   public func webPreviewCandidateStatus(for projectPath: String) -> WebPreviewCandidateStatus? {
     webPreviewCandidates[WebPreviewCandidateService.normalize(projectPath)]
+  }
+
+  public func projectCapabilities(for projectPath: String) -> ProjectCapabilities? {
+    projectCapabilities[ProjectCapabilityService.normalize(projectPath)]
+  }
+
+  public func ensureProjectCapabilities(
+    for projectPath: String,
+    forceRefresh: Bool = false
+  ) async {
+    let normalizedProjectPath = ProjectCapabilityService.normalize(projectPath)
+
+    if !forceRefresh {
+      if projectCapabilities[normalizedProjectPath] != nil {
+        return
+      }
+      if let cachedCapabilities = await projectCapabilityService.cachedCapabilities(for: normalizedProjectPath) {
+        projectCapabilities[normalizedProjectPath] = cachedCapabilities
+        return
+      }
+    }
+
+    let capabilities = await projectCapabilityService.capabilities(for: normalizedProjectPath)
+    projectCapabilities[normalizedProjectPath] = capabilities
   }
 
   public func ensureWebPreviewCandidate(
@@ -741,16 +768,22 @@ public final class CLISessionsViewModel {
   /// Focuses the terminal for a given key so it receives keyboard input.
   /// Uses a short delay to let SwiftUI layout settle before requesting AppKit first responder.
   public func focusTerminal(forKey key: String) {
+    guard activeTerminals[key] != nil else { return }
+    guard scheduledTerminalFocusKeys.insert(key).inserted else { return }
     Task { @MainActor in
       try? await Task.sleep(for: .milliseconds(100))
+      scheduledTerminalFocusKeys.remove(key)
       activeTerminals[key]?.focus()
     }
   }
 
   /// Focuses the auxiliary shell terminal for a given key so it receives keyboard input.
   public func focusAuxiliaryShellTerminal(forKey key: String) {
+    guard auxiliaryShellTerminals[key] != nil else { return }
+    guard scheduledAuxiliaryShellFocusKeys.insert(key).inserted else { return }
     Task { @MainActor in
       try? await Task.sleep(for: .milliseconds(100))
+      scheduledAuxiliaryShellFocusKeys.remove(key)
       auxiliaryShellTerminals[key]?.focus()
     }
   }
@@ -799,6 +832,9 @@ public final class CLISessionsViewModel {
   /// Cached project-level preview eligibility keyed by normalized project path.
   public private(set) var webPreviewCandidates: [String: WebPreviewCandidateStatus] = [:]
 
+  /// Cached project-level UI capabilities keyed by normalized project path.
+  public private(set) var projectCapabilities: [String: ProjectCapabilities] = [:]
+
   /// Combine cancellables for monitoring subscriptions (keyed by session ID)
   private var monitoringCancellables: [String: AnyCancellable] = [:]
 
@@ -837,6 +873,7 @@ public final class CLISessionsViewModel {
     providerKind: SessionProviderKind,
     metadataStore: SessionMetadataStore? = nil,
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
+    projectCapabilityService: any ProjectCapabilityServiceProtocol = ProjectCapabilityService.shared,
     approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared,
     approvalClaimStore: (any ApprovalClaimStoreProtocol)? = nil,
     hookInstaller: (any ClaudeHookInstallerProtocol)? = nil,
@@ -851,6 +888,7 @@ public final class CLISessionsViewModel {
     self.terminalWorkspaceStore = terminalWorkspaceStore ?? metadataStore
     self.fileWatcher = fileWatcher
     self.webPreviewCandidateService = webPreviewCandidateService
+    self.projectCapabilityService = projectCapabilityService
     self.approvalNotificationService = approvalNotificationService
     self.approvalClaimStore = approvalClaimStore
     self.hookInstaller = hookInstaller

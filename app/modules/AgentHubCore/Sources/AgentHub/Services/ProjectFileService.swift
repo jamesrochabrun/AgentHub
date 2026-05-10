@@ -24,9 +24,14 @@ actor ProjectFileService: ProjectFileServiceProtocol {
   private static let maxIndexedFileSize: UInt64 = 1_000_000
 
   private let webPreviewCandidateService: (any WebPreviewCandidateServiceProtocol)?
+  private let projectCapabilityService: (any ProjectCapabilityServiceProtocol)?
 
-  init(webPreviewCandidateService: (any WebPreviewCandidateServiceProtocol)? = WebPreviewCandidateService.shared) {
+  init(
+    webPreviewCandidateService: (any WebPreviewCandidateServiceProtocol)? = WebPreviewCandidateService.shared,
+    projectCapabilityService: (any ProjectCapabilityServiceProtocol)? = ProjectCapabilityService.shared
+  ) {
     self.webPreviewCandidateService = webPreviewCandidateService
+    self.projectCapabilityService = projectCapabilityService
   }
 
   func readFile(at path: String, projectPath: String) async throws -> String {
@@ -36,6 +41,7 @@ actor ProjectFileService: ProjectFileServiceProtocol {
   func writeFile(at path: String, content: String, projectPath: String) async throws {
     try await FileIndexService.shared.writeFile(at: path, content: content, projectPath: projectPath)
     await webPreviewCandidateService?.invalidate(projectPath: projectPath)
+    await projectCapabilityService?.invalidate(projectPath: projectPath)
   }
 
   func listTextFiles(in projectPath: String, extensions allowedExtensions: Set<String>) async -> [String] {

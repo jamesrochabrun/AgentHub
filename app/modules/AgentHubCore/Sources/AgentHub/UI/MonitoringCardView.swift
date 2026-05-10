@@ -27,11 +27,13 @@ public struct MonitoringCardView: View {
   var dangerouslySkipPermissions: Bool = false
   var permissionModePlan: Bool = false
   let worktreeName: String?
+  let shouldMountTerminal: Bool
   let onStopMonitoring: () -> Void
   let onConnect: () -> Void
   let onCopySessionId: () -> Void
   let onOpenSessionFile: () -> Void
   let onRefreshTerminal: () -> Void
+  let onRequestMountTerminal: () -> Void
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
   let onShowDiff: ((CLISession, String) -> Void)?
   let onShowPlan: ((CLISession, PlanState) -> Void)?
@@ -57,7 +59,6 @@ public struct MonitoringCardView: View {
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
   @State private var showingRemixProviderPicker = false
-  @State private var isXcodeProject = false
   @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
 
@@ -78,11 +79,13 @@ public struct MonitoringCardView: View {
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil,
+    shouldMountTerminal: Bool = true,
     onStopMonitoring: @escaping () -> Void,
     onConnect: @escaping () -> Void,
     onCopySessionId: @escaping () -> Void,
     onOpenSessionFile: @escaping () -> Void,
     onRefreshTerminal: @escaping () -> Void,
+    onRequestMountTerminal: @escaping () -> Void = {},
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
     onShowDiff: ((CLISession, String) -> Void)? = nil,
     onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
@@ -115,11 +118,13 @@ public struct MonitoringCardView: View {
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
     self.permissionModePlan = permissionModePlan
     self.worktreeName = worktreeName
+    self.shouldMountTerminal = shouldMountTerminal
     self.onStopMonitoring = onStopMonitoring
     self.onConnect = onConnect
     self.onCopySessionId = onCopySessionId
     self.onOpenSessionFile = onOpenSessionFile
     self.onRefreshTerminal = onRefreshTerminal
+    self.onRequestMountTerminal = onRequestMountTerminal
     self.onInlineRequestSubmit = onInlineRequestSubmit
     self.onShowDiff = onShowDiff
     self.onShowPlan = onShowPlan
@@ -150,6 +155,18 @@ public struct MonitoringCardView: View {
 
   private var webPreviewCandidateStatus: WebPreviewCandidateStatus? {
     viewModel?.webPreviewCandidateStatus(for: session.projectPath)
+  }
+
+  private var projectCapabilities: ProjectCapabilities? {
+    viewModel?.projectCapabilities(for: session.projectPath)
+  }
+
+  private var hasStorybook: Bool {
+    projectCapabilities?.hasStorybook == true
+  }
+
+  private var isXcodeProject: Bool {
+    projectCapabilities?.isXcodeProject == true
   }
 
   private var shouldShowWebPreviewButton: Bool {
@@ -231,13 +248,7 @@ public struct MonitoringCardView: View {
       await loadWebPreviewCandidateIfNeeded()
     }
     .task(id: session.projectPath) {
-      let projectPath = session.projectPath
-      isXcodeProject = false
-      let detected = await Task.detached {
-        XcodeProjectDetector.isXcodeProject(at: projectPath)
-      }.value
-      guard !Task.isCancelled else { return }
-      isXcodeProject = detected
+      await viewModel?.ensureProjectCapabilities(for: session.projectPath)
     }
     .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
       try? await Task.sleep(for: .seconds(2))
@@ -477,7 +488,7 @@ public struct MonitoringCardView: View {
   /// to two different URLs in confusing ways.
   @ViewBuilder
   private var webPreviewControls: some View {
-    if ProjectFramework.hasStorybook(at: session.projectPath) {
+    if hasStorybook {
       Button(action: {
         Task {
           await DevServerManager.shared.startStorybookServer(
@@ -787,7 +798,9 @@ public struct MonitoringCardView: View {
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName,
+      shouldMountTerminal: shouldMountTerminal,
       onUserInteraction: onTerminalInteraction,
+      onRequestMount: onRequestMountTerminal,
       onRequestShowEditor: onRequestShowEditor,
       consumeQueuedWebPreviewContextOnSubmit: {
         viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
@@ -884,28 +897,62 @@ private struct MonitoringCardTerminalContent: View {
   let dangerouslySkipPermissions: Bool
   let permissionModePlan: Bool
   let worktreeName: String?
+  let shouldMountTerminal: Bool
   let onUserInteraction: (() -> Void)?
+  let onRequestMount: () -> Void
   let onRequestShowEditor: (() -> Void)?
   let consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
 
   var body: some View {
-    EmbeddedTerminalView(
-      terminalKey: terminalKey,
-      sessionId: sessionId,
-      projectPath: projectPath,
-      cliConfiguration: cliConfiguration,
-      initialPrompt: initialPrompt,
-      initialInputText: initialInputText,
-      viewModel: viewModel,
-      dangerouslySkipPermissions: dangerouslySkipPermissions,
-      permissionModePlan: permissionModePlan,
-      worktreeName: worktreeName,
-      onUserInteraction: onUserInteraction,
-      onRequestShowEditor: onRequestShowEditor,
-      consumeQueuedWebPreviewContextOnSubmit: consumeQueuedWebPreviewContextOnSubmit
-    )
+    Group {
+      if shouldMountTerminal {
+        EmbeddedTerminalView(
+          terminalKey: terminalKey,
+          sessionId: sessionId,
+          projectPath: projectPath,
+          cliConfiguration: cliConfiguration,
+          initialPrompt: initialPrompt,
+          initialInputText: initialInputText,
+          viewModel: viewModel,
+          dangerouslySkipPermissions: dangerouslySkipPermissions,
+          permissionModePlan: permissionModePlan,
+          worktreeName: worktreeName,
+          onUserInteraction: onUserInteraction,
+          onRequestShowEditor: onRequestShowEditor,
+          consumeQueuedWebPreviewContextOnSubmit: consumeQueuedWebPreviewContextOnSubmit
+        )
+      } else {
+        TerminalMountPlaceholder(
+          projectPath: projectPath,
+          onRequestMount: onRequestMount
+        )
+      }
+    }
     .padding(DesignTokens.Spacing.sm)
     .frame(minHeight: 300)
+  }
+}
+
+private struct TerminalMountPlaceholder: View {
+  let projectPath: String
+  let onRequestMount: () -> Void
+
+  var body: some View {
+    VStack(spacing: 10) {
+      Image(systemName: "terminal")
+        .font(.title3)
+        .foregroundStyle(.secondary)
+
+      Text(URL(fileURLWithPath: projectPath).lastPathComponent)
+        .font(.primaryDefault)
+        .lineLimit(1)
+
+      Button("Load Terminal", action: onRequestMount)
+        .buttonStyle(.agentHubOutlined)
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Color.secondary.opacity(0.06))
+    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
   }
 }
 
