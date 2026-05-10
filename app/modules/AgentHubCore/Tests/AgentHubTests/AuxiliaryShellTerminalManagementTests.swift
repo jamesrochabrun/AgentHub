@@ -68,6 +68,7 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   var workspaceSnapshotToCapture: TerminalWorkspaceSnapshot?
   private(set) var configureCallCount = 0
   private(set) var terminateCallCount = 0
+  private(set) var focusCallCount = 0
 
   func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?) {}
 
@@ -110,7 +111,9 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
     initialTypedTexts.append(text)
   }
   func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {}
-  func focus() {}
+  func focus() {
+    focusCallCount += 1
+  }
   func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
     workspaceSnapshotToCapture
   }
@@ -305,6 +308,33 @@ struct AuxiliaryShellTerminalManagementTests {
     #expect(keys.contains("session-123"))
     #expect(keys.contains("shell:session-123"))
     #expect(keys.count == 2)
+  }
+
+  @Test("Duplicate terminal focus requests are coalesced while layout settles")
+  @MainActor
+  func duplicateTerminalFocusRequestsAreCoalesced() async throws {
+    let viewModel = makeAuxiliaryShellViewModel()
+    let terminal = TestTerminalSurface()
+    viewModel.activeTerminals["session-123"] = terminal
+
+    viewModel.focusTerminal(forKey: "session-123")
+    viewModel.focusTerminal(forKey: "session-123")
+
+    try await Task.sleep(for: .milliseconds(150))
+
+    #expect(terminal.focusCallCount == 1)
+  }
+
+  @Test("Missing terminals are not focused")
+  @MainActor
+  func missingTerminalFocusDoesNothing() async throws {
+    let viewModel = makeAuxiliaryShellViewModel()
+
+    viewModel.focusTerminal(forKey: "missing")
+
+    try await Task.sleep(for: .milliseconds(150))
+
+    #expect(viewModel.activeTerminals.isEmpty)
   }
 
   @Test("Stopping monitoring removes and terminates both terminal surfaces for the session")

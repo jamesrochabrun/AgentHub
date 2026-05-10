@@ -132,6 +132,58 @@ private actor MockWebPreviewCandidateService: WebPreviewCandidateServiceProtocol
   }
 }
 
+private actor ProjectCapabilityEvaluatorSpy {
+  private(set) var evaluationCount = 0
+  private let capabilities: ProjectCapabilities
+  private let delay: Duration?
+
+  init(
+    capabilities: ProjectCapabilities = ProjectCapabilities(hasStorybook: true, isXcodeProject: true),
+    delay: Duration? = nil
+  ) {
+    self.capabilities = capabilities
+    self.delay = delay
+  }
+
+  func evaluate(projectPath _: String) async -> ProjectCapabilities {
+    evaluationCount += 1
+    if let delay {
+      try? await Task.sleep(for: delay)
+    }
+    return capabilities
+  }
+}
+
+private actor MockProjectCapabilityService: ProjectCapabilityServiceProtocol {
+  private let capabilities: ProjectCapabilities
+  private let cachedCapabilities: ProjectCapabilities?
+  private(set) var invalidatedProjectPaths: [String] = []
+
+  init(
+    capabilities: ProjectCapabilities = ProjectCapabilities(hasStorybook: true, isXcodeProject: true),
+    cachedCapabilities: ProjectCapabilities? = nil
+  ) {
+    self.capabilities = capabilities
+    self.cachedCapabilities = cachedCapabilities
+  }
+
+  func cachedCapabilities(for projectPath: String) async -> ProjectCapabilities? {
+    cachedCapabilities
+  }
+
+  func capabilities(for projectPath: String) async -> ProjectCapabilities {
+    capabilities
+  }
+
+  func invalidate(projectPath: String) async {
+    invalidatedProjectPaths.append(projectPath)
+  }
+
+  func recordedInvalidations() -> [String] {
+    invalidatedProjectPaths
+  }
+}
+
 @Suite("WebPreviewCandidateService")
 struct WebPreviewCandidateServiceTests {
 
@@ -375,6 +427,107 @@ struct CLISessionsViewModelWebPreviewCandidateTests {
   }
 }
 
+@Suite("ProjectCapabilityService")
+struct ProjectCapabilityServiceTests {
+
+  @Test("Capabilities are cached by normalized project path")
+  func capabilitiesAreCachedByNormalizedPath() async {
+    let spy = ProjectCapabilityEvaluatorSpy(
+      capabilities: ProjectCapabilities(hasStorybook: true, isXcodeProject: false)
+    )
+    let service = ProjectCapabilityService(evaluator: { projectPath in
+      await spy.evaluate(projectPath: projectPath)
+    })
+
+    let first = await service.capabilities(for: "/tmp/project/../project")
+    let second = await service.capabilities(for: "/tmp/project")
+
+    #expect(first == ProjectCapabilities(hasStorybook: true, isXcodeProject: false))
+    #expect(second == first)
+    #expect(await spy.evaluationCount == 1)
+  }
+
+  @Test("Concurrent capability requests share in-flight evaluation")
+  func concurrentRequestsShareInFlightEvaluation() async {
+    let spy = ProjectCapabilityEvaluatorSpy(delay: .milliseconds(50))
+    let service = ProjectCapabilityService(evaluator: { projectPath in
+      await spy.evaluate(projectPath: projectPath)
+    })
+
+    async let first = service.capabilities(for: "/tmp/project")
+    async let second = service.capabilities(for: "/tmp/project")
+    _ = await (first, second)
+
+    #expect(await spy.evaluationCount == 1)
+  }
+
+  @Test("Invalidation prevents in-flight results from repopulating cache")
+  func invalidationPreventsInFlightResultsFromRepopulatingCache() async throws {
+    let spy = ProjectCapabilityEvaluatorSpy(delay: .milliseconds(50))
+    let service = ProjectCapabilityService(evaluator: { projectPath in
+      await spy.evaluate(projectPath: projectPath)
+    })
+
+    async let capabilities = service.capabilities(for: "/tmp/project")
+    try await Task.sleep(for: .milliseconds(10))
+    await service.invalidate(projectPath: "/tmp/project")
+    _ = await capabilities
+
+    #expect(await service.cachedCapabilities(for: "/tmp/project") == nil)
+  }
+}
+
+@Suite("CLISessionsViewModel Project Capabilities")
+struct CLISessionsViewModelProjectCapabilityTests {
+
+  @Test("ensureProjectCapabilities stores the resolved capabilities")
+  @MainActor
+  func ensureProjectCapabilitiesStoresResolvedCapabilities() async {
+    let capabilityService = MockProjectCapabilityService(
+      capabilities: ProjectCapabilities(hasStorybook: true, isXcodeProject: false)
+    )
+    let viewModel = CLISessionsViewModel(
+      monitorService: StubMonitorService(),
+      fileWatcher: StubFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      projectCapabilityService: capabilityService,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await viewModel.ensureProjectCapabilities(for: "/tmp/project")
+
+    #expect(
+      viewModel.projectCapabilities(for: "/tmp/project")
+        == ProjectCapabilities(hasStorybook: true, isXcodeProject: false)
+    )
+  }
+
+  @Test("ensureProjectCapabilities uses fresh cached capabilities")
+  @MainActor
+  func ensureProjectCapabilitiesUsesFreshCachedCapabilities() async {
+    let cached = ProjectCapabilities(hasStorybook: false, isXcodeProject: true)
+    let capabilityService = MockProjectCapabilityService(
+      capabilities: ProjectCapabilities(hasStorybook: true, isXcodeProject: false),
+      cachedCapabilities: cached
+    )
+    let viewModel = CLISessionsViewModel(
+      monitorService: StubMonitorService(),
+      fileWatcher: StubFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      projectCapabilityService: capabilityService,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await viewModel.ensureProjectCapabilities(for: "/tmp/project")
+
+    #expect(viewModel.projectCapabilities(for: "/tmp/project") == cached)
+  }
+}
+
 @Suite("ProjectFileService web preview invalidation")
 struct ProjectFileServiceWebPreviewInvalidationTests {
 
@@ -397,6 +550,29 @@ struct ProjectFileServiceWebPreviewInvalidationTests {
     )
 
     let invalidatedPaths = await candidateService.recordedInvalidations()
+    #expect(invalidatedPaths == [fixture.root.path])
+  }
+
+  @Test("Writes invalidate cached project capabilities")
+  func writesInvalidateProjectCapabilityCache() async throws {
+    let fixture = try WebPreviewCandidateFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.write("package.json", content: "{}")
+    let capabilityService = MockProjectCapabilityService()
+    let projectFileService = ProjectFileService(
+      webPreviewCandidateService: nil,
+      projectCapabilityService: capabilityService
+    )
+    let filePath = fixture.root.appendingPathComponent("package.json").path
+
+    try await projectFileService.writeFile(
+      at: filePath,
+      content: "{\"scripts\":{\"storybook\":\"storybook dev\"}}",
+      projectPath: fixture.root.path
+    )
+
+    let invalidatedPaths = await capabilityService.recordedInvalidations()
     #expect(invalidatedPaths == [fixture.root.path])
   }
 }
