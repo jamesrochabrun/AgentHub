@@ -111,6 +111,7 @@
 				7B03D9062F14D4E200C36AA3 /* Sources */,
 				7B03D9072F14D4E200C36AA3 /* Frameworks */,
 				7B03D9082F14D4E200C36AA3 /* Resources */,
+				7B04A1002F20A00000C36AA3 /* Bundle AgentHubCLI */,
 			);
 			buildRules = (
 			);
@@ -247,6 +248,26 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		7B04A1002F20A00000C36AA3 /* Bundle AgentHubCLI */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/modules/AgentHubCLI/Package.swift",
+			);
+			name = "Bundle AgentHubCLI";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/agenthub",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -euo pipefail\n\nPACKAGE_DIR=\"${SRCROOT}/modules/AgentHubCLI\"\nSCRATCH_PATH=\"${DERIVED_FILE_DIR}/AgentHubCLI\"\nSWIFT_CONFIG=\"debug\"\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n  SWIFT_CONFIG=\"release\"\nfi\n\n/usr/bin/xcrun swift build \\\n  --package-path \"${PACKAGE_DIR}\" \\\n  --product agenthub \\\n  -c \"${SWIFT_CONFIG}\" \\\n  --scratch-path \"${SCRATCH_PATH}\"\n\nHELPERS_DIR=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers\"\nmkdir -p \"${HELPERS_DIR}\"\ncp \"${SCRATCH_PATH}/${SWIFT_CONFIG}/agenthub\" \"${HELPERS_DIR}/agenthub\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		7B03D9062F14D4E200C36AA3 /* Sources */ = {
@@ -418,6 +439,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentHub/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -450,6 +472,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AgentHub/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";

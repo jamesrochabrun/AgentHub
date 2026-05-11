@@ -306,7 +306,7 @@ public struct CreateWorktreeSheet: View {
   // MARK: - Computed Properties
 
   private var parentDirectory: String {
-    (repositoryPath as NSString).deletingLastPathComponent
+    (repositoryPath as NSString).appendingPathComponent(".worktrees")
   }
 
   private var isValid: Bool {
