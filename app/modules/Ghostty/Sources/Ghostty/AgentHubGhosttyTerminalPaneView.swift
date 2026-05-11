@@ -83,7 +83,9 @@ struct AgentHubGhosttyTerminalPaneView: View {
 
   private func closeTab(_ tab: TerminalTab) {
     guard immediateActivity == nil else { return }
-    immediateActivity = .closingTerminal
+    immediateActivity = AgentHubGhosttyTerminalPaneActivityPolicy.activityForClosingTab(
+      tabCount: panel.tabs.count
+    )
     Task { @MainActor in
       await Task.yield()
       onCloseTab(panel, tab)

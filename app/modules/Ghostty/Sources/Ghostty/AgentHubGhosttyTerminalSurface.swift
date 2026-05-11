@@ -1063,7 +1063,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private func closeGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
     guard terminalSession != nil, canCloseGhosttyTab(tab, in: panel) else { return }
     guard pendingTabCloseTasks[tab.id] == nil else { return }
-    markPaneClosingTerminal(panel.id)
+    if AgentHubGhosttyTerminalPaneActivityPolicy.activityForClosingTab(tabCount: panel.tabs.count) != nil {
+      markPaneClosingTerminal(panel.id)
+    }
     pendingTabCloseTasks[tab.id] = Task { @MainActor [weak self] in
       await Task.yield()
       guard !Task.isCancelled else { return }
