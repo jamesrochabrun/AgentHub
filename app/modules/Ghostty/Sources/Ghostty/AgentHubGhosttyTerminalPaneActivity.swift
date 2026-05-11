@@ -50,3 +50,9 @@ final class AgentHubGhosttyPaneActivityRegistry {
     activities[panelID]
   }
 }
+
+enum AgentHubGhosttyTerminalPaneActivityPolicy {
+  static func activityForClosingTab(tabCount: Int) -> AgentHubGhosttyTerminalPaneActivity? {
+    tabCount == 1 ? .closingTerminal : nil
+  }
+}

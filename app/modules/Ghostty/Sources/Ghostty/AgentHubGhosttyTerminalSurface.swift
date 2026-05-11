@@ -43,7 +43,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var configuredProcessProvider: SessionProviderKind?
   private var configuredExpectedExecutable: String?
   private static let terminalPaneDividerSize: CGFloat = 1
-  private static let terminalTabStripHeight: CGFloat = 28
+  private static let terminalTabStripHeight = AgentHubGhosttyTerminalTabChrome.stripHeight
   private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
   private static let pendingPaneRenderDelay: Duration = .milliseconds(16)
 
@@ -385,6 +385,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     terminalSession?.activeTab?.controller
   }
 
+  private var protectedAgentTabName: String {
+    let providerKind = sessionViewModel?.providerKind ?? configuredProcessProvider
+    return providerKind?.rawValue ?? "CLI"
+  }
+
   private var protectedAgentController: GhosttyTerminalController? {
     guard
       let terminalSession,
@@ -405,7 +410,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       let session = try TerminalSession(
         configPath: GhosttyConfigPathResolver.configuredPath(),
         primaryConfiguration: primaryConfiguration,
-        primaryName: protectsPrimaryTab ? "Agent" : "Shell"
+        primaryName: protectsPrimaryTab ? protectedAgentTabName : "Shell"
       )
       if protectsPrimaryTab, let primaryTab = session.primaryPanel.activeTab {
         protectedAgentPanelID = session.primaryPanelID
@@ -751,7 +756,10 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func restoredTabName(for tab: TerminalWorkspaceTabSnapshot) -> String? {
-    Self.nonEmpty(tab.name) ?? Self.nonEmpty(tab.title) ?? "Shell"
+    if tab.role == .agent {
+      return protectedAgentTabName
+    }
+    return Self.nonEmpty(tab.name) ?? Self.nonEmpty(tab.title) ?? "Shell"
   }
 
   private func resolvedFontSize() -> Float {
@@ -1055,7 +1063,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private func closeGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
     guard terminalSession != nil, canCloseGhosttyTab(tab, in: panel) else { return }
     guard pendingTabCloseTasks[tab.id] == nil else { return }
-    markPaneClosingTerminal(panel.id)
+    if AgentHubGhosttyTerminalPaneActivityPolicy.activityForClosingTab(tabCount: panel.tabs.count) != nil {
+      markPaneClosingTerminal(panel.id)
+    }
     pendingTabCloseTasks[tab.id] = Task { @MainActor [weak self] in
       await Task.yield()
       guard !Task.isCancelled else { return }

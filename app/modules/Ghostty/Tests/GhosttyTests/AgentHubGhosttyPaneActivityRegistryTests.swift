@@ -75,4 +75,18 @@ struct AgentHubGhosttyPaneActivityRegistryTests {
     #expect(registry.activity(for: firstPanelID) == nil)
     #expect(registry.activity(for: secondPanelID) == nil)
   }
+
+  @Test("Closing the last tab exposes terminal closing activity")
+  func closingLastTabExposesTerminalClosingActivity() {
+    let activity = AgentHubGhosttyTerminalPaneActivityPolicy.activityForClosingTab(tabCount: 1)
+
+    #expect(activity == .closingTerminal)
+  }
+
+  @Test("Closing one tab in a multi-tab pane does not expose pane activity")
+  func closingTabInMultiTabPaneDoesNotExposePaneActivity() {
+    let activity = AgentHubGhosttyTerminalPaneActivityPolicy.activityForClosingTab(tabCount: 2)
+
+    #expect(activity == nil)
+  }
 }
