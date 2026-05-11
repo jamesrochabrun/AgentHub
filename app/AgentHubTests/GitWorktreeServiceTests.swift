@@ -189,7 +189,7 @@ struct GitWorktreeServiceCancellationTests {
 
     #expect(cleanup.removedWorktree || cleanup.removedBranch || !cleanup.notes.isEmpty)
     #expect(try fixture.localBranchExists(branchName) == false)
-    #expect(FileManager.default.fileExists(atPath: fixture.parentDir + "/\(directoryName)") == false)
+    #expect(FileManager.default.fileExists(atPath: fixture.repoPath + "/.worktrees/\(directoryName)") == false)
   }
 }
 
@@ -318,21 +318,21 @@ struct SanitizeBranchNameTests {
 @Suite("GitWorktreeService.worktreeDirectoryName")
 struct WorktreeDirectoryNameTests {
 
-  @Test("Prefixes sanitized branch name with repo name")
-  func prefixesRepoName() {
+  @Test("Uses sanitized branch name without repo prefix")
+  func usesSanitizedBranchName() {
     let result = GitWorktreeService.worktreeDirectoryName(for: "my-branch", repoName: "MyApp")
-    #expect(result == "MyApp-my-branch")
+    #expect(result == "my-branch")
   }
 
   @Test("Sanitizes branch name before prefixing")
   func sanitizesBeforePrefixing() {
     let result = GitWorktreeService.worktreeDirectoryName(for: "origin/feature/thing", repoName: "Repo")
-    #expect(result == "Repo-feature-thing")
+    #expect(result == "feature-thing")
   }
 
   @Test("Handles feature/ branch with repo prefix")
   func featureBranchWithRepoPrefix() {
     let result = GitWorktreeService.worktreeDirectoryName(for: "feature/login", repoName: "App")
-    #expect(result == "App-feature-login")
+    #expect(result == "feature-login")
   }
 }
