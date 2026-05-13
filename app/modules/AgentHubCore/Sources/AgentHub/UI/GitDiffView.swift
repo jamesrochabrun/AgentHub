@@ -187,13 +187,21 @@ public struct GitDiffView: View {
         Text(session.shortId)
           .font(.system(.caption, design: .monospaced))
           .foregroundColor(.secondary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.7)
+          .allowsTightening(true)
 
         if let branch = session.branchName {
           Text("[\(branch)]")
             .font(.caption)
             .foregroundColor(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .allowsTightening(true)
+            .truncationMode(.middle)
         }
       }
+      .frame(minWidth: 0, alignment: .leading)
 
       Spacer()
 
