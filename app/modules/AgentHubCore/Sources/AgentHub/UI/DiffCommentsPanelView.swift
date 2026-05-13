@@ -48,7 +48,7 @@ struct DiffCommentsPanelView: View {
             }
           }
         }
-        .frame(maxHeight: 200)
+        .frame(maxHeight: 150)
 
         toolbarView
           .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -79,30 +79,60 @@ struct DiffCommentsPanelView: View {
   // MARK: - Header
 
   private var headerView: some View {
-    Button {
-      isExpanded.toggle()
-    } label: {
-      HStack(spacing: 8) {
-        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-          .font(.caption2.weight(.semibold))
-          .foregroundColor(.secondary)
-          .frame(width: 10)
+    HStack(spacing: 8) {
+      Button {
+        isExpanded.toggle()
+      } label: {
+        HStack(spacing: 8) {
+          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+            .font(.caption2.weight(.semibold))
+            .foregroundColor(.secondary)
+            .frame(width: 10)
 
-        Image(systemName: "text.bubble.fill")
-          .font(.caption)
-          .foregroundColor(.secondary)
+          Image(systemName: "text.bubble.fill")
+            .font(.caption)
+            .foregroundColor(.secondary)
 
-        Text("\(commentsState.commentCount) Comment\(commentsState.commentCount == 1 ? "" : "s")")
-          .font(.caption.bold())
-          .foregroundColor(.primary)
+          Text("\(commentsState.commentCount) Comment\(commentsState.commentCount == 1 ? "" : "s")")
+            .font(.caption.bold())
+            .foregroundColor(.primary)
 
-        Spacer()
+          Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
       }
-      .padding(.horizontal, 12)
-      .padding(.vertical, 8)
+      .buttonStyle(.plain)
+
+      // Only shown while collapsed — when expanded, the bottom toolbar
+      // already exposes the same action.
+      if !isExpanded {
+        headerSendButton
+      }
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+  }
+
+  private var headerSendButton: some View {
+    Button(action: onSendToCloud) {
+      HStack(spacing: 4) {
+        Image(systemName: "paperplane")
+          .font(.caption)
+        Text("Send \(commentsState.commentCount) to \(providerKind.rawValue)")
+          .font(.caption.bold())
+      }
+      .foregroundColor(.primary)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 4)
+      .background(
+        RoundedRectangle(cornerRadius: 6)
+          .stroke(Color.primary.opacity(0.3), lineWidth: 1)
+      )
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
+    .help("Send all comments to \(providerKind.rawValue) (⌘⇧↵)")
   }
 
   // MARK: - Toolbar

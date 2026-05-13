@@ -116,6 +116,24 @@ struct InlineEditorView: View {
     .onAppear {
       isFocused = true
     }
+    // When the editor is reused for a different line (the overlay keeps the
+    // same view alive and only swaps init params), clicking the new line
+    // hands first-responder back to the diff view. @FocusState is still
+    // `true` locally, so re-asserting `true` would be a no-op — toggle
+    // through `false` on the next runloop tick to force SwiftUI to push
+    // focus back into the TextEditor's NSTextView.
+    .onChange(of: focusReassertKey) { _, _ in
+      isFocused = false
+      DispatchQueue.main.async {
+        isFocused = true
+      }
+    }
+  }
+
+  /// Identity used to detect when the editor is repositioned to a new line
+  /// while still on screen, so we can reapply focus.
+  private var focusReassertKey: String {
+    "\(fileName)|\(side)|\(lineNumber)|\(endLineNumber ?? -1)"
   }
 
   // MARK: - Input View
