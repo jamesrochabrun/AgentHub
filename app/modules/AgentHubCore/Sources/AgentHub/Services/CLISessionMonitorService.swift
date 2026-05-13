@@ -248,7 +248,11 @@ public actor CLISessionMonitorService {
       // Track the current repository path for this iteration
       let currentRepoPath = updatedRepositories[repoIndex].path
 
-      for worktreeIndex in updatedRepositories[repoIndex].worktrees.indices {
+      let orderedWorktreeIndices = updatedRepositories[repoIndex].worktrees.indices.sorted {
+        updatedRepositories[repoIndex].worktrees[$0].path.count > updatedRepositories[repoIndex].worktrees[$1].path.count
+      }
+
+      for worktreeIndex in orderedWorktreeIndices {
         let worktreePath = updatedRepositories[repoIndex].worktrees[worktreeIndex].path
         let worktreeBranch = updatedRepositories[repoIndex].worktrees[worktreeIndex].name
         let isWorktreeEntry = updatedRepositories[repoIndex].worktrees[worktreeIndex].isWorktree

@@ -167,7 +167,11 @@ public actor CodexSessionMonitorService {
     var assignedSessionIds: Set<String> = []
 
     for repoIndex in updatedRepositories.indices {
-      for worktreeIndex in updatedRepositories[repoIndex].worktrees.indices {
+      let orderedWorktreeIndices = updatedRepositories[repoIndex].worktrees.indices.sorted {
+        updatedRepositories[repoIndex].worktrees[$0].path.count > updatedRepositories[repoIndex].worktrees[$1].path.count
+      }
+
+      for worktreeIndex in orderedWorktreeIndices {
         let worktree = updatedRepositories[repoIndex].worktrees[worktreeIndex]
         var sessions: [CLISession] = []
 

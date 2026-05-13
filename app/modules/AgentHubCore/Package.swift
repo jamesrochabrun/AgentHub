@@ -18,6 +18,7 @@ let package = Package(
     ),
   ],
   dependencies: [
+    .package(path: "../AgentHubCLI"),
     .package(path: "../AgentHubGitHub"),
     .package(path: "../Storybook"),
     .package(url: "https://github.com/jamesrochabrun/Canvas", from: "1.2.0"),
@@ -43,6 +44,7 @@ let package = Package(
       name: "AgentHubCore",
       dependencies: [
         "ClaudeCodeClient",
+        .product(name: "AgentHubCLIKit", package: "AgentHubCLI"),
         .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
         .product(name: "Storybook", package: "Storybook"),
         .product(name: "Canvas", package: "Canvas"),
