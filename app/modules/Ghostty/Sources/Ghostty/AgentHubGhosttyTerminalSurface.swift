@@ -24,6 +24,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var protectedAgentTabID: TerminalTabID?
   private var splitRoot: TerminalSplitLayout.Node?
   private var pendingMount: PendingMount?
+  private var pendingMountTask: Task<Void, Never>?
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
@@ -95,6 +96,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       NSEvent.removeMonitor(localEventMonitor)
     }
     MainActor.assumeIsolated {
+      pendingMountTask?.cancel()
+      pendingMountTask = nil
       terminalSession?.requestCloseAll()
       cancelPendingPaneOpenTasks()
       cancelPendingCloseTasks()
@@ -183,6 +186,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     removeMountedContent()
     terminalSession = nil
     pendingMount = nil
+    pendingMountTask?.cancel()
+    pendingMountTask = nil
     pendingWorkspaceSnapshot = nil
     protectedAgentPanelID = nil
     protectedAgentTabID = nil
@@ -407,8 +412,13 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   ) {
     do {
       AgentHubGhosttyRuntimeLogging.applyQuietDefault()
+      // Share a single `GhosttyRuntime` across every embedded session in the
+      // app. Without this, each TerminalSession.init runs `ghostty_app_new`
+      // afresh — loading fonts, config, and Metal pipelines per surface —
+      // which is the bulk of the per-mount cold-start cost.
+      let runtime = try AgentHubSharedGhosttyRuntime.acquire()
       let session = try TerminalSession(
-        configPath: GhosttyConfigPathResolver.configuredPath(),
+        runtime: runtime,
         primaryConfiguration: primaryConfiguration,
         primaryName: protectsPrimaryTab ? protectedAgentTabName : "Shell"
       )
@@ -448,16 +458,32 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func mountGhosttySession(_ pendingMount: PendingMount) {
-    mountGhosttySession(
-      primaryConfiguration: makeGhosttyConfiguration(
-        command: pendingMount.command,
-        environment: pendingMount.environment,
-        initialInput: pendingMount.initialInput,
-        workingDirectory: pendingMount.workingDirectory,
-        initialSize: currentInitialSurfaceSize()
-      ),
-      protectsPrimaryTab: pendingMount.protectsPrimaryTab
+    // Build the configuration synchronously while we still know the view's
+    // bounds are valid, then defer the heavy `TerminalSession.init` to the
+    // next runloop turn. Without this hop, libghostty + Metal cold-start
+    // (~5s in Debug) runs inside the same SwiftUI layout pass that triggered
+    // the mount, freezing the surrounding UI until init returns.
+    let configuration = makeGhosttyConfiguration(
+      command: pendingMount.command,
+      environment: pendingMount.environment,
+      initialInput: pendingMount.initialInput,
+      workingDirectory: pendingMount.workingDirectory,
+      initialSize: currentInitialSurfaceSize()
     )
+    let protectsPrimaryTab = pendingMount.protectsPrimaryTab
+
+    pendingMountTask?.cancel()
+    pendingMountTask = Task { @MainActor [weak self] in
+      await Task.yield()
+      guard let self else { return }
+      guard !Task.isCancelled else { return }
+      self.pendingMountTask = nil
+      guard self.canMountGhosttySession, self.terminalSession == nil else { return }
+      self.mountGhosttySession(
+        primaryConfiguration: configuration,
+        protectsPrimaryTab: protectsPrimaryTab
+      )
+    }
   }
 
   private func restorePendingWorkspaceSnapshotIfNeeded() {
