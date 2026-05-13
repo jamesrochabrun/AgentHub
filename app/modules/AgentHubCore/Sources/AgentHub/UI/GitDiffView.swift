@@ -593,7 +593,6 @@ public struct GitDiffView: View {
     if let callback = onInlineRequestSubmit {
       callback(prompt, session)
       commentsState.clearAll()
-      onDismiss()
     } else if let config = cliConfiguration {
       // Fallback to external Terminal with cliConfiguration
       if let error = TerminalLauncher.launchTerminalWithSession(
@@ -605,7 +604,6 @@ public struct GitDiffView: View {
         inlineEditorState.errorMessage = error.localizedDescription
       } else {
         commentsState.clearAll()
-        onDismiss()
       }
     }
   }

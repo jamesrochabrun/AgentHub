@@ -364,7 +364,6 @@ public struct PlanView: View {
 
     onSendFeedback?("\u{1B}[B\u{1B}[B\u{1B}[B\r\(feedback)", session)
     commentsState.clearAll()
-    onDismiss()
   }
 
   // MARK: - Load Content
