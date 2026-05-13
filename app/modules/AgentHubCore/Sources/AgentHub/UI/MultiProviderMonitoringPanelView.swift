@@ -457,12 +457,12 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @ViewBuilder
   private func mainContentBody(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
-    if isLoading {
-      loadingState
-    } else if snapshot.allItems.isEmpty {
-      emptyState
-    } else {
+    if !snapshot.allItems.isEmpty {
       monitoredSessionsList(snapshot: snapshot)
+    } else if isLoading {
+      loadingState
+    } else {
+      emptyState
     }
   }
 
@@ -476,11 +476,21 @@ public struct MultiProviderMonitoringPanelView: View {
     VStack(spacing: 12) {
       ProgressView()
         .scaleEffect(0.8)
-      Text("Restoring sessions...")
+      Text(loadingMessage)
         .font(.primaryDefault)
         .foregroundColor(.secondary)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var loadingMessage: String {
+    if claudeViewModel.isLoading {
+      return claudeViewModel.loadingState.message
+    }
+    if codexViewModel.isLoading {
+      return codexViewModel.loadingState.message
+    }
+    return "Loading sessions..."
   }
 
   // MARK: - Empty State
