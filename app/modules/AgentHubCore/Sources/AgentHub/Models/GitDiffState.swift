@@ -68,6 +68,39 @@ public struct GitDiffState: Equatable, Sendable {
   }
 }
 
+// MARK: - GitDiffRenderPolicy
+
+public struct GitDiffRenderPolicy: Equatable, Sendable {
+  public static let `default` = GitDiffRenderPolicy(maxFullContentBytes: 2 * 1024 * 1024)
+
+  public let maxFullContentBytes: UInt64
+
+  public init(maxFullContentBytes: UInt64) {
+    self.maxFullContentBytes = maxFullContentBytes
+  }
+}
+
+// MARK: - GitDiffRenderPayload
+
+public struct GitDiffRenderPayload: Equatable, Sendable {
+  public let oldContent: String
+  public let newContent: String
+  public let isLimitedContext: Bool
+  public let limitedContextReason: String?
+
+  public init(
+    oldContent: String,
+    newContent: String,
+    isLimitedContext: Bool = false,
+    limitedContextReason: String? = nil
+  ) {
+    self.oldContent = oldContent
+    self.newContent = newContent
+    self.isLimitedContext = isLimitedContext
+    self.limitedContextReason = limitedContextReason
+  }
+}
+
 // MARK: - GitDiffFileEntry
 
 /// Individual file with unstaged changes, including path and line statistics

@@ -39,7 +39,7 @@ public struct GitDiffView: View {
   @State private var isLoading = true
   @State private var errorMessage: String?
   @State private var selectedFileId: UUID?
-  @State private var diffContents: [UUID: (old: String, new: String)] = [:]
+  @State private var diffContents: [UUID: GitDiffRenderPayload] = [:]
   @State private var loadingStates: [UUID: Bool] = [:]
   @State private var fileErrorMessages: [UUID: String] = [:]
   @State private var diffStyle: DiffStyle = .unified
@@ -51,7 +51,10 @@ public struct GitDiffView: View {
   @State private var showDiscardCommentsAlert = false
   @State private var expandedPaths: Set<String> = []
   @State private var showSidebar: Bool = true
+  @State private var fileTree: [GitDiffTreeNode] = []
   @State private var treeCommonPrefix: String = ""
+  @State private var fileLoadTask: Task<Void, Never>?
+  @State private var loadGeneration = UUID()
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -60,7 +63,7 @@ public struct GitDiffView: View {
     Color.adaptiveExpandedContentBackground(for: colorScheme, theme: runtimeTheme)
   }
 
-  private let gitDiffService = GitDiffService()
+  private let gitDiffService: any GitDiffServiceProtocol
 
   public init(
     session: CLISession,
@@ -69,7 +72,8 @@ public struct GitDiffView: View {
     cliConfiguration: CLICommandConfiguration? = nil,
     providerKind: SessionProviderKind = .claude,
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
-    isEmbedded: Bool = false
+    isEmbedded: Bool = false,
+    gitDiffService: any GitDiffServiceProtocol = GitDiffService()
   ) {
     self.session = session
     self.projectPath = projectPath
@@ -78,6 +82,7 @@ public struct GitDiffView: View {
     self.providerKind = providerKind
     self.onInlineRequestSubmit = onInlineRequestSubmit
     self.isEmbedded = isEmbedded
+    self.gitDiffService = gitDiffService
   }
 
   public var body: some View {
@@ -144,6 +149,11 @@ public struct GitDiffView: View {
     .task {
       await loadChanges(for: diffMode)
     }
+    .onDisappear {
+      fileLoadTask?.cancel()
+      fileLoadTask = nil
+      loadGeneration = UUID()
+    }
     .confirmationDialog(
       "Discard Unsent Comments?",
       isPresented: $showDiscardCommentsAlert,
@@ -187,13 +197,21 @@ public struct GitDiffView: View {
         Text(session.shortId)
           .font(.system(.caption, design: .monospaced))
           .foregroundColor(.secondary)
+          .lineLimit(1)
+          .minimumScaleFactor(0.7)
+          .allowsTightening(true)
 
         if let branch = session.branchName {
           Text("[\(branch)]")
             .font(.caption)
             .foregroundColor(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .allowsTightening(true)
+            .truncationMode(.middle)
         }
       }
+      .frame(minWidth: 0, alignment: .leading)
 
       Spacer()
 
@@ -285,117 +303,6 @@ public struct GitDiffView: View {
   }
 
   // MARK: - File List Sidebar
-
-  /// Builds a hierarchical tree from flat file entries
-  private var fileTree: [GitDiffTreeNode] {
-    buildFileTree(from: diffState.files).nodes
-  }
-
-  /// Finds the longest common directory prefix among all file paths
-  private func findCommonPrefix(from files: [GitDiffFileEntry]) -> [String] {
-    guard let first = files.first else { return [] }
-
-    // Get directory components (exclude filename)
-    var commonComponents = Array(first.relativePath.components(separatedBy: "/").dropLast())
-
-    for file in files.dropFirst() {
-      let components = Array(file.relativePath.components(separatedBy: "/").dropLast())
-      // Keep only matching prefix components
-      var matchCount = 0
-      for (a, b) in zip(commonComponents, components) {
-        if a == b {
-          matchCount += 1
-        } else {
-          break
-        }
-      }
-      commonComponents = Array(commonComponents.prefix(matchCount))
-      if commonComponents.isEmpty { break }
-    }
-
-    return commonComponents
-  }
-
-  /// Result of building the file tree
-  private struct FileTreeResult {
-    let nodes: [GitDiffTreeNode]
-    let commonPrefix: String
-    let allFolderPaths: Set<String>
-  }
-
-  private func buildFileTree(from files: [GitDiffFileEntry]) -> FileTreeResult {
-    guard !files.isEmpty else {
-      return FileTreeResult(nodes: [], commonPrefix: "", allFolderPaths: [])
-    }
-
-    // Find common prefix to strip
-    let commonComponents = findCommonPrefix(from: files)
-    let commonPrefix = commonComponents.joined(separator: "/")
-    let stripCount = commonComponents.count
-
-    // Root node to hold top-level children
-    let root = GitDiffTreeNode(name: "", fullPath: "", file: nil)
-    var allFolderPaths: Set<String> = []
-
-    for file in files {
-      // Strip common prefix from path components
-      let allComponents = file.relativePath.components(separatedBy: "/")
-      let pathComponents = Array(allComponents.dropFirst(stripCount))
-
-      var currentNode = root
-      var currentPath = ""
-
-      for (index, component) in pathComponents.enumerated() {
-        let isLastComponent = index == pathComponents.count - 1
-        currentPath = currentPath.isEmpty ? component : "\(currentPath)/\(component)"
-
-        if isLastComponent {
-          // This is a file node
-          let fileNode = GitDiffTreeNode(
-            name: component,
-            fullPath: currentPath,
-            file: file
-          )
-          currentNode.childrenDict[component] = fileNode
-        } else {
-          // This is a folder node
-          if currentNode.childrenDict[component] == nil {
-            let folderNode = GitDiffTreeNode(
-              name: component,
-              fullPath: currentPath,
-              file: nil
-            )
-            currentNode.childrenDict[component] = folderNode
-          }
-          allFolderPaths.insert(currentPath)
-          // Move into this folder
-          currentNode = currentNode.childrenDict[component]!
-        }
-      }
-    }
-
-    // Convert dictionary to sorted array starting from root's children
-    let nodes = sortNodes(from: root.childrenDict)
-    return FileTreeResult(nodes: nodes, commonPrefix: commonPrefix, allFolderPaths: allFolderPaths)
-  }
-
-  private func sortNodes(from dict: [String: GitDiffTreeNode]) -> [GitDiffTreeNode] {
-    dict.values
-      .map { node in
-        // Recursively sort children
-        if !node.childrenDict.isEmpty {
-          node.children = sortNodes(from: node.childrenDict)
-        }
-        return node
-      }
-      .sorted { lhs, rhs in
-        // Folders first, then alphabetically
-        if lhs.isFolder != rhs.isFolder {
-          return lhs.isFolder
-        }
-        return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
-      }
-  }
 
   /// Computes the ideal sidebar width based on the deepest/widest node in the tree
   private var computedSidebarWidth: CGFloat {
@@ -501,16 +408,18 @@ public struct GitDiffView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
-      } else if let contents = diffContents[selectedId] {
+      } else if let payload = diffContents[selectedId] {
         // Find the file entry for the name
         if let file = diffState.files.first(where: { $0.id == selectedId }) {
           GitDiffContentView(
-            oldContent: contents.old,
-            newContent: contents.new,
+            oldContent: payload.oldContent,
+            newContent: payload.newContent,
             fileName: file.fileName,
             filePath: file.filePath,
             projectPath: projectPath,
             isWebRenderable: file.isWebRenderable,
+            isLimitedContext: payload.isLimitedContext,
+            limitedContextReason: payload.limitedContextReason,
             showSidebar: $showSidebar,
             diffStyle: $diffStyle,
             overflowMode: $overflowMode,
@@ -541,9 +450,13 @@ public struct GitDiffView: View {
   private func loadChanges(for mode: DiffMode) async {
     let clock = ContinuousClock()
     let totalStart = clock.now
+    let generation = UUID()
 
     // Clear existing state when switching modes
     await MainActor.run {
+      loadGeneration = generation
+      fileLoadTask?.cancel()
+      fileLoadTask = nil
       isLoading = true
       errorMessage = nil
       diffState = .empty
@@ -551,64 +464,55 @@ public struct GitDiffView: View {
       selectedFileId = nil
       loadingStates = [:]
       fileErrorMessages = [:]
+      fileTree = []
       treeCommonPrefix = ""
       expandedPaths = []
     }
 
     do {
       // Detect base branch for branch mode (cache it for later use)
+      let baseBranch: String?
       if mode == .branch && detectedBaseBranch == nil {
         let branchStart = clock.now
-        detectedBaseBranch = try await gitDiffService.detectBaseBranch(at: projectPath)
+        let detectedBranch = try await gitDiffService.detectBaseBranch(at: projectPath)
         AppLogger.git.info("[perf] detectBaseBranch: \(clock.now - branchStart)")
+        baseBranch = detectedBranch
+        await MainActor.run {
+          guard loadGeneration == generation else { return }
+          detectedBaseBranch = detectedBranch
+        }
+      } else {
+        baseBranch = mode == .branch ? detectedBaseBranch : nil
       }
 
       let gitRootStart = clock.now
-      let gitRoot = try await gitDiffService.findGitRoot(at: projectPath)
-      AppLogger.git.info("[perf] findGitRoot: \(clock.now - gitRootStart)")
+      _ = try await gitDiffService.findGitRoot(at: projectPath)
+      AppLogger.git.info("[perf] findGitRoot/cache: \(clock.now - gitRootStart)")
 
-      // Get unified diff in ONE command (fast path)
-      let diffStart = clock.now
-      let unifiedDiff = try await gitDiffService.getUnifiedDiffOutput(
+      let changedFilesStart = clock.now
+      let state = try await gitDiffService.changedFiles(
         at: projectPath,
         mode: mode,
-        baseBranch: detectedBaseBranch
+        baseBranch: baseBranch
       )
-      AppLogger.git.info("[perf] getUnifiedDiffOutput: \(clock.now - diffStart)")
-
-      // Parse all tracked file diffs upfront
-      let parseStart = clock.now
-      let parsed = DiffParserUtils.parse(diffOutput: unifiedDiff)
-      var entries = DiffParserUtils.toGitDiffFileEntries(parsed, gitRoot: gitRoot)
-      AppLogger.git.info("[perf] parse+toEntries: \(clock.now - parseStart)")
-
-      // Add untracked files in unstaged mode (not present in `git diff` output).
-      if mode == .unstaged {
-        let untrackedStart = clock.now
-        let untrackedEntries = try await gitDiffService.getUntrackedChanges(atGitRoot: gitRoot)
-        AppLogger.git.info("[perf] getUntrackedChanges: \(clock.now - untrackedStart)")
-
-        if !untrackedEntries.isEmpty {
-          var seenPaths = Set(entries.map(\.relativePath))
-          for entry in untrackedEntries where seenPaths.insert(entry.relativePath).inserted {
-            entries.append(entry)
-          }
-        }
-      }
+      AppLogger.git.info("[perf] changedFiles: \(clock.now - changedFilesStart)")
 
       await MainActor.run {
-        diffState = GitDiffState(files: entries)
+        guard loadGeneration == generation else { return }
+
+        diffState = state
         isLoading = false
 
         // Build tree and auto-expand all folders
-        let treeResult = buildFileTree(from: entries)
+        let treeResult = GitDiffTreeBuilder.build(from: state.files)
+        fileTree = treeResult.nodes
         treeCommonPrefix = treeResult.commonPrefix
         expandedPaths = treeResult.allFolderPaths
 
         // Auto-select first file
-        if let first = entries.first {
+        if let first = state.files.first {
           selectedFileId = first.id
-          loadFileDiff(for: first, mode: mode)
+          loadFileDiff(for: first, mode: mode, generation: generation)
         }
       }
 
@@ -616,35 +520,60 @@ public struct GitDiffView: View {
 
     } catch {
       await MainActor.run {
+        guard loadGeneration == generation else { return }
         errorMessage = error.localizedDescription
         isLoading = false
       }
     }
   }
 
-  private func loadFileDiff(for file: GitDiffFileEntry, mode: DiffMode? = nil) {
+  private func loadFileDiff(
+    for file: GitDiffFileEntry,
+    mode: DiffMode? = nil,
+    generation: UUID? = nil
+  ) {
+    let loadingIds = loadingStates.filter(\.value).map(\.key)
+    fileLoadTask?.cancel()
+    fileLoadTask = nil
+    for id in loadingIds {
+      loadingStates[id] = false
+    }
+
     // Skip if already loaded
     if diffContents[file.id] != nil { return }
 
-    // Fetch full file contents via git (preserves real line numbers)
+    // Fetch render payload lazily for the selected file.
     loadingStates[file.id] = true
+    fileErrorMessages[file.id] = nil
 
     let currentMode = mode ?? diffMode
+    let currentGeneration = generation ?? loadGeneration
+    let currentBaseBranch = currentMode == .branch ? detectedBaseBranch : nil
 
-    Task {
+    fileLoadTask = Task {
       do {
-        let (oldContent, newContent) = try await gitDiffService.getFileDiff(
-          filePath: file.filePath,
+        let payload = try await gitDiffService.renderPayload(
+          for: file,
           at: projectPath,
           mode: currentMode,
-          baseBranch: detectedBaseBranch
+          baseBranch: currentBaseBranch
         )
+        guard !Task.isCancelled else { return }
         await MainActor.run {
-          diffContents[file.id] = (old: oldContent, new: newContent)
+          guard loadGeneration == currentGeneration,
+                selectedFileId == file.id else { return }
+          diffContents[file.id] = payload
+          loadingStates[file.id] = false
+        }
+      } catch is CancellationError {
+        await MainActor.run {
+          guard loadGeneration == currentGeneration else { return }
           loadingStates[file.id] = false
         }
       } catch {
         await MainActor.run {
+          guard loadGeneration == currentGeneration,
+                selectedFileId == file.id else { return }
           fileErrorMessages[file.id] = error.localizedDescription
           loadingStates[file.id] = false
         }
@@ -681,26 +610,6 @@ public struct GitDiffView: View {
     }
   }
 
-}
-
-// MARK: - GitDiffTreeNode
-
-/// Represents a node in the hierarchical file tree (folder or file)
-private class GitDiffTreeNode: Identifiable {
-  let id = UUID()
-  let name: String                        // Folder or file name
-  let fullPath: String                    // Full relative path
-  var children: [GitDiffTreeNode] = []       // Child nodes (populated after tree build)
-  var childrenDict: [String: GitDiffTreeNode] = [:] // Used during tree construction
-  let file: GitDiffFileEntry?             // Non-nil for leaf file nodes
-
-  var isFolder: Bool { file == nil }
-
-  init(name: String, fullPath: String, file: GitDiffFileEntry?) {
-    self.name = name
-    self.fullPath = fullPath
-    self.file = file
-  }
 }
 
 // MARK: - GitDiffTreeNodeRow
@@ -886,6 +795,8 @@ private struct GitDiffContentView: View {
   let filePath: String
   let projectPath: String
   let isWebRenderable: Bool
+  let isLimitedContext: Bool
+  let limitedContextReason: String?
 
   @Binding var showSidebar: Bool
   @Binding var diffStyle: DiffStyle
@@ -912,7 +823,7 @@ private struct GitDiffContentView: View {
 
   /// Inline editor is enabled when cliConfiguration is available
   private var isInlineEditorEnabled: Bool {
-    cliConfiguration != nil
+    cliConfiguration != nil && !isLimitedContext
   }
 
   var body: some View {
@@ -1095,6 +1006,17 @@ private struct GitDiffContentView: View {
             .foregroundStyle(.blue)
           Text(fileName)
             .font(.headline)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+        .frame(minWidth: 0, alignment: .leading)
+
+        if isLimitedContext {
+          Label("Limited context", systemImage: "speedometer")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .help(limitedContextReason ?? "Only changed hunks are rendered for this file.")
         }
 
         // TODO: Revisit Code/Preview toggle for web-renderable files

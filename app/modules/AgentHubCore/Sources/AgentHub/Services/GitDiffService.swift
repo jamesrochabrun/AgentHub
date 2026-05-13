@@ -33,12 +33,30 @@ public enum GitDiffError: LocalizedError, Sendable {
 }
 
 /// Service for git diff operations
-public actor GitDiffService {
+public protocol GitDiffServiceProtocol: Sendable {
+  func changedFiles(at repoPath: String, mode: DiffMode, baseBranch: String?) async throws -> GitDiffState
+  func renderPayload(
+    for file: GitDiffFileEntry,
+    at repoPath: String,
+    mode: DiffMode,
+    baseBranch: String?
+  ) async throws -> GitDiffRenderPayload
+  func detectBaseBranch(at repoPath: String) async throws -> String
+  func findGitRoot(at path: String) async throws -> String
+}
+
+public actor GitDiffService: GitDiffServiceProtocol {
 
   /// Maximum time to wait for git commands (in seconds)
   private static let gitCommandTimeout: TimeInterval = 30.0
+  private static let limitedContextReason = "Large file rendered with changed hunks only."
 
-  public init() { }
+  private let renderPolicy: GitDiffRenderPolicy
+  private var gitRootCache: [String: String] = [:]
+
+  public init(renderPolicy: GitDiffRenderPolicy = .default) {
+    self.renderPolicy = renderPolicy
+  }
 
   // MARK: - Public API
 
@@ -51,6 +69,14 @@ public actor GitDiffService {
   ///   - baseBranch: Base branch for branch mode (auto-detected if nil)
   /// - Returns: GitDiffState containing all files with changes
   public func getChanges(
+    at repoPath: String,
+    mode: DiffMode,
+    baseBranch: String? = nil
+  ) async throws -> GitDiffState {
+    try await changedFiles(at: repoPath, mode: mode, baseBranch: baseBranch)
+  }
+
+  public func changedFiles(
     at repoPath: String,
     mode: DiffMode,
     baseBranch: String? = nil
@@ -306,6 +332,137 @@ public actor GitDiffService {
     }
   }
 
+  public func renderPayload(
+    for file: GitDiffFileEntry,
+    at repoPath: String,
+    mode: DiffMode,
+    baseBranch: String? = nil
+  ) async throws -> GitDiffRenderPayload {
+    if Task.isCancelled {
+      throw CancellationError()
+    }
+
+    if try await shouldUseLimitedContext(for: file, at: repoPath, mode: mode, baseBranch: baseBranch) {
+      return try await limitedContextPayload(for: file, at: repoPath, mode: mode, baseBranch: baseBranch)
+    }
+
+    do {
+      let contents = try await getFileDiff(
+        filePath: file.filePath,
+        at: repoPath,
+        mode: mode,
+        baseBranch: baseBranch
+      )
+      return GitDiffRenderPayload(oldContent: contents.oldContent, newContent: contents.newContent)
+    } catch {
+      if let fallback = try? await limitedContextPayload(for: file, at: repoPath, mode: mode, baseBranch: baseBranch) {
+        return fallback
+      }
+      throw error
+    }
+  }
+
+  private func shouldUseLimitedContext(
+    for file: GitDiffFileEntry,
+    at repoPath: String,
+    mode: DiffMode,
+    baseBranch: String?
+  ) async throws -> Bool {
+    let gitRoot = try await findGitRoot(at: repoPath)
+    let relativePath = relativePath(for: file.filePath, gitRoot: gitRoot)
+    let sizes = try await estimatedSideSizes(
+      filePath: file.filePath,
+      relativePath: relativePath,
+      gitRoot: gitRoot,
+      repoPath: repoPath,
+      mode: mode,
+      baseBranch: baseBranch
+    )
+
+    return max(sizes.old, sizes.new) > renderPolicy.maxFullContentBytes
+  }
+
+  private func estimatedSideSizes(
+    filePath: String,
+    relativePath: String,
+    gitRoot: String,
+    repoPath: String,
+    mode: DiffMode,
+    baseBranch: String?
+  ) async throws -> (old: UInt64, new: UInt64) {
+    switch mode {
+    case .unstaged:
+      async let oldSize = gitObjectSize("HEAD:\(relativePath)", at: gitRoot)
+      let newSize = localFileSize(filePath)
+      return await (oldSize ?? 0, newSize ?? 0)
+
+    case .staged:
+      async let oldSize = gitObjectSize("HEAD:\(relativePath)", at: gitRoot)
+      async let newSize = gitObjectSize(":\(relativePath)", at: gitRoot)
+      return await (oldSize ?? 0, newSize ?? 0)
+
+    case .branch:
+      let branch: String
+      if let baseBranch {
+        branch = baseBranch
+      } else {
+        branch = try await detectBaseBranch(at: repoPath)
+      }
+      let base = try await mergeBase(for: branch, gitRoot: gitRoot)
+      async let oldSize = gitObjectSize("\(base):\(relativePath)", at: gitRoot)
+      async let newSize = gitObjectSize("HEAD:\(relativePath)", at: gitRoot)
+      return await (oldSize ?? 0, newSize ?? 0)
+    }
+  }
+
+  private func limitedContextPayload(
+    for file: GitDiffFileEntry,
+    at repoPath: String,
+    mode: DiffMode,
+    baseBranch: String?
+  ) async throws -> GitDiffRenderPayload {
+    let patch = try await unifiedPatch(for: file, at: repoPath, mode: mode, baseBranch: baseBranch)
+    guard let payload = GitDiffPatchRenderAdapter.renderedPayload(
+      from: patch,
+      limitedContextReason: Self.limitedContextReason
+    ) else {
+      throw GitDiffError.binaryFile(file.relativePath)
+    }
+    return payload
+  }
+
+  private func unifiedPatch(
+    for file: GitDiffFileEntry,
+    at repoPath: String,
+    mode: DiffMode,
+    baseBranch: String?
+  ) async throws -> String {
+    let gitRoot = try await findGitRoot(at: repoPath)
+    let relativePath = relativePath(for: file.filePath, gitRoot: gitRoot)
+
+    let shouldUseNoIndexDiff: Bool
+    if mode == .unstaged {
+      shouldUseNoIndexDiff = !(try await isTracked(relativePath: relativePath, gitRoot: gitRoot))
+    } else {
+      shouldUseNoIndexDiff = false
+    }
+
+    if shouldUseNoIndexDiff {
+      return try await runGitCommand(
+        ["diff", "--no-index", "--", "/dev/null", relativePath],
+        at: gitRoot,
+        allowedExitCodes: [0, 1]
+      )
+    }
+
+    return try await getUnifiedFileDiff(
+      filePath: file.filePath,
+      at: repoPath,
+      mode: mode,
+      baseBranch: baseBranch
+    )
+  }
+
   /// Gets the diff content for an unstaged file (old content from HEAD, new content from disk)
   private func getUnstagedFileDiff(filePath: String, at repoPath: String) async throws -> (oldContent: String, newContent: String) {
     let gitRoot = try await findGitRoot(at: repoPath)
@@ -373,9 +530,7 @@ public actor GitDiffService {
       relativePath = filePath
     }
 
-    // Find the merge-base between current branch and base branch
-    let mergeBaseOutput = try await runGitCommand(["merge-base", baseBranch, "HEAD"], at: gitRoot)
-    let mergeBase = mergeBaseOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+    let mergeBase = try await mergeBase(for: baseBranch, gitRoot: gitRoot)
 
     // Get old content from merge-base and new content from HEAD in parallel
     async let oldTask = fetchGitFileContent(ref: mergeBase, relativePath: relativePath, gitRoot: gitRoot)
@@ -397,6 +552,48 @@ public actor GitDiffService {
     } catch {
       // File might be new or deleted
       return ""
+    }
+  }
+
+  private func relativePath(for filePath: String, gitRoot: String) -> String {
+    if filePath == gitRoot {
+      return ""
+    }
+
+    let prefix = gitRoot.hasSuffix("/") ? gitRoot : "\(gitRoot)/"
+    if filePath.hasPrefix(prefix) {
+      return String(filePath.dropFirst(prefix.count))
+    }
+    return filePath
+  }
+
+  private func gitObjectSize(_ spec: String, at gitRoot: String) async -> UInt64? {
+    guard let output = try? await runGitCommand(["cat-file", "-s", spec], at: gitRoot) else {
+      return nil
+    }
+
+    return UInt64(output.trimmingCharacters(in: .whitespacesAndNewlines))
+  }
+
+  private func localFileSize(_ filePath: String) -> UInt64? {
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: filePath),
+          let size = attributes[.size] as? NSNumber else {
+      return nil
+    }
+    return size.uint64Value
+  }
+
+  private func mergeBase(for baseBranch: String, gitRoot: String) async throws -> String {
+    let output = try await runGitCommand(["merge-base", baseBranch, "HEAD"], at: gitRoot)
+    return output.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private func isTracked(relativePath: String, gitRoot: String) async throws -> Bool {
+    do {
+      _ = try await runGitCommand(["ls-files", "--error-unmatch", "--", relativePath], at: gitRoot)
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -443,8 +640,14 @@ public actor GitDiffService {
 
   /// Finds the git root directory from any path within a repository
   public func findGitRoot(at path: String) async throws -> String {
+    if let cached = gitRootCache[path] {
+      return cached
+    }
+
     let output = try await runGitCommand(["rev-parse", "--show-toplevel"], at: path)
-    return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    let root = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    gitRootCache[path] = root
+    return root
   }
 
   // MARK: - Helper Methods
@@ -453,7 +656,8 @@ public actor GitDiffService {
   private func runGitCommand(
     _ arguments: [String],
     at path: String,
-    timeout: TimeInterval = gitCommandTimeout
+    timeout: TimeInterval = gitCommandTimeout,
+    allowedExitCodes: Set<Int32> = [0]
   ) async throws -> String {
 
     let process = Process()
@@ -542,7 +746,7 @@ public actor GitDiffService {
       throw GitDiffError.timeout
     }
 
-    if process.terminationStatus != 0 {
+    if !allowedExitCodes.contains(process.terminationStatus) {
       throw GitDiffError.gitCommandFailed(errorOutput.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
