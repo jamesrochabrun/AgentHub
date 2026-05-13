@@ -331,6 +331,7 @@ public final class AgentHubProvider {
       webPreviewCandidateService: webPreviewCandidateService,
       approvalClaimStore: claimStore,
       hookInstaller: installer,
+      codexDataPath: providerKind == .codex ? configuration.codexDataPath : nil,
       terminalSurfaceFactory: terminalSurfaceFactory,
       terminalBackend: terminalBackend,
       terminalWorkspaceStore: metadataStore

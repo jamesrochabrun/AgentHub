@@ -426,7 +426,12 @@ struct LazyBrowseSessionsLoadingTests {
 
     let requestedId = "22222222-2222-2222-2222-222222222222"
     let otherId = "33333333-3333-3333-3333-333333333333"
-    try codexLines(sessionId: requestedId, cwd: "/tmp/project", message: "requested")
+    try codexLines(
+      sessionId: requestedId,
+      cwd: "/tmp/project",
+      message: "requested",
+      baseInstructionsLength: 24_000
+    )
       .write(
         to: sessionsDir.appending(path: "rollout-2026-05-05T12-00-00-\(requestedId).jsonl"),
         atomically: true,
@@ -445,6 +450,73 @@ struct LazyBrowseSessionsLoadingTests {
     #expect(sessions.map(\.id) == [requestedId])
     #expect(sessions.first?.firstMessage == "requested")
     #expect(sessions.first?.projectPath == "/tmp/project")
+  }
+
+  @Test("Codex pending session resolves from configured data path with oversized session metadata")
+  func codexPendingSessionResolvesFromConfiguredDataPath() async throws {
+    let root = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let projectURL = root.appending(path: "project", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
+
+    let watcher = RecordingFileWatcher()
+    let monitorService = CodexSessionMonitorService(codexDataPath: root.path)
+    let viewModel = CLISessionsViewModel(
+      monitorService: monitorService,
+      fileWatcher: watcher,
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "codex", mode: .codex),
+      providerKind: .codex,
+      approvalNotificationService: NoOpApprovalNotificationService(),
+      codexDataPath: root.path
+    )
+
+    viewModel.addRepository(at: projectURL.path)
+
+    await waitUntil(timeout: .seconds(6)) {
+      viewModel.loadingState == .idle && viewModel.selectedRepositories.count == 1
+    }
+
+    let worktree = try #require(
+      viewModel.selectedRepositories.first?.worktrees.first(where: { $0.path == projectURL.path })
+    )
+
+    viewModel.startNewSessionInHub(worktree, initialPrompt: "pending codex")
+
+    await waitUntil {
+      viewModel.pendingHubSessions.count == 1
+    }
+
+    let pending = try #require(viewModel.pendingHubSessions.first)
+    let sessionId = "44444444-4444-4444-4444-444444444444"
+    let sessionsDir = root
+      .appending(path: "sessions")
+      .appending(path: "2026")
+      .appending(path: "05")
+      .appending(path: "05")
+    try FileManager.default.createDirectory(at: sessionsDir, withIntermediateDirectories: true)
+
+    try codexLines(
+      sessionId: sessionId,
+      cwd: projectURL.path,
+      message: "pending codex",
+      baseInstructionsLength: 24_000
+    )
+    .write(
+      to: sessionsDir.appending(path: "rollout-2026-05-05T12-02-00-\(sessionId).jsonl"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    await waitUntil(timeout: .seconds(8)) {
+      viewModel.resolvedPendingSessions[pending.id] == sessionId
+        && !viewModel.pendingHubSessions.contains(where: { $0.id == pending.id })
+        && viewModel.monitoredSessions.contains(where: { $0.session.id == sessionId })
+    }
+
+    #expect(viewModel.findSession(byId: sessionId)?.projectPath == projectURL.path)
+    #expect((await watcher.startedSessionIds()).contains(sessionId))
   }
 }
 
@@ -665,10 +737,49 @@ private func claudeLine(
   """
 }
 
-private func codexLines(sessionId: String, cwd: String, message: String) -> String {
-  """
-  {"timestamp":"2026-05-05T12:00:00.000Z","type":"session_meta","payload":{"id":"\(sessionId)","timestamp":"2026-05-05T12:00:00.000Z","cwd":"\(cwd)","git":{"branch":"main"}}}
-  {"timestamp":"2026-05-05T12:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"\(message)"}}
+private func codexLines(
+  sessionId: String,
+  cwd: String,
+  message: String,
+  baseInstructionsLength: Int = 0
+) -> String {
+  var sessionMetaPayload: [String: Any] = [
+    "id": sessionId,
+    "timestamp": "2026-05-05T12:00:00.000Z",
+    "cwd": cwd,
+    "git": [
+      "branch": "main"
+    ]
+  ]
+
+  if baseInstructionsLength > 0 {
+    sessionMetaPayload["base_instructions"] = [
+      "text": String(repeating: "x", count: baseInstructionsLength)
+    ]
+  }
+
+  let sessionMeta: [String: Any] = [
+    "timestamp": "2026-05-05T12:00:00.000Z",
+    "type": "session_meta",
+    "payload": sessionMetaPayload
+  ]
+  let userMessage: [String: Any] = [
+    "timestamp": "2026-05-05T12:00:01.000Z",
+    "type": "event_msg",
+    "payload": [
+      "type": "user_message",
+      "message": message
+    ]
+  ]
+
+  return """
+  \(jsonLine(sessionMeta))
+  \(jsonLine(userMessage))
 
   """
+}
+
+private func jsonLine(_ object: [String: Any]) -> String {
+  let data = try! JSONSerialization.data(withJSONObject: object)
+  return String(decoding: data, as: UTF8.self)
 }

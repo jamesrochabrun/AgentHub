@@ -27,6 +27,7 @@ public final class CLISessionsViewModel {
   private let searchService: (any SessionSearchServiceProtocol)?
   public let cliConfiguration: CLICommandConfiguration
   public let providerKind: SessionProviderKind
+  private let codexDataPath: String
   private let worktreeService = GitWorktreeService()
   private let metadataStore: SessionMetadataStore?
   private let terminalWorkspaceStore: (any TerminalWorkspaceStoreProtocol)?
@@ -877,6 +878,7 @@ public final class CLISessionsViewModel {
     approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared,
     approvalClaimStore: (any ApprovalClaimStoreProtocol)? = nil,
     hookInstaller: (any ClaudeHookInstallerProtocol)? = nil,
+    codexDataPath: String? = nil,
     terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
     terminalBackend: EmbeddedTerminalBackend = .storedPreference,
     terminalWorkspaceStore: (any TerminalWorkspaceStoreProtocol)? = nil
@@ -896,6 +898,7 @@ public final class CLISessionsViewModel {
     self.terminalBackend = terminalBackend
     self.cliConfiguration = cliConfiguration
     self.providerKind = providerKind
+    self.codexDataPath = NSString(string: codexDataPath ?? "~/.codex").expandingTildeInPath
     self.showLastMessage = UserDefaults.standard.bool(forKey: "CLISessionsShowLastMessage")
 
     // Load approval timeout with default of 5 seconds
@@ -2445,8 +2448,7 @@ public final class CLISessionsViewModel {
   /// Watches the Codex sessions directory for a new session file.
   @MainActor
   private func watchForNewCodexSession(pending: PendingHubSession, worktree: WorktreeBranch) async {
-    let codexPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.codex"
-    var knownFiles = Set(CodexSessionFileScanner.listSessionFiles(codexDataPath: codexPath))
+    var knownFiles = Set(CodexSessionFileScanner.listSessionFiles(codexDataPath: codexDataPath))
 
     if let meta = findRecentCodexSession(
       in: knownFiles,
@@ -2465,7 +2467,7 @@ public final class CLISessionsViewModel {
     await pollForNewCodexSession(
       pending: pending,
       worktree: worktree,
-      codexPath: codexPath,
+      codexPath: codexDataPath,
       knownFiles: &knownFiles
     )
   }

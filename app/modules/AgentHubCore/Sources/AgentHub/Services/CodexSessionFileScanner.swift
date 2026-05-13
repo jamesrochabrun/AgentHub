@@ -30,6 +30,8 @@ public struct CodexSessionMeta: Sendable {
 }
 
 public enum CodexSessionFileScanner {
+  private static let firstLineChunkSize = 16_384
+  private static let maxFirstLineBytes = 262_144
 
   public static func listSessionFiles(codexDataPath: String) -> [String] {
     let sessionsRoot = (codexDataPath as NSString).expandingTildeInPath + "/sessions"
@@ -57,38 +59,30 @@ public enum CodexSessionFileScanner {
     guard let handle = FileHandle(forReadingAtPath: path) else { return nil }
     defer { try? handle.close() }
 
-    guard let data = try? handle.read(upToCount: 16_384),
-          let content = String(data: data, encoding: .utf8) else {
+    guard let firstLine = readFirstLine(from: handle),
+          let jsonData = firstLine.data(using: .utf8),
+          let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
       return nil
     }
 
-    for line in content.components(separatedBy: .newlines) where !line.isEmpty {
-      guard let jsonData = line.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-        continue
-      }
-
-      guard let type = json["type"] as? String, type == "session_meta" else { continue }
-      guard let payload = json["payload"] as? [String: Any] else { continue }
-      guard let sessionId = payload["id"] as? String,
-            let cwd = payload["cwd"] as? String else {
-        continue
-      }
-
-      let startedAt = parseTimestamp(payload["timestamp"] as? String) ?? parseTimestamp(json["timestamp"] as? String)
-      let git = payload["git"] as? [String: Any]
-      let branch = git?["branch"] as? String
-
-      return CodexSessionMeta(
-        sessionId: sessionId,
-        projectPath: cwd,
-        branch: branch,
-        startedAt: startedAt,
-        sessionFilePath: path
-      )
+    guard let type = json["type"] as? String, type == "session_meta" else { return nil }
+    guard let payload = json["payload"] as? [String: Any] else { return nil }
+    guard let sessionId = payload["id"] as? String,
+          let cwd = payload["cwd"] as? String else {
+      return nil
     }
 
-    return nil
+    let startedAt = parseTimestamp(payload["timestamp"] as? String) ?? parseTimestamp(json["timestamp"] as? String)
+    let git = payload["git"] as? [String: Any]
+    let branch = git?["branch"] as? String
+
+    return CodexSessionMeta(
+      sessionId: sessionId,
+      projectPath: cwd,
+      branch: branch,
+      startedAt: startedAt,
+      sessionFilePath: path
+    )
   }
 
   private static func parseTimestamp(_ string: String?) -> Date? {
@@ -101,5 +95,37 @@ public enum CodexSessionFileScanner {
     formatter.formatOptions = [.withInternetDateTime]
     return formatter.date(from: string)
   }
-}
 
+  private static func readFirstLine(from handle: FileHandle) -> String? {
+    var data = Data()
+
+    while data.count < maxFirstLineBytes {
+      let remaining = min(firstLineChunkSize, maxFirstLineBytes - data.count)
+      guard remaining > 0 else { break }
+
+      guard let chunk = try? handle.read(upToCount: remaining),
+            !chunk.isEmpty else {
+        break
+      }
+
+      if let newlineIndex = chunk.firstIndex(of: 0x0A) {
+        data.append(chunk.prefix(upTo: newlineIndex))
+        return String(data: data, encoding: .utf8)?
+          .trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+      }
+
+      data.append(chunk)
+
+      if chunk.count < remaining {
+        break
+      }
+    }
+
+    guard !data.isEmpty, data.count < maxFirstLineBytes else {
+      return nil
+    }
+
+    return String(data: data, encoding: .utf8)?
+      .trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+  }
+}
