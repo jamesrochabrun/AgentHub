@@ -273,7 +273,7 @@ xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHu
 
 ## Approval Detection (Claude only)
 
-Claude Code buffers `tool_use` blocks until the turn commits, so JSONL alone can't surface pending approvals during the prompt. A `PreToolUse` hook writes to a sidecar directory we watch; JSONL stays primary and the hook fills the gap. Codex has no equivalent mechanism — `CodexSessionFileWatcher` hardcodes `pendingToolUse: nil`.
+Claude Code buffers `tool_use` blocks until the turn commits, so JSONL alone can't surface pending approvals during the prompt. Hook events write to a sidecar directory we watch: `PermissionRequest` marks real approval prompts, while `PreToolUse` records observed tool/mode state so `auto` mode changes can suppress false pending approvals mid-session. JSONL stays primary and the hook fills the gap. Codex has no equivalent mechanism — `CodexSessionFileWatcher` hardcodes `pendingToolUse: nil`.
 
 - `ClaudeHookInstaller` — writes our hook entry into `{project}/.claude/settings.local.json`. Driven by the repositories subscription (Claude Code reads settings once at session start). Preserves every other key and every non-AgentHub hook entry.
 - `ClaudeHookSidecarWatcher` — per-session kqueue watcher over `approvals/`, merges into `ParseResult.pendingToolUses` at `buildMonitorState`.

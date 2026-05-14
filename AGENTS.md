@@ -83,11 +83,12 @@ Storybook-enabled projects swap the Preview button for a Storybook button (never
 
 ## Claude Code Approval Hook Invariants
 
-AgentHub installs a `PreToolUse` hook to surface pending approvals in real time (see `CLAUDE.md` → "Approval Detection"). When modifying `ClaudeHookInstaller`, `ClaudeHookSidecarWatcher`, `ApprovalClaimStore`, or `HookPendingStalenessFilter`, these invariants must hold:
+AgentHub installs Claude Code hooks to surface pending approvals in real time (see `CLAUDE.md` → "Approval Detection"). `PermissionRequest` is the only hook event that represents a real pending approval; `PreToolUse` is only an observed tool/mode signal used to track dynamic permission-mode changes. When modifying `ClaudeHookInstaller`, `ClaudeHookSidecarWatcher`, `SessionFileWatcher`, `ApprovalClaimStore`, or `HookPendingStalenessFilter`, these invariants must hold:
 
 - The **only** file written inside a user's repo is `{project}/.claude/settings.local.json`. Never create files under `.claude/hooks/`, never touch `.claude/settings.json`, never modify `.gitignore`.
 - Merge must preserve every unrelated key and every non-AgentHub hook entry. Our entry is identified by the absolute path to the shared script.
 - The hook script stays claim-gated so external Terminal sessions in tracked worktrees remain silent no-ops.
+- `auto` and bypass permission modes must suppress `pendingToolUse`, `awaitingApproval`, and approval notifications, including when the mode changes mid-session.
 - Install is driven by the repositories subscription, not per-session — Claude Code reads `settings.local.json` once at session start.
 - Launch reconcile and terminate flush must run synchronously (blocking `applicationDidFinishLaunching` / `applicationWillTerminate` via semaphore) so AppKit can't kill cleanup mid-flight.
 

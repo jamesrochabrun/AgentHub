@@ -51,6 +51,7 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
   private let stateStore: any ClaudeHookInstallStateStoreProtocol
   private let bundledScriptURL: URL?
   private let sharedScriptURL: URL
+  private let hookEvents = ["PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse"]
 
   // MARK: - Initialization
 
@@ -268,23 +269,20 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     }
 
     let legacyScriptPath = legacyPerProjectScriptURL(atProjectPath: path).path
-    let pre = inspectEventEntry(
-      hooks["PreToolUse"],
-      scriptPath: sharedScriptURL.path,
-      legacyScriptPath: legacyScriptPath
-    )
-    let post = inspectEventEntry(
-      hooks["PostToolUse"],
-      scriptPath: sharedScriptURL.path,
-      legacyScriptPath: legacyScriptPath
-    )
+    for event in hookEvents {
+      let inspection = inspectEventEntry(
+        hooks[event],
+        scriptPath: sharedScriptURL.path,
+        legacyScriptPath: legacyScriptPath
+      )
+      if !inspection.hasCurrentEntry
+        || inspection.hasDuplicateAgentHubEntries
+        || inspection.hasLegacyPerProjectReference {
+        return true
+      }
+    }
 
-    return !pre.hasCurrentEntry
-      || !post.hasCurrentEntry
-      || pre.hasDuplicateAgentHubEntries
-      || post.hasDuplicateAgentHubEntries
-      || pre.hasLegacyPerProjectReference
-      || post.hasLegacyPerProjectReference
+    return false
   }
 
   private func mergeSettingsLocal(at url: URL, scriptPath: String, legacyScriptPath: String) throws {
@@ -295,23 +293,16 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     }
     var hooks = root["hooks"] as? [String: Any] ?? [:]
     var didChange = false
-    let pre = upsertEventEntry(
-      in: hooks,
-      event: "PreToolUse",
-      scriptPath: scriptPath,
-      legacyScriptPath: legacyScriptPath
-    )
-    hooks = pre.hooks
-    didChange = didChange || pre.didChange
-
-    let post = upsertEventEntry(
-      in: hooks,
-      event: "PostToolUse",
-      scriptPath: scriptPath,
-      legacyScriptPath: legacyScriptPath
-    )
-    hooks = post.hooks
-    didChange = didChange || post.didChange
+    for event in hookEvents {
+      let update = upsertEventEntry(
+        in: hooks,
+        event: event,
+        scriptPath: scriptPath,
+        legacyScriptPath: legacyScriptPath
+      )
+      hooks = update.hooks
+      didChange = didChange || update.didChange
+    }
 
     guard didChange else { return }
     root["hooks"] = hooks
@@ -325,13 +316,11 @@ public actor ClaudeHookInstaller: ClaudeHookInstallerProtocol {
     }
     guard var hooks = root["hooks"] as? [String: Any] else { return }
     var didChange = false
-    let pre = removeEventEntry(in: hooks, event: "PreToolUse", scriptPaths: scriptPaths)
-    hooks = pre.hooks
-    didChange = didChange || pre.didChange
-
-    let post = removeEventEntry(in: hooks, event: "PostToolUse", scriptPaths: scriptPaths)
-    hooks = post.hooks
-    didChange = didChange || post.didChange
+    for event in hookEvents {
+      let update = removeEventEntry(in: hooks, event: event, scriptPaths: scriptPaths)
+      hooks = update.hooks
+      didChange = didChange || update.didChange
+    }
 
     guard didChange else { return }
     if hooks.isEmpty {

@@ -74,7 +74,13 @@ public actor SessionFileWatcher {
     // If already monitoring, just re-emit current state
     if let existingInfo = watchedSessions[sessionId] {
       AppLogger.watcher.info("[Polling] Session already monitored, re-emitting state: \(sessionId.prefix(8), privacy: .public)")
-      let state = buildMonitorState(from: existingInfo.parseResult)
+      let hookPendingInfo = await hookSidecarWatcher?.pendingInfo(for: sessionId)
+      let hookPermissionMode = await hookSidecarWatcher?.permissionMode(for: sessionId)
+      let state = buildMonitorState(
+        from: existingInfo.parseResult,
+        hookPending: hookPendingInfo,
+        permissionMode: hookPermissionMode
+      )
       stateSubject.send(StateUpdate(sessionId: sessionId, state: state))
       return
     }
@@ -91,12 +97,18 @@ public actor SessionFileWatcher {
 
     // Seed hook-sourced pending info (if the hook fired before we started).
     var hookPendingInfo: SessionJSONLParser.PendingToolInfo?
+    var hookPermissionMode: String?
     if let hookSidecarWatcher {
       await hookSidecarWatcher.startWatching(sessionId: sessionId)
       hookPendingInfo = await hookSidecarWatcher.pendingInfo(for: sessionId)
+      hookPermissionMode = await hookSidecarWatcher.permissionMode(for: sessionId)
     }
 
-    let initialState = buildMonitorState(from: parseResult, hookPending: hookPendingInfo)
+    let initialState = buildMonitorState(
+      from: parseResult,
+      hookPending: hookPendingInfo,
+      permissionMode: hookPermissionMode
+    )
 
     // Emit initial state
     stateSubject.send(StateUpdate(sessionId: sessionId, state: initialState))
@@ -123,7 +135,7 @@ public actor SessionFileWatcher {
     // Shared state between closures - protected by processingQueue
     var lastFileEventTime = Date()
     var lastKnownFileSize = filePosition
-    var lastEmittedStatus: SessionStatus = parseResult.currentStatus
+    var lastEmittedStatus: SessionStatus = initialState.status
 
     let statusTimer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
 
@@ -162,10 +174,13 @@ public actor SessionFileWatcher {
         // Parse new lines
         SessionJSONLParser.parseNewLines(newLines, into: &parseResult, approvalTimeoutSeconds: timeout)
 
-        // Keep lastEmittedStatus in sync to prevent redundant emissions from status timer
-        lastEmittedStatus = parseResult.currentStatus
-
-        let updatedState = self.buildMonitorState(from: parseResult, hookPending: hookPendingInfo)
+        let updatedState = self.buildMonitorState(
+          from: parseResult,
+          hookPending: hookPendingInfo,
+          permissionMode: hookPermissionMode
+        )
+        // Keep lastEmittedStatus in sync to prevent redundant emissions from status timer.
+        lastEmittedStatus = updatedState.status
 
         // Emit update
         Task { @MainActor in
@@ -225,11 +240,16 @@ public actor SessionFileWatcher {
         // Re-evaluate status based on current time
         let previousStatus = lastEmittedStatus
         SessionJSONLParser.updateCurrentStatus(&parseResult, approvalTimeoutSeconds: timeout)
+        let updatedState = self.buildMonitorState(
+          from: parseResult,
+          hookPending: hookPendingInfo,
+          permissionMode: hookPermissionMode
+        )
 
         // Only emit if status actually changed
-        if parseResult.currentStatus != lastEmittedStatus {
+        if updatedState.status != lastEmittedStatus {
           // Detect transition TO awaitingApproval (for notification)
-          if case .awaitingApproval(let tool) = parseResult.currentStatus,
+          if case .awaitingApproval(let tool) = updatedState.status,
              !self.isAwaitingApproval(previousStatus) {
             // Get last user message for notification context
             let lastMessage = parseResult.recentActivities
@@ -246,8 +266,7 @@ public actor SessionFileWatcher {
             )
           }
 
-          lastEmittedStatus = parseResult.currentStatus
-          let updatedState = self.buildMonitorState(from: parseResult, hookPending: hookPendingInfo)
+          lastEmittedStatus = updatedState.status
 
           Task { @MainActor in
             self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
@@ -286,13 +305,17 @@ public actor SessionFileWatcher {
           guard let self else { return }
           self.processingQueue.async {
             hookPendingInfo = update.info
+            hookPermissionMode = update.permissionMode
             let updatedState = self.buildMonitorState(
               from: parseResult,
-              hookPending: hookPendingInfo
+              hookPending: hookPendingInfo,
+              permissionMode: hookPermissionMode
             )
             // Fire the approval notification when the hook signals a new
             // pending tool (and only when we haven't already notified for it).
-            if let info = update.info, notifiedRef.lastNotifiedToolUseId != info.toolUseId {
+            if let info = update.info,
+               case .awaitingApproval = updatedState.status,
+               notifiedRef.lastNotifiedToolUseId != info.toolUseId {
               notifiedRef.lastNotifiedToolUseId = info.toolUseId
               let lastMessage = parseResult.recentActivities
                 .last(where: { if case .userMessage = $0.type { return true }; return false })?
@@ -308,6 +331,7 @@ public actor SessionFileWatcher {
             if update.info == nil {
               notifiedRef.lastNotifiedToolUseId = nil
             }
+            lastEmittedStatus = updatedState.status
             Task { @MainActor in
               self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
             }
@@ -348,7 +372,13 @@ public actor SessionFileWatcher {
   /// Get current state for a session
   public func getState(sessionId: String) async -> SessionMonitorState? {
     guard let info = watchedSessions[sessionId] else { return nil }
-    return buildMonitorState(from: info.parseResult)
+    let hookPendingInfo = await hookSidecarWatcher?.pendingInfo(for: sessionId)
+    let hookPermissionMode = await hookSidecarWatcher?.permissionMode(for: sessionId)
+    return buildMonitorState(
+      from: info.parseResult,
+      hookPending: hookPendingInfo,
+      permissionMode: hookPermissionMode
+    )
   }
 
   /// Check if a session is being monitored
@@ -375,7 +405,13 @@ public actor SessionFileWatcher {
     info.parseResult = parseResult
     watchedSessions[sessionId] = info
 
-    let state = buildMonitorState(from: parseResult)
+    let hookPendingInfo = await hookSidecarWatcher?.pendingInfo(for: sessionId)
+    let hookPermissionMode = await hookSidecarWatcher?.permissionMode(for: sessionId)
+    let state = buildMonitorState(
+      from: parseResult,
+      hookPending: hookPendingInfo,
+      permissionMode: hookPermissionMode
+    )
     stateSubject.send(StateUpdate(sessionId: sessionId, state: state))
   }
 
@@ -460,7 +496,8 @@ public actor SessionFileWatcher {
 
   private nonisolated func buildMonitorState(
     from result: SessionJSONLParser.ParseResult,
-    hookPending: SessionJSONLParser.PendingToolInfo? = nil
+    hookPending: SessionJSONLParser.PendingToolInfo? = nil,
+    permissionMode: String? = nil
   ) -> SessionMonitorState {
     // JSONL is authoritative when it has a pending entry; otherwise fall back
     // to the hook-sourced entry (Claude Code CLI doesn't flush tool_use blocks
@@ -479,8 +516,13 @@ public actor SessionFileWatcher {
       chosenPending = effectiveHookPending
     }
 
+    let suppressesChosenPending = shouldSuppressApproval(
+      forTool: chosenPending?.toolName,
+      permissionMode: permissionMode
+    )
+
     let pendingToolUse: PendingToolUse?
-    if let p = chosenPending {
+    if let p = chosenPending, !suppressesChosenPending {
       pendingToolUse = PendingToolUse(
         toolName: p.toolName,
         toolUseId: p.toolUseId,
@@ -497,7 +539,14 @@ public actor SessionFileWatcher {
     // reflects reality.
     let derivedStatus: SessionStatus = {
       if result.pendingToolUses.isEmpty, let p = effectiveHookPending {
+        if shouldSuppressApproval(forTool: p.toolName, permissionMode: permissionMode) {
+          return .executingTool(name: p.toolName)
+        }
         return .awaitingApproval(tool: p.toolName)
+      }
+      if case .awaitingApproval(let tool) = result.currentStatus,
+         shouldSuppressApproval(forTool: tool, permissionMode: permissionMode) {
+        return .executingTool(name: tool)
       }
       return result.currentStatus
     }()
@@ -528,6 +577,21 @@ public actor SessionFileWatcher {
       return pending.toolName
     }
     return nil
+  }
+
+  private nonisolated func shouldSuppressApproval(
+    forTool toolName: String?,
+    permissionMode: String?
+  ) -> Bool {
+    switch permissionMode {
+    case "auto", "bypassPermissions":
+      return true
+    case "acceptEdits":
+      guard let toolName else { return false }
+      return ["Edit", "Write", "MultiEdit", "NotebookEdit"].contains(toolName)
+    default:
+      return false
+    }
   }
 
   /// Check if a status is awaitingApproval

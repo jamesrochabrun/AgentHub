@@ -138,6 +138,16 @@ struct ClaudeHookInstallerTests {
       return (hooks["PostToolUse"] as? [[String: Any]]) ?? []
     }
 
+    func permissionRequestEntries(in settings: [String: Any]) -> [[String: Any]] {
+      let hooks = settings["hooks"] as? [String: Any] ?? [:]
+      return (hooks["PermissionRequest"] as? [[String: Any]]) ?? []
+    }
+
+    func permissionDeniedEntries(in settings: [String: Any]) -> [[String: Any]] {
+      let hooks = settings["hooks"] as? [String: Any] ?? [:]
+      return (hooks["PermissionDenied"] as? [[String: Any]]) ?? []
+    }
+
     func writeSettings(_ settings: [String: Any], for project: URL) throws {
       let url = settingsLocal(for: project)
       try FileManager.default.createDirectory(
@@ -188,6 +198,9 @@ struct ClaudeHookInstallerTests {
     let settings = try fx.readSettings(at: fx.settingsLocal(for: fx.projectA))
     let entries = fx.preEntries(in: settings)
     #expect(fx.hasAgentHubEntry(in: entries, scriptPath: fx.sharedScriptURL.path))
+    #expect(fx.hasAgentHubEntry(in: fx.postEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
+    #expect(fx.hasAgentHubEntry(in: fx.permissionRequestEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
+    #expect(fx.hasAgentHubEntry(in: fx.permissionDeniedEntries(in: settings), scriptPath: fx.sharedScriptURL.path))
   }
 
   @Test("sync never writes into {project}/.claude/hooks/")
