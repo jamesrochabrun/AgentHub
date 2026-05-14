@@ -165,6 +165,9 @@ public struct MultiProviderSessionsListView: View {
   @State private var gitHubSheetItem: GitHubSheetItem?
   @State private var archiveConfirmation: ArchiveConfirmation?
   @State private var removeConfirmation: RemoveConfirmation?
+  @State private var selectedModuleLandingPath: String?
+  @State private var pendingAddedModulePaths: [String] = []
+  @State private var isStartSessionSheetPresented = false
 
   // TODO: Remove along with MultiSessionLaunchView once the new Threads-based
   // session-start flow is fully implemented. Flip to `true` to restore the
@@ -227,6 +230,7 @@ public struct MultiProviderSessionsListView: View {
           claudeViewModel: claudeViewModel,
           codexViewModel: codexViewModel,
           primarySessionId: $primarySessionId,
+          selectedModuleLandingPath: $selectedModuleLandingPath,
           onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
           onRequestStartSession: { preferredRepositoryPath in
             triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
@@ -281,10 +285,21 @@ public struct MultiProviderSessionsListView: View {
       codexViewModel.lastCreatedPendingId = nil
     }
     .onChange(of: selectedSessionItems.map(\.id)) { _, _ in
+      syncModuleLandingSelection()
       ensurePrimarySelection()
       if selectedSessionItems.isEmpty {
         setAuxiliaryShellVisible(false)
       }
+    }
+    .onChange(of: orderedTrackedRepos.map(\.path)) { _, _ in
+      syncPendingModuleRows()
+      syncModuleLandingSelection()
+      ensurePrimarySelection()
+    }
+    .onChange(of: sidebarGroupMode) { _, newMode in
+      guard newMode != .repo else { return }
+      selectedModuleLandingPath = nil
+      ensurePrimarySelection()
     }
     .sheet(item: $sessionFileSheetItem) { item in
       SessionFileSheetView(
@@ -403,6 +418,15 @@ public struct MultiProviderSessionsListView: View {
           }
         }
       )
+    }
+    .sheet(isPresented: $isStartSessionSheetPresented) {
+      if let multiLaunchViewModel {
+        StartSessionSheet(
+          launchViewModel: multiLaunchViewModel,
+          intelligenceViewModel: intelligenceViewModel,
+          onDismiss: { isStartSessionSheetPresented = false }
+        )
+      }
     }
     .modifier(ArchiveConfirmationAlert(confirmation: $archiveConfirmation))
     .modifier(RemoveConfirmationAlert(confirmation: $removeConfirmation))
@@ -930,6 +954,17 @@ public struct MultiProviderSessionsListView: View {
         onAddFolder: { showAddRepositoryPicker() }
       )
 
+      let pendingModules = pendingModulePaths
+      if !pendingModules.isEmpty {
+        ForEach(pendingModules, id: \.self) { path in
+          PendingModuleRow(
+            name: moduleDisplayName(for: path),
+            isSelected: selectedModuleLandingPath == path
+          )
+          .transition(.opacity.combined(with: .move(edge: .top)))
+        }
+      }
+
       // Pinned sessions section
       let pinned = pinnedSessionItems
       if !pinned.isEmpty {
@@ -960,6 +995,7 @@ public struct MultiProviderSessionsListView: View {
               name: group.displayName,
               isExpanded: isExpanded,
               canToggle: !group.items.isEmpty,
+              isSelected: selectedModuleLandingPath == group.id && group.items.isEmpty,
               onToggle: {
                 withAnimation(.easeInOut(duration: 0.25)) {
                   if isExpanded {
@@ -969,9 +1005,13 @@ public struct MultiProviderSessionsListView: View {
                   }
                 }
               },
+              onSelectEmptyModule: {
+                selectEmptyModule(group.id)
+              },
               repoPath: group.id,
-              launchViewModel: multiLaunchViewModel,
-              intelligenceViewModel: intelligenceViewModel,
+              onStartSession: {
+                triggerNewSessionFlow(preferredRepositoryPath: group.id)
+              },
               onOpenInFinder: {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: group.id)
               },
@@ -999,6 +1039,9 @@ public struct MultiProviderSessionsListView: View {
                   repoName: group.displayName,
                   sessionCount: group.items.count
                 ) {
+                  if selectedModuleLandingPath == group.id {
+                    selectedModuleLandingPath = nil
+                  }
                   if let repo = claudeViewModel.selectedRepositories.first(where: { $0.path == group.id }) {
                     claudeViewModel.removeRepository(repo)
                   }
@@ -1090,6 +1133,7 @@ public struct MultiProviderSessionsListView: View {
             }
           }(),
           onSelect: {
+            selectedModuleLandingPath = nil
             primarySessionId = item.id
           }
         )
@@ -1354,8 +1398,11 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func addRepository(at path: String) {
+    sidebarGroupMode = .repo
+    trackPendingModule(path)
     claudeViewModel.addRepository(at: path)
     codexViewModel.addRepository(at: path)
+    selectEmptyModule(path)
   }
 
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {
@@ -1423,6 +1470,11 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func ensurePrimarySelection() {
+    guard selectedModuleLandingPath == nil else {
+      primarySessionId = nil
+      return
+    }
+
     let items = selectedSessionItems
     guard !items.isEmpty else {
       primarySessionId = nil
@@ -1432,6 +1484,54 @@ public struct MultiProviderSessionsListView: View {
       return
     }
     primarySessionId = items.first?.id
+  }
+
+  private func selectEmptyModule(_ path: String) {
+    selectedModuleLandingPath = path
+    primarySessionId = nil
+    setAuxiliaryShellVisible(false)
+  }
+
+  private func syncModuleLandingSelection() {
+    if let selectedModuleLandingPath,
+       pendingModulePaths.contains(selectedModuleLandingPath) {
+      return
+    }
+
+    let activePath = ModuleLandingSelection.activeModulePath(
+      selectedPath: selectedModuleLandingPath,
+      repositories: orderedTrackedRepos,
+      itemProjectPaths: selectedSessionItems.map { $0.session.projectPath }
+    )
+
+    if activePath == nil {
+      selectedModuleLandingPath = nil
+    }
+  }
+
+  private func trackPendingModule(_ path: String) {
+    guard !orderedTrackedRepos.contains(where: { $0.path == path }),
+          !pendingAddedModulePaths.contains(path) else {
+      return
+    }
+    pendingAddedModulePaths.insert(path, at: 0)
+  }
+
+  private func syncPendingModuleRows() {
+    let trackedPaths = Set(orderedTrackedRepos.map(\.path))
+    pendingAddedModulePaths.removeAll { trackedPaths.contains($0) }
+  }
+
+  private var pendingModulePaths: [String] {
+    let trackedPaths = Set(orderedTrackedRepos.map(\.path))
+    var seen: Set<String> = []
+    return pendingAddedModulePaths.filter { path in
+      !trackedPaths.contains(path) && seen.insert(path).inserted
+    }
+  }
+
+  private func moduleDisplayName(for path: String) -> String {
+    URL(fileURLWithPath: path).lastPathComponent
   }
 
   // MARK: - Computed
@@ -1488,6 +1588,7 @@ public struct MultiProviderSessionsListView: View {
 
     case .switchToSession(let id, _, _, _):
       if let item = selectedSessionItems.first(where: { $0.id == id }) {
+        selectedModuleLandingPath = nil
         primarySessionId = item.id
         scrollToSessionId = item.id
       }
@@ -1533,25 +1634,21 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func triggerNewSessionFlow(preferredRepositoryPath: String? = nil) {
-    withAnimation(browseAnimation) {
-      isBrowseExpanded = true
-    }
-    claudeViewModel.ensureBrowseSessionsLoaded()
-    codexViewModel.ensureBrowseSessionsLoaded()
-    launchExpandRequestID += 1
-
     guard let multiLaunchViewModel else { return }
-
     multiLaunchViewModel.reset()
 
     guard let preferredRepositoryPath else {
+      isStartSessionSheetPresented = true
       multiLaunchViewModel.selectRepository()
       return
     }
 
     Task { @MainActor in
       let didPreselect = await multiLaunchViewModel.preselectRepository(path: preferredRepositoryPath)
-      if !didPreselect {
+      if didPreselect {
+        isStartSessionSheetPresented = true
+      } else {
+        isStartSessionSheetPresented = true
         multiLaunchViewModel.selectRepository()
       }
     }
@@ -1609,12 +1706,51 @@ public struct MultiProviderSessionsListView: View {
       case .backward:
         newIndex = max(currentIndex - 1, 0)
       }
+      selectedModuleLandingPath = nil
       primarySessionId = items[newIndex].id
       scrollToSessionId = items[newIndex].id
     } else {
+      selectedModuleLandingPath = nil
       primarySessionId = items.first?.id
       scrollToSessionId = items.first?.id
     }
+  }
+}
+
+// MARK: - PendingModuleRow
+
+private struct PendingModuleRow: View {
+  let name: String
+  let isSelected: Bool
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    HStack(spacing: 8) {
+      ProgressView()
+        .controlSize(.small)
+        .scaleEffect(0.65)
+        .frame(width: 13, height: 13)
+
+      Text(name)
+        .font(Font.geist(size: 13, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.tail)
+
+      Spacer(minLength: 0)
+    }
+    .padding(.vertical, 6)
+    .padding(.horizontal, 4)
+    .background(
+      RoundedRectangle(cornerRadius: 6, style: .continuous)
+        .fill(isSelected
+              ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.12 : 0.1)
+              : Color.clear)
+    )
+    .padding(.top, 2)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Adding \(name)")
   }
 }
 
@@ -1624,24 +1760,24 @@ private struct ProjectGroupHeader: View {
   let name: String
   let isExpanded: Bool
   let canToggle: Bool
+  let isSelected: Bool
   let onToggle: () -> Void
+  let onSelectEmptyModule: () -> Void
   let repoPath: String
-  let launchViewModel: MultiSessionLaunchViewModel?
-  let intelligenceViewModel: IntelligenceViewModel?
+  let onStartSession: () -> Void
   let onOpenInFinder: () -> Void
   let onOpenGitHub: () -> Void
   let onArchiveSessions: (() -> Void)?
   let onRemove: () -> Void
 
   @State private var isHovered: Bool = false
-  @State private var showStartSheet: Bool = false
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     HStack(spacing: 4) {
-      Button(action: { if canToggle { onToggle() } }) {
+      Button(action: { canToggle ? onToggle() : onSelectEmptyModule() }) {
         HStack(spacing: 8) {
-          Image(systemName: canToggle && isExpanded ? "folder.fill" : "folder")
+          Image(systemName: isSelected || (canToggle && isExpanded) ? "folder.fill" : "folder")
             .font(.system(size: 13))
             .foregroundColor(.primary)
             .contentTransition(.symbolEffect(.replace))
@@ -1661,6 +1797,7 @@ private struct ProjectGroupHeader: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .help(canToggle ? "Expand or collapse sessions" : "Show module landing page")
 
       HeaderIconMenu(systemName: "ellipsis", size: 14, help: "More actions") {
         Button(action: onOpenInFinder) {
@@ -1679,35 +1816,20 @@ private struct ProjectGroupHeader: View {
           Label("Remove", systemImage: "xmark")
         }
       }
-      .opacity(isHovered || showStartSheet ? 1 : 0)
+      .opacity(isHovered ? 1 : 0)
 
       HeaderIconButton(
         systemName: "square.and.pencil",
         size: 14,
         help: "Start a new session"
-      ) {
-        guard let vm = launchViewModel else { return }
-        Task { @MainActor in
-          _ = await vm.preselectRepository(path: repoPath)
-          showStartSheet = true
-        }
-      }
-      .opacity(isHovered || showStartSheet ? 1 : 0)
-      .sheet(isPresented: $showStartSheet) {
-        if let vm = launchViewModel {
-          StartSessionSheet(
-            launchViewModel: vm,
-            intelligenceViewModel: intelligenceViewModel,
-            onDismiss: { showStartSheet = false }
-          )
-        }
-      }
+      ) { onStartSession() }
+      .opacity(isHovered ? 1 : 0)
     }
     .padding(.vertical, 6)
     .padding(.horizontal, 4)
     .background(
       RoundedRectangle(cornerRadius: 6, style: .continuous)
-        .fill(isHovered
+        .fill(isSelected || isHovered
               ? Color.brandPrimary.opacity(colorScheme == .dark ? 0.12 : 0.1)
               : Color.clear)
     )

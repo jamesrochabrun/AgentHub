@@ -196,6 +196,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var editorStates: [String: MonitoringEditorState] = [:]
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
+  @Binding var selectedModuleLandingPath: String?
   @AppStorage(AgentHubDefaults.hubLayoutMode)
   private var layoutModeRawValue: Int = LayoutMode.single.rawValue
   @AppStorage(AgentHubDefaults.hubPreviousLayoutMode)
@@ -232,6 +233,7 @@ public struct MultiProviderMonitoringPanelView: View {
   private func wantsEmbeddedSidePanelPresentation(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> Bool {
     layoutMode == .single
       && maximizedSessionId == nil
+      && activeModuleLandingPath(snapshot: snapshot) == nil
       && sidePanelPresentation.shellPayload != nil
       && !snapshot.visibleItems.isEmpty
   }
@@ -244,12 +246,14 @@ public struct MultiProviderMonitoringPanelView: View {
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
     primarySessionId: Binding<String?>,
+    selectedModuleLandingPath: Binding<String?> = .constant(nil),
     onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
     onRequestStartSession: @escaping (String?) -> Void
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self._primarySessionId = primarySessionId
+    self._selectedModuleLandingPath = selectedModuleLandingPath
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onRequestStartSession = onRequestStartSession
   }
@@ -291,6 +295,11 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: snapshot.effectivePrimaryItemID) { _, _ in
       syncAuxiliaryShellDockState()
+    }
+    .onChange(of: activeModuleLandingPath(snapshot: snapshot)) { _, activePath in
+      guard activePath != nil else { return }
+      maximizedSessionId = nil
+      closeEmbeddedSidePanel()
     }
     .onChange(of: isAuxiliaryShellVisible) { _, _ in
       syncAuxiliaryShellDockState()
@@ -457,7 +466,12 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @ViewBuilder
   private func mainContentBody(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
-    if !snapshot.allItems.isEmpty {
+    if let modulePath = activeModuleLandingPath(snapshot: snapshot) {
+      ModuleLandingView(
+        modulePath: modulePath,
+        onStartSession: { onRequestStartSession(modulePath) }
+      )
+    } else if !snapshot.allItems.isEmpty {
       monitoredSessionsList(snapshot: snapshot)
     } else if isLoading {
       loadingState
@@ -1352,6 +1366,7 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func auxiliaryShellTarget(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> HubAuxiliaryShellTarget? {
+    guard activeModuleLandingPath(snapshot: snapshot) == nil else { return nil }
     guard let item = snapshot.effectivePrimaryItem else { return nil }
 
     switch item {
@@ -1464,6 +1479,11 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func ensurePrimarySelection(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>? = nil) {
+    guard selectedModuleLandingPath == nil else {
+      primarySessionId = nil
+      return
+    }
+
     let snapshot = snapshot ?? makeItemSnapshot()
     guard !snapshot.allItems.isEmpty else {
       primarySessionId = nil
@@ -1619,6 +1639,7 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func togglePrimarySessionContentMode() {
+    guard activeModuleLandingPath(snapshot: makeItemSnapshot()) == nil else { return }
     guard let item = effectivePrimaryItem else { return }
     let nextMode: MonitoringCardContentMode =
       editorState(for: item).contentMode == .terminal ? .editor : .terminal
@@ -1660,6 +1681,60 @@ public struct MultiProviderMonitoringPanelView: View {
         state: state
       )
     }
+  }
+
+  private func activeModuleLandingPath(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> String? {
+    ModuleLandingSelection.activeModulePath(
+      selectedPath: selectedModuleLandingPath,
+      repositories: allSelectedRepositories,
+      itemProjectPaths: snapshot.allItems.map(\.projectPath)
+    )
+  }
+}
+
+// MARK: - ModuleLandingView
+
+private struct ModuleLandingView: View {
+  let modulePath: String
+  let onStartSession: () -> Void
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  private var moduleName: String {
+    URL(fileURLWithPath: modulePath).lastPathComponent
+  }
+
+  var body: some View {
+    VStack(spacing: 20) {
+      Text("What should we build in \(moduleName)?")
+        .font(.system(size: 31, weight: .regular))
+        .foregroundStyle(.primary)
+        .multilineTextAlignment(.center)
+        .lineLimit(nil)
+        .minimumScaleFactor(0.65)
+        .fixedSize(horizontal: false, vertical: true)
+
+      Button(action: onStartSession) {
+        HStack(spacing: 8) {
+          Image(systemName: "plus.circle.fill")
+            .font(.system(size: 13))
+          Text("Start Session")
+            .font(.system(size: 13, weight: .semibold))
+        }
+        .foregroundStyle(colorScheme == .dark ? .black : .white)
+        .frame(height: 36)
+        .padding(.horizontal, 18)
+        .background(
+          RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(Color.primary)
+        )
+      }
+      .buttonStyle(.plain)
+      .help("Start a session in \(moduleName)")
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .padding(.horizontal, 48)
+    .padding(.vertical, 32)
   }
 }
 
