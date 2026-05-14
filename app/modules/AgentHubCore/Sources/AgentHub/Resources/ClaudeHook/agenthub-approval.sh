@@ -1,10 +1,11 @@
 #!/bin/bash
 # AgentHub Claude Code approval hook
 #
-# Invoked by Claude Code on PreToolUse (and optionally PostToolUse).
+# Invoked by Claude Code on PreToolUse, PermissionRequest, PermissionDenied,
+# and PostToolUse.
 # Reads a single JSON object from stdin, checks whether AgentHub is actively
 # monitoring this session (claim file), and if so appends a JSON line to the
-# session's approval queue. Otherwise exits silently.
+# session's approval/mode queue. Otherwise exits silently.
 #
 # Design invariants:
 #   1. Exit 0 on every error path. Never block Claude Code, never print to the
@@ -41,6 +42,8 @@ event = data.get("hook_event_name") or ""
 tool = data.get("tool_name") or ""
 tool_input = data.get("tool_input") or {}
 tool_use_id = data.get("tool_use_id") or ""
+permission_mode = data.get("permission_mode") or ""
+reason = data.get("reason") or ""
 
 if not sid:
     sys.exit(0)
@@ -55,9 +58,13 @@ if not os.path.exists(claim_path):
     sys.exit(0)
 
 if event == "PreToolUse":
+    kind = "observed"
+elif event == "PermissionRequest":
     kind = "pending"
 elif event == "PostToolUse":
     kind = "resolved"
+elif event == "PermissionDenied":
+    kind = "denied"
 else:
     sys.exit(0)
 
@@ -72,8 +79,11 @@ line = {
     "toolName": tool,
     "toolUseId": tool_use_id,
     "timestamp": ts,
+    "permissionMode": permission_mode,
     "input": tool_input,
 }
+if reason:
+    line["reason"] = reason
 out_path = os.path.join(approvals_dir, sid + ".jsonl")
 try:
     with open(out_path, "a", encoding="utf-8") as f:

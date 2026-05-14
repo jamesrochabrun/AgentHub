@@ -78,6 +78,63 @@ struct ClaudeHookSidecarWatcherTests {
     #expect(info == nil)
   }
 
+  @Test("observed auto mode records mode without creating pending approval")
+  func observedAutoModeDoesNotCreatePending() async throws {
+    let (watcher, dir) = makeWatcher()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let sid = "sess-auto"
+    let file = dir.appendingPathComponent("\(sid).jsonl")
+    let observed: [String: Any] = [
+      "event": "observed",
+      "toolName": "Edit",
+      "toolUseId": "tu-auto",
+      "timestamp": "2026-04-23T00:00:00Z",
+      "permissionMode": "auto",
+      "input": ["file_path": "/tmp/x.swift", "old_string": "a", "new_string": "b"],
+    ]
+    var data = try JSONSerialization.data(withJSONObject: observed)
+    data.append(0x0A)
+    try data.write(to: file)
+
+    await watcher.startWatching(sessionId: sid)
+
+    #expect(await watcher.pendingInfo(for: sid) == nil)
+    #expect(await watcher.permissionMode(for: sid) == "auto")
+  }
+
+  @Test("observed auto mode clears stale pending approval")
+  func observedAutoModeClearsStalePending() async throws {
+    let (watcher, dir) = makeWatcher()
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    let sid = "sess-auto-clear"
+    let file = dir.appendingPathComponent("\(sid).jsonl")
+    let pending: [String: Any] = [
+      "event": "pending", "toolName": "Bash",
+      "toolUseId": "tu-1", "timestamp": "2026-04-23T00:00:00Z",
+      "permissionMode": "default",
+      "input": ["command": "npm test"]
+    ]
+    let observed: [String: Any] = [
+      "event": "observed", "toolName": "Bash",
+      "toolUseId": "tu-2", "timestamp": "2026-04-23T00:00:01Z",
+      "permissionMode": "auto",
+      "input": ["command": "npm test"]
+    ]
+    var data = Data()
+    data.append(try JSONSerialization.data(withJSONObject: pending))
+    data.append(0x0A)
+    data.append(try JSONSerialization.data(withJSONObject: observed))
+    data.append(0x0A)
+    try data.write(to: file)
+
+    await watcher.startWatching(sessionId: sid)
+
+    #expect(await watcher.pendingInfo(for: sid) == nil)
+    #expect(await watcher.permissionMode(for: sid) == "auto")
+  }
+
   @Test("wipeAll drops sidecar files so stale pending lines can't be replayed")
   func wipeAllDropsStaleFiles() async throws {
     let (watcher, dir) = makeWatcher()

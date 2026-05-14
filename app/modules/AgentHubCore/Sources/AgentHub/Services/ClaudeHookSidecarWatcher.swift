@@ -7,13 +7,19 @@ import os
 /// Emitted whenever an `approvals/{sessionId}.jsonl` file yields new state.
 public struct SidecarUpdate: Sendable {
   public let sessionId: String
-  /// The latest pending info, or `nil` if the last event was `resolved`
-  /// (or there are no pending events).
+  /// The latest real approval prompt, or `nil` when no prompt is active.
   public let info: SessionJSONLParser.PendingToolInfo?
+  /// Latest permission mode reported by Claude Code hook payloads.
+  public let permissionMode: String?
 
-  public init(sessionId: String, info: SessionJSONLParser.PendingToolInfo?) {
+  public init(
+    sessionId: String,
+    info: SessionJSONLParser.PendingToolInfo?,
+    permissionMode: String? = nil
+  ) {
     self.sessionId = sessionId
     self.info = info
+    self.permissionMode = permissionMode
   }
 }
 
@@ -24,6 +30,7 @@ public protocol ClaudeHookSidecarWatcherProtocol: AnyObject, Sendable {
   func startWatching(sessionId: String) async
   func stopWatching(sessionId: String) async
   func pendingInfo(for sessionId: String) async -> SessionJSONLParser.PendingToolInfo?
+  func permissionMode(for sessionId: String) async -> String?
   /// Remove every sidecar file on disk and drop all in-memory state. Called
   /// at app launch and termination so stale `pending` entries left behind by
   /// an approval the user resolved while AgentHub was down can't be replayed
@@ -48,6 +55,7 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
   private var fileSources: [String: DispatchSourceFileSystemObject] = [:]
   private var filePositions: [String: UInt64] = [:]
   private var currentInfo: [String: SessionJSONLParser.PendingToolInfo] = [:]
+  private var currentPermissionMode: [String: String] = [:]
   private var directorySource: DispatchSourceFileSystemObject?
 
   public nonisolated var updates: AnyPublisher<SidecarUpdate, Never> {
@@ -87,6 +95,7 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
     fileSources.removeValue(forKey: sessionId)
     filePositions.removeValue(forKey: sessionId)
     currentInfo.removeValue(forKey: sessionId)
+    currentPermissionMode.removeValue(forKey: sessionId)
 
     // Intentionally keep the sidecar file on disk. `stopWatching` is also
     // called when a user toggles monitoring off mid-approval (the JSONL
@@ -101,6 +110,10 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
     currentInfo[sessionId]
   }
 
+  public func permissionMode(for sessionId: String) async -> String? {
+    currentPermissionMode[sessionId]
+  }
+
   public func wipeAll() async {
     directorySource?.cancel()
     directorySource = nil
@@ -108,6 +121,7 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
     fileSources.removeAll()
     filePositions.removeAll()
     currentInfo.removeAll()
+    currentPermissionMode.removeAll()
     watchedSessions.removeAll()
 
     if fileManager.fileExists(atPath: approvalsDirectory.path) {
@@ -197,8 +211,21 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
             let decoded = try? JSONDecoder().decode(SidecarLine.self, from: data) else {
         continue
       }
+
+      if let permissionMode = decoded.permissionMode, !permissionMode.isEmpty,
+         currentPermissionMode[sessionId] != permissionMode {
+        currentPermissionMode[sessionId] = permissionMode
+        changed = true
+      }
+
       switch decoded.event {
       case "pending":
+        if Self.suppressesApprovalPrompts(permissionMode: decoded.permissionMode) {
+          if currentInfo.removeValue(forKey: sessionId) != nil {
+            changed = true
+          }
+          continue
+        }
         let info = SessionJSONLParser.PendingToolInfo(
           toolName: decoded.toolName ?? "",
           toolUseId: decoded.toolUseId ?? "hook-\(sessionId)",
@@ -208,7 +235,16 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
         )
         currentInfo[sessionId] = info
         changed = true
+      case "observed":
+        if Self.suppressesApprovalPrompts(permissionMode: decoded.permissionMode),
+           currentInfo.removeValue(forKey: sessionId) != nil {
+          changed = true
+        }
       case "resolved":
+        if currentInfo.removeValue(forKey: sessionId) != nil {
+          changed = true
+        }
+      case "denied":
         if currentInfo.removeValue(forKey: sessionId) != nil {
           changed = true
         }
@@ -219,7 +255,20 @@ public actor ClaudeHookSidecarWatcher: ClaudeHookSidecarWatcherProtocol {
 
     if changed {
       let info = currentInfo[sessionId]
-      subject.send(SidecarUpdate(sessionId: sessionId, info: info))
+      subject.send(SidecarUpdate(
+        sessionId: sessionId,
+        info: info,
+        permissionMode: currentPermissionMode[sessionId]
+      ))
+    }
+  }
+
+  private static func suppressesApprovalPrompts(permissionMode: String?) -> Bool {
+    switch permissionMode {
+    case "auto", "bypassPermissions":
+      true
+    default:
+      false
     }
   }
 
@@ -265,6 +314,7 @@ private struct SidecarLine: Decodable {
   let toolName: String?
   let toolUseId: String?
   let timestamp: String?
+  let permissionMode: String?
   let input: InputPayload?
 
   var parsedTimestamp: Date? {
