@@ -71,7 +71,7 @@ public struct WelcomeView: View {
         HStack(spacing: 8) {
           Image(systemName: "plus.circle.fill")
             .font(.system(size: 13))
-          Text("Start New Session")
+          Text("Add Repository")
             .font(.system(size: 12, weight: .semibold, design: .monospaced))
         }
         .foregroundColor(colorScheme == .dark ? .black : .white)
