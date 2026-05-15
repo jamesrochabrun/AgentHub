@@ -196,18 +196,24 @@ public struct WelcomeView: View {
       VStack(spacing: 10) {
         tipRow(
           icon: "folder.badge.plus",
-          title: "Easy Worktree Management",
+          title: "Keep Worktrees",
           description: "Create and manage worktrees quickly from the launcher."
         )
         tipRow(
-          icon: "square.grid.2x2",
-          title: "Layout Modes",
-          description: "Switch between single, list, and grid views."
+          icon: "doc.text.magnifyingglass",
+          title: "Review Changes",
+          description: "Easily code review your changes in the diff panel."
         )
         tipRow(
-          icon: "arrow.left.arrow.right",
-          title: "Fast Navigation",
-          description: "Use command palette and history shortcuts."
+          icon: "safari",
+          title: "Preview Locally",
+          description: "Easily preview your work with local web preview support."
+        )
+        tipLinkRow(
+          icon: "terminal",
+          title: "Install GitHub CLI",
+          description: "Download GitHub CLI for easy access to GitHub in the app.",
+          url: URL(string: "https://cli.github.com/")!
         )
       }
       .padding(14)
@@ -267,6 +273,27 @@ public struct WelcomeView: View {
           .foregroundColor(.primary)
 
         Text(description)
+          .font(.system(size: 10, weight: .regular, design: .monospaced))
+          .foregroundColor(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private func tipLinkRow(icon: String, title: String, description: String, url: URL) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: icon)
+        .font(.system(size: 12))
+        .foregroundColor(.primary)
+        .frame(width: 16)
+
+      VStack(alignment: .leading, spacing: 3) {
+        Text(title)
+          .font(.system(size: 11, weight: .semibold, design: .monospaced))
+          .foregroundColor(.primary)
+
+        Link(description, destination: url)
           .font(.system(size: 10, weight: .regular, design: .monospaced))
           .foregroundColor(.secondary)
           .fixedSize(horizontal: false, vertical: true)
