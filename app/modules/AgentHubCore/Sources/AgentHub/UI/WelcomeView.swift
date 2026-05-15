@@ -5,6 +5,7 @@
 //  Rich welcome/onboarding view for the empty state.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - WelcomeView
@@ -12,14 +13,22 @@ import SwiftUI
 /// Rich welcome screen shown when no session is selected.
 public struct WelcomeView: View {
   let viewModel: CLISessionsViewModel
+  let onAddFolder: () -> Void
   let onStartSession: (String?) -> Void
+  private let appIconImage: NSImage
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
 
-  public init(viewModel: CLISessionsViewModel, onStartSession: @escaping (String?) -> Void) {
+  public init(
+    viewModel: CLISessionsViewModel,
+    onAddFolder: @escaping () -> Void = {},
+    onStartSession: @escaping (String?) -> Void
+  ) {
     self.viewModel = viewModel
+    self.onAddFolder = onAddFolder
     self.onStartSession = onStartSession
+    self.appIconImage = Self.cachedAppIconImage
   }
 
   public var body: some View {
@@ -45,34 +54,24 @@ public struct WelcomeView: View {
 
   private var heroSection: some View {
     VStack(spacing: 14) {
-      ZStack {
-        Circle()
-          .fill(Color.primary.opacity(0.1))
-          .frame(width: 76, height: 76)
-
-        Image(systemName: "apple.terminal.on.rectangle")
-          .font(.system(size: 30))
-          .foregroundColor(.primary)
-      }
+      appIconBadge
 
       VStack(spacing: 6) {
         Text("Welcome to AgentHub")
           .font(.system(size: 22, weight: .semibold, design: .monospaced))
           .foregroundColor(.primary)
 
-        Text("Start a new session with Claude, Codex, or both.")
+        Text("Start a new session with Codex or Claude.")
           .font(.system(size: 12, weight: .regular, design: .monospaced))
           .foregroundColor(.secondary)
           .multilineTextAlignment(.center)
       }
 
-      Button(action: {
-        onStartSession(latestRecentRepositoryPath)
-      }) {
+      Button(action: onAddFolder) {
         HStack(spacing: 8) {
           Image(systemName: "plus.circle.fill")
             .font(.system(size: 13))
-          Text("Start New Session")
+          Text("Add Repository")
             .font(.system(size: 12, weight: .semibold, design: .monospaced))
         }
         .foregroundColor(colorScheme == .dark ? .black : .white)
@@ -89,6 +88,24 @@ public struct WelcomeView: View {
     }
   }
 
+  private var appIconBadge: some View {
+    Image(nsImage: appIconImage)
+      .resizable()
+      .interpolation(.high)
+      .scaledToFit()
+      .frame(width: 96, height: 96)
+      .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+      .accessibilityHidden(true)
+  }
+
+  private static let cachedAppIconImage: NSImage = {
+    guard let image = NSApplication.shared.applicationIconImage.copy() as? NSImage else {
+      return NSApplication.shared.applicationIconImage
+    }
+    image.size = NSSize(width: 96, height: 96)
+    return image
+  }()
+
   // MARK: - Quick Start Section
 
   private var quickStartSection: some View {
@@ -99,7 +116,7 @@ public struct WelcomeView: View {
         shortcutRow(key: "⌘ N", description: "Start new session", icon: "plus.circle")
         shortcutRow(key: "⌘ K", description: "Command palette", icon: "command")
         shortcutRow(key: "⌘ B", description: "Toggle sidebar", icon: "sidebar.left")
-        shortcutRow(key: "⌘ [ / ]", description: "Navigate history", icon: "arrow.left.arrow.right")
+        shortcutRow(key: "⌘ [ / ]", description: "Navigate between sessions", icon: "arrow.left.arrow.right")
         shortcutRow(key: "⌘ ,", description: "Open settings", icon: "gearshape")
       }
       .padding(14)
@@ -179,18 +196,24 @@ public struct WelcomeView: View {
       VStack(spacing: 10) {
         tipRow(
           icon: "folder.badge.plus",
-          title: "Easy Worktree Management",
-          description: "Create and manage worktrees quickly from the launcher."
+          title: "Manage Worktrees",
+          description: "Create and manage worktrees quickly from the side panel."
         )
         tipRow(
-          icon: "square.grid.2x2",
-          title: "Layout Modes",
-          description: "Switch between single, list, and grid views."
+          icon: "doc.text.magnifyingglass",
+          title: "Review Changes",
+          description: "Easily code review your changes in the diff panel."
         )
         tipRow(
-          icon: "arrow.left.arrow.right",
-          title: "Fast Navigation",
-          description: "Use command palette and history shortcuts."
+          icon: "safari",
+          title: "Preview Locally",
+          description: "Easily preview your work with local web preview support."
+        )
+        tipLinkRow(
+          icon: "terminal",
+          title: "Install GitHub CLI",
+          description: "Download GitHub CLI at https://cli.github.com/ for easy access to GitHub in the app.",
+          url: URL(string: "https://cli.github.com/")!
         )
       }
       .padding(14)
@@ -258,14 +281,31 @@ public struct WelcomeView: View {
     }
   }
 
+  private func tipLinkRow(icon: String, title: String, description: String, url: URL) -> some View {
+    HStack(alignment: .top, spacing: 12) {
+      Image(systemName: icon)
+        .font(.system(size: 12))
+        .foregroundColor(.primary)
+        .frame(width: 16)
+
+      VStack(alignment: .leading, spacing: 3) {
+        Text(title)
+          .font(.system(size: 11, weight: .semibold, design: .monospaced))
+          .foregroundColor(.primary)
+
+        Link(description, destination: url)
+          .font(.system(size: 10, weight: .regular, design: .monospaced))
+          .foregroundColor(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
   // MARK: - Helpers
 
   private var recentRepositories: [SelectedRepository] {
     Array(viewModel.selectedRepositories.suffix(4).reversed())
-  }
-
-  private var latestRecentRepositoryPath: String? {
-    viewModel.selectedRepositories.last?.path
   }
 
   private func repoName(_ repo: SelectedRepository) -> String {

@@ -188,6 +188,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @Bindable var codexViewModel: CLISessionsViewModel
   @AppStorage(AgentHubDefaults.auxiliaryShellVisible) var isAuxiliaryShellVisible: Bool = false
   let onEmbeddedSidePanelVisibilityChange: (Bool) -> Void
+  let onAddFolder: () -> Void
   let onRequestStartSession: (String?) -> Void
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
@@ -248,6 +249,7 @@ public struct MultiProviderMonitoringPanelView: View {
     primarySessionId: Binding<String?>,
     selectedModuleLandingPath: Binding<String?> = .constant(nil),
     onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
+    onAddFolder: @escaping () -> Void,
     onRequestStartSession: @escaping (String?) -> Void
   ) {
     self.claudeViewModel = claudeViewModel
@@ -255,6 +257,7 @@ public struct MultiProviderMonitoringPanelView: View {
     self._primarySessionId = primarySessionId
     self._selectedModuleLandingPath = selectedModuleLandingPath
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
+    self.onAddFolder = onAddFolder
     self.onRequestStartSession = onRequestStartSession
   }
 
@@ -512,6 +515,7 @@ public struct MultiProviderMonitoringPanelView: View {
   private var emptyState: some View {
     WelcomeView(
       viewModel: emptyStateViewModel,
+      onAddFolder: onAddFolder,
       onStartSession: onRequestStartSession
     )
   }
