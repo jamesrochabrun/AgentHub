@@ -15,7 +15,7 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../AgentHubCore"),
-    .package(url: "https://github.com/jamesrochabrun/GhosttySwift", branch: "codex/async-runtime-config"),
+    .package(url: "https://github.com/jamesrochabrun/GhosttySwift", exact: "1.0.4"),
   ],
   targets: [
     .target(

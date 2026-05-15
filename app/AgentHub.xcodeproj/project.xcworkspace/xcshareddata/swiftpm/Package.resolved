@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/GhosttySwift",
       "state" : {
-        "branch" : "codex/async-runtime-config",
-        "revision" : "d1e6298c6fdbf0abd4fcce56c41cfbe32fe64b4f"
+        "revision" : "f7286937278044fcfa0d6385b1264fe9cc8195b3",
+        "version" : "1.0.4"
       }
     },
     {
