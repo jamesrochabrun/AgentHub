@@ -196,8 +196,8 @@ public struct WelcomeView: View {
       VStack(spacing: 10) {
         tipRow(
           icon: "folder.badge.plus",
-          title: "Keep Worktrees",
-          description: "Create and manage worktrees quickly from the launcher."
+          title: "Manage Worktrees",
+          description: "Create and manage worktrees quickly from the side panel."
         )
         tipRow(
           icon: "doc.text.magnifyingglass",
