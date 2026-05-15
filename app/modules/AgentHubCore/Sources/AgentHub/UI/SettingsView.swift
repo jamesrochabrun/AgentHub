@@ -44,6 +44,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.sourceEditorWrapLinesEnabled)
   private var sourceEditorWrapLinesEnabled: Bool = true
 
+  @AppStorage(AgentHubDefaults.diffDisplayMode)
+  private var diffDisplayModeRawValue: String = DiffDisplayMode.inline.rawValue
+
   @AppStorage(AgentHubDefaults.terminalNewlineShortcut)
   private var newlineShortcutRawValue: Int = NewlineShortcut.system.rawValue
 
@@ -260,6 +263,12 @@ public struct SettingsView: View {
           description: "Show all sessions without per-repository sections",
           isOn: $flatSessionLayout
         )
+
+        Picker("Diff display", selection: $diffDisplayModeRawValue) {
+          ForEach(DiffDisplayMode.allCases) { mode in
+            Text(mode.label).tag(mode.rawValue)
+          }
+        }
       }
 
       Section("Terminal") {

@@ -38,7 +38,7 @@ public enum CommandPaletteAction: Identifiable {
     case .openSettings: return "Open Settings"
     case .toggleSidebar: return "Toggle Sidebar"
     case .toggleFocusMode: return "Toggle Focus Mode"
-    case .toggleTerminalEditor: return "Swap Terminal and Code"
+    case .toggleTerminalEditor: return "Swap Terminal and Files"
     }
   }
 
@@ -57,7 +57,7 @@ public enum CommandPaletteAction: Identifiable {
     case .openSettings: return "Open application settings"
     case .toggleSidebar: return "Show or hide the sidebar"
     case .toggleFocusMode: return "Expand focused session or restore previous layout"
-    case .toggleTerminalEditor: return "Switch the focused session between terminal and code"
+    case .toggleTerminalEditor: return "Switch the focused session between terminal and files"
     }
   }
 

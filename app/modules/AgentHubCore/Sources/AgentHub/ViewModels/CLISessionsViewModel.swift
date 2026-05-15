@@ -33,6 +33,7 @@ public final class CLISessionsViewModel {
   private let fileWatcher: any SessionFileWatcherProtocol
   private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
   private let projectCapabilityService: any ProjectCapabilityServiceProtocol
+  private let diffAvailabilityService: any DiffAvailabilityServiceProtocol
   private let approvalNotificationService: any ApprovalNotificationServiceProtocol
   private let approvalClaimStore: (any ApprovalClaimStoreProtocol)?
   private let hookInstaller: (any ClaudeHookInstallerProtocol)?
@@ -158,6 +159,10 @@ public final class CLISessionsViewModel {
     projectCapabilities[ProjectCapabilityService.normalize(projectPath)]
   }
 
+  public func diffAvailabilityStatus(for projectPath: String) -> DiffAvailabilityStatus? {
+    diffAvailability[DiffAvailabilityService.normalize(projectPath)]
+  }
+
   public func ensureProjectCapabilities(
     for projectPath: String,
     forceRefresh: Bool = false
@@ -202,6 +207,31 @@ public final class CLISessionsViewModel {
     }
     let status = await webPreviewCandidateService.candidateStatus(for: normalizedProjectPath)
     webPreviewCandidates[normalizedProjectPath] = status
+  }
+
+  public func ensureDiffAvailability(
+    for projectPath: String,
+    forceRefresh: Bool = false
+  ) async {
+    let normalizedProjectPath = DiffAvailabilityService.normalize(projectPath)
+
+    if forceRefresh {
+      await diffAvailabilityService.invalidate(projectPath: normalizedProjectPath)
+    } else {
+      if let currentStatus = diffAvailability[normalizedProjectPath],
+         currentStatus.isAvailable || currentStatus.isChecking {
+        return
+      }
+
+      if let cachedStatus = await diffAvailabilityService.cachedAvailability(for: normalizedProjectPath) {
+        diffAvailability[normalizedProjectPath] = cachedStatus
+        return
+      }
+    }
+
+    diffAvailability[normalizedProjectPath] = .checking
+    let status = await diffAvailabilityService.availability(for: normalizedProjectPath)
+    diffAvailability[normalizedProjectPath] = status
   }
 
   /// Start polling for a session
@@ -835,6 +865,9 @@ public final class CLISessionsViewModel {
   /// Cached project-level UI capabilities keyed by normalized project path.
   public private(set) var projectCapabilities: [String: ProjectCapabilities] = [:]
 
+  /// Cached project-level git diff availability keyed by normalized project path.
+  public private(set) var diffAvailability: [String: DiffAvailabilityStatus] = [:]
+
   /// Combine cancellables for monitoring subscriptions (keyed by session ID)
   private var monitoringCancellables: [String: AnyCancellable] = [:]
 
@@ -874,6 +907,7 @@ public final class CLISessionsViewModel {
     metadataStore: SessionMetadataStore? = nil,
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
     projectCapabilityService: any ProjectCapabilityServiceProtocol = ProjectCapabilityService.shared,
+    diffAvailabilityService: any DiffAvailabilityServiceProtocol = DiffAvailabilityService.shared,
     approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared,
     approvalClaimStore: (any ApprovalClaimStoreProtocol)? = nil,
     hookInstaller: (any ClaudeHookInstallerProtocol)? = nil,
@@ -889,6 +923,7 @@ public final class CLISessionsViewModel {
     self.fileWatcher = fileWatcher
     self.webPreviewCandidateService = webPreviewCandidateService
     self.projectCapabilityService = projectCapabilityService
+    self.diffAvailabilityService = diffAvailabilityService
     self.approvalNotificationService = approvalNotificationService
     self.approvalClaimStore = approvalClaimStore
     self.hookInstaller = hookInstaller

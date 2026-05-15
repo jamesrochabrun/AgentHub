@@ -128,6 +128,11 @@ public final class AgentHubProvider {
     WebPreviewCandidateService.shared
   }()
 
+  /// Cached project-level detector for inline diff tab visibility.
+  lazy var diffAvailabilityService: any DiffAvailabilityServiceProtocol = {
+    DiffAvailabilityService.shared
+  }()
+
   /// Session metadata store for user-provided session names
   public private(set) lazy var metadataStore: SessionMetadataStore? = {
     if let metadataStoreOverride {
@@ -329,6 +334,7 @@ public final class AgentHubProvider {
       providerKind: providerKind,
       metadataStore: metadataStore,
       webPreviewCandidateService: webPreviewCandidateService,
+      diffAvailabilityService: diffAvailabilityService,
       approvalClaimStore: claimStore,
       hookInstaller: installer,
       terminalSurfaceFactory: terminalSurfaceFactory,

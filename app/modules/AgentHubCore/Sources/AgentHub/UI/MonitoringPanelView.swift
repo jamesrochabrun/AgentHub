@@ -73,6 +73,7 @@ public struct MonitoringPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
+  @State private var editorStates: [String: MonitoringEditorState] = [:]
   /// Primary session shown in Single mode and highlighted in All mode
   @Binding var primarySessionId: String?
   @AppStorage(AgentHubDefaults.hubLayoutMode)
@@ -205,9 +206,11 @@ public struct MonitoringPanelView: View {
     }
     .onAppear {
       ensurePrimarySelection()
+      syncEditorStates()
     }
     .onChange(of: allItems.map(\.id)) { _, _ in
       ensurePrimarySelection()
+      syncEditorStates()
     }
   }
 
@@ -255,6 +258,7 @@ public struct MonitoringPanelView: View {
     let isPrimary = sessionId == effectivePrimarySessionId
     // Find the session to maximize (check both pending and monitored)
     if let pending = viewModel.pendingHubSessions.first(where: { "pending-\($0.id.uuidString)" == sessionId }) {
+      let monitoringItem = MonitoringItem.pending(pending)
       MonitoringCardView(
         session: pending.placeholderSession,
         state: nil,
@@ -264,6 +268,10 @@ public struct MonitoringPanelView: View {
         initialInputText: pending.initialInputText,
         terminalKey: "pending-\(pending.id.uuidString)",
         viewModel: viewModel,
+        contentMode: editorContentModeBinding(for: monitoringItem),
+        selectedEditorFilePath: selectedEditorFilePathBinding(for: monitoringItem),
+        editorProjectPath: editorState(for: monitoringItem).projectPath,
+        editorNavigationRequest: editorState(for: monitoringItem).navigationRequest,
         dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
         permissionModePlan: pending.permissionModePlan,
         worktreeName: pending.worktreeName,
@@ -278,6 +286,7 @@ public struct MonitoringPanelView: View {
         onOpenSessionFile: { },
         onRefreshTerminal: { },
         onTerminalInteraction: { setPrimarySessionIfNeeded(sessionId) },
+        onRequestShowEditor: { setContentMode(.editor, for: monitoringItem) },
         isMaximized: true,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -288,6 +297,7 @@ public struct MonitoringPanelView: View {
         showPrimaryIndicator: layoutMode != .single
       )
     } else if let item = viewModel.monitoredSessions.first(where: { $0.session.id == sessionId }) {
+      let monitoringItem = MonitoringItem.monitored(session: item.session, state: item.state)
       let planState = item.state.flatMap {
         PlanState.from(activities: $0.recentActivities)
       }
@@ -302,6 +312,10 @@ public struct MonitoringPanelView: View {
         initialPrompt: initialPrompt,
         terminalKey: item.session.id,
         viewModel: viewModel,
+        contentMode: editorContentModeBinding(for: monitoringItem),
+        selectedEditorFilePath: selectedEditorFilePathBinding(for: monitoringItem),
+        editorProjectPath: editorState(for: monitoringItem).projectPath,
+        editorNavigationRequest: editorState(for: monitoringItem).navigationRequest,
         onStopMonitoring: {
           viewModel.stopMonitoring(session: item.session)
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -331,6 +345,7 @@ public struct MonitoringPanelView: View {
           viewModel.clearPendingPrompt(for: item.session.id)
         },
         onTerminalInteraction: { setPrimarySessionIfNeeded(item.session.id) },
+        onRequestShowEditor: { setContentMode(.editor, for: monitoringItem) },
         isMaximized: true,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -400,6 +415,7 @@ public struct MonitoringPanelView: View {
       switch item {
       case .pending(let pending):
         let pendingId = "pending-\(pending.id.uuidString)"
+        let monitoringItem = MonitoringItem.pending(pending)
         MonitoringCardView(
           session: pending.placeholderSession,
           state: nil,
@@ -409,6 +425,10 @@ public struct MonitoringPanelView: View {
           initialInputText: pending.initialInputText,
           terminalKey: pendingId,
           viewModel: viewModel,
+          contentMode: editorContentModeBinding(for: monitoringItem),
+          selectedEditorFilePath: selectedEditorFilePathBinding(for: monitoringItem),
+          editorProjectPath: editorState(for: monitoringItem).projectPath,
+          editorNavigationRequest: editorState(for: monitoringItem).navigationRequest,
           dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
           permissionModePlan: pending.permissionModePlan,
           worktreeName: pending.worktreeName,
@@ -420,6 +440,7 @@ public struct MonitoringPanelView: View {
           onOpenSessionFile: { },
           onRefreshTerminal: { },
           onTerminalInteraction: { setPrimarySessionIfNeeded(pendingId) },
+          onRequestShowEditor: { setContentMode(.editor, for: monitoringItem) },
           isMaximized: false,
           onToggleMaximize: { },
           isPrimarySession: true,
@@ -429,6 +450,7 @@ public struct MonitoringPanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
       case .monitored(let session, let state):
+        let monitoringItem = MonitoringItem.monitored(session: session, state: state)
         let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
         let initialPrompt = viewModel.pendingPrompt(for: session.id)
 
@@ -441,6 +463,10 @@ public struct MonitoringPanelView: View {
           initialPrompt: initialPrompt,
           terminalKey: session.id,
           viewModel: viewModel,
+          contentMode: editorContentModeBinding(for: monitoringItem),
+          selectedEditorFilePath: selectedEditorFilePathBinding(for: monitoringItem),
+          editorProjectPath: editorState(for: monitoringItem).projectPath,
+          editorNavigationRequest: editorState(for: monitoringItem).navigationRequest,
           onStopMonitoring: {
             viewModel.stopMonitoring(session: session)
           },
@@ -467,6 +493,7 @@ public struct MonitoringPanelView: View {
             viewModel.clearPendingPrompt(for: session.id)
           },
           onTerminalInteraction: { setPrimarySessionIfNeeded(session.id) },
+          onRequestShowEditor: { setContentMode(.editor, for: monitoringItem) },
           isMaximized: false,
           onToggleMaximize: { },
           isPrimarySession: true,
@@ -495,6 +522,10 @@ public struct MonitoringPanelView: View {
         initialInputText: pending.initialInputText,
         terminalKey: pendingId,
         viewModel: viewModel,
+        contentMode: editorContentModeBinding(for: item),
+        selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+        editorProjectPath: editorState(for: item).projectPath,
+        editorNavigationRequest: editorState(for: item).navigationRequest,
         dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
         permissionModePlan: pending.permissionModePlan,
         worktreeName: pending.worktreeName,
@@ -506,6 +537,7 @@ public struct MonitoringPanelView: View {
         onOpenSessionFile: { },
         onRefreshTerminal: { },
         onTerminalInteraction: { setPrimarySessionIfNeeded(pendingId) },
+        onRequestShowEditor: { setContentMode(.editor, for: item) },
         isMaximized: maximizedSessionId == pendingId,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -533,6 +565,10 @@ public struct MonitoringPanelView: View {
         initialPrompt: initialPrompt,
         terminalKey: session.id,
         viewModel: viewModel,
+        contentMode: editorContentModeBinding(for: item),
+        selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
+        editorProjectPath: editorState(for: item).projectPath,
+        editorNavigationRequest: editorState(for: item).navigationRequest,
         onStopMonitoring: {
           viewModel.stopMonitoring(session: session)
         },
@@ -559,6 +595,7 @@ public struct MonitoringPanelView: View {
           viewModel.clearPendingPrompt(for: session.id)
         },
         onTerminalInteraction: { setPrimarySessionIfNeeded(session.id) },
+        onRequestShowEditor: { setContentMode(.editor, for: item) },
         isMaximized: maximizedSessionId == session.id,
         onToggleMaximize: {
           withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
@@ -641,6 +678,59 @@ public struct MonitoringPanelView: View {
   private func setPrimarySessionIfNeeded(_ sessionId: String) {
     guard primarySessionId != sessionId else { return }
     primarySessionId = sessionId
+  }
+
+  private func editorState(for item: MonitoringItem) -> MonitoringEditorState {
+    MonitoringEditorStateStore.state(
+      for: item.id,
+      defaultProjectPath: item.projectPath,
+      in: editorStates
+    )
+  }
+
+  private func editorContentModeBinding(for item: MonitoringItem) -> Binding<MonitoringCardContentMode> {
+    Binding(
+      get: { editorState(for: item).contentMode },
+      set: { newValue in
+        setContentMode(newValue, for: item)
+      }
+    )
+  }
+
+  private func selectedEditorFilePathBinding(for item: MonitoringItem) -> Binding<String?> {
+    Binding(
+      get: { editorState(for: item).selectedFilePath },
+      set: { newValue in
+        setPrimarySessionIfNeeded(item.id)
+        editorStates = MonitoringEditorStateStore.setSelectedFilePath(
+          newValue,
+          for: item.id,
+          defaultProjectPath: editorState(for: item).projectPath,
+          in: editorStates
+        )
+      }
+    )
+  }
+
+  private func syncEditorStates() {
+    editorStates = MonitoringEditorStateStore.prune(
+      editorStates,
+      validItemIDs: Set(allItems.map(\.id))
+    )
+  }
+
+  private func setContentMode(_ contentMode: MonitoringCardContentMode, for item: MonitoringItem) {
+    setPrimarySessionIfNeeded(item.id)
+    editorStates = MonitoringEditorStateStore.setContentMode(
+      contentMode,
+      for: item.id,
+      defaultProjectPath: editorState(for: item).projectPath,
+      in: editorStates
+    )
+
+    if contentMode == .terminal {
+      viewModel.focusTerminal(forKey: item.id)
+    }
   }
 
   @ViewBuilder

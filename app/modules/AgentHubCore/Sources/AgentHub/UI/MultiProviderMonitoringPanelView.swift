@@ -833,7 +833,15 @@ public struct MultiProviderMonitoringPanelView: View {
         onDismiss: closeEmbeddedSidePanel,
         cliConfiguration: viewModel.cliConfiguration,
         providerKind: payload.providerKind,
-        onInlineRequestSubmit: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) },
+        onInlineRequestSubmit: { prompt, sess in
+          closeEmbeddedSidePanel()
+          showTerminalWithPrompt(
+            prompt,
+            for: sess,
+            itemID: payload.itemID,
+            viewModel: viewModel
+          )
+        },
         isEmbedded: true
       )
     case .plan(_, let session, let planState):
@@ -844,7 +852,13 @@ public struct MultiProviderMonitoringPanelView: View {
         isEmbedded: true,
         providerKind: payload.providerKind,
         onSendFeedback: { feedback, sess in
-          viewModel.showTerminalWithPrompt(for: sess, prompt: feedback)
+          closeEmbeddedSidePanel()
+          showTerminalWithPrompt(
+            feedback,
+            for: sess,
+            itemID: payload.itemID,
+            viewModel: viewModel
+          )
         }
       )
     case .webPreview(let sessionId, let session, let projectPath, let mode):
@@ -1610,9 +1624,24 @@ public struct MultiProviderMonitoringPanelView: View {
 
   private func togglePrimarySessionContentMode() {
     guard let item = effectivePrimaryItem else { return }
-    let nextMode: MonitoringCardContentMode =
-      editorState(for: item).contentMode == .terminal ? .editor : .terminal
+    let nextMode = MonitoringEditorStateStore.toggledTerminalFilesMode(
+      from: editorState(for: item).contentMode
+    )
     setContentMode(nextMode, for: item)
+  }
+
+  private func showTerminalWithPrompt(
+    _ prompt: String,
+    for session: CLISession,
+    itemID: String,
+    viewModel: CLISessionsViewModel
+  ) {
+    if let item = allItems.first(where: { $0.id == itemID }) {
+      setContentMode(.terminal, for: item)
+    } else {
+      viewModel.focusTerminal(forKey: session.id)
+    }
+    viewModel.showTerminalWithPrompt(for: session, prompt: prompt)
   }
 
   private func openFileInEditor(

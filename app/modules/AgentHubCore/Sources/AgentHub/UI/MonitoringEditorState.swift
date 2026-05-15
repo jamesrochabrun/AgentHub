@@ -6,20 +6,36 @@
 import Foundation
 
 extension Notification.Name {
-  /// Request the focused monitoring card to swap between Terminal and Code content modes.
+  /// Request the focused monitoring card to swap between Terminal and Files content modes.
   static let toggleMonitoringContentMode = Notification.Name("com.agenthub.toggleMonitoringContentMode")
+}
+
+public enum DiffDisplayMode: String, CaseIterable, Identifiable, Sendable {
+  case inline
+  case sidePanel
+
+  public var id: String { rawValue }
+
+  var label: String {
+    switch self {
+    case .inline: "Inline"
+    case .sidePanel: "Side Panel"
+    }
+  }
 }
 
 public enum MonitoringCardContentMode: String, CaseIterable, Identifiable {
   case terminal
   case editor
+  case diffs
 
   public var id: String { rawValue }
 
   var label: String {
     switch self {
     case .terminal: "Terminal"
-    case .editor: "Code"
+    case .editor: "Files"
+    case .diffs: "Diffs"
     }
   }
 
@@ -27,6 +43,7 @@ public enum MonitoringCardContentMode: String, CaseIterable, Identifiable {
     switch self {
     case .terminal: "terminal"
     case .editor: "doc.text"
+    case .diffs: "arrow.left.arrow.right"
     }
   }
 }
@@ -60,6 +77,31 @@ struct MonitoringEditorRouteResult {
 }
 
 enum MonitoringEditorStateStore {
+  static func availableContentModes(
+    diffDisplayMode: DiffDisplayMode,
+    diffAvailabilityStatus: DiffAvailabilityStatus?
+  ) -> [MonitoringCardContentMode] {
+    var modes: [MonitoringCardContentMode] = [.terminal, .editor]
+    if diffDisplayMode == .inline,
+       diffAvailabilityStatus?.isAvailable == true {
+      modes.append(.diffs)
+    }
+    return modes
+  }
+
+  static func coercedContentMode(
+    _ contentMode: MonitoringCardContentMode,
+    availableModes: [MonitoringCardContentMode]
+  ) -> MonitoringCardContentMode {
+    availableModes.contains(contentMode) ? contentMode : .terminal
+  }
+
+  static func toggledTerminalFilesMode(
+    from contentMode: MonitoringCardContentMode
+  ) -> MonitoringCardContentMode {
+    contentMode == .terminal ? .editor : .terminal
+  }
+
   static func state(
     for itemID: String,
     defaultProjectPath: String,
