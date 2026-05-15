@@ -105,6 +105,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true)
   public static let sourceEditorWrapLinesEnabled = "\(keyPrefix)editor.wrapLinesEnabled"
 
+  /// Preferred presentation for git diffs from session cards
+  /// Type: String (default: "inline")
+  public static let diffDisplayMode = "\(keyPrefix)ui.diffDisplayMode"
+
   /// Preferred newline shortcut in the embedded terminal
   /// Type: Int (default: 0 = system/default)
   /// See: NewlineShortcut enum in EmbeddedTerminalView.swift

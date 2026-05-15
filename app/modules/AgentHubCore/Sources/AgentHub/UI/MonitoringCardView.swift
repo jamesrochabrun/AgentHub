@@ -59,6 +59,8 @@ public struct MonitoringCardView: View {
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
   @State private var showingRemixProviderPicker = false
+  @AppStorage(AgentHubDefaults.diffDisplayMode)
+  private var diffDisplayModeRawValue: String = DiffDisplayMode.inline.rawValue
   @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
 
@@ -161,6 +163,28 @@ public struct MonitoringCardView: View {
     viewModel?.projectCapabilities(for: session.projectPath)
   }
 
+  private var diffDisplayMode: DiffDisplayMode {
+    DiffDisplayMode(rawValue: diffDisplayModeRawValue) ?? .inline
+  }
+
+  private var diffAvailabilityStatus: DiffAvailabilityStatus? {
+    viewModel?.diffAvailabilityStatus(for: session.projectPath)
+  }
+
+  private var availableContentModes: [MonitoringCardContentMode] {
+    MonitoringEditorStateStore.availableContentModes(
+      diffDisplayMode: diffDisplayMode,
+      diffAvailabilityStatus: diffAvailabilityStatus
+    )
+  }
+
+  private var effectiveContentMode: MonitoringCardContentMode {
+    MonitoringEditorStateStore.coercedContentMode(
+      contentMode,
+      availableModes: availableContentModes
+    )
+  }
+
   private var hasStorybook: Bool {
     projectCapabilities?.hasStorybook == true
   }
@@ -250,6 +274,9 @@ public struct MonitoringCardView: View {
     .task(id: session.projectPath) {
       await viewModel?.ensureProjectCapabilities(for: session.projectPath)
     }
+    .task(id: session.projectPath) {
+      await viewModel?.ensureDiffAvailability(for: session.projectPath, forceRefresh: true)
+    }
     .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
       try? await Task.sleep(for: .seconds(2))
       guard !Task.isCancelled else { return }
@@ -270,6 +297,7 @@ public struct MonitoringCardView: View {
       Task {
         await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: newValue)
         await loadWebPreviewCandidateIfNeeded()
+        await viewModel?.ensureDiffAvailability(for: session.projectPath, forceRefresh: true)
       }
     }
     .onChange(of: state?.detectedLocalhostURL) { _, newValue in
@@ -612,18 +640,20 @@ public struct MonitoringCardView: View {
           .help("View session plan")
         }
 
-        // Diff button
-        Button(action: {
-          onShowDiff?(session, session.projectPath)
-        }) {
-          HStack(spacing: 4) {
-            Image(systemName: "arrow.left.arrow.right")
-              .font(.caption2)
-            Text("Diff")
+        if diffDisplayMode == .sidePanel {
+          // Diff button
+          Button(action: {
+            onShowDiff?(session, session.projectPath)
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "arrow.left.arrow.right")
+                .font(.caption2)
+              Text("Diff")
+            }
           }
+          .buttonStyle(.agentHubOutlined)
+          .help("View git changes")
         }
-        .buttonStyle(.agentHubOutlined)
-        .help("View git unstaged changes")
 
         // Web preview controls — segmented App | Storybook when Storybook is
         // detected, otherwise a single Preview button.
@@ -770,7 +800,8 @@ public struct MonitoringCardView: View {
     MonitoringCardPathRow(
       session: session,
       providerKind: providerKind,
-      contentMode: $contentMode
+      contentMode: $contentMode,
+      availableContentModes: availableContentModes
     )
   }
 
@@ -778,11 +809,13 @@ public struct MonitoringCardView: View {
 
   @ViewBuilder
   private var monitorContent: some View {
-    switch contentMode {
+    switch effectiveContentMode {
     case .terminal:
       terminalContent
     case .editor:
       editorContent
+    case .diffs:
+      diffContent
     }
   }
 
@@ -821,6 +854,27 @@ public struct MonitoringCardView: View {
     .id("editor-\(session.id)")
   }
 
+  private var diffContent: some View {
+    GitDiffView(
+      session: session,
+      projectPath: session.projectPath,
+      onDismiss: { contentMode = .terminal },
+      cliConfiguration: viewModel?.cliConfiguration,
+      providerKind: providerKind,
+      onInlineRequestSubmit: { prompt, sess in
+        contentMode = .terminal
+        if let onInlineRequestSubmit {
+          onInlineRequestSubmit(prompt, sess)
+        } else {
+          viewModel?.showTerminalWithPrompt(for: sess, prompt: prompt)
+        }
+      },
+      isEmbedded: false
+    )
+    .frame(maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
+    .id("diffs-\(session.id)")
+  }
+
   private var previewContextBadge: some View {
     Text("\(queuedPreviewContextCount)")
       .font(.system(.caption2, design: .monospaced))
@@ -834,13 +888,21 @@ public struct MonitoringCardView: View {
   }
 }
 
-private enum MonitoringCardContentModeItems {
-  static let items = MonitoringCardContentMode.allCases.map { mode in
-    BracketedSegmentedControlItem(
-      value: mode,
-      title: mode.label.lowercased(),
-      helpText: mode.label
-    )
+enum MonitoringCardContentModeItems {
+  static func items(
+    diffDisplayMode: DiffDisplayMode,
+    diffAvailabilityStatus: DiffAvailabilityStatus?
+  ) -> [BracketedSegmentedControlItem<MonitoringCardContentMode>] {
+    MonitoringEditorStateStore.availableContentModes(
+      diffDisplayMode: diffDisplayMode,
+      diffAvailabilityStatus: diffAvailabilityStatus
+    ).map { mode in
+      BracketedSegmentedControlItem(
+        value: mode,
+        title: mode.label.lowercased(),
+        helpText: mode.label
+      )
+    }
   }
 }
 
@@ -848,6 +910,29 @@ private struct MonitoringCardPathRow: View {
   let session: CLISession
   let providerKind: SessionProviderKind
   @Binding var contentMode: MonitoringCardContentMode
+  let availableContentModes: [MonitoringCardContentMode]
+
+  private var selection: Binding<MonitoringCardContentMode> {
+    Binding(
+      get: {
+        MonitoringEditorStateStore.coercedContentMode(
+          contentMode,
+          availableModes: availableContentModes
+        )
+      },
+      set: { contentMode = $0 }
+    )
+  }
+
+  private var items: [BracketedSegmentedControlItem<MonitoringCardContentMode>] {
+    availableContentModes.map { mode in
+      BracketedSegmentedControlItem(
+        value: mode,
+        title: mode.label.lowercased(),
+        helpText: mode.label
+      )
+    }
+  }
 
   var body: some View {
     HStack(spacing: 8) {
@@ -875,12 +960,12 @@ private struct MonitoringCardPathRow: View {
       Spacer(minLength: 8)
 
       BracketedSegmentedControl(
-        selection: $contentMode,
-        items: MonitoringCardContentModeItems.items,
+        selection: selection,
+        items: items,
         selectedColor: Color.brandPrimary(for: providerKind)
       )
       .layoutPriority(2)
-      .help("Switch between terminal and code")
+      .help("Switch session content")
     }
     .frame(minHeight: 24)
   }

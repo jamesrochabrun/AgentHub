@@ -100,4 +100,54 @@ struct MonitoringEditorStateTests {
     #expect(prunedStates["claude-session-1"] == nil)
     #expect(prunedStates["codex-session-2"]?.projectPath == "/tmp/repo-b")
   }
+
+  @Test("Diff mode can be stored")
+  func diffModeCanBeStored() throws {
+    let states = MonitoringEditorStateStore.setContentMode(
+      .diffs,
+      for: "claude-session-1",
+      defaultProjectPath: "/tmp/repo",
+      in: [:]
+    )
+
+    let state = try #require(states["claude-session-1"])
+    #expect(state.contentMode == .diffs)
+  }
+
+  @Test("Unavailable diff mode falls back to terminal")
+  func unavailableDiffModeFallsBackToTerminal() {
+    let mode = MonitoringEditorStateStore.coercedContentMode(
+      .diffs,
+      availableModes: [.terminal, .editor]
+    )
+
+    #expect(mode == .terminal)
+  }
+
+  @Test("Terminal files shortcut ignores diffs")
+  func terminalFilesShortcutIgnoresDiffs() {
+    #expect(MonitoringEditorStateStore.toggledTerminalFilesMode(from: .terminal) == .editor)
+    #expect(MonitoringEditorStateStore.toggledTerminalFilesMode(from: .editor) == .terminal)
+    #expect(MonitoringEditorStateStore.toggledTerminalFilesMode(from: .diffs) == .terminal)
+  }
+
+  @Test("Inline available modes include diffs only when available")
+  func inlineAvailableModesIncludeDiffsOnlyWhenAvailable() {
+    let availableItems = MonitoringCardContentModeItems.items(
+      diffDisplayMode: .inline,
+      diffAvailabilityStatus: .available
+    )
+    let unavailableItems = MonitoringCardContentModeItems.items(
+      diffDisplayMode: .inline,
+      diffAvailabilityStatus: .unavailable
+    )
+    let sidePanelItems = MonitoringCardContentModeItems.items(
+      diffDisplayMode: .sidePanel,
+      diffAvailabilityStatus: .available
+    )
+
+    #expect(availableItems.map(\.value) == [.terminal, .editor, .diffs])
+    #expect(unavailableItems.map(\.value) == [.terminal, .editor])
+    #expect(sidePanelItems.map(\.value) == [.terminal, .editor])
+  }
 }
