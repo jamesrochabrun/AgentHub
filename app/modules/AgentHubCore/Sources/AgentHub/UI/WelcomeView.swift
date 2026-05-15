@@ -5,6 +5,7 @@
 //  Rich welcome/onboarding view for the empty state.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - WelcomeView
@@ -12,14 +13,22 @@ import SwiftUI
 /// Rich welcome screen shown when no session is selected.
 public struct WelcomeView: View {
   let viewModel: CLISessionsViewModel
+  let onAddFolder: () -> Void
   let onStartSession: (String?) -> Void
+  private let appIconImage: NSImage
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
 
-  public init(viewModel: CLISessionsViewModel, onStartSession: @escaping (String?) -> Void) {
+  public init(
+    viewModel: CLISessionsViewModel,
+    onAddFolder: @escaping () -> Void = {},
+    onStartSession: @escaping (String?) -> Void
+  ) {
     self.viewModel = viewModel
+    self.onAddFolder = onAddFolder
     self.onStartSession = onStartSession
+    self.appIconImage = Self.cachedAppIconImage
   }
 
   public var body: some View {
@@ -45,30 +54,20 @@ public struct WelcomeView: View {
 
   private var heroSection: some View {
     VStack(spacing: 14) {
-      ZStack {
-        Circle()
-          .fill(Color.primary.opacity(0.1))
-          .frame(width: 76, height: 76)
-
-        Image(systemName: "apple.terminal.on.rectangle")
-          .font(.system(size: 30))
-          .foregroundColor(.primary)
-      }
+      appIconBadge
 
       VStack(spacing: 6) {
         Text("Welcome to AgentHub")
           .font(.system(size: 22, weight: .semibold, design: .monospaced))
           .foregroundColor(.primary)
 
-        Text("Start a new session with Claude, Codex, or both.")
+        Text("Start a new session with Codex or Claude.")
           .font(.system(size: 12, weight: .regular, design: .monospaced))
           .foregroundColor(.secondary)
           .multilineTextAlignment(.center)
       }
 
-      Button(action: {
-        onStartSession(latestRecentRepositoryPath)
-      }) {
+      Button(action: onAddFolder) {
         HStack(spacing: 8) {
           Image(systemName: "plus.circle.fill")
             .font(.system(size: 13))
@@ -88,6 +87,24 @@ public struct WelcomeView: View {
       .padding(.top, 2)
     }
   }
+
+  private var appIconBadge: some View {
+    Image(nsImage: appIconImage)
+      .resizable()
+      .interpolation(.high)
+      .scaledToFit()
+      .frame(width: 96, height: 96)
+      .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+      .accessibilityHidden(true)
+  }
+
+  private static let cachedAppIconImage: NSImage = {
+    guard let image = NSApplication.shared.applicationIconImage.copy() as? NSImage else {
+      return NSApplication.shared.applicationIconImage
+    }
+    image.size = NSSize(width: 96, height: 96)
+    return image
+  }()
 
   // MARK: - Quick Start Section
 
@@ -262,10 +279,6 @@ public struct WelcomeView: View {
 
   private var recentRepositories: [SelectedRepository] {
     Array(viewModel.selectedRepositories.suffix(4).reversed())
-  }
-
-  private var latestRecentRepositoryPath: String? {
-    viewModel.selectedRepositories.last?.path
   }
 
   private func repoName(_ repo: SelectedRepository) -> String {

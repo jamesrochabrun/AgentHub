@@ -228,6 +228,10 @@ public struct AgentHubMenuBarLabel: View {
   }
 
   public var body: some View {
-    Image(systemName: "apple.terminal.on.rectangle")
+    Image("AgentHubMenuBarIcon", bundle: .main)
+      .renderingMode(.template)
+      .resizable()
+      .scaledToFit()
+      .frame(width: 18, height: 18)
   }
 }

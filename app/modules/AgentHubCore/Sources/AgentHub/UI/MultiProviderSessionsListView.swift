@@ -232,6 +232,7 @@ public struct MultiProviderSessionsListView: View {
           primarySessionId: $primarySessionId,
           selectedModuleLandingPath: $selectedModuleLandingPath,
           onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
+          onAddFolder: { showAddRepositoryPicker() },
           onRequestStartSession: { preferredRepositoryPath in
             triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
           }
