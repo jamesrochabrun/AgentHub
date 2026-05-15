@@ -36,6 +36,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var pendingPaneOpenTasks: [TerminalPanelID: Task<Void, Never>] = [:]
   private var pendingPaneCloseTasks: [TerminalPanelID: Task<Void, Never>] = [:]
   private var pendingTabCloseTasks: [TerminalTabID: Task<Void, Never>] = [:]
+  private var clipboardConfirmationInFlight = false
   private var localEventMonitor: Any?
   private var projectPath: String = ""
   private var isRestoringWorkspace = false
@@ -1289,7 +1290,84 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     controller.onOpenURL = { [weak self] url in
       self?.handleOpenURL(url) ?? false
     }
+    controller.onClipboardConfirmation = { [weak self] confirmation in
+      guard let self else { return .deny }
+      return await self.presentClipboardConfirmation(confirmation)
+    }
     registerPIDWhenAvailable(for: controller)
+  }
+
+  private func presentClipboardConfirmation(
+    _ confirmation: GhosttyClipboardConfirmation
+  ) async -> GhosttyClipboardDecision {
+    guard !clipboardConfirmationInFlight else {
+      return .deny
+    }
+
+    guard let window else {
+      return .deny
+    }
+
+    clipboardConfirmationInFlight = true
+    let copy = AgentHubGhosttyClipboardConfirmationCopy.copy(for: confirmation.request)
+
+    return await withCheckedContinuation { continuation in
+      let alert = NSAlert()
+      alert.alertStyle = .warning
+      alert.messageText = copy.title
+      alert.informativeText = copy.message
+      alert.addButton(withTitle: copy.allowButtonTitle)
+      alert.addButton(withTitle: "Deny")
+      alert.buttons.first?.keyEquivalent = "\r"
+      if alert.buttons.count > 1 {
+        alert.buttons[1].keyEquivalent = "\u{1b}"
+      }
+      alert.accessoryView = makeClipboardConfirmationAccessoryView(
+        contents: confirmation.contents
+      )
+
+      alert.beginSheetModal(for: window) { [weak self] response in
+        Task { @MainActor in
+          self?.clipboardConfirmationInFlight = false
+          continuation.resume(
+            returning: response == .alertFirstButtonReturn ? .allow : .deny
+          )
+        }
+      }
+    }
+  }
+
+  private func makeClipboardConfirmationAccessoryView(contents: String) -> NSView {
+    let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 460, height: 180))
+    textView.string = contents
+    textView.isEditable = false
+    textView.isSelectable = true
+    textView.drawsBackground = true
+    textView.backgroundColor = .textBackgroundColor
+    textView.textColor = .textColor
+    textView.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+    textView.textContainerInset = NSSize(width: 8, height: 8)
+    textView.minSize = NSSize(width: 0, height: 0)
+    textView.maxSize = NSSize(
+      width: CGFloat.greatestFiniteMagnitude,
+      height: CGFloat.greatestFiniteMagnitude
+    )
+    textView.isVerticallyResizable = true
+    textView.isHorizontallyResizable = false
+    textView.textContainer?.containerSize = NSSize(
+      width: 460,
+      height: CGFloat.greatestFiniteMagnitude
+    )
+    textView.textContainer?.widthTracksTextView = true
+    textView.autoresizingMask = [.width]
+
+    let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 180))
+    scrollView.borderType = .bezelBorder
+    scrollView.hasVerticalScroller = true
+    scrollView.hasHorizontalScroller = false
+    scrollView.autohidesScrollers = true
+    scrollView.documentView = textView
+    return scrollView
   }
 
   private func closeControllerIfAllowed(_ controller: GhosttyTerminalController) {
