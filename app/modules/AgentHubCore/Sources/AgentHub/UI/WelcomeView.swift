@@ -212,7 +212,7 @@ public struct WelcomeView: View {
         tipLinkRow(
           icon: "terminal",
           title: "Install GitHub CLI",
-          description: "Download GitHub CLI for easy access to GitHub in the app.",
+          description: "Download GitHub CLI at https://cli.github.com/ for easy access to GitHub in the app.",
           url: URL(string: "https://cli.github.com/")!
         )
       }
