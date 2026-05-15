@@ -921,7 +921,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     case .closePanel:
       closeActiveOrLastAuxiliaryPanel()
     case .focusPanel(let direction):
-      if terminalSession?.focusPanel(direction: direction) == true {
+      if focusGhosttyPanel(in: direction) {
         notifyWorkspaceChanged()
       }
     case .selectTab(let direction):
@@ -1039,6 +1039,25 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     if terminalSession.focusPanel(panel.id) {
       notifyWorkspaceChanged()
     }
+  }
+
+  private func focusGhosttyPanel(in direction: TerminalPanelNavigationDirection) -> Bool {
+    guard let terminalSession else { return false }
+    let layoutRoot = splitRoot
+      ?? terminalSession.splitLayout?.root
+      ?? .panel(terminalSession.primaryPanelID)
+
+    guard let targetID = AgentHubGhosttySplitLayoutBuilder.panelID(
+      adjacentTo: terminalSession.activePanelID,
+      direction: direction,
+      in: layoutRoot
+    ) else { return false }
+
+    guard targetID != terminalSession.activePanelID,
+          terminalSession.focusPanel(targetID) else { return false }
+
+    refreshWorkspaceRootView()
+    return true
   }
 
   private func selectGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) {
