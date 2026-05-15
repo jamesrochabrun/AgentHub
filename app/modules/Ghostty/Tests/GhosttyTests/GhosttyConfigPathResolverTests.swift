@@ -1,6 +1,9 @@
 import AgentHubCore
 import Foundation
 import Testing
+#if canImport(Darwin)
+import Darwin
+#endif
 
 @testable import Ghostty
 
@@ -41,6 +44,22 @@ struct GhosttyConfigPathResolverTests {
     defaults.set(directoryURL.appendingPathComponent("missing").path, forKey: AgentHubDefaults.terminalGhosttyConfigPath)
     #expect(GhosttyConfigPathResolver.configuredPath(defaults: defaults) == nil)
   }
+
+  #if canImport(Darwin)
+  @Test("Ignores non-regular files")
+  func ignoresNonRegularFiles() throws {
+    let defaults = makeDefaults()
+    let fifoURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("ghostty-config-\(UUID().uuidString).fifo")
+    let created = fifoURL.path.withCString { mkfifo($0, mode_t(0o600)) }
+    try #require(created == 0)
+    defer { unlink(fifoURL.path) }
+
+    defaults.set(fifoURL.path, forKey: AgentHubDefaults.terminalGhosttyConfigPath)
+
+    #expect(GhosttyConfigPathResolver.configuredPath(defaults: defaults) == nil)
+  }
+  #endif
 }
 
 private func makeDefaults() -> UserDefaults {

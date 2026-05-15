@@ -409,14 +409,15 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private func mountGhosttySession(
     primaryConfiguration: GhosttySurfaceConfiguration,
     protectsPrimaryTab: Bool
-  ) {
+  ) async {
     do {
       AgentHubGhosttyRuntimeLogging.applyQuietDefault()
       // Share a single `GhosttyRuntime` across every embedded session in the
       // app. Without this, each TerminalSession.init runs `ghostty_app_new`
       // afresh — loading fonts, config, and Metal pipelines per surface —
       // which is the bulk of the per-mount cold-start cost.
-      let runtime = try AgentHubSharedGhosttyRuntime.acquire()
+      let runtime = try await AgentHubSharedGhosttyRuntime.acquire()
+      guard !Task.isCancelled else { return }
       let session = try TerminalSession(
         runtime: runtime,
         primaryConfiguration: primaryConfiguration,
@@ -479,7 +480,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       guard !Task.isCancelled else { return }
       self.pendingMountTask = nil
       guard self.canMountGhosttySession, self.terminalSession == nil else { return }
-      self.mountGhosttySession(
+      await self.mountGhosttySession(
         primaryConfiguration: configuration,
         protectsPrimaryTab: protectsPrimaryTab
       )

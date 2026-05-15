@@ -15,27 +15,50 @@ import GhosttySwift
 /// (observed in xctrace traces).
 ///
 /// Sharing one runtime app-wide means every session past the first reuses the
-/// same `ghostty_app_t`, font cache, and config — and the runtime can be
-/// pre-warmed in the background once at launch so the first user-facing mount
-/// is cheap too.
+/// same `ghostty_app_t`, font cache, and config. Runtime creation remains
+/// lazy; GhosttySwift's async factory keeps config loading off the main actor
+/// before returning to the main actor for AppKit-facing runtime setup.
 @MainActor
 public enum AgentHubSharedGhosttyRuntime {
   private static var runtime: GhosttyRuntime?
+  private static var loadingTask: Task<GhosttyRuntime, Error>?
 
   /// Returns the shared runtime, lazily constructing it the first time.
-  /// Throws whatever `GhosttyRuntime.init` throws.
-  public static func acquire() throws -> GhosttyRuntime {
+  /// Throws whatever GhosttySwift's runtime factory throws.
+  public static func acquire() async throws -> GhosttyRuntime {
     if let runtime { return runtime }
+    if let loadingTask {
+      return try await loadingTask.value
+    }
+
     AgentHubGhosttyRuntimeLogging.applyQuietDefault()
-    let new = try GhosttyRuntime(configPath: GhosttyConfigPathResolver.configuredPath())
-    runtime = new
-    return new
+    let configPath = GhosttyConfigPathResolver.configuredPath()
+    let task = Task { @MainActor in
+      try await GhosttyRuntime.make(configPath: configPath)
+    }
+    loadingTask = task
+
+    do {
+      let new = try await task.value
+      runtime = new
+      loadingTask = nil
+      return new
+    } catch {
+      loadingTask = nil
+      throw error
+    }
   }
 
-  /// Warms the runtime off the critical path. Safe to call multiple times.
+  /// Warms the runtime. Safe to call multiple times.
+  ///
+  /// Config loading happens off the main actor, but the final Ghostty app
+  /// creation remains main-actor work. Do not call it from launch or other
+  /// latency-sensitive paths.
   /// Errors are swallowed — if pre-warm fails, the next `acquire()` call will
   /// surface the real error to the caller that needs it.
   public static func prewarm() {
-    _ = try? acquire()
+    Task { @MainActor in
+      _ = try? await acquire()
+    }
   }
 }

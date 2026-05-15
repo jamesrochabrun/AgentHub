@@ -15,7 +15,7 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../AgentHubCore"),
-    .package(url: "https://github.com/jamesrochabrun/GhosttySwift", exact: "1.0.3"),
+    .package(url: "https://github.com/jamesrochabrun/GhosttySwift", exact: "1.0.4"),
   ],
   targets: [
     .target(

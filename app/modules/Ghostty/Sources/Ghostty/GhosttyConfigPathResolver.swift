@@ -21,10 +21,21 @@ public enum GhosttyConfigPathResolver {
     let expandedPath = (path as NSString).expandingTildeInPath
     var isDirectory: ObjCBool = false
     guard fileManager.fileExists(atPath: expandedPath, isDirectory: &isDirectory),
-          !isDirectory.boolValue else {
+          !isDirectory.boolValue,
+          fileManager.isReadableFile(atPath: expandedPath),
+          isRegularFile(atPath: expandedPath) else {
       return nil
     }
 
     return expandedPath
+  }
+
+  private static func isRegularFile(atPath path: String) -> Bool {
+    do {
+      let values = try URL(fileURLWithPath: path).resourceValues(forKeys: [.isRegularFileKey])
+      return values.isRegularFile == true
+    } catch {
+      return false
+    }
   }
 }

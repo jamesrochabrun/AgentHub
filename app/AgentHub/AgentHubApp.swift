@@ -36,12 +36,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // session begins monitoring.
     provider.reconcileClaudeHooksOnLaunch()
     provider.cleanupOrphanedProcesses()
-    // Build the shared Ghostty runtime off the critical launch path so the
-    // first session's terminal mount only pays the per-tab cost, not the
-    // full app-wide font/config/Metal cold-start.
-    Task { @MainActor in
-      AgentHubSharedGhosttyRuntime.prewarm()
-    }
   }
 
   /// Register all bundled fonts (Geist, GeistMono, JetBrains Mono)
