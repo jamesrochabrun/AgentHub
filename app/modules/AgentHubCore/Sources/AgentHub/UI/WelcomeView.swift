@@ -116,7 +116,7 @@ public struct WelcomeView: View {
         shortcutRow(key: "⌘ N", description: "Start new session", icon: "plus.circle")
         shortcutRow(key: "⌘ K", description: "Command palette", icon: "command")
         shortcutRow(key: "⌘ B", description: "Toggle sidebar", icon: "sidebar.left")
-        shortcutRow(key: "⌘ [ / ]", description: "Navigate history", icon: "arrow.left.arrow.right")
+        shortcutRow(key: "⌘ [ / ]", description: "Navigate between sessions", icon: "arrow.left.arrow.right")
         shortcutRow(key: "⌘ ,", description: "Open settings", icon: "gearshape")
       }
       .padding(14)
