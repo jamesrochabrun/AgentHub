@@ -95,7 +95,6 @@ extension TerminalContainerView: EmbeddedTerminalSurface {
   }
 
   public func focus() {
-    guard let terminalView, let window = terminalView.window else { return }
-    window.makeFirstResponder(terminalView)
+    focusActiveTerminal()
   }
 }

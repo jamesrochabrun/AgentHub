@@ -219,17 +219,30 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
 /// Container view that manages the terminal lifecycle
 public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDelegate {
   var terminalView: SafeLocalProcessTerminalView?
+  private var terminalPanelSession: TerminalPanelKit.Session<SafeLocalProcessTerminalView>?
+  private var protectedAgentPanelID: RegularTerminalPanelID?
+  private var protectedAgentTabID: RegularTerminalTabID?
+  private var workspaceHostingView: NSHostingView<RegularTerminalWorkspaceView>?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
   private var lastAppliedFontSize: CGFloat?
   private var lastAppliedFontFamily: String?
   private var lastAppliedIsDark: Bool?
+  private var currentIsDark = true
+  private var currentFontSize: CGFloat = 12
+  private var currentFontFamily = "SF Mono"
+  private var currentTheme: RuntimeTheme?
   private var terminalPidMap: [ObjectIdentifier: pid_t] = [:]
   private var localEventMonitor: Any?
+  private var projectPath: String = ""
+  private var configuredProcessProvider: SessionProviderKind?
+  private var isRestoringWorkspace = false
+  private var lastWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   public var onUserInteraction: (() -> Void)?
   public var onRequestShowEditor: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
+  public var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
   var terminalSessionKey: String?
   weak var sessionViewModel: CLISessionsViewModel?
   var metadataStore: SessionMetadataStore?
@@ -237,7 +250,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// The PID of the current terminal process, if running
   public var currentProcessPID: Int32? {
-    terminalView?.currentProcessId
+    protectedAgentTab?.terminalView.currentProcessId ?? activeTab?.terminalView.currentProcessId
   }
 
   // MARK: - Lifecycle
@@ -255,9 +268,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// Safe to call multiple times - subsequent calls are no-ops.
   public func terminateProcess() {
     terminateProcessCallCount += 1
-    // Stop data reception FIRST to prevent DispatchIO race condition crash
-    terminalView?.stopReceivingData()
-    terminalView?.terminateProcessTree()
+    for terminal in allTerminalViews {
+      terminateAndUnregister(terminal)
+    }
   }
 
   // MARK: - Configuration
@@ -270,8 +283,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     cliConfiguration: CLICommandConfiguration
   ) {
     terminateProcess()
-    terminalView?.removeFromSuperview()
-    terminalView = nil
+    removeMountedContent()
+    resetWorkspaceState()
     isConfigured = false
     hasDeliveredInitialPrompt = false  // Reset for fresh start
     hasPrefilledInitialInputText = false
@@ -295,6 +308,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
     guard !isConfigured else { return }
     isConfigured = true
+    self.projectPath = projectPath
+    currentIsDark = isDark
+    configuredProcessProvider = SessionProviderKind(cliMode: cliConfiguration.mode)
 
     let terminal = prepareTerminalView(isDark: isDark)
     terminal.projectPath = projectPath
@@ -319,10 +335,17 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     registerProcessIfNeeded(
       for: terminal,
       kind: .agentTerminal,
-      provider: SessionProviderKind(cliMode: cliConfiguration.mode),
+      provider: configuredProcessProvider,
       sessionId: sessionId,
       projectPath: projectPath,
       expectedExecutable: cliConfiguration.executableName
+    )
+    mountInitialWorkspace(
+      terminal: terminal,
+      role: .agent,
+      panelRole: .primary,
+      name: providerDisplayName,
+      workingDirectory: resolvedProjectPath
     )
 
     if let initialInputText, !initialInputText.isEmpty {
@@ -339,8 +362,17 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   ) {
     guard !isConfigured else { return }
     isConfigured = true
+    self.projectPath = projectPath
+    currentIsDark = isDark
+    configuredProcessProvider = sessionViewModel?.providerKind
 
     let terminal = prepareTerminalView(isDark: isDark)
+    terminal.projectPath = projectPath
+    terminal.onOpenFile = { [weak self] path, line in
+      if let self, let vm = self.sessionViewModel, let key = self.terminalSessionKey {
+        vm.pendingFileOpen = (sessionId: key, filePath: path, lineNumber: line)
+      }
+    }
     installInteractionMonitorIfNeeded()
 
     startShellProcess(
@@ -356,6 +388,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       projectPath: projectPath,
       expectedExecutable: nil
     )
+    mountInitialWorkspace(
+      terminal: terminal,
+      role: .shell,
+      panelRole: .primary,
+      name: "Shell",
+      workingDirectory: resolvedProjectPath
+    )
   }
 
   /// Resets the prompt delivery flag so a new prompt can be sent.
@@ -366,9 +405,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// Sends a prompt to the terminal (only once per terminal instance unless reset)
   public func sendPromptIfNeeded(_ prompt: String) {
-    guard let terminal = terminalView else { return }
+    guard let terminal = protectedAgentTab?.terminalView else { return }
     guard !hasDeliveredInitialPrompt else { return }
     hasDeliveredInitialPrompt = true
+    focusProtectedAgentTab()
 
     // Detect plan-feedback prefix: 3 down-arrows + Enter marks step-by-step delivery
     let planFeedbackPrefix = "\u{1B}[B\u{1B}[B\u{1B}[B\r"
@@ -405,7 +445,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// This path is for explicit user actions and must not be gated by initial
   /// prompt delivery state.
   public func submitPromptImmediately(_ prompt: String) -> Bool {
-    guard let terminal = terminalView else { return false }
+    guard let terminal = protectedAgentTab?.terminalView else { return false }
+    focusProtectedAgentTab()
     terminal.send(TerminalPromptSubmissionPayload.textBytes(
       prompt: prompt,
       bracketedPasteMode: terminal.terminal?.bracketedPasteMode ?? false
@@ -431,7 +472,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// Types text into the terminal WITHOUT pressing Enter.
   /// Used for drag-and-drop file paths where user adds context before submitting.
   public func typeText(_ text: String) {
-    guard let terminal = terminalView else { return }
+    guard let terminal = activeTab?.terminalView ?? protectedAgentTab?.terminalView else { return }
     terminal.send(txt: text)
   }
 
@@ -440,24 +481,29 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard !text.isEmpty else { return }
     guard !hasPrefilledInitialInputText else { return }
     hasPrefilledInitialInputText = true
-    typeText(text)
+    focusProtectedAgentTab()
+    protectedAgentTab?.terminalView.send(txt: text)
   }
 
   public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String = "SF Mono", theme: RuntimeTheme? = nil) {
+    currentIsDark = isDark
+    currentFontSize = max(fontSize, 8)
+    currentFontFamily = fontFamily
+    currentTheme = theme
     updateColors(isDark: isDark, theme: theme)
     updateFont(size: fontSize, family: fontFamily)
   }
 
   /// Updates terminal font size and family.
   public func updateFont(size: CGFloat, family: String = "SF Mono") {
-    guard let terminal = terminalView else { return }
     let resolvedSize = max(size, 8)
-    guard lastAppliedFontSize != resolvedSize || lastAppliedFontFamily != family else { return }
 
     let font = NSFont(name: family, size: resolvedSize)
       ?? NSFont(name: "SF Mono", size: resolvedSize)
       ?? NSFont.monospacedSystemFont(ofSize: resolvedSize, weight: .regular)
-    terminal.font = font
+    for terminal in allTerminalViews {
+      terminal.font = font
+    }
     lastAppliedFontSize = resolvedSize
     lastAppliedFontFamily = family
   }
@@ -468,37 +514,36 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   /// Only background and cursor are themed — foreground and ANSI colors are left
   /// untouched to preserve Claude Code / Codex syntax highlighting.
   public func updateColors(isDark: Bool, theme: RuntimeTheme? = nil) {
-    guard let terminal = terminalView else { return }
-
     let themeId = theme?.id
-    let needsUpdate = lastAppliedIsDark != isDark || lastAppliedThemeId != themeId
-    guard needsUpdate else { return }
 
-    // Theme terminal colors only apply in dark mode
-    if isDark, let bg = theme?.terminalBackground {
-      terminal.nativeBackgroundColor = bg
-    } else if isDark {
-      terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
-    } else {
-      // Match app light background
-      terminal.nativeBackgroundColor = NSColor(Color.backgroundLight)
-    }
+    for terminal in allTerminalViews {
+      // Theme terminal colors only apply in dark mode
+      if isDark, let bg = theme?.terminalBackground {
+        terminal.nativeBackgroundColor = bg
+      } else if isDark {
+        terminal.nativeBackgroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.12, alpha: 1.0)
+      } else {
+        // Match app light background
+        terminal.nativeBackgroundColor = NSColor(Color.backgroundLight)
+      }
 
-    if isDark {
-      terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
-    } else {
-      terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
-    }
+      if isDark {
+        terminal.nativeForegroundColor = NSColor(red: 0.9, green: 0.9, blue: 0.88, alpha: 1.0)
+      } else {
+        terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
+      }
 
-    if isDark, let cursor = theme?.terminalCursor {
-      terminal.caretColor = cursor
-    } else {
-      terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
+      if isDark, let cursor = theme?.terminalCursor {
+        terminal.caretColor = cursor
+      } else {
+        terminal.caretColor = NSColor(red: 204/255, green: 120/255, blue: 92/255, alpha: 1.0)
+      }
+
+      terminal.needsDisplay = true
     }
 
     lastAppliedIsDark = isDark
     lastAppliedThemeId = themeId
-    terminal.needsDisplay = true
   }
 
   private func applyInitialAppearance(to terminal: TerminalView, isDark: Bool) {
@@ -522,15 +567,24 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private func installInteractionMonitorIfNeeded() {
     guard localEventMonitor == nil else { return }
     localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseUp]) { [weak self] event in
-      guard let self, let terminal = self.terminalView else { return event }
+      guard let self else { return event }
 
       switch event.type {
       case .keyDown:
-        guard let window = terminal.window,
-              event.window === window else { break }
+        guard let window = event.window ?? self.window,
+              window === self.window else { break }
+        guard let focusedTab = self.focusedTab(in: window) else { break }
+        let terminal = focusedTab.terminalView
+        self.syncSelection(to: focusedTab)
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isTerminalVisible = terminal.superview != nil && !terminal.isHidden && terminal.alphaValue > 0
+
+        if let shortcut = RegularTerminalShortcut.action(for: event) {
+          self.handleShortcut(shortcut, focusedTerminal: terminal)
+          self.onUserInteraction?()
+          return nil
+        }
 
         if isTerminalVisible,
            self.isTerminalResponderActive(window: window, terminal: terminal),
@@ -542,21 +596,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
           return nil
         }
 
-        // Cmd+F: only when terminal has focus (let file editor handle it otherwise)
-        if isTerminalVisible, self.isTerminalResponderActive(window: window, terminal: terminal) {
-          if flags == .command, event.charactersIgnoringModifiers == "f" {
-            window.makeFirstResponder(terminal)
-            // performFindPanelAction requires an NSMenuItem with the correct tag
-            let menuItem = NSMenuItem()
-            menuItem.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
-            terminal.performFindPanelAction(menuItem)
-            return nil
-          }
-
-          }
-
         // Typing shortcuts (require terminal to be first responder)
         guard isTerminalResponderActive(window: window, terminal: terminal) else { break }
+        guard isProtectedAgentTab(focusedTab) else {
+          self.onUserInteraction?()
+          break
+        }
 
         let shortcut = NewlineShortcut(
           rawValue: UserDefaults.standard.integer(forKey: AgentHubDefaults.terminalNewlineShortcut)
@@ -606,9 +651,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         guard !ResizeInteractionSuppression.shared.shouldSuppressSelection else {
           return event
         }
-        guard let window = terminal.window, event.window === window else { return event }
-        let locationInTerminal = terminal.convert(event.locationInWindow, from: nil)
-        if terminal.bounds.contains(locationInTerminal) {
+        guard let window = event.window, window === self.window else { return event }
+        if let tab = self.tab(containingMouseEvent: event) {
+          self.syncSelection(to: tab)
           // Defer selection updates until after mouse handling completes.
           DispatchQueue.main.async { [weak self] in
             self?.onUserInteraction?()
@@ -649,16 +694,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminal.processDelegate = self
 
     configureTerminalAppearance(terminal, isDark: isDark)
+    terminal.font = NSFont(name: currentFontFamily, size: currentFontSize)
+      ?? NSFont(name: "SF Mono", size: currentFontSize)
+      ?? NSFont.monospacedSystemFont(ofSize: currentFontSize, weight: .regular)
 
-    addSubview(terminal)
-    NSLayoutConstraint.activate([
-      terminal.leadingAnchor.constraint(equalTo: leadingAnchor),
-      terminal.trailingAnchor.constraint(equalTo: trailingAnchor),
-      terminal.topAnchor.constraint(equalTo: topAnchor),
-      terminal.bottomAnchor.constraint(equalTo: bottomAnchor)
-    ])
-
-    self.terminalView = terminal
     return terminal
   }
 
@@ -748,13 +787,704 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
   }
 
+  private var resolvedProjectPath: String {
+    projectPath.isEmpty ? NSHomeDirectory() : projectPath
+  }
+
+  private var providerDisplayName: String {
+    (sessionViewModel?.providerKind ?? configuredProcessProvider)?.rawValue ?? "CLI"
+  }
+
+  private var panels: [RegularTerminalPanel] {
+    terminalPanelSession?.panels ?? []
+  }
+
+  private var primaryPanelID: RegularTerminalPanelID? {
+    terminalPanelSession?.primaryPanelID
+  }
+
+  private var activePanelID: RegularTerminalPanelID? {
+    terminalPanelSession?.activePanelID
+  }
+
+  private var splitRoot: RegularTerminalSplitNode? {
+    terminalPanelSession?.splitRoot
+  }
+
+  private var activePanel: RegularTerminalPanel? {
+    terminalPanelSession?.activePanel
+  }
+
+  private var activeTab: RegularTerminalTab? {
+    activePanel?.activeTab
+  }
+
+  private var protectedAgentTab: RegularTerminalTab? {
+    guard let protectedAgentPanelID, let protectedAgentTabID else { return nil }
+    return panels
+      .first { $0.id == protectedAgentPanelID }?
+      .tabs
+      .first { $0.id == protectedAgentTabID }
+  }
+
+  private var allTabs: [RegularTerminalTab] {
+    panels.flatMap(\.tabs)
+  }
+
+  private var allTerminalViews: [SafeLocalProcessTerminalView] {
+    allTabs.map(\.terminalView)
+  }
+
+  private func mountInitialWorkspace(
+    terminal: SafeLocalProcessTerminalView,
+    role: TerminalWorkspaceTabRole,
+    panelRole: TerminalWorkspacePanelRole,
+    name: String?,
+    workingDirectory: String?
+  ) {
+    let tab = RegularTerminalTab(
+      role: role,
+      name: name,
+      workingDirectory: workingDirectory,
+      terminalView: terminal
+    )
+    let panel = RegularTerminalPanel(
+      role: panelRole,
+      tabs: [tab],
+      activeTabID: tab.id
+    )
+
+    terminalView = terminal
+    terminalPanelSession = TerminalPanelKit.Session(primaryPanel: panel)
+
+    if role == .agent {
+      protectedAgentPanelID = panel.id
+      protectedAgentTabID = tab.id
+    }
+
+    refreshWorkspaceRootView()
+    syncAppearance(
+      isDark: currentIsDark,
+      fontSize: currentFontSize,
+      fontFamily: currentFontFamily,
+      theme: currentTheme
+    )
+    lastWorkspaceSnapshot = captureWorkspaceSnapshot()
+  }
+
+  private func resetWorkspaceState() {
+    terminalPanelSession = nil
+    protectedAgentPanelID = nil
+    protectedAgentTabID = nil
+    terminalView = nil
+    lastWorkspaceSnapshot = nil
+  }
+
+  private func removeMountedContent() {
+    workspaceHostingView?.removeFromSuperview()
+    workspaceHostingView = nil
+    for subview in subviews {
+      subview.removeFromSuperview()
+    }
+  }
+
+  private func refreshWorkspaceRootView() {
+    guard !panels.isEmpty else {
+      removeMountedContent()
+      return
+    }
+
+    if let workspaceHostingView {
+      workspaceHostingView.rootView = makeWorkspaceRootView()
+      return
+    }
+
+    let host = NSHostingView(rootView: makeWorkspaceRootView())
+    host.translatesAutoresizingMaskIntoConstraints = false
+    host.wantsLayer = true
+    host.layer?.backgroundColor = NSColor.clear.cgColor
+    addSubview(host)
+    NSLayoutConstraint.activate([
+      host.leadingAnchor.constraint(equalTo: leadingAnchor),
+      host.trailingAnchor.constraint(equalTo: trailingAnchor),
+      host.topAnchor.constraint(equalTo: topAnchor),
+      host.bottomAnchor.constraint(equalTo: bottomAnchor)
+    ])
+    workspaceHostingView = host
+  }
+
+  private func makeWorkspaceRootView() -> RegularTerminalWorkspaceView {
+    RegularTerminalWorkspaceView(
+      panels: panels,
+      splitRoot: splitRoot,
+      activePanelID: activePanelID,
+      canClosePanel: { [weak self] panel in
+        self?.canCloseRegularPanel(panel) ?? false
+      },
+      canCloseTab: { [weak self] panel, tab in
+        self?.canCloseRegularTab(tab, in: panel) ?? false
+      },
+      onActivatePanel: { [weak self] panel in
+        self?.activateRegularPanel(panel)
+      },
+      onSelectTab: { [weak self] panel, tab in
+        self?.selectRegularTab(tab, in: panel)
+      },
+      onClosePanel: { [weak self] panel in
+        self?.closeRegularPanel(panel)
+      },
+      onCloseTab: { [weak self] panel, tab in
+        self?.closeRegularTab(tab, in: panel)
+      },
+      onOpenTab: { [weak self] panel in
+        self?.openShellTab(in: panel.id)
+      },
+      onSplitPanel: { [weak self] panel, axis in
+        self?.openShellPane(axis: axis, anchorPanelID: panel.id)
+      }
+    )
+  }
+
+  private func makeShellTab(
+    name: String? = "Shell",
+    workingDirectory: String? = nil
+  ) -> RegularTerminalTab {
+    let shellProjectPath = resolvedExistingDirectory(workingDirectory)
+    let terminal = prepareTerminalView(isDark: currentIsDark)
+    terminal.projectPath = shellProjectPath
+    terminal.onOpenFile = { [weak self] path, line in
+      if let self, let vm = self.sessionViewModel, let key = self.terminalSessionKey {
+        vm.pendingFileOpen = (sessionId: key, filePath: path, lineNumber: line)
+      }
+    }
+
+    let tab = RegularTerminalTab(
+      role: .shell,
+      name: name,
+      workingDirectory: shellProjectPath,
+      terminalView: terminal
+    )
+    scheduleShellStart(for: tab, projectPath: shellProjectPath)
+    return tab
+  }
+
+  private func scheduleShellStart(for tab: RegularTerminalTab, projectPath: String) {
+    Task { @MainActor [weak self, weak tab] in
+      await Task.yield()
+      guard let self, let tab else { return }
+      guard self.allTabs.contains(where: { $0.id == tab.id }) else { return }
+      guard !tab.terminalView.isStopped else { return }
+
+      self.startShellProcess(
+        terminal: tab.terminalView,
+        projectPath: projectPath,
+        shellPath: nil
+      )
+      self.registerProcessIfNeeded(
+        for: tab.terminalView,
+        kind: .auxiliaryShell,
+        provider: self.sessionViewModel?.providerKind ?? self.configuredProcessProvider,
+        sessionId: self.terminalSessionKey,
+        projectPath: projectPath,
+        expectedExecutable: nil
+      )
+    }
+  }
+
+  private func openShellTab(in panelID: RegularTerminalPanelID? = nil) {
+    guard RegularTerminalLaunchFeatures.tabsEnabled else { return }
+    guard let session = terminalPanelSession else { return }
+    guard let panel = panel(for: panelID ?? activePanelID ?? primaryPanelID) else { return }
+    let tab = makeShellTab(workingDirectory: panel.activeTab?.workingDirectory)
+    guard session.appendTab(tab, in: panel.id) else { return }
+    refreshWorkspaceRootView()
+    syncAppearance(
+      isDark: currentIsDark,
+      fontSize: currentFontSize,
+      fontFamily: currentFontFamily,
+      theme: currentTheme
+    )
+    notifyWorkspaceChanged()
+    focus(tab)
+  }
+
+  private func openShellPane(
+    axis: RegularTerminalSplitAxis = .horizontal,
+    anchorPanelID: RegularTerminalPanelID? = nil
+  ) {
+    guard let session = terminalPanelSession, session.canOpenPanel else { return }
+    guard let anchorPanel = panel(for: anchorPanelID ?? activePanelID ?? primaryPanelID) else { return }
+    let tab = makeShellTab(workingDirectory: anchorPanel.activeTab?.workingDirectory)
+    guard session.openPanel(with: tab, beside: anchorPanel.id, axis: axis) != nil else { return }
+    refreshWorkspaceRootView()
+    syncAppearance(
+      isDark: currentIsDark,
+      fontSize: currentFontSize,
+      fontFamily: currentFontFamily,
+      theme: currentTheme
+    )
+    notifyWorkspaceChanged()
+    focus(tab)
+  }
+
+  private func canCloseRegularPanel(_ panel: RegularTerminalPanel) -> Bool {
+    terminalPanelSession?.canClosePanel(panel.id) ?? false
+  }
+
+  private func canCloseRegularTab(_ tab: RegularTerminalTab, in panel: RegularTerminalPanel) -> Bool {
+    guard RegularTerminalLaunchFeatures.tabsEnabled else { return false }
+    return terminalPanelSession?.canCloseTab(
+      tab.id,
+      in: panel.id,
+      isProtected: isProtectedAgentTab(tab, in: panel.id)
+    ) ?? false
+  }
+
+  private func activateRegularPanel(_ panel: RegularTerminalPanel) {
+    guard terminalPanelSession?.focusPanel(panel.id) == true else { return }
+    notifyWorkspaceChanged()
+  }
+
+  private func selectRegularTab(_ tab: RegularTerminalTab, in panel: RegularTerminalPanel) {
+    guard RegularTerminalLaunchFeatures.tabsEnabled || panel.activeTabID == tab.id else { return }
+    guard terminalPanelSession?.selectTab(tab.id, in: panel.id) == true else { return }
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
+    focus(tab)
+  }
+
+  private func closeRegularPanel(_ panel: RegularTerminalPanel) {
+    guard canCloseRegularPanel(panel) else { return }
+    let wasActivePanel = activePanelID == panel.id
+    let closeResult = terminalPanelSession?.closePanel(panel.id) ?? .empty
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
+    if wasActivePanel, let activeTab {
+      focus(activeTab)
+    }
+    terminateAfterWorkspaceUpdate(closeResult.payloads)
+  }
+
+  private func closeRegularTab(_ tab: RegularTerminalTab, in panel: RegularTerminalPanel) {
+    guard canCloseRegularTab(tab, in: panel) else { return }
+    let wasActiveTab = panel.activeTabID == tab.id
+    let closeResult = terminalPanelSession?.closeTab(tab.id, in: panel.id) ?? .empty
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
+    if wasActiveTab, let replacementTab = activePanel?.activeTab {
+      focus(replacementTab)
+    }
+    terminateAfterWorkspaceUpdate(closeResult.payloads)
+  }
+
+  private func closeActiveOrLastAuxiliaryPanel() {
+    guard let activePanel else { return }
+    if canCloseRegularPanel(activePanel) {
+      closeRegularPanel(activePanel)
+      return
+    }
+    if let auxiliary = panels.reversed().first(where: canCloseRegularPanel) {
+      closeRegularPanel(auxiliary)
+    }
+  }
+
+  private func focus(_ tab: RegularTerminalTab) {
+    focusTerminalView(tab.terminalView)
+  }
+
+  func focusActiveTerminal() {
+    focusTerminalView(activeTab?.terminalView ?? protectedAgentTab?.terminalView ?? terminalView)
+  }
+
+  private func focusTerminalView(_ terminal: SafeLocalProcessTerminalView?) {
+    guard let terminal else { return }
+    Task { @MainActor [weak terminal] in
+      await Task.yield()
+      guard let terminal, let window = terminal.window else { return }
+      window.makeFirstResponder(terminal)
+    }
+  }
+
+  private func terminateAfterWorkspaceUpdate(_ terminals: [SafeLocalProcessTerminalView]) {
+    guard !terminals.isEmpty else { return }
+    Task { @MainActor [weak self, terminals] in
+      await Task.yield()
+      guard let self else {
+        for terminal in terminals {
+          terminal.stopReceivingData()
+          terminal.terminateProcessTree()
+        }
+        return
+      }
+      for terminal in terminals {
+        self.terminateAndUnregister(terminal)
+      }
+    }
+  }
+
+  private func focusProtectedAgentTab() {
+    guard let tab = protectedAgentTab,
+          let protectedAgentPanelID,
+          terminalPanelSession?.selectTab(tab.id, in: protectedAgentPanelID) == true else {
+      return
+    }
+    refreshWorkspaceRootView()
+    focus(tab)
+  }
+
+  private func handleShortcut(
+    _ shortcut: RegularTerminalShortcut,
+    focusedTerminal: SafeLocalProcessTerminalView
+  ) {
+    switch shortcut {
+    case .startSearch:
+      showFindPanel(in: focusedTerminal)
+    case .openTab:
+      guard RegularTerminalLaunchFeatures.tabsEnabled else { return }
+      openShellTab()
+    case .openPane(let axis):
+      openShellPane(axis: axis)
+    case .closePanel:
+      closeActiveOrLastAuxiliaryPanel()
+    case .focusPanel(let direction):
+      if focusPanel(direction: direction) {
+        notifyWorkspaceChanged()
+      }
+    case .selectTab(let direction):
+      guard RegularTerminalLaunchFeatures.tabsEnabled else { return }
+      if selectTab(direction: direction) {
+        notifyWorkspaceChanged()
+      }
+    }
+  }
+
+  private func showFindPanel(in terminal: SafeLocalProcessTerminalView) {
+    guard let window = terminal.window else { return }
+    window.makeFirstResponder(terminal)
+    let menuItem = NSMenuItem()
+    menuItem.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+    terminal.performFindPanelAction(menuItem)
+  }
+
+  private func focusPanel(direction: RegularTerminalPanelNavigationDirection) -> Bool {
+    guard terminalPanelSession?.focusPanel(direction: direction, viewportSize: bounds.size) == true else {
+      return false
+    }
+    refreshWorkspaceRootView()
+    if let activeTab {
+      focus(activeTab)
+    }
+    return true
+  }
+
+  private func selectTab(direction: RegularTerminalTabNavigationDirection) -> Bool {
+    guard RegularTerminalLaunchFeatures.tabsEnabled else { return false }
+    guard terminalPanelSession?.selectTab(direction: direction) == true else { return false }
+    refreshWorkspaceRootView()
+    if let activeTab {
+      focus(activeTab)
+    }
+    return true
+  }
+
+  public func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
+    guard !panels.isEmpty else { return nil }
+
+    let panelSnapshots = panels.map { panel in
+      let snapshot = tabsForWorkspaceSnapshot(in: panel)
+      let tabs = snapshot.tabs.map { tab in
+        TerminalWorkspaceTabSnapshot(
+          role: tab.role,
+          name: Self.nonEmpty(tab.name),
+          title: Self.nonEmpty(tab.title),
+          workingDirectory: Self.nonEmpty(tab.workingDirectory ?? resolvedProjectPath)
+        )
+      }
+      return TerminalWorkspacePanelSnapshot(
+        role: panel.id == primaryPanelID ? .primary : .auxiliary,
+        tabs: tabs,
+        activeTabIndex: snapshot.activeTabIndex
+      )
+    }
+
+    return TerminalWorkspaceSnapshot(
+      panels: panelSnapshots,
+      activePanelIndex: panels.firstIndex { $0.id == activePanelID } ?? 0
+    )
+  }
+
+  public func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {
+    guard !panels.isEmpty, !snapshot.panels.isEmpty else { return }
+    isRestoringWorkspace = true
+    defer {
+      isRestoringWorkspace = false
+      lastWorkspaceSnapshot = captureWorkspaceSnapshot()
+    }
+
+    resetToPrimaryTerminal()
+    let panelSnapshots = normalizedPanelSnapshots(snapshot.panels)
+    var restoredPanelIDs: [RegularTerminalPanelID] = []
+    var restoredTabIDs: [[RegularTerminalTabID]] = []
+
+    if let primary = panel(for: primaryPanelID) {
+      restoredPanelIDs.append(primary.id)
+      var primaryTabIDs = primary.tabs.map(\.id)
+      if let primarySnapshot = panelSnapshots.first {
+        primaryTabIDs = restoreShellTabs(
+          from: primarySnapshot,
+          in: primary,
+          existingTabIDs: primaryTabIDs
+        )
+      }
+      restoredTabIDs.append(primaryTabIDs)
+    }
+
+    for panelSnapshot in panelSnapshots.dropFirst() {
+      guard let session = terminalPanelSession, session.canOpenPanel else { break }
+      guard let firstShellTab = panelSnapshot.tabs.first(where: { $0.role == .shell }) else { continue }
+      let tab = makeShellTab(
+        name: restoredTabName(for: firstShellTab),
+        workingDirectory: firstShellTab.workingDirectory
+      )
+      let anchorPanelID = primaryPanelID ?? panels[0].id
+      guard let panel = session.openPanel(
+        with: tab,
+        beside: anchorPanelID,
+        axis: .horizontal
+      ) else {
+        continue
+      }
+
+      var tabIDs = [tab.id]
+      if RegularTerminalLaunchFeatures.tabsEnabled {
+        tabIDs = restoreShellTabs(
+          from: panelSnapshot,
+          in: panel,
+          existingTabIDs: tabIDs,
+          skippingFirstShellTab: true
+        )
+      }
+      restoredPanelIDs.append(panel.id)
+      restoredTabIDs.append(tabIDs)
+    }
+
+    restoreActiveSelection(
+      from: snapshot,
+      panelIDs: restoredPanelIDs,
+      tabIDs: restoredTabIDs
+    )
+    refreshWorkspaceRootView()
+    syncAppearance(
+      isDark: currentIsDark,
+      fontSize: currentFontSize,
+      fontFamily: currentFontFamily,
+      theme: currentTheme
+    )
+  }
+
+  private func resetToPrimaryTerminal() {
+    guard let session = terminalPanelSession,
+          let primary = panel(for: primaryPanelID) ?? panels.first else { return }
+    let keepTabID = protectedAgentTabID ?? primary.tabs.first?.id
+    let closeResult = session.resetToPrimary(keeping: keepTabID)
+    for terminal in closeResult.payloads {
+      terminateAndUnregister(terminal)
+    }
+  }
+
+  private func restoreShellTabs(
+    from panelSnapshot: TerminalWorkspacePanelSnapshot,
+    in panel: RegularTerminalPanel,
+    existingTabIDs: [RegularTerminalTabID],
+    skippingFirstShellTab: Bool = false
+  ) -> [RegularTerminalTabID] {
+    guard RegularTerminalLaunchFeatures.tabsEnabled else { return existingTabIDs }
+    var restoredTabIDs = existingTabIDs
+    var hasSkippedFirstShellTab = false
+
+    for tabSnapshot in panelSnapshot.tabs where tabSnapshot.role == .shell {
+      if skippingFirstShellTab && !hasSkippedFirstShellTab {
+        hasSkippedFirstShellTab = true
+        continue
+      }
+
+      let tab = makeShellTab(
+        name: restoredTabName(for: tabSnapshot),
+        workingDirectory: tabSnapshot.workingDirectory
+      )
+      panel.appendTab(tab)
+      restoredTabIDs.append(tab.id)
+    }
+
+    return restoredTabIDs
+  }
+
+  private func tabsForWorkspaceSnapshot(
+    in panel: RegularTerminalPanel
+  ) -> (tabs: [RegularTerminalTab], activeTabIndex: Int) {
+    if RegularTerminalLaunchFeatures.tabsEnabled {
+      let activeTabIndex = panel.tabs.firstIndex { $0.id == panel.activeTabID } ?? 0
+      return (panel.tabs, activeTabIndex)
+    }
+
+    if let activeTab = panel.activeTab {
+      return ([activeTab], 0)
+    }
+
+    if let firstTab = panel.tabs.first {
+      return ([firstTab], 0)
+    }
+
+    return ([], 0)
+  }
+
+  private func restoreActiveSelection(
+    from snapshot: TerminalWorkspaceSnapshot,
+    panelIDs: [RegularTerminalPanelID],
+    tabIDs: [[RegularTerminalTabID]]
+  ) {
+    guard !panelIDs.isEmpty else { return }
+    let panelIndex = min(max(snapshot.activePanelIndex, 0), panelIDs.count - 1)
+    let panelID = panelIDs[panelIndex]
+
+    guard let panel = panel(for: panelID) else { return }
+    let savedPanel = snapshot.panels.indices.contains(panelIndex) ? snapshot.panels[panelIndex] : nil
+    let savedActiveTabIndex = savedPanel?.activeTabIndex ?? 0
+    let panelTabIDs = tabIDs.indices.contains(panelIndex) ? tabIDs[panelIndex] : []
+    guard !panelTabIDs.isEmpty else { return }
+
+    let tabIndex = min(max(savedActiveTabIndex, 0), panelTabIDs.count - 1)
+    _ = terminalPanelSession?.selectTab(panelTabIDs[tabIndex], in: panel.id)
+  }
+
+  private func normalizedPanelSnapshots(
+    _ panels: [TerminalWorkspacePanelSnapshot]
+  ) -> [TerminalWorkspacePanelSnapshot] {
+    let primary = panels.first { $0.role == .primary } ?? panels.first
+    let auxiliaries = panels.filter { $0.role == .auxiliary }
+    return ([primary].compactMap { $0 } + auxiliaries).prefix(4).map { $0 }
+  }
+
+  private func restoredTabName(for tab: TerminalWorkspaceTabSnapshot) -> String? {
+    if tab.role == .agent {
+      return providerDisplayName
+    }
+    return Self.nonEmpty(tab.name) ?? Self.nonEmpty(tab.title) ?? "Shell"
+  }
+
+  private func resolvedExistingDirectory(_ path: String?) -> String {
+    guard let path = Self.nonEmpty(path) else { return resolvedProjectPath }
+    let expandedPath = (path as NSString).expandingTildeInPath
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory),
+          isDirectory.boolValue else {
+      return resolvedProjectPath
+    }
+    return expandedPath
+  }
+
+  private func panel(for id: RegularTerminalPanelID?) -> RegularTerminalPanel? {
+    terminalPanelSession?.panel(for: id)
+  }
+
+  private func isProtectedAgentTab(_ tab: RegularTerminalTab) -> Bool {
+    guard let located = locate(tab) else { return false }
+    return isProtectedAgentTab(tab, in: located.panel.id)
+  }
+
+  private func isProtectedAgentTab(_ tab: RegularTerminalTab, in panelID: RegularTerminalPanelID) -> Bool {
+    panelID == protectedAgentPanelID && tab.id == protectedAgentTabID
+  }
+
+  private func locate(_ tab: RegularTerminalTab) -> (panel: RegularTerminalPanel, tab: RegularTerminalTab)? {
+    for panel in panels {
+      if let matchedTab = panel.tabs.first(where: { $0.id == tab.id }) {
+        return (panel, matchedTab)
+      }
+    }
+    return nil
+  }
+
+  private func locate(terminal: TerminalView) -> (panel: RegularTerminalPanel, tab: RegularTerminalTab)? {
+    for panel in panels {
+      if let matchedTab = panel.tabs.first(where: { $0.terminalView === terminal }) {
+        return (panel, matchedTab)
+      }
+    }
+    return nil
+  }
+
+  private func focusedTab(in window: NSWindow) -> RegularTerminalTab? {
+    guard let responder = window.firstResponder else { return nil }
+    guard let responderView = responder as? NSView else { return nil }
+    if let focusedTab = allTabs.first(where: { tab in
+      responderView === tab.terminalView || responderView.isDescendant(of: tab.terminalView)
+    }) {
+      return focusedTab
+    }
+    if responderView === self || responderView.isDescendant(of: self) {
+      return activeTab
+    }
+    return nil
+  }
+
+  private func tab(containingMouseEvent event: NSEvent) -> RegularTerminalTab? {
+    allTabs.first { tab in
+      guard event.window === tab.terminalView.window else { return false }
+      let location = tab.terminalView.convert(event.locationInWindow, from: nil)
+      return tab.terminalView.bounds.contains(location)
+    }
+  }
+
+  private func syncSelection(to tab: RegularTerminalTab) {
+    guard let located = locate(tab) else { return }
+    if activePanelID != located.panel.id || located.panel.activeTabID != located.tab.id {
+      _ = terminalPanelSession?.selectTab(located.tab.id, in: located.panel.id)
+      refreshWorkspaceRootView()
+      notifyWorkspaceChanged()
+    }
+  }
+
+  private func terminateAndUnregister(_ terminal: SafeLocalProcessTerminalView) {
+    let key = ObjectIdentifier(terminal)
+    if let pid = terminalPidMap.removeValue(forKey: key) {
+      Task {
+        await TerminalProcessRegistry.shared.unregister(pid: pid)
+      }
+    }
+    terminal.stopReceivingData()
+    terminal.terminateProcessTree()
+  }
+
+  private func notifyWorkspaceChanged() {
+    guard !isRestoringWorkspace else { return }
+    guard let snapshot = captureWorkspaceSnapshot() else { return }
+    guard snapshot != lastWorkspaceSnapshot else { return }
+    lastWorkspaceSnapshot = snapshot
+    onWorkspaceChanged?(snapshot)
+  }
+
+  private static func nonEmpty(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed?.isEmpty == false ? trimmed : nil
+  }
+
   // MARK: - ManagedLocalProcessTerminalViewDelegate
 
   public func sizeChanged(source: ManagedLocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
-  public func setTerminalTitle(source: ManagedLocalProcessTerminalView, title: String) {}
+  public func setTerminalTitle(source: ManagedLocalProcessTerminalView, title: String) {
+    guard let located = locate(terminal: source) else { return }
+    located.tab.title = title
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
+  }
 
-  public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+  public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+    guard let located = locate(terminal: source) else { return }
+    located.tab.workingDirectory = directory
+    notifyWorkspaceChanged()
+  }
 
   public func processTerminated(source: TerminalView, exitCode: Int32?) {
     let key = ObjectIdentifier(source)
