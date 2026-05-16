@@ -1,5 +1,6 @@
 module CLibgit2 [system] {
-  header "include/git2.h"
+  // Local SwiftPM shim. The actual libgit2 headers come from the build machine.
+  header "include/CLibgit2Shim.h"
   link "git2"
   export *
 }
