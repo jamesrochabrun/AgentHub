@@ -5,6 +5,7 @@
 //  Combines Claude + Codex monitored sessions into a single panel.
 //
 
+import AgentHubGitDiff
 import AgentHubGitHub
 import Foundation
 import PierreDiffsSwift

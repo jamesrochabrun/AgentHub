@@ -37,14 +37,20 @@ public actor DiffAvailabilityService: DiffAvailabilityServiceProtocol {
   }
 
   private let evaluator: Evaluator
+  private let minimumRefreshInterval: TimeInterval
   private var cache: [String: DiffAvailabilityStatus] = [:]
   private var cacheGeneration: [String: Int] = [:]
   private var inFlightTasks: [String: InFlightEvaluation] = [:]
+  private var lastEvaluationStartedAt: [String: Date] = [:]
 
-  init(evaluator: Evaluator? = nil) {
+  init(
+    evaluator: Evaluator? = nil,
+    minimumRefreshInterval: TimeInterval = 1.0
+  ) {
     self.evaluator = evaluator ?? { projectPath in
       await Self.defaultEvaluator(projectPath: projectPath)
     }
+    self.minimumRefreshInterval = minimumRefreshInterval
   }
 
   public func cachedAvailability(for projectPath: String) async -> DiffAvailabilityStatus? {
@@ -65,6 +71,7 @@ public actor DiffAvailabilityService: DiffAvailabilityServiceProtocol {
     let task = Task(priority: .utility) {
       await evaluator(normalizedProjectPath)
     }
+    lastEvaluationStartedAt[normalizedProjectPath] = Date.now
     let inFlightEvaluation = InFlightEvaluation(
       id: UUID(),
       generation: cacheGeneration[normalizedProjectPath] ?? 0,
@@ -84,10 +91,18 @@ public actor DiffAvailabilityService: DiffAvailabilityServiceProtocol {
 
   public func invalidate(projectPath: String) async {
     let normalizedProjectPath = Self.normalize(projectPath)
+
+    if inFlightTasks[normalizedProjectPath] != nil {
+      return
+    }
+
+    if let lastEvaluationStartedAt = lastEvaluationStartedAt[normalizedProjectPath],
+       Date.now.timeIntervalSince(lastEvaluationStartedAt) < minimumRefreshInterval {
+      return
+    }
+
     cacheGeneration[normalizedProjectPath, default: 0] += 1
     cache.removeValue(forKey: normalizedProjectPath)
-    inFlightTasks[normalizedProjectPath]?.task.cancel()
-    inFlightTasks.removeValue(forKey: normalizedProjectPath)
   }
 
   public nonisolated static func normalize(_ projectPath: String) -> String {

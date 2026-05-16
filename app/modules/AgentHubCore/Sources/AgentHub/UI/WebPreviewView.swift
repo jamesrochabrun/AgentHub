@@ -7,6 +7,7 @@
 //  for framework projects requiring transpilation.
 //
 
+import AgentHubGitDiff
 import SwiftUI
 import Canvas
 import WebKit

@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AgentHubCore
+@testable import AgentHubGitDiff
 
 @Suite("GitDiffService")
 struct GitDiffServiceTests {
@@ -94,6 +94,42 @@ struct GitDiffServiceTests {
     #expect(payload.oldContent == "")
     #expect(payload.newContent == "new file")
     #expect(!payload.isLimitedContext)
+    #expect(file.status == .untracked)
+  }
+
+  @Test("uses stable file ids across refreshes")
+  func usesStableFileIdsAcrossRefreshes() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "changed".write(toFile: fixture.repoPath + "/README.md", atomically: true, encoding: .utf8)
+
+    let service = GitDiffService()
+    let first = try await service.changedFiles(at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
+    let second = try await service.changedFiles(at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
+
+    #expect(first.files.map(\.id) == second.files.map(\.id))
+  }
+
+  @Test("detects unstaged renames")
+  func detectsUnstagedRenames() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try FileManager.default.moveItem(
+      atPath: fixture.repoPath + "/README.md",
+      toPath: fixture.repoPath + "/Renamed.md"
+    )
+
+    let service = GitDiffService()
+    let state = try await service.changedFiles(at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
+    let file = try #require(state.files.first(where: { $0.relativePath == "Renamed.md" }))
+    let payload = try await service.renderPayload(for: file, at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
+
+    #expect(file.status == .renamed)
+    #expect(file.oldRelativePath == "README.md")
+    #expect(payload.oldContent == "initial")
+    #expect(payload.newContent == "initial")
   }
 
   @Test("uses hunk fallback for large tracked files")
@@ -113,6 +149,7 @@ struct GitDiffServiceTests {
     let payload = try await service.renderPayload(for: file, at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
 
     #expect(payload.isLimitedContext)
+    #expect(payload.renderMode == .limitedHunks)
     #expect(payload.oldContent == "initial")
     #expect(payload.newContent == "changed line\nsecond line")
   }
@@ -130,6 +167,7 @@ struct GitDiffServiceTests {
     let payload = try await service.renderPayload(for: file, at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
 
     #expect(payload.isLimitedContext)
+    #expect(payload.renderMode == .limitedHunks)
     #expect(payload.oldContent == "")
     #expect(payload.newContent == "alpha\nbeta")
   }

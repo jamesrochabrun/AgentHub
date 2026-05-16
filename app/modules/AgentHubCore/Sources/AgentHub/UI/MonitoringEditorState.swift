@@ -3,6 +3,7 @@
 //  AgentHub
 //
 
+import AgentHubGitDiff
 import Foundation
 
 extension Notification.Name {
