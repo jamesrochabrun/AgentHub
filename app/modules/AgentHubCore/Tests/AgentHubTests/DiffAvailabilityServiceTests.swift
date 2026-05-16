@@ -181,6 +181,28 @@ struct DiffAvailabilityServiceTests {
     #expect(cached == .available)
     #expect(evaluationCount == 1)
   }
+
+  @Test("Invalidating an in-flight check reuses the active evaluation")
+  func invalidatingInFlightCheckReusesActiveEvaluation() async {
+    let evaluator = DiffAvailabilityEvaluatorSpy(
+      queuedStatuses: [.available],
+      delay: .milliseconds(100)
+    )
+    let service = DiffAvailabilityService(evaluator: { projectPath in
+      await evaluator.evaluate(projectPath: projectPath)
+    })
+
+    async let first = service.availability(for: "/tmp/project")
+    try? await Task.sleep(for: .milliseconds(10))
+    await service.invalidate(projectPath: "/tmp/project")
+    async let second = service.availability(for: "/tmp/project")
+
+    let statuses = await [first, second]
+    let evaluationCount = await evaluator.evaluationCount
+
+    #expect(statuses == [.available, .available])
+    #expect(evaluationCount == 1)
+  }
 }
 
 @Suite("CLISessionsViewModel Diff Availability")

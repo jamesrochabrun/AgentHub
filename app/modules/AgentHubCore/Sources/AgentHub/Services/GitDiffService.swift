@@ -50,6 +50,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
   /// Maximum time to wait for git commands (in seconds)
   private static let gitCommandTimeout: TimeInterval = 30.0
   private static let limitedContextReason = "Large file rendered with changed hunks only."
+  private static let backendPrintPrefix = "AGENTHUB_DIFF_BACKEND"
 
   private let renderPolicy: GitDiffRenderPolicy
   private var gitRootCache: [String: String] = [:]
@@ -81,6 +82,27 @@ public actor GitDiffService: GitDiffServiceProtocol {
     mode: DiffMode,
     baseBranch: String? = nil
   ) async throws -> GitDiffState {
+    do {
+      let gitRoot = try await findGitRoot(at: repoPath)
+      let branch: String?
+      if mode == .branch {
+        branch = try await resolvedBaseBranch(baseBranch, repoPath: repoPath)
+      } else {
+        branch = nil
+      }
+      let state = try LibGit2DiffBackend.changedFiles(
+        atGitRoot: gitRoot,
+        mode: mode,
+        baseBranch: branch,
+        renderPolicy: renderPolicy
+      )
+      printBackend("changedFiles backend=libgit2 mode=\(mode.rawValue) files=\(state.files.count)")
+      return state
+    } catch {
+      AppLogger.git.warning("libgit2 changedFiles fallback: \(error.localizedDescription)")
+      assertionFailure("libgit2 changedFiles fallback in \(mode.rawValue): \(error.localizedDescription)")
+    }
+
     switch mode {
     case .unstaged:
       return try await getUnstagedChanges(at: repoPath)
@@ -210,6 +232,12 @@ public actor GitDiffService: GitDiffServiceProtocol {
   /// - Parameter repoPath: Path to the git repository
   /// - Returns: The detected base branch name
   public func detectBaseBranch(at repoPath: String) async throws -> String {
+    do {
+      return try LibGit2DiffBackend.detectBaseBranch(at: repoPath)
+    } catch {
+      AppLogger.git.warning("libgit2 detectBaseBranch fallback: \(error.localizedDescription)")
+    }
+
     let gitRoot = try await findGitRoot(at: repoPath)
 
     // Try "main" first
@@ -342,8 +370,31 @@ public actor GitDiffService: GitDiffServiceProtocol {
       throw CancellationError()
     }
 
+    do {
+      let gitRoot = try await findGitRoot(at: repoPath)
+      let branch: String?
+      if mode == .branch {
+        branch = try await resolvedBaseBranch(baseBranch, repoPath: repoPath)
+      } else {
+        branch = nil
+      }
+      let payload = try LibGit2DiffBackend.renderPayload(
+        for: file,
+        atGitRoot: gitRoot,
+        mode: mode,
+        baseBranch: branch,
+        renderPolicy: renderPolicy
+      )
+      printBackend("renderPayload backend=libgit2 mode=\(mode.rawValue) file=\"\(oneLine(file.relativePath))\" renderMode=\(payload.renderMode.rawValue) limited=\(payload.isLimitedContext)")
+      return payload
+    } catch {
+      AppLogger.git.warning("libgit2 renderPayload fallback for \(file.relativePath): \(error.localizedDescription)")
+      assertionFailure("libgit2 renderPayload fallback in \(mode.rawValue) for \(file.relativePath): \(error.localizedDescription)")
+    }
+
     if try await shouldUseLimitedContext(for: file, at: repoPath, mode: mode, baseBranch: baseBranch) {
-      return try await limitedContextPayload(for: file, at: repoPath, mode: mode, baseBranch: baseBranch)
+      let payload = try await limitedContextPayload(for: file, at: repoPath, mode: mode, baseBranch: baseBranch)
+      return payload
     }
 
     do {
@@ -353,7 +404,8 @@ public actor GitDiffService: GitDiffServiceProtocol {
         mode: mode,
         baseBranch: baseBranch
       )
-      return GitDiffRenderPayload(oldContent: contents.oldContent, newContent: contents.newContent)
+      let payload = GitDiffRenderPayload(oldContent: contents.oldContent, newContent: contents.newContent)
+      return payload
     } catch {
       if let fallback = try? await limitedContextPayload(for: file, at: repoPath, mode: mode, baseBranch: baseBranch) {
         return fallback
@@ -588,6 +640,23 @@ public actor GitDiffService: GitDiffServiceProtocol {
     return output.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
+  private func printBackend(_ message: String) {
+    print("\(Self.backendPrintPrefix) \(message)")
+  }
+
+  private func oneLine(_ value: String) -> String {
+    value
+      .replacingOccurrences(of: "\n", with: " ")
+      .replacingOccurrences(of: "\r", with: " ")
+  }
+
+  private func resolvedBaseBranch(_ baseBranch: String?, repoPath: String) async throws -> String {
+    if let baseBranch, !baseBranch.isEmpty {
+      return baseBranch
+    }
+    return try await detectBaseBranch(at: repoPath)
+  }
+
   private func isTracked(relativePath: String, gitRoot: String) async throws -> Bool {
     do {
       _ = try await runGitCommand(["ls-files", "--error-unmatch", "--", relativePath], at: gitRoot)
@@ -614,7 +683,8 @@ public actor GitDiffService: GitDiffServiceProtocol {
         relativePath: relativePath,
         // Avoid reading each untracked file eagerly for line stats.
         additions: 0,
-        deletions: 0
+        deletions: 0,
+        status: .untracked
       )
     }
 
@@ -642,6 +712,14 @@ public actor GitDiffService: GitDiffServiceProtocol {
   public func findGitRoot(at path: String) async throws -> String {
     if let cached = gitRootCache[path] {
       return cached
+    }
+
+    do {
+      let root = try LibGit2DiffBackend.findGitRoot(at: path)
+      gitRootCache[path] = root
+      return root
+    } catch {
+      AppLogger.git.warning("libgit2 findGitRoot fallback: \(error.localizedDescription)")
     }
 
     let output = try await runGitCommand(["rev-parse", "--show-toplevel"], at: path)

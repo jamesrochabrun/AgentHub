@@ -71,13 +71,28 @@ public struct GitDiffState: Equatable, Sendable {
 // MARK: - GitDiffRenderPolicy
 
 public struct GitDiffRenderPolicy: Equatable, Sendable {
-  public static let `default` = GitDiffRenderPolicy(maxFullContentBytes: 2 * 1024 * 1024)
+  public static let `default` = GitDiffRenderPolicy(
+    maxFullContentBytes: 512 * 1024,
+    maxPatchBytes: 2 * 1024 * 1024
+  )
 
   public let maxFullContentBytes: UInt64
+  public let maxPatchBytes: UInt64
 
-  public init(maxFullContentBytes: UInt64) {
+  public init(
+    maxFullContentBytes: UInt64,
+    maxPatchBytes: UInt64 = 2 * 1024 * 1024
+  ) {
     self.maxFullContentBytes = maxFullContentBytes
+    self.maxPatchBytes = maxPatchBytes
   }
+}
+
+// MARK: - GitDiffRenderMode
+
+public enum GitDiffRenderMode: String, Equatable, Sendable {
+  case fullFile
+  case limitedHunks
 }
 
 // MARK: - GitDiffRenderPayload
@@ -87,33 +102,56 @@ public struct GitDiffRenderPayload: Equatable, Sendable {
   public let newContent: String
   public let isLimitedContext: Bool
   public let limitedContextReason: String?
+  public let renderMode: GitDiffRenderMode
 
   public init(
     oldContent: String,
     newContent: String,
     isLimitedContext: Bool = false,
-    limitedContextReason: String? = nil
+    limitedContextReason: String? = nil,
+    renderMode: GitDiffRenderMode? = nil
   ) {
     self.oldContent = oldContent
     self.newContent = newContent
     self.isLimitedContext = isLimitedContext
     self.limitedContextReason = limitedContextReason
+    self.renderMode = renderMode ?? (isLimitedContext ? .limitedHunks : .fullFile)
   }
+}
+
+// MARK: - GitDiffFileStatus
+
+public enum GitDiffFileStatus: String, Equatable, Sendable {
+  case added
+  case modified
+  case deleted
+  case renamed
+  case copied
+  case untracked
+  case typeChanged
+  case conflicted
+  case unknown
 }
 
 // MARK: - GitDiffFileEntry
 
 /// Individual file with unstaged changes, including path and line statistics
 public struct GitDiffFileEntry: Identifiable, Equatable, Sendable {
-  public let id: UUID
+  public let id: String
   /// Full absolute path to the file
   public let filePath: String
   /// Path relative to repository root
   public let relativePath: String
+  /// Previous path for renamed or copied files, relative to repository root.
+  public let oldRelativePath: String?
   /// Number of lines added
   public let additions: Int
   /// Number of lines deleted
   public let deletions: Int
+  /// Git status for this entry.
+  public let status: GitDiffFileStatus
+  /// Whether Git identified the file as binary.
+  public let isBinary: Bool
 
   /// File name extracted from path
   public var fileName: String {
@@ -137,16 +175,37 @@ public struct GitDiffFileEntry: Identifiable, Equatable, Sendable {
   }
 
   public init(
-    id: UUID = UUID(),
+    id: String? = nil,
     filePath: String,
     relativePath: String,
+    oldRelativePath: String? = nil,
     additions: Int,
-    deletions: Int
+    deletions: Int,
+    status: GitDiffFileStatus = .modified,
+    isBinary: Bool = false
   ) {
-    self.id = id
     self.filePath = filePath
     self.relativePath = relativePath
+    self.oldRelativePath = oldRelativePath
     self.additions = additions
     self.deletions = deletions
+    self.status = status
+    self.isBinary = isBinary
+    self.id = id ?? Self.makeStableId(
+      relativePath: relativePath,
+      oldRelativePath: oldRelativePath,
+      status: status
+    )
+  }
+
+  private static func makeStableId(
+    relativePath: String,
+    oldRelativePath: String?,
+    status: GitDiffFileStatus
+  ) -> String {
+    if let oldRelativePath, !oldRelativePath.isEmpty, oldRelativePath != relativePath {
+      return "\(status.rawValue):\(oldRelativePath)->\(relativePath)"
+    }
+    return "\(status.rawValue):\(relativePath)"
   }
 }

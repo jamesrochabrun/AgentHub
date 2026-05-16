@@ -111,6 +111,7 @@
 				7B03D9062F14D4E200C36AA3 /* Sources */,
 				7B03D9072F14D4E200C36AA3 /* Frameworks */,
 				7B03D9082F14D4E200C36AA3 /* Resources */,
+				7B04A1012F20A01000C36AA3 /* Bundle libgit2 */,
 				7B04A1002F20A00000C36AA3 /* Bundle AgentHubCLI */,
 			);
 			buildRules = (
@@ -250,6 +251,26 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		7B04A1012F20A01000C36AA3 /* Bundle libgit2 */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/bundle-libgit2.sh",
+			);
+			name = "Bundle libgit2";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libgit2.1.9.dylib",
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libssh2.1.dylib",
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libssl.3.dylib",
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libcrypto.3.dylib",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${SRCROOT}/scripts/bundle-libgit2.sh\"\n";
+		};
 		7B04A1002F20A00000C36AA3 /* Bundle AgentHubCLI */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

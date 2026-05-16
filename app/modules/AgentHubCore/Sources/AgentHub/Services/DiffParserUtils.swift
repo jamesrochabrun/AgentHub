@@ -179,11 +179,12 @@ public enum DiffParserUtils {
     parsedDiffs.map { diff in
       let fullPath = (gitRoot as NSString).appendingPathComponent(diff.filePath)
       return GitDiffFileEntry(
-        id: diff.id,
         filePath: fullPath,
         relativePath: diff.filePath,
         additions: diff.additions,
-        deletions: diff.deletions
+        deletions: diff.deletions,
+        status: diff.isNewFile ? .added : (diff.isDeletedFile ? .deleted : .modified),
+        isBinary: diff.isBinaryFile
       )
     }
   }

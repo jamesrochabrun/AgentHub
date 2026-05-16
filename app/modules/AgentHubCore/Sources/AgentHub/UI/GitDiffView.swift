@@ -38,10 +38,10 @@ public struct GitDiffView: View {
   @State private var diffState: GitDiffState = .empty
   @State private var isLoading = true
   @State private var errorMessage: String?
-  @State private var selectedFileId: UUID?
-  @State private var diffContents: [UUID: GitDiffRenderPayload] = [:]
-  @State private var loadingStates: [UUID: Bool] = [:]
-  @State private var fileErrorMessages: [UUID: String] = [:]
+  @State private var selectedFileId: String?
+  @State private var diffContents: [String: GitDiffRenderPayload] = [:]
+  @State private var loadingStates: [String: Bool] = [:]
+  @State private var fileErrorMessages: [String: String] = [:]
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
   @State private var inlineEditorState = InlineEditorState()
@@ -617,7 +617,7 @@ private struct GitDiffTreeNodeRow: View {
   let node: GitDiffTreeNode
   let depth: Int
   @Binding var expandedPaths: Set<String>
-  let selectedFileId: UUID?
+  let selectedFileId: String?
   let onSelectFile: (GitDiffFileEntry) -> Void
 
   private var isExpanded: Bool {

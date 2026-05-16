@@ -33,6 +33,13 @@ let package = Package(
     .package(url: "https://github.com/CodeEditApp/CodeEditLanguages", exact: "0.1.20"),
   ],
   targets: [
+    .systemLibrary(
+      name: "CLibgit2",
+      pkgConfig: "libgit2",
+      providers: [
+        .brew(["libgit2"])
+      ]
+    ),
     .target(
       name: "ClaudeCodeClient",
       path: "Sources/ClaudeCodeClient",
@@ -44,6 +51,7 @@ let package = Package(
       name: "AgentHubCore",
       dependencies: [
         "ClaudeCodeClient",
+        "CLibgit2",
         .product(name: "AgentHubCLIKit", package: "AgentHubCLI"),
         .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
         .product(name: "Storybook", package: "Storybook"),
