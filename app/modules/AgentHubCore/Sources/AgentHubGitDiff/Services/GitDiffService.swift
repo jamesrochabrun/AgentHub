@@ -51,6 +51,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
   private static let gitCommandTimeout: TimeInterval = 30.0
   private static let limitedContextReason = "Large file rendered with changed hunks only."
   private static let backendPrintPrefix = "AGENTHUB_DIFF_BACKEND"
+  private static let logger = Logger(subsystem: "com.agenthub.gitdiff", category: "GitDiff")
 
   private let renderPolicy: GitDiffRenderPolicy
   private var gitRootCache: [String: String] = [:]
@@ -99,7 +100,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
       printBackend("changedFiles backend=libgit2 mode=\(mode.rawValue) files=\(state.files.count)")
       return state
     } catch {
-      AppLogger.git.warning("libgit2 changedFiles fallback: \(error.localizedDescription)")
+      Self.logger.warning("libgit2 changedFiles fallback: \(error.localizedDescription)")
       assertionFailure("libgit2 changedFiles fallback in \(mode.rawValue): \(error.localizedDescription)")
     }
 
@@ -235,7 +236,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
     do {
       return try LibGit2DiffBackend.detectBaseBranch(at: repoPath)
     } catch {
-      AppLogger.git.warning("libgit2 detectBaseBranch fallback: \(error.localizedDescription)")
+      Self.logger.warning("libgit2 detectBaseBranch fallback: \(error.localizedDescription)")
     }
 
     let gitRoot = try await findGitRoot(at: repoPath)
@@ -388,7 +389,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
       printBackend("renderPayload backend=libgit2 mode=\(mode.rawValue) file=\"\(oneLine(file.relativePath))\" renderMode=\(payload.renderMode.rawValue) limited=\(payload.isLimitedContext)")
       return payload
     } catch {
-      AppLogger.git.warning("libgit2 renderPayload fallback for \(file.relativePath): \(error.localizedDescription)")
+      Self.logger.warning("libgit2 renderPayload fallback for \(file.relativePath): \(error.localizedDescription)")
       assertionFailure("libgit2 renderPayload fallback in \(mode.rawValue) for \(file.relativePath): \(error.localizedDescription)")
     }
 
@@ -542,7 +543,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
       do {
         newContent = try String(contentsOf: fileURL, encoding: .utf8)
       } catch {
-        AppLogger.git.error("Could not read file from disk: \(error.localizedDescription)")
+        Self.logger.error("Could not read file from disk: \(error.localizedDescription)")
         throw GitDiffError.fileNotFound(filePath)
       }
     }
@@ -719,7 +720,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
       gitRootCache[path] = root
       return root
     } catch {
-      AppLogger.git.warning("libgit2 findGitRoot fallback: \(error.localizedDescription)")
+      Self.logger.warning("libgit2 findGitRoot fallback: \(error.localizedDescription)")
     }
 
     let output = try await runGitCommand(["rev-parse", "--show-toplevel"], at: path)
@@ -762,7 +763,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
       try process.run()
       try inputPipe.fileHandleForWriting.close()
     } catch {
-      AppLogger.git.error("Failed to start git process: \(error.localizedDescription)")
+      Self.logger.error("Failed to start git process: \(error.localizedDescription)")
       throw GitDiffError.gitCommandFailed("Failed to start git: \(error.localizedDescription)")
     }
 
@@ -803,7 +804,7 @@ public actor GitDiffService: GitDiffServiceProtocol {
         do {
           try await Task.sleep(for: .seconds(timeout))
           if process.isRunning {
-            AppLogger.git.warning("Git command timed out after \(timeout)s, terminating")
+            Self.logger.warning("Git command timed out after \(timeout)s, terminating")
             process.terminate()
           }
           return true

@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AgentHubCore
+@testable import AgentHubGitDiff
 
 @Suite("GitDiffService")
 struct GitDiffServiceTests {

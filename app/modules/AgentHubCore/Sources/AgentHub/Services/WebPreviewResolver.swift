@@ -6,6 +6,7 @@
 //  direct file:// loading for static HTML, or dev server for frameworks.
 //
 
+import AgentHubGitDiff
 import Foundation
 
 // MARK: - WebPreviewResolution

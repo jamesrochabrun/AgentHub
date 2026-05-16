@@ -3,6 +3,7 @@ import Foundation
 import Testing
 
 @testable import AgentHubCore
+@testable import AgentHubGitDiff
 
 private actor DiffAvailabilityEvaluatorSpy {
   private var queuedStatuses: [DiffAvailabilityStatus]

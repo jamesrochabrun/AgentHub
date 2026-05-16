@@ -5,6 +5,7 @@
 //  Created by Assistant on 1/9/26.
 //
 
+import AgentHubGitDiff
 import Foundation
 import Combine
 import Canvas

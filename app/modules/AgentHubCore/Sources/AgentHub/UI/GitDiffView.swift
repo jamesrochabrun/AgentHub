@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AgentHubGitDiff
 import PierreDiffsSwift
 import Canvas
 import os

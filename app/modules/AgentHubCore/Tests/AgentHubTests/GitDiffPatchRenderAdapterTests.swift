@@ -1,6 +1,6 @@
 import Testing
 
-@testable import AgentHubCore
+@testable import AgentHubGitDiff
 
 @Suite("GitDiffPatchRenderAdapter")
 struct GitDiffPatchRenderAdapterTests {

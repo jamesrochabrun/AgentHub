@@ -16,6 +16,10 @@ let package = Package(
       name: "AgentHubCore",
       targets: ["AgentHubCore"]
     ),
+    .library(
+      name: "AgentHubGitDiff",
+      targets: ["AgentHubGitDiff"]
+    ),
   ],
   dependencies: [
     .package(path: "../AgentHubCLI"),
@@ -48,10 +52,20 @@ let package = Package(
       ]
     ),
     .target(
+      name: "AgentHubGitDiff",
+      dependencies: [
+        "CLibgit2"
+      ],
+      path: "Sources/AgentHubGitDiff",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .target(
       name: "AgentHubCore",
       dependencies: [
         "ClaudeCodeClient",
-        "CLibgit2",
+        "AgentHubGitDiff",
         .product(name: "AgentHubCLIKit", package: "AgentHubCLI"),
         .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
         .product(name: "Storybook", package: "Storybook"),
@@ -87,6 +101,7 @@ let package = Package(
       name: "AgentHubTests",
       dependencies: [
         "AgentHubCore",
+        "AgentHubGitDiff",
         "ClaudeCodeClient",
       ],
       path: "Tests/AgentHubTests",
