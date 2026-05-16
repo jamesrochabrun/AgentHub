@@ -128,6 +128,23 @@ struct WorktreeConventionTests {
     #expect(FileManager.default.fileExists(atPath: path))
   }
 
+  @Test("Checkout reuses an existing worktree for the branch")
+  func checkoutReusesExistingBranchWorktree() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let existingPath = try fixture.addSiblingWorktree(branch: "existing")
+    let service = WorktreeManagementService()
+
+    let path = try await service.checkoutWorktree(
+      at: fixture.repoPath,
+      branch: "existing",
+      directoryName: "existing"
+    )
+
+    #expect(path == existingPath)
+  }
+
   @Test("Uses start point when creating a new branch")
   func usesStartPoint() async throws {
     let fixture = try GitRepoFixture.create()

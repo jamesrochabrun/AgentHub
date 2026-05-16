@@ -102,19 +102,11 @@ struct CheckoutWorktree: AsyncParsableCommand {
   func run() async throws {
     let service = WorktreeManagementService()
     let directoryName = WorktreeNaming.worktreeDirectoryName(for: branch)
-    let worktreesDirectory = try await service.worktreesDirectory(at: options.repositoryPath)
-    let path = (worktreesDirectory as NSString).appendingPathComponent(directoryName)
-
-    let resolvedPath: String
-    if FileManager.default.fileExists(atPath: path) {
-      resolvedPath = path
-    } else {
-      resolvedPath = try await service.createWorktree(
-        at: options.repositoryPath,
-        branch: branch,
-        directoryName: directoryName
-      )
-    }
+    let resolvedPath = try await service.checkoutWorktree(
+      at: options.repositoryPath,
+      branch: branch,
+      directoryName: directoryName
+    )
 
     try printResult(path: resolvedPath, branch: branch, json: options.json)
   }

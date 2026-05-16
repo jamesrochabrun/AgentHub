@@ -10,6 +10,7 @@ public protocol WorktreeManagementServiceProtocol: Sendable {
   func getLocalBranches(at repoPath: String) async throws -> [BranchInfo]
   func getLocalBranchesWithCurrent(at repoPath: String) async throws -> LocalBranchesResult
   func createWorktree(at repoPath: String, branch: String, directoryName: String) async throws -> String
+  func checkoutWorktree(at repoPath: String, branch: String, directoryName: String) async throws -> String
   func createWorktreeWithNewBranch(at repoPath: String, newBranchName: String, directoryName: String, startPoint: String?) async throws -> String
   func createWorktreeWithNewBranch(
     at repoPath: String,
@@ -160,6 +161,23 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     )
 
     return worktreePath
+  }
+
+  public func checkoutWorktree(
+    at repoPath: String,
+    branch: String,
+    directoryName: String
+  ) async throws -> String {
+    if let existing = try await listWorktrees(at: repoPath)
+      .first(where: { $0.branch == branch }) {
+      return existing.path
+    }
+
+    return try await createWorktree(
+      at: repoPath,
+      branch: branch,
+      directoryName: directoryName
+    )
   }
 
   public func createWorktreeWithNewBranch(
@@ -515,8 +533,15 @@ private extension WorktreeManagementService {
   }
 
   func branchExists(_ branchName: String, at repoPath: String) async throws -> Bool {
-    let output = try await runGitCommand(["branch", "--list", branchName], at: repoPath)
-    return !output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    do {
+      try await runGitCommand(
+        ["show-ref", "--verify", "--quiet", "refs/heads/\(branchName)"],
+        at: repoPath
+      )
+      return true
+    } catch WorktreeManagementError.gitCommandFailed(let message) where message.isEmpty {
+      return false
+    }
   }
 
   func parseRemoteBranches(_ output: String) -> [BranchInfo] {
