@@ -52,6 +52,8 @@ private struct GitHubPopOutItem: Identifiable {
   let id = UUID()
   let session: CLISession
   let projectPath: String
+  let viewModel: GitHubViewModel
+  let onSendToSession: ((String, CLISession) -> Void)?
 }
 
 
@@ -353,10 +355,16 @@ public struct MultiProviderMonitoringPanelView: View {
     ) { item in
       GitHubPanelView(
         projectPath: item.projectPath,
+        branchName: item.session.branchName,
         onDismiss: { gitHubPopOutItem = nil },
         isEmbedded: false,
-        session: item.session
+        session: item.session,
+        viewModel: item.viewModel,
+        onSendToSession: item.onSendToSession
       )
+      .onDisappear {
+        item.viewModel.stopObserving()
+      }
     }
     .sheet(item: $sessionFileSheetItem) { item in
       MonitoringSessionFileSheetView(
@@ -916,15 +924,26 @@ public struct MultiProviderMonitoringPanelView: View {
         isEmbedded: true
       )
     case .gitHub(_, let session, let projectPath):
+      let gitHubViewModel = GitHubViewModel(
+        service: viewModel.agentHubProvider?.gitHubService ?? GitHubCLIService(),
+        observationService: viewModel.agentHubProvider?.gitHubPRObservationService
+      )
       GitHubPanelView(
         projectPath: projectPath,
+        branchName: session.branchName,
         onDismiss: closeEmbeddedSidePanel,
         isEmbedded: true,
         session: session,
+        viewModel: gitHubViewModel,
         onSendToSession: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) },
-        onPopOut: {
+        onPopOut: { panelViewModel in
           closeEmbeddedSidePanel()
-          gitHubPopOutItem = GitHubPopOutItem(session: session, projectPath: projectPath)
+          gitHubPopOutItem = GitHubPopOutItem(
+            session: session,
+            projectPath: projectPath,
+            viewModel: panelViewModel,
+            onSendToSession: { prompt, sess in viewModel.showTerminalWithPrompt(for: sess, prompt: prompt) }
+          )
         }
       )
     case .edits(let sessionId, let session):

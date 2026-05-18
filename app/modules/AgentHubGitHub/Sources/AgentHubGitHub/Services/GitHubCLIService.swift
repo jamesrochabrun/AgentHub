@@ -45,6 +45,7 @@ public actor GitHubCLIService {
 
   private static let commandTimeout: TimeInterval = 30.0
   static let checksJSONFields = "name,state,link,bucket"
+  static let noPullRequestsFoundMessageFragment = "no pull requests found"
 
   /// Cached gh executable path
   private var ghPath: String?
@@ -215,11 +216,12 @@ public actor GitHubCLIService {
     do {
       let json = try await runGH(
         ["pr", "view", "--json", fields],
-        at: repoPath
+        at: repoPath,
+        quietFailureMessages: [Self.noPullRequestsFoundMessageFragment]
       )
       return try decodePR(json)
     } catch let error as GitHubCLIError {
-      if case .commandFailed(let msg) = error, msg.contains("no pull requests found") {
+      if case .commandFailed(let msg) = error, Self.isNoCurrentBranchPRMessage(msg) {
         return nil
       }
       throw error
@@ -449,7 +451,8 @@ public actor GitHubCLIService {
     _ arguments: [String],
     at path: String,
     timeout: TimeInterval = commandTimeout,
-    allowedExitCodes: Set<Int> = [0]
+    allowedExitCodes: Set<Int> = [0],
+    quietFailureMessages: [String] = []
   ) async throws -> String {
     guard let executable = await findGHExecutable() else {
       throw GitHubCLIError.cliNotInstalled
@@ -460,7 +463,8 @@ public actor GitHubCLIService {
       arguments: arguments,
       at: path,
       timeout: timeout,
-      allowedExitCodes: allowedExitCodes
+      allowedExitCodes: allowedExitCodes,
+      quietFailureMessages: quietFailureMessages
     )
   }
 
@@ -470,7 +474,8 @@ public actor GitHubCLIService {
     arguments: [String],
     at path: String? = nil,
     timeout: TimeInterval = commandTimeout,
-    allowedExitCodes: Set<Int> = [0]
+    allowedExitCodes: Set<Int> = [0],
+    quietFailureMessages: [String] = []
   ) async throws -> String {
     let cmdDescription = ([executable] + arguments).joined(separator: " ")
     GitHubLogger.github.debug("[runCommand] START timeout=\(timeout)s cmd=\(cmdDescription)")
@@ -564,7 +569,11 @@ public actor GitHubCLIService {
     if !allowedExitCodes.contains(Int(process.terminationStatus)) {
       let errMsg = errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
       let exitCode = process.terminationStatus
-      GitHubLogger.github.error("[runCommand] FAILED in \(cmdElapsed)s exitCode=\(exitCode) stderr=\(errMsg) cmd=\(cmdDescription)")
+      if Self.shouldLogFailureQuietly(errMsg, quietFailureMessages: quietFailureMessages) {
+        GitHubLogger.github.debug("[runCommand] EXPECTED_FAILURE in \(cmdElapsed)s exitCode=\(exitCode) stderr=\(errMsg) cmd=\(cmdDescription)")
+      } else {
+        GitHubLogger.github.error("[runCommand] FAILED in \(cmdElapsed)s exitCode=\(exitCode) stderr=\(errMsg) cmd=\(cmdDescription)")
+      }
 
       if errMsg.contains("not logged") || errMsg.contains("auth login") {
         throw GitHubCLIError.notAuthenticated
@@ -581,6 +590,19 @@ public actor GitHubCLIService {
 
     GitHubLogger.github.debug("[runCommand] OK in \(cmdElapsed)s stdout=\(outputBytes) bytes cmd=\(cmdDescription)")
     return output
+  }
+
+  static func isNoCurrentBranchPRMessage(_ message: String) -> Bool {
+    message.localizedCaseInsensitiveContains(noPullRequestsFoundMessageFragment)
+  }
+
+  private static func shouldLogFailureQuietly(
+    _ message: String,
+    quietFailureMessages: [String]
+  ) -> Bool {
+    quietFailureMessages.contains { fragment in
+      message.localizedCaseInsensitiveContains(fragment)
+    }
   }
 
   // MARK: - JSON Parsing

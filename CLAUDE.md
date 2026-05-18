@@ -282,6 +282,12 @@ Claude Code buffers `tool_use` blocks until the turn commits, so JSONL alone can
 
 **Invariants when editing this area:** only `.claude/settings.local.json` is ever written inside a user's repo (never `.claude/hooks/`, never `.gitignore`); our merge identifies its own entry by the absolute script path; launch reconcile and terminate flush both block on a semaphore so AppKit can't kill cleanup mid-flight.
 
+## GitHub PR/CI Observation
+
+GitHub PR/check monitoring is documented in `GitHubMonitor.md`. Read that file before changing `GitHubPRObservationService`, `GitHubViewModel` observation paths, `SessionGitHubQuickAccessViewModel`, session-row GitHub status, or sidebar refresh behavior.
+
+The short version: GitHub observation is a shared actor service in `AgentHubGitHub`, injected through `AgentHubProvider.gitHubPRObservationService`. UI surfaces subscribe to target snapshots instead of polling independently. Current-branch rows only render GitHub state when a PR exists; no-PR branches should remain visually quiet. Initial refresh is delayed and bounded so GitHub checks do not affect app launch time.
+
 ## Important Patterns
 
 - File watchers use byte-offset tracking to read only new JSONL lines (never re-read entire files)

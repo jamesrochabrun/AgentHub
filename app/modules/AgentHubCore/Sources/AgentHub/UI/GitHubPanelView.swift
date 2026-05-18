@@ -14,33 +14,38 @@ import SwiftUI
 /// Panel view for GitHub integration — lists PRs, issues, and shows details
 public struct GitHubPanelView: View {
   let projectPath: String
+  let branchName: String?
   let onDismiss: () -> Void
   var isEmbedded: Bool = false
   var onSendToSession: ((String, CLISession) -> Void)?
   var onStartNewSession: ((String, SessionProviderKind) -> Void)?
   var session: CLISession?
-  var onPopOut: (() -> Void)?
+  var onPopOut: ((GitHubViewModel) -> Void)?
 
-  @State private var viewModel = GitHubViewModel()
+  @State private var viewModel: GitHubViewModel
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
 
   public init(
     projectPath: String,
+    branchName: String? = nil,
     onDismiss: @escaping () -> Void,
     isEmbedded: Bool = false,
     session: CLISession? = nil,
+    viewModel: GitHubViewModel? = nil,
     onSendToSession: ((String, CLISession) -> Void)? = nil,
     onStartNewSession: ((String, SessionProviderKind) -> Void)? = nil,
-    onPopOut: (() -> Void)? = nil
+    onPopOut: ((GitHubViewModel) -> Void)? = nil
   ) {
     self.projectPath = projectPath
+    self.branchName = branchName
     self.onDismiss = onDismiss
     self.isEmbedded = isEmbedded
     self.session = session
     self.onSendToSession = onSendToSession
     self.onStartNewSession = onStartNewSession
     self.onPopOut = onPopOut
+    self._viewModel = State(initialValue: viewModel ?? GitHubViewModel())
   }
 
   public var body: some View {
@@ -55,9 +60,13 @@ public struct GitHubPanelView: View {
     )
     .background(panelBackground)
     .task {
-      await viewModel.setup(repoPath: projectPath)
+      if !viewModel.isConfigured(repoPath: projectPath, branchName: branchName) {
+        await viewModel.setup(repoPath: projectPath, branchName: branchName)
+      }
       if viewModel.setupState == .ready {
-        await viewModel.loadPullRequests()
+        if viewModel.pullRequests.isEmpty {
+          await viewModel.loadPullRequests()
+        }
         await viewModel.loadCurrentBranchPR()
       }
     }
@@ -93,7 +102,7 @@ public struct GitHubPanelView: View {
       Spacer()
 
       if isEmbedded, let onPopOut {
-        Button { onPopOut() } label: {
+        Button { onPopOut(viewModel) } label: {
           Image(systemName: "rectangle.portrait.and.arrow.right")
             .font(.system(size: 14))
             .foregroundStyle(.secondary)
@@ -102,7 +111,10 @@ public struct GitHubPanelView: View {
         .help("Open in separate window")
       }
 
-      Button("Close") { onDismiss() }
+      Button("Close") {
+        viewModel.stopObserving()
+        onDismiss()
+      }
         .controlSize(.small)
     }
     .padding(.horizontal, DesignTokens.Spacing.sm)
@@ -361,8 +373,7 @@ public struct GitHubPanelView: View {
 
     return ScrollView {
       LazyVStack(spacing: 0, pinnedViews: []) {
-        if let branchPR = currentBranchPR,
-           viewModel.pullRequests.contains(where: { $0.number == branchPR.number }) {
+        if let branchPR = currentBranchPR {
           GitHubSectionHeader(title: "Current Branch")
           GitHubPRRow(pr: branchPR, isCurrentBranch: true) {
             viewModel.selectPR(branchPR)

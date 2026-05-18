@@ -83,12 +83,24 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
   }
 
   var pullRequestResult: GitHubPullRequest?
+  var pullRequestResults: [Result<GitHubPullRequest, Error>] = []
   var getPullRequestCalled = false
+  var getPullRequestCallCount = 0
   var getPullRequestNumber: Int?
 
   func getPullRequest(number: Int, at repoPath: String) async throws -> GitHubPullRequest {
     getPullRequestCalled = true
+    getPullRequestCallCount += 1
     getPullRequestNumber = number
+    if !pullRequestResults.isEmpty {
+      let nextResult = pullRequestResults.removeFirst()
+      switch nextResult {
+      case .success(let result):
+        return result
+      case .failure(let error):
+        throw error
+      }
+    }
     if let error = errorToThrow { throw error }
     guard let result = pullRequestResult else {
       throw GitHubCLIError.commandFailed("No mock pullRequestResult configured")
@@ -247,12 +259,24 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
   // MARK: - CI/CD
 
   var checksResult: [GitHubCheckRun] = []
+  var checksResults: [Result<[GitHubCheckRun], Error>] = []
   var getChecksCalled = false
+  var getChecksCallCount = 0
   var getChecksPRNumber: Int?
 
   func getChecks(prNumber: Int?, at repoPath: String) async throws -> [GitHubCheckRun] {
     getChecksCalled = true
+    getChecksCallCount += 1
     getChecksPRNumber = prNumber
+    if !checksResults.isEmpty {
+      let nextResult = checksResults.removeFirst()
+      switch nextResult {
+      case .success(let result):
+        return result
+      case .failure(let error):
+        throw error
+      }
+    }
     if let error = errorToThrow { throw error }
     return checksResult
   }
@@ -278,6 +302,7 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     listPullRequestsState = nil
     listPullRequestsLimit = nil
     getPullRequestCalled = false
+    getPullRequestCallCount = 0
     getPullRequestNumber = nil
     getCurrentBranchPRCalled = false
     getCurrentBranchPRCallCount = 0
@@ -306,6 +331,7 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     addIssueCommentNumber = nil
     addIssueCommentBody = nil
     getChecksCalled = false
+    getChecksCallCount = 0
     getChecksPRNumber = nil
     listWorkflowRunsCalled = false
   }
