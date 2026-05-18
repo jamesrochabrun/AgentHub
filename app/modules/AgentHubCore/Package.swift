@@ -20,6 +20,10 @@ let package = Package(
       name: "AgentHubGitDiff",
       targets: ["AgentHubGitDiff"]
     ),
+    .library(
+      name: "AgentHubFileSearch",
+      targets: ["AgentHubFileSearch"]
+    ),
   ],
   dependencies: [
     .package(path: "../AgentHubCLI"),
@@ -62,10 +66,18 @@ let package = Package(
       ]
     ),
     .target(
+      name: "AgentHubFileSearch",
+      path: "Sources/AgentHubFileSearch",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .target(
       name: "AgentHubCore",
       dependencies: [
         "ClaudeCodeClient",
         "AgentHubGitDiff",
+        "AgentHubFileSearch",
         .product(name: "AgentHubCLIKit", package: "AgentHubCLI"),
         .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
         .product(name: "Storybook", package: "Storybook"),
@@ -98,10 +110,19 @@ let package = Package(
       ]
     ),
     .testTarget(
+      name: "AgentHubFileSearchTests",
+      dependencies: ["AgentHubFileSearch"],
+      path: "Tests/AgentHubFileSearchTests",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .testTarget(
       name: "AgentHubTests",
       dependencies: [
         "AgentHubCore",
         "AgentHubGitDiff",
+        "AgentHubFileSearch",
         "ClaudeCodeClient",
       ],
       path: "Tests/AgentHubTests",

@@ -2,7 +2,7 @@
 //  QuickFilePickerView.swift
 //  AgentHub
 //
-//  Cmd+P modal for fuzzy file search within a project.
+//  Cmd+P modal for Spotlight-backed file search within a project.
 //
 
 import SwiftUI
@@ -104,10 +104,10 @@ public struct QuickFilePickerView: View {
         VStack(spacing: 8) {
           ProgressView()
             .controlSize(.small)
-          Text("Indexing files…")
+          Text("Searching files…")
             .font(.caption)
             .foregroundColor(.secondary)
-          Text("Large repositories are indexed in the background the first time you search.")
+          Text("Large repositories may take a moment if Spotlight has not indexed them yet.")
             .font(.caption2)
             .foregroundColor(.secondary.opacity(0.7))
             .multilineTextAlignment(.center)
@@ -191,11 +191,7 @@ public struct QuickFilePickerView: View {
       isIndexing = false
       try? await Task.sleep(for: .milliseconds(150))
       guard !Task.isCancelled else { return }
-      let status = await FileIndexService.shared.searchIndexStatus(projectPath: projectPath)
-      if status != .ready {
-        isIndexing = true
-        await FileIndexService.shared.prepareSearchIndex(projectPath: projectPath)
-      }
+      isIndexing = true
       let found = await FileIndexService.shared.search(query: searchQuery, in: projectPath)
       guard !Task.isCancelled else { return }
       isIndexing = false
