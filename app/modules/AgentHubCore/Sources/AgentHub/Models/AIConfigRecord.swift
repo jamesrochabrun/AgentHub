@@ -23,7 +23,8 @@ public struct AIConfigRecord: Codable, Sendable, FetchableRecord, PersistableRec
   public var allowedTools: String
   /// Comma-separated disallowed tool patterns, Claude only
   public var disallowedTools: String
-  /// Codex approval policy: "untrusted", "on-request", "never", or "full-auto" (empty = CLI default)
+  /// Codex approval policy: "untrusted", "on-request", "never", or "full-auto" (empty = CLI default).
+  /// "full-auto" is AgentHub's compatibility value for Codex workspace-write sandbox mode.
   public var approvalPolicy: String
   /// Last update timestamp
   public var updatedAt: Date

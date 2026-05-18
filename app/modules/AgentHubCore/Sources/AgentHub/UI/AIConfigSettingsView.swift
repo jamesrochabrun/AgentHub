@@ -21,6 +21,10 @@ public final class AIConfigSettingsViewModel {
   var codexApprovalPolicy: String = ""
   var codexReasoningEffort: String = ""
 
+  var codexApprovalPolicyDescription: String {
+    Self.codexApprovalPolicyDescription(for: codexApprovalPolicy)
+  }
+
   @ObservationIgnored private var aiConfigService: (any AIConfigServiceProtocol)?
   @ObservationIgnored
   private var isLoaded = false
@@ -74,6 +78,21 @@ public final class AIConfigSettingsViewModel {
       value
     default:
       ""
+    }
+  }
+
+  static func codexApprovalPolicyDescription(for value: String) -> String {
+    switch sanitizedCodexApprovalPolicy(value) {
+    case "untrusted":
+      "Only trusted commands run automatically. Other commands ask before running."
+    case "on-request":
+      "Codex decides when to ask before running commands."
+    case "never":
+      "Codex never asks before running commands; failures are returned immediately."
+    case "full-auto":
+      "Runs with Codex workspace-write sandbox: can edit this workspace, but this is not Full Access."
+    default:
+      "Uses the installed Codex CLI defaults for approval and sandbox behavior."
     }
   }
 }
@@ -163,6 +182,12 @@ struct CodexAIConfigView: View {
         .labelsHidden()
         .onChange(of: viewModel.codexApprovalPolicy) { viewModel.saveCodex() }
         .frame(maxWidth: 220, alignment: .leading)
+
+        Text(viewModel.codexApprovalPolicyDescription)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: 420, alignment: .leading)
       }
 
       settingsField("Effort") {

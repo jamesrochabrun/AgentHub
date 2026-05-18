@@ -125,7 +125,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
       if let codexApprovalPolicy {
         switch codexApprovalPolicy {
         case "full-auto":
-          args.append("--full-auto")
+          args += ["--sandbox", "workspace-write"]
         case "untrusted", "on-request", "never":
           args += ["-a", codexApprovalPolicy]
         default:
