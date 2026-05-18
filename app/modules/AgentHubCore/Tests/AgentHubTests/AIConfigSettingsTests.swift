@@ -118,7 +118,7 @@ struct CodexAIConfigArgumentTests {
     #expect(args[idx! + 1] == "on-request")
   }
 
-  @Test("Passes full-auto flag for Codex")
+  @Test("Maps Codex full-auto setting to workspace-write sandbox")
   func fullAutoFlag() {
     let args = config.argumentsForSession(
       sessionId: nil,
@@ -126,7 +126,10 @@ struct CodexAIConfigArgumentTests {
       codexApprovalPolicy: "full-auto"
     )
 
-    #expect(args.contains("--full-auto"))
+    let sandboxIdx = args.firstIndex(of: "--sandbox")
+    #expect(sandboxIdx != nil)
+    #expect(args[sandboxIdx! + 1] == "workspace-write")
+    #expect(!args.contains("--full-auto"))
     #expect(!args.contains("-a"))
   }
 
@@ -140,6 +143,7 @@ struct CodexAIConfigArgumentTests {
 
     #expect(!args.contains("-a"))
     #expect(!args.contains("--full-auto"))
+    #expect(!args.contains("--sandbox"))
   }
 
   @Test("Passes reasoning effort via config override for new Codex session")
@@ -180,6 +184,7 @@ struct CodexAIConfigArgumentTests {
     #expect(!args.contains("--model"))
     #expect(!args.contains("-a"))
     #expect(!args.contains("--full-auto"))
+    #expect(!args.contains("--sandbox"))
     #expect(args.contains("resume"))
     #expect(args.contains("session-1"))
   }
@@ -390,6 +395,31 @@ struct AIConfigSettingsViewModelTests {
     await viewModel.load(service: service)
 
     #expect(viewModel.codexApprovalPolicy.isEmpty)
+  }
+
+  @Test("Codex approval policy descriptions explain each launch mode")
+  @MainActor
+  func codexApprovalPolicyDescriptions() {
+    let viewModel = AIConfigSettingsViewModel()
+
+    viewModel.codexApprovalPolicy = ""
+    #expect(viewModel.codexApprovalPolicyDescription.contains("CLI defaults"))
+
+    viewModel.codexApprovalPolicy = "untrusted"
+    #expect(viewModel.codexApprovalPolicyDescription.contains("trusted commands"))
+
+    viewModel.codexApprovalPolicy = "on-request"
+    #expect(viewModel.codexApprovalPolicyDescription.contains("Codex decides"))
+
+    viewModel.codexApprovalPolicy = "never"
+    #expect(viewModel.codexApprovalPolicyDescription.contains("never asks"))
+
+    viewModel.codexApprovalPolicy = "full-auto"
+    #expect(viewModel.codexApprovalPolicyDescription.contains("workspace-write sandbox"))
+    #expect(viewModel.codexApprovalPolicyDescription.contains("not Full Access"))
+
+    viewModel.codexApprovalPolicy = "suggest"
+    #expect(viewModel.codexApprovalPolicyDescription.contains("CLI defaults"))
   }
 }
 

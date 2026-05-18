@@ -252,7 +252,7 @@ The Claude tool lists in Settings accept either comma-separated values or one pa
 AgentHub maps Codex defaults to the current interactive CLI flags:
 
 - `Model` → `--model <model>`
-- `Approval` → `-a untrusted|on-request|never` or `--full-auto`
+- `Approval` → `-a untrusted|on-request|never`; `Full-Auto` maps to `--sandbox workspace-write`
 - `Effort` → `-c model_reasoning_effort="low|medium|high|xhigh"`
 
 These mappings are verified in unit tests against the current CLI surface exposed by `codex --help` and `claude --help`.
