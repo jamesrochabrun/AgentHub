@@ -7,7 +7,12 @@
 
 import Foundation
 
-public final class ThemeFileWatcher {
+protocol ThemeFileWatching: AnyObject {
+  func watch(fileURL: URL, onChange: @escaping () -> Void)
+  func stopWatching(fileURL: URL)
+}
+
+public final class ThemeFileWatcher: ThemeFileWatching {
   private var sources: [URL: DispatchSourceFileSystemObject] = [:]
 
   public init() {}

@@ -83,7 +83,9 @@ public struct SettingsView: View {
   @Environment(ThemeManager.self) private var themeManager
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
-  @AppStorage(AgentHubDefaults.selectedTheme) private var selectedThemeId: String = "singularity.yaml"
+  @State private var selectedThemeId: String = Self.initialSelectedThemeId()
+  @State private var themeSelectionTask: Task<Void, Never>?
+  @State private var applyingThemeSelectionId: String?
   private let terminalFontFamilies = [
     "SF Mono",
     "JetBrains Mono",
@@ -144,6 +146,11 @@ public struct SettingsView: View {
     .task {
       await ensureSupportedThemeSelection()
       await aiConfigViewModel.load(service: agentHub?.aiConfigService)
+    }
+    .onDisappear {
+      themeSelectionTask?.cancel()
+      themeSelectionTask = nil
+      applyingThemeSelectionId = nil
     }
     .alert(
       "Relaunch AgentHub?",
@@ -328,9 +335,22 @@ public struct SettingsView: View {
       }
 
       Section {
-        Picker("Theme", selection: themeSelectionBinding) {
-          ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
-            Text(yamlThemeDisplayName(fileId)).tag(fileId)
+        HStack(spacing: 10) {
+          Picker("Theme", selection: themeSelectionBinding) {
+            ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
+              Text(yamlThemeDisplayName(fileId)).tag(fileId)
+            }
+          }
+
+          if applyingThemeSelectionId != nil {
+            HStack(spacing: 6) {
+              ProgressView()
+                .controlSize(.small)
+              Text("Applying...")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .transition(.opacity)
           }
         }
 
@@ -340,6 +360,7 @@ public struct SettingsView: View {
           Label("Refresh themes", systemImage: "arrow.clockwise")
         }
         .buttonStyle(.link)
+        .disabled(applyingThemeSelectionId != nil)
       } header: {
         Text("Theme")
       } footer: {
@@ -480,18 +501,20 @@ public struct SettingsView: View {
 
   private var themeSelectionBinding: Binding<String> {
     Binding(
-      get: {
-        if let matchedFileId = matchingBundledYAMLFileId(for: selectedThemeId) {
-          return matchedFileId
-        }
-        if activeTerminalBackend == .regular, let appTheme = AppTheme(rawValue: selectedThemeId) {
-          return appTheme.rawValue
-        }
-        return defaultThemeId
-      },
+      get: { currentThemeSelectionId },
       set: { newValue in
-        Task {
-          await applyThemeSelection(newValue)
+        guard newValue != currentThemeSelectionId else { return }
+        let requestedThemeId = newValue
+        selectedThemeId = requestedThemeId
+        applyingThemeSelectionId = requestedThemeId
+        themeSelectionTask?.cancel()
+        themeSelectionTask = Task {
+          try? await Task.sleep(for: .milliseconds(150))
+          guard !Task.isCancelled else { return }
+          await applyThemeSelection(requestedThemeId)
+          guard !Task.isCancelled, applyingThemeSelectionId == requestedThemeId else { return }
+          applyingThemeSelectionId = nil
+          themeSelectionTask = nil
         }
       }
     )
@@ -558,49 +581,35 @@ public struct SettingsView: View {
   }
 
   private func ensureSupportedThemeSelection() async {
-    let themeId = ThemeSelectionPolicy.coercePersistedThemeSelection(backend: activeTerminalBackend)
-    selectedThemeId = themeId
-    await applyThemeSelection(themeId)
+    let themeId = ThemeSelectionPolicy.canonicalThemeId(
+      for: selectedThemeId,
+      backend: activeTerminalBackend
+    ) ?? defaultThemeId
+    let appliedThemeId = await themeManager.applySelection(themeId, backend: activeTerminalBackend)
+    selectedThemeId = appliedThemeId
   }
 
   private func applyThemeSelection(_ selection: String) async {
-    let selection = ThemeSelectionPolicy.canonicalThemeId(
-      for: selection,
-      backend: activeTerminalBackend
-    ) ?? defaultThemeId
-
-    // Handle built-in themes
-    if activeTerminalBackend == .regular, let appTheme = AppTheme(rawValue: selection) {
-      selectedThemeId = appTheme.rawValue
-      themeManager.loadBuiltInTheme(appTheme)
-      return
-    }
-
-    // Handle bundled YAML themes
-    let fileId = matchingBundledYAMLFileId(for: selection) ?? selection
-    await themeManager.discoverThemes()
-
-    if let yamlTheme = themeManager.availableYAMLThemes.first(where: { $0.id == fileId }),
-       let fileURL = yamlTheme.fileURL {
-      try? await themeManager.loadTheme(fileURL: fileURL)
-      selectedThemeId = yamlTheme.id
-      return
-    }
-
-    let themeURL = ThemeManager.themesDirectory().appendingPathComponent(fileId)
-    if FileManager.default.fileExists(atPath: themeURL.path) {
-      try? await themeManager.loadTheme(fileURL: themeURL)
-      selectedThemeId = fileId
-      return
-    }
-
-    themeManager.loadBuiltInTheme(.neutral)
-    ThemeSelectionPolicy.persistThemeSelection(defaultThemeId, backend: activeTerminalBackend)
-    selectedThemeId = defaultThemeId
+    let appliedThemeId = await themeManager.applySelection(selection, backend: activeTerminalBackend)
+    selectedThemeId = appliedThemeId
   }
 
   private func matchingBundledYAMLFileId(for value: String) -> String? {
     ThemeSelectionPolicy.matchingBundledYAMLFileId(for: value, in: bundledYAMLThemeFileIds)
+  }
+
+  private static func initialSelectedThemeId() -> String {
+    UserDefaults.standard.string(forKey: AgentHubDefaults.selectedTheme) ?? "singularity.yaml"
+  }
+
+  private var currentThemeSelectionId: String {
+    if let matchedFileId = matchingBundledYAMLFileId(for: selectedThemeId) {
+      return matchedFileId
+    }
+    if activeTerminalBackend == .regular, let appTheme = AppTheme(rawValue: selectedThemeId) {
+      return appTheme.rawValue
+    }
+    return defaultThemeId
   }
 
   private func yamlThemeDisplayName(_ fileId: String) -> String {

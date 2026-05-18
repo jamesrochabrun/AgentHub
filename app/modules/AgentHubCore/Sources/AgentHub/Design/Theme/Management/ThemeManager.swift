@@ -16,11 +16,15 @@ public final class ThemeManager {
   public private(set) var currentTheme: RuntimeTheme
   public private(set) var availableYAMLThemes: [ThemeMetadata] = []
 
-  @ObservationIgnored private let parser = YAMLThemeParser()
-  @ObservationIgnored private let fileWatcher: ThemeFileWatcher
+  @ObservationIgnored private let loadingService: any ThemeLoadingServiceProtocol
+  @ObservationIgnored private let preferenceWriter: any ThemePreferenceWriting
+  @ObservationIgnored private let fileWatcher: any ThemeFileWatching
+  @ObservationIgnored private let defaults: UserDefaults
+  @ObservationIgnored private let themesDirectoryURL: URL
   @ObservationIgnored private var themeCache: [String: RuntimeTheme] = [:]
-  @ObservationIgnored private var yamlColorCache: [String: (primary: String, secondary: String, tertiary: String)] = [:]
+  @ObservationIgnored private var yamlColorCache: [String: ThemePalette] = [:]
   @ObservationIgnored private var activeWatchedThemeURL: URL?
+  @ObservationIgnored private var selectionGeneration = 0
 
   private static let bundledSentryYAML = """
   name: "Sentry"
@@ -179,7 +183,7 @@ public final class ThemeManager {
       expandedContentDark: "#081220"
   """
 
-  public struct ThemeMetadata: Identifiable {
+  public struct ThemeMetadata: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let description: String?
@@ -187,20 +191,50 @@ public final class ThemeManager {
     public let isYAML: Bool
   }
 
-  public init() {
-    // Load the correct built-in theme synchronously to avoid flash on launch
-    let saved = ThemeSelectionPolicy.coercePersistedThemeSelection()
+  public convenience init() {
+    let defaults = UserDefaults.standard
+    self.init(
+      defaults: defaults,
+      themesDirectory: Self.themesDirectory(),
+      loadingService: ThemeLoadingService(),
+      preferenceWriter: ThemePreferenceWriter(defaults: defaults),
+      fileWatcher: ThemeFileWatcher(),
+      installBundledThemes: true,
+      loadSavedThemeAsync: true
+    )
+  }
+
+  init(
+    defaults: UserDefaults,
+    themesDirectory: URL,
+    loadingService: any ThemeLoadingServiceProtocol,
+    preferenceWriter: (any ThemePreferenceWriting)? = nil,
+    fileWatcher: any ThemeFileWatching,
+    installBundledThemes: Bool,
+    loadSavedThemeAsync: Bool
+  ) {
+    self.defaults = defaults
+    self.themesDirectoryURL = themesDirectory
+    self.loadingService = loadingService
+    self.preferenceWriter = preferenceWriter ?? ThemePreferenceWriter(defaults: defaults)
+    self.fileWatcher = fileWatcher
+
+    // Load the correct built-in theme synchronously to avoid flash on launch.
+    // Preference writes happen later through ThemePreferenceWriter so launch does not block on defaults KVO.
+    let backend = EmbeddedTerminalBackend.storedPreference(in: defaults)
+    let saved = ThemeSelectionPolicy.resolvedPersistedThemeSelection(defaults: defaults, backend: backend)
     if let appTheme = AppTheme(rawValue: saved) {
       self.currentTheme = Self.loadBuiltInTheme(appTheme)
     } else {
       // YAML theme — start with neutral sync, async load replaces it
       self.currentTheme = Self.loadBuiltInTheme(.neutral)
     }
-    self.fileWatcher = ThemeFileWatcher()
-    self.installBundledThemesIfNeeded()
+    if installBundledThemes {
+      self.installBundledThemesIfNeeded()
+    }
 
     // Schedule async loading for YAML themes (including the default)
-    if AppTheme(rawValue: saved) == nil {
+    if loadSavedThemeAsync, AppTheme(rawValue: saved) == nil {
       Task { await self.loadSavedTheme() }
     }
   }
@@ -208,36 +242,9 @@ public final class ThemeManager {
   // MARK: - Theme Discovery
 
   public func discoverThemes() async {
-    let themesDir = Self.themesDirectory()
-
-    guard FileManager.default.fileExists(atPath: themesDir.path) else {
-      try? FileManager.default.createDirectory(at: themesDir, withIntermediateDirectories: true)
-      return
-    }
-
     do {
-      let files = try FileManager.default.contentsOfDirectory(
-        at: themesDir,
-        includingPropertiesForKeys: [.nameKey],
-        options: [.skipsHiddenFiles]
-      )
-
-      let yamlFiles = files.filter { $0.pathExtension == "yaml" || $0.pathExtension == "yml" }
-
-      var metadata: [ThemeMetadata] = []
-      for file in yamlFiles {
-        if let theme = try? parser.parse(fileURL: file) {
-          metadata.append(ThemeMetadata(
-            id: file.lastPathComponent,
-            name: theme.name,
-            description: theme.description,
-            fileURL: file,
-            isYAML: true
-          ))
-        }
-      }
-
-      self.availableYAMLThemes = metadata
+      let discoveredThemes = try await loadingService.discoverThemes(in: themesDirectoryURL)
+      self.availableYAMLThemes = discoveredThemes.map(Self.metadata(from:))
     } catch {
       AppLogger.session.error("Failed to discover themes: \(error.localizedDescription)")
     }
@@ -246,40 +253,101 @@ public final class ThemeManager {
   // MARK: - Theme Loading
 
   public func loadTheme(fileURL: URL) async throws {
-    stopWatchingInactiveThemeFile(nextThemeURL: fileURL)
+    let backend = EmbeddedTerminalBackend.storedPreference(in: defaults)
+    let generation = beginThemeSelection()
+    try await loadTheme(
+      fileURL: fileURL,
+      backend: backend,
+      generation: generation,
+      forceReload: false
+    )
+  }
 
-    // Check cache first
+  @discardableResult
+  public func applySelection(_ requestedSelection: String, backend: EmbeddedTerminalBackend) async -> String {
+    let defaultThemeId = ThemeSelectionPolicy.defaultThemeId(for: backend)
+    let selection = ThemeSelectionPolicy.canonicalThemeId(
+      for: requestedSelection,
+      backend: backend
+    ) ?? defaultThemeId
+
+    if backend == .regular, let appTheme = AppTheme(rawValue: selection) {
+      if isCurrentBuiltInTheme(appTheme),
+         isPersistedThemeSelection(appTheme.rawValue, backend: backend) {
+        beginThemeSelection()
+        return appTheme.rawValue
+      }
+
+      beginThemeSelection()
+      await applyBuiltInTheme(appTheme, persistedThemeId: appTheme.rawValue, backend: backend)
+      return appTheme.rawValue
+    }
+
+    let fileId = ThemeSelectionPolicy.matchingBundledYAMLFileId(
+      for: selection,
+      in: ThemeSelectionPolicy.bundledYAMLThemeFileIds(for: backend)
+    ) ?? selection
+
+    if isCurrentYAMLTheme(fileId),
+       isPersistedThemeSelection(fileId, backend: backend) {
+      beginThemeSelection()
+      return fileId
+    }
+
+    let generation = beginThemeSelection()
+    let themeURL = themesDirectoryURL.appendingPathComponent(fileId)
+    do {
+      try await loadTheme(
+        fileURL: themeURL,
+        backend: backend,
+        generation: generation,
+        forceReload: false
+      )
+      return fileId
+    } catch {
+      AppLogger.session.error("Failed to apply theme \(fileId): \(error.localizedDescription)")
+      guard isCurrentGeneration(generation) else { return fileId }
+      await applyBuiltInTheme(.neutral, persistedThemeId: defaultThemeId, backend: backend)
+      return defaultThemeId
+    }
+  }
+
+  private func loadTheme(
+    fileURL: URL,
+    backend: EmbeddedTerminalBackend,
+    generation: Int,
+    forceReload: Bool
+  ) async throws {
     let cacheKey = fileURL.lastPathComponent
-    if let cached = themeCache[cacheKey] {
+    if !forceReload, let cached = themeCache[cacheKey] {
+      guard isCurrentGeneration(generation) else { return }
+      stopWatchingInactiveThemeFile(nextThemeURL: fileURL)
       self.currentTheme = cached
-      persistYAMLPalette(for: cacheKey, runtime: cached)
-      saveCurrentThemeSelection(cacheKey)
       setupHotReload(for: fileURL)
+      await persistYAMLPalette(for: cacheKey)
+      await saveCurrentThemeSelection(cacheKey, backend: backend)
       return
     }
 
-    // Parse and cache
-    let yaml = try parser.parse(fileURL: fileURL)
-    let runtime = RuntimeTheme(from: yaml, sourceFileName: cacheKey)
+    let loaded = try await loadingService.loadTheme(fileURL: fileURL)
+    guard isCurrentGeneration(generation) else { return }
+
+    stopWatchingInactiveThemeFile(nextThemeURL: fileURL)
+    let runtime = RuntimeTheme(from: loaded.theme, sourceFileName: cacheKey)
     themeCache[cacheKey] = runtime
-    yamlColorCache[cacheKey] = (
-      primary: yaml.colors.brand.primary,
-      secondary: yaml.colors.brand.secondary,
-      tertiary: yaml.colors.brand.tertiary
-    )
+    yamlColorCache[cacheKey] = loaded.palette
     self.currentTheme = runtime
-    persistYAMLPalette(for: cacheKey, runtime: runtime)
-    saveCurrentThemeSelection(cacheKey)
 
     // Setup hot-reload
     setupHotReload(for: fileURL)
+    await persistYAMLPalette(for: cacheKey)
+    await saveCurrentThemeSelection(cacheKey, backend: backend)
   }
 
   public func loadBuiltInTheme(_ theme: AppTheme) {
-    stopWatchingInactiveThemeFile(nextThemeURL: nil)
-    let runtime = Self.loadBuiltInTheme(theme)
-    self.currentTheme = runtime
-    saveCurrentThemeSelection(theme.rawValue)
+    beginThemeSelection()
+    let backend = EmbeddedTerminalBackend.storedPreference(in: defaults)
+    applyBuiltInThemeAndPersistLater(theme, persistedThemeId: theme.rawValue, backend: backend)
   }
 
   private static func loadBuiltInTheme(_ theme: AppTheme) -> RuntimeTheme {
@@ -337,8 +405,15 @@ public final class ThemeManager {
         do {
           // Invalidate cache and reload
           let cacheKey = fileURL.lastPathComponent
+          let generation = self.selectionGeneration
+          let backend = EmbeddedTerminalBackend.storedPreference(in: self.defaults)
           self.themeCache.removeValue(forKey: cacheKey)
-          try await self.loadTheme(fileURL: fileURL)
+          try await self.loadTheme(
+            fileURL: fileURL,
+            backend: backend,
+            generation: generation,
+            forceReload: true
+          )
           AppLogger.session.info("Hot-reloaded theme: \(fileURL.lastPathComponent)")
         } catch {
           AppLogger.session.error("Failed to hot-reload theme: \(error.localizedDescription)")
@@ -350,35 +425,17 @@ public final class ThemeManager {
 
   // MARK: - Persistence
 
-  private func saveCurrentThemeSelection(_ themeId: String) {
-    ThemeSelectionPolicy.persistThemeSelection(themeId)
+  private func saveCurrentThemeSelection(
+    _ themeId: String,
+    backend: EmbeddedTerminalBackend
+  ) async {
+    await preferenceWriter.persistThemeSelection(themeId, backend: backend)
   }
 
   public func loadSavedTheme() async {
-    let saved = ThemeSelectionPolicy.coercePersistedThemeSelection()
-
-    // Check if it's a built-in theme
-    if let appTheme = AppTheme(rawValue: saved) {
-      loadBuiltInTheme(appTheme)
-      return
-    }
-
-    // Check if it's a YAML theme
-    let themesDir = Self.themesDirectory()
-    let fileURL = themesDir.appendingPathComponent(saved)
-
-    if FileManager.default.fileExists(atPath: fileURL.path) {
-      try? await loadTheme(fileURL: fileURL)
-    } else {
-      // Fallback: try the backend default, then neutral
-      let fallbackThemeId = ThemeSelectionPolicy.defaultThemeId(for: .storedPreference)
-      let fallbackURL = themesDir.appendingPathComponent(fallbackThemeId)
-      if fallbackThemeId != saved, FileManager.default.fileExists(atPath: fallbackURL.path) {
-        try? await loadTheme(fileURL: fallbackURL)
-      } else {
-        loadBuiltInTheme(.neutral)
-      }
-    }
+    let backend = EmbeddedTerminalBackend.storedPreference(in: defaults)
+    let saved = ThemeSelectionPolicy.resolvedPersistedThemeSelection(defaults: defaults, backend: backend)
+    await applySelection(saved, backend: backend)
   }
 
   // MARK: - Utilities
@@ -389,12 +446,72 @@ public final class ThemeManager {
   }
 
   public func openThemesFolder() {
-    let url = Self.themesDirectory()
+    let url = themesDirectoryURL
     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     NSWorkspace.shared.open(url)
   }
 
   // MARK: - Internal Helpers
+
+  private static func metadata(from discoveredTheme: DiscoveredYAMLTheme) -> ThemeMetadata {
+    ThemeMetadata(
+      id: discoveredTheme.id,
+      name: discoveredTheme.name,
+      description: discoveredTheme.description,
+      fileURL: discoveredTheme.fileURL,
+      isYAML: true
+    )
+  }
+
+  @discardableResult
+  private func beginThemeSelection() -> Int {
+    selectionGeneration += 1
+    return selectionGeneration
+  }
+
+  private func isCurrentGeneration(_ generation: Int) -> Bool {
+    selectionGeneration == generation
+  }
+
+  private func isCurrentBuiltInTheme(_ theme: AppTheme) -> Bool {
+    currentTheme.isBuiltIn && currentTheme.id == theme.rawValue
+  }
+
+  private func isCurrentYAMLTheme(_ fileId: String) -> Bool {
+    currentTheme.isYAML && currentTheme.sourceFileName == fileId
+  }
+
+  private func isPersistedThemeSelection(_ themeId: String, backend: EmbeddedTerminalBackend) -> Bool {
+    guard let persistedThemeId = defaults.string(forKey: AgentHubDefaults.selectedTheme) else {
+      return false
+    }
+    return ThemeSelectionPolicy.canonicalThemeId(for: persistedThemeId, backend: backend) == themeId
+  }
+
+  private func applyBuiltInTheme(
+    _ theme: AppTheme,
+    persistedThemeId: String,
+    backend: EmbeddedTerminalBackend
+  ) async {
+    stopWatchingInactiveThemeFile(nextThemeURL: nil)
+    let runtime = Self.loadBuiltInTheme(theme)
+    self.currentTheme = runtime
+    await saveCurrentThemeSelection(persistedThemeId, backend: backend)
+  }
+
+  private func applyBuiltInThemeAndPersistLater(
+    _ theme: AppTheme,
+    persistedThemeId: String,
+    backend: EmbeddedTerminalBackend
+  ) {
+    stopWatchingInactiveThemeFile(nextThemeURL: nil)
+    let runtime = Self.loadBuiltInTheme(theme)
+    self.currentTheme = runtime
+    let preferenceWriter = preferenceWriter
+    Task.detached(priority: .utility) {
+      await preferenceWriter.persistThemeSelection(persistedThemeId, backend: backend)
+    }
+  }
 
   private func stopWatchingInactiveThemeFile(nextThemeURL: URL?) {
     guard activeWatchedThemeURL != nextThemeURL else { return }
@@ -416,7 +533,7 @@ public final class ThemeManager {
   ]
 
   private func installBundledThemesIfNeeded() {
-    let themesDir = Self.themesDirectory()
+    let themesDir = themesDirectoryURL
     do {
       try FileManager.default.createDirectory(at: themesDir, withIntermediateDirectories: true)
     } catch {
@@ -448,7 +565,6 @@ public final class ThemeManager {
         return value.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
       }
 
-    let defaults = UserDefaults.standard
     let versionKey = AgentHubDefaults.installedBundledThemeVersion(for: name)
     let installedVersion = defaults.string(forKey: versionKey)
     let destinationURL = themesDir.appendingPathComponent("\(name).yaml")
@@ -492,34 +608,8 @@ public final class ThemeManager {
       .first(where: { $0.lastPathComponent == "\(name).yaml" })
   }
 
-  private func persistYAMLPalette(for cacheKey: String, runtime: RuntimeTheme) {
-    let defaults = UserDefaults.standard
-    if let colors = yamlColorCache[cacheKey] {
-      defaults.set(colors.primary, forKey: AgentHubDefaults.yamlPrimaryHex)
-      defaults.set(colors.secondary, forKey: AgentHubDefaults.yamlSecondaryHex)
-      defaults.set(colors.tertiary, forKey: AgentHubDefaults.yamlTertiaryHex)
-      return
-    }
-
-    // Fallback when serving from runtime-only cache.
-    if let primary = Self.hexString(from: runtime.brandPrimary) {
-      defaults.set(primary, forKey: AgentHubDefaults.yamlPrimaryHex)
-    }
-    if let secondary = Self.hexString(from: runtime.brandSecondary) {
-      defaults.set(secondary, forKey: AgentHubDefaults.yamlSecondaryHex)
-    }
-    if let tertiary = Self.hexString(from: runtime.brandTertiary) {
-      defaults.set(tertiary, forKey: AgentHubDefaults.yamlTertiaryHex)
-    }
-  }
-
-  private static func hexString(from color: Color) -> String? {
-    guard let resolved = NSColor(color).usingColorSpace(.sRGB) else { return nil }
-    var red: CGFloat = .zero
-    var green: CGFloat = .zero
-    var blue: CGFloat = .zero
-    var alpha: CGFloat = .zero
-    resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-    return String(format: "#%02X%02X%02X", Int(red * 255), Int(green * 255), Int(blue * 255))
+  private func persistYAMLPalette(for cacheKey: String) async {
+    guard let colors = yamlColorCache[cacheKey] else { return }
+    await preferenceWriter.persistYAMLPalette(colors)
   }
 }
