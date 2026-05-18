@@ -75,30 +75,37 @@ enum ThemeSelectionPolicy {
     defaults: UserDefaults = .standard,
     backend: EmbeddedTerminalBackend = .storedPreference
   ) -> String {
+    let selectedThemeId = resolvedPersistedThemeSelection(defaults: defaults, backend: backend)
+
+    if backend == .ghostty,
+       let savedThemeId = defaults.string(forKey: AgentHubDefaults.selectedTheme),
+       !isGhosttyTheme(savedThemeId),
+       let regularThemeId = canonicalRegularThemeId(for: savedThemeId) {
+      defaults.set(regularThemeId, forKey: AgentHubDefaults.previousNonGhosttyTheme)
+    }
+
+    persistThemeSelection(selectedThemeId, defaults: defaults, backend: backend)
+    return selectedThemeId
+  }
+
+  static func resolvedPersistedThemeSelection(
+    defaults: UserDefaults = .standard,
+    backend: EmbeddedTerminalBackend = .storedPreference
+  ) -> String {
     let savedThemeId = defaults.string(forKey: AgentHubDefaults.selectedTheme)
 
     switch backend {
     case .ghostty:
-      if let savedThemeId,
-         !isGhosttyTheme(savedThemeId),
-         let regularThemeId = canonicalRegularThemeId(for: savedThemeId) {
-        defaults.set(regularThemeId, forKey: AgentHubDefaults.previousNonGhosttyTheme)
-      }
-      defaults.set(ghosttyThemeId, forKey: AgentHubDefaults.selectedTheme)
       return ghosttyThemeId
 
     case .regular:
       if let savedThemeId,
          let regularThemeId = canonicalRegularThemeId(for: savedThemeId) {
-        defaults.set(regularThemeId, forKey: AgentHubDefaults.selectedTheme)
-        defaults.set(regularThemeId, forKey: AgentHubDefaults.previousNonGhosttyTheme)
         return regularThemeId
       }
 
       let previousThemeId = defaults.string(forKey: AgentHubDefaults.previousNonGhosttyTheme)
       let restoredThemeId = canonicalRegularThemeId(for: previousThemeId) ?? defaultRegularThemeId
-      defaults.set(restoredThemeId, forKey: AgentHubDefaults.selectedTheme)
-      defaults.set(restoredThemeId, forKey: AgentHubDefaults.previousNonGhosttyTheme)
       return restoredThemeId
     }
   }
