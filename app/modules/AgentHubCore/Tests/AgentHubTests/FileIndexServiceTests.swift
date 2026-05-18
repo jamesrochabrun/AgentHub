@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+import AgentHubFileSearch
 @testable import AgentHubCore
 
 private struct FileIndexFixture {
@@ -48,6 +49,14 @@ private struct FileIndexFixture {
     let parentPath = URL(fileURLWithPath: path).deletingLastPathComponent().path
     try FileManager.default.createDirectory(atPath: parentPath, withIntermediateDirectories: true)
     try content.write(toFile: path, atomically: true, encoding: .utf8)
+  }
+}
+
+private struct FakeProjectFileSearchService: ProjectFileSearchServiceProtocol {
+  let results: [ProjectFileSearchResult]
+
+  func search(query: String, in projectPath: String, limit: Int) async -> [ProjectFileSearchResult] {
+    Array(results.prefix(limit))
   }
 }
 
@@ -199,6 +208,39 @@ struct FileIndexServicePrivacyTests {
     #expect(rootNodes.contains { $0.name == "Sources" })
     #expect(!rootNodes.contains { $0.name == "Generated" })
     #expect(searchResults.isEmpty)
+  }
+
+  @Test("Filters Spotlight results through project ignore rules before showing Cmd+P results")
+  func filtersSpotlightResultsThroughProjectIgnoreRules() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile(".gitignore", content: "secrets/\n")
+    try fixture.writeProjectFile("secrets/token.swift", content: "let hidden = true")
+    try fixture.writeProjectFile("Sources/token.swift", content: "let visible = true")
+
+    let hiddenPath = fixture.projectPath + "/secrets/token.swift"
+    let visiblePath = fixture.projectPath + "/Sources/token.swift"
+    let service = FileIndexService(projectFileSearchService: FakeProjectFileSearchService(results: [
+      ProjectFileSearchResult(
+        id: hiddenPath,
+        name: "token.swift",
+        relativePath: "secrets/token.swift",
+        absolutePath: hiddenPath,
+        score: 5000
+      ),
+      ProjectFileSearchResult(
+        id: visiblePath,
+        name: "token.swift",
+        relativePath: "Sources/token.swift",
+        absolutePath: visiblePath,
+        score: 4000
+      )
+    ]))
+
+    let results = await service.search(query: "token", in: fixture.projectPath)
+
+    #expect(results.map(\.relativePath) == ["Sources/token.swift"])
   }
 
   @Test("Content-only writes keep the search index warm")

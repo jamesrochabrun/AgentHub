@@ -2,9 +2,10 @@
 //  FileIndexService.swift
 //  AgentHub
 //
-//  Actor-based file index service with gitignore support and fuzzy search.
+//  Actor-based file tree service with gitignore support and Spotlight-backed search.
 //
 
+import AgentHubFileSearch
 import Foundation
 
 // MARK: - FileIndexService
@@ -15,7 +16,7 @@ public enum FileSearchIndexStatus: Sendable {
   case ready
 }
 
-/// Scans project directories, respects .gitignore, caches the index, and provides fuzzy search.
+/// Scans project directories, respects .gitignore, caches tree nodes, and provides project file search.
 public actor FileIndexService {
 
   // MARK: - Shared Instance
@@ -86,10 +87,17 @@ public actor FileIndexService {
   private var searchBuildTasks: [String: Task<SearchCacheEntry, Never>] = [:]
   private var recentPaths: [String] = []
   private static let maxRecentFiles = 20
+  private let projectFileSearchService: any ProjectFileSearchServiceProtocol
 
   // MARK: - Initialization
 
-  public init() {}
+  public init() {
+    self.projectFileSearchService = SpotlightProjectFileSearchService.shared
+  }
+
+  init(projectFileSearchService: any ProjectFileSearchServiceProtocol) {
+    self.projectFileSearchService = projectFileSearchService
+  }
 
   // MARK: - Public API
 
@@ -140,25 +148,21 @@ public actor FileIndexService {
   }
 
   public func prepareSearchIndex(projectPath: String) async {
-    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
-    guard searchCache[resolvedProjectPath].map({ !isCacheStale($0.date) }) != true else { return }
-    if searchBuildTasks[resolvedProjectPath] == nil {
-      searchBuildTasks[resolvedProjectPath] = makeSearchBuildTask(projectPath: resolvedProjectPath)
-    }
+    // Spotlight is queried directly for Cmd+P. Keep the legacy fallback warm only
+    // for callers that explicitly request preloading.
+    _ = await searchIndex(projectPath: Self.resolvedURL(for: projectPath).path)
   }
 
   public func searchIndexStatus(projectPath: String) async -> FileSearchIndexStatus {
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
-    if let entry = searchCache[resolvedProjectPath], !isCacheStale(entry.date) {
-      return .ready
-    }
     if searchBuildTasks[resolvedProjectPath] != nil {
       return .building
     }
-    return .idle
+    return .ready
   }
 
-  /// Searches files using a strict 3-tier approach:
+  /// Searches files using Spotlight first, then falls back to the legacy in-process index if
+  /// Spotlight has no usable results for the project. Ranking uses a strict 3-tier approach:
   /// 1. Filename starts with query → highest score
   /// 2. Filename contains query as substring → high score
   /// 3. Path contains query as substring → medium score
@@ -166,6 +170,34 @@ public actor FileIndexService {
   public func search(query: String, in projectPath: String) async -> [FileSearchResult] {
     guard !query.isEmpty, query.count < 200 else { return [] }
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    let spotlightResults = await projectFileSearchService.search(
+      query: query,
+      in: resolvedProjectPath,
+      limit: Self.maxSearchResults * 10
+    )
+    let filteredSpotlightResults = spotlightResults
+      .compactMap { spotlightResult -> FileSearchResult? in
+        let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
+        guard Self.shouldIncludeSearchResult(at: absolutePath, rootPath: resolvedProjectPath),
+              let relativePath = Self.relativePathIfContained(absolutePath, within: resolvedProjectPath) else {
+          return nil
+        }
+        let name = URL(fileURLWithPath: absolutePath).lastPathComponent
+
+        return FileSearchResult(
+          id: absolutePath,
+          name: name,
+          relativePath: relativePath,
+          absolutePath: absolutePath,
+          score: spotlightResult.score
+        )
+      }
+      .sortedBySearchScore()
+
+    if !filteredSpotlightResults.isEmpty {
+      return Array(filteredSpotlightResults.prefix(Self.maxSearchResults))
+    }
+
     let allFiles = await searchIndex(projectPath: resolvedProjectPath)
     let q = query.lowercased()
 
@@ -466,6 +498,34 @@ public actor FileIndexService {
     return !isIgnored(relativePath: relativePath, isDirectory: entry.isDirectory, rules: rules)
   }
 
+  private static func shouldIncludeSearchResult(at path: String, rootPath: String) -> Bool {
+    let resolvedRootPath = resolvedURL(for: rootPath).path
+    let resolvedPath = resolvedURL(for: path).path
+    guard isPath(resolvedPath, within: resolvedRootPath),
+          resolvedPath != resolvedRootPath else {
+      return false
+    }
+
+    let url = URL(fileURLWithPath: resolvedPath)
+    guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+          values.isDirectory != true,
+          values.isSymbolicLink != true else {
+      return false
+    }
+
+    let directoryPath = (resolvedPath as NSString).deletingLastPathComponent
+    let rules = ignoreRules(forDirectoryAt: directoryPath, rootPath: resolvedRootPath)
+    return shouldIncludeEntry(
+      DirectoryEntry(
+        name: url.lastPathComponent,
+        path: resolvedPath,
+        isDirectory: false
+      ),
+      rootPath: resolvedRootPath,
+      rules: rules
+    )
+  }
+
   // MARK: - Gitignore Parsing
 
   private static func parseGitignore(at directoryPath: String, relativeTo rootPath: String) -> [IgnoreRule] {
@@ -629,4 +689,15 @@ public actor FileIndexService {
 
   // MARK: - Search Helpers
 
+}
+
+private extension Array where Element == FileSearchResult {
+  func sortedBySearchScore() -> [FileSearchResult] {
+    sorted {
+      if $0.score != $1.score { return $0.score > $1.score }
+      let nameOrder = $0.name.localizedStandardCompare($1.name)
+      if nameOrder != .orderedSame { return nameOrder == .orderedAscending }
+      return $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
+    }
+  }
 }
