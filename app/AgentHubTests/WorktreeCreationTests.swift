@@ -407,6 +407,137 @@ struct MultiSessionLaunchViewModelResetTests {
     #expect(vm.branchNamingStartedAt == nil)
     #expect(vm.branchNamingCompletedAt == nil)
   }
+
+  @Test("reset() clears manual worktree naming state")
+  @MainActor
+  func resetClearsManualWorktreeNamingState() {
+    let vm = makeViewModel()
+    vm.worktreeNamingMode = .manual
+    vm.manualSingleBranchName = "feature/manual"
+    vm.manualSingleDirectoryName = "manual-dir"
+    vm.manualClaudeBranchName = "feature/claude"
+    vm.manualClaudeDirectoryName = "claude-dir"
+    vm.manualCodexBranchName = "feature/codex"
+    vm.manualCodexDirectoryName = "codex-dir"
+
+    vm.reset()
+
+    #expect(vm.worktreeNamingMode == .automatic)
+    #expect(vm.manualSingleBranchName == "")
+    #expect(vm.manualSingleDirectoryName == "")
+    #expect(vm.manualClaudeBranchName == "")
+    #expect(vm.manualClaudeDirectoryName == "")
+    #expect(vm.manualCodexBranchName == "")
+    #expect(vm.manualCodexDirectoryName == "")
+  }
+}
+
+@Suite("MultiSessionLaunchViewModel — manual worktree naming")
+struct MultiSessionLaunchViewModelManualWorktreeNamingTests {
+
+  @Test("Manual naming requires both branch and worktree names")
+  @MainActor
+  func manualNamingRequiresBranchAndDirectory() {
+    let vm = makeViewModel()
+    vm.selectedRepository = SelectedRepository(path: "/repo", name: "repo")
+    vm.workMode = .worktree
+    vm.worktreeNamingMode = .manual
+    vm.isCodexSelected = true
+
+    #expect(vm.isValid == false)
+
+    vm.manualSingleBranchName = "feature/manual-launch"
+    #expect(vm.isValid == false)
+
+    vm.manualSingleDirectoryName = "manual-launch-dir"
+    #expect(vm.isValid == true)
+  }
+
+  @Test("Manual single-provider launch bypasses naming service and uses entered names")
+  @MainActor
+  func manualSingleProviderLaunchUsesEnteredNames() async throws {
+    let repo = try LauncherGitRepoFixture.create()
+    defer { repo.cleanup() }
+
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        single: "feature/should-not-be-used",
+        source: .ai
+      )
+    )
+    let fixture = makeViewModelFixture(namingService: namingService)
+    let viewModel = fixture.viewModel
+    let codexViewModel = fixture.codexViewModel
+
+    viewModel.selectedRepository = SelectedRepository(path: repo.repoPath, name: "repo")
+    await viewModel.loadBranches()
+    viewModel.workMode = .worktree
+    viewModel.worktreeNamingMode = .manual
+    viewModel.isCodexSelected = true
+    viewModel.manualSingleBranchName = "feature/manual-launch"
+    viewModel.manualSingleDirectoryName = "manual-launch-dir"
+
+    await viewModel.launchSessions()
+
+    let requests = await namingService.recordedRequests()
+    #expect(requests.isEmpty)
+
+    #expect(codexViewModel.pendingHubSessions.count == 1)
+    let pending = try #require(codexViewModel.pendingHubSessions.first)
+    #expect(pending.worktree.name == "feature/manual-launch")
+    #expect(URL(fileURLWithPath: pending.worktree.path).lastPathComponent == "manual-launch-dir")
+    #expect(FileManager.default.fileExists(atPath: pending.worktree.path))
+
+    let branch = try repo.runGit("branch", "--show-current", at: pending.worktree.path)
+    #expect(branch == "feature/manual-launch")
+
+    codexViewModel.pendingHubSessions.removeAll()
+  }
+
+  @Test("Manual dual-provider launch uses provider-specific names")
+  @MainActor
+  func manualDualProviderLaunchUsesProviderSpecificNames() async throws {
+    let repo = try LauncherGitRepoFixture.create()
+    defer { repo.cleanup() }
+
+    let namingService = MockWorktreeBranchNamingService(
+      result: WorktreeBranchNamingResult(
+        claude: "feature/should-not-be-used-claude",
+        codex: "feature/should-not-be-used-codex",
+        source: .ai
+      )
+    )
+    let fixture = makeViewModelFixture(namingService: namingService)
+    let viewModel = fixture.viewModel
+    let claudeViewModel = fixture.claudeViewModel
+    let codexViewModel = fixture.codexViewModel
+
+    viewModel.selectedRepository = SelectedRepository(path: repo.repoPath, name: "repo")
+    await viewModel.loadBranches()
+    viewModel.workMode = .worktree
+    viewModel.worktreeNamingMode = .manual
+    viewModel.claudeMode = .enabled
+    viewModel.isCodexSelected = true
+    viewModel.manualClaudeBranchName = "feature/manual-claude"
+    viewModel.manualClaudeDirectoryName = "manual-claude-dir"
+    viewModel.manualCodexBranchName = "feature/manual-codex"
+    viewModel.manualCodexDirectoryName = "manual-codex-dir"
+
+    await viewModel.launchSessions()
+
+    let requests = await namingService.recordedRequests()
+    #expect(requests.isEmpty)
+
+    let claudePending = try #require(claudeViewModel.pendingHubSessions.first)
+    let codexPending = try #require(codexViewModel.pendingHubSessions.first)
+    #expect(claudePending.worktree.name == "feature/manual-claude")
+    #expect(codexPending.worktree.name == "feature/manual-codex")
+    #expect(URL(fileURLWithPath: claudePending.worktree.path).lastPathComponent == "manual-claude-dir")
+    #expect(URL(fileURLWithPath: codexPending.worktree.path).lastPathComponent == "manual-codex-dir")
+
+    claudeViewModel.pendingHubSessions.removeAll()
+    codexViewModel.pendingHubSessions.removeAll()
+  }
 }
 
 @Suite("MultiSessionLaunchViewModel — AI worktree naming")
