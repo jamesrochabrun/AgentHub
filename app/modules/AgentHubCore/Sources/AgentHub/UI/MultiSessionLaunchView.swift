@@ -84,6 +84,7 @@ public struct MultiSessionLaunchView: View {
 
             if viewModel.selectedRepository != nil {
               workModeRow
+              worktreeNamingSection
             }
           } else {
             // Full order: work mode first, then providers.
@@ -92,6 +93,8 @@ public struct MultiSessionLaunchView: View {
             }
 
             providerPills
+
+            worktreeNamingSection
 
             if viewModel.selectedRepository != nil && viewModel.isClaudeSelected && !viewModel.isCodexSelected && viewModel.workMode == .local {
               worktreeRow
@@ -615,6 +618,166 @@ public struct MultiSessionLaunchView: View {
         .labelsHidden()
         .fixedSize()
       }
+    }
+  }
+
+  // MARK: - Worktree Naming
+
+  @ViewBuilder
+  private var worktreeNamingSection: some View {
+    if viewModel.selectedRepository != nil && viewModel.workMode == .worktree {
+      VStack(alignment: .leading, spacing: 8) {
+        ViewThatFits(in: .horizontal) {
+          HStack(spacing: 10) {
+            worktreeNamingModePicker
+            manualWorktreeNamingFields
+          }
+
+          VStack(alignment: .leading, spacing: 8) {
+            worktreeNamingModePicker
+            manualWorktreeNamingFields
+          }
+        }
+      }
+      .transition(.opacity.combined(with: .move(edge: .top)))
+      .animation(.easeInOut(duration: 0.2), value: viewModel.worktreeNamingMode)
+    }
+  }
+
+  private var worktreeNamingModePicker: some View {
+    HStack(spacing: 8) {
+      Text("Naming")
+        .font(.secondarySmall)
+        .foregroundColor(.secondary)
+
+      BracketedSegmentedControl(
+        selection: worktreeNamingModeSelection,
+        items: worktreeNamingModeItems,
+        selectedColor: Color.brandPrimary
+      )
+      .help("Choose worktree naming mode")
+    }
+    .fixedSize()
+  }
+
+  private var worktreeNamingModeItems: [BracketedSegmentedControlItem<WorktreeNamingMode>] {
+    WorktreeNamingMode.allCases.map { mode in
+      BracketedSegmentedControlItem(
+        value: mode,
+        title: mode.rawValue.lowercased(),
+        helpText: mode.rawValue
+      )
+    }
+  }
+
+  private var worktreeNamingModeSelection: Binding<WorktreeNamingMode> {
+    Binding(
+      get: { viewModel.worktreeNamingMode },
+      set: { newValue in
+        withAnimation(.easeInOut(duration: 0.2)) {
+          viewModel.worktreeNamingMode = newValue
+        }
+      }
+    )
+  }
+
+  @ViewBuilder
+  private var manualWorktreeNamingFields: some View {
+    if viewModel.worktreeNamingMode == .manual {
+      if viewModel.isClaudeSelected && viewModel.isCodexSelected {
+        VStack(alignment: .leading, spacing: 6) {
+          manualWorktreeNamingRow(
+            providerLabel: "Claude",
+            branchName: $viewModel.manualClaudeBranchName,
+            directoryName: $viewModel.manualClaudeDirectoryName
+          )
+          manualWorktreeNamingRow(
+            providerLabel: "Codex",
+            branchName: $viewModel.manualCodexBranchName,
+            directoryName: $viewModel.manualCodexDirectoryName
+          )
+        }
+        .transition(manualNamingFieldsTransition)
+      } else if viewModel.hasAnyProviderSelected {
+        manualWorktreeNamingRow(
+          providerLabel: nil,
+          branchName: $viewModel.manualSingleBranchName,
+          directoryName: $viewModel.manualSingleDirectoryName
+        )
+        .transition(manualNamingFieldsTransition)
+      }
+    }
+  }
+
+  private var manualNamingFieldsTransition: AnyTransition {
+    .asymmetric(
+      insertion: .opacity.combined(with: .move(edge: .leading)),
+      removal: .opacity.combined(with: .move(edge: .leading))
+    )
+  }
+
+  private func manualWorktreeNamingRow(
+    providerLabel: String?,
+    branchName: Binding<String>,
+    directoryName: Binding<String>
+  ) -> some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: 8) {
+        manualProviderLabel(providerLabel)
+        manualNameField("branch", text: branchName, width: 220)
+        manualNameField("worktree", text: directoryName, width: 170)
+      }
+
+      VStack(alignment: .leading, spacing: 6) {
+        manualProviderLabel(providerLabel)
+        HStack(spacing: 8) {
+          manualNameField("branch", text: branchName, width: 220)
+          manualNameField("worktree", text: directoryName, width: 170)
+        }
+      }
+    }
+    .onChange(of: branchName.wrappedValue) { oldValue, newValue in
+      syncDefaultDirectoryName(
+        directoryName,
+        oldBranchName: oldValue,
+        newBranchName: newValue
+      )
+    }
+  }
+
+  @ViewBuilder
+  private func manualProviderLabel(_ label: String?) -> some View {
+    if let label {
+      Text(label)
+        .font(.secondarySmall)
+        .foregroundColor(.secondary)
+        .frame(width: 44, alignment: .trailing)
+    }
+  }
+
+  private func manualNameField(_ placeholder: String, text: Binding<String>, width: CGFloat) -> some View {
+    TextField(placeholder, text: text)
+      .font(.system(size: 11))
+      .textFieldStyle(.plain)
+      .padding(.horizontal, 10)
+      .padding(.vertical, 5)
+      .background(
+        RoundedRectangle(cornerRadius: 6)
+          .fill(Color.primary.opacity(0.05))
+      )
+      .frame(width: width)
+  }
+
+  private func syncDefaultDirectoryName(
+    _ directoryName: Binding<String>,
+    oldBranchName: String,
+    newBranchName: String
+  ) {
+    let currentDirectory = directoryName.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    let oldDefault = viewModel.directoryName(for: oldBranchName)
+
+    if currentDirectory.isEmpty || currentDirectory == oldDefault {
+      directoryName.wrappedValue = viewModel.directoryName(for: newBranchName)
     }
   }
 

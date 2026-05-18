@@ -23,6 +23,13 @@ public enum WorkMode: String, CaseIterable, Sendable {
   case worktree = "Worktree"
 }
 
+// MARK: - WorktreeNamingMode
+
+public enum WorktreeNamingMode: String, CaseIterable, Sendable, Hashable {
+  case automatic = "Default"
+  case manual = "Manual"
+}
+
 // MARK: - ClaudeMode
 
 public enum ClaudeMode: CaseIterable, Sendable {
@@ -107,6 +114,11 @@ public final class MultiSessionLaunchViewModel {
     let startedAt: Date
   }
 
+  private struct WorktreeLaunchNames {
+    let branchName: String
+    let directoryName: String
+  }
+
   // MARK: - Dependencies
 
   private let claudeViewModel: CLISessionsViewModel
@@ -123,6 +135,7 @@ public final class MultiSessionLaunchViewModel {
 
   public var launchMode: LaunchMode = .manual
   public var workMode: WorkMode = .local
+  public var worktreeNamingMode: WorktreeNamingMode = .automatic
   public var claudeMode: ClaudeMode = .disabled
   public var claudeUseWorktree: Bool = false
   public var claudeWorktreeName: String = ""
@@ -133,6 +146,12 @@ public final class MultiSessionLaunchViewModel {
   public var claudeBranchName: String = ""
   public var codexBranchName: String = ""
   public var singleBranchName: String = ""
+  public var manualSingleBranchName: String = ""
+  public var manualSingleDirectoryName: String = ""
+  public var manualClaudeBranchName: String = ""
+  public var manualClaudeDirectoryName: String = ""
+  public var manualCodexBranchName: String = ""
+  public var manualCodexDirectoryName: String = ""
   public var baseBranch: RemoteBranch?
   public var selectedRepository: SelectedRepository?
 
@@ -199,11 +218,16 @@ public final class MultiSessionLaunchViewModel {
     let hasRepo = selectedRepository != nil
     switch launchMode {
     case .manual:
-      return hasRepo && hasAnyProviderSelected
+      return hasRepo && hasAnyProviderSelected && manualWorktreeNamingIsValid
     case .smart:
       let hasPrompt = !sharedPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
       return hasRepo && hasPrompt
     }
+  }
+
+  public var manualWorktreeNamingIsValid: Bool {
+    guard workMode == .worktree && worktreeNamingMode == .manual else { return true }
+    return validateManualWorktreeNames(for: selectedProviders)
   }
 
   // MARK: - Init
@@ -433,24 +457,37 @@ public final class MultiSessionLaunchViewModel {
       try await launchLocalSessions(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
     case .worktree:
       let providers = selectedProviders
+      let worktreeNamingModeName = worktreeNamingMode.rawValue
       AppLogger.intelligence.info(
-        "\(Self.aiWorktreeLogPrefix, privacy: .public) Entering launcher worktree naming flow for providers=\(providers.map(\.rawValue).joined(separator: ","), privacy: .public)"
+        "\(Self.aiWorktreeLogPrefix, privacy: .public) Entering launcher worktree naming flow for providers=\(providers.map(\.rawValue).joined(separator: ","), privacy: .public) mode=\(worktreeNamingModeName, privacy: .public)"
       )
-      let namingResult = try await resolveGeneratedBranchNames(
-        for: repo,
-        launchContext: .manualWorktree,
-        promptText: trimmedPrompt,
-        providerKinds: providers
-      )
-      applyResolvedBranchNames(namingResult)
-      guard validateResolvedBranchNames(for: providers) else {
-        AppLogger.intelligence.error(
-          "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree naming completed without usable branch names"
+      switch worktreeNamingMode {
+      case .automatic:
+        let namingResult = try await resolveGeneratedBranchNames(
+          for: repo,
+          launchContext: .manualWorktree,
+          promptText: trimmedPrompt,
+          providerKinds: providers
         )
-        applyBranchNamingProgress(.failed(message: "AgentHub could not resolve a usable branch name"))
-        launchError = "Failed to resolve worktree branch names."
-        isLaunching = false
-        return
+        applyResolvedBranchNames(namingResult)
+        guard validateResolvedBranchNames(for: providers) else {
+          AppLogger.intelligence.error(
+            "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree naming completed without usable branch names"
+          )
+          applyBranchNamingProgress(.failed(message: "AgentHub could not resolve a usable branch name"))
+          launchError = "Failed to resolve worktree branch names."
+          isLaunching = false
+          return
+        }
+      case .manual:
+        guard applyManualWorktreeNames(for: providers) else {
+          AppLogger.intelligence.error(
+            "\(Self.aiWorktreeLogPrefix, privacy: .public) Manual worktree naming missing required names"
+          )
+          launchError = "Enter branch and worktree names before launching."
+          isLaunching = false
+          return
+        }
       }
 
       if providers.count > 1 {
@@ -464,6 +501,7 @@ public final class MultiSessionLaunchViewModel {
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: claudeViewModel,
+            providerKind: .claude,
             providerLabel: SessionProviderKind.claude.rawValue,
             dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions,
             permissionModePlan: isPlanModeEnabled,
@@ -476,6 +514,7 @@ public final class MultiSessionLaunchViewModel {
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: codexViewModel,
+            providerKind: .codex,
             providerLabel: SessionProviderKind.codex.rawValue,
             permissionModePlan: isPlanModeEnabled,
             progressKeyPath: \.codexProgress
@@ -780,9 +819,16 @@ public final class MultiSessionLaunchViewModel {
     currentBranchName = ""
     launchMode = .manual
     workMode = .local
+    worktreeNamingMode = .automatic
     claudeMode = .disabled
     claudeUseWorktree = false
     claudeWorktreeName = ""
+    manualSingleBranchName = ""
+    manualSingleDirectoryName = ""
+    manualClaudeBranchName = ""
+    manualClaudeDirectoryName = ""
+    manualCodexBranchName = ""
+    manualCodexDirectoryName = ""
     isCodexSelected = false
     isPlanModeEnabled = false
     playedWorktreeSuccessPaths.removeAll()
@@ -863,7 +909,7 @@ public final class MultiSessionLaunchViewModel {
     // 1. Create Claude worktree
     var claudeWorktreePath: String?
     do {
-      let dirName = directoryName(for: claudeBranchName)
+      let dirName = directoryNameForLaunch(branchName: claudeBranchName, provider: .claude)
       claudeWorktreePath = try await createWorktreeForLaunch(
         providerLabel: SessionProviderKind.claude.rawValue,
         repoPath: repoPath,
@@ -884,7 +930,7 @@ public final class MultiSessionLaunchViewModel {
     // 2. Create Codex worktree
     var codexWorktreePath: String?
     do {
-      let dirName = directoryName(for: codexBranchName)
+      let dirName = directoryNameForLaunch(branchName: codexBranchName, provider: .codex)
       codexWorktreePath = try await createWorktreeForLaunch(
         providerLabel: SessionProviderKind.codex.rawValue,
         repoPath: repoPath,
@@ -943,6 +989,7 @@ public final class MultiSessionLaunchViewModel {
     repoPath: String,
     branchName: String,
     viewModel: CLISessionsViewModel,
+    providerKind: SessionProviderKind,
     providerLabel: String,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
@@ -954,7 +1001,7 @@ public final class MultiSessionLaunchViewModel {
 
     var worktreePath: String?
     do {
-      let dirName = directoryName(for: branchName)
+      let dirName = directoryNameForLaunch(branchName: branchName, provider: providerKind)
       worktreePath = try await createWorktreeForLaunch(
         providerLabel: providerLabel,
         repoPath: repoPath,
@@ -1074,6 +1121,30 @@ public final class MultiSessionLaunchViewModel {
     )
   }
 
+  private func applyManualWorktreeNames(for providers: [SessionProviderKind]) -> Bool {
+    guard validateManualWorktreeNames(for: providers) else { return false }
+
+    if providers.count > 1 {
+      singleBranchName = ""
+      claudeBranchName = manualNames(for: .claude, providerCount: providers.count)?.branchName ?? ""
+      codexBranchName = manualNames(for: .codex, providerCount: providers.count)?.branchName ?? ""
+    } else if let provider = providers.first,
+              let names = manualNames(for: provider, providerCount: providers.count) {
+      singleBranchName = names.branchName
+      claudeBranchName = ""
+      codexBranchName = ""
+    }
+
+    resetBranchNamingProgress()
+    let appliedSingle = singleBranchName
+    let appliedClaude = claudeBranchName
+    let appliedCodex = codexBranchName
+    AppLogger.intelligence.info(
+      "\(Self.aiWorktreeLogPrefix, privacy: .public) Applied manual worktree names single=\(appliedSingle, privacy: .public) claude=\(appliedClaude, privacy: .public) codex=\(appliedCodex, privacy: .public)"
+    )
+    return true
+  }
+
   private func validateResolvedBranchNames(for providers: [SessionProviderKind]) -> Bool {
     if providers.count > 1 {
       return (!claudeBranchName.isEmpty || !codexBranchName.isEmpty)
@@ -1081,6 +1152,51 @@ public final class MultiSessionLaunchViewModel {
         && (!providers.contains(.codex) || !codexBranchName.isEmpty)
     }
     return !singleBranchName.isEmpty
+  }
+
+  private func validateManualWorktreeNames(for providers: [SessionProviderKind]) -> Bool {
+    guard !providers.isEmpty else { return false }
+    return providers.allSatisfy { provider in
+      guard let names = manualNames(for: provider, providerCount: providers.count) else { return false }
+      return !names.branchName.isEmpty && !names.directoryName.isEmpty
+    }
+  }
+
+  private func manualNames(for provider: SessionProviderKind, providerCount: Int) -> WorktreeLaunchNames? {
+    let branchName: String
+    let directoryName: String
+
+    if providerCount > 1 {
+      switch provider {
+      case .claude:
+        branchName = Self.trimmed(manualClaudeBranchName)
+        directoryName = Self.trimmed(manualClaudeDirectoryName)
+      case .codex:
+        branchName = Self.trimmed(manualCodexBranchName)
+        directoryName = Self.trimmed(manualCodexDirectoryName)
+      }
+    } else {
+      branchName = Self.trimmed(manualSingleBranchName)
+      directoryName = Self.trimmed(manualSingleDirectoryName)
+    }
+
+    guard !branchName.isEmpty || !directoryName.isEmpty else { return nil }
+    return WorktreeLaunchNames(branchName: branchName, directoryName: directoryName)
+  }
+
+  private func directoryNameForLaunch(branchName: String, provider: SessionProviderKind) -> String {
+    if workMode == .worktree,
+       worktreeNamingMode == .manual,
+       let names = manualNames(for: provider, providerCount: selectedProviders.count),
+       !names.directoryName.isEmpty {
+      return names.directoryName
+    }
+
+    return directoryName(for: branchName)
+  }
+
+  private static func trimmed(_ value: String) -> String {
+    value.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
   private func applyBranchNamingProgress(_ progress: WorktreeBranchNamingProgress) {
