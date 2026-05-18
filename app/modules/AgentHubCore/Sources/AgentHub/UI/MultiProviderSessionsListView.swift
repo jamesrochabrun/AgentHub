@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import AgentHubGitHub
 import Foundation
 import PierreDiffsSwift
 import SwiftUI
@@ -168,6 +169,8 @@ public struct MultiProviderSessionsListView: View {
   @State private var selectedModuleLandingPath: String?
   @State private var pendingAddedModulePaths: [String] = []
   @State private var isStartSessionSheetPresented = false
+  @State private var isRefreshingGitHubStates = false
+  @State private var didScheduleInitialGitHubStateRefresh = false
 
   // TODO: Remove along with MultiSessionLaunchView once the new Threads-based
   // session-start flow is fully implemented. Flip to `true` to restore the
@@ -268,6 +271,7 @@ public struct MultiProviderSessionsListView: View {
         )
       }
       ensurePrimarySelection()
+      scheduleInitialGitHubStateRefreshIfNeeded()
     }
     .onChange(of: claudeViewModel.resolvedPendingSessions) { _, newResolutions in
       handleResolvedSessions(newResolutions, provider: .claude, viewModel: claudeViewModel)
@@ -291,6 +295,7 @@ public struct MultiProviderSessionsListView: View {
       if selectedSessionItems.isEmpty {
         setAuxiliaryShellVisible(false)
       }
+      scheduleInitialGitHubStateRefreshIfNeeded()
     }
     .onChange(of: orderedTrackedRepos.map(\.path)) { _, _ in
       syncPendingModuleRows()
@@ -400,10 +405,15 @@ public struct MultiProviderSessionsListView: View {
       )
     }
     .sheet(item: $gitHubSheetItem) { item in
+      let provider = claudeViewModel.agentHubProvider ?? codexViewModel.agentHubProvider
       GitHubPanelView(
         projectPath: item.projectPath,
         onDismiss: { gitHubSheetItem = nil },
         isEmbedded: false,
+        viewModel: GitHubViewModel(
+          service: provider?.gitHubService ?? GitHubCLIService(),
+          observationService: provider?.gitHubPRObservationService
+        ),
         onSendToSession: { prompt, session in
           claudeViewModel.showTerminalWithPrompt(for: session, prompt: prompt)
         },
@@ -952,6 +962,9 @@ public struct MultiProviderSessionsListView: View {
         repos: orderedTrackedRepos,
         launchViewModel: multiLaunchViewModel,
         intelligenceViewModel: intelligenceViewModel,
+        isRefreshingGitHubStates: isRefreshingGitHubStates,
+        canRefreshGitHubStates: canRefreshGitHubStates,
+        onRefreshGitHubStates: refreshGitHubStates,
         onAddFolder: { showAddRepositoryPicker() }
       )
 
@@ -1445,12 +1458,79 @@ public struct MultiProviderSessionsListView: View {
     selectedProvider == .claude ? claudeViewModel : codexViewModel
   }
 
+  private var gitHubPRObservationService: (any GitHubPRObservationServiceProtocol)? {
+    claudeViewModel.agentHubProvider?.gitHubPRObservationService
+      ?? codexViewModel.agentHubProvider?.gitHubPRObservationService
+  }
+
+  private var gitHubRefreshTargets: [GitHubPRObservationTarget] {
+    var seen = Set<GitHubPRObservationTarget>()
+    var targets: [GitHubPRObservationTarget] = []
+
+    for item in selectedSessionItems where !item.isPending {
+      let target = GitHubPRObservationTarget.currentBranch(
+        projectPath: item.session.projectPath,
+        branchName: item.session.branchName
+      )
+      guard seen.insert(target).inserted else { continue }
+      targets.append(target)
+    }
+
+    return targets
+  }
+
+  private var canRefreshGitHubStates: Bool {
+    gitHubPRObservationService != nil && !gitHubRefreshTargets.isEmpty
+  }
+
   private var hasCurrentProviderRepositories: Bool {
     !currentViewModel.selectedRepositories.isEmpty
   }
 
   private func toggleShowLastMessage() {
     currentViewModel.showLastMessage.toggle()
+  }
+
+  private func refreshGitHubStates() {
+    scheduleGitHubStateRefresh(limit: nil, showsIndicator: true)
+  }
+
+  private func scheduleInitialGitHubStateRefreshIfNeeded() {
+    guard !didScheduleInitialGitHubStateRefresh,
+          canRefreshGitHubStates else {
+      return
+    }
+
+    didScheduleInitialGitHubStateRefresh = true
+    Task { @MainActor in
+      try? await Task.sleep(for: .seconds(3))
+      guard !Task.isCancelled else { return }
+      scheduleGitHubStateRefresh(limit: 12, showsIndicator: false)
+    }
+  }
+
+  private func scheduleGitHubStateRefresh(limit: Int?, showsIndicator: Bool) {
+    guard !isRefreshingGitHubStates,
+          let observationService = gitHubPRObservationService else {
+      return
+    }
+
+    let targets = Array(gitHubRefreshTargets.prefix(limit ?? Int.max))
+    guard !targets.isEmpty else { return }
+
+    isRefreshingGitHubStates = true
+    Task { @MainActor in
+      for target in targets {
+        await observationService.refresh(target)
+        try? await Task.sleep(for: .milliseconds(120))
+      }
+      if !showsIndicator {
+        isRefreshingGitHubStates = false
+        return
+      }
+      try? await Task.sleep(for: .milliseconds(350))
+      isRefreshingGitHubStates = false
+    }
   }
 
   private func handleResolvedSessions(
@@ -1996,6 +2076,9 @@ private struct SessionsSectionHeader: View {
   let repos: [SelectedRepository]
   let launchViewModel: MultiSessionLaunchViewModel?
   let intelligenceViewModel: IntelligenceViewModel?
+  let isRefreshingGitHubStates: Bool
+  let canRefreshGitHubStates: Bool
+  let onRefreshGitHubStates: () -> Void
   let onAddFolder: () -> Void
 
   @State private var showGroupPopover = false
@@ -2019,6 +2102,13 @@ private struct SessionsSectionHeader: View {
         .popover(isPresented: $showGroupPopover, arrowEdge: .bottom) {
           GroupByPopover(groupMode: $groupMode)
         }
+
+        HeaderIconButton(
+          systemName: isRefreshingGitHubStates ? "arrow.triangle.2.circlepath" : "arrow.clockwise",
+          help: "Refresh GitHub PR and CI states",
+          isDisabled: !canRefreshGitHubStates || isRefreshingGitHubStates,
+          action: onRefreshGitHubStates
+        )
 
         HeaderIconButton(
           systemName: "folder.badge.plus",
@@ -2111,13 +2201,17 @@ private struct HeaderIconButton: View {
   let systemName: String
   var size: CGFloat = DesignTokens.IconSize.sm
   var help: String? = nil
+  var isDisabled = false
   let action: () -> Void
 
   var body: some View {
     Button(action: action) {
-      Image(systemName: systemName).headerIconStyle(size: size)
+      Image(systemName: systemName)
+        .headerIconStyle(size: size)
+        .opacity(isDisabled ? 0.35 : 1)
     }
     .buttonStyle(.plain)
+    .disabled(isDisabled)
     .help(help ?? "")
   }
 }

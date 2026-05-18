@@ -177,6 +177,11 @@ public final class AgentHubProvider {
     SessionGitHubQuickAccessCoordinator(service: gitHubService)
   }()
 
+  /// Shared GitHub PR/check observation service for panels and session rows
+  public private(set) lazy var gitHubPRObservationService: any GitHubPRObservationServiceProtocol = {
+    GitHubPRObservationService(service: gitHubService)
+  }()
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes

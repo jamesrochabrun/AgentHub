@@ -36,6 +36,14 @@ struct GitHubCLIServiceParsingTests {
     #expect(checks[0].statusDisplayName == "Pending")
   }
 
+  @Test("current branch no-PR message is recognized")
+  func currentBranchNoPRMessageIsRecognized() {
+    #expect(GitHubCLIService.isNoCurrentBranchPRMessage(
+      #"no pull requests found for branch "github-observe""#
+    ))
+    #expect(!GitHubCLIService.isNoCurrentBranchPRMessage("authentication required"))
+  }
+
   @Test("parsePRFiles handles slurped paginated arrays")
   func parsePRFilesHandlesSlurpedPages() throws {
     let json = """

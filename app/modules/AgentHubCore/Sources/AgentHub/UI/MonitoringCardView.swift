@@ -213,6 +213,10 @@ public struct MonitoringCardView: View {
     viewModel?.agentHubProvider?.gitHubQuickAccessCoordinator ?? agentHub?.gitHubQuickAccessCoordinator
   }
 
+  private var gitHubPRObservationService: (any GitHubPRObservationServiceProtocol)? {
+    viewModel?.agentHubProvider?.gitHubPRObservationService ?? agentHub?.gitHubPRObservationService
+  }
+
   public var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       // Header with session info and actions
@@ -284,7 +288,8 @@ public struct MonitoringCardView: View {
       await sessionGitHubQuickAccessViewModel.load(
         projectPath: session.projectPath,
         branchName: session.branchName,
-        coordinator: gitHubQuickAccessCoordinator
+        coordinator: gitHubQuickAccessCoordinator,
+        observationService: gitHubPRObservationService
       )
       if let lastActivityAt = state?.lastActivityAt {
         await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: lastActivityAt)

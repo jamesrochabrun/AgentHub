@@ -1,3 +1,4 @@
+import AgentHubGitHub
 import SwiftUI
 
 // MARK: - CollapsibleSessionRow
@@ -22,6 +23,8 @@ struct CollapsibleSessionRow: View {
   @State private var showArchiveConfirm = false
   @State private var pulseScale: CGFloat = 1.0
   @State private var isPulseAnimating = false
+  @State private var sessionGitHubQuickAccessViewModel = SessionGitHubQuickAccessViewModel()
+  @Environment(\.agentHub) private var agentHub
 
   // MARK: - Computed
 
@@ -62,6 +65,21 @@ struct CollapsibleSessionRow: View {
 
   private var showActions: Bool {
     isHovered && !isPending && (onPin != nil || onArchive != nil || onDeleteWorktree != nil)
+  }
+
+  private var gitHubObservationTaskID: String {
+    let repositoryKey = SessionGitHubQuickAccessViewModel.repositoryKey(
+      projectPath: session.projectPath,
+      branchName: session.branchName
+    )
+    return "\(repositoryKey)|\(isPending)|\(agentHub != nil)"
+  }
+
+  private var observationStartupDelayMilliseconds: Int {
+    let bucket = session.id.unicodeScalars.reduce(0) { partialResult, scalar in
+      (partialResult + Int(scalar.value)) % 1_500
+    }
+    return 250 + bucket
   }
 
   // MARK: - Body
@@ -121,6 +139,15 @@ struct CollapsibleSessionRow: View {
             .opacity(showActions ? 1 : 0)
             .animation(.easeInOut(duration: 0.25), value: showActions)
         }
+
+        if let pullRequest = sessionGitHubQuickAccessViewModel.currentBranchPR {
+          GitHubSessionRowStatusLine(
+            pullRequest: pullRequest,
+            summary: sessionGitHubQuickAccessViewModel.ciSummary,
+            observationState: sessionGitHubQuickAccessViewModel.observationState
+          )
+          .transition(.opacity)
+        }
       }
     }
     .padding(.horizontal, 10)
@@ -145,6 +172,17 @@ struct CollapsibleSessionRow: View {
     .onAppear { startPulseAnimation() }
     .onChange(of: sessionStatus) { _, _ in startPulseAnimation() }
     .onChange(of: isPending) { _, _ in startPulseAnimation() }
+    .task(id: gitHubObservationTaskID) {
+      await observeGitHubIfAvailable()
+    }
+    .onDisappear {
+      sessionGitHubQuickAccessViewModel.stopPolling()
+    }
+    .onChange(of: timestamp) { _, newValue in
+      Task {
+        await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: newValue)
+      }
+    }
   }
 
   @ViewBuilder
@@ -267,6 +305,185 @@ struct CollapsibleSessionRow: View {
       .repeatForever(autoreverses: true)
     ) {
       pulseScale = 1.4
+    }
+  }
+
+  private func observeGitHubIfAvailable() async {
+    guard !isPending, let observationService = agentHub?.gitHubPRObservationService else {
+      sessionGitHubQuickAccessViewModel.stopPolling()
+      return
+    }
+
+    try? await Task.sleep(for: .milliseconds(observationStartupDelayMilliseconds))
+    guard !Task.isCancelled else { return }
+
+    await sessionGitHubQuickAccessViewModel.load(
+      projectPath: session.projectPath,
+      branchName: session.branchName,
+      observationService: observationService,
+      refreshOnSubscribe: false,
+      recordInitialActivity: false
+    )
+    await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: timestamp)
+  }
+}
+
+// MARK: - GitHubSessionRowStatusLine
+
+private struct GitHubSessionRowStatusLine: View {
+  let pullRequest: GitHubPullRequest
+  let summary: GitHubCISummary
+  let observationState: GitHubPRObservationState
+
+  var body: some View {
+    HStack(spacing: 5) {
+      Image(systemName: primaryIcon)
+        .font(.system(size: 10, weight: .semibold))
+        .foregroundStyle(primaryColor)
+        .frame(width: 12, height: 12)
+
+      Text(primaryText)
+        .font(.geist(size: 10, weight: .medium))
+        .foregroundColor(.secondary.opacity(0.95))
+
+      if let secondaryText {
+        Text("·")
+          .font(.secondaryCaption)
+          .foregroundColor(.secondary.opacity(0.55))
+
+        Image(systemName: secondaryIcon)
+          .font(.system(size: 9, weight: .semibold))
+          .foregroundStyle(secondaryColor)
+          .frame(width: 11, height: 11)
+
+        Text(secondaryText)
+          .font(.secondaryCaption)
+          .foregroundColor(.secondary.opacity(0.86))
+      }
+    }
+    .lineLimit(1)
+    .truncationMode(.tail)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .help(helpText)
+    .accessibilityLabel(helpText)
+  }
+
+  private var primaryText: String {
+    switch pullRequest.stateKind {
+    case .open:
+      return pullRequest.isDraft ? "Draft PR #\(pullRequest.number)" : "Open PR #\(pullRequest.number)"
+    case .closed:
+      return "Closed PR #\(pullRequest.number)"
+    case .merged:
+      return "Merged PR #\(pullRequest.number)"
+    case .unknown:
+      return "PR #\(pullRequest.number)"
+    }
+  }
+
+  private var secondaryText: String? {
+    if observationState.isRefreshing && summary.total == 0 {
+      return "Refreshing checks"
+    }
+
+    guard summary.total > 0 else {
+      return "No CI checks"
+    }
+
+    switch summary.overallStatus {
+    case .success:
+      return "CI passing \(summary.passed)/\(summary.total)"
+    case .failure:
+      return "CI failing \(summary.failed) failed"
+    case .pending:
+      return "CI running \(summary.pending) pending"
+    case .none:
+      if summary.skipped > 0 {
+        return "CI skipped \(summary.skipped)"
+      }
+      return "No CI checks"
+    }
+  }
+
+  private var primaryIcon: String {
+    return pullRequest.stateIcon
+  }
+
+  private var secondaryIcon: String {
+    if observationState.isRefreshing && summary.total == 0 {
+      return "arrow.clockwise"
+    }
+    return summary.overallStatus.icon
+  }
+
+  private var primaryColor: Color {
+    switch pullRequest.stateKind {
+    case .open:
+      return pullRequest.isDraft ? .secondary : .green
+    case .closed:
+      return .red
+    case .merged:
+      return .purple
+    case .unknown:
+      return .secondary
+    }
+  }
+
+  private var secondaryColor: Color {
+    if observationState.isRefreshing && summary.total == 0 {
+      return .orange
+    }
+    switch summary.overallStatus {
+    case .success:
+      return .green
+    case .failure:
+      return .red
+    case .pending:
+      return .orange
+    case .none:
+      return .secondary
+    }
+  }
+
+  private var helpText: String {
+    let prText: String
+    switch pullRequest.stateKind {
+    case .open:
+      prText = pullRequest.isDraft
+        ? "Draft PR #\(pullRequest.number)"
+        : "Open PR #\(pullRequest.number)"
+    case .closed:
+      prText = "Closed PR #\(pullRequest.number)"
+    case .merged:
+      prText = "Merged PR #\(pullRequest.number)"
+    case .unknown:
+      prText = "PR #\(pullRequest.number) has an unknown state"
+    }
+
+    return "\(prText). \(ciHelpText)"
+  }
+
+  private var ciHelpText: String {
+    if observationState.isRefreshing && summary.total == 0 {
+      return "CI checks are refreshing."
+    }
+
+    guard summary.total > 0 else {
+      return "No CI checks are reported."
+    }
+
+    switch summary.overallStatus {
+    case .success:
+      return "CI passing: \(summary.passed) of \(summary.total) checks passed."
+    case .failure:
+      return "CI failing: \(summary.failed) failed, \(summary.passed) passed, \(summary.pending) pending."
+    case .pending:
+      return "CI running: \(summary.pending) pending, \(summary.passed) passed, \(summary.failed) failed."
+    case .none:
+      if summary.skipped > 0 {
+        return "CI checks are skipped or neutral: \(summary.skipped) of \(summary.total)."
+      }
+      return "No CI checks are reported."
     }
   }
 }
@@ -440,8 +657,6 @@ struct CollapsibleSessionRow: View {
   .background(Color(nsColor: .windowBackgroundColor))
   .preferredColorScheme(.dark)
 }
-
-// MARK: - Preview Helpers
 
 @ViewBuilder
 private func sectionHeader(_ title: String) -> some View {

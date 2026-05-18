@@ -41,6 +41,15 @@ private func makeQuickAccessPR(
   )
 }
 
+private func makeQuickAccessCheck(
+  name: String = "Build",
+  status: String = "COMPLETED",
+  conclusion: String? = "SUCCESS",
+  bucket: String? = nil
+) -> GitHubCheckRun {
+  GitHubCheckRun(name: name, status: status, conclusion: conclusion, bucket: bucket, detailsUrl: nil)
+}
+
 actor MockSessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordinatorProtocol {
   private var continuations: [UUID: AsyncStream<GitHubPullRequest?>.Continuation] = [:]
   private var subscriptionKeys: [UUID: String] = [:]
@@ -109,6 +118,57 @@ actor MockSessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordinat
   }
 }
 
+private actor MockSessionGitHubPRObservationService: GitHubPRObservationServiceProtocol {
+  private var continuations: [UUID: AsyncStream<GitHubPRObservationSnapshot>.Continuation] = [:]
+  private var subscriptionTargets: [UUID: GitHubPRObservationTarget] = [:]
+
+  private(set) var subscribedTargets: [GitHubPRObservationTarget] = []
+  private(set) var unsubscribedIDs: [UUID] = []
+  private(set) var recordedActivityTargets: [GitHubPRObservationTarget] = []
+
+  func subscribe(
+    to target: GitHubPRObservationTarget,
+    refreshOnSubscribe: Bool
+  ) async -> GitHubPRObservationSubscription {
+    let subscriptionID = UUID()
+    var continuation: AsyncStream<GitHubPRObservationSnapshot>.Continuation?
+    let updates = AsyncStream<GitHubPRObservationSnapshot> { streamContinuation in
+      continuation = streamContinuation
+    }
+
+    if let continuation {
+      continuations[subscriptionID] = continuation
+      subscriptionTargets[subscriptionID] = target
+      subscribedTargets.append(target)
+      continuation.yield(.initial(target: target))
+    }
+
+    return GitHubPRObservationSubscription(id: subscriptionID, updates: updates)
+  }
+
+  func unsubscribe(subscriptionID: UUID) async {
+    unsubscribedIDs.append(subscriptionID)
+    continuations.removeValue(forKey: subscriptionID)?.finish()
+    subscriptionTargets.removeValue(forKey: subscriptionID)
+  }
+
+  func refresh(_ target: GitHubPRObservationTarget) async {}
+
+  func recordActivity(for target: GitHubPRObservationTarget, at: Date) async {
+    recordedActivityTargets.append(target)
+  }
+
+  func publish(_ snapshot: GitHubPRObservationSnapshot) {
+    for (subscriptionID, continuation) in continuations where subscriptionTargets[subscriptionID] == snapshot.target {
+      continuation.yield(snapshot)
+    }
+  }
+
+  func activeSubscriptionCount(for target: GitHubPRObservationTarget) -> Int {
+    subscriptionTargets.values.count { $0 == target }
+  }
+}
+
 @Suite("SessionGitHubQuickAccessViewModel")
 struct SessionGitHubQuickAccessViewModelTests {
 
@@ -152,6 +212,54 @@ struct SessionGitHubQuickAccessViewModelTests {
     #expect(viewModel.currentBranchPR?.number == 42)
     #expect(await coordinator.subscribeCallCount == 1)
     #expect(await coordinator.activeSubscriptionCount(for: "/tmp/repo", branchName: "main") == 1)
+  }
+
+  @Test("observation service updates PR checks and state")
+  @MainActor
+  func observationServiceUpdatesChecksAndState() async {
+    let observer = MockSessionGitHubPRObservationService()
+    let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
+    let target = GitHubPRObservationTarget.currentBranch(projectPath: "/tmp/repo", branchName: "feature/github")
+
+    await viewModel.load(projectPath: "/tmp/repo", branchName: "feature/github")
+    await observer.publish(GitHubPRObservationSnapshot(
+      target: target,
+      pullRequest: makeQuickAccessPR(number: 91),
+      checks: [
+        makeQuickAccessCheck(name: "Build"),
+        makeQuickAccessCheck(name: "Tests", status: "IN_PROGRESS", conclusion: nil, bucket: "pending"),
+      ],
+      state: .ready,
+      lastRefreshedAt: .now
+    ))
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(viewModel.currentBranchPR?.number == 91)
+    #expect(viewModel.currentBranchChecks.map(\.name) == ["Build", "Tests"])
+    #expect(viewModel.ciSummary.passed == 1)
+    #expect(viewModel.ciSummary.pending == 1)
+    #expect(viewModel.observationState == .ready)
+    #expect(await observer.subscribedTargets == [target])
+    #expect(await observer.recordedActivityTargets == [target])
+  }
+
+  @Test("observation service can defer initial activity for list rows")
+  @MainActor
+  func observationServiceCanDeferInitialActivity() async {
+    let observer = MockSessionGitHubPRObservationService()
+    let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
+    let target = GitHubPRObservationTarget.currentBranch(projectPath: "/tmp/repo", branchName: "feature/github")
+    let activityDate = Date.now.addingTimeInterval(-600)
+
+    await viewModel.load(
+      projectPath: "/tmp/repo",
+      branchName: "feature/github",
+      recordInitialActivity: false
+    )
+    #expect(await observer.recordedActivityTargets.isEmpty)
+
+    await viewModel.notifySessionActivity(at: activityDate)
+    #expect(await observer.recordedActivityTargets == [target])
   }
 
   @Test("same repo load does not create duplicate subscriptions")

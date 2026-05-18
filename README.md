@@ -31,7 +31,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Auxiliary Hub shell** — Toggle a session-scoped shell dock from the Hub with **Cmd+J**; it follows the selected session's worktree and preserves shell state per session
 - **Resizable list cards** — In list mode, monitoring cards can be resized with a preview guide for a smoother, less distracting resize experience
 - **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
-- **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, and send GitHub context back into a session
+- **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, monitor current-branch PR status from session rows, and send GitHub context back into a session
 - **File explorer and built-in editor** — Browse the project tree, jump to files with Cmd+P, edit files in-app with syntax highlighting, and save changes without leaving AgentHub
 - **Git worktree management** — Create and delete worktrees from the UI; launch sessions on new branches
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
@@ -72,9 +72,17 @@ AgentHub can surface repository GitHub data directly inside the app through the 
 
 - Browse pull requests and issues for the active repository
 - Open the current branch PR directly from the session card
+- See current-branch PR state and CI status on active session rows when a PR exists
+- Force-refresh GitHub PR/CI state from the session list header
 - Review PR overview content, changed files, CI checks, and comments
 - Render PR file diffs with the same inline diff viewer used elsewhere in AgentHub
 - Send PR or issue context back into the active Claude Code or Codex session
+
+### GitHub Monitoring
+
+AgentHub can monitor the current branch PR for each visible session and show its PR state plus CI summary in the session row. Branches with no pull request stay quiet, so the list only adds GitHub context when there is something actionable to show.
+
+Monitoring is designed to avoid slowing down launch: initial GitHub refresh work is delayed after the app appears, session rows observe through a shared service, and the refresh button in the session list header can force an update whenever you want fresh GitHub state.
 
 ### GitHub Setup
 

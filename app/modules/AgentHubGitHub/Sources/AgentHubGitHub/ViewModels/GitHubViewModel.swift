@@ -129,6 +129,9 @@ public final class GitHubViewModel {
 
   /// PR for the current branch
   public var currentBranchPR: GitHubPullRequest?
+  public var currentBranchChecks: [GitHubCheckRun] = []
+  public var currentBranchObservationState: GitHubPRObservationState = .idle
+  public var currentBranchLastRefreshedAt: Date?
 
   /// Issue list state
   public var issues: [GitHubIssue] = []
@@ -153,6 +156,8 @@ public final class GitHubViewModel {
   public var checks: [GitHubCheckRun] = []
   public var checksLoadingState: GitHubLoadingState = .idle
   public private(set) var loadedChecksPRNumber: Int?
+  public var selectedPRObservationState: GitHubPRObservationState = .idle
+  public var selectedPRLastRefreshedAt: Date?
 
   /// Comment input
   public var newCommentText: String = ""
@@ -171,23 +176,49 @@ public final class GitHubViewModel {
   // MARK: - Dependencies
 
   private let service: any GitHubCLIServiceProtocol
+  private let observationService: (any GitHubPRObservationServiceProtocol)?
   private var currentRepoPath: String?
+  private var currentBranchName: String?
   private var prDetailTask: Task<Void, Never>?
   private var issueDetailTask: Task<Void, Never>?
+  private var currentBranchObservationTask: Task<Void, Never>?
+  private var selectedPRObservationTask: Task<Void, Never>?
+  private var currentBranchSubscriptionID: UUID?
+  private var selectedPRSubscriptionID: UUID?
 
   // MARK: - Init
 
-  public init(service: any GitHubCLIServiceProtocol = GitHubCLIService()) {
+  public init(
+    service: any GitHubCLIServiceProtocol = GitHubCLIService(),
+    observationService: (any GitHubPRObservationServiceProtocol)? = nil
+  ) {
     self.service = service
+    self.observationService = observationService
+  }
+
+  public var usesObservationService: Bool {
+    observationService != nil
+  }
+
+  public func stopObserving() {
+    stopCurrentBranchObservation()
+    stopSelectedPRObservation()
   }
 
   // MARK: - Setup
 
   /// Initializes the GitHub integration for a repository path
-  public func setup(repoPath: String) async {
+  public func setup(repoPath: String, branchName: String? = nil) async {
     currentRepoPath = repoPath
+    currentBranchName = branchName
     setupState = .checking
     repoInfo = nil
+    stopCurrentBranchObservation()
+    stopSelectedPRObservation()
+    currentBranchPR = nil
+    currentBranchChecks = []
+    currentBranchObservationState = .idle
+    currentBranchLastRefreshedAt = nil
 
     isGHInstalled = await service.isInstalled()
     guard isGHInstalled else {
@@ -209,6 +240,11 @@ public final class GitHubViewModel {
     }
 
     setupState = .ready
+    await startCurrentBranchObservationIfAvailable()
+  }
+
+  public func isConfigured(repoPath: String, branchName: String?) -> Bool {
+    currentRepoPath == repoPath && currentBranchName == branchName && setupState != .checking
   }
 
   // MARK: - Pull Requests
@@ -280,17 +316,29 @@ public final class GitHubViewModel {
     prDetailLoadingState = .loading
 
     do {
-      async let prTask = service.getPullRequest(number: number, at: repoPath)
-      async let diffTask = service.getPullRequestDiff(number: number, at: repoPath)
-      async let commentsTask = service.getPullRequestReviewComments(number: number, at: repoPath)
+      if observationService == nil {
+        async let prTask = service.getPullRequest(number: number, at: repoPath)
+        async let diffTask = service.getPullRequestDiff(number: number, at: repoPath)
+        async let commentsTask = service.getPullRequestReviewComments(number: number, at: repoPath)
 
-      let (pr, diff, comments) = try await (prTask, diffTask, commentsTask)
-      guard !Task.isCancelled, selectedPR == nil || selectedPR?.number == number else { return }
+        let (pr, diff, comments) = try await (prTask, diffTask, commentsTask)
+        guard !Task.isCancelled, selectedPR == nil || selectedPR?.number == number else { return }
 
-      selectedPR = pr
-      selectedPRDiff = diff
-      selectedPRReviewComments = comments
-      prDetailLoadingState = .loaded
+        selectedPR = pr
+        selectedPRDiff = diff
+        selectedPRReviewComments = comments
+        prDetailLoadingState = .loaded
+      } else {
+        async let diffTask = service.getPullRequestDiff(number: number, at: repoPath)
+        async let commentsTask = service.getPullRequestReviewComments(number: number, at: repoPath)
+
+        let (diff, comments) = try await (diffTask, commentsTask)
+        guard !Task.isCancelled, selectedPR == nil || selectedPR?.number == number else { return }
+
+        selectedPRDiff = diff
+        selectedPRReviewComments = comments
+        prDetailLoadingState = .loaded
+      }
 
       // Load files separately (can be slower)
       do {
@@ -310,6 +358,11 @@ public final class GitHubViewModel {
   /// Loads the PR for the current branch
   public func loadCurrentBranchPR() async {
     guard let repoPath = currentRepoPath else { return }
+    if observationService != nil {
+      await refreshCurrentBranchObservation()
+      return
+    }
+
     do {
       currentBranchPR = try await service.getCurrentBranchPR(at: repoPath)
     } catch {
@@ -429,6 +482,18 @@ public final class GitHubViewModel {
   /// Loads CI checks for a PR
   public func loadChecks(prNumber: Int? = nil) async {
     guard let repoPath = currentRepoPath else { return }
+    if let observationService {
+      if let prNumber {
+        checksLoadingState = .loading
+        let target = GitHubPRObservationTarget.pullRequest(projectPath: repoPath, number: prNumber)
+        await observationService.recordActivity(for: target, at: .now)
+        await observationService.refresh(target)
+      } else {
+        await refreshCurrentBranchObservation()
+      }
+      return
+    }
+
     checksLoadingState = .loading
 
     do {
@@ -453,6 +518,10 @@ public final class GitHubViewModel {
     checks = []
     checksLoadingState = .idle
     loadedChecksPRNumber = nil
+    selectedPRObservationState = .idle
+    selectedPRLastRefreshedAt = nil
+
+    startSelectedPRObservationIfAvailable(number: pr.number)
 
     prDetailTask = Task { [number = pr.number] in
       await loadPRDetail(number: number)
@@ -470,6 +539,9 @@ public final class GitHubViewModel {
     checks = []
     checksLoadingState = .idle
     loadedChecksPRNumber = nil
+    selectedPRObservationState = .idle
+    selectedPRLastRefreshedAt = nil
+    stopSelectedPRObservation()
   }
 
   /// Selects an issue and loads its details
@@ -486,5 +558,127 @@ public final class GitHubViewModel {
     issueDetailTask?.cancel()
     selectedIssue = nil
     issueDetailLoadingState = .idle
+  }
+
+  // MARK: - Observation
+
+  private func startCurrentBranchObservationIfAvailable() async {
+    guard let observationService, let repoPath = currentRepoPath else { return }
+    let target = GitHubPRObservationTarget.currentBranch(
+      projectPath: repoPath,
+      branchName: currentBranchName
+    )
+    let subscription = await observationService.subscribe(to: target)
+    currentBranchSubscriptionID = subscription.id
+    currentBranchObservationTask = Task { [weak self] in
+      for await snapshot in subscription.updates {
+        guard let self else { return }
+        self.applyCurrentBranchObservation(snapshot)
+      }
+    }
+    await observationService.recordActivity(for: target, at: .now)
+  }
+
+  private func refreshCurrentBranchObservation() async {
+    guard let observationService, let repoPath = currentRepoPath else { return }
+    let target = GitHubPRObservationTarget.currentBranch(
+      projectPath: repoPath,
+      branchName: currentBranchName
+    )
+    await observationService.recordActivity(for: target, at: .now)
+    await observationService.refresh(target)
+  }
+
+  private func startSelectedPRObservationIfAvailable(number: Int) {
+    guard let observationService, let repoPath = currentRepoPath else { return }
+    stopSelectedPRObservation()
+
+    let target = GitHubPRObservationTarget.pullRequest(projectPath: repoPath, number: number)
+    selectedPRObservationTask = Task { [weak self] in
+      let subscription = await observationService.subscribe(to: target)
+      await MainActor.run {
+        self?.selectedPRSubscriptionID = subscription.id
+      }
+      await observationService.recordActivity(for: target, at: .now)
+
+      for await snapshot in subscription.updates {
+        guard let self else { return }
+        self.applySelectedPRObservation(snapshot, expectedNumber: number)
+      }
+    }
+  }
+
+  private func stopCurrentBranchObservation() {
+    currentBranchObservationTask?.cancel()
+    currentBranchObservationTask = nil
+    let subscriptionID = currentBranchSubscriptionID
+    currentBranchSubscriptionID = nil
+    if let subscriptionID, let observationService {
+      Task {
+        await observationService.unsubscribe(subscriptionID: subscriptionID)
+      }
+    }
+  }
+
+  private func stopSelectedPRObservation() {
+    selectedPRObservationTask?.cancel()
+    selectedPRObservationTask = nil
+    let subscriptionID = selectedPRSubscriptionID
+    selectedPRSubscriptionID = nil
+    if let subscriptionID, let observationService {
+      Task {
+        await observationService.unsubscribe(subscriptionID: subscriptionID)
+      }
+    }
+  }
+
+  private func applyCurrentBranchObservation(_ snapshot: GitHubPRObservationSnapshot) {
+    currentBranchObservationState = snapshot.state
+    currentBranchLastRefreshedAt = snapshot.lastRefreshedAt
+    currentBranchPR = snapshot.pullRequest
+    currentBranchChecks = snapshot.checks
+
+    if let pullRequest = snapshot.pullRequest {
+      replaceLoadedPullRequest(pullRequest)
+    }
+  }
+
+  private func applySelectedPRObservation(
+    _ snapshot: GitHubPRObservationSnapshot,
+    expectedNumber: Int
+  ) {
+    guard selectedPR?.number == expectedNumber else { return }
+
+    selectedPRObservationState = snapshot.state
+    selectedPRLastRefreshedAt = snapshot.lastRefreshedAt
+
+    if let pullRequest = snapshot.pullRequest {
+      selectedPR = pullRequest
+      replaceLoadedPullRequest(pullRequest)
+    }
+
+    checks = snapshot.checks
+    loadedChecksPRNumber = expectedNumber
+    checksLoadingState = loadingState(from: snapshot.state)
+  }
+
+  private func replaceLoadedPullRequest(_ pullRequest: GitHubPullRequest) {
+    guard let index = pullRequests.firstIndex(where: { $0.number == pullRequest.number }) else {
+      return
+    }
+    pullRequests[index] = pullRequest
+  }
+
+  private func loadingState(from observationState: GitHubPRObservationState) -> GitHubLoadingState {
+    switch observationState {
+    case .idle:
+      return .idle
+    case .refreshing:
+      return .loading
+    case .ready:
+      return .loaded
+    case .error(let message), .paused(let message):
+      return .error(message)
+    }
   }
 }

@@ -81,6 +81,19 @@ protocol SessionSearchServiceProtocol {
 
 Storybook-enabled projects swap the Preview button for a Storybook button (never both). `WebPreviewMode { .app, .storybook }` routes the preview pane; the storybook server runs at compound key `"{sessionId}:storybook"` in `DevServerManager` so it coexists with the primary app server. Read **Storybook** in `README.md` before editing this area.
 
+## GitHub PR/CI Observation
+
+Read `GitHubMonitor.md` before editing GitHub PR/check observation, session-row GitHub state, GitHub panel refresh behavior, or related tests.
+
+Key invariants:
+
+- Shared GitHub PR/check observation lives in `AgentHubGitHub` behind `GitHubPRObservationServiceProtocol`; UI code should consume the protocol rather than starting per-view polling loops.
+- `AgentHubProvider.gitHubPRObservationService` is the shared service used by the GitHub panel, monitoring cards, and side-panel session rows.
+- Session rows must stay quiet when the current branch has no PR. Only render compact row GitHub state when a `currentBranchPR` exists.
+- Preserve launch performance: initial GitHub refresh work must remain delayed, bounded, activity-driven, or manually triggered.
+- Keep no-PR CLI output non-fatal. GitHub CLI's "no pull requests found for branch ..." response maps to a nil PR, not a row-level error.
+- Changes to polling cadence, target deduplication, no-PR parsing, row visibility, or refresh behavior need focused unit tests in `AgentHubGitHubTests` or matching UI/view-model tests.
+
 ## Claude Code Approval Hook Invariants
 
 AgentHub installs Claude Code hooks to surface pending approvals in real time (see `CLAUDE.md` → "Approval Detection"). `PermissionRequest` is the only hook event that represents a real pending approval; `PreToolUse` is only an observed tool/mode signal used to track dynamic permission-mode changes. When modifying `ClaudeHookInstaller`, `ClaudeHookSidecarWatcher`, `SessionFileWatcher`, `ApprovalClaimStore`, or `HookPendingStalenessFilter`, these invariants must hold:
