@@ -158,12 +158,12 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     }
     terminal.syncAppearance(isDark: colorScheme == .dark, fontSize: CGFloat(terminalFontSize), fontFamily: terminalFontFamily, theme: runtimeTheme)
 
-    // If there's a pending prompt in the viewModel, send it (and clear it)
-    // Use terminalKey (not sessionId) since it works for both pending and real sessions
-    if let prompt = viewModel?.pendingPrompt(for: terminalKey) {
+    // Use terminalKey (not sessionId) since it works for both pending and real sessions.
+    // Consuming here prevents duplicated delivery when multiple terminal views render
+    // the same stale initialPrompt value during a layout transition.
+    if let prompt = viewModel?.consumePendingPrompt(for: terminalKey) {
       terminal.resetPromptDeliveryFlag()
       terminal.sendPromptIfNeeded(prompt)
-      viewModel?.clearPendingPrompt(for: terminalKey)
     }
   }
 

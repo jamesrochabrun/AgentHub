@@ -61,9 +61,11 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
   private(set) var configuredProjectPath: String?
   private(set) var configuredShellPath: String?
+  private(set) var configuredInitialPrompt: String?
   private(set) var configuredInitialInputText: String?
   private(set) var typedTexts: [String] = []
   private(set) var initialTypedTexts: [String] = []
+  private(set) var sentPrompts: [String] = []
   private(set) var restoredWorkspaceSnapshot: TerminalWorkspaceSnapshot?
   var workspaceSnapshotToCapture: TerminalWorkspaceSnapshot?
   private(set) var configureCallCount = 0
@@ -85,6 +87,7 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
     metadataStore: SessionMetadataStore?
   ) {
     configuredProjectPath = projectPath
+    configuredInitialPrompt = initialPrompt
     configuredInitialInputText = initialInputText
     configureCallCount += 1
   }
@@ -102,7 +105,9 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   }
 
   func resetPromptDeliveryFlag() {}
-  func sendPromptIfNeeded(_ prompt: String) {}
+  func sendPromptIfNeeded(_ prompt: String) {
+    sentPrompts.append(prompt)
+  }
   func submitPromptImmediately(_ prompt: String) -> Bool { true }
   func typeText(_ text: String) {
     typedTexts.append(text)
@@ -241,6 +246,93 @@ struct AuxiliaryShellTerminalManagementTests {
 
     #expect(terminal.configuredInitialInputText == command)
     #expect(viewModel.pendingTerminalInputTexts["session-123"] == nil)
+  }
+
+  @Test("Pending prompts are consumed once")
+  @MainActor
+  func pendingPromptIsConsumedOnce() {
+    let viewModel = makeAuxiliaryShellViewModel()
+    let session = CLISession(
+      id: "session-123",
+      projectPath: "/tmp/project",
+      branchName: "main"
+    )
+
+    viewModel.showTerminalWithPrompt(for: session, prompt: "Review these changes")
+
+    #expect(viewModel.consumePendingPrompt(for: session.id) == "Review these changes")
+    #expect(viewModel.consumePendingPrompt(for: session.id) == nil)
+  }
+
+  @Test("Real session terminal launch does not embed follow-up prompt")
+  @MainActor
+  func realSessionTerminalLaunchDoesNotEmbedFollowUpPrompt() {
+    let terminal = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [terminal])
+    let viewModel = makeAuxiliaryShellViewModel(terminalSurfaceFactory: factory, terminalBackend: .regular)
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      initialPrompt: "Review these changes",
+      initialInputText: nil,
+      isDark: true
+    )
+
+    #expect(terminal.configuredInitialPrompt == nil)
+  }
+
+  @Test("Pending session terminal launch keeps initial prompt")
+  @MainActor
+  func pendingSessionTerminalLaunchKeepsInitialPrompt() {
+    let terminal = TestTerminalSurface()
+    let factory = RecordingTerminalSurfaceFactory(surfaces: [terminal])
+    let viewModel = makeAuxiliaryShellViewModel(terminalSurfaceFactory: factory, terminalBackend: .regular)
+    let pendingKey = "pending-\(UUID().uuidString)"
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: pendingKey,
+      sessionId: pendingKey,
+      projectPath: "/tmp/project",
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      initialPrompt: "Build the feature",
+      initialInputText: nil,
+      isDark: true
+    )
+
+    #expect(terminal.configuredInitialPrompt == "Build the feature")
+  }
+
+  @Test("Existing terminal ignores stale initial prompt props")
+  @MainActor
+  func existingTerminalIgnoresStaleInitialPromptProps() {
+    let viewModel = makeAuxiliaryShellViewModel()
+    let terminal = TestTerminalSurface()
+    viewModel.activeTerminals["session-123"] = terminal
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      initialPrompt: "Review these changes",
+      initialInputText: nil,
+      isDark: true
+    )
+
+    _ = viewModel.getOrCreateTerminal(
+      forKey: "session-123",
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      initialPrompt: "Review these changes",
+      initialInputText: nil,
+      isDark: true
+    )
+
+    #expect(terminal.sentPrompts.isEmpty)
   }
 
   @Test("Transfers auxiliary shell terminal from pending key to resolved session ID")

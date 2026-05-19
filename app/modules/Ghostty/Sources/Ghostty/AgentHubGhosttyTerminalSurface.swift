@@ -26,6 +26,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var pendingMount: PendingMount?
   private var pendingMountTask: Task<Void, Never>?
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
+  private var pendingInitialPrompt: String?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
@@ -227,9 +228,18 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   public func sendPromptIfNeeded(_ prompt: String) {
     guard !hasDeliveredInitialPrompt else { return }
+    guard protectedAgentController != nil else {
+      pendingInitialPrompt = prompt
+      return
+    }
+
+    deliverPrompt(prompt)
+  }
+
+  private func deliverPrompt(_ prompt: String) {
+    guard !hasDeliveredInitialPrompt else { return }
     hasDeliveredInitialPrompt = true
     focusProtectedAgentTab()
-
     let planFeedbackPrefix = "\u{1B}[B\u{1B}[B\u{1B}[B\r"
     if prompt.hasPrefix(planFeedbackPrefix) {
       let feedback = String(prompt.dropFirst(planFeedbackPrefix.count))
@@ -256,6 +266,12 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       try? await Task.sleep(for: .milliseconds(100))
       self?.protectedAgentController?.sendReturnKey()
     }
+  }
+
+  private func deliverPendingInitialPromptIfNeeded() {
+    guard let prompt = pendingInitialPrompt else { return }
+    pendingInitialPrompt = nil
+    deliverPrompt(prompt)
   }
 
   public func submitPromptImmediately(_ prompt: String) -> Bool {
@@ -433,6 +449,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       terminalSession = session
       restorePendingWorkspaceSnapshotIfNeeded()
       installInteractionMonitorIfNeeded()
+      deliverPendingInitialPromptIfNeeded()
     } catch {
       mountError(error.localizedDescription)
     }
