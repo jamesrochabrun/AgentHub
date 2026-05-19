@@ -454,7 +454,7 @@ public struct MultiProviderSessionsListView: View {
         .keyboardShortcut("k", modifiers: .command)
         .hidden()
 
-      Button("") { handleCommandPaletteAction(.newSession) }
+      Button("") { triggerFocusedNewSessionFlow() }
         .keyboardShortcut("n", modifiers: .command)
         .hidden()
 
@@ -1665,7 +1665,7 @@ public struct MultiProviderSessionsListView: View {
   private func handleCommandPaletteAction(_ action: CommandPaletteAction) {
     switch action {
     case .newSession:
-      triggerNewSessionFlow()
+      triggerFocusedNewSessionFlow()
 
     case .switchToSession(let id, _, _, _):
       if let item = selectedSessionItems.first(where: { $0.id == id }) {
@@ -1714,7 +1714,32 @@ public struct MultiProviderSessionsListView: View {
     columnVisibility = previousVisibility
   }
 
-  private func triggerNewSessionFlow(preferredRepositoryPath: String? = nil) {
+  private var focusedSessionLaunchPath: String? {
+    FocusedSessionLaunchTargetResolver.launchPath(
+      primarySessionId: primarySessionId,
+      selectedModuleLandingPath: selectedModuleLandingPath,
+      items: selectedSessionItems.map {
+        FocusedSessionLaunchTargetResolver.SessionItem(
+          id: $0.id,
+          projectPath: $0.session.projectPath
+        )
+      },
+      repositories: orderedTrackedRepos
+    )
+  }
+
+  private func triggerFocusedNewSessionFlow() {
+    guard let focusedSessionLaunchPath else { return }
+    triggerNewSessionFlow(
+      preferredRepositoryPath: focusedSessionLaunchPath,
+      fallsBackToRepositoryPicker: false
+    )
+  }
+
+  private func triggerNewSessionFlow(
+    preferredRepositoryPath: String? = nil,
+    fallsBackToRepositoryPicker: Bool = true
+  ) {
     guard let multiLaunchViewModel else { return }
     multiLaunchViewModel.reset()
 
@@ -1728,7 +1753,7 @@ public struct MultiProviderSessionsListView: View {
       let didPreselect = await multiLaunchViewModel.preselectRepository(path: preferredRepositoryPath)
       if didPreselect {
         isStartSessionSheetPresented = true
-      } else {
+      } else if fallsBackToRepositoryPicker {
         isStartSessionSheetPresented = true
         multiLaunchViewModel.selectRepository()
       }

@@ -7,7 +7,7 @@ import AgentHubGitDiff
 import Foundation
 
 extension Notification.Name {
-  /// Request the focused monitoring card to swap between Terminal and Files content modes.
+  /// Request the focused monitoring card to cycle to its next visible content mode.
   static let toggleMonitoringContentMode = Notification.Name("com.agenthub.toggleMonitoringContentMode")
 }
 
@@ -97,10 +97,16 @@ enum MonitoringEditorStateStore {
     availableModes.contains(contentMode) ? contentMode : .terminal
   }
 
-  static func toggledTerminalFilesMode(
-    from contentMode: MonitoringCardContentMode
+  static func nextContentMode(
+    after contentMode: MonitoringCardContentMode,
+    availableModes: [MonitoringCardContentMode]
   ) -> MonitoringCardContentMode {
-    contentMode == .terminal ? .editor : .terminal
+    guard !availableModes.isEmpty else { return .terminal }
+    guard let currentIndex = availableModes.firstIndex(of: contentMode) else {
+      return availableModes[0]
+    }
+    let nextIndex = availableModes.index(after: currentIndex)
+    return nextIndex == availableModes.endIndex ? availableModes[0] : availableModes[nextIndex]
   }
 
   static func state(

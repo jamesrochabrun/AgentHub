@@ -311,24 +311,29 @@ public final class MultiSessionLaunchViewModel {
   @discardableResult
   public func preselectRepository(path: String) async -> Bool {
     let combined = claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
-    if let repository = combined.last(where: { $0.path == path }) {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    if let repository = combined.last(where: {
+      WorktreeModuleResolver.normalizedDirectoryPath($0.path) == normalizedPath
+    }) {
       selectedRepository = repository
       await loadBranches()
       return true
     }
 
-    guard let match = WorktreeModuleResolver.bestMatch(for: path, repositories: combined),
-          match.worktree.isWorktree,
-          match.worktree.path == WorktreeModuleResolver.normalizedDirectoryPath(path) else {
+    guard let match = WorktreeModuleResolver.bestMatch(for: path, repositories: combined) else {
       return false
     }
 
-    selectedRepository = SelectedRepository(
-      path: match.worktree.path,
-      name: URL(fileURLWithPath: match.worktree.path).lastPathComponent,
-      worktrees: [match.worktree],
-      isExpanded: true
-    )
+    if match.worktree.isWorktree {
+      selectedRepository = SelectedRepository(
+        path: match.worktree.path,
+        name: URL(fileURLWithPath: match.worktree.path).lastPathComponent,
+        worktrees: [match.worktree],
+        isExpanded: true
+      )
+    } else {
+      selectedRepository = match.repository
+    }
     await loadBranches()
     return true
   }
