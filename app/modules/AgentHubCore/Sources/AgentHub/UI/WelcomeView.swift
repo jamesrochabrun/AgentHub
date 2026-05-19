@@ -113,7 +113,6 @@ public struct WelcomeView: View {
       sectionHeader(title: "Quick Start", icon: "bolt.fill")
 
       VStack(spacing: 10) {
-        shortcutRow(key: "⌘ N", description: "Start new session", icon: "plus.circle")
         shortcutRow(key: "⌘ K", description: "Command palette", icon: "command")
         shortcutRow(key: "⌘ B", description: "Toggle sidebar", icon: "sidebar.left")
         shortcutRow(key: "⌘ [ / ]", description: "Navigate between sessions", icon: "arrow.left.arrow.right")

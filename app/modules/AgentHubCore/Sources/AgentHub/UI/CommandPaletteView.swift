@@ -44,7 +44,7 @@ public enum CommandPaletteAction: Identifiable {
 
   var subtitle: String? {
     switch self {
-    case .newSession: return "Start a new Claude or Codex session"
+    case .newSession: return "Start from the focused session's worktree"
     case .switchToSession(_, _, let provider, let firstMessage):
       if let firstMessage {
         let trimmed = firstMessage.trimmingCharacters(in: .whitespacesAndNewlines)
