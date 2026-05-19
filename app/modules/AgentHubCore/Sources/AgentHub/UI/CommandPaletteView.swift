@@ -38,7 +38,7 @@ public enum CommandPaletteAction: Identifiable {
     case .openSettings: return "Open Settings"
     case .toggleSidebar: return "Toggle Sidebar"
     case .toggleFocusMode: return "Toggle Focus Mode"
-    case .toggleTerminalEditor: return "Swap Terminal and Files"
+    case .toggleTerminalEditor: return "Next Session Tab"
     }
   }
 
@@ -57,7 +57,7 @@ public enum CommandPaletteAction: Identifiable {
     case .openSettings: return "Open application settings"
     case .toggleSidebar: return "Show or hide the sidebar"
     case .toggleFocusMode: return "Expand focused session or restore previous layout"
-    case .toggleTerminalEditor: return "Switch the focused session between terminal and files"
+    case .toggleTerminalEditor: return "Cycle the focused session through visible tabs"
     }
   }
 
@@ -69,7 +69,7 @@ public enum CommandPaletteAction: Identifiable {
     case .openSettings: return "gear"
     case .toggleSidebar: return "sidebar.left"
     case .toggleFocusMode: return "arrow.up.left.and.arrow.down.right"
-    case .toggleTerminalEditor: return "rectangle.2.swap"
+    case .toggleTerminalEditor: return "arrow.triangle.2.circlepath"
     }
   }
 
@@ -79,7 +79,7 @@ public enum CommandPaletteAction: Identifiable {
     case .toggleSidebar: return "⌘B"
     case .openSettings: return "⌘,"
     case .toggleFocusMode: return "⌘\\"
-    case .toggleTerminalEditor: return "⌃`"
+    case .toggleTerminalEditor: return "⌥`"
     default: return nil
     }
   }

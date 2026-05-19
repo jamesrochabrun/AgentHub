@@ -125,11 +125,25 @@ struct MonitoringEditorStateTests {
     #expect(mode == .terminal)
   }
 
-  @Test("Terminal files shortcut ignores diffs")
-  func terminalFilesShortcutIgnoresDiffs() {
-    #expect(MonitoringEditorStateStore.toggledTerminalFilesMode(from: .terminal) == .editor)
-    #expect(MonitoringEditorStateStore.toggledTerminalFilesMode(from: .editor) == .terminal)
-    #expect(MonitoringEditorStateStore.toggledTerminalFilesMode(from: .diffs) == .terminal)
+  @Test("Content shortcut cycles visible modes by index")
+  func contentShortcutCyclesVisibleModesByIndex() {
+    let modes: [MonitoringCardContentMode] = [.terminal, .editor, .diffs]
+
+    #expect(MonitoringEditorStateStore.nextContentMode(after: .terminal, availableModes: modes) == .editor)
+    #expect(MonitoringEditorStateStore.nextContentMode(after: .editor, availableModes: modes) == .diffs)
+    #expect(MonitoringEditorStateStore.nextContentMode(after: .diffs, availableModes: modes) == .terminal)
+  }
+
+  @Test("Content shortcut falls back to first visible mode when current mode disappears")
+  func contentShortcutFallsBackToFirstVisibleMode() {
+    #expect(MonitoringEditorStateStore.nextContentMode(
+      after: .diffs,
+      availableModes: [.terminal, .editor]
+    ) == .terminal)
+    #expect(MonitoringEditorStateStore.nextContentMode(
+      after: .terminal,
+      availableModes: []
+    ) == .terminal)
   }
 
   @Test("Inline available modes include diffs only when available")

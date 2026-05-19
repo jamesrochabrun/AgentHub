@@ -209,6 +209,8 @@ public struct MultiProviderMonitoringPanelView: View {
   private var flatSessionLayout: Bool = false
   @AppStorage(AgentHubDefaults.worktreeDisplayMode)
   private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
+  @AppStorage(AgentHubDefaults.diffDisplayMode)
+  private var diffDisplayModeRawValue: String = DiffDisplayMode.inline.rawValue
   @State private var showQuickFilePicker = false
   @State private var gitHubPopOutItem: GitHubPopOutItem?
   @Environment(\.colorScheme) private var colorScheme
@@ -322,6 +324,9 @@ public struct MultiProviderMonitoringPanelView: View {
       Group {
         Button("") { showQuickFilePicker = true }
           .keyboardShortcut("p", modifiers: [.command])
+
+        Button("") { togglePrimarySessionContentMode() }
+          .keyboardShortcut("`", modifiers: [.option])
 
         Button("") { togglePrimarySessionContentMode() }
           .keyboardShortcut("`", modifiers: [.control])
@@ -1435,6 +1440,10 @@ public struct MultiProviderMonitoringPanelView: View {
     WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
   }
 
+  private var diffDisplayMode: DiffDisplayMode {
+    DiffDisplayMode(rawValue: diffDisplayModeRawValue) ?? .inline
+  }
+
   private var emptyStateViewModel: CLISessionsViewModel {
     if !claudeViewModel.selectedRepositories.isEmpty { return claudeViewModel }
     if !codexViewModel.selectedRepositories.isEmpty { return codexViewModel }
@@ -1675,10 +1684,18 @@ public struct MultiProviderMonitoringPanelView: View {
   private func togglePrimarySessionContentMode() {
     guard activeModuleLandingPath(snapshot: makeItemSnapshot()) == nil else { return }
     guard let item = effectivePrimaryItem else { return }
-    let nextMode = MonitoringEditorStateStore.toggledTerminalFilesMode(
-      from: editorState(for: item).contentMode
+    let nextMode = MonitoringEditorStateStore.nextContentMode(
+      after: editorState(for: item).contentMode,
+      availableModes: availableContentModes(for: item)
     )
     setContentMode(nextMode, for: item)
+  }
+
+  private func availableContentModes(for item: ProviderMonitoringItem) -> [MonitoringCardContentMode] {
+    MonitoringEditorStateStore.availableContentModes(
+      diffDisplayMode: diffDisplayMode,
+      diffAvailabilityStatus: item.viewModel.diffAvailabilityStatus(for: item.projectPath)
+    )
   }
 
   private func showTerminalWithPrompt(
