@@ -308,6 +308,13 @@ public final class CLISessionsViewModel {
     pendingTerminalPrompts[sessionId]
   }
 
+  /// Returns and clears the pending prompt for a session.
+  public func consumePendingPrompt(for sessionId: String) -> String? {
+    guard let prompt = pendingTerminalPrompts[sessionId] else { return nil }
+    pendingTerminalPrompts.removeValue(forKey: sessionId)
+    return prompt
+  }
+
   /// Clears the pending prompt after terminal has started (call from onAppear)
   public func clearPendingPrompt(for sessionId: String) {
     pendingTerminalPrompts.removeValue(forKey: sessionId)
@@ -622,13 +629,21 @@ public final class CLISessionsViewModel {
   ) -> any EmbeddedTerminalSurface {
     let config = cliConfiguration ?? self.currentCLIConfiguration
     let queuedInputText = consumePendingTerminalInputText(for: key)
-    let descriptorInputText = key.hasPrefix("pending-") ? combinedInputText(initialInputText, queuedInputText) : queuedInputText
+    let isNewSession = (
+      sessionId == nil
+        || sessionId?.isEmpty == true
+        || sessionId?.hasPrefix("pending-") == true
+    )
+    let launchInitialPrompt = isNewSession ? initialPrompt : nil
+    let descriptorInputText = key.hasPrefix("pending-")
+      ? combinedInputText(initialInputText, queuedInputText)
+      : queuedInputText
     let createInputText = combinedInputText(initialInputText, queuedInputText)
     let descriptor = TerminalSurfaceDescriptor.cli(
       sessionId: sessionId,
       projectPath: projectPath,
       cliConfiguration: config,
-      initialPrompt: key.hasPrefix("pending-") ? initialPrompt : nil,
+      initialPrompt: launchInitialPrompt,
       initialInputText: descriptorInputText,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
@@ -639,16 +654,6 @@ public final class CLISessionsViewModel {
     if let existing = activeTerminals[key] {
       if activeTerminalDescriptors[key] == nil {
         activeTerminalDescriptors[key] = descriptor
-      }
-      // Send prompt to existing terminal if provided
-      if let prompt = initialPrompt {
-        if !key.hasPrefix("pending-") {
-          // Resume scenario: send prompt to existing terminal (e.g., inline edit).
-          // For pending sessions, the prompt is already embedded in CLI args — don't re-send.
-          existing.resetPromptDeliveryFlag()
-          existing.sendPromptIfNeeded(prompt)
-        }
-        clearPendingPrompt(for: key)  // Clear after sending
       }
       if let inputText = initialInputText, !inputText.isEmpty {
         existing.typeInitialTextIfNeeded(inputText)
@@ -668,7 +673,7 @@ public final class CLISessionsViewModel {
       sessionId: sessionId,
       projectPath: projectPath,
       cliConfiguration: config,
-      initialPrompt: initialPrompt,
+      initialPrompt: launchInitialPrompt,
       initialInputText: createInputText,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
