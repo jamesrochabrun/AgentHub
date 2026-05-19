@@ -33,7 +33,7 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
 - **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, monitor current-branch PR status from session rows, and send GitHub context back into a session
 - **File explorer and built-in editor** — Browse the project tree, jump to files with Cmd+P, edit files in-app with syntax highlighting, and save changes without leaving AgentHub
-- **Git worktree management** — Create and delete worktrees from the UI; launch sessions on new branches
+- **Git worktree management** — Create and delete worktrees from the UI, launch sessions on new branches, and choose whether AgentHub-owned worktree sessions appear under the parent module or as separate modules
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
 - **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
@@ -224,10 +224,11 @@ When active, a teal indicator appears below the prompt.
 
 ## Configuration
 
-AgentHub's settings window is organized into three tabs:
+AgentHub's settings window is organized into four tabs:
 
 - **General** — Notifications and app-wide behavior such as opening the file explorer in a modal window
 - **Configuration** — Claude and Codex CLI commands, provider-specific defaults, and Smart mode
+- **Worktrees** — Worktree module grouping and generated branch naming
 - **Appearance** — Flat session layout, terminal preferences, and theme selection
 
 ### Display Mode
@@ -238,6 +239,12 @@ AgentHub supports two display modes:
 - **Popover Mode** — Stats appear as a toolbar button in the app window
 
 Toggle between modes in the app settings.
+
+### Worktree Grouping
+
+Worktree sessions are grouped under their parent module by default, so `ModuleA` shows its regular sessions plus AgentHub-owned worktree sessions. The Worktrees settings tab can switch to separate modules, where each AgentHub-owned worktree appears as its own module section.
+
+AgentHub only treats worktrees it created, explicitly added, or focused through monitored sessions as owned. External Git worktrees discovered from the repository are ignored for session grouping, which keeps large local worktree setups from flooding the session list.
 
 ### Provider Defaults
 
