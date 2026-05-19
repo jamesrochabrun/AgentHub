@@ -311,11 +311,24 @@ public final class MultiSessionLaunchViewModel {
   @discardableResult
   public func preselectRepository(path: String) async -> Bool {
     let combined = claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
-    guard let repository = combined.last(where: { $0.path == path }) else {
+    if let repository = combined.last(where: { $0.path == path }) {
+      selectedRepository = repository
+      await loadBranches()
+      return true
+    }
+
+    guard let match = WorktreeModuleResolver.bestMatch(for: path, repositories: combined),
+          match.worktree.isWorktree,
+          match.worktree.path == WorktreeModuleResolver.normalizedDirectoryPath(path) else {
       return false
     }
 
-    selectedRepository = repository
+    selectedRepository = SelectedRepository(
+      path: match.worktree.path,
+      name: URL(fileURLWithPath: match.worktree.path).lastPathComponent,
+      worktrees: [match.worktree],
+      isExpanded: true
+    )
     await loadBranches()
     return true
   }
@@ -692,7 +705,11 @@ public final class MultiSessionLaunchViewModel {
         try await Task.sleep(for: .milliseconds(500))
         try Task.checkCancellation()
 
-        let worktree = WorktreeBranch(name: session.branchName, path: worktreePath, isWorktree: true)
+        let worktree = await viewModel.registerCreatedWorktree(
+          name: session.branchName,
+          path: worktreePath,
+          parentRepositoryPath: repoPath
+        )
         viewModel.startNewSessionInHub(
           worktree,
           initialPrompt: session.prompt,
@@ -768,7 +785,11 @@ public final class MultiSessionLaunchViewModel {
       try await Task.sleep(for: .milliseconds(500))
       try Task.checkCancellation()
 
-      let worktree = WorktreeBranch(name: branchName, path: worktreePath, isWorktree: true)
+      let worktree = await viewModel.registerCreatedWorktree(
+        name: branchName,
+        path: worktreePath,
+        parentRepositoryPath: repoPath
+      )
       viewModel.startNewSessionInHub(
         worktree,
         initialPrompt: initialPrompt,
@@ -956,7 +977,11 @@ public final class MultiSessionLaunchViewModel {
     try Task.checkCancellation()
 
     if let path = claudeWorktreePath {
-      let worktree = WorktreeBranch(name: claudeBranchName, path: path, isWorktree: true)
+      let worktree = await claudeViewModel.registerCreatedWorktree(
+        name: claudeBranchName,
+        path: path,
+        parentRepositoryPath: repoPath
+      )
       claudeViewModel.startNewSessionInHub(
         worktree,
         initialPrompt: initialPrompt,
@@ -970,7 +995,11 @@ public final class MultiSessionLaunchViewModel {
     try Task.checkCancellation()
 
     if let path = codexWorktreePath {
-      let worktree = WorktreeBranch(name: codexBranchName, path: path, isWorktree: true)
+      let worktree = await codexViewModel.registerCreatedWorktree(
+        name: codexBranchName,
+        path: path,
+        parentRepositoryPath: repoPath
+      )
       codexViewModel.startNewSessionInHub(
         worktree,
         initialPrompt: initialPrompt,
@@ -1024,7 +1053,11 @@ public final class MultiSessionLaunchViewModel {
     try await Task.sleep(for: .milliseconds(500))
     try Task.checkCancellation()
 
-    let worktree = WorktreeBranch(name: branchName, path: path, isWorktree: true)
+    let worktree = await viewModel.registerCreatedWorktree(
+      name: branchName,
+      path: path,
+      parentRepositoryPath: repoPath
+    )
     viewModel.startNewSessionInHub(
       worktree,
       initialPrompt: initialPrompt,

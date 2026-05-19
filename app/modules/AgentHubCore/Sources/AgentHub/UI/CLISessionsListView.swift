@@ -29,6 +29,8 @@ public struct CLISessionsListView: View {
   @State private var isSearchSheetVisible: Bool = false
   @State private var primarySessionId: String?
   @State private var createWorktreeRepository: SelectedRepository?
+  @AppStorage(AgentHubDefaults.worktreeDisplayMode)
+  private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @FocusState private var isSearchFieldFocused: Bool
@@ -580,7 +582,11 @@ public struct CLISessionsListView: View {
       }
 
       HStack {
-        Text("\(viewModel.selectedRepositories.count) \(viewModel.selectedRepositories.count == 1 ? "module" : "modules") selected · \(viewModel.totalSessionCount) sessions")
+        let moduleCount = WorktreeModuleResolver.modulePaths(
+          for: viewModel.selectedRepositories,
+          mode: worktreeDisplayMode
+        ).count
+        Text("\(moduleCount) \(moduleCount == 1 ? "module" : "modules") selected · \(viewModel.totalSessionCount) sessions")
           .font(.secondaryCaption)
           .foregroundColor(.secondary)
 
@@ -663,6 +669,10 @@ public struct CLISessionsListView: View {
       }
     }
     .padding(.horizontal, DesignTokens.Spacing.xs)
+  }
+
+  private var worktreeDisplayMode: WorktreeDisplayMode {
+    WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
   }
 }
 
@@ -837,6 +847,7 @@ private struct SessionFileSheetView: View {
       return .handled
     }
   }
+
 }
 
 // MARK: - Preview

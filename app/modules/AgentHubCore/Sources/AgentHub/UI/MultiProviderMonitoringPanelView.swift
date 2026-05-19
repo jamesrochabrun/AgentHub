@@ -207,6 +207,8 @@ public struct MultiProviderMonitoringPanelView: View {
   private var previousLayoutModeRawValue: Int = -1
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
+  @AppStorage(AgentHubDefaults.worktreeDisplayMode)
+  private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
   @State private var showQuickFilePicker = false
   @State private var gitHubPopOutItem: GitHubPopOutItem?
   @Environment(\.colorScheme) private var colorScheme
@@ -1424,14 +1426,13 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private var allSelectedRepositories: [SelectedRepository] {
-    var map: [String: SelectedRepository] = [:]
-    for repo in claudeViewModel.selectedRepositories {
-      map[repo.path] = repo
-    }
-    for repo in codexViewModel.selectedRepositories where map[repo.path] == nil {
-      map[repo.path] = repo
-    }
-    return map.values.sorted { $0.path < $1.path }
+    WorktreeModuleResolver.mergedRepositories(
+      claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
+    ).sorted { $0.path < $1.path }
+  }
+
+  private var worktreeDisplayMode: WorktreeDisplayMode {
+    WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
   }
 
   private var emptyStateViewModel: CLISessionsViewModel {
@@ -1441,16 +1442,11 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func findModulePath(for item: ProviderMonitoringItem) -> String {
-    let itemPath = item.projectPath
-
-    for repo in allSelectedRepositories {
-      for worktree in repo.worktrees {
-        if worktree.path == itemPath {
-          return repo.path
-        }
-      }
-    }
-    return itemPath
+    WorktreeModuleResolver.modulePath(
+      for: item.projectPath,
+      repositories: allSelectedRepositories,
+      mode: worktreeDisplayMode
+    )
   }
 
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {
@@ -1740,7 +1736,8 @@ public struct MultiProviderMonitoringPanelView: View {
     ModuleLandingSelection.activeModulePath(
       selectedPath: selectedModuleLandingPath,
       repositories: allSelectedRepositories,
-      itemProjectPaths: snapshot.allItems.map(\.projectPath)
+      itemProjectPaths: snapshot.allItems.map(\.projectPath),
+      mode: worktreeDisplayMode
     )
   }
 }

@@ -179,6 +179,10 @@ public enum AgentHubDefaults {
   /// Type: String (default: "")
   public static let worktreeBranchPrefix = "\(keyPrefix)worktree.generatedBranchPrefix"
 
+  /// How worktree sessions are grouped in module-oriented UI.
+  /// Type: String (default: WorktreeDisplayMode.parent.rawValue)
+  public static let worktreeDisplayMode = "\(keyPrefix)worktree.displayMode"
+
   // MARK: - Theme Settings
 
   /// Selected color theme name

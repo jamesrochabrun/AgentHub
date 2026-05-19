@@ -6,31 +6,19 @@ enum ModuleLandingSelection {
   static func activeModulePath(
     selectedPath: String?,
     repositories: [SelectedRepository],
-    itemProjectPaths: [String]
+    itemProjectPaths: [String],
+    mode: WorktreeDisplayMode = .parent
   ) -> String? {
     guard let selectedPath else { return nil }
-    guard repositories.contains(where: { $0.path == selectedPath }) else { return nil }
+    guard WorktreeModuleResolver.modulePaths(for: repositories, mode: mode).contains(selectedPath) else { return nil }
 
     let hasItems = itemProjectPaths.contains { itemPath in
-      parentModulePath(for: itemPath, repositories: repositories) == selectedPath
+      WorktreeModuleResolver.modulePath(
+        for: itemPath,
+        repositories: repositories,
+        mode: mode
+      ) == selectedPath
     }
     return hasItems ? nil : selectedPath
-  }
-
-  private static func parentModulePath(
-    for itemPath: String,
-    repositories: [SelectedRepository]
-  ) -> String {
-    for repository in repositories {
-      if repository.path == itemPath {
-        return repository.path
-      }
-
-      if repository.worktrees.contains(where: { $0.path == itemPath }) {
-        return repository.path
-      }
-    }
-
-    return itemPath
   }
 }

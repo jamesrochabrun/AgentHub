@@ -18,6 +18,8 @@ public struct SessionsBrowserPanel: View {
   @Bindable var codexViewModel: CLISessionsViewModel
 
   @Environment(\.colorScheme) private var colorScheme
+  @AppStorage(AgentHubDefaults.worktreeDisplayMode)
+  private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
 
   public init(claudeViewModel: CLISessionsViewModel, codexViewModel: CLISessionsViewModel) {
     self.claudeViewModel = claudeViewModel
@@ -184,27 +186,21 @@ public struct SessionsBrowserPanel: View {
   }
 
   private var allSelectedRepositories: [SelectedRepository] {
-    var map: [String: SelectedRepository] = [:]
-    for repo in claudeViewModel.selectedRepositories {
-      map[repo.path] = repo
-    }
-    for repo in codexViewModel.selectedRepositories where map[repo.path] == nil {
-      map[repo.path] = repo
-    }
-    return map.values.sorted { $0.path < $1.path }
+    WorktreeModuleResolver.mergedRepositories(
+      claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
+    ).sorted { $0.path < $1.path }
   }
 
   private func findModulePath(for item: ProviderMonitoringItem) -> String {
-    let itemPath = item.projectPath
+    WorktreeModuleResolver.modulePath(
+      for: item.projectPath,
+      repositories: allSelectedRepositories,
+      mode: worktreeDisplayMode
+    )
+  }
 
-    for repo in allSelectedRepositories {
-      for worktree in repo.worktrees {
-        if worktree.path == itemPath {
-          return repo.path
-        }
-      }
-    }
-    return itemPath
+  private var worktreeDisplayMode: WorktreeDisplayMode {
+    WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
   }
 
   // MARK: - Focus/Selection Logic

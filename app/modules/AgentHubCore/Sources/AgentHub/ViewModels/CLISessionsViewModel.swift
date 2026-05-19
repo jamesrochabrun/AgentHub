@@ -855,6 +855,9 @@ public final class CLISessionsViewModel {
   /// Set of session IDs currently being monitored
   public private(set) var monitoredSessionIds: Set<String> = []
 
+  /// Worktrees explicitly created or focused through AgentHub.
+  private var ownedWorktreePaths: Set<String> = []
+
   /// Current monitoring states keyed by session ID
   public private(set) var monitorStates: [String: SessionMonitorState] = [:]
 
@@ -1165,6 +1168,51 @@ public final class CLISessionsViewModel {
     return false
   }
 
+  private func normalizeWorktreePaths(_ paths: Set<String>) -> Set<String> {
+    Set(paths.map { WorktreeModuleResolver.normalizedDirectoryPath($0) })
+  }
+
+  private func setOwnedWorktreePaths(_ paths: Set<String>) async {
+    ownedWorktreePaths = normalizeWorktreePaths(paths)
+    await monitorService.setOwnedWorktreePaths(ownedWorktreePaths)
+  }
+
+  private func syncOwnedWorktreePathsToMonitor() {
+    let paths = ownedWorktreePaths
+    Task {
+      await monitorService.setOwnedWorktreePaths(paths)
+    }
+  }
+
+  private func syncFocusedSessionIdsToMonitor(extraSessionIds: Set<String> = []) {
+    let sessionIds = monitoredSessionIds.union(extraSessionIds)
+    Task {
+      await monitorService.setFocusedSessionIds(sessionIds)
+    }
+  }
+
+  private func registerOwnedWorktreePath(_ path: String) {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    guard ownedWorktreePaths.insert(normalizedPath).inserted else { return }
+    syncOwnedWorktreePathsToMonitor()
+  }
+
+  private func removeOwnedWorktreePath(_ path: String) {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    guard ownedWorktreePaths.remove(normalizedPath) != nil else { return }
+    syncOwnedWorktreePathsToMonitor()
+  }
+
+  private func filterOwnedWorktrees(in repositories: [SelectedRepository]) -> [SelectedRepository] {
+    repositories.map { repository in
+      var filtered = repository
+      filtered.worktrees = repository.worktrees.filter { worktree in
+        !worktree.isWorktree || ownedWorktreePaths.contains(WorktreeModuleResolver.normalizedDirectoryPath(worktree.path))
+      }
+      return filtered
+    }
+  }
+
   /// Merges updated repositories while preserving expanded state from current repositories
   private func mergePreservingExpandedState(
     current: [SelectedRepository],
@@ -1182,7 +1230,7 @@ public final class CLISessionsViewModel {
     }
 
     // Apply preserved states to updated repositories
-    var result = updated
+    var result = filterOwnedWorktrees(in: updated)
     for i in result.indices {
       if let expanded = repoExpandedState[result[i].id] {
         result[i].isExpanded = expanded
@@ -1216,6 +1264,38 @@ public final class CLISessionsViewModel {
       if !persistedSessionIds.isEmpty {
         pendingRestorationSessionIds = persistedSessionIds
       }
+
+      var restoredOwnedWorktreePaths = Set(workspaceState.ownedWorktreePaths)
+      for path in paths {
+        let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+        if let info = await GitWorktreeDetector.detectWorktreeInfo(for: normalizedPath),
+           info.isWorktree {
+          restoredOwnedWorktreePaths.insert(normalizedPath)
+        }
+      }
+      if !persistedSessionIds.isEmpty,
+         let mappings = try? await metadataStore?.getRepoMappings(for: Array(persistedSessionIds)) {
+        var restoredRepositoryPaths = Set(paths.map { WorktreeModuleResolver.normalizedDirectoryPath($0) })
+        for path in paths {
+          let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+          if let info = await GitWorktreeDetector.detectWorktreeInfo(for: normalizedPath),
+             info.isWorktree,
+             let mainRepoPath = info.mainRepoPath {
+            restoredRepositoryPaths.insert(WorktreeModuleResolver.normalizedDirectoryPath(mainRepoPath))
+          }
+        }
+        for mapping in mappings.values {
+          let parentPath = WorktreeModuleResolver.normalizedDirectoryPath(mapping.parentRepoPath)
+          let worktreePath = WorktreeModuleResolver.normalizedDirectoryPath(mapping.worktreePath)
+          guard restoredRepositoryPaths.contains(parentPath),
+                worktreePath != parentPath else {
+            continue
+          }
+          restoredOwnedWorktreePaths.insert(worktreePath)
+        }
+      }
+      await setOwnedWorktreePaths(restoredOwnedWorktreePaths)
+      await monitorService.setFocusedSessionIds(persistedSessionIds)
 
       // Restore repository/worktree shells first. Full all-session scanning is
       // deferred until the Browse panel is opened.
@@ -1368,6 +1448,7 @@ public final class CLISessionsViewModel {
     return SessionWorkspaceState(
       selectedRepositoryPaths: selectedRepositories.map(\.path),
       monitoredSessionIds: Array(sessionIdsToPersist).sorted(),
+      ownedWorktreePaths: Array(ownedWorktreePaths).sorted(),
       expansionState: state
     )
   }
@@ -1521,6 +1602,7 @@ public final class CLISessionsViewModel {
       loadingState = .addingRepository(name: repoName)
       let previousBrowseSessionsLoadState = browseSessionsLoadState
       browseSessionsLoadState = .loading
+      await focusWorktreeIfNeeded(at: path)
       // [CLISessionsVM] Calling monitorService.addRepository...")
       let addedRepository = await monitorService.addRepository(path)
       // [CLISessionsVM] monitorService.addRepository completed")
@@ -1528,6 +1610,15 @@ public final class CLISessionsViewModel {
       loadingState = .idle
       // [CLISessionsVM] loadingState = .idle")
     }
+  }
+
+  private func focusWorktreeIfNeeded(at path: String) async {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    guard let info = await GitWorktreeDetector.detectWorktreeInfo(for: normalizedPath),
+          info.isWorktree else {
+      return
+    }
+    await setOwnedWorktreePaths(ownedWorktreePaths.union([normalizedPath]))
   }
 
   /// Removes a repository from monitoring
@@ -1548,6 +1639,9 @@ public final class CLISessionsViewModel {
       stopMonitoring(sessionId: sessionId)
     }
 
+    ownedWorktreePaths.subtract(repository.worktrees.filter(\.isWorktree).map(\.path))
+    syncOwnedWorktreePathsToMonitor()
+
     Task {
       await monitorService.removeRepository(repository.path)
     }
@@ -1561,7 +1655,7 @@ public final class CLISessionsViewModel {
     baseBranch: String?,
     onProgress: @escaping @Sendable (WorktreeCreationProgress) async -> Void
   ) async throws {
-    _ = try await worktreeService.createWorktreeWithNewBranch(
+    let worktreePath = try await worktreeService.createWorktreeWithNewBranch(
       at: repository.path,
       newBranchName: branchName,
       directoryName: directoryName,
@@ -1569,7 +1663,38 @@ public final class CLISessionsViewModel {
       operationID: WorktreeCreationOperationID(),
       onProgress: onProgress
     )
+    await registerCreatedWorktree(
+      name: branchName,
+      path: worktreePath,
+      parentRepositoryPath: repository.path
+    )
     refresh()
+  }
+
+  @discardableResult
+  public func registerCreatedWorktree(
+    name: String,
+    path: String,
+    parentRepositoryPath: String
+  ) async -> WorktreeBranch {
+    let worktree = WorktreeBranch(
+      name: name,
+      path: path,
+      isWorktree: true,
+      sessions: [],
+      isExpanded: true
+    )
+
+    await setOwnedWorktreePaths(ownedWorktreePaths.union([worktree.path]))
+    await monitorService.registerWorktree(worktree, parentRepositoryPath: parentRepositoryPath)
+    let updatedRepositories = await monitorService.getSelectedRepositories()
+    selectedRepositories = mergePreservingExpandedState(
+      current: selectedRepositories,
+      updated: updatedRepositories
+    )
+    persistSelectedRepositories()
+    syncClaudeHookInstalls()
+    return worktree
   }
 
   /// Finds the parent repository path for a worktree by searching selectedRepositories.
@@ -1600,6 +1725,7 @@ public final class CLISessionsViewModel {
           NSLocalizedDescriptionKey: "Cannot find parent repository for worktree at \(worktree.path)"
         ])
       }
+      removeOwnedWorktreePath(worktree.path)
       deletingWorktreePath = nil
       clearWorktreeDeletionError()
       refresh()
@@ -1633,6 +1759,7 @@ public final class CLISessionsViewModel {
 
     do {
       try await worktreeService.removeOrphanedWorktree(at: worktree.path, parentRepoPath: parentRepoPath)
+      removeOwnedWorktreePath(worktree.path)
       deletingWorktreePath = nil
       clearWorktreeDeletionError()
       refresh()
@@ -1673,6 +1800,7 @@ public final class CLISessionsViewModel {
     deletingWorktreePath = session.projectPath
     do {
       try await worktreeService.removeWorktree(at: session.projectPath, force: force)
+      removeOwnedWorktreePath(session.projectPath)
       deletingWorktreePath = nil
       stopMonitoring(session: session)
       refresh()
@@ -1978,14 +2106,6 @@ public final class CLISessionsViewModel {
           try await worktreeService.applyStash(stashRef, at: worktreePath)
         }
 
-        let worktree = WorktreeBranch(
-          name: branchName,
-          path: worktreePath,
-          isWorktree: true,
-          sessions: [],
-          isExpanded: true
-        )
-
         // Build a transcript reference to orient the new session.
         // sessionFilePath is the canonical, provider-agnostic path already stored on the model:
         //   - Claude sessions: ~/.claude/projects/{encoded-path}/{sessionId}.jsonl
@@ -2008,8 +2128,18 @@ public final class CLISessionsViewModel {
             ? hub.claudeSessionsViewModel
             : hub.codexSessionsViewModel
           targetViewModel.addRepository(at: session.projectPath)
+          let worktree = await targetViewModel.registerCreatedWorktree(
+            name: branchName,
+            path: worktreePath,
+            parentRepositoryPath: session.projectPath
+          )
           targetViewModel.startNewSessionInHub(worktree, initialPrompt: reference)
         } else {
+          let worktree = await registerCreatedWorktree(
+            name: branchName,
+            path: worktreePath,
+            parentRepositoryPath: session.projectPath
+          )
           startNewSessionInHub(worktree, initialPrompt: reference)
         }
       } catch {
@@ -2227,8 +2357,23 @@ public final class CLISessionsViewModel {
 #endif
     // Refresh to get the real session object with retry loop
     Task {
+      if let worktreeName = pending.worktreeName, !worktreeName.isEmpty {
+        let expectedWorktreePath = worktree.path + "/.claude/worktrees/" + worktreeName
+        await registerCreatedWorktree(
+          name: worktreeName,
+          path: expectedWorktreePath,
+          parentRepositoryPath: worktree.path
+        )
+      }
+      await monitorService.setFocusedSessionIds(monitoredSessionIds.union([sessionId]))
       // Retry loop: wait up to 2 seconds for session to appear in selectedRepositories
       let maxAttempts = 10  // 10 × 200ms = 2 seconds
+      let expectedWorktreePath: String
+      if let worktreeName = pending.worktreeName, !worktreeName.isEmpty {
+        expectedWorktreePath = worktree.path + "/.claude/worktrees/" + worktreeName
+      } else {
+        expectedWorktreePath = worktree.path
+      }
 
       for attempt in 1...maxAttempts {
         await monitorService.refreshSessions()
@@ -2240,7 +2385,7 @@ public final class CLISessionsViewModel {
         // Find and monitor the new session (try path matching first)
         var found = false
         for repo in selectedRepositories {
-          if let matchingWorktree = repo.worktrees.first(where: { $0.path == worktree.path }),
+          if let matchingWorktree = repo.worktrees.first(where: { $0.path == expectedWorktreePath || $0.path == worktree.path }),
              let session = matchingWorktree.sessions.first(where: { $0.id == sessionId }) {
             // Remove pending only after finding the real session
             pendingHubSessions.removeAll { $0.id == pending.id }
@@ -2468,10 +2613,11 @@ public final class CLISessionsViewModel {
           "[PollWorktreeHistory] pendingId=\(pending.id.uuidString, privacy: .public) found sessionId=\(sessionId, privacy: .public) at \(projectPath, privacy: .public)"
         )
 #endif
-        let resolvedWorktree = WorktreeBranch(
-          name: URL(fileURLWithPath: projectPath).lastPathComponent,
+        let worktreeName = URL(fileURLWithPath: projectPath).lastPathComponent
+        let resolvedWorktree = await registerCreatedWorktree(
+          name: worktreeName,
           path: projectPath,
-          isWorktree: true
+          parentRepositoryPath: repoPath
         )
         handleNewSessionFound(sessionId: sessionId, pending: pending, worktree: resolvedWorktree)
         return
@@ -2644,6 +2790,12 @@ public final class CLISessionsViewModel {
 
     monitoredSessionIds.insert(session.id)
     monitoredSessionBackup[session.id] = session
+    if session.isWorktree {
+      let worktreePath = WorktreeModuleResolver.bestMatch(for: session.projectPath, repositories: selectedRepositories)?.worktree.path
+        ?? session.projectPath
+      registerOwnedWorktreePath(worktreePath)
+    }
+    syncFocusedSessionIdsToMonitor()
 
     persistMonitoredSessions()
 
@@ -2667,6 +2819,7 @@ public final class CLISessionsViewModel {
     removeTerminal(forKey: sessionId)
     removeAuxiliaryShellTerminal(forKey: sessionId)
 
+    syncFocusedSessionIdsToMonitor()
     persistMonitoredSessions()
 
     Task {

@@ -13,6 +13,7 @@ public struct SessionWorkspaceStateRecord: Codable, Sendable, FetchableRecord, P
   public var provider: String
   public var selectedRepositoryPathsData: Data
   public var monitoredSessionIdsData: Data
+  public var ownedWorktreePathsData: Data?
   public var expansionStateData: Data
   public var updatedAt: Date
 
@@ -24,6 +25,7 @@ public struct SessionWorkspaceStateRecord: Codable, Sendable, FetchableRecord, P
     self.provider = provider
     self.selectedRepositoryPathsData = try JSONEncoder().encode(state.selectedRepositoryPaths)
     self.monitoredSessionIdsData = try JSONEncoder().encode(state.monitoredSessionIds)
+    self.ownedWorktreePathsData = try JSONEncoder().encode(state.ownedWorktreePaths)
     self.expansionStateData = try JSONEncoder().encode(state.expansionState)
     self.updatedAt = updatedAt
   }
@@ -32,6 +34,9 @@ public struct SessionWorkspaceStateRecord: Codable, Sendable, FetchableRecord, P
     SessionWorkspaceState(
       selectedRepositoryPaths: (try? JSONDecoder().decode([String].self, from: selectedRepositoryPathsData)) ?? [],
       monitoredSessionIds: (try? JSONDecoder().decode([String].self, from: monitoredSessionIdsData)) ?? [],
+      ownedWorktreePaths: ownedWorktreePathsData.flatMap {
+        try? JSONDecoder().decode([String].self, from: $0)
+      } ?? [],
       expansionState: (try? JSONDecoder().decode([String: Bool].self, from: expansionStateData)) ?? [:]
     )
   }

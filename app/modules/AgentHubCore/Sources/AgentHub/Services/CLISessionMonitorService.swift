@@ -45,6 +45,16 @@ public actor CLISessionMonitorService {
   /// Cache of worktree detection results keyed by repository path.
   private var worktreeCache: [String: [WorktreeBranch]] = [:]
 
+  /// Worktrees explicitly created or focused through AgentHub.
+  private var ownedWorktreePaths: Set<String> = []
+
+  /// Sessions explicitly started or focused through AgentHub.
+  private var focusedSessionIds: Set<String> = []
+
+  /// Git worktrees detected for tracked repositories but not owned by AgentHub.
+  /// Used to avoid attributing their sessions to the parent repository.
+  private var ignoredWorktreePathsByRepository: [String: Set<String>] = [:]
+
   // MARK: - Initialization
 
   public init(claudeDataPath: String? = nil, metadataStore: SessionMetadataStore? = nil) {
@@ -59,16 +69,19 @@ public actor CLISessionMonitorService {
   /// - Returns: The created SelectedRepository with detected worktrees, or nil for a duplicate add
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
+    await markInputWorktreeAsOwnedIfNeeded(path)
+    let repositoryPath = await normalizedRepositoryPath(for: path)
+
     // Check if already added
-    guard !selectedRepositories.contains(where: { $0.path == path }) else {
+    guard !selectedRepositories.contains(where: { $0.path == repositoryPath }) else {
       return nil
     }
 
     // Detect worktrees for this repository
-    let worktrees = await detectWorktrees(at: path)
+    let worktrees = await detectWorktrees(at: repositoryPath)
 
     let repository = SelectedRepository(
-      path: path,
+      path: repositoryPath,
       worktrees: worktrees,
       isExpanded: true
     )
@@ -86,8 +99,13 @@ public actor CLISessionMonitorService {
   /// Adds multiple repositories at once, detecting worktrees in parallel and
   /// calling refreshSessions only once at the end (instead of N times).
   public func addRepositories(_ paths: [String]) async {
+    for path in paths {
+      await markInputWorktreeAsOwnedIfNeeded(path)
+    }
+    let normalizedPaths = await normalizedRepositoryPaths(paths)
+
     // Filter out already-added repos
-    let newPaths = paths.filter { path in
+    let newPaths = normalizedPaths.filter { path in
       !selectedRepositories.contains(where: { $0.path == path })
     }
     guard !newPaths.isEmpty else { return }
@@ -114,8 +132,10 @@ public actor CLISessionMonitorService {
   /// Restores selected repositories and worktrees without scanning every session.
   /// Used on app launch so the main monitored-session list can appear quickly.
   public func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository] {
-    var seen: Set<String> = []
-    let uniquePaths = paths.filter { seen.insert($0).inserted }
+    for path in paths {
+      await markInputWorktreeAsOwnedIfNeeded(path)
+    }
+    let uniquePaths = await normalizedRepositoryPaths(paths)
 
     guard !uniquePaths.isEmpty else {
       selectedRepositories = []
@@ -140,7 +160,63 @@ public actor CLISessionMonitorService {
   /// Removes a repository from monitoring
   /// - Parameter path: Path to the repository to remove
   public func removeRepository(_ path: String) async {
-    selectedRepositories.removeAll { $0.path == path }
+    let repositoryPath = await normalizedRepositoryPath(for: path)
+    if let repository = selectedRepositories.first(where: { $0.path == repositoryPath }) {
+      ownedWorktreePaths.subtract(repository.worktrees.map(\.path))
+    }
+    ignoredWorktreePathsByRepository.removeValue(forKey: repositoryPath)
+    selectedRepositories.removeAll { $0.path == repositoryPath }
+    invalidateHistoryCache()
+    repositoriesSubject.send(selectedRepositories)
+  }
+
+  public func setOwnedWorktreePaths(_ paths: Set<String>) async {
+    let normalizedPaths = Set(paths.map { WorktreeModuleResolver.normalizedDirectoryPath($0) })
+    guard normalizedPaths != ownedWorktreePaths else { return }
+    ownedWorktreePaths = normalizedPaths
+    worktreeCache.removeAll()
+    invalidateHistoryCache()
+  }
+
+  public func setFocusedSessionIds(_ ids: Set<String>) async {
+    guard ids != focusedSessionIds else { return }
+    focusedSessionIds = ids
+    invalidateHistoryCache()
+  }
+
+  public func registerWorktree(_ worktree: WorktreeBranch, parentRepositoryPath: String) async {
+    let repositoryPath = await normalizedRepositoryPath(for: parentRepositoryPath)
+    let normalizedWorktree = WorktreeBranch(
+      name: worktree.name,
+      path: WorktreeModuleResolver.normalizedDirectoryPath(worktree.path),
+      isWorktree: worktree.isWorktree,
+      sessions: worktree.sessions,
+      isExpanded: true
+    )
+    if normalizedWorktree.isWorktree {
+      ownedWorktreePaths.insert(normalizedWorktree.path)
+      ignoredWorktreePathsByRepository[repositoryPath]?.remove(normalizedWorktree.path)
+    }
+
+    if let index = selectedRepositories.firstIndex(where: { $0.path == repositoryPath }) {
+      upsertWorktree(normalizedWorktree, inRepositoryAt: index)
+      worktreeCache[repositoryPath] = selectedRepositories[index].worktrees
+      invalidateHistoryCache()
+      repositoriesSubject.send(selectedRepositories)
+      return
+    }
+
+    var worktrees = await detectWorktrees(at: repositoryPath)
+    if !worktrees.contains(where: { $0.path == normalizedWorktree.path }) {
+      worktrees.append(normalizedWorktree)
+    }
+    let repository = SelectedRepository(
+      path: repositoryPath,
+      worktrees: worktrees,
+      isExpanded: true
+    )
+    selectedRepositories.append(repository)
+    worktreeCache[repositoryPath] = worktrees
     invalidateHistoryCache()
     repositoriesSubject.send(selectedRepositories)
   }
@@ -155,6 +231,54 @@ public actor CLISessionMonitorService {
     selectedRepositories = repositories
     invalidateHistoryCache()
     await refreshSessions()
+  }
+
+  private func normalizedRepositoryPath(for path: String) async -> String {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    guard let info = await GitWorktreeDetector.detectWorktreeInfo(for: normalizedPath),
+          info.isWorktree,
+          let mainRepoPath = info.mainRepoPath,
+          !mainRepoPath.isEmpty else {
+      return normalizedPath
+    }
+    return WorktreeModuleResolver.normalizedDirectoryPath(mainRepoPath)
+  }
+
+  private func markInputWorktreeAsOwnedIfNeeded(_ path: String) async {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    guard let info = await GitWorktreeDetector.detectWorktreeInfo(for: normalizedPath),
+          info.isWorktree else {
+      return
+    }
+    ownedWorktreePaths.insert(normalizedPath)
+  }
+
+  private func normalizedRepositoryPaths(_ paths: [String]) async -> [String] {
+    var seen: Set<String> = []
+    var normalizedPaths: [String] = []
+
+    for path in paths {
+      let normalizedPath = await normalizedRepositoryPath(for: path)
+      guard seen.insert(normalizedPath).inserted else { continue }
+      normalizedPaths.append(normalizedPath)
+    }
+
+    return normalizedPaths
+  }
+
+  private func upsertWorktree(_ worktree: WorktreeBranch, inRepositoryAt index: Int) {
+    if let worktreeIndex = selectedRepositories[index].worktrees.firstIndex(where: { $0.path == worktree.path }) {
+      let existing = selectedRepositories[index].worktrees[worktreeIndex]
+      selectedRepositories[index].worktrees[worktreeIndex] = WorktreeBranch(
+        name: worktree.name,
+        path: worktree.path,
+        isWorktree: worktree.isWorktree,
+        sessions: worktree.sessions.isEmpty ? existing.sessions : worktree.sessions,
+        isExpanded: existing.isExpanded || worktree.isExpanded
+      )
+    } else {
+      selectedRepositories[index].worktrees.append(worktree)
+    }
   }
 
   /// Loads only the requested Claude sessions from their JSONL files.
@@ -224,11 +348,10 @@ public actor CLISessionMonitorService {
       }
     }
 
-    // Get all paths to filter by (including worktree paths)
-    let allPaths = getAllMonitoredPaths()
+    let discoveryScope = makeSessionDiscoveryScope()
 
     // Parse history for selected paths only
-    let sessionSummaries = await parseHistoryForPaths(allPaths)
+    let sessionSummaries = await parseHistory(in: discoveryScope)
 
     // Build a map of session ID -> (gitBranch, slug) (read from session files in parallel)
     let sessionMetadata = await readSessionMetadataBatch(sessionSummaries: sessionSummaries)
@@ -427,6 +550,7 @@ public actor CLISessionMonitorService {
     let worktrees = await GitWorktreeDetector.listWorktrees(at: repoPath)
 
     if worktrees.isEmpty {
+      ignoredWorktreePathsByRepository[repoPath] = []
       // If no worktrees detected, just use the main repo with current branch
       let info = await GitWorktreeDetector.detectWorktreeInfo(for: repoPath)
 
@@ -440,13 +564,23 @@ public actor CLISessionMonitorService {
       ]
     }
 
-    return worktrees.map { info in
+    let allWorktrees = worktrees.map { info in
       WorktreeBranch(
         name: info.branch ?? URL(fileURLWithPath: info.path).lastPathComponent,
-        path: info.path,
+        path: WorktreeModuleResolver.normalizedDirectoryPath(info.path),
         isWorktree: info.isWorktree,
         sessions: []
       )
+    }
+
+    ignoredWorktreePathsByRepository[repoPath] = Set(
+      allWorktrees
+        .filter { $0.isWorktree && !ownedWorktreePaths.contains($0.path) }
+        .map(\.path)
+    )
+
+    return allWorktrees.filter { worktree in
+      !worktree.isWorktree || ownedWorktreePaths.contains(worktree.path)
     }
   }
 
@@ -508,15 +642,26 @@ public actor CLISessionMonitorService {
 
   // MARK: - Path Collection
 
-  private func getAllMonitoredPaths() -> Set<String> {
-    var paths = Set<String>()
+  private func makeSessionDiscoveryScope() -> SessionDiscoveryScope {
+    var repositoryPaths = Set<String>()
+    var ownedPaths = Set<String>()
     for repo in selectedRepositories {
-      paths.insert(repo.path)
-      for worktree in repo.worktrees {
-        paths.insert(worktree.path)
+      repositoryPaths.insert(repo.path)
+      for worktree in repo.worktrees where worktree.isWorktree {
+        ownedPaths.insert(worktree.path)
       }
     }
-    return paths
+
+    let ignoredPaths = ignoredWorktreePathsByRepository.values.reduce(into: Set<String>()) { result, paths in
+      result.formUnion(paths)
+    }
+
+    return SessionDiscoveryScope(
+      repositoryPaths: repositoryPaths,
+      ownedWorktreePaths: ownedPaths.union(ownedWorktreePaths),
+      ignoredWorktreePaths: ignoredPaths,
+      focusedSessionIds: focusedSessionIds
+    )
   }
 
   private func restoreSession(sessionId: String, filePath: String) -> CLISession? {
@@ -787,7 +932,7 @@ public actor CLISessionMonitorService {
   /// Parses history.jsonl incrementally — only reads new bytes since last parse.
   /// On first call or if the file was truncated, does a full parse.
   /// Uses Task.detached to run heavy I/O and parsing off the actor's isolation context.
-  private func parseHistoryForPaths(_ paths: Set<String>) async -> [String: HistorySessionSummary] {
+  private func parseHistory(in scope: SessionDiscoveryScope) async -> [String: HistorySessionSummary] {
     let historyPath = claudeDataPath + "/history.jsonl"
     let previousOffset = lastHistoryOffset
     let previousSummaries = cachedHistorySummaries
@@ -845,7 +990,7 @@ public actor CLISessionMonitorService {
           return entry
         }
       var summaries = needsFullParse ? [String: HistorySessionSummary]() : previousSummaries
-      CLISessionMonitorService.accumulateHistoryEntries(parsed, filteredBy: paths, into: &summaries)
+      CLISessionMonitorService.accumulateHistoryEntries(parsed, filteredBy: scope, into: &summaries)
       return (summaries, fileSize)
     }.value
 
@@ -861,7 +1006,21 @@ public actor CLISessionMonitorService {
     filteredBy paths: Set<String>,
     into summaries: inout [String: HistorySessionSummary]
   ) {
-    for entry in entries where matchesMonitoredPath(entry.project, monitoredPaths: paths) {
+    let scope = SessionDiscoveryScope(
+      repositoryPaths: paths,
+      ownedWorktreePaths: [],
+      ignoredWorktreePaths: [],
+      focusedSessionIds: []
+    )
+    accumulateHistoryEntries(entries, filteredBy: scope, into: &summaries)
+  }
+
+  static func accumulateHistoryEntries(
+    _ entries: [HistoryEntry],
+    filteredBy scope: SessionDiscoveryScope,
+    into summaries: inout [String: HistorySessionSummary]
+  ) {
+    for entry in entries where scope.includes(projectPath: entry.project, sessionId: entry.sessionId) {
       mergeHistoryEntry(entry, into: &summaries)
     }
   }

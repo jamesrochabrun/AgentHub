@@ -23,6 +23,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     static let createSessionWorkspaceState = "v6_create_session_workspace_state"
     static let createManagedProcesses = "v7_create_managed_processes"
     static let createClaudeHookInstallations = "v8_create_claude_hook_installations"
+    static let addOwnedWorktreePaths = "v9_add_owned_worktree_paths"
   }
 
   static let migrationIdentifiers = [
@@ -33,7 +34,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     MigrationID.createTerminalWorkspaces,
     MigrationID.createSessionWorkspaceState,
     MigrationID.createManagedProcesses,
-    MigrationID.createClaudeHookInstallations
+    MigrationID.createClaudeHookInstallations,
+    MigrationID.addOwnedWorktreePaths
   ]
 
   private let dbQueue: DatabaseQueue
@@ -151,6 +153,12 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
         t.column("projectPath", .text).primaryKey()
         t.column("installedAt", .datetime).notNull()
         t.column("updatedAt", .datetime).notNull()
+      }
+    }
+
+    migrator.registerMigration(MigrationID.addOwnedWorktreePaths) { db in
+      try db.alter(table: "session_workspace_state") { t in
+        t.add(column: "ownedWorktreePathsData", .blob)
       }
     }
 

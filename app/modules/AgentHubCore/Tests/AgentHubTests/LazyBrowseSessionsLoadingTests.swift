@@ -62,7 +62,10 @@ struct LazyBrowseSessionsLoadingTests {
   func launchRestoreSyncsClaudeHooksOnce() async throws {
     let store = try SessionMetadataStore(path: temporaryDatabasePath())
     try await store.saveWorkspaceState(
-      SessionWorkspaceState(selectedRepositoryPaths: ["/tmp/project"]),
+      SessionWorkspaceState(
+        selectedRepositoryPaths: ["/tmp/project"],
+        ownedWorktreePaths: ["/tmp/project-feature"]
+      ),
       for: .claude
     )
 
@@ -106,8 +109,15 @@ struct LazyBrowseSessionsLoadingTests {
       path: "/tmp/project",
       worktreePath: "/tmp/project-feature"
     )
+    try await store.saveWorkspaceState(
+      SessionWorkspaceState(
+        selectedRepositoryPaths: ["/tmp/project"],
+        ownedWorktreePaths: ["/tmp/project-feature"]
+      ),
+      for: .claude
+    )
     let monitor = LazyBrowseMockMonitorService(
-      skeletonRepositories: [],
+      skeletonRepositories: [repository],
       browseRepositories: [repository]
     )
     let hookInstaller = RecordingClaudeHookInstaller()

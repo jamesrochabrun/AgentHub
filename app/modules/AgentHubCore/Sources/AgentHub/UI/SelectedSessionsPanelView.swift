@@ -12,6 +12,8 @@ import SwiftUI
 public struct SelectedSessionsPanelView: View {
   @Bindable var viewModel: CLISessionsViewModel
   @Binding var primarySessionId: String?
+  @AppStorage(AgentHubDefaults.worktreeDisplayMode)
+  private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
 
   public init(
     viewModel: CLISessionsViewModel,
@@ -141,12 +143,15 @@ public struct SelectedSessionsPanelView: View {
   }
 
   private func findModulePath(for itemPath: String) -> String {
-    for repo in viewModel.selectedRepositories {
-      for worktree in repo.worktrees where worktree.path == itemPath {
-        return repo.path
-      }
-    }
-    return itemPath
+    WorktreeModuleResolver.modulePath(
+      for: itemPath,
+      repositories: viewModel.selectedRepositories,
+      mode: worktreeDisplayMode
+    )
+  }
+
+  private var worktreeDisplayMode: WorktreeDisplayMode {
+    WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
   }
 
   private func ensurePrimarySelection() {
@@ -169,6 +174,8 @@ public struct MultiProviderSelectedSessionsPanelView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
   @Binding var primarySessionId: String?
+  @AppStorage(AgentHubDefaults.worktreeDisplayMode)
+  private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
 
   public init(
     claudeViewModel: CLISessionsViewModel,
@@ -325,23 +332,21 @@ public struct MultiProviderSelectedSessionsPanelView: View {
   }
 
   private var allSelectedRepositories: [SelectedRepository] {
-    var map: [String: SelectedRepository] = [:]
-    for repo in claudeViewModel.selectedRepositories {
-      map[repo.path] = repo
-    }
-    for repo in codexViewModel.selectedRepositories where map[repo.path] == nil {
-      map[repo.path] = repo
-    }
-    return map.values.sorted { $0.path < $1.path }
+    WorktreeModuleResolver.mergedRepositories(
+      claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
+    ).sorted { $0.path < $1.path }
   }
 
   private func findModulePath(for itemPath: String) -> String {
-    for repo in allSelectedRepositories {
-      for worktree in repo.worktrees where worktree.path == itemPath {
-        return repo.path
-      }
-    }
-    return itemPath
+    WorktreeModuleResolver.modulePath(
+      for: itemPath,
+      repositories: allSelectedRepositories,
+      mode: worktreeDisplayMode
+    )
+  }
+
+  private var worktreeDisplayMode: WorktreeDisplayMode {
+    WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
   }
 
   private func customName(for item: SelectedSessionItem) -> String? {

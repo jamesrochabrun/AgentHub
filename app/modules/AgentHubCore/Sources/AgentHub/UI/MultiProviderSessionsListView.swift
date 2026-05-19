@@ -178,6 +178,8 @@ public struct MultiProviderSessionsListView: View {
   private let showLegacyLauncher = false
 
   @AppStorage(AgentHubDefaults.auxiliaryShellVisible) private var isAuxiliaryShellVisible = false
+  @AppStorage(AgentHubDefaults.worktreeDisplayMode)
+  private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
   @State private var isEmbeddedTrailingPanelVisible = false
   @State private var sidebarVisibilityBeforeAutoHide: NavigationSplitViewVisibility?
   @FocusState private var isSearchFieldFocused: Bool
@@ -859,29 +861,23 @@ public struct MultiProviderSessionsListView: View {
   /// Deduplicated tracked repos from both providers, preserving insertion order,
   /// newest-first. Claude's repos are walked first, then Codex-only repos.
   private var orderedTrackedRepos: [SelectedRepository] {
-    var seen: Set<String> = []
-    var combined: [SelectedRepository] = []
-    for repo in claudeViewModel.selectedRepositories {
-      if seen.insert(repo.path).inserted { combined.append(repo) }
-    }
-    for repo in codexViewModel.selectedRepositories {
-      if seen.insert(repo.path).inserted { combined.append(repo) }
-    }
+    let combined = WorktreeModuleResolver.mergedRepositories(
+      claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
+    )
     // Newest-added first (reverse of insertion order).
     return combined.reversed()
   }
 
-  /// Returns the parent repo path for an arbitrary session path — handles both
-  /// "path is the repo root" and "path is a worktree under the repo". Falls back
-  /// to the original path when no tracked repo matches (used for the orphan group).
-  private func findParentRepoPath(for itemPath: String) -> String {
-    for repo in orderedTrackedRepos {
-      if repo.path == itemPath { return repo.path }
-      if repo.worktrees.contains(where: { $0.path == itemPath }) {
-        return repo.path
-      }
-    }
-    return itemPath
+  private var worktreeDisplayMode: WorktreeDisplayMode {
+    WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
+  }
+
+  private func findModulePath(for itemPath: String) -> String {
+    WorktreeModuleResolver.modulePath(
+      for: itemPath,
+      repositories: orderedTrackedRepos,
+      mode: worktreeDisplayMode
+    )
   }
 
   private var pinnedSessionSnapshot: ProviderScopedPinnedSessions {
@@ -910,22 +906,22 @@ public struct MultiProviderSessionsListView: View {
     let allItems = selectedSessionItems.filter { !isPinned($0) }
     var byRepo: [String: [SelectedSessionItem]] = [:]
     for item in allItems {
-      let key = findParentRepoPath(for: item.session.projectPath)
+      let key = findModulePath(for: item.session.projectPath)
       byRepo[key, default: []].append(item)
     }
 
     var groups: [SessionGroup] = []
     var handledKeys: Set<String> = []
 
-    // Tracked repos — always emit a header, even if empty.
-    for repo in orderedTrackedRepos {
-      let items = (byRepo[repo.path] ?? []).sorted { $0.timestamp > $1.timestamp }
+    // Tracked modules — always emit a header, even if empty.
+    for modulePath in WorktreeModuleResolver.modulePaths(for: Array(orderedTrackedRepos), mode: worktreeDisplayMode) {
+      let items = (byRepo[modulePath] ?? []).sorted { $0.timestamp > $1.timestamp }
       groups.append(SessionGroup(
-        id: repo.path,
-        displayName: URL(fileURLWithPath: repo.path).lastPathComponent,
+        id: modulePath,
+        displayName: URL(fileURLWithPath: modulePath).lastPathComponent,
         items: items
       ))
-      handledKeys.insert(repo.path)
+      handledKeys.insert(modulePath)
     }
 
     // Orphan sessions (repo not tracked yet — e.g. a brand-new pending one).
@@ -1048,7 +1044,7 @@ public struct MultiProviderSessionsListView: View {
                   }
                 }
               },
-              onRemove: {
+              onRemove: orderedTrackedRepos.contains(where: { $0.path == group.id }) ? {
                 removeConfirmation = RemoveConfirmation(
                   repoName: group.displayName,
                   sessionCount: group.items.count
@@ -1063,7 +1059,7 @@ public struct MultiProviderSessionsListView: View {
                     codexViewModel.removeRepository(repo)
                   }
                 }
-              }
+              } : nil
             )
 
             if isExpanded {
@@ -1338,7 +1334,8 @@ public struct MultiProviderSessionsListView: View {
       }
 
       HStack {
-        Text("\(currentViewModel.selectedRepositories.count) \(currentViewModel.selectedRepositories.count == 1 ? "module" : "modules") · \(currentViewModel.allSessions.count) \(currentViewModel.allSessions.count == 1 ? "session" : "sessions")")
+        let moduleCount = displayModuleCount(for: currentViewModel)
+        Text("\(moduleCount) \(moduleCount == 1 ? "module" : "modules") · \(currentViewModel.allSessions.count) \(currentViewModel.allSessions.count == 1 ? "session" : "sessions")")
           .font(.secondaryCaption)
           .foregroundColor(.secondary)
 
@@ -1582,7 +1579,8 @@ public struct MultiProviderSessionsListView: View {
     let activePath = ModuleLandingSelection.activeModulePath(
       selectedPath: selectedModuleLandingPath,
       repositories: orderedTrackedRepos,
-      itemProjectPaths: selectedSessionItems.map { $0.session.projectPath }
+      itemProjectPaths: selectedSessionItems.map { $0.session.projectPath },
+      mode: worktreeDisplayMode
     )
 
     if activePath == nil {
@@ -1630,18 +1628,20 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private var allRepositories: [SelectedRepository] {
-    var map: [String: SelectedRepository] = [:]
-    for repo in claudeViewModel.selectedRepositories {
-      map[repo.path] = repo
-    }
-    for repo in codexViewModel.selectedRepositories where map[repo.path] == nil {
-      map[repo.path] = repo
-    }
-    return map.values.sorted { $0.path < $1.path }
+    WorktreeModuleResolver.mergedRepositories(
+      claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
+    ).sorted { $0.path < $1.path }
   }
 
   private var totalSessionCount: Int {
     claudeViewModel.totalSessionCount + codexViewModel.totalSessionCount
+  }
+
+  private func displayModuleCount(for viewModel: CLISessionsViewModel) -> Int {
+    WorktreeModuleResolver.modulePaths(
+      for: viewModel.selectedRepositories,
+      mode: worktreeDisplayMode
+    ).count
   }
 
   // MARK: - Keyboard Shortcuts
@@ -1849,7 +1849,7 @@ private struct ProjectGroupHeader: View {
   let onOpenInFinder: () -> Void
   let onOpenGitHub: () -> Void
   let onArchiveSessions: (() -> Void)?
-  let onRemove: () -> Void
+  let onRemove: (() -> Void)?
 
   @State private var isHovered: Bool = false
   @Environment(\.colorScheme) private var colorScheme
@@ -1893,8 +1893,10 @@ private struct ProjectGroupHeader: View {
             Label("Archive Sessions", systemImage: "archivebox")
           }
         }
-        Button(action: onRemove) {
-          Label("Remove", systemImage: "xmark")
+        if let onRemove {
+          Button(action: onRemove) {
+            Label("Remove", systemImage: "xmark")
+          }
         }
       }
       .opacity(isHovered ? 1 : 0)
