@@ -37,6 +37,9 @@ public protocol SessionMonitorServiceProtocol: AnyObject, Sendable {
   func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository]
   func loadSessions(ids: Set<String>) async -> [CLISession]
   func removeRepository(_ path: String) async
+  func setOwnedWorktreePaths(_ paths: Set<String>) async
+  func setFocusedSessionIds(_ ids: Set<String>) async
+  func registerWorktree(_ worktree: WorktreeBranch, parentRepositoryPath: String) async
   func getSelectedRepositories() async -> [SelectedRepository]
   func setSelectedRepositories(_ repositories: [SelectedRepository]) async
   func refreshSessions(skipWorktreeRedetection: Bool) async
@@ -68,6 +71,12 @@ public extension SessionMonitorServiceProtocol {
       .flatMap { $0.sessions }
       .filter { ids.contains($0.id) }
   }
+
+  func registerWorktree(_ worktree: WorktreeBranch, parentRepositoryPath: String) async {}
+
+  func setOwnedWorktreePaths(_ paths: Set<String>) async {}
+
+  func setFocusedSessionIds(_ ids: Set<String>) async {}
 }
 
 // MARK: - SessionFileWatcherProtocol

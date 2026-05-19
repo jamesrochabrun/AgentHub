@@ -11,10 +11,25 @@ public struct WorktreeSettingsView: View {
   @AppStorage(AgentHubDefaults.worktreeBranchPrefix)
   private var worktreeBranchPrefix: String = ""
 
+  @AppStorage(AgentHubDefaults.worktreeDisplayMode)
+  private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
+
   public init() {}
 
   public var body: some View {
     Form {
+      Section("Display") {
+        Picker("Module grouping", selection: $worktreeDisplayModeRawValue) {
+          ForEach(WorktreeDisplayMode.allCases) { mode in
+            Text(mode.label).tag(mode.rawValue)
+          }
+        }
+
+        Text(selectedDisplayMode.settingsDescription)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
       Section("Generated Branches") {
         VStack(alignment: .leading, spacing: 8) {
           Text("Branch prefix")
@@ -74,5 +89,9 @@ public struct WorktreeSettingsView: View {
       RoundedRectangle(cornerRadius: 8)
         .stroke(Color.primary.opacity(0.12), lineWidth: 1)
     )
+  }
+
+  private var selectedDisplayMode: WorktreeDisplayMode {
+    WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
   }
 }

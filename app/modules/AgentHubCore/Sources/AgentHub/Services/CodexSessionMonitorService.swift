@@ -25,6 +25,9 @@ public actor CodexSessionMonitorService {
   // MARK: - State
 
   private var selectedRepositories: [SelectedRepository] = []
+  private var ownedWorktreePaths: Set<String> = []
+  private var focusedSessionIds: Set<String> = []
+  private var ignoredWorktreePathsByRepository: [String: Set<String>] = [:]
 
   // MARK: - Initialization
 
@@ -37,13 +40,15 @@ public actor CodexSessionMonitorService {
 
   @discardableResult
   public func addRepository(_ path: String) async -> SelectedRepository? {
-    guard !selectedRepositories.contains(where: { $0.path == path }) else {
+    await markInputWorktreeAsOwnedIfNeeded(path)
+    let repositoryPath = await normalizedRepositoryPath(for: path)
+    guard !selectedRepositories.contains(where: { $0.path == repositoryPath }) else {
       return nil
     }
 
-    let worktrees = await detectWorktrees(at: path)
+    let worktrees = await detectWorktrees(at: repositoryPath)
     let repository = SelectedRepository(
-      path: path,
+      path: repositoryPath,
       worktrees: worktrees,
       isExpanded: true
     )
@@ -54,8 +59,10 @@ public actor CodexSessionMonitorService {
   }
 
   public func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository] {
-    var seen: Set<String> = []
-    let uniquePaths = paths.filter { seen.insert($0).inserted }
+    for path in paths {
+      await markInputWorktreeAsOwnedIfNeeded(path)
+    }
+    let uniquePaths = await normalizedRepositoryPaths(paths)
 
     guard !uniquePaths.isEmpty else {
       selectedRepositories = []
@@ -76,7 +83,52 @@ public actor CodexSessionMonitorService {
   }
 
   public func removeRepository(_ path: String) async {
-    selectedRepositories.removeAll { $0.path == path }
+    let repositoryPath = await normalizedRepositoryPath(for: path)
+    if let repository = selectedRepositories.first(where: { $0.path == repositoryPath }) {
+      ownedWorktreePaths.subtract(repository.worktrees.map(\.path))
+    }
+    ignoredWorktreePathsByRepository.removeValue(forKey: repositoryPath)
+    selectedRepositories.removeAll { $0.path == repositoryPath }
+    repositoriesSubject.send(selectedRepositories)
+  }
+
+  public func setOwnedWorktreePaths(_ paths: Set<String>) async {
+    ownedWorktreePaths = Set(paths.map { WorktreeModuleResolver.normalizedDirectoryPath($0) })
+  }
+
+  public func setFocusedSessionIds(_ ids: Set<String>) async {
+    focusedSessionIds = ids
+  }
+
+  public func registerWorktree(_ worktree: WorktreeBranch, parentRepositoryPath: String) async {
+    let repositoryPath = await normalizedRepositoryPath(for: parentRepositoryPath)
+    let normalizedWorktree = WorktreeBranch(
+      name: worktree.name,
+      path: WorktreeModuleResolver.normalizedDirectoryPath(worktree.path),
+      isWorktree: worktree.isWorktree,
+      sessions: worktree.sessions,
+      isExpanded: true
+    )
+    if normalizedWorktree.isWorktree {
+      ownedWorktreePaths.insert(normalizedWorktree.path)
+      ignoredWorktreePathsByRepository[repositoryPath]?.remove(normalizedWorktree.path)
+    }
+
+    if let index = selectedRepositories.firstIndex(where: { $0.path == repositoryPath }) {
+      upsertWorktree(normalizedWorktree, inRepositoryAt: index)
+      repositoriesSubject.send(selectedRepositories)
+      return
+    }
+
+    var worktrees = await detectWorktrees(at: repositoryPath)
+    if !worktrees.contains(where: { $0.path == normalizedWorktree.path }) {
+      worktrees.append(normalizedWorktree)
+    }
+    selectedRepositories.append(SelectedRepository(
+      path: repositoryPath,
+      worktrees: worktrees,
+      isExpanded: true
+    ))
     repositoriesSubject.send(selectedRepositories)
   }
 
@@ -87,6 +139,54 @@ public actor CodexSessionMonitorService {
   public func setSelectedRepositories(_ repositories: [SelectedRepository]) async {
     selectedRepositories = repositories
     await refreshSessions()
+  }
+
+  private func normalizedRepositoryPath(for path: String) async -> String {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    guard let info = await GitWorktreeDetector.detectWorktreeInfo(for: normalizedPath),
+          info.isWorktree,
+          let mainRepoPath = info.mainRepoPath,
+          !mainRepoPath.isEmpty else {
+      return normalizedPath
+    }
+    return WorktreeModuleResolver.normalizedDirectoryPath(mainRepoPath)
+  }
+
+  private func markInputWorktreeAsOwnedIfNeeded(_ path: String) async {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    guard let info = await GitWorktreeDetector.detectWorktreeInfo(for: normalizedPath),
+          info.isWorktree else {
+      return
+    }
+    ownedWorktreePaths.insert(normalizedPath)
+  }
+
+  private func normalizedRepositoryPaths(_ paths: [String]) async -> [String] {
+    var seen: Set<String> = []
+    var normalizedPaths: [String] = []
+
+    for path in paths {
+      let normalizedPath = await normalizedRepositoryPath(for: path)
+      guard seen.insert(normalizedPath).inserted else { continue }
+      normalizedPaths.append(normalizedPath)
+    }
+
+    return normalizedPaths
+  }
+
+  private func upsertWorktree(_ worktree: WorktreeBranch, inRepositoryAt index: Int) {
+    if let worktreeIndex = selectedRepositories[index].worktrees.firstIndex(where: { $0.path == worktree.path }) {
+      let existing = selectedRepositories[index].worktrees[worktreeIndex]
+      selectedRepositories[index].worktrees[worktreeIndex] = WorktreeBranch(
+        name: worktree.name,
+        path: worktree.path,
+        isWorktree: worktree.isWorktree,
+        sessions: worktree.sessions.isEmpty ? existing.sessions : worktree.sessions,
+        isExpanded: existing.isExpanded || worktree.isExpanded
+      )
+    } else {
+      selectedRepositories[index].worktrees.append(worktree)
+    }
   }
 
   public func loadSessions(ids: Set<String>) async -> [CLISession] {
@@ -156,12 +256,12 @@ public actor CodexSessionMonitorService {
       }
     }
 
-    let allPaths = getAllMonitoredPaths()
+    let discoveryScope = makeSessionDiscoveryScope()
 
     let historyEntries = parseHistory()
     let historyBySession = Dictionary(grouping: historyEntries) { $0.sessionId }
 
-    let sessionMetas = scanSessions(for: allPaths)
+    let sessionMetas = scanSessions(in: discoveryScope)
 
     var updatedRepositories = selectedRepositories
     var assignedSessionIds: Set<String> = []
@@ -264,17 +364,15 @@ public actor CodexSessionMonitorService {
       }
   }
 
-  private func scanSessions(for paths: Set<String>) -> [CodexSessionInfo] {
+  private func scanSessions(in scope: SessionDiscoveryScope) -> [CodexSessionInfo] {
     let files = CodexSessionFileScanner.listSessionFiles(codexDataPath: codexDataPath)
     var results: [CodexSessionInfo] = []
 
     for path in files {
-      guard let meta = CodexSessionFileScanner.readSessionMeta(from: path) else { continue }
-
-      let matchesPath = paths.contains { p in
-        meta.projectPath == p || meta.projectPath.hasPrefix(p + "/")
+      guard let meta = CodexSessionFileScanner.readSessionMeta(from: path),
+            scope.includes(projectPath: meta.projectPath, sessionId: meta.sessionId) else {
+        continue
       }
-      guard matchesPath else { continue }
 
       let lastActivity = fileModificationDate(path)
 
@@ -349,6 +447,7 @@ public actor CodexSessionMonitorService {
     let worktrees = await GitWorktreeDetector.listWorktrees(at: repoPath)
 
     if worktrees.isEmpty {
+      ignoredWorktreePathsByRepository[repoPath] = []
       let info = await GitWorktreeDetector.detectWorktreeInfo(for: repoPath)
       return [
         WorktreeBranch(
@@ -360,13 +459,23 @@ public actor CodexSessionMonitorService {
       ]
     }
 
-    return worktrees.map { info in
+    let allWorktrees = worktrees.map { info in
       WorktreeBranch(
         name: info.branch ?? URL(fileURLWithPath: info.path).lastPathComponent,
-        path: info.path,
+        path: WorktreeModuleResolver.normalizedDirectoryPath(info.path),
         isWorktree: info.isWorktree,
         sessions: []
       )
+    }
+
+    ignoredWorktreePathsByRepository[repoPath] = Set(
+      allWorktrees
+        .filter { $0.isWorktree && !ownedWorktreePaths.contains($0.path) }
+        .map(\.path)
+    )
+
+    return allWorktrees.filter { worktree in
+      !worktree.isWorktree || ownedWorktreePaths.contains(worktree.path)
     }
   }
 
@@ -387,15 +496,26 @@ public actor CodexSessionMonitorService {
     }
   }
 
-  private func getAllMonitoredPaths() -> Set<String> {
-    var paths = Set<String>()
+  private func makeSessionDiscoveryScope() -> SessionDiscoveryScope {
+    var repositoryPaths = Set<String>()
+    var ownedPaths = Set<String>()
     for repo in selectedRepositories {
-      paths.insert(repo.path)
-      for worktree in repo.worktrees {
-        paths.insert(worktree.path)
+      repositoryPaths.insert(repo.path)
+      for worktree in repo.worktrees where worktree.isWorktree {
+        ownedPaths.insert(worktree.path)
       }
     }
-    return paths
+
+    let ignoredPaths = ignoredWorktreePathsByRepository.values.reduce(into: Set<String>()) { result, paths in
+      result.formUnion(paths)
+    }
+
+    return SessionDiscoveryScope(
+      repositoryPaths: repositoryPaths,
+      ownedWorktreePaths: ownedPaths.union(ownedWorktreePaths),
+      ignoredWorktreePaths: ignoredPaths,
+      focusedSessionIds: focusedSessionIds
+    )
   }
 }
 

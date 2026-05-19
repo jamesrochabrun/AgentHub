@@ -82,6 +82,8 @@ public struct MonitoringPanelView: View {
   private var previousLayoutModeRawValue: Int = -1
   @AppStorage(AgentHubDefaults.flatSessionLayout)
   private var flatSessionLayout: Bool = false
+  @AppStorage(AgentHubDefaults.worktreeDisplayMode)
+  private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @State private var cardHeights: [String: CGFloat] = [:]
@@ -98,23 +100,17 @@ public struct MonitoringPanelView: View {
     self._primarySessionId = primarySessionId
   }
 
-  /// Finds the main module path for an item (maps worktree paths to their parent repository)
-  private func findModulePath(for item: MonitoringItem) -> String {
-    let itemPath: String
-    switch item {
-    case .pending(let p): itemPath = p.worktree.path
-    case .monitored(let s, _): itemPath = s.projectPath
-    }
+  private var worktreeDisplayMode: WorktreeDisplayMode {
+    WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
+  }
 
-    // Find which SelectedRepository contains this path
-    for repo in viewModel.selectedRepositories {
-      for worktree in repo.worktrees {
-        if worktree.path == itemPath {
-          return repo.path  // Return main module path
-        }
-      }
-    }
-    return itemPath  // Fallback to original path
+  /// Finds the display module path for an item.
+  private func findModulePath(for item: MonitoringItem) -> String {
+    WorktreeModuleResolver.modulePath(
+      for: item.projectPath,
+      repositories: viewModel.selectedRepositories,
+      mode: worktreeDisplayMode
+    )
   }
 
   private var allItems: [MonitoringItem] {
