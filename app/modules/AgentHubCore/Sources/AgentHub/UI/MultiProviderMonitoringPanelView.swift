@@ -197,6 +197,7 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var maximizedSessionId: String?
   @State private var sidePanelPresentation = EmbeddedSidePanelPresentationState<SidePanelPayload>()
+  @State private var autoOpenedSidePanelKeys: Set<MonitoringAutoOpenSidePanelKey> = []
   @State private var editorStates: [String: MonitoringEditorState] = [:]
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
@@ -272,6 +273,7 @@ public struct MultiProviderMonitoringPanelView: View {
     let snapshot = makeItemSnapshot()
     let wantsSidePanelPresentation = wantsEmbeddedSidePanelPresentation(snapshot: snapshot)
     let auxiliaryTarget = auxiliaryShellTarget(snapshot: snapshot)
+    let autoOpenCandidate = autoOpenSidePanelCandidate(snapshot: snapshot)
 
     GeometryReader { geometry in
       VStack(spacing: 0) {
@@ -296,12 +298,14 @@ public struct MultiProviderMonitoringPanelView: View {
       onEmbeddedSidePanelVisibilityChange(wantsSidePanelPresentation)
       syncEditorStates(snapshot: snapshot)
       syncAuxiliaryShellDockState(target: auxiliaryTarget)
+      openAutoSidePanelIfNeeded(candidate: autoOpenCandidate)
     }
     .onChange(of: wantsSidePanelPresentation) { _, wantsPresentation in
       onEmbeddedSidePanelVisibilityChange(wantsPresentation)
     }
     .onChange(of: snapshot.itemIDs) { _, _ in
       syncEditorStates()
+      pruneAutoOpenedSidePanelKeys()
     }
     .onChange(of: snapshot.effectivePrimaryItemID) { _, _ in
       syncAuxiliaryShellDockState()
@@ -319,6 +323,9 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: codexViewModel.pendingFileOpen?.filePath) { _, _ in
       consumePendingFileOpen(from: codexViewModel, providerKind: .codex)
+    }
+    .onChange(of: autoOpenCandidate?.key) { _, _ in
+      openAutoSidePanelIfNeeded()
     }
     .overlay {
       Group {
@@ -418,7 +425,13 @@ public struct MultiProviderMonitoringPanelView: View {
           )
         )
       } else {
-        closeEmbeddedSidePanel()
+        if let newId {
+          if currentSidePanelPayload.itemID != newId {
+            closeEmbeddedSidePanel()
+          }
+        } else {
+          closeEmbeddedSidePanel()
+        }
       }
     }
     .onChange(of: primarySessionId) { _, newId in
@@ -806,6 +819,74 @@ public struct MultiProviderMonitoringPanelView: View {
       .webPreview(sessionId: session.id, session: session, projectPath: projectPath, mode: mode),
       forItemID: itemID
     )
+  }
+
+  private func autoOpenSidePanelCandidate(
+    snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>
+  ) -> MonitoringAutoOpenSidePanelCandidate? {
+    MonitoringAutoOpenSidePanelPolicy.candidate(
+      layoutMode: layoutMode,
+      maximizedSessionId: maximizedSessionId,
+      activeModuleLandingPath: activeModuleLandingPath(snapshot: snapshot),
+      visibleItem: snapshot.visibleItems.first.flatMap { autoOpenSidePanelItem(for: $0) },
+      openedKeys: autoOpenedSidePanelKeys
+    )
+  }
+
+  private func autoOpenSidePanelItem(
+    for item: ProviderMonitoringItem
+  ) -> MonitoringAutoOpenSidePanelItem? {
+    switch item {
+    case .pending:
+      return nil
+    case .monitored(_, _, let session, let state):
+      return MonitoringAutoOpenSidePanelItem(
+        itemID: item.id,
+        providerKind: item.providerKind,
+        session: session,
+        state: state
+      )
+    }
+  }
+
+  private func openAutoSidePanelIfNeeded(
+    candidate: MonitoringAutoOpenSidePanelCandidate? = nil
+  ) {
+    guard let candidate = candidate ?? autoOpenSidePanelCandidate(snapshot: makeItemSnapshot()) else {
+      return
+    }
+
+    autoOpenedSidePanelKeys.insert(candidate.key)
+
+    let payload = SidePanelPayload(
+      itemID: candidate.itemID,
+      providerKind: candidate.providerKind,
+      content: sidePanelContent(for: candidate)
+    )
+    guard sidePanelPresentation.currentPayload != payload else { return }
+    openEmbeddedSidePanel(payload)
+  }
+
+  private func sidePanelContent(
+    for candidate: MonitoringAutoOpenSidePanelCandidate
+  ) -> SidePanelContent {
+    switch candidate.target {
+    case .edits:
+      return .edits(sessionId: candidate.session.id, session: candidate.session)
+    case .plan(let planState):
+      return .plan(
+        sessionId: candidate.session.id,
+        session: candidate.session,
+        planState: planState
+      )
+    }
+  }
+
+  private func pruneAutoOpenedSidePanelKeys() {
+    let activeSessionIDs = Set(allItems.map(\.sessionId))
+    autoOpenedSidePanelKeys = Set(autoOpenedSidePanelKeys.filter {
+      activeSessionIDs.contains($0.sessionID)
+    })
   }
 
   /// Ensures the single-mode inline layout is active for `itemID`, then toggles the requested
