@@ -198,6 +198,8 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var maximizedSessionId: String?
   @State private var sidePanelPresentation = EmbeddedSidePanelPresentationState<SidePanelPayload>()
   @State private var autoOpenedSidePanelKeys: Set<MonitoringAutoOpenSidePanelKey> = []
+  @State private var autoOpenBaselineDate: Date?
+  @State private var observedAutoOpenKeysBySessionID: [String: Set<MonitoringAutoOpenSidePanelKey>] = [:]
   @State private var editorStates: [String: MonitoringEditorState] = [:]
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
@@ -295,10 +297,13 @@ public struct MultiProviderMonitoringPanelView: View {
     .background(monitorContainerBackgroundColor)
     .cornerRadius(8)
     .onAppear {
+      if autoOpenBaselineDate == nil {
+        autoOpenBaselineDate = Date()
+      }
       onEmbeddedSidePanelVisibilityChange(wantsSidePanelPresentation)
       syncEditorStates(snapshot: snapshot)
       syncAuxiliaryShellDockState(target: auxiliaryTarget)
-      openAutoSidePanelIfNeeded(candidate: autoOpenCandidate)
+      seedObservedAutoOpenKeys(snapshot: snapshot)
     }
     .onChange(of: wantsSidePanelPresentation) { _, wantsPresentation in
       onEmbeddedSidePanelVisibilityChange(wantsPresentation)
@@ -829,7 +834,8 @@ public struct MultiProviderMonitoringPanelView: View {
       maximizedSessionId: maximizedSessionId,
       activeModuleLandingPath: activeModuleLandingPath(snapshot: snapshot),
       visibleItem: snapshot.visibleItems.first.flatMap { autoOpenSidePanelItem(for: $0) },
-      openedKeys: autoOpenedSidePanelKeys
+      openedKeys: autoOpenedSidePanelKeys,
+      detectedAfter: autoOpenBaselineDate
     )
   }
 
@@ -849,6 +855,16 @@ public struct MultiProviderMonitoringPanelView: View {
     }
   }
 
+  private func seedObservedAutoOpenKeys(
+    snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>
+  ) {
+    for item in snapshot.allItems.compactMap({ autoOpenSidePanelItem(for: $0) }) {
+      guard item.state != nil else { continue }
+      let keys = MonitoringAutoOpenSidePanelPolicy.keys(for: item)
+      observedAutoOpenKeysBySessionID[item.session.id, default: []].formUnion(keys)
+    }
+  }
+
   private func openAutoSidePanelIfNeeded(
     candidate: MonitoringAutoOpenSidePanelCandidate? = nil
   ) {
@@ -856,7 +872,15 @@ public struct MultiProviderMonitoringPanelView: View {
       return
     }
 
+    if let observedKeys = observedAutoOpenKeysBySessionID[candidate.session.id] {
+      guard !observedKeys.contains(candidate.key) else { return }
+    } else if shouldSuppressFirstObservedAutoOpenCandidate(candidate) {
+      observedAutoOpenKeysBySessionID[candidate.session.id, default: []].insert(candidate.key)
+      return
+    }
+
     autoOpenedSidePanelKeys.insert(candidate.key)
+    observedAutoOpenKeysBySessionID[candidate.session.id, default: []].insert(candidate.key)
 
     let payload = SidePanelPayload(
       itemID: candidate.itemID,
@@ -865,6 +889,13 @@ public struct MultiProviderMonitoringPanelView: View {
     )
     guard sidePanelPresentation.currentPayload != payload else { return }
     openEmbeddedSidePanel(payload)
+  }
+
+  private func shouldSuppressFirstObservedAutoOpenCandidate(
+    _ candidate: MonitoringAutoOpenSidePanelCandidate
+  ) -> Bool {
+    guard let autoOpenBaselineDate else { return true }
+    return candidate.session.lastActivityAt <= autoOpenBaselineDate
   }
 
   private func sidePanelContent(
@@ -887,6 +918,9 @@ public struct MultiProviderMonitoringPanelView: View {
     autoOpenedSidePanelKeys = Set(autoOpenedSidePanelKeys.filter {
       activeSessionIDs.contains($0.sessionID)
     })
+    observedAutoOpenKeysBySessionID = observedAutoOpenKeysBySessionID.filter { sessionID, _ in
+      activeSessionIDs.contains(sessionID)
+    }
   }
 
   /// Ensures the single-mode inline layout is active for `itemID`, then toggles the requested

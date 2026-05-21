@@ -88,7 +88,8 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     #expect(candidate.key == .plan(
       providerKind: .claude,
       sessionID: "session-1",
-      filePath: path
+      filePath: path,
+      detectedAt: Date(timeIntervalSince1970: 1)
     ))
   }
 
@@ -157,14 +158,53 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     #expect(candidate.key.value == "edit-2")
   }
 
-  @Test("Suppresses an already-opened plan file path")
-  func suppressesSamePlanKeyAfterOpen() {
+  @Test("Suppresses restored edits detected before initial appearance")
+  func suppressesRestoredEditsBeforeInitialAppearance() {
+    let item = Self.item(state: Self.pendingEditState(
+      toolUseId: "edit-1",
+      timestamp: Date(timeIntervalSince1970: 10)
+    ))
+
+    let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
+      layoutMode: .single,
+      maximizedSessionId: nil,
+      activeModuleLandingPath: nil,
+      visibleItem: item,
+      openedKeys: [],
+      detectedAfter: Date(timeIntervalSince1970: 20)
+    )
+
+    #expect(candidate == nil)
+  }
+
+  @Test("Allows edits detected after initial appearance")
+  func allowsEditsAfterInitialAppearance() throws {
+    let item = Self.item(state: Self.pendingEditState(
+      toolUseId: "edit-1",
+      timestamp: Date(timeIntervalSince1970: 30)
+    ))
+
+    let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
+      layoutMode: .single,
+      maximizedSessionId: nil,
+      activeModuleLandingPath: nil,
+      visibleItem: item,
+      openedKeys: [],
+      detectedAfter: Date(timeIntervalSince1970: 20)
+    ))
+
+    #expect(candidate.target == .edits)
+  }
+
+  @Test("Suppresses an already-opened plan event")
+  func suppressesSamePlanEventAfterOpen() {
     let path = "/Users/test/.claude/plans/feature-plan.md"
     let item = Self.item(state: Self.planFileState(filePath: path))
     let openedKey = MonitoringAutoOpenSidePanelKey.plan(
       providerKind: .claude,
       sessionID: "session-1",
-      filePath: path
+      filePath: path,
+      detectedAt: Date(timeIntervalSince1970: 1)
     )
 
     let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
@@ -176,6 +216,36 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     )
 
     #expect(candidate == nil)
+  }
+
+  @Test("Allows same plan file when the plan event timestamp changes")
+  func allowsSamePlanFileWhenPlanEventTimestampChanges() throws {
+    let path = "/Users/test/.claude/plans/feature-plan.md"
+    let item = Self.item(state: Self.planFileState(
+      filePath: path,
+      timestamp: Date(timeIntervalSince1970: 2)
+    ))
+    let openedKey = MonitoringAutoOpenSidePanelKey.plan(
+      providerKind: .claude,
+      sessionID: "session-1",
+      filePath: path,
+      detectedAt: Date(timeIntervalSince1970: 1)
+    )
+
+    let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
+      layoutMode: .single,
+      maximizedSessionId: nil,
+      activeModuleLandingPath: nil,
+      visibleItem: item,
+      openedKeys: [openedKey]
+    ))
+
+    #expect(candidate.key == .plan(
+      providerKind: .claude,
+      sessionID: "session-1",
+      filePath: path,
+      detectedAt: Date(timeIntervalSince1970: 2)
+    ))
   }
 
   @Test("Allows a new plan candidate when the file path changes")
@@ -197,7 +267,106 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
       openedKeys: [openedKey]
     ))
 
-    #expect(candidate.key.value == newPath)
+    #expect(candidate.key == .plan(
+      providerKind: .claude,
+      sessionID: "session-1",
+      filePath: newPath,
+      detectedAt: Date(timeIntervalSince1970: 1)
+    ))
+  }
+
+  @Test("Suppresses restored plans detected before initial appearance")
+  func suppressesRestoredPlansBeforeInitialAppearance() {
+    let item = Self.item(state: Self.planFileState(
+      filePath: "/Users/test/.claude/plans/feature-plan.md",
+      timestamp: Date(timeIntervalSince1970: 10)
+    ))
+
+    let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
+      layoutMode: .single,
+      maximizedSessionId: nil,
+      activeModuleLandingPath: nil,
+      visibleItem: item,
+      openedKeys: [],
+      detectedAfter: Date(timeIntervalSince1970: 20)
+    )
+
+    #expect(candidate == nil)
+  }
+
+  @Test("Allows plans detected after initial appearance")
+  func allowsPlansAfterInitialAppearance() throws {
+    let item = Self.item(state: Self.planFileState(
+      filePath: "/Users/test/.claude/plans/feature-plan.md",
+      timestamp: Date(timeIntervalSince1970: 30)
+    ))
+
+    let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
+      layoutMode: .single,
+      maximizedSessionId: nil,
+      activeModuleLandingPath: nil,
+      visibleItem: item,
+      openedKeys: [],
+      detectedAfter: Date(timeIntervalSince1970: 20)
+    ))
+
+    #expect(candidate.target == .plan(PlanState(filePath: "/Users/test/.claude/plans/feature-plan.md")))
+  }
+
+  @Test("Initial keys suppress already-present edits and plans but allow later edit changes")
+  func initialKeysSuppressAlreadyPresentTriggersButAllowLaterChanges() throws {
+    let path = "/Users/test/.claude/plans/feature-plan.md"
+    let initialItem = Self.item(state: SessionMonitorState(
+      pendingToolUse: PendingToolUse(
+        toolName: "Edit",
+        toolUseId: "edit-1",
+        timestamp: Date(timeIntervalSince1970: 1)
+      ),
+      recentActivities: Self.planActivities(filePath: path)
+    ))
+
+    let initialKeys = MonitoringAutoOpenSidePanelPolicy.keys(for: initialItem)
+
+    #expect(initialKeys.contains(.edits(
+      providerKind: .claude,
+      sessionID: "session-1",
+      toolUseId: "edit-1"
+    )))
+    #expect(initialKeys.contains(.plan(
+      providerKind: .claude,
+      sessionID: "session-1",
+      filePath: path,
+      detectedAt: Date(timeIntervalSince1970: 1)
+    )))
+    #expect(MonitoringAutoOpenSidePanelPolicy.candidate(
+      layoutMode: .single,
+      maximizedSessionId: nil,
+      activeModuleLandingPath: nil,
+      visibleItem: initialItem,
+      openedKeys: initialKeys
+    ) == nil)
+
+    let changedItem = Self.item(state: SessionMonitorState(
+      pendingToolUse: PendingToolUse(
+        toolName: "Edit",
+        toolUseId: "edit-2",
+        timestamp: Date(timeIntervalSince1970: 2)
+      ),
+      recentActivities: Self.planActivities(filePath: path)
+    ))
+    let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
+      layoutMode: .single,
+      maximizedSessionId: nil,
+      activeModuleLandingPath: nil,
+      visibleItem: changedItem,
+      openedKeys: initialKeys
+    ))
+
+    #expect(candidate.key == .edits(
+      providerKind: .claude,
+      sessionID: "session-1",
+      toolUseId: "edit-2"
+    ))
   }
 
   private static func item(
@@ -211,24 +380,33 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     )
   }
 
-  private static func pendingEditState(toolUseId: String) -> SessionMonitorState {
+  private static func pendingEditState(
+    toolUseId: String,
+    timestamp: Date = Date(timeIntervalSince1970: 1)
+  ) -> SessionMonitorState {
     SessionMonitorState(
       pendingToolUse: PendingToolUse(
         toolName: "Edit",
         toolUseId: toolUseId,
-        timestamp: Date(timeIntervalSince1970: 1)
+        timestamp: timestamp
       )
     )
   }
 
-  private static func planFileState(filePath: String) -> SessionMonitorState {
-    SessionMonitorState(recentActivities: planActivities(filePath: filePath))
+  private static func planFileState(
+    filePath: String,
+    timestamp: Date = Date(timeIntervalSince1970: 1)
+  ) -> SessionMonitorState {
+    SessionMonitorState(recentActivities: planActivities(filePath: filePath, timestamp: timestamp))
   }
 
-  private static func planActivities(filePath: String) -> [ActivityEntry] {
+  private static func planActivities(
+    filePath: String,
+    timestamp: Date = Date(timeIntervalSince1970: 1)
+  ) -> [ActivityEntry] {
     [
       ActivityEntry(
-        timestamp: Date(timeIntervalSince1970: 1),
+        timestamp: timestamp,
         type: .toolUse(name: "Write"),
         description: "plan.md",
         toolInput: CodeChangeInput(
