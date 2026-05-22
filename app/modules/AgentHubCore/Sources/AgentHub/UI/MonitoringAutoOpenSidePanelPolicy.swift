@@ -29,6 +29,10 @@ struct MonitoringAutoOpenSidePanelKey: Equatable, Hashable, Sendable {
     )
   }
 
+  /// Builds a dedupe key for a plan auto-open trigger.
+  ///
+  /// `detectedAt` is included when available so an update to the same plan file
+  /// is treated as a new event instead of being suppressed by a previous open.
   static func plan(
     providerKind: SessionProviderKind,
     sessionID: String,
@@ -90,6 +94,12 @@ struct MonitoringAutoOpenSidePanelCandidate: Equatable, Sendable {
 }
 
 enum MonitoringAutoOpenSidePanelPolicy {
+  /// Returns every current auto-open trigger key for an item without choosing a
+  /// presentation candidate.
+  ///
+  /// The monitoring panel uses this to mark restored launch state as already
+  /// observed, while `candidate(...)` keeps the normal edit-before-plan
+  /// precedence for actual presentation decisions.
   static func keys(
     for item: MonitoringAutoOpenSidePanelItem
   ) -> Set<MonitoringAutoOpenSidePanelKey> {
