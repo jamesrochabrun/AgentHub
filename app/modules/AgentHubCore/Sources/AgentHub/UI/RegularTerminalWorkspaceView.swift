@@ -34,6 +34,7 @@ extension TerminalPanelKit.Tab where Payload == SafeLocalProcessTerminalView {
     name: String? = nil,
     title: String? = nil,
     workingDirectory: String? = nil,
+    linkedSession: TerminalWorkspaceLinkedSessionSnapshot? = nil,
     terminalView: SafeLocalProcessTerminalView
   ) {
     self.init(
@@ -42,6 +43,7 @@ extension TerminalPanelKit.Tab where Payload == SafeLocalProcessTerminalView {
       name: name,
       title: title,
       workingDirectory: workingDirectory,
+      linkedSession: linkedSession,
       payload: terminalView
     )
   }

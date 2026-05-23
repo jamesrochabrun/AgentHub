@@ -22,6 +22,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var hostingView: NSHostingView<AgentHubGhosttyTerminalWorkspaceView>?
   private var protectedAgentPanelID: TerminalPanelID?
   private var protectedAgentTabID: TerminalTabID?
+  private var accessoryAgentTabIDs: Set<TerminalTabID> = []
+  private var accessoryAgentProvidersByTabID: [TerminalTabID: SessionProviderKind] = [:]
+  private var linkedSessionsByTabID: [TerminalTabID: TerminalWorkspaceLinkedSessionSnapshot] = [:]
   private var splitRoot: TerminalSplitLayout.Node?
   private var pendingMount: PendingMount?
   private var pendingMountTask: Task<Void, Never>?
@@ -44,6 +47,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var configuredSessionId: String?
   private var configuredProcessProvider: SessionProviderKind?
   private var configuredExpectedExecutable: String?
+  private var metadataStore: SessionMetadataStore?
   private static let terminalPaneDividerSize: CGFloat = 1
   private static let terminalTabStripHeight = AgentHubGhosttyTerminalTabChrome.stripHeight
   private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
@@ -131,6 +135,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     configuredSessionId = sessionId
     configuredProcessProvider = SessionProviderKind(cliMode: cliConfiguration.mode)
     configuredExpectedExecutable = cliConfiguration.executableName
+    self.metadataStore = metadataStore
 
     let launch = EmbeddedTerminalLaunchBuilder.cliLaunch(
       sessionId: sessionId,
@@ -192,6 +197,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     pendingWorkspaceSnapshot = nil
     protectedAgentPanelID = nil
     protectedAgentTabID = nil
+    accessoryAgentTabIDs.removeAll()
+    accessoryAgentProvidersByTabID.removeAll()
+    linkedSessionsByTabID.removeAll()
     splitRoot = nil
     resetPaneActivities()
     isConfigured = false
@@ -306,20 +314,96 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     activeController?.focusTerminal()
   }
 
+  public func activeWorkingDirectory() -> String? {
+    activeController?.workingDirectory
+      ?? activeController?.configuration.workingDirectory
+      ?? resolvedProjectPath
+  }
+
+  public func openAccessorySessionPane(
+    provider: SessionProviderKind,
+    cliConfiguration: CLICommandConfiguration,
+    projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> AccessorySessionPaneContext? {
+    if let metadataStore {
+      self.metadataStore = metadataStore
+    }
+    guard let terminalSession, terminalSession.canOpenPanel else { return nil }
+    let workingDirectory = resolvedExistingDirectory(projectPath)
+    let startedAt = Date()
+    guard let configuration = accessoryAgentConfiguration(
+      provider: provider,
+      sessionId: nil,
+      workingDirectory: workingDirectory,
+      cliConfigurationOverride: cliConfiguration,
+      initialSize: predictedInitialSizeForNewTerminal()
+    ) else {
+      return nil
+    }
+
+    do {
+      let panel = try terminalSession.openPanel(
+        named: provider.rawValue,
+        configuration: configuration,
+        axis: .horizontal
+      )
+      if let tab = panel.activeTab {
+        accessoryAgentTabIDs.insert(tab.id)
+        accessoryAgentProvidersByTabID[tab.id] = provider
+      }
+      configureControllerHooks(for: panel.activeTab?.controller)
+      markPaneStarting(panel.id)
+      splitRoot = terminalSession.splitLayout?.root ?? .panel(terminalSession.primaryPanelID)
+      refreshWorkspaceRootView()
+      notifyWorkspaceChanged()
+      panel.activeTab?.controller.focusTerminal()
+      return AccessorySessionPaneContext(provider: provider, projectPath: workingDirectory, startedAt: startedAt)
+    } catch {
+      AppLogger.session.error("Failed to open Ghostty accessory agent pane: \(error.localizedDescription)")
+      return nil
+    }
+  }
+
+  public func markAccessorySession(
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool {
+    let workingDirectory = resolvedExistingDirectory(projectPath)
+    guard let located = candidateAccessoryTab(for: workingDirectory) else { return false }
+    let linkedSession = TerminalWorkspaceLinkedSessionSnapshot(
+      provider: provider,
+      sessionId: sessionId,
+      relationshipKind: .accessoryChild
+    )
+    accessoryAgentTabIDs.insert(located.tab.id)
+    accessoryAgentProvidersByTabID[located.tab.id] = provider
+    linkedSessionsByTabID[located.tab.id] = linkedSession
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
+    return true
+  }
+
   public func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
     guard let terminalSession else { return nil }
 
     let panels = terminalSession.panels.map { panel in
       let tabs = panel.tabs.map { tab in
-        TerminalWorkspaceTabSnapshot(
-          role: isProtectedAgentTab(tab, in: panel.id) ? .agent : .shell,
+        let linkedSession = linkedSessionsByTabID[tab.id]
+        return TerminalWorkspaceTabSnapshot(
+          role: isProtectedAgentTab(tab, in: panel.id) || accessoryAgentTabIDs.contains(tab.id) || linkedSession != nil
+            ? .agent
+            : .shell,
           name: Self.nonEmpty(tab.name),
           title: Self.nonEmpty(tab.title),
           workingDirectory: Self.nonEmpty(
             tab.controller.workingDirectory
               ?? tab.controller.configuration.workingDirectory
               ?? resolvedProjectPath
-          )
+          ),
+          linkedSession: linkedSession
         )
       }
       let activeTabIndex = panel.tabs.firstIndex { $0.id == panel.activeTabID } ?? 0
@@ -365,13 +449,19 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
     for panelSnapshot in panelSnapshots.dropFirst() {
       guard terminalSession.canOpenPanel else { break }
-      guard let firstShellTab = panelSnapshot.tabs.first(where: { $0.role == .shell }) else { continue }
+      guard let firstAccessoryTab = firstRestorableAccessoryTab(in: panelSnapshot) else { continue }
+      guard let configuration = configurationForRestoredAccessoryTab(firstAccessoryTab) else { continue }
 
       do {
         let panel = try terminalSession.openPanel(
-          named: restoredTabName(for: firstShellTab),
-          configuration: shellConfiguration(forRestoredWorkingDirectory: firstShellTab.workingDirectory)
+          named: restoredTabName(for: firstAccessoryTab),
+          configuration: configuration
         )
+        if let tab = panel.activeTab, let linkedSession = firstAccessoryTab.linkedSession {
+          accessoryAgentTabIDs.insert(tab.id)
+          accessoryAgentProvidersByTabID[tab.id] = linkedSession.provider
+          linkedSessionsByTabID[tab.id] = linkedSession
+        }
         configureControllerHooks(for: panel.activeTab?.controller)
         restoredPanelIDs.append(panel.id)
 
@@ -656,6 +746,45 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     )
   }
 
+  private func accessoryAgentConfiguration(
+    provider: SessionProviderKind,
+    sessionId: String?,
+    workingDirectory: String,
+    cliConfigurationOverride: CLICommandConfiguration? = nil,
+    initialSize: GhosttySurfaceInitialSize? = nil
+  ) -> GhosttySurfaceConfiguration? {
+    let cliConfiguration = cliConfigurationOverride
+      ?? sessionViewModel?.cliConfiguration(for: provider)
+      ?? (provider == .claude ? .claudeDefault : .codexDefault)
+    let launch = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: sessionId,
+      projectPath: workingDirectory,
+      cliConfiguration: cliConfiguration,
+      initialPrompt: nil,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: metadataStore
+    )
+
+    guard case .success(let launch) = launch else { return nil }
+    return makeGhosttyConfiguration(
+      command: launch.ghosttyCommand,
+      environment: launch.environment,
+      initialInput: nil,
+      workingDirectory: workingDirectory,
+      initialSize: initialSize
+    )
+  }
+
+  private func expectedExecutable(for provider: SessionProviderKind?) -> String? {
+    guard let provider else { return configuredExpectedExecutable }
+    return sessionViewModel?.cliConfiguration(for: provider).executableName
+      ?? (provider == .claude
+        ? CLICommandConfiguration.claudeDefault.executableName
+        : CLICommandConfiguration.codexDefault.executableName)
+  }
+
   private func currentInitialSurfaceSize() -> GhosttySurfaceInitialSize? {
     initialSurfaceSize(
       from: Self.terminalContentSize(
@@ -752,21 +881,26 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     var restoredTabIDs = existingTabIDs
     var hasSkippedFirstShellTab = false
 
-    for tabSnapshot in panelSnapshot.tabs where tabSnapshot.role == .shell {
+    for tabSnapshot in panelSnapshot.tabs where tabSnapshot.role == .shell || tabSnapshot.linkedSession != nil {
       if skippingFirstShellTab && !hasSkippedFirstShellTab {
         hasSkippedFirstShellTab = true
         continue
       }
 
       do {
+        guard let configuration = configurationForRestoredAccessoryTab(tabSnapshot, in: panelID) else {
+          continue
+        }
         let tab = try terminalSession.openTab(
           in: panelID,
           named: restoredTabName(for: tabSnapshot),
-          configuration: shellConfiguration(
-            forRestoredWorkingDirectory: tabSnapshot.workingDirectory,
-            in: panelID
-          )
+          configuration: configuration
         )
+        if let linkedSession = tabSnapshot.linkedSession {
+          accessoryAgentTabIDs.insert(tab.id)
+          accessoryAgentProvidersByTabID[tab.id] = linkedSession.provider
+          linkedSessionsByTabID[tab.id] = linkedSession
+        }
         configureControllerHooks(for: tab.controller)
         restoredTabIDs.append(tab.id)
       } catch {
@@ -775,6 +909,31 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     return restoredTabIDs
+  }
+
+  private func firstRestorableAccessoryTab(
+    in panelSnapshot: TerminalWorkspacePanelSnapshot
+  ) -> TerminalWorkspaceTabSnapshot? {
+    panelSnapshot.tabs.first { $0.linkedSession != nil || $0.role == .shell }
+  }
+
+  private func configurationForRestoredAccessoryTab(
+    _ tabSnapshot: TerminalWorkspaceTabSnapshot,
+    in panelID: TerminalPanelID? = nil
+  ) -> GhosttySurfaceConfiguration? {
+    if let linkedSession = tabSnapshot.linkedSession {
+      return accessoryAgentConfiguration(
+        provider: linkedSession.provider,
+        sessionId: linkedSession.sessionId,
+        workingDirectory: resolvedExistingDirectory(tabSnapshot.workingDirectory),
+        initialSize: predictedInitialSizeForNewTerminal(in: panelID)
+      )
+    }
+
+    return shellConfiguration(
+      forRestoredWorkingDirectory: tabSnapshot.workingDirectory,
+      in: panelID
+    )
   }
 
   private func restoreActiveSelection(
@@ -1271,6 +1430,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func requestClose(_ tab: TerminalTab) {
+    accessoryAgentTabIDs.remove(tab.id)
+    accessoryAgentProvidersByTabID.removeValue(forKey: tab.id)
+    linkedSessionsByTabID.removeValue(forKey: tab.id)
     tab.controller.requestClose()
     unregisterPID(for: tab.controller)
   }
@@ -1395,6 +1557,23 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       }
     }
     return nil
+  }
+
+  private func candidateAccessoryTab(
+    for workingDirectory: String
+  ) -> (panel: TerminalPanel, tab: TerminalTab)? {
+    let candidates = allTabs().compactMap { tab -> (panel: TerminalPanel, tab: TerminalTab)? in
+      guard let located = locateTab(tab) else { return nil }
+      guard !isProtectedAgentTab(tab, in: located.panel.id) else { return nil }
+      guard linkedSessionsByTabID[tab.id] == nil else { return nil }
+      let tabDirectory = resolvedExistingDirectory(
+        tab.controller.workingDirectory
+          ?? tab.controller.configuration.workingDirectory
+      )
+      return tabDirectory == workingDirectory ? located : nil
+    }
+
+    return candidates.first { accessoryAgentTabIDs.contains($0.tab.id) } ?? candidates.first
   }
 
   private func allTabs() -> [TerminalTab] {
@@ -1529,16 +1708,32 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         guard let located = self.locateController(controller) else { return }
         if let pid = controller.foregroundProcessID, pid > 0 {
           self.registeredPIDs[id] = pid
-          let kind: ManagedProcessKind = self.isProtectedAgentTab(located.tab, in: located.panel.id)
+          let linkedSession = self.linkedSessionsByTabID[located.tab.id]
+          let isProtectedAgent = self.isProtectedAgentTab(located.tab, in: located.panel.id)
+          let isAgentTerminal = isProtectedAgent
+            || self.accessoryAgentTabIDs.contains(located.tab.id)
+            || linkedSession != nil
+          let kind: ManagedProcessKind = isAgentTerminal
             ? .agentTerminal
             : .auxiliaryShell
-          let provider = self.sessionViewModel?.providerKind ?? self.configuredProcessProvider
+          let provider = linkedSession?.provider
+            ?? self.accessoryAgentProvidersByTabID[located.tab.id]
+            ?? self.sessionViewModel?.providerKind
+            ?? self.configuredProcessProvider
           let terminalKey = self.terminalSessionKey
-          let sessionId = kind == .agentTerminal
-            ? self.configuredSessionId ?? terminalKey
-            : terminalKey
+          let sessionId: String? = if kind == .auxiliaryShell {
+            terminalKey
+          } else if let linkedSession {
+            linkedSession.sessionId
+          } else if isProtectedAgent {
+            self.configuredSessionId ?? terminalKey
+          } else {
+            nil
+          }
           let projectPath = self.projectPath
-          let expectedExecutable = kind == .agentTerminal ? self.configuredExpectedExecutable : nil
+          let expectedExecutable = kind == .agentTerminal
+            ? self.expectedExecutable(for: provider)
+            : nil
           Task {
             await TerminalProcessRegistry.shared.register(
               pid: pid,

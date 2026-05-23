@@ -113,6 +113,7 @@ final class MockSessionMonitorService: SessionMonitorServiceProtocol { ... }
 
 ### Database Migration Rules
 
+- Read `AccessorySessions.md` before editing accessory terminal panes, sub-session launch/detection, terminal workspace linked-session restore, or `session_relationships`.
 - Session/workspace management state belongs in `SessionMetadataStore` / SQLite, not UserDefaults.
 - Do not add `AgentHubDefaults` keys for selected repositories, monitored session IDs, session restore state, repo mappings, terminal workspace state, or terminal/dev-server process cleanup state.
 - `managed_processes` is the SQLite authority for app-spawned terminal/dev-server cleanup. Store only process identity/routing metadata needed for cleanup (PID, process group, process start time, kind/provider/session/project context), never prompts, full environment, terminal contents, or other sensitive runtime payloads.

@@ -1,0 +1,20 @@
+//
+//  SessionGraphCompatibility.swift
+//  AgentHub
+//
+//  Re-exports session graph domain types for existing AgentHubCore call sites.
+//
+
+import AgentHubSessionGraph
+
+public typealias AccessorySessionDetectionBaseline = AgentHubSessionGraph.AccessorySessionDetectionBaseline
+public typealias AccessorySessionDetectionResult = AgentHubSessionGraph.AccessorySessionDetectionResult
+public typealias AccessorySessionDetectionService = AgentHubSessionGraph.AccessorySessionDetectionService
+public typealias AccessorySessionDetectionServiceProtocol = AgentHubSessionGraph.AccessorySessionDetectionServiceProtocol
+public typealias CodexSessionFileScanner = AgentHubSessionGraph.CodexSessionFileScanner
+public typealias CodexSessionMeta = AgentHubSessionGraph.CodexSessionMeta
+public typealias SessionProviderKind = AgentHubSessionGraph.SessionProviderKind
+public typealias SessionRelationshipKind = AgentHubSessionGraph.SessionRelationshipKind
+public typealias SessionRelationshipOrigin = AgentHubSessionGraph.SessionRelationshipOrigin
+public typealias SessionRelationshipRecord = AgentHubSessionGraph.SessionRelationshipRecord
+public typealias SessionRelationshipStoreProtocol = AgentHubSessionGraph.SessionRelationshipStoreProtocol

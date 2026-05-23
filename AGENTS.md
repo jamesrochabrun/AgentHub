@@ -42,6 +42,7 @@ Concrete types: `CLISessionMonitorService` / `CodexSessionMonitorService`, `Sess
 
 ## CLI Launch & Persistence Invariants
 
+- Read `AccessorySessions.md` before editing accessory terminal panes, sub-session launch/detection, terminal workspace linked-session restore, or `session_relationships`.
 - AI override flags are applied only when starting a new CLI session, never when resuming an existing one
 - Empty or unsupported saved provider settings must fall back to the CLI's own defaults instead of emitting override flags
 - UserDefaults is only for app/UI preferences. Session/workspace management state must live in SQLite via `SessionMetadataStore`.

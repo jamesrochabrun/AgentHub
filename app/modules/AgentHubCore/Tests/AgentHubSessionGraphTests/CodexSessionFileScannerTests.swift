@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import AgentHubCore
+@testable import AgentHubSessionGraph
 
 @Suite("CodexSessionFileScanner")
 struct CodexSessionFileScannerTests {

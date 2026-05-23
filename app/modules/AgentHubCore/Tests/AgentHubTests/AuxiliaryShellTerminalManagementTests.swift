@@ -36,7 +36,9 @@ private actor AuxiliaryShellStubFileWatcher: SessionFileWatcherProtocol {
 private func makeAuxiliaryShellViewModel(
   terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
   terminalBackend: EmbeddedTerminalBackend = .storedPreference,
-  terminalWorkspaceStore: (any TerminalWorkspaceStoreProtocol)? = nil
+  terminalWorkspaceStore: (any TerminalWorkspaceStoreProtocol)? = nil,
+  sessionRelationshipStore: (any SessionRelationshipStoreProtocol)? = nil,
+  accessorySessionDetectionService: any AccessorySessionDetectionServiceProtocol = AccessorySessionDetectionService()
 ) -> CLISessionsViewModel {
   CLISessionsViewModel(
     monitorService: AuxiliaryShellStubMonitorService(),
@@ -44,7 +46,9 @@ private func makeAuxiliaryShellViewModel(
     searchService: nil,
     cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
     providerKind: .claude,
+    sessionRelationshipStore: sessionRelationshipStore,
     approvalNotificationService: NoOpApprovalNotificationService(),
+    accessorySessionDetectionService: accessorySessionDetectionService,
     terminalSurfaceFactory: terminalSurfaceFactory,
     terminalBackend: terminalBackend,
     terminalWorkspaceStore: terminalWorkspaceStore
@@ -67,6 +71,9 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   private(set) var initialTypedTexts: [String] = []
   private(set) var sentPrompts: [String] = []
   private(set) var restoredWorkspaceSnapshot: TerminalWorkspaceSnapshot?
+  private(set) var openedAccessoryPanes: [(provider: SessionProviderKind, projectPath: String)] = []
+  private(set) var markedAccessorySessions: [(provider: SessionProviderKind, sessionId: String, projectPath: String)] = []
+  var activeWorkingDirectoryResult: String?
   var workspaceSnapshotToCapture: TerminalWorkspaceSnapshot?
   private(set) var configureCallCount = 0
   private(set) var terminateCallCount = 0
@@ -118,6 +125,27 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {}
   func focus() {
     focusCallCount += 1
+  }
+  func activeWorkingDirectory() -> String? {
+    activeWorkingDirectoryResult
+  }
+  func openAccessorySessionPane(
+    provider: SessionProviderKind,
+    cliConfiguration: CLICommandConfiguration,
+    projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> AccessorySessionPaneContext? {
+    openedAccessoryPanes.append((provider, projectPath))
+    return AccessorySessionPaneContext(provider: provider, projectPath: projectPath, startedAt: Date())
+  }
+  func markAccessorySession(
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool {
+    markedAccessorySessions.append((provider, sessionId, projectPath))
+    return true
   }
   func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
     workspaceSnapshotToCapture
@@ -185,6 +213,96 @@ private final class RecordingTerminalWorkspaceStore: TerminalWorkspaceStoreProto
     backend: EmbeddedTerminalBackend
   ) -> String {
     "\(provider.rawValue)|\(sessionId)|\(backend.rawValue)"
+  }
+}
+
+private final class RecordingSessionRelationshipStore: SessionRelationshipStoreProtocol, @unchecked Sendable {
+  private let lock = NSLock()
+  private var relationships: [SessionRelationshipRecord] = []
+
+  func saveSessionRelationship(_ relationship: SessionRelationshipRecord) async throws {
+    lock.lock()
+    defer { lock.unlock() }
+    relationships.removeAll {
+      $0.sourceProvider == relationship.sourceProvider
+        && $0.sourceSessionId == relationship.sourceSessionId
+        && $0.targetProvider == relationship.targetProvider
+        && $0.targetSessionId == relationship.targetSessionId
+        && $0.kind == relationship.kind
+    }
+    relationships.append(relationship)
+  }
+
+  func sessionRelationships(
+    from sourceProvider: SessionProviderKind,
+    sessionId: String,
+    kind: SessionRelationshipKind?
+  ) async throws -> [SessionRelationshipRecord] {
+    lock.lock()
+    defer { lock.unlock() }
+    return relationships.filter {
+      $0.sourceProvider == sourceProvider.rawValue
+        && $0.sourceSessionId == sessionId
+        && (kind == nil || $0.kind == kind?.rawValue)
+    }
+  }
+
+  func sessionRelationships(
+    to targetProvider: SessionProviderKind,
+    sessionId: String,
+    kind: SessionRelationshipKind?
+  ) async throws -> [SessionRelationshipRecord] {
+    lock.lock()
+    defer { lock.unlock() }
+    return relationships.filter {
+      $0.targetProvider == targetProvider.rawValue
+        && $0.targetSessionId == sessionId
+        && (kind == nil || $0.kind == kind?.rawValue)
+    }
+  }
+
+  func deleteSessionRelationship(
+    sourceProvider: SessionProviderKind,
+    sourceSessionId: String,
+    targetProvider: SessionProviderKind,
+    targetSessionId: String,
+    kind: SessionRelationshipKind
+  ) async throws {
+    lock.lock()
+    defer { lock.unlock() }
+    relationships.removeAll {
+      $0.sourceProvider == sourceProvider.rawValue
+        && $0.sourceSessionId == sourceSessionId
+        && $0.targetProvider == targetProvider.rawValue
+        && $0.targetSessionId == targetSessionId
+        && $0.kind == kind.rawValue
+    }
+  }
+}
+
+private struct ImmediateAccessoryDetectionService: AccessorySessionDetectionServiceProtocol {
+  let result: AccessorySessionDetectionResult
+
+  func makeBaseline(
+    provider: SessionProviderKind,
+    projectPath: String,
+    startedAt: Date
+  ) -> AccessorySessionDetectionBaseline {
+    AccessorySessionDetectionBaseline(
+      provider: provider,
+      projectPath: projectPath,
+      startedAt: startedAt,
+      knownSessionFiles: []
+    )
+  }
+
+  func detectNewSession(
+    provider: SessionProviderKind,
+    projectPath: String,
+    startedAt: Date,
+    baseline: AccessorySessionDetectionBaseline
+  ) -> AccessorySessionDetectionResult? {
+    result.provider == provider ? result : nil
   }
 }
 
@@ -474,6 +592,45 @@ struct AuxiliaryShellTerminalManagementTests {
     #expect(terminal.view === surface)
     #expect(surface.configuredProjectPath == "/tmp/project")
     #expect(factory.requestedBackends == [.regular])
+  }
+
+  @Test("Starting accessory session opens pane and persists resolved relationship")
+  @MainActor
+  func startAccessorySessionPersistsResolvedRelationship() async throws {
+    let surface = TestTerminalSurface()
+    surface.activeWorkingDirectoryResult = "/tmp/project"
+    let relationshipStore = RecordingSessionRelationshipStore()
+    let detection = ImmediateAccessoryDetectionService(result: AccessorySessionDetectionResult(
+      provider: .codex,
+      sessionId: "child-1",
+      projectPath: "/tmp/project",
+      branchName: "main",
+      sessionFilePath: "/tmp/codex/child-1.jsonl"
+    ))
+    let viewModel = makeAuxiliaryShellViewModel(
+      sessionRelationshipStore: relationshipStore,
+      accessorySessionDetectionService: detection
+    )
+    viewModel.activeTerminals["parent-1"] = surface
+
+    viewModel.startAccessorySession(
+      parentSession: CLISession(id: "parent-1", projectPath: "/tmp/project"),
+      childProvider: .codex
+    )
+
+    try await Task.sleep(for: .milliseconds(1_100))
+
+    #expect(surface.openedAccessoryPanes.map(\.provider) == [.codex])
+    #expect(surface.markedAccessorySessions.map(\.sessionId) == ["child-1"])
+
+    let relationships = try await relationshipStore.sessionRelationships(
+      from: .claude,
+      sessionId: "parent-1",
+      kind: .accessoryChild
+    )
+    #expect(relationships.count == 1)
+    #expect(relationships.first?.targetProviderKind == .codex)
+    #expect(relationships.first?.targetSessionId == "child-1")
   }
 
   @Test("Changing terminal backend preference does not recreate cached terminal surfaces")
