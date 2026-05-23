@@ -729,4 +729,207 @@ struct WebPreviewInspectorViewModelTests {
     let clearedConsoleCount = await MainActor.run { viewModel.consoleEntries.count }
     #expect(clearedConsoleCount == 0)
   }
+
+  @Test("Inline-toolbar edits are reformatted by the reconciler after the direct write")
+  func reconcilerOverwritesDirectWriteWithReformattedContent() async throws {
+    let filePath = "/project/styles/site.css"
+    let originalContent = """
+    .cta {
+    \tcolor: #ffffff;
+    }
+    """
+    let reconciledContent = """
+    .cta {
+    \tcolor: #ffffff;
+    \tline-height: 30px;
+    }
+    """
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: originalContent])
+    let reconciler = MockInlineEditStyleReconciler(behavior: .success(reconciledContent))
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-reconcile-success",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        inlineEditReconciler: reconciler,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    let element = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Launch",
+      computedStyles: ["line-height": "26px", "color": "rgb(255, 255, 255)"]
+    )
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateProperty(.lineHeight, value: "30px")))
+    }
+
+    try await Task.sleep(for: .milliseconds(150))
+
+    let calls = await reconciler.recordedCalls()
+    let writes = await fileService.recordedWrites()
+
+    #expect(calls.count == 1)
+    #expect(calls.first?.changeSummary.contains("line-height") == true)
+    #expect(calls.first?.changeSummary.contains(".cta") == true)
+    #expect(calls.first?.originalContent == originalContent)
+    #expect(writes.count == 2)
+    #expect(writes.first?.content.contains("line-height: 30px;") == true)
+    #expect(writes.last?.content == reconciledContent)
+  }
+
+  @Test("Reconciler failures leave the direct write untouched")
+  func reconcilerFailureKeepsDirectWrite() async throws {
+    let filePath = "/project/styles/site.css"
+    let originalContent = """
+    .cta {
+      color: #ffffff;
+    }
+    """
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: originalContent])
+    let reconciler = MockInlineEditStyleReconciler(
+      behavior: .failure(InlineEditStyleReconcilerError.emptyOutput)
+    )
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-reconcile-failure",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        inlineEditReconciler: reconciler,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    let element = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Launch",
+      computedStyles: ["line-height": "26px", "color": "rgb(255, 255, 255)"]
+    )
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateProperty(.lineHeight, value: "30px")))
+    }
+
+    try await Task.sleep(for: .milliseconds(150))
+
+    let calls = await reconciler.recordedCalls()
+    let writes = await fileService.recordedWrites()
+
+    #expect(calls.count == 1)
+    #expect(writes.count == 1)
+    #expect(writes.first?.content.contains("line-height: 30px;") == true)
+  }
+
+  @Test("Editor-only edits (no DesignEdit) skip the reconciler")
+  func nonToolbarEditsBypassReconciler() async throws {
+    let filePath = "/project/index.html"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: "<button>Launch</button>"])
+    let reconciler = MockInlineEditStyleReconciler(behavior: .success("<button>Reformatted</button>"))
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-reconcile-bypass",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        inlineEditReconciler: reconciler,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(element: makeElement(), previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.updateEditorContent("<button>Edited</button>")
+    }
+
+    try await Task.sleep(for: .milliseconds(80))
+
+    let calls = await reconciler.recordedCalls()
+    let writes = await fileService.recordedWrites()
+
+    #expect(calls.isEmpty)
+    #expect(writes == [.init(path: filePath, content: "<button>Edited</button>")])
+  }
+}
+
+private actor MockInlineEditStyleReconciler: InlineEditStyleReconcilerProtocol {
+  struct Call: Sendable {
+    let originalContent: String
+    let editedContent: String
+    let filePath: String
+    let changeSummary: String
+    let projectPath: String
+  }
+
+  enum Behavior: Sendable {
+    case success(String)
+    case failure(InlineEditStyleReconcilerError)
+  }
+
+  private let behavior: Behavior
+  private var calls: [Call] = []
+
+  init(behavior: Behavior) {
+    self.behavior = behavior
+  }
+
+  func recordedCalls() -> [Call] {
+    calls
+  }
+
+  func reconcile(
+    originalContent: String,
+    editedContent: String,
+    filePath: String,
+    changeSummary: String,
+    projectPath: String
+  ) async throws -> String {
+    calls.append(Call(
+      originalContent: originalContent,
+      editedContent: editedContent,
+      filePath: filePath,
+      changeSummary: changeSummary,
+      projectPath: projectPath
+    ))
+    switch behavior {
+    case .success(let output):
+      return output
+    case .failure(let error):
+      throw error
+    }
+  }
 }

@@ -19,9 +19,12 @@ final class WebPreviewInspectorViewModel {
 
   private let sourceResolver: any WebPreviewSourceResolverProtocol
   private let fileService: any ProjectFileServiceProtocol
+  private let inlineEditReconciler: (any InlineEditStyleReconcilerProtocol)?
   private let writeDebounceDuration: Duration
 
   private var pendingWriteTask: Task<Void, Never>?
+  private var pendingReconcileTask: Task<Void, Never>?
+  private var pendingChangeSummary: String?
   private var trackedTextToken: String?
   private var userConfirmedLowConfidenceFile = false
   private weak var previewWebView: WKWebView?
@@ -54,12 +57,14 @@ final class WebPreviewInspectorViewModel {
     projectPath: String,
     sourceResolver: any WebPreviewSourceResolverProtocol = WebPreviewSourceResolver(),
     fileService: any ProjectFileServiceProtocol = ProjectFileService.shared,
+    inlineEditReconciler: (any InlineEditStyleReconcilerProtocol)? = nil,
     writeDebounceDuration: Duration = .milliseconds(600)
   ) {
     self.sessionID = sessionID
     self.projectPath = projectPath
     self.sourceResolver = sourceResolver
     self.fileService = fileService
+    self.inlineEditReconciler = inlineEditReconciler
     self.writeDebounceDuration = writeDebounceDuration
   }
 
@@ -416,16 +421,22 @@ final class WebPreviewInspectorViewModel {
   func flushPendingWriteIfNeeded() async {
     pendingWriteTask?.cancel()
     pendingWriteTask = nil
-    await persistCurrentFileIfNeeded()
+    pendingReconcileTask?.cancel()
+    pendingReconcileTask = nil
+    await persistCurrentFileIfNeeded(reconcileAfterWrite: false)
   }
 
   func apply(_ edit: DesignEdit) {
+    let selectorLabel = matchedSelector ?? "(unknown selector)"
     switch edit.action {
     case .updateProperty(let property, value: let value):
+      pendingChangeSummary = "Set \(property.rawValue) of selector \"\(selectorLabel)\" to \(value)"
       applyRawStyleValue(property.rawValue, value: value, mappedProperty: WebPreviewStyleProperty(rawValue: property.rawValue))
     case .updateTextContent(let value):
+      pendingChangeSummary = "Replace text content of selector \"\(selectorLabel)\" with \"\(value)\""
       updateContentValue(value)
     case .fitContent:
+      pendingChangeSummary = "Fit width and height to content for selector \"\(selectorLabel)\""
       applyRawStyleValue("width", value: "fit-content", mappedProperty: .width)
       applyRawStyleValue("height", value: "fit-content", mappedProperty: .height)
     case .deleteElement:
@@ -529,11 +540,13 @@ final class WebPreviewInspectorViewModel {
   private func scheduleWrite() {
     guard isEditingEnabled else { return }
     pendingWriteTask?.cancel()
+    pendingReconcileTask?.cancel()
+    pendingReconcileTask = nil
     pendingWriteTask = Task { [weak self] in
       guard let self else { return }
       try? await Task.sleep(for: self.writeDebounceDuration)
       guard !Task.isCancelled else { return }
-      await self.persistCurrentFileIfNeeded()
+      await self.persistCurrentFileIfNeeded(reconcileAfterWrite: true)
     }
   }
 
@@ -592,7 +605,7 @@ final class WebPreviewInspectorViewModel {
     scheduleWrite()
   }
 
-  private func persistCurrentFileIfNeeded() async {
+  private func persistCurrentFileIfNeeded(reconcileAfterWrite: Bool = true) async {
     guard isEditingEnabled,
           let currentFilePath,
           fileContent != savedFileContent else {
@@ -602,15 +615,100 @@ final class WebPreviewInspectorViewModel {
     isWriting = true
     writeErrorMessage = nil
     let contentToWrite = fileContent
+    let originalForReconcile = savedFileContent
+    let summaryForReconcile = pendingChangeSummary
 
     do {
       try await fileService.writeFile(at: currentFilePath, content: contentToWrite, projectPath: projectPath)
       savedFileContent = contentToWrite
     } catch {
       writeErrorMessage = "Update failed: \(error.localizedDescription)"
+      isWriting = false
+      return
     }
 
     isWriting = false
+
+    if reconcileAfterWrite,
+       let reconciler = inlineEditReconciler,
+       let summary = summaryForReconcile,
+       !summary.isEmpty {
+      let filePath = currentFilePath
+      let baselineContent = contentToWrite
+      let projectPathSnapshot = projectPath
+      pendingReconcileTask?.cancel()
+      pendingReconcileTask = Task { [weak self] in
+        await self?.runReconcile(
+          reconciler: reconciler,
+          originalContent: originalForReconcile,
+          editedContent: baselineContent,
+          filePath: filePath,
+          changeSummary: summary,
+          projectPath: projectPathSnapshot
+        )
+      }
+    }
+
+    pendingChangeSummary = nil
+  }
+
+  private func runReconcile(
+    reconciler: any InlineEditStyleReconcilerProtocol,
+    originalContent: String,
+    editedContent: String,
+    filePath: String,
+    changeSummary: String,
+    projectPath: String
+  ) async {
+    do {
+      let reformatted = try await reconciler.reconcile(
+        originalContent: originalContent,
+        editedContent: editedContent,
+        filePath: filePath,
+        changeSummary: changeSummary,
+        projectPath: projectPath
+      )
+
+      guard !Task.isCancelled else { return }
+      await applyReconciledContent(
+        reformatted,
+        filePath: filePath,
+        expectedBaseline: editedContent
+      )
+    } catch is CancellationError {
+      return
+    } catch {
+      AppLogger.intelligence.warning(
+        "[CANVASEDIT] Reconcile failed; keeping direct write. path=\(filePath, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+    }
+  }
+
+  private func applyReconciledContent(
+    _ reformatted: String,
+    filePath: String,
+    expectedBaseline: String
+  ) async {
+    guard currentFilePath == filePath else {
+      AppLogger.intelligence.info("[CANVASEDIT] Reconcile output discarded; file selection changed before completion")
+      return
+    }
+    guard savedFileContent == expectedBaseline,
+          fileContent == expectedBaseline else {
+      AppLogger.intelligence.info("[CANVASEDIT] Reconcile output discarded; file content moved on before completion")
+      return
+    }
+    guard reformatted != expectedBaseline else { return }
+
+    do {
+      try await fileService.writeFile(at: filePath, content: reformatted, projectPath: projectPath)
+      fileContent = reformatted
+      savedFileContent = reformatted
+    } catch {
+      AppLogger.intelligence.warning(
+        "[CANVASEDIT] Reconciled write failed; keeping direct write. path=\(filePath, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+    }
   }
 
   private static func selectorCandidates(for element: ElementInspectorData, fallback: String?) -> [String] {

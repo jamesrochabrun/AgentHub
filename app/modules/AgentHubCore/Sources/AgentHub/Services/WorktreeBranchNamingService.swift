@@ -24,26 +24,19 @@ public extension WorktreeBranchNamingServiceProtocol {
 public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProtocol {
   private static let logPrefix = "[AIWORKTREE]"
   private static let namingTimeout: Duration = .seconds(15)
-  private static let namingModels = [
-    "haiku",
-    "claude-haiku-4-5",
-    "claude-3-haiku-20240307"
-  ]
-  typealias ClientFactory = @Sendable (String, [String]) -> any ClaudeCLIClientProtocol
+  static let namingModels = ClaudeProgrammaticService.haikuFallbackModels
 
-  private let additionalPaths: [String]
   private let defaults: UserDefaults
-  private let clientFactory: ClientFactory
+  private let programmaticService: any ClaudeProgrammaticServiceProtocol
   private let namingTimeoutDuration: Duration
   private let uuidProvider: @Sendable () -> UUID
-  private var activeRequestID: UUID?
-  private var activeClient: (any ClaudeCLIClientProtocol)?
-  private var userCancelledRequestIDs: Set<UUID> = []
 
+  /// Convenience init that wires up a default `ClaudeProgrammaticService`.
+  /// Preserves the legacy parameter shape consumed by tests.
   init(
     additionalPaths: [String],
     defaults: UserDefaults = .standard,
-    clientFactory: @escaping ClientFactory = { command, paths in
+    clientFactory: @escaping ClaudeProgrammaticService.ClientFactory = { command, paths in
       ClaudeCLIClient(
         command: command,
         additionalPaths: paths,
@@ -55,9 +48,29 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
     namingTimeout: Duration? = nil,
     uuidProvider: @escaping @Sendable () -> UUID = { UUID() }
   ) {
-    self.additionalPaths = additionalPaths
+    self.init(
+      programmaticService: ClaudeProgrammaticService(
+        additionalPaths: additionalPaths,
+        defaults: defaults,
+        clientFactory: clientFactory,
+        uuidProvider: uuidProvider
+      ),
+      defaults: defaults,
+      namingTimeout: namingTimeout ?? Self.namingTimeout,
+      uuidProvider: uuidProvider
+    )
+  }
+
+  /// Primary init used when the surrounding app already has a shared
+  /// `ClaudeProgrammaticService` (e.g. from `AgentHubProvider`).
+  public init(
+    programmaticService: any ClaudeProgrammaticServiceProtocol,
+    defaults: UserDefaults = .standard,
+    namingTimeout: Duration? = nil,
+    uuidProvider: @escaping @Sendable () -> UUID = { UUID() }
+  ) {
+    self.programmaticService = programmaticService
     self.defaults = defaults
-    self.clientFactory = clientFactory
     self.namingTimeoutDuration = namingTimeout ?? Self.namingTimeout
     self.uuidProvider = uuidProvider
   }
@@ -69,9 +82,6 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
     let settings = WorktreeBranchNamingSettings.load(from: defaults)
     let providers = request.providerKinds.map(\.rawValue).joined(separator: ",")
     let attachments = request.attachmentBasenames.joined(separator: ",")
-    let requestID = UUID()
-    activeRequestID = requestID
-    activeClient = nil
     AppLogger.intelligence.info(
       "\(Self.logPrefix, privacy: .public) Naming request context=\(request.launchContext.rawValue, privacy: .public) repo=\(request.repoName, privacy: .public) base=\(request.baseBranchName ?? "HEAD", privacy: .public) providers=\(providers, privacy: .public) promptLength=\(request.promptText.count) attachments=\(attachments, privacy: .public)"
     )
@@ -81,241 +91,53 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
       )
     }
     await emitProgress(
-      .preparingContext(
-        message: "Preparing branch name"
-      ),
+      .preparingContext(message: "Preparing branch name"),
       using: onProgress
     )
 
-    let command = defaults.string(forKey: AgentHubDefaults.claudeCommand) ?? "claude"
-    let raceOutcome = await withTaskGroup(of: NamingRaceOutcome?.self, returning: NamingRaceOutcome?.self) { group in
-      group.addTask { [self] in
-        do {
-          let result = try await self.resolveBranchNamesWithoutTimeout(
-            for: request,
-            requestID: requestID,
-            settings: settings,
-            command: command,
-            onProgress: onProgress
-          )
-          return .resolved(result)
-        } catch is CancellationError {
-          return .cancelled
-        } catch {
-          let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
-          await emitProgress(
-            .completed(
-              message: "Fallback branch name ready",
-              source: fallback.source,
-              branchNames: Self.resolvedBranchNames(from: fallback)
-            ),
-            using: onProgress
-          )
-          await self.logResolvedNames(fallback)
-          return .resolved(fallback)
-        }
-      }
+    let systemPrompt = makeSystemPrompt(hasContext: request.hasMeaningfulContext)
+    let userPrompt = makeUserPrompt(for: request)
 
-      group.addTask { [self] in
-        do {
-          try await Task.sleep(for: namingTimeoutDuration)
-          await cancelActiveClient()
-          return .timedOut
-        } catch {
-          return nil
-        }
-      }
-
-      while let next = await group.next() {
-        guard let next else { continue }
-        group.cancelAll()
-        return next
-      }
-
-      return nil
-    }
-
-    switch raceOutcome {
-    case .resolved(let result):
-      clearActiveRequest(requestID)
-      return result
-    case .cancelled:
-      clearActiveRequest(requestID)
-      throw CancellationError()
-    case .timedOut, .none:
-      if isUserCancelled(requestID) || Task.isCancelled {
-        clearActiveRequest(requestID)
-        throw CancellationError()
-      }
-      let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
-      AppLogger.intelligence.error(
-        "\(Self.logPrefix, privacy: .public) Branch naming timed out after \(Self.timeoutLabel(self.namingTimeoutDuration), privacy: .public); canceling Claude CLI and using deterministic fallback"
-      )
-      await emitProgress(
-        .completed(
-          message: "Branch naming reached the 15-second limit, so AgentHub used a fallback name",
-          source: fallback.source,
-          branchNames: Self.resolvedBranchNames(from: fallback)
-        ),
-        using: onProgress
-      )
-      logResolvedNames(fallback)
-      clearActiveRequest(requestID)
-      return fallback
-    }
-  }
-
-  public func cancelActiveRequest() async {
-    guard let requestID = activeRequestID else { return }
-    userCancelledRequestIDs.insert(requestID)
     AppLogger.intelligence.info(
-      "\(Self.logPrefix, privacy: .public) User requested branch naming cancellation"
+      "\(Self.logPrefix, privacy: .public) Claude naming system prompt:\n\(systemPrompt, privacy: .public)"
     )
-    await cancelActiveClient()
-  }
-}
+    AppLogger.intelligence.info(
+      "\(Self.logPrefix, privacy: .public) Claude naming user prompt:\n\(userPrompt, privacy: .public)"
+    )
 
-extension ClaudeWorktreeBranchNamingService {
-  enum NamingRaceOutcome {
-    case resolved(WorktreeBranchNamingResult)
-    case timedOut
-    case cancelled
-  }
+    let programmaticRequest = ClaudeProgrammaticRequest(
+      systemPrompt: systemPrompt,
+      userPrompt: userPrompt,
+      workingDirectory: request.repoPath,
+      models: Self.namingModels,
+      timeout: namingTimeoutDuration,
+      permissionMode: nil,
+      disallowedTools: nil,
+      logPrefix: Self.logPrefix
+    )
 
-  func setActiveClient(_ client: (any ClaudeCLIClientProtocol)?, for requestID: UUID) {
-    guard activeRequestID == requestID else { return }
-    activeClient = client
-  }
-
-  func cancelActiveClient() async {
-    let client = activeClient
-    activeClient = nil
-    guard let client else { return }
-    await MainActor.run {
-      client.cancel()
+    let progressForwarder: (@Sendable (String) -> Void)? = onProgress.map { callback in
+      { model in
+        Task { @MainActor in
+          callback(.queryingModel(model: model, message: "Generating branch name"))
+        }
+      }
     }
-  }
 
-  func clearActiveRequest(_ requestID: UUID) {
-    if activeRequestID == requestID {
-      activeRequestID = nil
-      activeClient = nil
-    }
-    userCancelledRequestIDs.remove(requestID)
-  }
-
-  func isUserCancelled(_ requestID: UUID) -> Bool {
-    userCancelledRequestIDs.contains(requestID)
-  }
-
-  func resolveBranchNamesWithoutTimeout(
-    for request: WorktreeBranchNamingRequest,
-    requestID: UUID,
-    settings: WorktreeBranchNamingSettings,
-    command: String,
-    onProgress: (@MainActor @Sendable (WorktreeBranchNamingProgress) -> Void)?
-  ) async throws -> WorktreeBranchNamingResult {
-    for (index, model) in Self.namingModels.enumerated() {
-      await emitProgress(
-        .queryingModel(
-          model: model,
-          message: "Generating branch name"
-        ),
-        using: onProgress
-      )
-      AppLogger.intelligence.info(
-        "\(Self.logPrefix, privacy: .public) Invoking Claude prompt naming with command=\(command, privacy: .public) model=\(model, privacy: .public) cwd=\(request.repoPath, privacy: .public)"
-      )
-      let client = clientFactory(command, additionalPaths)
-      setActiveClient(client, for: requestID)
-
-      do {
-        let candidate = try await collectCandidateStem(
-          using: client,
-          request: request,
-          model: model
-        )
-        setActiveClient(nil, for: requestID)
-        if isUserCancelled(requestID) || Task.isCancelled {
-          throw CancellationError()
-        }
-        AppLogger.intelligence.info(
-          "\(Self.logPrefix, privacy: .public) Claude returned branch stem candidate length=\(candidate.count)"
-        )
-        await emitProgress(
-          .sanitizing(message: "Finalizing branch name"),
-          using: onProgress
-        )
-        let sanitizedStem = Self.sanitizeGeneratedStem(candidate)
-        guard !sanitizedStem.isEmpty else {
-          AppLogger.intelligence.info(
-            "\(Self.logPrefix, privacy: .public) Claude output sanitized to an empty stem; using deterministic fallback"
-          )
-          let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
-          await emitProgress(
-            .completed(
-              message: "Branch naming returned an unusable stem, so AgentHub used a fallback name",
-              source: fallback.source,
-              branchNames: Self.resolvedBranchNames(from: fallback)
-            ),
-            using: onProgress
-          )
-          logResolvedNames(fallback)
-          return fallback
-        }
-
-        AppLogger.intelligence.info(
-          "\(Self.logPrefix, privacy: .public) Sanitized AI stem=\(sanitizedStem, privacy: .public) prefix=\(settings.normalizedPrefix, privacy: .public)"
-        )
-
-        let result = Self.buildResult(
-          stem: sanitizedStem,
-          source: .ai,
-          request: request,
-          settings: settings,
-          uuid: uuidProvider()
-        )
-        await emitProgress(
-          .completed(
-            message: "Branch name ready",
-            source: result.source,
-            branchNames: Self.resolvedBranchNames(from: result)
-          ),
-          using: onProgress
-        )
-        logResolvedNames(result)
-        return result
-      } catch {
-        setActiveClient(nil, for: requestID)
-        if isUserCancelled(requestID) || Task.isCancelled {
-          throw CancellationError()
-        }
-        if index < Self.namingModels.count - 1,
-           let rejectionMessage = Self.modelSelectionRejectionMessage(from: error) {
-          AppLogger.intelligence.warning(
-            "\(Self.logPrefix, privacy: .public) Claude rejected model=\(model, privacy: .public); retrying with fallback Haiku model. Details: \(rejectionMessage, privacy: .public)"
-          )
-          AppLogger.intelligence.warning(
-            "\(Self.logPrefix, privacy: .public) Claude model rejection surfaced via stream-json output for model=\(model, privacy: .public): \(rejectionMessage, privacy: .public)"
-          )
-          continue
-        }
-
-        if let output = Self.failureOutput(from: error), !output.isEmpty {
-          AppLogger.intelligence.error(
-            "\(Self.logPrefix, privacy: .public) Claude naming failed stream-json output for model=\(model, privacy: .public): \(output, privacy: .public)"
-          )
-        }
+    let candidate: String
+    do {
+      candidate = try await programmaticService.run(programmaticRequest, onModelAttempt: progressForwarder)
+    } catch is CancellationError {
+      throw CancellationError()
+    } catch let error as ClaudeProgrammaticError {
+      if case .timeout = error {
         AppLogger.intelligence.error(
-          "\(Self.logPrefix, privacy: .public) Claude naming failed; using deterministic fallback: \(error.localizedDescription, privacy: .public)"
-        )
-        AppLogger.intelligence.error(
-          "\(Self.logPrefix, privacy: .public) Claude naming failure details for model=\(model, privacy: .public): \(Self.describeError(error), privacy: .public)"
+          "\(Self.logPrefix, privacy: .public) Branch naming timed out after \(Self.timeoutLabel(namingTimeoutDuration), privacy: .public); canceling Claude CLI and using deterministic fallback"
         )
         let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
         await emitProgress(
           .completed(
-            message: "Branch naming was unavailable, so AgentHub used a fallback name",
+            message: "Branch naming reached the 15-second limit, so AgentHub used a fallback name",
             source: fallback.source,
             branchNames: Self.resolvedBranchNames(from: fallback)
           ),
@@ -324,24 +146,80 @@ extension ClaudeWorktreeBranchNamingService {
         logResolvedNames(fallback)
         return fallback
       }
+      return await fallbackFromGenericFailure(
+        request: request,
+        settings: settings,
+        error: error,
+        onProgress: onProgress
+      )
+    } catch {
+      return await fallbackFromGenericFailure(
+        request: request,
+        settings: settings,
+        error: error,
+        onProgress: onProgress
+      )
     }
 
-    let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
-    if isUserCancelled(requestID) || Task.isCancelled {
+    if Task.isCancelled {
       throw CancellationError()
     }
+
+    AppLogger.intelligence.info(
+      "\(Self.logPrefix, privacy: .public) Claude returned branch stem candidate length=\(candidate.count)"
+    )
+    await emitProgress(.sanitizing(message: "Finalizing branch name"), using: onProgress)
+
+    let sanitizedStem = Self.sanitizeGeneratedStem(candidate)
+    guard !sanitizedStem.isEmpty else {
+      AppLogger.intelligence.info(
+        "\(Self.logPrefix, privacy: .public) Claude output sanitized to an empty stem; using deterministic fallback"
+      )
+      let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
+      await emitProgress(
+        .completed(
+          message: "Branch naming returned an unusable stem, so AgentHub used a fallback name",
+          source: fallback.source,
+          branchNames: Self.resolvedBranchNames(from: fallback)
+        ),
+        using: onProgress
+      )
+      logResolvedNames(fallback)
+      return fallback
+    }
+
+    AppLogger.intelligence.info(
+      "\(Self.logPrefix, privacy: .public) Sanitized AI stem=\(sanitizedStem, privacy: .public) prefix=\(settings.normalizedPrefix, privacy: .public)"
+    )
+
+    let result = Self.buildResult(
+      stem: sanitizedStem,
+      source: .ai,
+      request: request,
+      settings: settings,
+      uuid: uuidProvider()
+    )
     await emitProgress(
       .completed(
-        message: "Fallback branch name ready",
-        source: fallback.source,
-        branchNames: Self.resolvedBranchNames(from: fallback)
+        message: "Branch name ready",
+        source: result.source,
+        branchNames: Self.resolvedBranchNames(from: result)
       ),
       using: onProgress
     )
-    logResolvedNames(fallback)
-    return fallback
+    logResolvedNames(result)
+    return result
   }
 
+  public func cancelActiveRequest() async {
+    AppLogger.intelligence.info(
+      "\(Self.logPrefix, privacy: .public) User requested branch naming cancellation"
+    )
+    await programmaticService.cancelActiveRequest()
+  }
+}
+
+extension ClaudeWorktreeBranchNamingService {
   nonisolated static func deterministicFallback(
     for request: WorktreeBranchNamingRequest,
     settings: WorktreeBranchNamingSettings = .load(),
@@ -404,125 +282,34 @@ private extension ClaudeWorktreeBranchNamingService {
     await callback(progress)
   }
 
-  enum NamingPromptFailure: LocalizedError {
-    case completionFailure(underlying: Error, output: String)
-
-    var errorDescription: String? {
-      switch self {
-      case .completionFailure(let underlying, let output):
-        if output.isEmpty {
-          return underlying.localizedDescription
-        }
-        return "\(underlying.localizedDescription) | output: \(output)"
-      }
-    }
-
-    var output: String {
-      switch self {
-      case .completionFailure(_, let output):
-        return output
-      }
-    }
-  }
-
-  final class StreamAccumulator: @unchecked Sendable {
-    private let lock = NSLock()
-    private var latestAssistantText: String = ""
-    private var finalResultText: String = ""
-
-    func ingest(_ chunk: StreamJSONChunk) {
-      lock.lock()
-      defer { lock.unlock() }
-
-      switch chunk {
-      case .assistant(let message):
-        let text = message.message.content.compactMap { content -> String? in
-          guard case .text(let chunkText) = content else { return nil }
-          return chunkText
-        }.joined()
-
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-          latestAssistantText = text
-        }
-
-      case .result(let resultMessage):
-        if let result = resultMessage.result?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !result.isEmpty {
-          finalResultText = result
-        }
-
-      default:
-        break
-      }
-    }
-
-    func preferredOutput() -> String {
-      lock.lock()
-      defer { lock.unlock() }
-
-      let preferred = finalResultText.trimmingCharacters(in: .whitespacesAndNewlines)
-      if !preferred.isEmpty {
-        return preferred
-      }
-      return latestAssistantText.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-  }
-
-  final class CancellableBox: @unchecked Sendable {
-    var cancellable: AnyCancellable?
-  }
-
-  func collectCandidateStem(
-    using client: any ClaudeCLIClientProtocol,
+  func fallbackFromGenericFailure(
     request: WorktreeBranchNamingRequest,
-    model: String
-  ) async throws -> String {
-    let accumulator = StreamAccumulator()
-    let systemPrompt = makeSystemPrompt(hasContext: request.hasMeaningfulContext)
-    let userPrompt = makeUserPrompt(for: request)
-
-    AppLogger.intelligence.info(
-      "\(Self.logPrefix, privacy: .public) Claude naming system prompt for model=\(model, privacy: .public):\n\(systemPrompt, privacy: .public)"
-    )
-    AppLogger.intelligence.info(
-      "\(Self.logPrefix, privacy: .public) Claude naming user prompt for model=\(model, privacy: .public):\n\(userPrompt, privacy: .public)"
-    )
-
-    let publisher = client.runStreamingPrompt(
-      prompt: userPrompt,
-      workingDirectory: request.repoPath,
-      systemPrompt: systemPrompt,
-      permissionMode: nil,
-      disallowedTools: nil,
-      model: model
-    )
-
-    let box = CancellableBox()
-    return try await withCheckedThrowingContinuation { continuation in
-      box.cancellable = publisher.sink(
-        receiveCompletion: { completion in
-          let output = accumulator.preferredOutput()
-          box.cancellable = nil
-
-          switch completion {
-          case .finished:
-            continuation.resume(returning: output)
-          case .failure(let error):
-            if !output.isEmpty {
-              continuation.resume(throwing: NamingPromptFailure.completionFailure(
-                underlying: error,
-                output: output
-              ))
-            } else {
-              continuation.resume(throwing: error)
-            }
-          }
-        },
-        receiveValue: { chunk in
-          accumulator.ingest(chunk)
-        }
+    settings: WorktreeBranchNamingSettings,
+    error: Error,
+    onProgress: (@MainActor @Sendable (WorktreeBranchNamingProgress) -> Void)?
+  ) async -> WorktreeBranchNamingResult {
+    if let output = ClaudeProgrammaticService.failureOutput(from: error), !output.isEmpty {
+      AppLogger.intelligence.error(
+        "\(Self.logPrefix, privacy: .public) Claude naming failed stream-json output: \(output, privacy: .public)"
       )
     }
+    AppLogger.intelligence.error(
+      "\(Self.logPrefix, privacy: .public) Claude naming failed; using deterministic fallback: \(error.localizedDescription, privacy: .public)"
+    )
+    AppLogger.intelligence.error(
+      "\(Self.logPrefix, privacy: .public) Claude naming failure details: \(ClaudeProgrammaticService.describeError(error), privacy: .public)"
+    )
+    let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
+    await emitProgress(
+      .completed(
+        message: "Branch naming was unavailable, so AgentHub used a fallback name",
+        source: fallback.source,
+        branchNames: Self.resolvedBranchNames(from: fallback)
+      ),
+      using: onProgress
+    )
+    logResolvedNames(fallback)
+    return fallback
   }
 
   func makeSystemPrompt(hasContext: Bool) -> String {
@@ -611,54 +398,6 @@ private extension ClaudeWorktreeBranchNamingService {
     }
   }
 
-  nonisolated static func modelSelectionRejectionMessage(from error: Error) -> String? {
-    if let namingFailure = error as? NamingPromptFailure {
-      let output = namingFailure.output
-      if output.localizedCaseInsensitiveContains("issue with the selected model")
-        || output.localizedCaseInsensitiveContains("may not exist or you may not have access") {
-        return output
-      }
-    }
-
-    if let clientError = error as? ClaudeCodeClientError,
-       case .executionFailed(let message) = clientError,
-       (message.localizedCaseInsensitiveContains("issue with the selected model")
-        || message.localizedCaseInsensitiveContains("may not exist or you may not have access")) {
-      return message
-    }
-
-    return nil
-  }
-
-  nonisolated static func describeError(_ error: Error) -> String {
-    if let namingFailure = error as? NamingPromptFailure {
-      return namingFailure.errorDescription ?? String(describing: error)
-    }
-
-    if let clientError = error as? ClaudeCodeClientError,
-       case .executionFailed(let message) = clientError {
-      return message
-    }
-
-    return error.localizedDescription
-  }
-
-  nonisolated static func failureOutput(from error: Error) -> String? {
-    if let namingFailure = error as? NamingPromptFailure {
-      let output = namingFailure.output.trimmingCharacters(in: .whitespacesAndNewlines)
-      return output.isEmpty ? nil : output
-    }
-
-    if let clientError = error as? ClaudeCodeClientError,
-       case .executionFailed(let message) = clientError {
-      let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-      return trimmed.isEmpty ? nil : trimmed
-    }
-
-    let trimmed = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? nil : trimmed
-  }
-
   nonisolated static func buildResult(
     stem: String,
     source: WorktreeBranchNameSource,
@@ -695,7 +434,7 @@ private extension ClaudeWorktreeBranchNamingService {
     return String(format: "%.1f seconds", seconds)
   }
 
-  private func logResolvedNames(_ result: WorktreeBranchNamingResult) {
+  func logResolvedNames(_ result: WorktreeBranchNamingResult) {
     AppLogger.intelligence.info(
       "\(Self.logPrefix, privacy: .public) Resolved branch names source=\(result.source.rawValue, privacy: .public) single=\(result.single ?? "-", privacy: .public) claude=\(result.claude ?? "-", privacy: .public) codex=\(result.codex ?? "-", privacy: .public)"
     )

@@ -193,7 +193,8 @@ public struct WebPreviewView: View {
     mode: WebPreviewMode = .app,
     agentLocalhostURL: URL? = nil,
     monitorState: SessionMonitorState? = nil,
-    reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe()
+    reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe(),
+    inlineEditReconciler: (any InlineEditStyleReconcilerProtocol)? = nil
   ) {
     self.session = session
     self.projectPath = projectPath
@@ -209,7 +210,8 @@ public struct WebPreviewView: View {
     self._inspectorViewModel = State(
       initialValue: WebPreviewInspectorViewModel(
         sessionID: session.id,
-        projectPath: projectPath
+        projectPath: projectPath,
+        inlineEditReconciler: inlineEditReconciler
       )
     )
   }
