@@ -202,20 +202,19 @@ public actor CodexSessionMonitorService {
         continue
       }
 
-      let parsed = CodexSessionJSONLParser.parseSessionFile(at: path)
-      let userMessages = Self.userMessagePreviews(from: path)
+      let summary = CodexSessionJSONLParser.parseSessionSummaryFile(at: path)
       let worktree = worktreeInfo(containing: meta.projectPath)
-      let lastActivity = [parsed.lastActivityAt, fileModificationDate(path)].compactMap { $0 }.max()
+      let lastActivity = [summary.lastActivityAt, fileModificationDate(path)].compactMap { $0 }.max()
       let session = CLISession(
         id: meta.sessionId,
         projectPath: meta.projectPath,
         branchName: meta.branch ?? worktree.branchName,
         isWorktree: worktree.isWorktree,
         lastActivityAt: lastActivity ?? meta.startedAt ?? Date(),
-        messageCount: parsed.messageCount,
+        messageCount: summary.messageCount,
         isActive: isSessionFileActive(path),
-        firstMessage: userMessages.first,
-        lastMessage: userMessages.last,
+        firstMessage: summary.firstUserMessage,
+        lastMessage: summary.lastUserMessage,
         slug: nil,
         sessionFilePath: path
       )
@@ -408,37 +407,6 @@ public actor CodexSessionMonitorService {
       .max { $0.path.count < $1.path.count }
 
     return (matchingWorktree?.name, matchingWorktree?.isWorktree ?? false)
-  }
-
-  private static func userMessagePreviews(from path: String) -> (first: String?, last: String?) {
-    guard let data = FileManager.default.contents(atPath: path),
-          let content = String(data: data, encoding: .utf8) else {
-      return (nil, nil)
-    }
-
-    var first: String?
-    var last: String?
-
-    for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-      guard let lineData = line.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
-            json["type"] as? String == "event_msg",
-            let payload = json["payload"] as? [String: Any],
-            payload["type"] as? String == "user_message",
-            let message = payload["message"] as? String else {
-        continue
-      }
-
-      let cleaned = message.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard !cleaned.isEmpty else { continue }
-      let preview = String(cleaned.prefix(500))
-      if first == nil {
-        first = preview
-      }
-      last = preview
-    }
-
-    return (first, last)
   }
 
   // MARK: - Worktree Detection

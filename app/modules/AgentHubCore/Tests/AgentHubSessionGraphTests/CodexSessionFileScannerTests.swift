@@ -29,9 +29,21 @@ struct CodexSessionFileScannerTests {
     #expect(meta.branch == "feature/oversized-meta")
     #expect(meta.sessionFilePath == sessionFile.path)
 
-    let expectedDate = ISO8601DateFormatter().date(from: "2026-05-05T12:00:00.000Z")
+    let expectedDate = iso8601Date("2026-05-05T12:00:00.000Z")
     #expect(meta.startedAt == expectedDate)
   }
+}
+
+private func iso8601Date(_ string: String) -> Date? {
+  let fractionalFormatter = ISO8601DateFormatter()
+  fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  if let date = fractionalFormatter.date(from: string) {
+    return date
+  }
+
+  let formatter = ISO8601DateFormatter()
+  formatter.formatOptions = [.withInternetDateTime]
+  return formatter.date(from: string)
 }
 
 private func oversizedCodexSessionFileContents(

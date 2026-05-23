@@ -13,6 +13,7 @@ public typealias AccessorySessionDetectionService = AgentHubSessionGraph.Accesso
 public typealias AccessorySessionDetectionServiceProtocol = AgentHubSessionGraph.AccessorySessionDetectionServiceProtocol
 public typealias CodexSessionFileScanner = AgentHubSessionGraph.CodexSessionFileScanner
 public typealias CodexSessionMeta = AgentHubSessionGraph.CodexSessionMeta
+public typealias CodexTimestampParser = AgentHubSessionGraph.CodexTimestampParser
 public typealias SessionProviderKind = AgentHubSessionGraph.SessionProviderKind
 public typealias SessionRelationshipKind = AgentHubSessionGraph.SessionRelationshipKind
 public typealias SessionRelationshipOrigin = AgentHubSessionGraph.SessionRelationshipOrigin

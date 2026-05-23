@@ -1752,7 +1752,9 @@ public final class CLISessionsViewModel {
     for session in restorableSessions {
       monitoredSessionIds.insert(session.id)
       monitoredSessionBackup[session.id] = session
-      startPolling(session: session)
+      if shouldStartRestoredSessionPolling {
+        startPolling(session: session)
+      }
       restoredIds.insert(session.id)
     }
 
@@ -1805,8 +1807,9 @@ public final class CLISessionsViewModel {
         monitoredSessionIds.insert(session.id)
         monitoredSessionBackup[session.id] = session
 
-        // Start polling for file changes
-        startPolling(session: session)
+        if shouldStartRestoredSessionPolling {
+          startPolling(session: session)
+        }
 
         restoredIds.insert(sessionId)
       }
@@ -3206,6 +3209,17 @@ public final class CLISessionsViewModel {
     startPolling(session: session)
   }
 
+  public func ensureLiveMonitoring(sessionId: String) {
+    guard providerKind == .codex else { return }
+    guard monitoredSessionIds.contains(sessionId) else { return }
+    guard monitoringCancellables[sessionId] == nil else { return }
+    guard let session = allSessions.first(where: { $0.id == sessionId }) ?? monitoredSessionBackup[sessionId] else {
+      return
+    }
+
+    startPolling(session: session)
+  }
+
   /// Stop monitoring a session
   public func stopMonitoring(session: CLISession) {
     stopMonitoring(sessionId: session.id)
@@ -3250,6 +3264,10 @@ public final class CLISessionsViewModel {
       // Session not found anywhere - should not happen, but handle gracefully
       return nil
     }
+  }
+
+  private var shouldStartRestoredSessionPolling: Bool {
+    providerKind != .codex
   }
 
   public func monitorStateModel(for sessionId: String) -> SessionMonitorStateModel {

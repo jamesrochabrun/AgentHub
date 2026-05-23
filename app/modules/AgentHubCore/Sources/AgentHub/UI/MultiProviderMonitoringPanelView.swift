@@ -332,9 +332,11 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onAppear {
       ensurePrimarySelection(snapshot: snapshot)
+      ensureLiveMonitoringForPrimaryItem(snapshot: snapshot)
     }
     .onChange(of: snapshot.itemIDs) { _, _ in
       ensurePrimarySelection()
+      ensureLiveMonitoringForPrimaryItem()
     }
     .onChange(of: snapshot.effectivePrimaryItemID) { _, newId in
       guard let currentSidePanelPayload = sidePanelPresentation.currentPayload else { return }
@@ -372,6 +374,7 @@ public struct MultiProviderMonitoringPanelView: View {
       if let item = makeItemSnapshot().allItems.first(where: { $0.id == newId }) {
         item.viewModel.focusTerminal(forKey: item.sessionId)
       }
+      ensureLiveMonitoringForPrimaryItem()
     }
   }
 
@@ -1115,6 +1118,16 @@ public struct MultiProviderMonitoringPanelView: View {
   private func setPrimarySessionIfNeeded(_ sessionId: String) {
     guard primarySessionId != sessionId else { return }
     primarySessionId = sessionId
+  }
+
+  private func ensureLiveMonitoringForPrimaryItem(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>? = nil) {
+    guard selectedModuleLandingPath == nil else { return }
+    let snapshot = snapshot ?? makeItemSnapshot()
+    guard case .monitored(.codex, let viewModel, let session, _) = snapshot.effectivePrimaryItem else {
+      return
+    }
+
+    viewModel.ensureLiveMonitoring(sessionId: session.id)
   }
 
   private func toggleAuxiliaryShellDock() {

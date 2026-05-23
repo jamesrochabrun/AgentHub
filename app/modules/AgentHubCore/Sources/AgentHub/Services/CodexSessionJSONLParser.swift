@@ -26,6 +26,17 @@ public struct CodexSessionJSONLParser {
     public init() {}
   }
 
+  /// Minimal parsing result for launch restoration and targeted session loading.
+  /// Skips activity, tool state, resource detection, and status computation.
+  public struct SessionSummaryParseResult: Sendable {
+    public var messageCount: Int = 0
+    public var lastActivityAt: Date?
+    public var firstUserMessage: String?
+    public var lastUserMessage: String?
+
+    public init() {}
+  }
+
   // MARK: - Parsing Results
 
   public struct ParseResult: Sendable {
@@ -110,6 +121,25 @@ public struct CodexSessionJSONLParser {
     return result
   }
 
+  public static func parseSessionSummaryFile(at path: String) -> SessionSummaryParseResult {
+    var result = SessionSummaryParseResult()
+
+    guard let data = FileManager.default.contents(atPath: path),
+          let content = String(data: data, encoding: .utf8) else {
+      return result
+    }
+
+    for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
+      guard let lineData = line.data(using: .utf8),
+            let entry = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else {
+        continue
+      }
+      processSummaryEntry(entry, into: &result)
+    }
+
+    return result
+  }
+
   public static func parseSessionFile(at path: String, approvalTimeoutSeconds: Int = 0) -> ParseResult {
     var result = ParseResult()
 
@@ -179,6 +209,38 @@ public struct CodexSessionJSONLParser {
       guard let payload = entry["payload"] as? [String: Any],
             let payloadType = payload["type"] as? String else { return }
       handleResponseItem(type: payloadType, payload: payload, timestamp: timestamp, result: &result)
+
+    default:
+      break
+    }
+  }
+
+  private static func processSummaryEntry(_ entry: [String: Any], into result: inout SessionSummaryParseResult) {
+    if let timestamp = CodexTimestampParser.parse(entry["timestamp"] as? String) {
+      result.lastActivityAt = timestamp
+    }
+
+    guard let type = entry["type"] as? String,
+          type == "event_msg",
+          let payload = entry["payload"] as? [String: Any],
+          let eventType = payload["type"] as? String else {
+      return
+    }
+
+    switch eventType {
+    case "user_message":
+      result.messageCount += 1
+      guard let message = payload["message"] as? String else { return }
+      let cleaned = message.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard !cleaned.isEmpty else { return }
+      let preview = String(cleaned.prefix(500))
+      if result.firstUserMessage == nil {
+        result.firstUserMessage = preview
+      }
+      result.lastUserMessage = preview
+
+    case "agent_message":
+      result.messageCount += 1
 
     default:
       break
@@ -364,13 +426,6 @@ public struct CodexSessionJSONLParser {
   }
 
   private static func parseTimestamp(_ string: String?) -> Date? {
-    guard let string else { return nil }
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = formatter.date(from: string) {
-      return date
-    }
-    formatter.formatOptions = [.withInternetDateTime]
-    return formatter.date(from: string)
+    CodexTimestampParser.parse(string)
   }
 }
