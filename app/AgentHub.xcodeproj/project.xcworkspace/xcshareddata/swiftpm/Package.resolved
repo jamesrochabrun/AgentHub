@@ -177,8 +177,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/SwiftTerm",
       "state" : {
-        "revision" : "287a410162ca653e43b1c571faefc0320ae2f51b",
-        "version" : "1.13.0-agenthub.1"
+        "revision" : "46d4c1a9b5bf981b9d9e376447be7f81f456837a",
+        "version" : "1.13.0-agenthub.5"
       }
     },
     {

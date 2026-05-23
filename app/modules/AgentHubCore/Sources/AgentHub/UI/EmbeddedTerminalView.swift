@@ -579,15 +579,19 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isTerminalVisible = terminal.superview != nil && !terminal.isHidden && terminal.alphaValue > 0
+        let terminalTextInputActive = isTerminalVisible
+          && self.isTerminalResponderActive(window: window, terminal: terminal)
 
-        if let shortcut = RegularTerminalShortcut.action(for: event) {
+        if let shortcut = RegularTerminalShortcut.action(
+          for: event,
+          terminalTextInputActive: terminalTextInputActive
+        ) {
           self.handleShortcut(shortcut, focusedTerminal: terminal)
           self.onUserInteraction?()
           return nil
         }
 
-        if isTerminalVisible,
-           self.isTerminalResponderActive(window: window, terminal: terminal),
+        if terminalTextInputActive,
            flags == .control,
            event.keyCode == 50,
            self.onRequestShowEditor != nil {
@@ -597,7 +601,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         }
 
         // Typing shortcuts (require terminal to be first responder)
-        guard isTerminalResponderActive(window: window, terminal: terminal) else { break }
+        guard terminalTextInputActive else { break }
         guard isProtectedAgentTab(focusedTab) else {
           self.onUserInteraction?()
           break

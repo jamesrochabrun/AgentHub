@@ -170,11 +170,21 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 
 ### Embedded Terminal
 
+When the embedded Claude or Codex terminal is focused, text editing shortcuts follow macOS Terminal-style line editing.
+
 | Shortcut | Action |
 |---|---|
 | **Cmd+C** | Copy selected text |
 | **Cmd+V** | Paste |
 | **Cmd+A** | Select all |
+| **Cmd+Left / Cmd+Up** | Move to beginning of line |
+| **Cmd+Right / Cmd+Down** | Move to end of line |
+| **Cmd+Backspace** | Delete to beginning of line |
+| **Cmd+Forward Delete** | Delete to end of line |
+| **Option+Left** | Move back one word |
+| **Option+Right** | Move forward one word |
+| **Option+Backspace** | Delete previous word |
+| **Option+Forward Delete** | Delete next word |
 | **⌥↩ / ⌘↩ / ⇧↩** | Insert newline (configurable in Settings → Terminal) |
 
 ### Command Palette
