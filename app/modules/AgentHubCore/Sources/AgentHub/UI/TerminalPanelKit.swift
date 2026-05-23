@@ -179,10 +179,11 @@ public enum TerminalPanelKit {
   @MainActor
   public final class Tab<Payload>: Identifiable {
     public let id: TabID
-    public let role: TerminalWorkspaceTabRole
+    public var role: TerminalWorkspaceTabRole
     public var name: String?
     public var title: String?
     public var workingDirectory: String?
+    public var linkedSession: TerminalWorkspaceLinkedSessionSnapshot?
     public let payload: Payload
 
     public init(
@@ -191,6 +192,7 @@ public enum TerminalPanelKit {
       name: String? = nil,
       title: String? = nil,
       workingDirectory: String? = nil,
+      linkedSession: TerminalWorkspaceLinkedSessionSnapshot? = nil,
       payload: Payload
     ) {
       self.id = id
@@ -198,6 +200,7 @@ public enum TerminalPanelKit {
       self.name = name
       self.title = title
       self.workingDirectory = workingDirectory
+      self.linkedSession = linkedSession
       self.payload = payload
     }
 

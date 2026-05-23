@@ -6,6 +6,18 @@
 import AppKit
 import SwiftUI
 
+public struct AccessorySessionPaneContext: Equatable, Sendable {
+  public let provider: SessionProviderKind
+  public let projectPath: String
+  public let startedAt: Date
+
+  public init(provider: SessionProviderKind, projectPath: String, startedAt: Date) {
+    self.provider = provider
+    self.projectPath = projectPath
+    self.startedAt = startedAt
+  }
+}
+
 @MainActor
 public protocol EmbeddedTerminalSurface: AnyObject {
   var view: NSView { get }
@@ -38,6 +50,19 @@ public protocol EmbeddedTerminalSurface: AnyObject {
   func typeInitialTextIfNeeded(_ text: String)
   func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?)
   func focus()
+  func activeWorkingDirectory() -> String?
+  func openAccessorySessionPane(
+    provider: SessionProviderKind,
+    cliConfiguration: CLICommandConfiguration,
+    projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> AccessorySessionPaneContext?
+  func markAccessorySession(
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool
   func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot?
   func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot)
 }
@@ -53,6 +78,28 @@ public extension EmbeddedTerminalSurface {
   }
 
   func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {}
+
+  func activeWorkingDirectory() -> String? {
+    nil
+  }
+
+  func openAccessorySessionPane(
+    provider: SessionProviderKind,
+    cliConfiguration: CLICommandConfiguration,
+    projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> AccessorySessionPaneContext? {
+    nil
+  }
+
+  func markAccessorySession(
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool {
+    false
+  }
 }
 
 public protocol EmbeddedTerminalSurfaceFactory {

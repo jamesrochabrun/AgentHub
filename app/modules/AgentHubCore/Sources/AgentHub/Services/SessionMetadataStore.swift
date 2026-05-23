@@ -24,6 +24,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     static let createManagedProcesses = "v7_create_managed_processes"
     static let createClaudeHookInstallations = "v8_create_claude_hook_installations"
     static let addOwnedWorktreePaths = "v9_add_owned_worktree_paths"
+    static let createSessionRelationships = "v10_create_session_relationships"
   }
 
   static let migrationIdentifiers = [
@@ -35,7 +36,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     MigrationID.createSessionWorkspaceState,
     MigrationID.createManagedProcesses,
     MigrationID.createClaudeHookInstallations,
-    MigrationID.addOwnedWorktreePaths
+    MigrationID.addOwnedWorktreePaths,
+    MigrationID.createSessionRelationships
   ]
 
   private let dbQueue: DatabaseQueue
@@ -162,6 +164,33 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       }
     }
 
+    migrator.registerMigration(MigrationID.createSessionRelationships) { db in
+      try db.create(table: "session_relationships") { t in
+        t.column("sourceProvider", .text).notNull()
+        t.column("sourceSessionId", .text).notNull()
+        t.column("targetProvider", .text).notNull()
+        t.column("targetSessionId", .text).notNull()
+        t.column("kind", .text).notNull()
+        t.column("origin", .text).notNull()
+        t.column("createdAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+        t.primaryKey(
+          ["sourceProvider", "sourceSessionId", "targetProvider", "targetSessionId", "kind"],
+          onConflict: .replace
+        )
+      }
+      try db.create(
+        index: "idx_session_relationships_source",
+        on: "session_relationships",
+        columns: ["sourceProvider", "sourceSessionId", "kind"]
+      )
+      try db.create(
+        index: "idx_session_relationships_target",
+        on: "session_relationships",
+        columns: ["targetProvider", "targetSessionId", "kind"]
+      )
+    }
+
     return migrator
   }
 
@@ -261,6 +290,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       _ = try SessionWorkspaceStateRecord.deleteAll(db)
       _ = try ClaudeHookInstallationRecord.deleteAll(db)
       _ = try ManagedProcessRecord.deleteAll(db)
+      _ = try SessionRelationshipRecord.deleteAll(db)
       _ = try AIConfigRecord.deleteAll(db)
       _ = try SessionRepoMapping.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
@@ -432,6 +462,81 @@ extension SessionMetadataStore: ManagedProcessStoreProtocol {
   public func getManagedProcesses() async throws -> [ManagedProcessRecord] {
     try await dbQueue.read { db in
       try ManagedProcessRecord.fetchAll(db)
+    }
+  }
+}
+
+extension SessionMetadataStore: SessionRelationshipStoreProtocol {
+  public func saveSessionRelationship(_ relationship: SessionRelationshipRecord) async throws {
+    var record = relationship
+    let now = Date()
+    record.updatedAt = now
+
+    try await dbQueue.write { db in
+      if let existing = try SessionRelationshipRecord
+        .filter(Column("sourceProvider") == record.sourceProvider)
+        .filter(Column("sourceSessionId") == record.sourceSessionId)
+        .filter(Column("targetProvider") == record.targetProvider)
+        .filter(Column("targetSessionId") == record.targetSessionId)
+        .filter(Column("kind") == record.kind)
+        .fetchOne(db) {
+        record.createdAt = existing.createdAt
+      }
+      try record.save(db)
+    }
+  }
+
+  public func sessionRelationships(
+    from sourceProvider: SessionProviderKind,
+    sessionId: String,
+    kind: SessionRelationshipKind?
+  ) async throws -> [SessionRelationshipRecord] {
+    try await dbQueue.read { db in
+      var request = SessionRelationshipRecord
+        .filter(Column("sourceProvider") == sourceProvider.rawValue)
+        .filter(Column("sourceSessionId") == sessionId)
+      if let kind {
+        request = request.filter(Column("kind") == kind.rawValue)
+      }
+      return try request
+        .order(Column("createdAt"))
+        .fetchAll(db)
+    }
+  }
+
+  public func sessionRelationships(
+    to targetProvider: SessionProviderKind,
+    sessionId: String,
+    kind: SessionRelationshipKind?
+  ) async throws -> [SessionRelationshipRecord] {
+    try await dbQueue.read { db in
+      var request = SessionRelationshipRecord
+        .filter(Column("targetProvider") == targetProvider.rawValue)
+        .filter(Column("targetSessionId") == sessionId)
+      if let kind {
+        request = request.filter(Column("kind") == kind.rawValue)
+      }
+      return try request
+        .order(Column("createdAt"))
+        .fetchAll(db)
+    }
+  }
+
+  public func deleteSessionRelationship(
+    sourceProvider: SessionProviderKind,
+    sourceSessionId: String,
+    targetProvider: SessionProviderKind,
+    targetSessionId: String,
+    kind: SessionRelationshipKind
+  ) async throws {
+    try await dbQueue.write { db in
+      _ = try SessionRelationshipRecord
+        .filter(Column("sourceProvider") == sourceProvider.rawValue)
+        .filter(Column("sourceSessionId") == sourceSessionId)
+        .filter(Column("targetProvider") == targetProvider.rawValue)
+        .filter(Column("targetSessionId") == targetSessionId)
+        .filter(Column("kind") == kind.rawValue)
+        .deleteAll(db)
     }
   }
 }

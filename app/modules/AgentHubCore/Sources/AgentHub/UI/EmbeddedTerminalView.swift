@@ -968,6 +968,39 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     return tab
   }
 
+  private func makeAccessoryAgentTab(
+    provider: SessionProviderKind,
+    sessionId: String?,
+    workingDirectory: String?,
+    linkedSession: TerminalWorkspaceLinkedSessionSnapshot? = nil,
+    cliConfigurationOverride: CLICommandConfiguration? = nil
+  ) -> RegularTerminalTab {
+    let agentProjectPath = resolvedExistingDirectory(workingDirectory)
+    let terminal = prepareTerminalView(isDark: currentIsDark)
+    terminal.projectPath = agentProjectPath
+    terminal.onOpenFile = { [weak self] path, line in
+      if let self, let vm = self.sessionViewModel, let key = self.terminalSessionKey {
+        vm.pendingFileOpen = (sessionId: key, filePath: path, lineNumber: line)
+      }
+    }
+
+    let tab = RegularTerminalTab(
+      role: .agent,
+      name: provider.rawValue,
+      workingDirectory: agentProjectPath,
+      linkedSession: linkedSession,
+      terminalView: terminal
+    )
+    scheduleAccessoryAgentStart(
+      for: tab,
+      provider: provider,
+      sessionId: sessionId,
+      projectPath: agentProjectPath,
+      cliConfigurationOverride: cliConfigurationOverride
+    )
+    return tab
+  }
+
   private func scheduleShellStart(for tab: RegularTerminalTab, projectPath: String) {
     Task { @MainActor [weak self, weak tab] in
       await Task.yield()
@@ -987,6 +1020,39 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         sessionId: self.terminalSessionKey,
         projectPath: projectPath,
         expectedExecutable: nil
+      )
+    }
+  }
+
+  private func scheduleAccessoryAgentStart(
+    for tab: RegularTerminalTab,
+    provider: SessionProviderKind,
+    sessionId: String?,
+    projectPath: String,
+    cliConfigurationOverride: CLICommandConfiguration? = nil
+  ) {
+    Task { @MainActor [weak self, weak tab] in
+      await Task.yield()
+      guard let self, let tab else { return }
+      guard self.allTabs.contains(where: { $0.id == tab.id }) else { return }
+      guard !tab.terminalView.isStopped else { return }
+
+      let cliConfiguration = cliConfigurationOverride
+        ?? self.sessionViewModel?.cliConfiguration(for: provider)
+        ?? (provider == .claude ? .claudeDefault : .codexDefault)
+      self.startCLIProcess(
+        terminal: tab.terminalView,
+        sessionId: sessionId,
+        projectPath: projectPath,
+        cliConfiguration: cliConfiguration
+      )
+      self.registerProcessIfNeeded(
+        for: tab.terminalView,
+        kind: .agentTerminal,
+        provider: provider,
+        sessionId: sessionId,
+        projectPath: projectPath,
+        expectedExecutable: cliConfiguration.executableName
       )
     }
   }
@@ -1025,6 +1091,74 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     )
     notifyWorkspaceChanged()
     focus(tab)
+  }
+
+  public func activeWorkingDirectory() -> String? {
+    activeTab?.workingDirectory ?? protectedAgentTab?.workingDirectory ?? resolvedProjectPath
+  }
+
+  public func openAccessorySessionPane(
+    provider: SessionProviderKind,
+    cliConfiguration: CLICommandConfiguration,
+    projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> AccessorySessionPaneContext? {
+    if let metadataStore {
+      self.metadataStore = metadataStore
+    }
+    guard let session = terminalPanelSession, session.canOpenPanel else { return nil }
+    guard let anchorPanel = activePanel ?? panel(for: primaryPanelID) else { return nil }
+    let workingDirectory = resolvedExistingDirectory(projectPath)
+    let startedAt = Date()
+    let tab = makeAccessoryAgentTab(
+      provider: provider,
+      sessionId: nil,
+      workingDirectory: workingDirectory,
+      cliConfigurationOverride: cliConfiguration
+    )
+    guard session.openPanel(with: tab, beside: anchorPanel.id, axis: .horizontal) != nil else {
+      return nil
+    }
+    refreshWorkspaceRootView()
+    syncAppearance(
+      isDark: currentIsDark,
+      fontSize: currentFontSize,
+      fontFamily: currentFontFamily,
+      theme: currentTheme
+    )
+    notifyWorkspaceChanged()
+    focus(tab)
+    return AccessorySessionPaneContext(provider: provider, projectPath: workingDirectory, startedAt: startedAt)
+  }
+
+  public func markAccessorySession(
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool {
+    let normalizedPath = resolvedExistingDirectory(projectPath)
+    guard let tab = candidateAccessoryTab(for: normalizedPath) else { return false }
+    tab.role = .agent
+    tab.name = provider.rawValue
+    tab.linkedSession = TerminalWorkspaceLinkedSessionSnapshot(
+      provider: provider,
+      sessionId: sessionId,
+      relationshipKind: .accessoryChild
+    )
+    tab.workingDirectory = normalizedPath
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
+    return true
+  }
+
+  private func candidateAccessoryTab(for workingDirectory: String) -> RegularTerminalTab? {
+    let candidates = allTabs.filter { tab in
+      !isProtectedAgentTab(tab)
+        && tab.linkedSession == nil
+        && resolvedExistingDirectory(tab.workingDirectory) == workingDirectory
+    }
+    return candidates.first { $0.role == .agent } ?? candidates.first { $0.role == .shell }
   }
 
   private func canCloseRegularPanel(_ panel: RegularTerminalPanel) -> Bool {
@@ -1197,7 +1331,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
           role: tab.role,
           name: Self.nonEmpty(tab.name),
           title: Self.nonEmpty(tab.title),
-          workingDirectory: Self.nonEmpty(tab.workingDirectory ?? resolvedProjectPath)
+          workingDirectory: Self.nonEmpty(tab.workingDirectory ?? resolvedProjectPath),
+          linkedSession: tab.linkedSession
         )
       }
       return TerminalWorkspacePanelSnapshot(
@@ -1241,11 +1376,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
     for panelSnapshot in panelSnapshots.dropFirst() {
       guard let session = terminalPanelSession, session.canOpenPanel else { break }
-      guard let firstShellTab = panelSnapshot.tabs.first(where: { $0.role == .shell }) else { continue }
-      let tab = makeShellTab(
-        name: restoredTabName(for: firstShellTab),
-        workingDirectory: firstShellTab.workingDirectory
-      )
+      guard let firstAccessoryTab = firstRestorableAccessoryTab(in: panelSnapshot) else { continue }
+      let tab = makeRestoredAccessoryTab(firstAccessoryTab)
       let anchorPanelID = primaryPanelID ?? panels[0].id
       guard let panel = session.openPanel(
         with: tab,
@@ -1292,6 +1424,27 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
   }
 
+  private func firstRestorableAccessoryTab(
+    in panelSnapshot: TerminalWorkspacePanelSnapshot
+  ) -> TerminalWorkspaceTabSnapshot? {
+    panelSnapshot.tabs.first { $0.linkedSession != nil || $0.role == .shell }
+  }
+
+  private func makeRestoredAccessoryTab(_ tabSnapshot: TerminalWorkspaceTabSnapshot) -> RegularTerminalTab {
+    if let linkedSession = tabSnapshot.linkedSession {
+      return makeAccessoryAgentTab(
+        provider: linkedSession.provider,
+        sessionId: linkedSession.sessionId,
+        workingDirectory: tabSnapshot.workingDirectory,
+        linkedSession: linkedSession
+      )
+    }
+    return makeShellTab(
+      name: restoredTabName(for: tabSnapshot),
+      workingDirectory: tabSnapshot.workingDirectory
+    )
+  }
+
   private func restoreShellTabs(
     from panelSnapshot: TerminalWorkspacePanelSnapshot,
     in panel: RegularTerminalPanel,
@@ -1302,16 +1455,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     var restoredTabIDs = existingTabIDs
     var hasSkippedFirstShellTab = false
 
-    for tabSnapshot in panelSnapshot.tabs where tabSnapshot.role == .shell {
+    for tabSnapshot in panelSnapshot.tabs where tabSnapshot.role == .shell || tabSnapshot.linkedSession != nil {
       if skippingFirstShellTab && !hasSkippedFirstShellTab {
         hasSkippedFirstShellTab = true
         continue
       }
 
-      let tab = makeShellTab(
-        name: restoredTabName(for: tabSnapshot),
-        workingDirectory: tabSnapshot.workingDirectory
-      )
+      let tab = makeRestoredAccessoryTab(tabSnapshot)
       panel.appendTab(tab)
       restoredTabIDs.append(tab.id)
     }

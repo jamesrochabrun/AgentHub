@@ -24,6 +24,10 @@ let package = Package(
       name: "AgentHubFileSearch",
       targets: ["AgentHubFileSearch"]
     ),
+    .library(
+      name: "AgentHubSessionGraph",
+      targets: ["AgentHubSessionGraph"]
+    ),
   ],
   dependencies: [
     .package(path: "../AgentHubCLI"),
@@ -73,11 +77,22 @@ let package = Package(
       ]
     ),
     .target(
+      name: "AgentHubSessionGraph",
+      dependencies: [
+        .product(name: "GRDB", package: "GRDB.swift"),
+      ],
+      path: "Sources/AgentHubSessionGraph",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .target(
       name: "AgentHubCore",
       dependencies: [
         "ClaudeCodeClient",
         "AgentHubGitDiff",
         "AgentHubFileSearch",
+        "AgentHubSessionGraph",
         .product(name: "AgentHubCLIKit", package: "AgentHubCLI"),
         .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
         .product(name: "Storybook", package: "Storybook"),
@@ -113,6 +128,14 @@ let package = Package(
       name: "AgentHubFileSearchTests",
       dependencies: ["AgentHubFileSearch"],
       path: "Tests/AgentHubFileSearchTests",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .testTarget(
+      name: "AgentHubSessionGraphTests",
+      dependencies: ["AgentHubSessionGraph"],
+      path: "Tests/AgentHubSessionGraphTests",
       swiftSettings: [
         .swiftLanguageMode(.v5)
       ]

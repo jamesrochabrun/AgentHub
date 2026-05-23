@@ -17,7 +17,9 @@ struct SessionMetadataMigrationSafetyTests {
       "v5_create_terminal_workspaces",
       "v6_create_session_workspace_state",
       "v7_create_managed_processes",
-      "v8_create_claude_hook_installations"
+      "v8_create_claude_hook_installations",
+      "v9_add_owned_worktree_paths",
+      "v10_create_session_relationships"
     ]
 
     #expect(Array(SessionMetadataStore.migrationIdentifiers.prefix(baseline.count)) == baseline)
@@ -56,6 +58,7 @@ struct SessionMetadataMigrationSafetyTests {
     #expect(store.getWorkspaceStateSync(for: .claude) == seed.workspaceState)
     #expect(try await store.getManagedProcesses() == [seed.managedProcess])
     #expect(try await store.loadClaudeHookInstalledPaths().isEmpty)
+    #expect(try await store.sessionRelationships(from: .claude, sessionId: seed.sessionId, kind: nil).isEmpty)
   }
 }
 
@@ -148,10 +151,10 @@ private func seedCurrentBaselineDatabase(at dbPath: String) throws -> MigrationS
 
     try managedProcess.insert(db)
 
-    // Mark the database as fully migrated through v7 so opening
-    // SessionMetadataStore exercises only the v8 claude_hook_installations migration.
+    // Mark the database as fully migrated through v9 so opening
+    // SessionMetadataStore exercises only the v10 session_relationships migration.
     for migrationIdentifier in SessionMetadataStore.migrationIdentifiers
-      where migrationIdentifier != SessionMetadataStore.MigrationID.createClaudeHookInstallations {
+      where migrationIdentifier != SessionMetadataStore.MigrationID.createSessionRelationships {
       try db.execute(
         sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
         arguments: [migrationIdentifier]
@@ -210,6 +213,7 @@ private func createCurrentBaselineSchema(in db: Database) throws {
     t.column("monitoredSessionIdsData", .blob).notNull()
     t.column("expansionStateData", .blob).notNull()
     t.column("updatedAt", .datetime).notNull()
+    t.column("ownedWorktreePathsData", .blob)
   }
 
   try db.create(table: "managed_processes") { t in
@@ -227,6 +231,12 @@ private func createCurrentBaselineSchema(in db: Database) throws {
   }
   try db.create(index: "idx_managed_processes_kind", on: "managed_processes", columns: ["kind"])
   try db.create(index: "idx_managed_processes_session", on: "managed_processes", columns: ["provider", "sessionId"])
+
+  try db.create(table: "claude_hook_installations") { t in
+    t.column("projectPath", .text).primaryKey()
+    t.column("installedAt", .datetime).notNull()
+    t.column("updatedAt", .datetime).notNull()
+  }
 
   try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
 }

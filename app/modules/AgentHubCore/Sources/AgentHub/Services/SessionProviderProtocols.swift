@@ -8,13 +8,8 @@
 import Combine
 import Foundation
 
-// MARK: - SessionProviderKind
-
-public enum SessionProviderKind: String, CaseIterable, Sendable {
-  case claude = "Claude"
-  case codex = "Codex"
-
-  public init(cliMode: CLICommandMode) {
+public extension SessionProviderKind {
+  init(cliMode: CLICommandMode) {
     switch cliMode {
     case .claude:
       self = .claude

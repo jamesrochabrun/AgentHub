@@ -32,16 +32,22 @@ public final class CLISessionsViewModel {
   private let worktreeService = GitWorktreeService()
   private let metadataStore: SessionMetadataStore?
   private let terminalWorkspaceStore: (any TerminalWorkspaceStoreProtocol)?
+  private let sessionRelationshipStore: (any SessionRelationshipStoreProtocol)?
   private let fileWatcher: any SessionFileWatcherProtocol
   private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
   private let projectCapabilityService: any ProjectCapabilityServiceProtocol
   private let diffAvailabilityService: any DiffAvailabilityServiceProtocol
   private let approvalNotificationService: any ApprovalNotificationServiceProtocol
+  private let accessorySessionDetectionService: any AccessorySessionDetectionServiceProtocol
   private let approvalClaimStore: (any ApprovalClaimStoreProtocol)?
   private let hookInstaller: (any ClaudeHookInstallerProtocol)?
   private let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
   private let terminalBackend: EmbeddedTerminalBackend
   @ObservationIgnored private var terminalWorkspaceSaveTasks: [String: Task<Void, Never>] = [:]
+  @ObservationIgnored private var accessoryDetectionTasks: [AccessoryDetectionContextKey: Task<Void, Never>] = [:]
+  @ObservationIgnored private var activeAccessoryDetectionKeysByParent: [String: Set<AccessoryDetectionContextKey>] = [:]
+  @ObservationIgnored private var activeAccessoryRelationshipsByParent: [String: Set<AccessoryRelationshipIdentity>] = [:]
+  @ObservationIgnored private var pendingResolvedAccessoryRelationships: [String: [SessionRelationshipRecord]] = [:]
   @ObservationIgnored private var scheduledTerminalFocusKeys: Set<String> = []
   @ObservationIgnored private var scheduledAuxiliaryShellFocusKeys: Set<String> = []
   weak var agentHubProvider: AgentHubProvider?
@@ -413,6 +419,47 @@ public final class CLISessionsViewModel {
     )
   }
 
+  public func cliConfiguration(for provider: SessionProviderKind) -> CLICommandConfiguration {
+    if provider == providerKind {
+      return currentCLIConfiguration
+    }
+
+    if let hub = agentHubProvider {
+      switch provider {
+      case .claude:
+        return hub.claudeSessionsViewModel.currentCLIConfiguration
+      case .codex:
+        return hub.codexSessionsViewModel.currentCLIConfiguration
+      }
+    }
+
+    return provider == .claude ? .claudeDefault : .codexDefault
+  }
+
+  private struct AccessoryDetectionContextKey: Hashable, Sendable {
+    let parentTerminalKey: String
+    let provider: SessionProviderKind
+    let panelIndex: Int
+    let tabIndex: Int
+    let projectPath: String
+  }
+
+  private struct PendingAccessoryDetection: Sendable {
+    let parentProvider: SessionProviderKind
+    let parentTerminalKey: String
+    let parentSessionId: String?
+    let targetProvider: SessionProviderKind
+    let projectPath: String
+    let startedAt: Date
+    let baseline: AccessorySessionDetectionBaseline
+    let origin: SessionRelationshipOrigin
+  }
+
+  private struct AccessoryRelationshipIdentity: Hashable, Sendable {
+    let targetProvider: SessionProviderKind
+    let targetSessionId: String
+  }
+
   private enum TerminalSurfaceDescriptor {
     case cli(
       sessionId: String?,
@@ -527,13 +574,17 @@ public final class CLISessionsViewModel {
     key: String,
     sessionId: String?
   ) {
-    guard let sessionId = persistableWorkspaceSessionId(key: key, sessionId: sessionId) else {
-      terminal.onWorkspaceChanged = nil
-      return
-    }
+    let persistableSessionId = persistableWorkspaceSessionId(key: key, sessionId: sessionId)
 
     terminal.onWorkspaceChanged = { [weak self] snapshot in
-      self?.scheduleTerminalWorkspaceSave(snapshot, sessionId: sessionId)
+      if let persistableSessionId {
+        self?.scheduleTerminalWorkspaceSave(snapshot, sessionId: persistableSessionId)
+      }
+      self?.syncAccessoryDetectionContexts(
+        snapshot,
+        parentTerminalKey: key,
+        parentSessionId: persistableSessionId
+      )
     }
   }
 
@@ -603,6 +654,282 @@ public final class CLISessionsViewModel {
     }
   }
 
+  private func syncAccessoryDetectionContexts(
+    _ snapshot: TerminalWorkspaceSnapshot,
+    parentTerminalKey: String,
+    parentSessionId: String?
+  ) {
+    syncActiveAccessoryRelationships(
+      snapshot,
+      parentTerminalKey: parentTerminalKey,
+      parentSessionId: parentSessionId
+    )
+
+    let shellContexts = accessoryShellContexts(
+      from: snapshot,
+      parentTerminalKey: parentTerminalKey
+    )
+    let currentKeys = Set(shellContexts.map(\.key))
+    let previousKeys = activeAccessoryDetectionKeysByParent[parentTerminalKey] ?? []
+    for staleKey in previousKeys.subtracting(currentKeys) {
+      accessoryDetectionTasks[staleKey]?.cancel()
+      accessoryDetectionTasks.removeValue(forKey: staleKey)
+    }
+    activeAccessoryDetectionKeysByParent[parentTerminalKey] = currentKeys
+
+    for context in shellContexts where accessoryDetectionTasks[context.key] == nil {
+      startAccessoryDetection(
+        PendingAccessoryDetection(
+          parentProvider: providerKind,
+          parentTerminalKey: parentTerminalKey,
+          parentSessionId: parentSessionId,
+          targetProvider: context.key.provider,
+          projectPath: context.projectPath,
+          startedAt: context.startedAt,
+          baseline: context.baseline,
+          origin: .detected
+        ),
+        contextKey: context.key
+      )
+    }
+  }
+
+  private func syncActiveAccessoryRelationships(
+    _ snapshot: TerminalWorkspaceSnapshot,
+    parentTerminalKey: String,
+    parentSessionId: String?
+  ) {
+    let linked = Set(snapshot.panels.flatMap { panel in
+      panel.tabs.compactMap { tab -> AccessoryRelationshipIdentity? in
+        guard let linkedSession = tab.linkedSession else { return nil }
+        return AccessoryRelationshipIdentity(
+          targetProvider: linkedSession.provider,
+          targetSessionId: linkedSession.sessionId
+        )
+      }
+    })
+
+    let previous = activeAccessoryRelationshipsByParent[parentTerminalKey] ?? []
+    activeAccessoryRelationshipsByParent[parentTerminalKey] = linked
+
+    guard let parentSessionId else { return }
+    for removed in previous.subtracting(linked) {
+      deleteAccessoryRelationship(
+        sourceProvider: providerKind,
+        sourceSessionId: parentSessionId,
+        targetProvider: removed.targetProvider,
+        targetSessionId: removed.targetSessionId
+      )
+    }
+  }
+
+  private func accessoryShellContexts(
+    from snapshot: TerminalWorkspaceSnapshot,
+    parentTerminalKey: String
+  ) -> [(key: AccessoryDetectionContextKey, projectPath: String, startedAt: Date, baseline: AccessorySessionDetectionBaseline)] {
+    var contexts: [(AccessoryDetectionContextKey, String, Date, AccessorySessionDetectionBaseline)] = []
+    for (panelIndex, panel) in snapshot.panels.enumerated() where panel.role == .auxiliary {
+      for (tabIndex, tab) in panel.tabs.enumerated()
+        where tab.role == .shell && tab.linkedSession == nil {
+        guard let projectPath = nonEmpty(tab.workingDirectory) else { continue }
+        for provider in SessionProviderKind.allCases {
+          let startedAt = Date()
+          let key = AccessoryDetectionContextKey(
+            parentTerminalKey: parentTerminalKey,
+            provider: provider,
+            panelIndex: panelIndex,
+            tabIndex: tabIndex,
+            projectPath: projectPath
+          )
+          let baseline = accessorySessionDetectionService.makeBaseline(
+            provider: provider,
+            projectPath: projectPath,
+            startedAt: startedAt
+          )
+          contexts.append((key, projectPath, startedAt, baseline))
+        }
+      }
+    }
+    return contexts
+  }
+
+  private func startAccessoryDetection(
+    _ pending: PendingAccessoryDetection,
+    contextKey: AccessoryDetectionContextKey? = nil
+  ) {
+    let taskKey = contextKey ?? AccessoryDetectionContextKey(
+      parentTerminalKey: pending.parentTerminalKey,
+      provider: pending.targetProvider,
+      panelIndex: -1,
+      tabIndex: -1,
+      projectPath: pending.projectPath
+    )
+
+    accessoryDetectionTasks[taskKey]?.cancel()
+    accessoryDetectionTasks[taskKey] = Task { [weak self, pending, taskKey] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(1))
+        guard !Task.isCancelled else { return }
+
+        let result = await MainActor.run {
+          self?.accessorySessionDetectionService.detectNewSession(
+            provider: pending.targetProvider,
+            projectPath: pending.projectPath,
+            startedAt: pending.startedAt,
+            baseline: pending.baseline
+          )
+        }
+        guard let result else { continue }
+
+        await MainActor.run {
+          self?.accessoryDetectionTasks[taskKey] = nil
+          self?.resolveAccessorySession(pending, result: result)
+        }
+        return
+      }
+    }
+  }
+
+  private func resolveAccessorySession(
+    _ pending: PendingAccessoryDetection,
+    result: AccessorySessionDetectionResult
+  ) {
+    let didMarkPane = activeTerminals[pending.parentTerminalKey]?.markAccessorySession(
+      provider: result.provider,
+      sessionId: result.sessionId,
+      projectPath: result.projectPath,
+      origin: pending.origin
+    ) ?? false
+    guard didMarkPane else { return }
+
+    let parentSessionId = pending.parentSessionId
+      ?? (pending.parentTerminalKey.hasPrefix("pending-") ? nil : pending.parentTerminalKey)
+
+    if let parentSessionId {
+      saveAccessoryRelationship(
+        sourceProvider: pending.parentProvider,
+        sourceSessionId: parentSessionId,
+        targetProvider: result.provider,
+        targetSessionId: result.sessionId,
+        origin: pending.origin
+      )
+    } else {
+      let relationship = SessionRelationshipRecord(
+        sourceProvider: pending.parentProvider,
+        sourceSessionId: pending.parentTerminalKey,
+        targetProvider: result.provider,
+        targetSessionId: result.sessionId,
+        kind: .accessoryChild,
+        origin: pending.origin
+      )
+      pendingResolvedAccessoryRelationships[pending.parentTerminalKey, default: []].append(relationship)
+    }
+
+    if let terminal = activeTerminals[pending.parentTerminalKey],
+       let snapshot = terminal.captureWorkspaceSnapshot(),
+       let parentSessionId {
+      scheduleTerminalWorkspaceSave(snapshot, sessionId: parentSessionId, debounce: false)
+    }
+  }
+
+  private func saveAccessoryRelationship(
+    sourceProvider: SessionProviderKind,
+    sourceSessionId: String,
+    targetProvider: SessionProviderKind,
+    targetSessionId: String,
+    origin: SessionRelationshipOrigin
+  ) {
+    guard let store = sessionRelationshipStore else { return }
+    let relationship = SessionRelationshipRecord(
+      sourceProvider: sourceProvider,
+      sourceSessionId: sourceSessionId,
+      targetProvider: targetProvider,
+      targetSessionId: targetSessionId,
+      kind: .accessoryChild,
+      origin: origin
+    )
+    Task { [store, relationship] in
+      do {
+        try await store.saveSessionRelationship(relationship)
+      } catch {
+        AppLogger.session.error("Failed to save accessory session relationship: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  private func deleteAccessoryRelationship(
+    sourceProvider: SessionProviderKind,
+    sourceSessionId: String,
+    targetProvider: SessionProviderKind,
+    targetSessionId: String
+  ) {
+    guard let store = sessionRelationshipStore else { return }
+    Task { [store, sourceProvider, sourceSessionId, targetProvider, targetSessionId] in
+      do {
+        try await store.deleteSessionRelationship(
+          sourceProvider: sourceProvider,
+          sourceSessionId: sourceSessionId,
+          targetProvider: targetProvider,
+          targetSessionId: targetSessionId,
+          kind: .accessoryChild
+        )
+      } catch {
+        AppLogger.session.error("Failed to delete accessory session relationship: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  private func cancelAccessoryDetectionTasks(parentTerminalKey: String) {
+    let keys = accessoryDetectionTasks.keys.filter { $0.parentTerminalKey == parentTerminalKey }
+    for key in keys {
+      accessoryDetectionTasks[key]?.cancel()
+      accessoryDetectionTasks.removeValue(forKey: key)
+    }
+    activeAccessoryDetectionKeysByParent.removeValue(forKey: parentTerminalKey)
+    activeAccessoryRelationshipsByParent.removeValue(forKey: parentTerminalKey)
+    pendingResolvedAccessoryRelationships.removeValue(forKey: parentTerminalKey)
+  }
+
+  private func transferAccessoryDetection(parentKey: String, to sessionId: String) {
+    let keys = accessoryDetectionTasks.keys.filter { $0.parentTerminalKey == parentKey }
+    for key in keys {
+      accessoryDetectionTasks[key]?.cancel()
+      accessoryDetectionTasks.removeValue(forKey: key)
+    }
+    activeAccessoryDetectionKeysByParent.removeValue(forKey: parentKey)
+    activeAccessoryRelationshipsByParent.removeValue(forKey: parentKey)
+
+    guard let terminal = activeTerminals[sessionId],
+          let snapshot = terminal.captureWorkspaceSnapshot() else {
+      return
+    }
+    syncAccessoryDetectionContexts(snapshot, parentTerminalKey: sessionId, parentSessionId: sessionId)
+  }
+
+  private func persistPendingAccessoryRelationships(
+    parentKey: String,
+    resolvedParentSessionId: String
+  ) {
+    guard let relationships = pendingResolvedAccessoryRelationships.removeValue(forKey: parentKey) else {
+      return
+    }
+
+    for relationship in relationships {
+      guard let sourceProvider = relationship.sourceProviderKind,
+            let targetProvider = relationship.targetProviderKind,
+            let origin = relationship.relationshipOrigin else {
+        continue
+      }
+      saveAccessoryRelationship(
+        sourceProvider: sourceProvider,
+        sourceSessionId: resolvedParentSessionId,
+        targetProvider: targetProvider,
+        targetSessionId: relationship.targetSessionId,
+        origin: origin
+      )
+    }
+  }
+
   private func combinedInputText(_ first: String?, _ second: String?) -> String? {
     let combined = [first, second]
       .compactMap { $0 }
@@ -610,6 +937,11 @@ public final class CLISessionsViewModel {
       .joined()
 
     return combined.isEmpty ? nil : combined
+  }
+
+  private func nonEmpty(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed?.isEmpty == false ? trimmed : nil
   }
 
   /// Gets an existing terminal or creates a new one for the given key.
@@ -663,6 +995,13 @@ public final class CLISessionsViewModel {
       }
       existing.updateContext(terminalSessionKey: key, sessionViewModel: self)
       configureTerminalWorkspacePersistence(for: existing, key: key, sessionId: sessionId)
+      if let snapshot = existing.captureWorkspaceSnapshot() {
+        syncAccessoryDetectionContexts(
+          snapshot,
+          parentTerminalKey: key,
+          parentSessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)
+        )
+      }
       return existing
     }
 
@@ -685,6 +1024,13 @@ public final class CLISessionsViewModel {
     configureTerminalWorkspacePersistence(for: terminal, key: key, sessionId: sessionId)
     if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)) {
       terminal.restoreWorkspaceSnapshot(workspaceSnapshot)
+    }
+    if let snapshot = terminal.captureWorkspaceSnapshot() {
+      syncAccessoryDetectionContexts(
+        snapshot,
+        parentTerminalKey: key,
+        parentSessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)
+      )
     }
     activeTerminals[key] = terminal
     return terminal
@@ -717,8 +1063,47 @@ public final class CLISessionsViewModel {
     return terminal
   }
 
+  public func startAccessorySession(
+    parentSession: CLISession,
+    parentTerminalKey: String? = nil,
+    childProvider: SessionProviderKind
+  ) {
+    let key = parentTerminalKey ?? parentSession.id
+    guard let terminal = activeTerminals[key] else { return }
+    let projectPath = terminal.activeWorkingDirectory() ?? parentSession.projectPath
+    let startedAt = Date()
+    let baseline = accessorySessionDetectionService.makeBaseline(
+      provider: childProvider,
+      projectPath: projectPath,
+      startedAt: startedAt
+    )
+    let childConfiguration = cliConfiguration(for: childProvider)
+    guard let context = terminal.openAccessorySessionPane(
+      provider: childProvider,
+      cliConfiguration: childConfiguration,
+      projectPath: projectPath,
+      metadataStore: metadataStore
+    ) else {
+      return
+    }
+
+    let parentSessionId = parentSession.id.hasPrefix("pending-") ? nil : parentSession.id
+    let pending = PendingAccessoryDetection(
+      parentProvider: providerKind,
+      parentTerminalKey: key,
+      parentSessionId: parentSessionId,
+      targetProvider: childProvider,
+      projectPath: context.projectPath,
+      startedAt: context.startedAt,
+      baseline: baseline,
+      origin: .explicit
+    )
+    startAccessoryDetection(pending)
+  }
+
   /// Removes the terminal for a given key and terminates its process
   public func removeTerminal(forKey key: String) {
+    cancelAccessoryDetectionTasks(parentTerminalKey: key)
     if let terminal = activeTerminals[key] {
       persistCurrentWorkspaceIfNeeded(for: terminal, key: key, sessionId: key, debounce: false)
       terminal.terminateProcess()
@@ -742,6 +1127,8 @@ public final class CLISessionsViewModel {
       activeTerminalDescriptors[sessionId] = descriptor.transferred(toSessionId: sessionId)
     }
     transferQueuedWebPreviewContext(from: pendingKey, to: sessionId)
+    transferAccessoryDetection(parentKey: pendingKey, to: sessionId)
+    persistPendingAccessoryRelationships(parentKey: pendingKey, resolvedParentSessionId: sessionId)
   }
 
   /// Removes the auxiliary shell terminal for a given key and terminates its process.
@@ -787,6 +1174,13 @@ public final class CLISessionsViewModel {
     configureTerminalWorkspacePersistence(for: newTerminal, key: key, sessionId: sessionId)
     if let workspaceSnapshot = loadTerminalWorkspaceSnapshot(sessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)) {
       newTerminal.restoreWorkspaceSnapshot(workspaceSnapshot)
+    }
+    if let snapshot = newTerminal.captureWorkspaceSnapshot() {
+      syncAccessoryDetectionContexts(
+        snapshot,
+        parentTerminalKey: key,
+        parentSessionId: persistableWorkspaceSessionId(key: key, sessionId: sessionId)
+      )
     }
     activeTerminals[key] = newTerminal
   }
@@ -915,10 +1309,12 @@ public final class CLISessionsViewModel {
     cliConfiguration: CLICommandConfiguration,
     providerKind: SessionProviderKind,
     metadataStore: SessionMetadataStore? = nil,
+    sessionRelationshipStore: (any SessionRelationshipStoreProtocol)? = nil,
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
     projectCapabilityService: any ProjectCapabilityServiceProtocol = ProjectCapabilityService.shared,
     diffAvailabilityService: any DiffAvailabilityServiceProtocol = DiffAvailabilityService.shared,
     approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared,
+    accessorySessionDetectionService: any AccessorySessionDetectionServiceProtocol = AccessorySessionDetectionService(),
     approvalClaimStore: (any ApprovalClaimStoreProtocol)? = nil,
     hookInstaller: (any ClaudeHookInstallerProtocol)? = nil,
     codexDataPath: String? = nil,
@@ -931,11 +1327,13 @@ public final class CLISessionsViewModel {
     self.searchService = searchService
     self.metadataStore = metadataStore
     self.terminalWorkspaceStore = terminalWorkspaceStore ?? metadataStore
+    self.sessionRelationshipStore = sessionRelationshipStore ?? metadataStore
     self.fileWatcher = fileWatcher
     self.webPreviewCandidateService = webPreviewCandidateService
     self.projectCapabilityService = projectCapabilityService
     self.diffAvailabilityService = diffAvailabilityService
     self.approvalNotificationService = approvalNotificationService
+    self.accessorySessionDetectionService = accessorySessionDetectionService
     self.approvalClaimStore = approvalClaimStore
     self.hookInstaller = hookInstaller
     self.terminalSurfaceFactory = terminalSurfaceFactory
