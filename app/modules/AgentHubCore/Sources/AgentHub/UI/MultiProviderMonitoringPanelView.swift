@@ -66,54 +66,6 @@ private struct SessionFileSheetItem: Identifiable {
   let content: String
 }
 
-// MARK: - HubLayoutMode
-
-public enum HubLayoutMode: Int, CaseIterable {
-  case single = 0
-  case list = 1
-  case twoColumn = 2
-
-  public var columnCount: Int {
-    switch self {
-    case .single: return 1
-    case .list: return 1
-    case .twoColumn: return 2
-    }
-  }
-
-  public var icon: String {
-    switch self {
-    case .single: return "rectangle"
-    case .list: return "list.bullet"
-    case .twoColumn: return "square.grid.2x2"
-    }
-  }
-}
-
-private typealias LayoutMode = HubLayoutMode
-
-// MARK: - ModuleSectionHeader
-
-private struct ModuleSectionHeader: View {
-  let name: String
-  let sessionCount: Int
-
-  var body: some View {
-    HStack {
-      Text(name)
-        .font(.secondarySmall)
-        .foregroundColor(.secondary)
-      Spacer()
-      Text("\(sessionCount)")
-        .font(.secondarySmall)
-        .foregroundColor(.secondary)
-    }
-    .padding(.horizontal, 4)
-    .padding(.top, 6)
-    .padding(.bottom, 10)
-  }
-}
-
 // MARK: - ProviderMonitoringItem
 
 enum ProviderMonitoringItem: Identifiable {
@@ -195,7 +147,6 @@ public struct MultiProviderMonitoringPanelView: View {
   let onRequestStartSession: (String?) -> Void
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
-  @State private var maximizedSessionId: String?
   @State private var sidePanelPresentation = EmbeddedSidePanelPresentationState<SidePanelPayload>()
   @State private var autoOpenedSidePanelKeys: Set<MonitoringAutoOpenSidePanelKey> = []
   @State private var autoOpenBaselineDate: Date?
@@ -204,12 +155,6 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var availableDetailWidth: CGFloat = 0
   @Binding var primarySessionId: String?
   @Binding var selectedModuleLandingPath: String?
-  @AppStorage(AgentHubDefaults.hubLayoutMode)
-  private var layoutModeRawValue: Int = LayoutMode.single.rawValue
-  @AppStorage(AgentHubDefaults.hubPreviousLayoutMode)
-  private var previousLayoutModeRawValue: Int = -1
-  @AppStorage(AgentHubDefaults.flatSessionLayout)
-  private var flatSessionLayout: Bool = false
   @AppStorage(AgentHubDefaults.worktreeDisplayMode)
   private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
   @AppStorage(AgentHubDefaults.diffDisplayMode)
@@ -219,7 +164,6 @@ public struct MultiProviderMonitoringPanelView: View {
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
-  @State private var cardHeights: [String: CGFloat] = [:]
   private let embeddedPrimaryContentMinWidth: CGFloat = 470
   private let embeddedSidePanelMinWidth: CGFloat = 400
   private let embeddedSidePanelDefaultWidth: CGFloat = 700
@@ -228,10 +172,6 @@ public struct MultiProviderMonitoringPanelView: View {
   private let auxiliaryShellDefaultHeight: CGFloat = 220
   private let auxiliaryShellMinHeight: CGFloat = 140
   private let auxiliaryShellMinMainContentHeight: CGFloat = 260
-
-  private var layoutMode: LayoutMode {
-    get { LayoutMode(rawValue: layoutModeRawValue) ?? .single }
-  }
 
   private var allowedEmbeddedSidePanelWidth: CGFloat {
     let availablePanelWidth = availableDetailWidth - embeddedPrimaryContentMinWidth - embeddedSidePanelHandleWidth
@@ -242,9 +182,7 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func wantsEmbeddedSidePanelPresentation(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> Bool {
-    layoutMode == .single
-      && maximizedSessionId == nil
-      && activeModuleLandingPath(snapshot: snapshot) == nil
+    activeModuleLandingPath(snapshot: snapshot) == nil
       && sidePanelPresentation.shellPayload != nil
       && !snapshot.visibleItems.isEmpty
   }
@@ -317,7 +255,6 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .onChange(of: activeModuleLandingPath(snapshot: snapshot)) { _, activePath in
       guard activePath != nil else { return }
-      maximizedSessionId = nil
       closeEmbeddedSidePanel()
     }
     .onChange(of: isAuxiliaryShellVisible) { _, _ in
@@ -393,20 +330,13 @@ public struct MultiProviderMonitoringPanelView: View {
         onDismiss: { sessionFileSheetItem = nil }
       )
     }
-    .onKeyPress(.escape) {
-      if maximizedSessionId != nil {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-          maximizedSessionId = nil
-        }
-        return .handled
-      }
-      return .ignored
-    }
     .onAppear {
       ensurePrimarySelection(snapshot: snapshot)
+      ensureLiveMonitoringForPrimaryItem(snapshot: snapshot)
     }
     .onChange(of: snapshot.itemIDs) { _, _ in
       ensurePrimarySelection()
+      ensureLiveMonitoringForPrimaryItem()
     }
     .onChange(of: snapshot.effectivePrimaryItemID) { _, newId in
       guard let currentSidePanelPayload = sidePanelPresentation.currentPayload else { return }
@@ -444,19 +374,12 @@ public struct MultiProviderMonitoringPanelView: View {
       if let item = makeItemSnapshot().allItems.first(where: { $0.id == newId }) {
         item.viewModel.focusTerminal(forKey: item.sessionId)
       }
+      ensureLiveMonitoringForPrimaryItem()
     }
   }
 
   private var monitorContainerBackgroundColor: Color {
     let defaultBackground = colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.96)
-    if runtimeTheme?.hasCustomBackgrounds == true {
-      return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
-    }
-    return defaultBackground
-  }
-
-  private var maximizedContainerBackgroundColor: Color {
-    let defaultBackground = colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92)
     if runtimeTheme?.hasCustomBackgrounds == true {
       return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
     }
@@ -491,14 +414,8 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @ViewBuilder
   private func mainContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
-    if let maximizedId = maximizedSessionId {
-      maximizedCardContent(for: maximizedId, snapshot: snapshot)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(maximizedContainerBackgroundColor)
-    } else {
-      mainContentBody(snapshot: snapshot)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
+    mainContentBody(snapshot: snapshot)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
   }
 
   @ViewBuilder
@@ -558,66 +475,16 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @ViewBuilder
   private func monitoredSessionsList(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
-    if layoutMode == .single {
-      singleModeContent(snapshot: snapshot)
-        .background(
-          GeometryReader { geometry in
-            Color.clear
-              .onAppear { availableDetailWidth = geometry.size.width }
-              .onChange(of: geometry.size.width) { _, newWidth in
-                availableDetailWidth = newWidth
-              }
-          }
-        )
-    } else {
-      ScrollViewReader { proxy in
-        ScrollView {
-          if layoutMode == .list {
-            listModeContent(snapshot: snapshot)
-          } else {
-            let columns = Array(repeating: GridItem(.flexible(), alignment: .top), count: layoutMode.columnCount)
-            if flatSessionLayout {
-              LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(snapshot.flatSortedItems) { item in
-                  itemCardView(for: item, effectivePrimaryItemID: snapshot.effectivePrimaryItemID)
-                }
-              }
-              .padding(12)
-              .transition(.opacity)
-            } else {
-              LazyVGrid(columns: columns, spacing: 12, pinnedViews: [.sectionHeaders]) {
-                monitoredSessionsGroupedContent(snapshot: snapshot)
-              }
-              .padding(12)
-              .transition(.opacity)
+    singleModeContent(snapshot: snapshot)
+      .background(
+        GeometryReader { geometry in
+          Color.clear
+            .onAppear { availableDetailWidth = geometry.size.width }
+            .onChange(of: geometry.size.width) { _, newWidth in
+              availableDetailWidth = newWidth
             }
-          }
         }
-        .animation(.easeInOut(duration: 0.2), value: layoutMode)
-        .animation(.easeInOut(duration: 0.25), value: flatSessionLayout)
-        .onChange(of: primarySessionId) { _, newId in
-          guard let newId else { return }
-          withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(newId, anchor: .top)
-          }
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func listModeContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
-    VStack(spacing: 12) {
-      if flatSessionLayout {
-        ForEach(snapshot.flatSortedItems) { item in
-          listModeCard(for: item, effectivePrimaryItemID: snapshot.effectivePrimaryItemID)
-        }
-      } else {
-        listModeGroupedContent(snapshot: snapshot)
-      }
-    }
-    .padding(12)
-    .transition(.opacity)
+      )
   }
 
   // MARK: - Single Mode Content
@@ -685,8 +552,6 @@ public struct MultiProviderMonitoringPanelView: View {
             },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
             onRequestShowEditor: { setContentMode(.editor, for: item) },
-            isMaximized: false,
-            onToggleMaximize: { },
             isPrimarySession: true,
             showPrimaryIndicator: false
           )
@@ -772,8 +637,6 @@ public struct MultiProviderMonitoringPanelView: View {
             },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
             onRequestShowEditor: { setContentMode(.editor, for: item) },
-            isMaximized: false,
-            onToggleMaximize: { },
             isPrimarySession: true,
             showPrimaryIndicator: false
           )
@@ -830,8 +693,6 @@ public struct MultiProviderMonitoringPanelView: View {
     snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>
   ) -> MonitoringAutoOpenSidePanelCandidate? {
     MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: layoutMode,
-      maximizedSessionId: maximizedSessionId,
       activeModuleLandingPath: activeModuleLandingPath(snapshot: snapshot),
       visibleItem: snapshot.visibleItems.first.flatMap { autoOpenSidePanelItem(for: $0) },
       openedKeys: autoOpenedSidePanelKeys,
@@ -935,12 +796,6 @@ public struct MultiProviderMonitoringPanelView: View {
     performWithoutAnimation {
       if primarySessionId != itemID {
         primarySessionId = itemID
-      }
-      if layoutMode != .single {
-        layoutModeRawValue = LayoutMode.single.rawValue
-      }
-      if maximizedSessionId != nil {
-        maximizedSessionId = nil
       }
     }
 
@@ -1088,402 +943,15 @@ public struct MultiProviderMonitoringPanelView: View {
     }
   }
 
-  // MARK: - Single Card View
-
-  @ViewBuilder
-  private func itemCardView(
-    for item: ProviderMonitoringItem,
-    effectivePrimaryItemID: String? = nil
-  ) -> some View {
-    let isPrimary = item.id == (effectivePrimaryItemID ?? effectivePrimarySessionId)
-    switch item {
-    case .pending(_, let viewModel, let pending):
-      MonitoringCardView(
-        session: pending.placeholderSession,
-        state: nil,
-        cliConfiguration: viewModel.cliConfiguration,
-        providerKind: item.providerKind,
-        initialPrompt: pending.initialPrompt,
-        initialInputText: pending.initialInputText,
-        terminalKey: "pending-\(pending.id.uuidString)",
-        viewModel: viewModel,
-        contentMode: editorContentModeBinding(for: item),
-        selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
-        editorProjectPath: editorState(for: item).projectPath,
-        editorNavigationRequest: editorState(for: item).navigationRequest,
-        dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
-        permissionModePlan: pending.permissionModePlan,
-        worktreeName: pending.worktreeName,
-        shouldMountTerminal: shouldMountTerminal(for: item, isPrimary: isPrimary),
-        onStopMonitoring: { viewModel.cancelPendingSession(pending) },
-        onConnect: { },
-        onCopySessionId: { },
-        onOpenSessionFile: { },
-        onRefreshTerminal: { },
-        onRequestMountTerminal: { setPrimarySessionIfNeeded(item.id) },
-        onShowDiff: { session, projectPath in
-          toggleSidePanel(
-            .diff(sessionId: session.id, session: session, projectPath: projectPath),
-            forItemID: item.id
-          )
-        },
-        onShowPlan: { session, planState in
-          toggleSidePanel(
-            .plan(sessionId: session.id, session: session, planState: planState),
-            forItemID: item.id
-          )
-        },
-        onShowWebPreview: { session, projectPath, mode in
-          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath, mode: mode)
-        },
-        onShowMermaid: { session in
-          toggleSidePanel(
-            .mermaid(sessionId: session.id, session: session),
-            forItemID: item.id
-          )
-        },
-        onShowGitHub: { session, projectPath in
-          toggleSidePanel(
-            .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
-            forItemID: item.id
-          )
-        },
-        onShowPendingChanges: { session, _ in
-          toggleSidePanel(
-            .edits(sessionId: session.id, session: session),
-            forItemID: item.id
-          )
-        },
-        onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
-        onRequestShowEditor: { setContentMode(.editor, for: item) },
-        isMaximized: maximizedSessionId == item.id,
-        onToggleMaximize: {
-          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            maximizedSessionId = maximizedSessionId == item.id ? nil : item.id
-          }
-        },
-        isPrimarySession: isPrimary,
-        showPrimaryIndicator: layoutMode != .single
-      )
-      .id(item.id)
-
-    case .monitored(_, let viewModel, let session, let state):
-      let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
-      let initialPrompt = viewModel.pendingPrompt(for: session.id)
-
-      MonitoringCardView(
-        session: session,
-        state: state,
-        planState: planState,
-        cliConfiguration: viewModel.cliConfiguration,
-        providerKind: item.providerKind,
-        initialPrompt: initialPrompt,
-        terminalKey: session.id,
-        viewModel: viewModel,
-        contentMode: editorContentModeBinding(for: item),
-        selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
-        editorProjectPath: editorState(for: item).projectPath,
-        editorNavigationRequest: editorState(for: item).navigationRequest,
-        shouldMountTerminal: shouldMountTerminal(for: item, isPrimary: isPrimary),
-        onStopMonitoring: {
-          viewModel.stopMonitoring(session: session)
-        },
-        onConnect: {
-          _ = viewModel.connectToSession(session)
-        },
-        onCopySessionId: {
-          viewModel.copySessionId(session)
-        },
-        onOpenSessionFile: {
-          openSessionFile(for: session, viewModel: viewModel)
-        },
-        onRefreshTerminal: {
-          viewModel.refreshTerminal(
-            forKey: session.id,
-            sessionId: session.id,
-            projectPath: session.projectPath
-          )
-        },
-        onRequestMountTerminal: { setPrimarySessionIfNeeded(item.id) },
-        onInlineRequestSubmit: { prompt, sess in
-          viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
-        },
-        onShowDiff: { session, projectPath in
-          toggleSidePanel(
-            .diff(sessionId: session.id, session: session, projectPath: projectPath),
-            forItemID: item.id
-          )
-        },
-        onShowPlan: { session, planState in
-          toggleSidePanel(
-            .plan(sessionId: session.id, session: session, planState: planState),
-            forItemID: item.id
-          )
-        },
-        onShowWebPreview: { session, projectPath, mode in
-          presentWebPreviewInSidePanel(forItemID: item.id, session: session, projectPath: projectPath, mode: mode)
-        },
-        onShowMermaid: { session in
-          toggleSidePanel(
-            .mermaid(sessionId: session.id, session: session),
-            forItemID: item.id
-          )
-        },
-        onShowGitHub: { session, projectPath in
-          toggleSidePanel(
-            .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
-            forItemID: item.id
-          )
-        },
-        onShowPendingChanges: { session, _ in
-          toggleSidePanel(
-            .edits(sessionId: session.id, session: session),
-            forItemID: item.id
-          )
-        },
-        onPromptConsumed: {
-          viewModel.clearPendingPrompt(for: session.id)
-        },
-        onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
-        onRequestShowEditor: { setContentMode(.editor, for: item) },
-        isMaximized: maximizedSessionId == item.id,
-        onToggleMaximize: {
-          withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            maximizedSessionId = maximizedSessionId == item.id ? nil : item.id
-          }
-        },
-        isPrimarySession: isPrimary,
-        showPrimaryIndicator: layoutMode != .single
-      )
-      .id(item.id)
-    }
-  }
-
-  // MARK: - Grouped Content by Module
-
-  @ViewBuilder
-  private func listModeGroupedContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
-    VStack(alignment: .leading, spacing: 18) {
-      ForEach(snapshot.groupedItems, id: \.modulePath) { group in
-        VStack(alignment: .leading, spacing: 12) {
-          ModuleSectionHeader(
-            name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
-            sessionCount: group.items.count
-          )
-
-          ForEach(group.items) { item in
-            listModeCard(for: item, effectivePrimaryItemID: snapshot.effectivePrimaryItemID)
-          }
-        }
-      }
-    }
-  }
-
-  @ViewBuilder
-  private func monitoredSessionsGroupedContent(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> some View {
-    ForEach(snapshot.groupedItems, id: \.modulePath) { group in
-      Section(header: ModuleSectionHeader(
-        name: URL(fileURLWithPath: group.modulePath).lastPathComponent,
-        sessionCount: group.items.count
-      )) {
-        ForEach(group.items) { item in
-          itemCardView(for: item, effectivePrimaryItemID: snapshot.effectivePrimaryItemID)
-        }
-      }
-    }
-  }
-
-  private var effectivePrimarySessionId: String? {
-    makeItemSnapshot().effectivePrimaryItemID
-  }
-
-  private var visibleItems: [ProviderMonitoringItem] {
-    makeItemSnapshot().visibleItems
-  }
-
   private func makeItemSnapshot() -> MonitoringItemsSnapshot<ProviderMonitoringItem> {
     MonitoringItemsSnapshot(
       items: allItems,
       primaryItemID: primarySessionId,
-      layoutMode: layoutMode,
-      modulePath: { findModulePath(for: $0) },
       timestamp: { $0.timestamp }
     )
   }
 
   // MARK: - Helpers
-
-  @ViewBuilder
-  private func maximizedCardContent(
-    for itemId: String,
-    snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>
-  ) -> some View {
-    if let item = snapshot.allItems.first(where: { $0.id == itemId }) {
-      let isPrimary = item.id == snapshot.effectivePrimaryItemID
-      switch item {
-      case .pending(_, let viewModel, let pending):
-        MonitoringCardView(
-          session: pending.placeholderSession,
-          state: nil,
-          cliConfiguration: viewModel.cliConfiguration,
-          providerKind: item.providerKind,
-          initialPrompt: pending.initialPrompt,
-          initialInputText: pending.initialInputText,
-          terminalKey: "pending-\(pending.id.uuidString)",
-          viewModel: viewModel,
-          contentMode: editorContentModeBinding(for: item),
-          selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
-          editorProjectPath: editorState(for: item).projectPath,
-          editorNavigationRequest: editorState(for: item).navigationRequest,
-          dangerouslySkipPermissions: pending.dangerouslySkipPermissions,
-          permissionModePlan: pending.permissionModePlan,
-          worktreeName: pending.worktreeName,
-          onStopMonitoring: {
-            viewModel.cancelPendingSession(pending)
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-              maximizedSessionId = nil
-            }
-          },
-          onConnect: { },
-          onCopySessionId: { },
-          onOpenSessionFile: { },
-          onRefreshTerminal: { },
-          onShowDiff: { session, projectPath in
-            toggleSidePanel(
-              .diff(sessionId: session.id, session: session, projectPath: projectPath),
-              forItemID: itemId
-            )
-          },
-          onShowPlan: { session, planState in
-            toggleSidePanel(
-              .plan(sessionId: session.id, session: session, planState: planState),
-              forItemID: itemId
-            )
-          },
-          onShowWebPreview: { session, projectPath, mode in
-            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath, mode: mode)
-          },
-          onShowMermaid: { session in
-            toggleSidePanel(
-              .mermaid(sessionId: session.id, session: session),
-              forItemID: itemId
-            )
-          },
-          onShowGitHub: { session, projectPath in
-            toggleSidePanel(
-              .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
-              forItemID: itemId
-            )
-          },
-          onShowPendingChanges: { session, _ in
-            toggleSidePanel(
-              .edits(sessionId: session.id, session: session),
-              forItemID: itemId
-            )
-          },
-          onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
-          onRequestShowEditor: { setContentMode(.editor, for: item) },
-          isMaximized: true,
-          onToggleMaximize: {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-              maximizedSessionId = nil
-            }
-          },
-          isPrimarySession: isPrimary,
-          showPrimaryIndicator: layoutMode != .single
-        )
-      case .monitored(_, let viewModel, let session, let state):
-        let planState = state.flatMap { PlanState.from(activities: $0.recentActivities) }
-        let initialPrompt = viewModel.pendingPrompt(for: session.id)
-
-        MonitoringCardView(
-          session: session,
-          state: state,
-          planState: planState,
-          cliConfiguration: viewModel.cliConfiguration,
-          providerKind: item.providerKind,
-          initialPrompt: initialPrompt,
-          terminalKey: session.id,
-          viewModel: viewModel,
-          contentMode: editorContentModeBinding(for: item),
-          selectedEditorFilePath: selectedEditorFilePathBinding(for: item),
-          editorProjectPath: editorState(for: item).projectPath,
-          editorNavigationRequest: editorState(for: item).navigationRequest,
-          onStopMonitoring: {
-            viewModel.stopMonitoring(session: session)
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-              maximizedSessionId = nil
-            }
-          },
-          onConnect: {
-            _ = viewModel.connectToSession(session)
-          },
-          onCopySessionId: {
-            viewModel.copySessionId(session)
-          },
-          onOpenSessionFile: {
-            openSessionFile(for: session, viewModel: viewModel)
-          },
-          onRefreshTerminal: {
-            viewModel.refreshTerminal(
-              forKey: session.id,
-              sessionId: session.id,
-              projectPath: session.projectPath
-            )
-          },
-          onInlineRequestSubmit: { prompt, sess in
-            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
-          },
-          onShowDiff: { session, projectPath in
-            toggleSidePanel(
-              .diff(sessionId: session.id, session: session, projectPath: projectPath),
-              forItemID: itemId
-            )
-          },
-          onShowPlan: { session, planState in
-            toggleSidePanel(
-              .plan(sessionId: session.id, session: session, planState: planState),
-              forItemID: itemId
-            )
-          },
-          onShowWebPreview: { session, projectPath, mode in
-            presentWebPreviewInSidePanel(forItemID: itemId, session: session, projectPath: projectPath, mode: mode)
-          },
-          onShowMermaid: { session in
-            toggleSidePanel(
-              .mermaid(sessionId: session.id, session: session),
-              forItemID: itemId
-            )
-          },
-          onShowGitHub: { session, projectPath in
-            toggleSidePanel(
-              .gitHub(sessionId: session.id, session: session, projectPath: projectPath),
-              forItemID: itemId
-            )
-          },
-          onShowPendingChanges: { session, _ in
-            toggleSidePanel(
-              .edits(sessionId: session.id, session: session),
-              forItemID: itemId
-            )
-          },
-          onPromptConsumed: {
-            viewModel.clearPendingPrompt(for: session.id)
-          },
-          onTerminalInteraction: { setPrimarySessionIfNeeded(itemId) },
-          onRequestShowEditor: { setContentMode(.editor, for: item) },
-          isMaximized: true,
-          onToggleMaximize: {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-              maximizedSessionId = nil
-            }
-          },
-          isPrimarySession: isPrimary,
-          showPrimaryIndicator: layoutMode != .single
-        )
-      }
-    }
-  }
 
   private var allItems: [ProviderMonitoringItem] {
     pendingItems + monitoredItems
@@ -1507,14 +975,6 @@ public struct MultiProviderMonitoringPanelView: View {
       ProviderMonitoringItem.monitored(provider: .codex, viewModel: codexViewModel, session: $0.session, state: $0.state)
     }
     return claudeItems + codexItems
-  }
-
-  private var groupedMonitoredSessions: [(modulePath: String, items: [ProviderMonitoringItem])] {
-    makeItemSnapshot().groupedItems
-  }
-
-  private var flatSortedItems: [ProviderMonitoringItem] {
-    makeItemSnapshot().flatSortedItems
   }
 
   private var effectivePrimaryItem: ProviderMonitoringItem? {
@@ -1660,8 +1120,14 @@ public struct MultiProviderMonitoringPanelView: View {
     primarySessionId = sessionId
   }
 
-  private func shouldMountTerminal(for item: ProviderMonitoringItem, isPrimary: Bool) -> Bool {
-    item.isPending || isPrimary || maximizedSessionId == item.id
+  private func ensureLiveMonitoringForPrimaryItem(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>? = nil) {
+    guard selectedModuleLandingPath == nil else { return }
+    let snapshot = snapshot ?? makeItemSnapshot()
+    guard case .monitored(.codex, let viewModel, let session, _) = snapshot.effectivePrimaryItem else {
+      return
+    }
+
+    viewModel.ensureLiveMonitoring(sessionId: session.id)
   }
 
   private func toggleAuxiliaryShellDock() {
@@ -1720,26 +1186,6 @@ public struct MultiProviderMonitoringPanelView: View {
     .frame(height: resolvedHeight, alignment: .top)
     .background(colorScheme == .dark ? Color(white: 0.07) : Color(white: 0.92))
     .clipShape(RoundedRectangle(cornerRadius: 8))
-  }
-
-  @ViewBuilder
-  private func listModeCard(
-    for item: ProviderMonitoringItem,
-    effectivePrimaryItemID: String? = nil
-  ) -> some View {
-    ResizableCardContainer(
-      height: cardHeightBinding(for: item.id),
-      metrics: listCardMetrics(for: item)
-    ) {
-      itemCardView(for: item, effectivePrimaryItemID: effectivePrimaryItemID)
-    }
-  }
-
-  private func cardHeightBinding(for itemId: String) -> Binding<CGFloat> {
-    Binding(
-      get: { cardHeights[itemId] ?? 0 },
-      set: { cardHeights[itemId] = $0 }
-    )
   }
 
   private func editorState(for item: ProviderMonitoringItem) -> MonitoringEditorState {
@@ -1846,21 +1292,6 @@ public struct MultiProviderMonitoringPanelView: View {
     editorStates = result.states
     if let primaryItemID = result.primaryItemID {
       primarySessionId = primaryItemID
-    }
-  }
-
-  private func listCardMetrics(for item: ProviderMonitoringItem) -> ResizableCardMetrics {
-    switch item {
-    case .pending(let providerKind, _, _):
-      return MonitoringCardView.listHeightMetrics(
-        providerKind: providerKind,
-        state: nil
-      )
-    case .monitored(let providerKind, _, _, let state):
-      return MonitoringCardView.listHeightMetrics(
-        providerKind: providerKind,
-        state: state
-      )
     }
   }
 

@@ -114,16 +114,12 @@ enum MonitoringAutoOpenSidePanelPolicy {
   }
 
   static func candidate(
-    layoutMode: HubLayoutMode,
-    maximizedSessionId: String?,
     activeModuleLandingPath: String?,
     visibleItem: MonitoringAutoOpenSidePanelItem?,
     openedKeys: Set<MonitoringAutoOpenSidePanelKey>,
     detectedAfter: Date? = nil
   ) -> MonitoringAutoOpenSidePanelCandidate? {
-    guard layoutMode == .single,
-          maximizedSessionId == nil,
-          activeModuleLandingPath == nil,
+    guard activeModuleLandingPath == nil,
           let visibleItem else {
       return nil
     }

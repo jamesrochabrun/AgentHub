@@ -58,6 +58,69 @@ struct LazyBrowseSessionsLoadingTests {
     #expect(await watcher.startedSessionIds() == ["session-1"])
   }
 
+  @Test("Codex launch restore defers file watching until a session is selected")
+  func codexLaunchRestoreDefersFileWatchingUntilSessionSelection() async throws {
+    let store = try SessionMetadataStore(path: temporaryDatabasePath())
+    try await store.saveWorkspaceState(
+      SessionWorkspaceState(
+        selectedRepositoryPaths: ["/tmp/project"],
+        monitoredSessionIds: ["session-1", "session-2"]
+      ),
+      for: .codex
+    )
+
+    let firstSession = CLISession(
+      id: "session-1",
+      projectPath: "/tmp/project",
+      branchName: "main",
+      firstMessage: "first",
+      sessionFilePath: "/tmp/session-1.jsonl"
+    )
+    let secondSession = CLISession(
+      id: "session-2",
+      projectPath: "/tmp/project",
+      branchName: "main",
+      firstMessage: "second",
+      sessionFilePath: "/tmp/session-2.jsonl"
+    )
+    let monitor = LazyBrowseMockMonitorService(
+      skeletonRepositories: [repository(path: "/tmp/project")],
+      browseRepositories: [repository(path: "/tmp/project", sessions: [firstSession, secondSession])],
+      sessionsById: [
+        "session-1": firstSession,
+        "session-2": secondSession
+      ]
+    )
+    let watcher = RecordingFileWatcher()
+
+    let viewModel = CLISessionsViewModel(
+      monitorService: monitor,
+      fileWatcher: watcher,
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "codex", mode: .codex),
+      providerKind: .codex,
+      metadataStore: store,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await waitUntil {
+      viewModel.loadingState == .idle && viewModel.monitoredSessions.count == 2
+    }
+
+    #expect((await watcher.startedSessionIds()).isEmpty)
+
+    viewModel.ensureLiveMonitoring(sessionId: "session-1")
+    viewModel.ensureLiveMonitoring(sessionId: "session-1")
+    await waitUntilAsync {
+      await watcher.startedSessionIds() == ["session-1"]
+    }
+
+    viewModel.ensureLiveMonitoring(sessionId: "session-2")
+    await waitUntilAsync {
+      await watcher.startedSessionIds() == ["session-1", "session-2"]
+    }
+  }
+
   @Test("Launch restore syncs Claude hooks once for restored repo and worktree paths")
   func launchRestoreSyncsClaudeHooksOnce() async throws {
     let store = try SessionMetadataStore(path: temporaryDatabasePath())

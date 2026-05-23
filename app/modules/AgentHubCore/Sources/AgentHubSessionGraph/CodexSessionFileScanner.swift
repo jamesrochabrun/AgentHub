@@ -72,7 +72,8 @@ public enum CodexSessionFileScanner {
       return nil
     }
 
-    let startedAt = parseTimestamp(payload["timestamp"] as? String) ?? parseTimestamp(json["timestamp"] as? String)
+    let startedAt = CodexTimestampParser.parse(payload["timestamp"] as? String)
+      ?? CodexTimestampParser.parse(json["timestamp"] as? String)
     let git = payload["git"] as? [String: Any]
     let branch = git?["branch"] as? String
 
@@ -83,17 +84,6 @@ public enum CodexSessionFileScanner {
       startedAt: startedAt,
       sessionFilePath: path
     )
-  }
-
-  private static func parseTimestamp(_ string: String?) -> Date? {
-    guard let string else { return nil }
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    if let date = formatter.date(from: string) {
-      return date
-    }
-    formatter.formatOptions = [.withInternetDateTime]
-    return formatter.date(from: string)
   }
 
   private static func readFirstLine(from handle: FileHandle) -> String? {

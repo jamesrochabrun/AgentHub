@@ -119,18 +119,6 @@ public enum AgentHubDefaults {
   /// See: FileOpenEditor enum in ManagedLocalProcessTerminalView.swift
   public static let terminalFileOpenEditor = "\(keyPrefix)terminal.fileOpenEditor"
 
-  /// Monitoring panel layout mode (list, 2-column, 3-column grid)
-  /// Type: Int (default: 0 = list)
-  public static let monitoringPanelLayoutMode = "\(keyPrefix)ui.monitoringPanelLayoutMode"
-
-  /// Hub layout mode (single, list, 2-column, 3-column)
-  /// Type: Int (default: 0 = single)
-  public static let hubLayoutMode = "\(keyPrefix)hub.layoutMode"
-
-  /// Previous hub layout mode saved by Toggle Focus Mode (Cmd+\)
-  /// Type: Int (default: -1 = no saved layout)
-  public static let hubPreviousLayoutMode = "\(keyPrefix)hub.previousLayoutMode"
-
   /// Whether the auxiliary shell dock is visible
   /// Type: Bool (default: false)
   public static let auxiliaryShellVisible = "\(keyPrefix)hub.auxiliaryShellVisible"
@@ -148,10 +136,6 @@ public enum AgentHubDefaults {
   /// Whether smart mode (AI-powered orchestration planning) is enabled
   /// Type: Bool (default: false)
   public static let smartModeEnabled = "\(keyPrefix)features.smartModeEnabled"
-
-  /// Whether to show sessions in a flat list without per-repository section headers
-  /// Type: Bool (default: false)
-  public static let flatSessionLayout = "\(keyPrefix)hub.flatSessionLayout"
 
   /// Whether debug-only web preview design tools are enabled
   /// Type: Bool (default: true in debug)

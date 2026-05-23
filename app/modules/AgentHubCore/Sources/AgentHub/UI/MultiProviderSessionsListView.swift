@@ -191,12 +191,6 @@ public struct MultiProviderSessionsListView: View {
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
-  @AppStorage(AgentHubDefaults.hubLayoutMode)
-  private var layoutModeRawValue: Int = 0
-
-  @AppStorage(AgentHubDefaults.hubPreviousLayoutMode)
-  private var previousLayoutModeRawValue: Int = -1
-
   @AppStorage(AgentHubDefaults.selectedSidePanelProvider)
   private var selectedProviderRaw: String = "Claude"
 
@@ -472,10 +466,6 @@ public struct MultiProviderSessionsListView: View {
 
       Button("") { navigateSessionHistory(direction: .forward) }
         .keyboardShortcut("]", modifiers: .command)
-        .hidden()
-
-      Button("") { toggleFocusMode() }
-        .keyboardShortcut("\\", modifiers: .command)
         .hidden()
 
       Button("") { terminalFontSize = min(terminalFontSize + 1, 24) }
@@ -1684,9 +1674,6 @@ public struct MultiProviderSessionsListView: View {
       sidebarVisibilityBeforeAutoHide = nil
       columnVisibility = columnVisibility == .all ? .detailOnly : .all
 
-    case .toggleFocusMode:
-      toggleFocusMode()
-
     case .toggleTerminalEditor:
       NotificationCenter.default.post(name: .toggleMonitoringContentMode, object: nil)
     }
@@ -1756,22 +1743,6 @@ public struct MultiProviderSessionsListView: View {
       } else if fallsBackToRepositoryPicker {
         isStartSessionSheetPresented = true
         multiLaunchViewModel.selectRepository()
-      }
-    }
-  }
-
-  private func toggleFocusMode() {
-    let singleRaw = 0
-    if layoutModeRawValue != singleRaw {
-      previousLayoutModeRawValue = layoutModeRawValue
-      withAnimation(.easeInOut(duration: 0.2)) {
-        layoutModeRawValue = singleRaw
-      }
-    } else if previousLayoutModeRawValue >= 0 {
-      let restoreTo = previousLayoutModeRawValue
-      previousLayoutModeRawValue = -1
-      withAnimation(.easeInOut(duration: 0.2)) {
-        layoutModeRawValue = restoreTo
       }
     }
   }

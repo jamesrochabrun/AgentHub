@@ -3,7 +3,7 @@
 //  AgentHub
 //
 //  Horizontal drag-resize primitives for split pane layouts.
-//  Mirrors the vertical ResizableCardContainer pattern.
+//  Shared drag handle for resizable split panels.
 //
 
 import AppKit
@@ -15,6 +15,35 @@ enum ResizablePanelSide: Equatable {
 }
 
 // MARK: - Drag State Propagation
+
+/// Tracks active split-handle drags so the terminal does not treat the mouse-up
+/// that ends a resize as a terminal/tab selection click.
+final class ResizeInteractionSuppression {
+  static let shared = ResizeInteractionSuppression()
+
+  private let lock = NSLock()
+  private var activeResizeCount = 0
+  private var suppressSelectionUntil: TimeInterval = 0
+
+  func beginResize() {
+    lock.lock()
+    activeResizeCount += 1
+    lock.unlock()
+  }
+
+  func endResize() {
+    lock.lock()
+    activeResizeCount = max(0, activeResizeCount - 1)
+    suppressSelectionUntil = max(suppressSelectionUntil, ProcessInfo.processInfo.systemUptime + 0.2)
+    lock.unlock()
+  }
+
+  var shouldSuppressSelection: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return activeResizeCount > 0 || ProcessInfo.processInfo.systemUptime < suppressSelectionUntil
+  }
+}
 
 /// Process-wide observable that publishes whether ANY split handle is being
 /// dragged. Individual panes subscribe via `.blursWhileResizing()` so both the
@@ -66,6 +95,17 @@ private struct BlurWhileResizingModifier: ViewModifier {
           .allowsHitTesting(false)
       }
   }
+}
+
+func resizableDividerColor(isDragging: Bool, isHovering: Bool) -> Color {
+  if isHovering {
+    return Color.primary.opacity(0.28)
+  }
+  return Color.primary.opacity(isDragging ? 0.14 : 0.09)
+}
+
+func resizableDividerThickness(isDragging: Bool, isHovering: Bool) -> CGFloat {
+  return isHovering || isDragging ? 2 : 1
 }
 
 // MARK: - ResizablePanelContainer

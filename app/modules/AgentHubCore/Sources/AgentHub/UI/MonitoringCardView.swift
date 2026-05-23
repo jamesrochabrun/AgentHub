@@ -28,13 +28,11 @@ public struct MonitoringCardView: View {
   var dangerouslySkipPermissions: Bool = false
   var permissionModePlan: Bool = false
   let worktreeName: String?
-  let shouldMountTerminal: Bool
   let onStopMonitoring: () -> Void
   let onConnect: () -> Void
   let onCopySessionId: () -> Void
   let onOpenSessionFile: () -> Void
   let onRefreshTerminal: () -> Void
-  let onRequestMountTerminal: () -> Void
   let onInlineRequestSubmit: ((String, CLISession) -> Void)?
   let onShowDiff: ((CLISession, String) -> Void)?
   let onShowPlan: ((CLISession, PlanState) -> Void)?
@@ -45,8 +43,6 @@ public struct MonitoringCardView: View {
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
   let onRequestShowEditor: (() -> Void)?
-  let isMaximized: Bool
-  let onToggleMaximize: () -> Void
   let isPrimarySession: Bool
   let showPrimaryIndicator: Bool
   var isSidePanelOpen: Bool = false
@@ -82,13 +78,11 @@ public struct MonitoringCardView: View {
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil,
-    shouldMountTerminal: Bool = true,
     onStopMonitoring: @escaping () -> Void,
     onConnect: @escaping () -> Void,
     onCopySessionId: @escaping () -> Void,
     onOpenSessionFile: @escaping () -> Void,
     onRefreshTerminal: @escaping () -> Void,
-    onRequestMountTerminal: @escaping () -> Void = {},
     onInlineRequestSubmit: ((String, CLISession) -> Void)? = nil,
     onShowDiff: ((CLISession, String) -> Void)? = nil,
     onShowPlan: ((CLISession, PlanState) -> Void)? = nil,
@@ -99,8 +93,6 @@ public struct MonitoringCardView: View {
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
     onRequestShowEditor: (() -> Void)? = nil,
-    isMaximized: Bool = false,
-    onToggleMaximize: @escaping () -> Void = {},
     isPrimarySession: Bool = false,
     showPrimaryIndicator: Bool = false,
     isSidePanelOpen: Bool = false
@@ -121,13 +113,11 @@ public struct MonitoringCardView: View {
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
     self.permissionModePlan = permissionModePlan
     self.worktreeName = worktreeName
-    self.shouldMountTerminal = shouldMountTerminal
     self.onStopMonitoring = onStopMonitoring
     self.onConnect = onConnect
     self.onCopySessionId = onCopySessionId
     self.onOpenSessionFile = onOpenSessionFile
     self.onRefreshTerminal = onRefreshTerminal
-    self.onRequestMountTerminal = onRequestMountTerminal
     self.onInlineRequestSubmit = onInlineRequestSubmit
     self.onShowDiff = onShowDiff
     self.onShowPlan = onShowPlan
@@ -138,18 +128,9 @@ public struct MonitoringCardView: View {
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
     self.onRequestShowEditor = onRequestShowEditor
-    self.isMaximized = isMaximized
-    self.onToggleMaximize = onToggleMaximize
     self.isPrimarySession = isPrimarySession
     self.showPrimaryIndicator = showPrimaryIndicator
     self.isSidePanelOpen = isSidePanelOpen
-  }
-
-  static func listHeightMetrics(
-    providerKind: SessionProviderKind,
-    state: SessionMonitorState?
-  ) -> ResizableCardMetrics {
-    return ResizableCardMetrics(defaultHeight: 520, minHeight: 400)
   }
 
   private var queuedPreviewContextCount: Int {
@@ -837,9 +818,7 @@ public struct MonitoringCardView: View {
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName,
-      shouldMountTerminal: shouldMountTerminal,
       onUserInteraction: onTerminalInteraction,
-      onRequestMount: onRequestMountTerminal,
       onRequestShowEditor: onRequestShowEditor,
       consumeQueuedWebPreviewContextOnSubmit: {
         viewModel?.consumeQueuedWebPreviewContextPrompt(for: session.id)
@@ -988,62 +967,28 @@ private struct MonitoringCardTerminalContent: View {
   let dangerouslySkipPermissions: Bool
   let permissionModePlan: Bool
   let worktreeName: String?
-  let shouldMountTerminal: Bool
   let onUserInteraction: (() -> Void)?
-  let onRequestMount: () -> Void
   let onRequestShowEditor: (() -> Void)?
   let consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
 
   var body: some View {
-    Group {
-      if shouldMountTerminal {
-        EmbeddedTerminalView(
-          terminalKey: terminalKey,
-          sessionId: sessionId,
-          projectPath: projectPath,
-          cliConfiguration: cliConfiguration,
-          initialPrompt: initialPrompt,
-          initialInputText: initialInputText,
-          viewModel: viewModel,
-          dangerouslySkipPermissions: dangerouslySkipPermissions,
-          permissionModePlan: permissionModePlan,
-          worktreeName: worktreeName,
-          onUserInteraction: onUserInteraction,
-          onRequestShowEditor: onRequestShowEditor,
-          consumeQueuedWebPreviewContextOnSubmit: consumeQueuedWebPreviewContextOnSubmit
-        )
-      } else {
-        TerminalMountPlaceholder(
-          projectPath: projectPath,
-          onRequestMount: onRequestMount
-        )
-      }
-    }
+    EmbeddedTerminalView(
+      terminalKey: terminalKey,
+      sessionId: sessionId,
+      projectPath: projectPath,
+      cliConfiguration: cliConfiguration,
+      initialPrompt: initialPrompt,
+      initialInputText: initialInputText,
+      viewModel: viewModel,
+      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      permissionModePlan: permissionModePlan,
+      worktreeName: worktreeName,
+      onUserInteraction: onUserInteraction,
+      onRequestShowEditor: onRequestShowEditor,
+      consumeQueuedWebPreviewContextOnSubmit: consumeQueuedWebPreviewContextOnSubmit
+    )
     .padding(DesignTokens.Spacing.sm)
     .frame(minHeight: 300)
-  }
-}
-
-private struct TerminalMountPlaceholder: View {
-  let projectPath: String
-  let onRequestMount: () -> Void
-
-  var body: some View {
-    VStack(spacing: 10) {
-      Image(systemName: "terminal")
-        .font(.title3)
-        .foregroundStyle(.secondary)
-
-      Text(URL(fileURLWithPath: projectPath).lastPathComponent)
-        .font(.primaryDefault)
-        .lineLimit(1)
-
-      Button("Load Terminal", action: onRequestMount)
-        .buttonStyle(.agentHubOutlined)
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color.secondary.opacity(0.06))
-    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
   }
 }
 

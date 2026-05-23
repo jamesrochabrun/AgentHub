@@ -5,43 +5,11 @@ import Testing
 
 @Suite("MonitoringAutoOpenSidePanelPolicy")
 struct MonitoringAutoOpenSidePanelPolicyTests {
-  @Test("Returns no candidate outside single layout")
-  func returnsNoCandidateOutsideSingleLayout() {
-    let item = Self.item(state: Self.pendingEditState(toolUseId: "edit-1"))
-
-    let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .list,
-      maximizedSessionId: nil,
-      activeModuleLandingPath: nil,
-      visibleItem: item,
-      openedKeys: []
-    )
-
-    #expect(candidate == nil)
-  }
-
-  @Test("Returns no candidate while maximized")
-  func returnsNoCandidateWhileMaximized() {
-    let item = Self.item(state: Self.pendingEditState(toolUseId: "edit-1"))
-
-    let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: "session-1",
-      activeModuleLandingPath: nil,
-      visibleItem: item,
-      openedKeys: []
-    )
-
-    #expect(candidate == nil)
-  }
-
   @Test("Returns no candidate while module landing is active")
   func returnsNoCandidateWhileModuleLandingIsActive() {
     let item = Self.item(state: Self.pendingEditState(toolUseId: "edit-1"))
 
     let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: "/tmp/project",
       visibleItem: item,
       openedKeys: []
@@ -55,8 +23,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     let item = Self.item(state: Self.pendingEditState(toolUseId: "edit-1"))
 
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: []
@@ -77,8 +43,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     let item = Self.item(state: Self.planFileState(filePath: path))
 
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: []
@@ -107,8 +71,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     ))
 
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: []
@@ -128,8 +90,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     )
 
     let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [openedKey]
@@ -148,8 +108,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     )
 
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [openedKey]
@@ -166,8 +124,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     ))
 
     let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [],
@@ -185,8 +141,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     ))
 
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [],
@@ -208,8 +162,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     )
 
     let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [openedKey]
@@ -233,8 +185,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     )
 
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [openedKey]
@@ -260,8 +210,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     )
 
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [openedKey]
@@ -283,8 +231,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     ))
 
     let candidate = MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [],
@@ -302,8 +248,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
     ))
 
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: item,
       openedKeys: [],
@@ -339,8 +283,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
       detectedAt: Date(timeIntervalSince1970: 1)
     )))
     #expect(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: initialItem,
       openedKeys: initialKeys
@@ -355,8 +297,6 @@ struct MonitoringAutoOpenSidePanelPolicyTests {
       recentActivities: Self.planActivities(filePath: path)
     ))
     let candidate = try #require(MonitoringAutoOpenSidePanelPolicy.candidate(
-      layoutMode: .single,
-      maximizedSessionId: nil,
       activeModuleLandingPath: nil,
       visibleItem: changedItem,
       openedKeys: initialKeys
