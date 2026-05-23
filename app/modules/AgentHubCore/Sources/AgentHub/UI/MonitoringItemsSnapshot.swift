@@ -8,8 +8,6 @@ import Foundation
 struct MonitoringItemsSnapshot<Item: Identifiable> where Item.ID == String {
   let allItems: [Item]
   let visibleItems: [Item]
-  let groupedItems: [(modulePath: String, items: [Item])]
-  let flatSortedItems: [Item]
   let effectivePrimaryItem: Item?
 
   var effectivePrimaryItemID: String? {
@@ -23,8 +21,6 @@ struct MonitoringItemsSnapshot<Item: Identifiable> where Item.ID == String {
   init(
     items: [Item],
     primaryItemID: String?,
-    layoutMode: HubLayoutMode,
-    modulePath: (Item) -> String,
     timestamp: (Item) -> Date
   ) {
     self.allItems = items
@@ -37,20 +33,6 @@ struct MonitoringItemsSnapshot<Item: Identifiable> where Item.ID == String {
       self.effectivePrimaryItem = sortedItems.first
     }
 
-    if layoutMode == .single, let effectivePrimaryItem {
-      self.visibleItems = [effectivePrimaryItem]
-    } else {
-      self.visibleItems = items
-    }
-
-    self.groupedItems = Dictionary(grouping: visibleItems, by: modulePath)
-      .sorted { $0.key < $1.key }
-      .map { group in
-        (
-          modulePath: group.key,
-          items: group.value.sorted { timestamp($0) > timestamp($1) }
-        )
-      }
-    self.flatSortedItems = groupedItems.flatMap(\.items)
+    self.visibleItems = effectivePrimaryItem.map { [$0] } ?? []
   }
 }

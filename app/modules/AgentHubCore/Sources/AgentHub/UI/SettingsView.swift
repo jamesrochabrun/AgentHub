@@ -23,9 +23,6 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
 
-  @AppStorage(AgentHubDefaults.flatSessionLayout)
-  private var flatSessionLayout: Bool = false
-
   @AppStorage(AgentHubDefaults.terminalFontSize)
   private var terminalFontSize: Double = 12
 
@@ -265,12 +262,6 @@ public struct SettingsView: View {
   private var appearanceSettingsForm: some View {
     Form {
       Section("Layout") {
-        settingsToggle(
-          title: "Flat session layout",
-          description: "Show all sessions without per-repository sections",
-          isOn: $flatSessionLayout
-        )
-
         Picker("Diff display", selection: $diffDisplayModeRawValue) {
           ForEach(DiffDisplayMode.allCases) { mode in
             Text(mode.label).tag(mode.rawValue)

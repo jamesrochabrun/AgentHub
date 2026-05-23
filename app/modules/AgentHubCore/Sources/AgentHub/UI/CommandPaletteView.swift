@@ -15,7 +15,6 @@ public enum CommandPaletteAction: Identifiable {
   case selectRepository(path: String, name: String)
   case openSettings
   case toggleSidebar
-  case toggleFocusMode
   case toggleTerminalEditor
 
   public var id: String {
@@ -25,7 +24,6 @@ public enum CommandPaletteAction: Identifiable {
     case .selectRepository(let path, _): return "repo-\(path)"
     case .openSettings: return "settings"
     case .toggleSidebar: return "toggle-sidebar"
-    case .toggleFocusMode: return "toggle-focus-mode"
     case .toggleTerminalEditor: return "toggle-terminal-editor"
     }
   }
@@ -37,7 +35,6 @@ public enum CommandPaletteAction: Identifiable {
     case .selectRepository(_, let name): return name
     case .openSettings: return "Open Settings"
     case .toggleSidebar: return "Toggle Sidebar"
-    case .toggleFocusMode: return "Toggle Focus Mode"
     case .toggleTerminalEditor: return "Next Session Tab"
     }
   }
@@ -56,7 +53,6 @@ public enum CommandPaletteAction: Identifiable {
     case .selectRepository(let path, _): return path
     case .openSettings: return "Open application settings"
     case .toggleSidebar: return "Show or hide the sidebar"
-    case .toggleFocusMode: return "Expand focused session or restore previous layout"
     case .toggleTerminalEditor: return "Cycle the focused session through visible tabs"
     }
   }
@@ -68,7 +64,6 @@ public enum CommandPaletteAction: Identifiable {
     case .selectRepository: return "folder"
     case .openSettings: return "gear"
     case .toggleSidebar: return "sidebar.left"
-    case .toggleFocusMode: return "arrow.up.left.and.arrow.down.right"
     case .toggleTerminalEditor: return "arrow.triangle.2.circlepath"
     }
   }
@@ -78,7 +73,6 @@ public enum CommandPaletteAction: Identifiable {
     case .newSession: return "⌘N"
     case .toggleSidebar: return "⌘B"
     case .openSettings: return "⌘,"
-    case .toggleFocusMode: return "⌘\\"
     case .toggleTerminalEditor: return "⌥`"
     default: return nil
     }
@@ -106,7 +100,6 @@ public struct CommandPaletteView: View {
   private var quickActions: [CommandPaletteAction] {
     [
       .newSession,
-      .toggleFocusMode,
       .toggleTerminalEditor,
       .openSettings,
       .toggleSidebar,
