@@ -64,6 +64,44 @@ struct RegularTerminalWorkspaceTests {
     ) == .closePanel)
   }
 
+  @Test("Terminal editing shortcuts pass through when terminal input is focused")
+  func terminalEditingShortcutsPassThroughWhenTerminalInputIsFocused() {
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 123,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .numericPad],
+      terminalTextInputActive: true
+    ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 124,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .shift, .numericPad],
+      terminalTextInputActive: true
+    ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 51,
+      charactersIgnoringModifiers: "\u{7f}",
+      modifierFlags: [.command],
+      terminalTextInputActive: true
+    ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 3,
+      charactersIgnoringModifiers: "f",
+      modifierFlags: [.command],
+      terminalTextInputActive: true
+    ) == .startSearch)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 17,
+      charactersIgnoringModifiers: "t",
+      modifierFlags: [.command],
+      terminalTextInputActive: true
+    ) == .openTab)
+  }
+
   @Test("Split layout builder adds and removes panels")
   func splitLayoutBuilderAddsAndRemovesPanels() {
     let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)

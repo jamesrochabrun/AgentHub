@@ -79,21 +79,30 @@ public enum TerminalPanelKit {
     case focusPanel(PanelNavigationDirection)
     case selectTab(TabNavigationDirection)
 
-    public static func action(for event: NSEvent) -> Shortcut? {
+    public static func action(
+      for event: NSEvent,
+      terminalTextInputActive: Bool = false
+    ) -> Shortcut? {
       action(
         keyCode: event.keyCode,
         charactersIgnoringModifiers: event.charactersIgnoringModifiers,
-        modifierFlags: event.modifierFlags
+        modifierFlags: event.modifierFlags,
+        terminalTextInputActive: terminalTextInputActive
       )
     }
 
     public static func action(
       keyCode: UInt16,
       charactersIgnoringModifiers: String?,
-      modifierFlags: NSEvent.ModifierFlags
+      modifierFlags: NSEvent.ModifierFlags,
+      terminalTextInputActive: Bool = false
     ) -> Shortcut? {
       let flags = normalizedModifierFlags(modifierFlags)
       let key = charactersIgnoringModifiers?.lowercased()
+
+      if terminalTextInputActive && isTerminalEditingShortcut(keyCode: keyCode, flags: flags) {
+        return nil
+      }
 
       if flags == [.command] {
         switch keyCode {
@@ -137,6 +146,23 @@ public enum TerminalPanelKit {
       flags
         .intersection(.deviceIndependentFlagsMask)
         .subtracting([.numericPad, .function, .capsLock])
+    }
+
+    private static func isTerminalEditingShortcut(
+      keyCode: UInt16,
+      flags: NSEvent.ModifierFlags
+    ) -> Bool {
+      guard !flags.contains(.control),
+            flags.contains(.command) || flags.contains(.option) else {
+        return false
+      }
+
+      switch keyCode {
+      case 51, 117, 123, 124, 125, 126:
+        return true
+      default:
+        return false
+      }
     }
   }
 
