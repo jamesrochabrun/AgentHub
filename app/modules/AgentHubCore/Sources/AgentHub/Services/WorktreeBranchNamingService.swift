@@ -132,7 +132,7 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
     } catch let error as ClaudeProgrammaticError {
       if case .timeout = error {
         AppLogger.intelligence.error(
-          "\(Self.logPrefix, privacy: .public) Branch naming timed out after \(Self.timeoutLabel(namingTimeoutDuration), privacy: .public); canceling Claude CLI and using deterministic fallback"
+          "\(Self.logPrefix, privacy: .public) Branch naming timed out after \(Self.timeoutLabel(self.namingTimeoutDuration), privacy: .public); canceling Claude CLI and using deterministic fallback"
         )
         let fallback = Self.deterministicFallback(for: request, settings: settings, uuid: uuidProvider())
         await emitProgress(
