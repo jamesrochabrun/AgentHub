@@ -51,6 +51,9 @@ extension TerminalPanelKit.Tab where Payload == SafeLocalProcessTerminalView {
 
 @MainActor
 struct RegularTerminalWorkspaceView: View {
+  @State private var panelFrames: [RegularTerminalPanelID: CGRect] = [:]
+  @State private var dragState: RegularTerminalPanelDragState?
+
   let panels: [RegularTerminalPanel]
   let splitRoot: RegularTerminalSplitNode?
   let activePanelID: RegularTerminalPanelID?
@@ -62,32 +65,176 @@ struct RegularTerminalWorkspaceView: View {
   let onCloseTab: (RegularTerminalPanel, RegularTerminalTab) -> Void
   let onOpenTab: (RegularTerminalPanel) -> Void
   let onSplitPanel: (RegularTerminalPanel, RegularTerminalSplitAxis) -> Void
+  let onRearrangePanels: (RegularTerminalSplitNode) -> Void
 
   var body: some View {
-    if panels.isEmpty {
-      Text("No terminal available")
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    } else {
-      RegularTerminalSplitView(
-        node: resolvedSplitRoot,
-        panels: panels,
-        activePanelID: activePanelID,
-        canClosePanel: canClosePanel,
-        canCloseTab: canCloseTab,
-        onActivatePanel: onActivatePanel,
-        onSelectTab: onSelectTab,
-        onClosePanel: onClosePanel,
-        onCloseTab: onCloseTab,
-        onOpenTab: onOpenTab,
-        onSplitPanel: onSplitPanel
-      )
+    GeometryReader { proxy in
+      if panels.isEmpty {
+        Text("No terminal available")
+          .foregroundStyle(.secondary)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else {
+        RegularTerminalSplitView(
+          node: displayedSplitRoot,
+          panels: panels,
+          activePanelID: activePanelID,
+          canClosePanel: canClosePanel,
+          canCloseTab: canCloseTab,
+          onActivatePanel: onActivatePanel,
+          onSelectTab: onSelectTab,
+          onClosePanel: onClosePanel,
+          onCloseTab: onCloseTab,
+          onOpenTab: onOpenTab,
+          onSplitPanel: onSplitPanel,
+          dragVisualState: dragVisualState(for:),
+          coordinateSpaceName: Self.coordinateSpaceName,
+          onPanelDragChanged: { panel, value in
+            updatePanelDrag(panel, value: value, containerSize: proxy.size)
+          },
+          onPanelDragEnded: { _, _ in
+            finishPanelDrag()
+          }
+        )
+      }
+    }
+    .coordinateSpace(name: Self.coordinateSpaceName)
+    .onPreferenceChange(RegularTerminalPanelFramePreferenceKey.self) { frames in
+      panelFrames = frames
+    }
+    .onChange(of: panelIdentity) { _, _ in
+      dragState = nil
     }
   }
 
   private var resolvedSplitRoot: RegularTerminalSplitNode {
     splitRoot ?? panels.first.map { .panel($0.id) } ?? .panel(RegularTerminalPanelID())
   }
+
+  private var displayedSplitRoot: RegularTerminalSplitNode {
+    dragState?.proposalRoot ?? resolvedSplitRoot
+  }
+
+  private var panelIdentity: [RegularTerminalPanelID] {
+    panels.map(\.id)
+  }
+
+  private static let coordinateSpaceName = "RegularTerminalWorkspaceCoordinateSpace"
+  private static let nearestTargetDistance: CGFloat = 96
+
+  private func updatePanelDrag(
+    _ panel: RegularTerminalPanel,
+    value: DragGesture.Value,
+    containerSize: CGSize
+  ) {
+    guard panels.count > 1 else { return }
+    let sourceRoot = dragState?.sourceRoot ?? resolvedSplitRoot
+    let sourceFrames = dragState?.sourceFrames ?? usablePanelFrames(
+      containerSize: containerSize,
+      root: sourceRoot
+    )
+
+    guard let target = targetPanel(at: value.location, dragging: panel.id, frames: sourceFrames) else {
+      dragState = RegularTerminalPanelDragState(
+        draggedPanelID: panel.id,
+        sourceRoot: sourceRoot,
+        sourceFrames: sourceFrames,
+        proposalRoot: nil,
+        isInvalid: true
+      )
+      return
+    }
+
+    let placement = dropPlacement(for: value.location, in: target.frame)
+    let proposal = TerminalPanelDragLayoutEngine.proposal(
+      root: sourceRoot.terminalPanelLayoutNode,
+      dragging: panel.id,
+      over: target.id,
+      placement: placement,
+      containerSize: containerSize
+    )
+
+    dragState = RegularTerminalPanelDragState(
+      draggedPanelID: panel.id,
+      sourceRoot: sourceRoot,
+      sourceFrames: sourceFrames,
+      proposalRoot: proposal.map { RegularTerminalSplitNode(layoutNode: $0.root) },
+      isInvalid: proposal == nil
+    )
+  }
+
+  private func finishPanelDrag() {
+    defer { dragState = nil }
+    guard let proposalRoot = dragState?.proposalRoot,
+          dragState?.isInvalid == false else {
+      return
+    }
+    onRearrangePanels(proposalRoot)
+  }
+
+  private func dragVisualState(for panelID: RegularTerminalPanelID) -> TerminalPanelDragVisualState {
+    guard dragState?.draggedPanelID == panelID else { return .inactive }
+    return dragState?.isInvalid == true ? .invalid : .preview
+  }
+
+  private func targetPanel(
+    at point: CGPoint,
+    dragging draggedPanelID: RegularTerminalPanelID,
+    frames sourceFrames: [RegularTerminalPanelID: CGRect]
+  ) -> (id: RegularTerminalPanelID, frame: CGRect)? {
+    let frames = sourceFrames.filter { $0.key != draggedPanelID }
+    guard !frames.isEmpty else { return nil }
+
+    if let contained = frames.first(where: { $0.value.insetBy(dx: -12, dy: -12).contains(point) }) {
+      return (contained.key, contained.value)
+    }
+
+    guard let nearest = frames.min(by: {
+      distance(from: point, to: $0.value) < distance(from: point, to: $1.value)
+    }) else {
+      return nil
+    }
+    guard distance(from: point, to: nearest.value) <= Self.nearestTargetDistance else {
+      return nil
+    }
+    return (nearest.key, nearest.value)
+  }
+
+  private func usablePanelFrames(
+    containerSize: CGSize,
+    root: RegularTerminalSplitNode
+  ) -> [RegularTerminalPanelID: CGRect] {
+    if !panelFrames.isEmpty {
+      return panelFrames
+    }
+    return TerminalPanelDragLayoutEngine.panelFrames(
+      for: root.terminalPanelLayoutNode,
+      in: CGRect(origin: .zero, size: containerSize)
+    )
+  }
+
+  private func dropPlacement(for point: CGPoint, in frame: CGRect) -> TerminalPanelDropPlacement {
+    let distances: [(distance: CGFloat, placement: TerminalPanelDropPlacement)] = [
+      (abs(point.x - frame.minX), .leading),
+      (abs(point.x - frame.maxX), .trailing),
+      (abs(point.y - frame.minY), .above),
+      (abs(point.y - frame.maxY), .below)
+    ]
+    return distances.min(by: { $0.distance < $1.distance })?.placement ?? .trailing
+  }
+
+  private func distance(from point: CGPoint, to frame: CGRect) -> CGFloat {
+    let dx = max(frame.minX - point.x, 0, point.x - frame.maxX)
+    let dy = max(frame.minY - point.y, 0, point.y - frame.maxY)
+    return sqrt(dx * dx + dy * dy)
+  }
+}
+
+private struct RegularTerminalPanelDragState {
+  let draggedPanelID: RegularTerminalPanelID
+  let sourceRoot: RegularTerminalSplitNode
+  let sourceFrames: [RegularTerminalPanelID: CGRect]
+  let proposalRoot: RegularTerminalSplitNode?
+  let isInvalid: Bool
 }
 
 @MainActor
@@ -103,6 +250,10 @@ private struct RegularTerminalSplitView: View {
   let onCloseTab: (RegularTerminalPanel, RegularTerminalTab) -> Void
   let onOpenTab: (RegularTerminalPanel) -> Void
   let onSplitPanel: (RegularTerminalPanel, RegularTerminalSplitAxis) -> Void
+  let dragVisualState: (RegularTerminalPanelID) -> TerminalPanelDragVisualState
+  let coordinateSpaceName: String
+  let onPanelDragChanged: (RegularTerminalPanel, DragGesture.Value) -> Void
+  let onPanelDragEnded: (RegularTerminalPanel, DragGesture.Value) -> Void
 
   var body: some View {
     content(for: node)
@@ -126,7 +277,11 @@ private struct RegularTerminalSplitView: View {
           onCloseTab: { tab in onCloseTab(panel, tab) },
           onOpenTab: { onOpenTab(panel) },
           onSplitRight: { onSplitPanel(panel, .horizontal) },
-          onSplitBelow: { onSplitPanel(panel, .vertical) }
+          onSplitBelow: { onSplitPanel(panel, .vertical) },
+          dragVisualState: dragVisualState(panel.id),
+          coordinateSpaceName: coordinateSpaceName,
+          onDragChanged: { value in onPanelDragChanged(panel, value) },
+          onDragEnded: { value in onPanelDragEnded(panel, value) }
         )
       } else {
         EmptyView()
@@ -177,7 +332,11 @@ private struct RegularTerminalSplitView: View {
           onClosePanel: onClosePanel,
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
-          onSplitPanel: onSplitPanel
+          onSplitPanel: onSplitPanel,
+          dragVisualState: dragVisualState,
+          coordinateSpaceName: coordinateSpaceName,
+          onPanelDragChanged: onPanelDragChanged,
+          onPanelDragEnded: onPanelDragEnded
         )
         .frame(width: childWidth, height: size.height)
       }
@@ -209,7 +368,11 @@ private struct RegularTerminalSplitView: View {
           onClosePanel: onClosePanel,
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
-          onSplitPanel: onSplitPanel
+          onSplitPanel: onSplitPanel,
+          dragVisualState: dragVisualState,
+          coordinateSpaceName: coordinateSpaceName,
+          onPanelDragChanged: onPanelDragChanged,
+          onPanelDragEnded: onPanelDragEnded
         )
         .frame(width: size.width, height: childHeight)
       }
@@ -244,6 +407,10 @@ private struct RegularTerminalPaneView: View {
   let onOpenTab: () -> Void
   let onSplitRight: () -> Void
   let onSplitBelow: () -> Void
+  let dragVisualState: TerminalPanelDragVisualState
+  let coordinateSpaceName: String
+  let onDragChanged: (DragGesture.Value) -> Void
+  let onDragEnded: (DragGesture.Value) -> Void
 
   var body: some View {
     VStack(spacing: 0) {
@@ -259,6 +426,7 @@ private struct RegularTerminalPaneView: View {
         onSplitBelow: onSplitBelow,
         onClosePanel: onClosePanel
       )
+      .simultaneousGesture(panelDragGesture)
 
       if let activeTab = panel.activeTab {
         RegularTerminalTabRepresentable(tab: activeTab)
@@ -272,14 +440,45 @@ private struct RegularTerminalPaneView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color.clear)
+    .background {
+      GeometryReader { proxy in
+        Color.clear.preference(
+          key: RegularTerminalPanelFramePreferenceKey.self,
+          value: [panel.id: proxy.frame(in: .named(coordinateSpaceName))]
+        )
+      }
+    }
     .contentShape(Rectangle())
     .onTapGesture(perform: onActivatePanel)
     .overlay {
-      if isActive && showsSelectionBorder {
+      if dragVisualState == .invalid {
+        Rectangle()
+          .stroke(Color.red.opacity(0.85), lineWidth: 2)
+      } else if dragVisualState == .preview {
+        Rectangle()
+          .stroke(Color.accentColor.opacity(0.75), lineWidth: 1)
+      } else if isActive && showsSelectionBorder {
         Rectangle()
           .stroke(Color.accentColor.opacity(0.55), lineWidth: 1)
       }
     }
+  }
+
+  private var panelDragGesture: some Gesture {
+    DragGesture(minimumDistance: 8, coordinateSpace: .named(coordinateSpaceName))
+      .onChanged(onDragChanged)
+      .onEnded(onDragEnded)
+  }
+}
+
+private struct RegularTerminalPanelFramePreferenceKey: PreferenceKey {
+  static var defaultValue: [RegularTerminalPanelID: CGRect] = [:]
+
+  static func reduce(
+    value: inout [RegularTerminalPanelID: CGRect],
+    nextValue: () -> [RegularTerminalPanelID: CGRect]
+  ) {
+    value.merge(nextValue(), uniquingKeysWith: { _, next in next })
   }
 }
 

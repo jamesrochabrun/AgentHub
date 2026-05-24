@@ -3,6 +3,7 @@
 //  AgentHub
 //
 
+import AgentHubCore
 import GhosttySwift
 import SwiftUI
 
@@ -20,6 +21,10 @@ struct AgentHubGhosttyTerminalPaneView: View {
   let onCloseTab: (TerminalPanel, TerminalTab) -> Void
   let onOpenTab: (TerminalPanel) -> Void
   let onSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Void
+  let dragVisualState: TerminalPanelDragVisualState
+  let coordinateSpaceName: String
+  let onDragChanged: (DragGesture.Value) -> Void
+  let onDragEnded: (DragGesture.Value) -> Void
   let activity: AgentHubGhosttyTerminalPaneActivity?
 
   var body: some View {
@@ -36,6 +41,7 @@ struct AgentHubGhosttyTerminalPaneView: View {
         onSplitBelow: { onSplitPanel(panel, .vertical) },
         onClosePanel: closePanel
       )
+      .simultaneousGesture(panelDragGesture)
 
       if let activeTab = panel.activeTab {
         ZStack {
@@ -55,8 +61,22 @@ struct AgentHubGhosttyTerminalPaneView: View {
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color.clear)
+    .background {
+      GeometryReader { proxy in
+        Color.clear.preference(
+          key: AgentHubGhosttyPanelFramePreferenceKey.self,
+          value: [panel.id: proxy.frame(in: .named(coordinateSpaceName))]
+        )
+      }
+    }
     .overlay {
-      if panel.id == session.activePanelID && session.visiblePanels.count > 1 {
+      if dragVisualState == .invalid {
+        Rectangle()
+          .stroke(Color.red.opacity(0.85), lineWidth: 2)
+      } else if dragVisualState == .preview {
+        Rectangle()
+          .stroke(Color.accentColor.opacity(0.75), lineWidth: 1)
+      } else if panel.id == session.activePanelID && session.visiblePanels.count > 1 {
         Rectangle()
           .stroke(Color.accentColor.opacity(0.55), lineWidth: 1)
       }
@@ -70,6 +90,12 @@ struct AgentHubGhosttyTerminalPaneView: View {
 
   private var visibleActivity: AgentHubGhosttyTerminalPaneActivity? {
     immediateActivity ?? activity
+  }
+
+  private var panelDragGesture: some Gesture {
+    DragGesture(minimumDistance: 8, coordinateSpace: .named(coordinateSpaceName))
+      .onChanged(onDragChanged)
+      .onEnded(onDragEnded)
   }
 
   private func closePanel() {

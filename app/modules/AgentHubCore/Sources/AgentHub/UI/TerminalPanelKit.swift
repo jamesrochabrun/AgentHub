@@ -512,6 +512,18 @@ public enum TerminalPanelKit {
     }
 
     @discardableResult
+    public func rearrangePanels(to root: SplitNode) -> Bool {
+      let currentPanelIDs = panels.map(\.id)
+      let proposedPanelIDs = root.panelIDs
+      guard proposedPanelIDs.count == currentPanelIDs.count,
+            Set(proposedPanelIDs) == Set(currentPanelIDs) else {
+        return false
+      }
+      splitRoot = root
+      return true
+    }
+
+    @discardableResult
     public func focusPanel(
       direction: PanelNavigationDirection,
       viewportSize: CGSize
@@ -751,6 +763,52 @@ public enum TerminalPanelKit {
           }
         )
       }
+    }
+  }
+}
+
+public extension TerminalPanelKit.SplitAxis {
+  init(_ axis: TerminalPanelLayoutAxis) {
+    switch axis {
+    case .horizontal:
+      self = .horizontal
+    case .vertical:
+      self = .vertical
+    }
+  }
+
+  var terminalPanelLayoutAxis: TerminalPanelLayoutAxis {
+    switch self {
+    case .horizontal:
+      return .horizontal
+    case .vertical:
+      return .vertical
+    }
+  }
+}
+
+public extension TerminalPanelKit.SplitNode {
+  init(layoutNode: TerminalPanelLayoutNode<TerminalPanelKit.PanelID>) {
+    switch layoutNode {
+    case .panel(let panelID):
+      self = .panel(panelID)
+    case .split(let axis, let children):
+      self = .split(
+        axis: TerminalPanelKit.SplitAxis(axis),
+        children: children.map(TerminalPanelKit.SplitNode.init(layoutNode:))
+      )
+    }
+  }
+
+  var terminalPanelLayoutNode: TerminalPanelLayoutNode<TerminalPanelKit.PanelID> {
+    switch self {
+    case .panel(let panelID):
+      return .panel(panelID)
+    case .split(let axis, let children):
+      return .split(
+        axis: axis.terminalPanelLayoutAxis,
+        children: children.map(\.terminalPanelLayoutNode)
+      )
     }
   }
 }

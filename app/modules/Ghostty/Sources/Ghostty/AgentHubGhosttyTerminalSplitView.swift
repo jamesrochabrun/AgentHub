@@ -3,6 +3,7 @@
 //  AgentHub
 //
 
+import AgentHubCore
 import GhosttySwift
 import SwiftUI
 
@@ -18,6 +19,10 @@ struct AgentHubGhosttyTerminalSplitView: View {
   let onCloseTab: (TerminalPanel, TerminalTab) -> Void
   let onOpenTab: (TerminalPanel) -> Void
   let onSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Void
+  let dragVisualState: (TerminalPanelID) -> TerminalPanelDragVisualState
+  let coordinateSpaceName: String
+  let onPanelDragChanged: (TerminalPanel, DragGesture.Value) -> Void
+  let onPanelDragEnded: (TerminalPanel, DragGesture.Value) -> Void
   let activityForPanel: (TerminalPanelID) -> AgentHubGhosttyTerminalPaneActivity?
 
   var body: some View {
@@ -40,6 +45,10 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
+          dragVisualState: dragVisualState(panel.id),
+          coordinateSpaceName: coordinateSpaceName,
+          onDragChanged: { value in onPanelDragChanged(panel, value) },
+          onDragEnded: { value in onPanelDragEnded(panel, value) },
           activity: activityForPanel(panel.id)
         )
       } else if let activity = activityForPanel(panelID) {
@@ -93,6 +102,10 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
+          dragVisualState: dragVisualState,
+          coordinateSpaceName: coordinateSpaceName,
+          onPanelDragChanged: onPanelDragChanged,
+          onPanelDragEnded: onPanelDragEnded,
           activityForPanel: activityForPanel
         )
         .frame(width: childWidth, height: size.height)
@@ -125,6 +138,10 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
+          dragVisualState: dragVisualState,
+          coordinateSpaceName: coordinateSpaceName,
+          onPanelDragChanged: onPanelDragChanged,
+          onPanelDragEnded: onPanelDragEnded,
           activityForPanel: activityForPanel
         )
         .frame(width: size.width, height: childHeight)

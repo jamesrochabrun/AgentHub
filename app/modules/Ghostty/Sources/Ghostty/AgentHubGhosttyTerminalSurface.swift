@@ -637,6 +637,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       onSplitPanel: { [weak self] panel, axis in
         self?.openShellPane(axis: axis, anchorPanelID: panel.id)
       },
+      onRearrangePanels: { [weak self] root in
+        self?.rearrangeGhosttyPanels(to: root)
+      },
       activityForPanel: { [weak self] panelID in
         self?.paneActivityRegistry.activity(for: panelID)
       }
@@ -1200,6 +1203,20 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
     guard let targetPanel, targetPanel.id != terminalSession.primaryPanelID else { return }
     closeGhosttyPanel(targetPanel)
+  }
+
+  private func rearrangeGhosttyPanels(to root: TerminalSplitLayout.Node) {
+    guard let terminalSession else { return }
+    let currentPanelIDs = terminalSession.visiblePanels.map(\.id)
+    let proposedPanelIDs = root.agentHubPanelIDs
+    guard proposedPanelIDs.count == currentPanelIDs.count,
+          Set(proposedPanelIDs) == Set(currentPanelIDs) else {
+      return
+    }
+    prepareVisiblePanelsForPaneTransition(projectedRoot: root)
+    splitRoot = root
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
   }
 
   private func canCloseGhosttyPanel(_ panel: TerminalPanel) -> Bool {

@@ -945,6 +945,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       },
       onSplitPanel: { [weak self] panel, axis in
         self?.openShellPane(axis: axis, anchorPanelID: panel.id)
+      },
+      onRearrangePanels: { [weak self] root in
+        self?.rearrangeRegularPanels(to: root)
       }
     )
   }
@@ -1224,6 +1227,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     if let auxiliary = panels.reversed().first(where: canCloseRegularPanel) {
       closeRegularPanel(auxiliary)
     }
+  }
+
+  private func rearrangeRegularPanels(to root: RegularTerminalSplitNode) {
+    guard terminalPanelSession?.rearrangePanels(to: root) == true else { return }
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
   }
 
   private func focus(_ tab: RegularTerminalTab) {

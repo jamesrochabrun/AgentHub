@@ -119,6 +119,107 @@ struct RegularTerminalWorkspaceTests {
     #expect(RegularTerminalSplitLayoutBuilder.removingPanel(shell, from: split) == .panel(primary))
   }
 
+  @Test("Drag layout proposal switches a flat stack when current orientation is too small")
+  func dragLayoutProposalSwitchesFlatStackWhenCurrentOrientationIsTooSmall() {
+    let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+    let shell1 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let shell2 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+    let root = RegularTerminalSplitNode.split(
+      axis: .vertical,
+      children: [.panel(primary), .panel(shell1), .panel(shell2)]
+    )
+
+    let proposal = TerminalPanelDragLayoutEngine.proposal(
+      root: root.terminalPanelLayoutNode,
+      dragging: shell2,
+      over: shell1,
+      placement: .below,
+      containerSize: CGSize(width: 900, height: 420),
+      minimumPanelSize: CGSize(width: 260, height: 180)
+    )
+
+    #expect(proposal?.switchedAxis == true)
+    #expect(
+      proposal?.root == TerminalPanelLayoutNode.split(
+        axis: .horizontal,
+        children: [.panel(primary), .panel(shell1), .panel(shell2)]
+      )
+    )
+  }
+
+  @Test("Drag layout proposal rejects drops that cannot fit after reflow")
+  func dragLayoutProposalRejectsDropsThatCannotFitAfterReflow() {
+    let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+    let shell1 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let shell2 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+    let root = RegularTerminalSplitNode.split(
+      axis: .vertical,
+      children: [.panel(primary), .panel(shell1), .panel(shell2)]
+    )
+
+    let proposal = TerminalPanelDragLayoutEngine.proposal(
+      root: root.terminalPanelLayoutNode,
+      dragging: shell2,
+      over: shell1,
+      placement: .below,
+      containerSize: CGSize(width: 600, height: 420),
+      minimumPanelSize: CGSize(width: 260, height: 180)
+    )
+
+    #expect(proposal == nil)
+  }
+
+  @Test("Drag layout proposal does not reflow nested target stacks")
+  func dragLayoutProposalDoesNotReflowNestedTargetStacks() {
+    let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+    let shell1 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let shell2 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+    let shell3 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000004")!)
+    let root = RegularTerminalSplitNode.split(
+      axis: .horizontal,
+      children: [
+        .panel(primary),
+        .split(axis: .vertical, children: [.panel(shell1), .panel(shell2)]),
+        .panel(shell3)
+      ]
+    )
+
+    let proposal = TerminalPanelDragLayoutEngine.proposal(
+      root: root.terminalPanelLayoutNode,
+      dragging: shell3,
+      over: shell1,
+      placement: .below,
+      containerSize: CGSize(width: 1_000, height: 420),
+      minimumPanelSize: CGSize(width: 240, height: 180)
+    )
+
+    #expect(proposal == nil)
+  }
+
+  @MainActor
+  @Test("Panel kit commits a validated panel rearrangement")
+  func panelKitCommitsValidatedPanelRearrangement() {
+    let agent = TerminalPanelKit.Tab(role: .agent, payload: "agent")
+    let session = TerminalPanelKit.Session(primaryTab: agent)
+    let shell1 = TerminalPanelKit.Tab(role: .shell, payload: "shell1")
+    let shell2 = TerminalPanelKit.Tab(role: .shell, payload: "shell2")
+    let firstPanel = session.openPanel(with: shell1, beside: session.primaryPanelID, axis: .horizontal)
+    let secondPanel = session.openPanel(with: shell2, beside: firstPanel!.id, axis: .horizontal)
+
+    let rearrangedRoot = RegularTerminalSplitNode.split(
+      axis: .vertical,
+      children: [
+        .panel(session.primaryPanelID),
+        .panel(secondPanel!.id),
+        .panel(firstPanel!.id)
+      ]
+    )
+
+    #expect(session.rearrangePanels(to: rearrangedRoot))
+    #expect(session.splitRoot == rearrangedRoot)
+    #expect(session.rearrangePanels(to: .panel(RegularTerminalPanelID())) == false)
+  }
+
   @Test("Removing a nested split panel collapses the empty branch")
   func removingNestedPanelCollapsesSplitBranch() {
     let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)

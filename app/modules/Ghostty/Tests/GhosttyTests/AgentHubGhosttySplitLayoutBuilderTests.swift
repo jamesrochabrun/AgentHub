@@ -1,3 +1,5 @@
+import AgentHubCore
+import CoreGraphics
 import Foundation
 import GhosttySwift
 import Testing
@@ -86,5 +88,27 @@ struct AgentHubGhosttySplitLayoutBuilderTests {
     )
 
     #expect(result == .split(axis: .vertical, children: [.panel(primary), .panel(shell)]))
+  }
+
+  @Test("Drag proposal switches a flat stack when the current orientation is too small")
+  func dragProposalSwitchesFlatStackWhenCurrentOrientationIsTooSmall() {
+    let primary = TerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+    let shell1 = TerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let shell2 = TerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+    let root = TerminalSplitLayout.Node.split(
+      axis: .vertical,
+      children: [.panel(primary), .panel(shell1), .panel(shell2)]
+    )
+
+    let result = AgentHubGhosttySplitLayoutBuilder.rearrangementProposal(
+      root: root,
+      dragging: shell2,
+      over: shell1,
+      placement: .below,
+      containerSize: CGSize(width: 900, height: 420),
+      minimumPanelSize: CGSize(width: 260, height: 180)
+    )
+
+    #expect(result == .split(axis: .horizontal, children: [.panel(primary), .panel(shell1), .panel(shell2)]))
   }
 }
