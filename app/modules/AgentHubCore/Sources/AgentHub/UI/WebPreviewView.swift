@@ -525,7 +525,11 @@ public struct WebPreviewView: View {
           .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
       }
       .buttonStyle(.plain)
-      .help("\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior.modeName) mode (Cmd+Shift+I)")
+      .help(
+        inspectState.isActive
+          ? "Stop \(inspectBehavior.modeName) mode. Cmd+Shift+I cycles modes."
+          : "Start inspect mode (Cmd+Shift+I)"
+      )
 
       if inspectState.isActive {
         let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
@@ -593,7 +597,7 @@ public struct WebPreviewView: View {
     .overlay {
       // Hidden keyboard shortcuts — kept outside HStack layout to avoid phantom spacing
       HStack(spacing: 0) {
-        Button("") { toggleInspector() }
+        Button("") { handleInspectModeShortcut() }
           .keyboardShortcut("i", modifiers: [.command, .shift])
         Button("") { refreshPreview() }
           .keyboardShortcut("r", modifiers: .command)
@@ -1394,6 +1398,30 @@ public struct WebPreviewView: View {
     } else {
       inspectState.activate(mode: inspectBehavior.canvasMode)
     }
+  }
+
+  private func handleInspectModeShortcut() {
+    let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
+    guard let firstMode = availableModes.first else { return }
+
+    guard inspectState.isActive else {
+      inspectBehavior = firstMode
+      inspectState.activate(mode: firstMode.canvasMode)
+      return
+    }
+
+    guard let currentIndex = availableModes.firstIndex(of: inspectBehavior) else {
+      inspectBehavior = firstMode
+      return
+    }
+
+    let nextIndex = availableModes.index(after: currentIndex)
+    guard nextIndex < availableModes.endIndex else {
+      deactivateInspector()
+      return
+    }
+
+    inspectBehavior = availableModes[nextIndex]
   }
 
   private func deactivateInspector() {
