@@ -1298,8 +1298,8 @@ public struct WebPreviewView: View {
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
                 .contentShape(RoundedRectangle(cornerRadius: 12))
-                .inlineDesignToolbarCursor { hovering in
-                  handleInlineDesignToolbarHover(hovering)
+                .inspectOverlayCursor(label: "inlineDesignToolbar") { hovering in
+                  handleInspectOverlayHover(hovering)
                 }
               }
             }
@@ -1351,6 +1351,9 @@ public struct WebPreviewView: View {
           },
           onCropSubmit: { rect, elements, instruction in
             handleCropSubmit(rect: rect, elements: elements, instruction: instruction)
+          },
+          onOverlayHoverChange: { hovering in
+            handleInspectOverlayHover(hovering)
           },
           deactivateOnSubmit: false
         )
@@ -1548,8 +1551,8 @@ public struct WebPreviewView: View {
     inspectorViewModel.refreshFromLiveElement(element)
   }
 
-  private func handleInlineDesignToolbarHover(_ hovering: Bool) {
-    let shouldRestoreCrosshair = inspectState.isActive && isAdvancedEditingEnabled && inspectBehavior == .edit
+  private func handleInspectOverlayHover(_ hovering: Bool) {
+    let shouldRestoreCrosshair = inspectState.isActive
     let cursor = hovering ? "default" : (shouldRestoreCrosshair ? "crosshair" : "")
     let script = cursor.isEmpty
       ? "document.body.style.cursor = ''"
@@ -1698,6 +1701,8 @@ public struct WebPreviewView: View {
         Image(systemName: "xmark")
           .font(.system(size: 10))
           .foregroundColor(.white.opacity(0.8))
+          .frame(width: 24, height: 24)
+          .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .help("Exit inspect mode (Esc)")
@@ -1705,6 +1710,10 @@ public struct WebPreviewView: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
     .background(Color.accentColor.opacity(0.9))
+    .contentShape(Rectangle())
+    .inspectOverlayCursor(label: "editModeBanner") { hovering in
+      handleInspectOverlayHover(hovering)
+    }
     .padding(12)
   }
 
@@ -1774,19 +1783,20 @@ public struct WebPreviewView: View {
   }
 }
 
-private struct InlineDesignToolbarCursorModifier: ViewModifier {
+private struct InspectOverlayCursorModifier: ViewModifier {
+  let label: String
   let onHoverChange: (Bool) -> Void
   @State private var isHovering = false
 
   func body(content: Content) -> some View {
     content
       .onHover { hovering in
-        print("[HOVER] inlineDesignToolbar hovering=\(hovering)")
+        print("[HOVER] \(label) hovering=\(hovering)")
         updateCursor(isHovering: hovering)
         onHoverChange(hovering)
       }
       .onDisappear {
-        print("[HOVER] inlineDesignToolbar disappear")
+        print("[HOVER] \(label) disappear")
         updateCursor(isHovering: false)
         onHoverChange(false)
       }
@@ -1804,8 +1814,8 @@ private struct InlineDesignToolbarCursorModifier: ViewModifier {
 }
 
 private extension View {
-  func inlineDesignToolbarCursor(onHoverChange: @escaping (Bool) -> Void) -> some View {
-    modifier(InlineDesignToolbarCursorModifier(onHoverChange: onHoverChange))
+  func inspectOverlayCursor(label: String, onHoverChange: @escaping (Bool) -> Void) -> some View {
+    modifier(InspectOverlayCursorModifier(label: label, onHoverChange: onHoverChange))
   }
 }
 
