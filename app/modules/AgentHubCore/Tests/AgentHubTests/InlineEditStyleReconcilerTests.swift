@@ -56,6 +56,18 @@ struct InlineEditStyleReconcilerSanitizeTests {
     let sanitized = try ClaudeInlineEditStyleReconciler.sanitizeOutput(raw, editedContentLength: 45)
     #expect(sanitized == raw)
   }
+
+  @Test("Debug request body prefixes every line")
+  func debugRequestBodyPrefixesEveryLine() {
+    let text = "first\n\nthird"
+    let prefixed = ClaudeInlineEditStyleReconciler.prefixedRequestBody(text)
+
+    #expect(prefixed == """
+    [CANVASEDIT][REQUEST] first
+    [CANVASEDIT][REQUEST]
+    [CANVASEDIT][REQUEST] third
+    """)
+  }
 }
 
 @Suite("InlineEditStyleReconciler.reconcile")

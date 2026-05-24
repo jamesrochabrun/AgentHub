@@ -30,7 +30,7 @@ struct WebPreviewUpdateStateTests {
 
     #expect(state.isVisible)
     #expect(state.isEnabled)
-    #expect(state.detailText == "Design and code preview updates are manual. Save changes, then press Reload.")
+    #expect(state.detailText == "Design controls apply live. Use Reload to verify saved source and code edits.")
   }
 
   @Test("Edit mode enables manual update for ready dev-server previews")
@@ -44,7 +44,7 @@ struct WebPreviewUpdateStateTests {
 
     #expect(state.isVisible)
     #expect(state.isEnabled)
-    #expect(state.detailText == "Design and code preview updates are manual. Save changes, then press Reload.")
+    #expect(state.detailText == "Design controls apply live. Use Reload to verify saved source and code edits.")
   }
 
   @Test("Unavailable preview states disable manual update in edit mode")

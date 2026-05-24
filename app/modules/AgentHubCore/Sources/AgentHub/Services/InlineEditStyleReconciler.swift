@@ -69,20 +69,32 @@ public actor ClaudeInlineEditStyleReconciler: InlineEditStyleReconcilerProtocol 
     changeSummary: String,
     projectPath: String
   ) async throws -> String {
+    let userPrompt = Self.makeUserPrompt(
+      originalContent: originalContent,
+      editedContent: editedContent,
+      filePath: filePath,
+      changeSummary: changeSummary
+    )
     let request = ClaudeProgrammaticRequest(
       systemPrompt: Self.systemPrompt,
-      userPrompt: Self.makeUserPrompt(
-        originalContent: originalContent,
-        editedContent: editedContent,
-        filePath: filePath,
-        changeSummary: changeSummary
-      ),
+      userPrompt: userPrompt,
       workingDirectory: projectPath,
       models: ClaudeProgrammaticService.haikuFallbackModels,
       timeout: timeout,
       permissionMode: nil,
       disallowedTools: nil,
       logPrefix: Self.logPrefix
+    )
+
+    print(
+      """
+      \(Self.logPrefix)[REQUEST] file=\(filePath) project=\(projectPath) change=\(changeSummary)
+      \(Self.logPrefix)[REQUEST][SYSTEM]
+      \(Self.prefixedRequestBody(Self.systemPrompt))
+      \(Self.logPrefix)[REQUEST][USER]
+      \(Self.prefixedRequestBody(userPrompt))
+      \(Self.logPrefix)[REQUEST][END]
+      """
     )
 
     let raw = try await programmaticService.run(request)
@@ -125,6 +137,15 @@ public actor ClaudeInlineEditStyleReconciler: InlineEditStyleReconcilerProtocol 
 
     Return the reformatted file contents only.
     """
+  }
+
+  static func prefixedRequestBody(_ text: String) -> String {
+    text
+      .components(separatedBy: .newlines)
+      .map { line in
+        line.isEmpty ? "\(logPrefix)[REQUEST]" : "\(logPrefix)[REQUEST] \(line)"
+      }
+      .joined(separator: "\n")
   }
 
   static func sanitizeOutput(_ raw: String, editedContentLength: Int) throws -> String {

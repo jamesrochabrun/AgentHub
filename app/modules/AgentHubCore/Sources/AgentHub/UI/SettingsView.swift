@@ -77,6 +77,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.webPreviewAdvancedEditingEnabled)
   private var webPreviewAdvancedEditingEnabled: Bool = true
 
+  @AppStorage(AgentHubDefaults.webPreviewDesignToolsMode)
+  private var webPreviewDesignToolsModeRawValue: String = WebPreviewDesignToolsMode.inline.rawValue
+
   @Environment(ThemeManager.self) private var themeManager
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -384,6 +387,19 @@ public struct SettingsView: View {
           isOn: $webPreviewAdvancedEditingEnabled
         )
 
+        if webPreviewAdvancedEditingEnabled {
+          Picker("Design tools mode", selection: $webPreviewDesignToolsModeRawValue) {
+            ForEach(WebPreviewDesignToolsMode.allCases) { mode in
+              Text(mode.settingsLabel).tag(mode.rawValue)
+            }
+          }
+          .pickerStyle(.segmented)
+
+          Text(selectedWebPreviewDesignToolsMode.settingsDescription)
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+
         Picker("Inspector payload", selection: webPreviewInspectorDataLevelBinding) {
           ForEach(webPreviewInspectorDataLevels, id: \.rawValue) { level in
             Text(level.settingsLabel).tag(level)
@@ -610,6 +626,10 @@ public struct SettingsView: View {
 
   private var selectedWebPreviewInspectorDataLevel: ElementInspectorDataLevel {
     ElementInspectorDataLevel(rawValue: webPreviewInspectorDataLevelRawValue) ?? .regular
+  }
+
+  private var selectedWebPreviewDesignToolsMode: WebPreviewDesignToolsMode {
+    WebPreviewDesignToolsMode(rawValue: webPreviewDesignToolsModeRawValue) ?? .inline
   }
 
   private var webPreviewInspectorDataLevelBinding: Binding<ElementInspectorDataLevel> {

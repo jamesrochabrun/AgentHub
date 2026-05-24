@@ -163,6 +163,9 @@ public struct WebPreviewView: View {
   @AppStorage(AgentHubDefaults.webPreviewAdvancedEditingEnabled)
   private var webPreviewAdvancedEditingEnabled: Bool = true
 
+  @AppStorage(AgentHubDefaults.webPreviewDesignToolsMode)
+  private var webPreviewDesignToolsModeRawValue: String = WebPreviewDesignToolsMode.inline.rawValue
+
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
 
@@ -229,7 +232,20 @@ public struct WebPreviewView: View {
   }
 
   private var showsInspectorRail: Bool {
-    isAdvancedEditingEnabled && inspectBehavior == .edit && inspectorViewModel.isPanelVisible
+    isAdvancedEditingEnabled
+      && inspectBehavior == .edit
+      && webPreviewDesignToolsMode == .panel
+      && inspectorViewModel.isPanelVisible
+  }
+
+  private var showsInlineDesignToolbar: Bool {
+    isAdvancedEditingEnabled
+      && inspectBehavior == .edit
+      && webPreviewDesignToolsMode == .inline
+  }
+
+  private var webPreviewDesignToolsMode: WebPreviewDesignToolsMode {
+    WebPreviewDesignToolsMode(rawValue: webPreviewDesignToolsModeRawValue) ?? .inline
   }
 
   private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
@@ -1252,6 +1268,9 @@ public struct WebPreviewView: View {
           onElementSelected: { data in
             handleElementSelection(data)
           },
+          onSelectedElementDataChange: { data in
+            handleSelectedElementDataChange(data)
+          },
           onSelectedElementViewportRectChange: { rect in
             inspectState.updateSelectedElementViewportRect(rect)
           },
@@ -1264,11 +1283,13 @@ public struct WebPreviewView: View {
           if inspectState.isActive {
             VStack(spacing: 8) {
               editModeBanner
-              if let element = inspectorViewModel.selectedElement,
+              if showsInlineDesignToolbar,
+                 let element = inspectorViewModel.selectedElement,
                  let toolbarValues = inspectorViewModel.toolbarValues {
                 DesignToolbarContent(
                   values: toolbarValues,
                   element: element,
+                  isTextContentEditable: inspectorViewModel.canEditContent,
                   onEdit: inspectorViewModel.apply
                 )
                 .padding(.horizontal, 12)
@@ -1295,6 +1316,9 @@ public struct WebPreviewView: View {
           reloadToken: reloadToken,
           onElementSelected: { data in
             handleElementSelection(data)
+          },
+          onSelectedElementDataChange: { data in
+            handleSelectedElementDataChange(data)
           },
           onSelectedElementViewportRectChange: { rect in
             inspectState.updateSelectedElementViewportRect(rect)
@@ -1509,6 +1533,14 @@ public struct WebPreviewView: View {
         recentActivities: monitorState?.recentActivities ?? []
       )
     }
+  }
+
+  private func handleSelectedElementDataChange(_ element: ElementInspectorData) {
+    lastSelectedSelector = element.cssSelector
+    inspectState.refreshSelectedElement(element)
+
+    guard isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
+    inspectorViewModel.refreshFromLiveElement(element)
   }
 
   private func handleInspectUpdateSubmit(element: ElementInspectorData, instruction: String) {

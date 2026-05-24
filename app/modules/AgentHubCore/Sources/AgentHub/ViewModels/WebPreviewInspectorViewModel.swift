@@ -14,18 +14,43 @@ import WebKit
 @MainActor
 @Observable
 final class WebPreviewInspectorViewModel {
+  private struct SourceTextSegment {
+    let rawRange: Range<String.Index>
+    let text: String
+    let textStart: Int
+
+    var textEnd: Int {
+      textStart + text.count
+    }
+  }
+
+  private struct SourceTextContentMapping {
+    let text: String
+    let segments: [SourceTextSegment]
+  }
+
+  private struct TextSplice {
+    let start: Int
+    let end: Int
+    let replacement: String
+  }
+
   let sessionID: String
   let projectPath: String
 
   private let sourceResolver: any WebPreviewSourceResolverProtocol
   private let fileService: any ProjectFileServiceProtocol
   private let inlineEditReconciler: (any InlineEditStyleReconcilerProtocol)?
+  private let liveEditApplier: any WebPreviewLiveEditApplying
   private let writeDebounceDuration: Duration
+  private let reconcileDebounceDuration: Duration
 
   private var pendingWriteTask: Task<Void, Never>?
   private var pendingReconcileTask: Task<Void, Never>?
   private var pendingChangeSummary: String?
   private var trackedTextToken: String?
+  private var trackedTextLocation: Int?
+  private var trackedStructuredTextContent: SourceTextContentMapping?
   private var userConfirmedLowConfidenceFile = false
   private weak var previewWebView: WKWebView?
 
@@ -58,14 +83,18 @@ final class WebPreviewInspectorViewModel {
     sourceResolver: any WebPreviewSourceResolverProtocol = WebPreviewSourceResolver(),
     fileService: any ProjectFileServiceProtocol = ProjectFileService.shared,
     inlineEditReconciler: (any InlineEditStyleReconcilerProtocol)? = nil,
-    writeDebounceDuration: Duration = .milliseconds(600)
+    liveEditApplier: any WebPreviewLiveEditApplying = CanvasWebPreviewLiveEditApplier(),
+    writeDebounceDuration: Duration = .milliseconds(600),
+    reconcileDebounceDuration: Duration = .milliseconds(1_200)
   ) {
     self.sessionID = sessionID
     self.projectPath = projectPath
     self.sourceResolver = sourceResolver
     self.fileService = fileService
     self.inlineEditReconciler = inlineEditReconciler
+    self.liveEditApplier = liveEditApplier
     self.writeDebounceDuration = writeDebounceDuration
+    self.reconcileDebounceDuration = reconcileDebounceDuration
   }
 
   var candidateFilePaths: [String] {
@@ -304,6 +333,8 @@ final class WebPreviewInspectorViewModel {
     savedFileContent = ""
     editorDocumentID = UUID()
     trackedTextToken = nil
+    trackedTextLocation = nil
+    trackedStructuredTextContent = nil
     matchedSelector = element.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     styleValues = [:]
     activeCapabilities = [.code]
@@ -355,6 +386,8 @@ final class WebPreviewInspectorViewModel {
     editorDocumentID = UUID()
     activeCapabilities = [.code]
     trackedTextToken = nil
+    trackedTextLocation = nil
+    trackedStructuredTextContent = nil
     matchedSelector = nil
     styleValues = [:]
     consoleEntries.removeAll()
@@ -375,18 +408,68 @@ final class WebPreviewInspectorViewModel {
   }
 
   func updateContentValue(_ value: String) {
-    guard canEditContent,
-          let previousTextToken = trackedTextToken,
-          !previousTextToken.isEmpty,
-          let updatedContent = Self.replaceUniqueOccurrence(
+    updateContentValue(value, propagateLiveEdit: true)
+  }
+
+  private func updateContentValue(_ value: String, propagateLiveEdit: Bool) {
+    guard canEditContent else {
+      return
+    }
+
+    if let trackedStructuredTextContent,
+       let selectedElement,
+       let update = Self.updateStructuredTextContent(
+        trackedStructuredTextContent,
+        in: fileContent,
+        to: value,
+        element: selectedElement
+       ) {
+      applyContentUpdate(
+        value: value,
+        updatedContent: update.content,
+        textLocation: nil,
+        structuredMapping: update.mapping,
+        propagateLiveEdit: propagateLiveEdit
+      )
+      return
+    }
+
+    guard let previousTextToken = trackedTextToken,
+          let replacementRange = Self.trackedTextRange(
             in: fileContent,
-            from: previousTextToken,
-            to: value
+            token: previousTextToken,
+            location: trackedTextLocation
           ) else {
       return
     }
 
+    let replacementLocation = Self.characterOffset(of: replacementRange, in: fileContent)
+    let updatedContent = fileContent.replacingCharacters(in: replacementRange, with: value)
+    applyContentUpdate(
+      value: value,
+      updatedContent: updatedContent,
+      textLocation: replacementLocation,
+      structuredMapping: nil,
+      propagateLiveEdit: propagateLiveEdit
+    )
+  }
+
+  private func applyContentUpdate(
+    value: String,
+    updatedContent: String,
+    textLocation: Int?,
+    structuredMapping: SourceTextContentMapping?,
+    propagateLiveEdit: Bool
+  ) {
+    if propagateLiveEdit, let selectedElement {
+      liveEditApplier.apply(
+        DesignEdit(element: selectedElement, action: .updateTextContent(value)),
+        in: previewWebView
+      )
+    }
     trackedTextToken = value
+    trackedTextLocation = textLocation
+    trackedStructuredTextContent = structuredMapping
     fileContent = updatedContent
     liveProperties = liveProperties?.updatingContent(value)
     toolbarValues?.textContent = value
@@ -395,6 +478,7 @@ final class WebPreviewInspectorViewModel {
 
   func updateStyleValue(_ property: WebPreviewStyleProperty, value: String) {
     guard isEditable(property) else { return }
+    applyLiveStyleEdit(property: property, value: value)
     applyRawStyleValue(property.rawValue, value: value, mappedProperty: property)
   }
 
@@ -427,16 +511,20 @@ final class WebPreviewInspectorViewModel {
   }
 
   func apply(_ edit: DesignEdit) {
+    guard isCurrentEditTarget(edit.element) else { return }
+
     let selectorLabel = matchedSelector ?? "(unknown selector)"
     switch edit.action {
     case .updateProperty(let property, value: let value):
       pendingChangeSummary = "Set \(property.rawValue) of selector \"\(selectorLabel)\" to \(value)"
+      liveEditApplier.apply(edit, in: previewWebView)
       applyRawStyleValue(property.rawValue, value: value, mappedProperty: WebPreviewStyleProperty(rawValue: property.rawValue))
     case .updateTextContent(let value):
       pendingChangeSummary = "Replace text content of selector \"\(selectorLabel)\" with \"\(value)\""
-      updateContentValue(value)
+      updateContentValue(value, propagateLiveEdit: true)
     case .fitContent:
       pendingChangeSummary = "Fit width and height to content for selector \"\(selectorLabel)\""
+      liveEditApplier.apply(edit, in: previewWebView)
       applyRawStyleValue("width", value: "fit-content", mappedProperty: .width)
       applyRawStyleValue("height", value: "fit-content", mappedProperty: .height)
     case .deleteElement:
@@ -444,7 +532,62 @@ final class WebPreviewInspectorViewModel {
     }
   }
 
+  func refreshFromLiveElement(_ element: ElementInspectorData) {
+    guard isCurrentLiveElementUpdate(element) else { return }
+    selectedElement = element
+    liveProperties = WebPreviewLivePropertiesSnapshot(element: element)
+    toolbarValues = DesignToolbarValues(element: element)
+
+    if matchedSelector == nil {
+      matchedSelector = element.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    recomputeEditingState()
+  }
+
   // MARK: - Private
+
+  private func applyLiveStyleEdit(property: WebPreviewStyleProperty, value: String) {
+    guard let selectedElement,
+          let designProperty = DesignEdit.Property(rawValue: property.rawValue) else {
+      return
+    }
+
+    liveEditApplier.apply(
+      DesignEdit(element: selectedElement, action: .updateProperty(designProperty, value: value)),
+      in: previewWebView
+    )
+  }
+
+  private func isCurrentEditTarget(_ element: ElementInspectorData) -> Bool {
+    guard let selectedElement else { return false }
+    if element.id == selectedElement.id {
+      return true
+    }
+
+    let incomingSelector = element.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines)
+    let selectedSelector = selectedElement.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !incomingSelector.isEmpty, incomingSelector == selectedSelector {
+      return true
+    }
+
+    return !element.elementId.isEmpty && element.elementId == selectedElement.elementId
+  }
+
+  private func isCurrentLiveElementUpdate(_ element: ElementInspectorData) -> Bool {
+    guard let selectedElement else { return false }
+    if element.id == selectedElement.id {
+      return true
+    }
+
+    let incomingSelector = element.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines)
+    let selectedSelector = selectedElement.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !incomingSelector.isEmpty, incomingSelector == selectedSelector {
+      return true
+    }
+
+    return !element.elementId.isEmpty && element.elementId == selectedElement.elementId
+  }
 
   private func loadFile(at path: String) async {
     do {
@@ -463,6 +606,8 @@ final class WebPreviewInspectorViewModel {
       fileContent = ""
       savedFileContent = ""
       trackedTextToken = nil
+      trackedTextLocation = nil
+      trackedStructuredTextContent = nil
       styleValues = [:]
       activeCapabilities = [.code]
     }
@@ -500,17 +645,42 @@ final class WebPreviewInspectorViewModel {
     guard currentFilePath != nil else {
       activeCapabilities = capabilities
       trackedTextToken = nil
+      trackedTextLocation = nil
+      trackedStructuredTextContent = nil
       styleValues = nextStyleValues
       return
     }
 
-    if let contentCandidate = trackedTextToken ?? selectedElement.textContent.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-       Self.literalOccurrenceCount(of: contentCandidate, in: fileContent) == 1,
-       userConfirmedLowConfidenceFile || resolution?.isLowConfidence != true {
+    let canTrustContentMatch = userConfirmedLowConfidenceFile || resolution?.isLowConfidence != true
+    if let trackedTextToken,
+       let trackedRange = Self.trackedTextRange(
+        in: fileContent,
+        token: trackedTextToken,
+        location: trackedTextLocation
+       ),
+       canTrustContentMatch {
+      capabilities.insert(.content)
+      trackedTextLocation = Self.characterOffset(of: trackedRange, in: fileContent)
+      trackedStructuredTextContent = nil
+    } else if let contentCandidate = selectedElement.textContent.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+              Self.literalOccurrenceCount(of: contentCandidate, in: fileContent) == 1,
+              let range = fileContent.range(of: contentCandidate),
+              canTrustContentMatch {
       capabilities.insert(.content)
       trackedTextToken = contentCandidate
+      trackedTextLocation = Self.characterOffset(of: range, in: fileContent)
+      trackedStructuredTextContent = nil
+    } else if let mapping = Self.structuredTextContentMapping(for: selectedElement, in: fileContent),
+              canTrustContentMatch {
+      capabilities.insert(.content)
+      trackedTextToken = mapping.text
+      trackedTextLocation = nil
+      trackedStructuredTextContent = mapping
+      toolbarValues?.textContent = mapping.text
     } else {
       trackedTextToken = nil
+      trackedTextLocation = nil
+      trackedStructuredTextContent = nil
     }
 
     let mayEnableInlineEditing =
@@ -638,7 +808,10 @@ final class WebPreviewInspectorViewModel {
       let projectPathSnapshot = projectPath
       pendingReconcileTask?.cancel()
       pendingReconcileTask = Task { [weak self] in
-        await self?.runReconcile(
+        guard let self else { return }
+        try? await Task.sleep(for: self.reconcileDebounceDuration)
+        guard !Task.isCancelled else { return }
+        await self.runReconcile(
           reconciler: reconciler,
           originalContent: originalForReconcile,
           editedContent: baselineContent,
@@ -725,12 +898,439 @@ final class WebPreviewInspectorViewModel {
     ).elements
   }
 
-  private static func replaceUniqueOccurrence(in content: String, from oldValue: String, to newValue: String) -> String? {
-    guard literalOccurrenceCount(of: oldValue, in: content) == 1,
-          let range = content.range(of: oldValue) else {
+  private static func structuredTextContentMapping(
+    for element: ElementInspectorData,
+    in content: String,
+    expectedText: String? = nil
+  ) -> SourceTextContentMapping? {
+    let category = ElementCategory(tagName: element.tagName)
+    guard category == .text || category == .button else {
       return nil
     }
-    return content.replacingCharacters(in: range, with: newValue)
+
+    let expected = (expectedText ?? element.textContent.trimmingCharacters(in: .whitespacesAndNewlines))
+    guard expectedText != nil || !expected.isEmpty else {
+      return nil
+    }
+
+    let innerRanges = htmlElementInnerRanges(for: element, in: content)
+    let matches = innerRanges.compactMap { innerRange -> SourceTextContentMapping? in
+      guard let mapping = sourceTextContentMapping(in: innerRange, content: content),
+            mapping.text == expected else {
+        return nil
+      }
+      return mapping
+    }
+
+    return matches.count == 1 ? matches[0] : nil
+  }
+
+  private static func updateStructuredTextContent(
+    _ mapping: SourceTextContentMapping,
+    in content: String,
+    to newText: String,
+    element: ElementInspectorData
+  ) -> (content: String, mapping: SourceTextContentMapping)? {
+    guard let splice = textSplice(from: mapping.text, to: newText) else {
+      return (content, mapping)
+    }
+
+    guard !mapping.segments.isEmpty else {
+      return nil
+    }
+
+    var segmentTexts = mapping.segments.map(\.text)
+    if splice.start == mapping.text.count {
+      let targetIndex = mapping.text.isEmpty ? 0 : segmentTexts.count - 1
+      segmentTexts[targetIndex] += splice.replacement
+    } else {
+      var inserted = false
+      for index in mapping.segments.indices {
+        let segment = mapping.segments[index]
+        if segment.textEnd < splice.start || segment.textStart > splice.end {
+          continue
+        }
+
+        let localStart = max(0, splice.start - segment.textStart)
+        let localEnd = min(segment.text.count, splice.end - segment.textStart)
+        if !inserted {
+          segmentTexts[index] = prefix(segment.text, count: localStart)
+            + splice.replacement
+            + suffix(segment.text, droppingFirst: localEnd)
+          inserted = true
+        } else {
+          segmentTexts[index] = suffix(segment.text, droppingFirst: localEnd)
+        }
+      }
+
+      if !inserted {
+        segmentTexts[segmentTexts.count - 1] += splice.replacement
+      }
+    }
+
+    var updatedContent = content
+    for index in mapping.segments.indices.reversed() {
+      updatedContent.replaceSubrange(
+        mapping.segments[index].rawRange,
+        with: escapeHTMLText(segmentTexts[index])
+      )
+    }
+
+    guard let updatedMapping = structuredTextContentMapping(
+      for: element,
+      in: updatedContent,
+      expectedText: newText
+    ) else {
+      return nil
+    }
+
+    return (updatedContent, updatedMapping)
+  }
+
+  private static func textSplice(from oldText: String, to newText: String) -> TextSplice? {
+    guard oldText != newText else {
+      return nil
+    }
+
+    let oldCharacters = Array(oldText)
+    let newCharacters = Array(newText)
+    var prefixCount = 0
+    let maxPrefixCount = min(oldCharacters.count, newCharacters.count)
+    while prefixCount < maxPrefixCount,
+          oldCharacters[prefixCount] == newCharacters[prefixCount] {
+      prefixCount += 1
+    }
+
+    var oldSuffixIndex = oldCharacters.count
+    var newSuffixIndex = newCharacters.count
+    while oldSuffixIndex > prefixCount,
+          newSuffixIndex > prefixCount,
+          oldCharacters[oldSuffixIndex - 1] == newCharacters[newSuffixIndex - 1] {
+      oldSuffixIndex -= 1
+      newSuffixIndex -= 1
+    }
+
+    return TextSplice(
+      start: prefixCount,
+      end: oldSuffixIndex,
+      replacement: String(newCharacters[prefixCount..<newSuffixIndex])
+    )
+  }
+
+  private static func sourceTextContentMapping(
+    in innerRange: Range<String.Index>,
+    content: String
+  ) -> SourceTextContentMapping? {
+    var segments: [SourceTextSegment] = []
+    var textOffset = 0
+    var cursor = innerRange.lowerBound
+
+    func appendSegment(_ range: Range<String.Index>) {
+      guard !range.isEmpty else { return }
+      let rawText = String(content[range])
+      let text = decodeHTMLText(rawText)
+      guard !text.isEmpty else { return }
+      segments.append(SourceTextSegment(rawRange: range, text: text, textStart: textOffset))
+      textOffset += text.count
+    }
+
+    while cursor < innerRange.upperBound {
+      guard let tagStart = content.range(of: "<", range: cursor..<innerRange.upperBound)?.lowerBound else {
+        appendSegment(cursor..<innerRange.upperBound)
+        break
+      }
+
+      appendSegment(cursor..<tagStart)
+
+      guard let tagEnd = htmlTagEnd(startingAt: tagStart, in: content),
+            tagEnd < innerRange.upperBound else {
+        return nil
+      }
+      cursor = content.index(after: tagEnd)
+    }
+
+    guard !segments.isEmpty else {
+      return nil
+    }
+
+    return SourceTextContentMapping(
+      text: segments.map(\.text).joined(),
+      segments: segments
+    )
+  }
+
+  private static func htmlElementInnerRanges(
+    for element: ElementInspectorData,
+    in content: String
+  ) -> [Range<String.Index>] {
+    let tagName = element.tagName.lowercased()
+    guard !tagName.isEmpty else {
+      return []
+    }
+
+    var ranges: [Range<String.Index>] = []
+    var cursor = content.startIndex
+    while let start = htmlStartTagStart(tagName: tagName, in: content, range: cursor..<content.endIndex) {
+      guard let startTagEnd = htmlTagEnd(startingAt: start, in: content) else {
+        break
+      }
+
+      let startTag = String(content[start...startTagEnd])
+      if htmlStartTag(startTag, matches: element),
+         let closeStart = htmlClosingTagStart(
+          tagName: tagName,
+          afterOpeningTagEndingAt: startTagEnd,
+          in: content
+         ) {
+        ranges.append(content.index(after: startTagEnd)..<closeStart)
+      }
+
+      cursor = content.index(after: start)
+    }
+
+    return ranges
+  }
+
+  private static func htmlStartTag(
+    _ startTag: String,
+    matches element: ElementInspectorData
+  ) -> Bool {
+    if !element.elementId.isEmpty {
+      guard htmlAttribute("id", in: startTag) == element.elementId else {
+        return false
+      }
+    }
+
+    let classNames = element.className
+      .split(whereSeparator: \.isWhitespace)
+      .map(String.init)
+      .filter { !$0.isEmpty }
+    if !classNames.isEmpty {
+      let sourceClasses = Set(
+        (htmlAttribute("class", in: startTag) ?? "")
+          .split(whereSeparator: \.isWhitespace)
+          .map(String.init)
+      )
+      guard classNames.allSatisfy(sourceClasses.contains) else {
+        return false
+      }
+    }
+
+    return true
+  }
+
+  private static func htmlAttribute(_ name: String, in startTag: String) -> String? {
+    let escapedName = NSRegularExpression.escapedPattern(for: name)
+    let pattern = #"\b"# + escapedName + #"\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#
+    guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+      return nil
+    }
+
+    let range = NSRange(startTag.startIndex..<startTag.endIndex, in: startTag)
+    guard let match = regex.firstMatch(in: startTag, range: range),
+          let valueRange = Range(match.range(at: 1), in: startTag) else {
+      return nil
+    }
+
+    var value = String(startTag[valueRange])
+    if (value.hasPrefix("\"") && value.hasSuffix("\"")) || (value.hasPrefix("'") && value.hasSuffix("'")) {
+      value.removeFirst()
+      value.removeLast()
+    }
+    return decodeHTMLText(value)
+  }
+
+  private static func htmlStartTagStart(
+    tagName: String,
+    in content: String,
+    range: Range<String.Index>
+  ) -> String.Index? {
+    var cursor = range.lowerBound
+    let needle = "<\(tagName)"
+    while cursor < range.upperBound,
+          let found = content.range(of: needle, options: [.caseInsensitive], range: cursor..<range.upperBound) {
+      let afterTagName = found.upperBound
+      if afterTagName == content.endIndex || isHTMLTagNameBoundary(content[afterTagName]) {
+        return found.lowerBound
+      }
+      cursor = afterTagName
+    }
+    return nil
+  }
+
+  private static func htmlClosingTagStart(
+    tagName: String,
+    afterOpeningTagEndingAt openingTagEnd: String.Index,
+    in content: String
+  ) -> String.Index? {
+    var depth = 1
+    var cursor = content.index(after: openingTagEnd)
+
+    while cursor < content.endIndex {
+      let searchRange = cursor..<content.endIndex
+      let nextOpening = htmlStartTagStart(tagName: tagName, in: content, range: searchRange)
+      let nextClosing = htmlClosingTagStart(tagName: tagName, in: content, range: searchRange)
+
+      guard let nearest = nearestHTMLTag(opening: nextOpening, closing: nextClosing) else {
+        return nil
+      }
+
+      switch nearest.kind {
+      case .opening:
+        guard let tagEnd = htmlTagEnd(startingAt: nearest.index, in: content) else {
+          return nil
+        }
+        if !isSelfClosingHTMLTag(content[nearest.index...tagEnd]) {
+          depth += 1
+        }
+        cursor = content.index(after: tagEnd)
+      case .closing:
+        depth -= 1
+        if depth == 0 {
+          return nearest.index
+        }
+        guard let tagEnd = htmlTagEnd(startingAt: nearest.index, in: content) else {
+          return nil
+        }
+        cursor = content.index(after: tagEnd)
+      }
+    }
+
+    return nil
+  }
+
+  private enum HTMLTagKind {
+    case opening
+    case closing
+  }
+
+  private static func nearestHTMLTag(
+    opening: String.Index?,
+    closing: String.Index?
+  ) -> (kind: HTMLTagKind, index: String.Index)? {
+    switch (opening, closing) {
+    case (.some(let opening), .some(let closing)):
+      if opening < closing {
+        return (kind: .opening, index: opening)
+      }
+      return (kind: .closing, index: closing)
+    case (.some(let opening), nil):
+      return (kind: .opening, index: opening)
+    case (nil, .some(let closing)):
+      return (kind: .closing, index: closing)
+    case (nil, nil):
+      return nil
+    }
+  }
+
+  private static func htmlClosingTagStart(
+    tagName: String,
+    in content: String,
+    range: Range<String.Index>
+  ) -> String.Index? {
+    var cursor = range.lowerBound
+    let needle = "</\(tagName)"
+    while cursor < range.upperBound,
+          let found = content.range(of: needle, options: [.caseInsensitive], range: cursor..<range.upperBound) {
+      let afterTagName = found.upperBound
+      if afterTagName == content.endIndex || isHTMLTagNameBoundary(content[afterTagName]) {
+        return found.lowerBound
+      }
+      cursor = afterTagName
+    }
+    return nil
+  }
+
+  private static func htmlTagEnd(startingAt start: String.Index, in content: String) -> String.Index? {
+    var cursor = start
+    var quote: Character?
+
+    while cursor < content.endIndex {
+      let character = content[cursor]
+      if let activeQuote = quote {
+        if character == activeQuote {
+          quote = nil
+        }
+      } else if character == "\"" || character == "'" {
+        quote = character
+      } else if character == ">" {
+        return cursor
+      }
+      cursor = content.index(after: cursor)
+    }
+
+    return nil
+  }
+
+  private static func isSelfClosingHTMLTag(_ tag: Substring) -> Bool {
+    String(tag.dropLast()).trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("/")
+  }
+
+  private static func isHTMLTagNameBoundary(_ character: Character) -> Bool {
+    character == ">" || character == "/" || character.isWhitespace
+  }
+
+  private static func decodeHTMLText(_ text: String) -> String {
+    text
+      .replacingOccurrences(of: "&nbsp;", with: " ")
+      .replacingOccurrences(of: "&lt;", with: "<")
+      .replacingOccurrences(of: "&gt;", with: ">")
+      .replacingOccurrences(of: "&quot;", with: "\"")
+      .replacingOccurrences(of: "&#39;", with: "'")
+      .replacingOccurrences(of: "&apos;", with: "'")
+      .replacingOccurrences(of: "&amp;", with: "&")
+  }
+
+  private static func escapeHTMLText(_ text: String) -> String {
+    text
+      .replacingOccurrences(of: "&", with: "&amp;")
+      .replacingOccurrences(of: "<", with: "&lt;")
+      .replacingOccurrences(of: ">", with: "&gt;")
+  }
+
+  private static func prefix(_ text: String, count: Int) -> String {
+    String(text.prefix(max(0, count)))
+  }
+
+  private static func suffix(_ text: String, droppingFirst count: Int) -> String {
+    String(text.dropFirst(max(0, count)))
+  }
+
+  private static func trackedTextRange(
+    in content: String,
+    token: String,
+    location: Int?
+  ) -> Range<String.Index>? {
+    if let location,
+       let startIndex = index(in: content, atCharacterOffset: location) {
+      if token.isEmpty {
+        return startIndex..<startIndex
+      }
+
+      if let endIndex = content.index(startIndex, offsetBy: token.count, limitedBy: content.endIndex) {
+        let range = startIndex..<endIndex
+        if String(content[range]) == token {
+          return range
+        }
+      }
+    }
+
+    guard !token.isEmpty,
+          literalOccurrenceCount(of: token, in: content) == 1 else {
+      return nil
+    }
+    return content.range(of: token)
+  }
+
+  private static func index(in content: String, atCharacterOffset offset: Int) -> String.Index? {
+    guard offset >= 0, offset <= content.count else {
+      return nil
+    }
+    return content.index(content.startIndex, offsetBy: offset, limitedBy: content.endIndex)
+  }
+
+  private static func characterOffset(of range: Range<String.Index>, in content: String) -> Int {
+    content.distance(from: content.startIndex, to: range.lowerBound)
   }
 
   private static func literalOccurrenceCount(of needle: String, in haystack: String) -> Int {

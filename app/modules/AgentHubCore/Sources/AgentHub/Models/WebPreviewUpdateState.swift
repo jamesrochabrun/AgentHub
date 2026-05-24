@@ -24,12 +24,12 @@ enum WebPreviewUpdateState: Equatable {
 
     switch resolution {
     case .directFile:
-      return WebPreviewUpdateState.available(detail: "Design and code preview updates are manual. Save changes, then press Reload.")
+      return WebPreviewUpdateState.available(detail: "Design controls apply live. Use Reload to verify saved source and code edits.")
 
     case .devServer:
       switch serverState {
       case .ready:
-        return WebPreviewUpdateState.available(detail: "Design and code preview updates are manual. Save changes, then press Reload.")
+        return WebPreviewUpdateState.available(detail: "Design controls apply live. Use Reload to verify saved source and code edits.")
       case .failed:
         return WebPreviewUpdateState.unavailable(detail: "Reload is unavailable while the preview server is offline.")
       case .detecting, .starting, .waitingForReady:

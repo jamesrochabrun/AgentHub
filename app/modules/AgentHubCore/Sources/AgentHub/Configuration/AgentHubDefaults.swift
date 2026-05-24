@@ -141,6 +141,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true in debug)
   public static let webPreviewAdvancedEditingEnabled = "\(keyPrefix)developer.webPreviewAdvancedEditingEnabled"
 
+  /// Presentation mode for debug-only web preview design tools
+  /// Type: String (default: "inline")
+  public static let webPreviewDesignToolsMode = "\(keyPrefix)developer.webPreviewDesignToolsMode"
+
   /// Inspector payload level used by debug web preview inspect flows
   /// Type: String (default: "regular")
   public static let webPreviewInspectorDataLevel = "\(keyPrefix)developer.webPreviewInspectorDataLevel"
