@@ -8,6 +8,7 @@
 //
 
 import AgentHubGitDiff
+import AppKit
 import SwiftUI
 import Canvas
 import WebKit
@@ -1296,6 +1297,10 @@ public struct WebPreviewView: View {
                 .padding(.vertical, 8)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+                .inlineDesignToolbarCursor { hovering in
+                  handleInlineDesignToolbarHover(hovering)
+                }
               }
             }
           }
@@ -1543,6 +1548,18 @@ public struct WebPreviewView: View {
     inspectorViewModel.refreshFromLiveElement(element)
   }
 
+  private func handleInlineDesignToolbarHover(_ hovering: Bool) {
+    let shouldRestoreCrosshair = inspectState.isActive && isAdvancedEditingEnabled && inspectBehavior == .edit
+    let cursor = hovering ? "default" : (shouldRestoreCrosshair ? "crosshair" : "")
+    let script = cursor.isEmpty
+      ? "document.body.style.cursor = ''"
+      : "document.body.style.cursor = '\(cursor)'"
+    previewWebView?.evaluateJavaScript(script) { _, _ in }
+    if hovering {
+      NSCursor.arrow.set()
+    }
+  }
+
   private func handleInspectUpdateSubmit(element: ElementInspectorData, instruction: String) {
     queueSendFailureMessage = nil
     if let viewModel {
@@ -1754,6 +1771,41 @@ public struct WebPreviewView: View {
       setTimeout(restore, 50);
     })();
     """
+  }
+}
+
+private struct InlineDesignToolbarCursorModifier: ViewModifier {
+  let onHoverChange: (Bool) -> Void
+  @State private var isHovering = false
+
+  func body(content: Content) -> some View {
+    content
+      .onHover { hovering in
+        print("[HOVER] inlineDesignToolbar hovering=\(hovering)")
+        updateCursor(isHovering: hovering)
+        onHoverChange(hovering)
+      }
+      .onDisappear {
+        print("[HOVER] inlineDesignToolbar disappear")
+        updateCursor(isHovering: false)
+        onHoverChange(false)
+      }
+  }
+
+  private func updateCursor(isHovering: Bool) {
+    guard isHovering != self.isHovering else { return }
+    self.isHovering = isHovering
+    if isHovering {
+      NSCursor.arrow.push()
+    } else {
+      NSCursor.pop()
+    }
+  }
+}
+
+private extension View {
+  func inlineDesignToolbarCursor(onHoverChange: @escaping (Bool) -> Void) -> some View {
+    modifier(InlineDesignToolbarCursorModifier(onHoverChange: onHoverChange))
   }
 }
 
