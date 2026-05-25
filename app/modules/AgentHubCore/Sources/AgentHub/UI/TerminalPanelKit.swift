@@ -516,6 +516,18 @@ public enum TerminalPanelKit {
     }
 
     @discardableResult
+    public func restoreSplitRoot(_ root: SplitNode) -> Bool {
+      let visiblePanelIDs = root.panelIDs
+      let availablePanelIDs = panels.map(\.id)
+      guard Set(visiblePanelIDs) == Set(availablePanelIDs),
+            Set(visiblePanelIDs).count == visiblePanelIDs.count else {
+        return false
+      }
+      splitRoot = root
+      return true
+    }
+
+    @discardableResult
     public func focusPanel(
       direction: PanelNavigationDirection,
       viewportSize: CGSize
@@ -695,6 +707,50 @@ public enum TerminalPanelKit {
   }
 
   public enum SplitLayoutBuilder {
+    public static func snapshotNode(
+      from root: SplitNode,
+      panelIDs: [PanelID]
+    ) -> TerminalWorkspaceSplitNode? {
+      let indexByPanelID = Dictionary(
+        uniqueKeysWithValues: panelIDs.enumerated().map { index, panelID in
+          (panelID, index)
+        }
+      )
+      return snapshotNode(from: root, indexByPanelID: indexByPanelID)
+    }
+
+    public static func splitNode(
+      from snapshotNode: TerminalWorkspaceSplitNode,
+      panelIDs: [PanelID]
+    ) -> SplitNode? {
+      splitNode(
+        from: snapshotNode,
+        panelIDByIndex: Dictionary(
+          uniqueKeysWithValues: panelIDs.enumerated().map { index, panelID in
+            (index, panelID)
+          }
+        )
+      )
+    }
+
+    public static func splitNode(
+      from snapshotNode: TerminalWorkspaceSplitNode,
+      panelIDByIndex: [Int: PanelID]
+    ) -> SplitNode? {
+      switch snapshotNode {
+      case .panel(let index):
+        guard let panelID = panelIDByIndex[index] else { return nil }
+        return .panel(panelID)
+
+      case .split(let axis, let children):
+        let restoredChildren = children.compactMap {
+          splitNode(from: $0, panelIDByIndex: panelIDByIndex)
+        }
+        guard !restoredChildren.isEmpty else { return nil }
+        return .split(axis: SplitAxis(axis), children: restoredChildren)
+      }
+    }
+
     public static func addingPanel(
       _ newPanelID: PanelID,
       to root: SplitNode,
@@ -755,6 +811,46 @@ public enum TerminalPanelKit {
           }
         )
       }
+    }
+
+    private static func snapshotNode(
+      from root: SplitNode,
+      indexByPanelID: [PanelID: Int]
+    ) -> TerminalWorkspaceSplitNode? {
+      switch root {
+      case .panel(let panelID):
+        guard let index = indexByPanelID[panelID] else { return nil }
+        return .panel(index: index)
+
+      case .split(let axis, let children):
+        let snapshotChildren = children.compactMap {
+          snapshotNode(from: $0, indexByPanelID: indexByPanelID)
+        }
+        guard !snapshotChildren.isEmpty else { return nil }
+        return .split(axis: TerminalWorkspaceSplitAxis(axis), children: snapshotChildren)
+      }
+    }
+  }
+}
+
+private extension TerminalWorkspaceSplitAxis {
+  init(_ axis: TerminalPanelKit.SplitAxis) {
+    switch axis {
+    case .horizontal:
+      self = .horizontal
+    case .vertical:
+      self = .vertical
+    }
+  }
+}
+
+private extension TerminalPanelKit.SplitAxis {
+  init(_ axis: TerminalWorkspaceSplitAxis) {
+    switch axis {
+    case .horizontal:
+      self = .horizontal
+    case .vertical:
+      self = .vertical
     }
   }
 }

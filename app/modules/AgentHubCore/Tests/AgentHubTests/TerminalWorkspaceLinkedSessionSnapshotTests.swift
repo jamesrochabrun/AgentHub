@@ -34,12 +34,23 @@ struct TerminalWorkspaceLinkedSessionSnapshotTests {
 
     #expect(snapshot.schemaVersion == 1)
     #expect(snapshot.panels.first?.tabs.first?.linkedSession == nil)
+    #expect(snapshot.splitLayout == nil)
   }
 
-  @Test("Linked child session metadata round-trips")
-  func linkedSessionRoundTrip() throws {
+  @Test("Linked child session metadata and split layout round-trip")
+  func linkedSessionAndSplitLayoutRoundTrip() throws {
     let snapshot = TerminalWorkspaceSnapshot(
       panels: [
+        TerminalWorkspacePanelSnapshot(
+          role: .primary,
+          tabs: [
+            TerminalWorkspaceTabSnapshot(
+              role: .agent,
+              name: "Claude",
+              workingDirectory: "/tmp/project"
+            )
+          ]
+        ),
         TerminalWorkspacePanelSnapshot(
           role: .auxiliary,
           tabs: [
@@ -54,13 +65,20 @@ struct TerminalWorkspaceLinkedSessionSnapshotTests {
             )
           ]
         )
-      ]
+      ],
+      splitLayout: .split(
+        axis: .horizontal,
+        children: [
+          .panel(index: 0),
+          .split(axis: .vertical, children: [.panel(index: 1)])
+        ]
+      )
     )
 
     let data = try JSONEncoder().encode(snapshot)
     let decoded = try JSONDecoder().decode(TerminalWorkspaceSnapshot.self, from: data)
 
     #expect(decoded == snapshot)
-    #expect(decoded.schemaVersion == 2)
+    #expect(decoded.schemaVersion == 3)
   }
 }

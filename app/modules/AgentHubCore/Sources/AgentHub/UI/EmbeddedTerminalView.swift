@@ -1348,7 +1348,13 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
     return TerminalWorkspaceSnapshot(
       panels: panelSnapshots,
-      activePanelIndex: panels.firstIndex { $0.id == activePanelID } ?? 0
+      activePanelIndex: panels.firstIndex { $0.id == activePanelID } ?? 0,
+      splitLayout: terminalPanelSession.flatMap {
+        RegularTerminalSplitLayoutBuilder.snapshotNode(
+          from: $0.currentSplitRoot(),
+          panelIDs: panels.map(\.id)
+        )
+      }
     )
   }
 
@@ -1361,12 +1367,21 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     }
 
     resetToPrimaryTerminal()
-    let panelSnapshots = normalizedPanelSnapshots(snapshot.panels)
+    let panelSnapshotEntries = normalizedPanelSnapshotEntries(snapshot.panels)
+    let panelSnapshots = panelSnapshotEntries.map(\.snapshot)
+    let normalizedIndexByOriginalIndex = Dictionary(
+      uniqueKeysWithValues: panelSnapshotEntries.enumerated().map { normalizedIndex, entry in
+        (entry.originalIndex, normalizedIndex)
+      }
+    )
+    let restoredSplitLayout = snapshot.splitLayout?.remappingPanelIndexes(normalizedIndexByOriginalIndex)
     var restoredPanelIDs: [RegularTerminalPanelID] = []
+    var restoredPanelIDByIndex: [Int: RegularTerminalPanelID] = [:]
     var restoredTabIDs: [[RegularTerminalTabID]] = []
 
     if let primary = panel(for: primaryPanelID) {
       restoredPanelIDs.append(primary.id)
+      restoredPanelIDByIndex[0] = primary.id
       var primaryTabIDs = primary.tabs.map(\.id)
       if let primarySnapshot = panelSnapshots.first {
         primaryTabIDs = restoreShellTabs(
@@ -1378,7 +1393,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       restoredTabIDs.append(primaryTabIDs)
     }
 
-    for panelSnapshot in panelSnapshots.dropFirst() {
+    for (panelIndex, panelSnapshot) in panelSnapshots.enumerated().dropFirst() {
       guard let session = terminalPanelSession, session.canOpenPanel else { break }
       guard let firstAccessoryTab = firstRestorableAccessoryTab(in: panelSnapshot) else { continue }
       let tab = makeRestoredAccessoryTab(firstAccessoryTab)
@@ -1401,7 +1416,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         )
       }
       restoredPanelIDs.append(panel.id)
+      restoredPanelIDByIndex[panelIndex] = panel.id
       restoredTabIDs.append(tabIDs)
+    }
+
+    if let restoredSplitLayout,
+       let splitRoot = RegularTerminalSplitLayoutBuilder.splitNode(
+         from: restoredSplitLayout,
+         panelIDByIndex: restoredPanelIDByIndex
+       ) {
+      _ = terminalPanelSession?.restoreSplitRoot(splitRoot)
     }
 
     restoreActiveSelection(
@@ -1511,12 +1535,18 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     _ = terminalPanelSession?.selectTab(panelTabIDs[tabIndex], in: panel.id)
   }
 
-  private func normalizedPanelSnapshots(
+  private func normalizedPanelSnapshotEntries(
     _ panels: [TerminalWorkspacePanelSnapshot]
-  ) -> [TerminalWorkspacePanelSnapshot] {
+  ) -> [(originalIndex: Int, snapshot: TerminalWorkspacePanelSnapshot)] {
     let primary = panels.first { $0.role == .primary } ?? panels.first
-    let auxiliaries = panels.filter { $0.role == .auxiliary }
-    return ([primary].compactMap { $0 } + auxiliaries).prefix(4).map { $0 }
+    let primaryIndex = primary.flatMap { primary in
+      panels.firstIndex { $0 == primary }
+    }
+    let primaryEntry = primaryIndex.map { (originalIndex: $0, snapshot: panels[$0]) }
+    let auxiliaries = panels.enumerated()
+      .filter { $0.element.role == .auxiliary && $0.offset != primaryIndex }
+      .map { (originalIndex: $0.offset, snapshot: $0.element) }
+    return Array(([primaryEntry].compactMap { $0 } + auxiliaries).prefix(4))
   }
 
   private func restoredTabName(for tab: TerminalWorkspaceTabSnapshot) -> String? {
