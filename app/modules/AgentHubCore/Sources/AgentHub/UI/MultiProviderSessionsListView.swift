@@ -99,38 +99,13 @@ private struct RemoveConfirmationAlert: ViewModifier {
   }
 }
 
-// MARK: - SidebarGroupMode
-
-private enum SidebarGroupMode: String, CaseIterable {
-  case repo = "Repo"
-  case status = "Status"
-}
-
-// MARK: - StatusGroupCategory
-
-private enum StatusGroupCategory: String, CaseIterable, Identifiable {
-  case needsAttention = "Needs Attention"
-  case working = "Working"
-  case ready = "Ready"
-  case idle = "Idle"
-
-  var id: String { rawValue }
-
+private extension StatusGroupCategory {
   var color: Color {
     switch self {
     case .needsAttention: return .yellow
     case .working: return .blue
     case .ready: return .green
     case .idle: return .gray
-    }
-  }
-
-  static func category(for status: SessionStatus?) -> StatusGroupCategory {
-    switch status {
-    case .thinking, .executingTool: return .working
-    case .waitingForUser: return .ready
-    case .awaitingApproval: return .needsAttention
-    case .idle, .none: return .idle
     }
   }
 }
@@ -842,12 +817,6 @@ public struct MultiProviderSessionsListView: View {
 
   // MARK: - Project Grouping
 
-  private struct SessionGroup: Identifiable {
-    let id: String            // repoPath
-    let displayName: String
-    let items: [SelectedSessionItem]
-  }
-
   /// Deduplicated tracked repos from both providers, preserving insertion order,
   /// newest-first. Claude's repos are walked first, then Codex-only repos.
   private var orderedTrackedRepos: [SelectedRepository] {
@@ -860,14 +829,6 @@ public struct MultiProviderSessionsListView: View {
 
   private var worktreeDisplayMode: WorktreeDisplayMode {
     WorktreeDisplayMode(rawValue: worktreeDisplayModeRawValue) ?? .parent
-  }
-
-  private func findModulePath(for itemPath: String) -> String {
-    WorktreeModuleResolver.modulePath(
-      for: itemPath,
-      repositories: orderedTrackedRepos,
-      mode: worktreeDisplayMode
-    )
   }
 
   private var pinnedSessionSnapshot: ProviderScopedPinnedSessions {
@@ -885,59 +846,54 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private var pinnedSessionItems: [SelectedSessionItem] {
-    return selectedSessionItems
-      .filter { isPinned($0) }
-      .sorted { $0.timestamp > $1.timestamp }
+    SidebarSessionOrdering.pinnedItems(
+      from: selectedSessionItems,
+      isPinned: isPinned,
+      timestamp: { $0.timestamp },
+      id: { $0.id }
+    )
   }
 
   /// Groups built from tracked repos first (even empty), then an orphan bucket
   /// for sessions whose path doesn't belong to any tracked repo.
-  private var groupedSelectedSessions: [SessionGroup] {
-    let allItems = selectedSessionItems.filter { !isPinned($0) }
-    var byRepo: [String: [SelectedSessionItem]] = [:]
-    for item in allItems {
-      let key = findModulePath(for: item.session.projectPath)
-      byRepo[key, default: []].append(item)
-    }
-
-    var groups: [SessionGroup] = []
-    var handledKeys: Set<String> = []
-
-    // Tracked modules — always emit a header, even if empty.
-    for modulePath in WorktreeModuleResolver.modulePaths(for: Array(orderedTrackedRepos), mode: worktreeDisplayMode) {
-      let items = (byRepo[modulePath] ?? []).sorted { $0.timestamp > $1.timestamp }
-      groups.append(SessionGroup(
-        id: modulePath,
-        displayName: URL(fileURLWithPath: modulePath).lastPathComponent,
-        items: items
-      ))
-      handledKeys.insert(modulePath)
-    }
-
-    // Orphan sessions (repo not tracked yet — e.g. a brand-new pending one).
-    for (key, items) in byRepo where !handledKeys.contains(key) {
-      groups.append(SessionGroup(
-        id: key,
-        displayName: URL(fileURLWithPath: key).lastPathComponent,
-        items: items.sorted { $0.timestamp > $1.timestamp }
-      ))
-    }
-
-    return groups
+  private var groupedSelectedSessions: [SidebarSessionGroup<SelectedSessionItem>] {
+    SidebarSessionOrdering.moduleGroups(
+      from: selectedSessionItems,
+      repositories: Array(orderedTrackedRepos),
+      worktreeDisplayMode: worktreeDisplayMode,
+      isPinned: isPinned,
+      projectPath: { $0.session.projectPath },
+      timestamp: { $0.timestamp },
+      id: { $0.id }
+    )
   }
 
   /// Sessions grouped by status category (Working / Needs Attention / Idle).
   private var statusGroupedSessions: [StatusGroupCategory: [SelectedSessionItem]] {
-    var result: [StatusGroupCategory: [SelectedSessionItem]] = [:]
-    for item in selectedSessionItems where !isPinned(item) {
-      let category = StatusGroupCategory.category(for: item.sessionStatus)
-      result[category, default: []].append(item)
-    }
-    // Sort each group by timestamp descending.
-    for key in result.keys {
-      result[key]?.sort { $0.timestamp > $1.timestamp }
-    }
-    return result
+    SidebarSessionOrdering.statusGroups(
+      from: selectedSessionItems,
+      isPinned: isPinned,
+      status: { $0.sessionStatus },
+      timestamp: { $0.timestamp },
+      id: { $0.id }
+    )
+  }
+
+  private var navigableSessionItems: [SelectedSessionItem] {
+    SidebarSessionOrdering.flattenedItems(
+      from: selectedSessionItems,
+      repositories: Array(orderedTrackedRepos),
+      groupMode: sidebarGroupMode,
+      worktreeDisplayMode: worktreeDisplayMode,
+      collapsedProjectGroups: collapsedProjectGroups,
+      collapsedStatusGroups: collapsedStatusGroups,
+      isPinnedSectionCollapsed: isPinnedSectionCollapsed,
+      isPinned: isPinned,
+      projectPath: { $0.session.projectPath },
+      status: { $0.sessionStatus },
+      timestamp: { $0.timestamp },
+      id: { $0.id }
+    )
   }
 
   @ViewBuilder
@@ -1766,31 +1722,19 @@ public struct MultiProviderSessionsListView: View {
     accessibilityReduceMotion ? .easeInOut(duration: 0.12) : .spring(response: 0.28, dampingFraction: 0.9)
   }
 
-  private enum NavigationDirection {
-    case forward, backward
-  }
-
-  private func navigateSessionHistory(direction: NavigationDirection) {
-    let items = selectedSessionItems
-    guard !items.isEmpty else { return }
-
-    if let currentId = primarySessionId,
-       let currentIndex = items.firstIndex(where: { $0.id == currentId }) {
-      let newIndex: Int
-      switch direction {
-      case .forward:
-        newIndex = min(currentIndex + 1, items.count - 1)
-      case .backward:
-        newIndex = max(currentIndex - 1, 0)
-      }
-      selectedModuleLandingPath = nil
-      primarySessionId = items[newIndex].id
-      scrollToSessionId = items[newIndex].id
-    } else {
-      selectedModuleLandingPath = nil
-      primarySessionId = items.first?.id
-      scrollToSessionId = items.first?.id
+  private func navigateSessionHistory(direction: SidebarSessionNavigationDirection) {
+    let orderedIDs = navigableSessionItems.map(\.id)
+    guard let nextID = SidebarSessionOrdering.nextID(
+      in: orderedIDs,
+      currentID: primarySessionId,
+      direction: direction
+    ) else {
+      return
     }
+
+    selectedModuleLandingPath = nil
+    primarySessionId = nextID
+    scrollToSessionId = nextID
   }
 }
 
