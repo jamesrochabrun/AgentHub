@@ -44,6 +44,14 @@ struct GitHubCLIServiceParsingTests {
     #expect(!GitHubCLIService.isNoCurrentBranchPRMessage("authentication required"))
   }
 
+  @Test("no checks reported message is recognized")
+  func noChecksReportedMessageIsRecognized() {
+    #expect(GitHubCLIService.isNoChecksReportedMessage(
+      "no checks reported on the 'drag-arrange' branch"
+    ))
+    #expect(!GitHubCLIService.isNoChecksReportedMessage("authentication required"))
+  }
+
   @Test("parsePRFiles handles slurped paginated arrays")
   func parsePRFilesHandlesSlurpedPages() throws {
     let json = """
