@@ -127,6 +127,9 @@ public struct WebPreviewView: View {
   /// the primary app server.
   var agentLocalhostURL: URL?
   var monitorState: SessionMonitorState?
+  let isExpanded: Bool
+  var onToggleExpanded: (() -> Void)?
+  var onCollapseExpandedAfterSend: (() -> Void)?
   /// Reachability probe used before connecting to an agent-advertised URL.
   /// Injected so tests can substitute a deterministic mock.
   var reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe()
@@ -190,6 +193,9 @@ public struct WebPreviewView: View {
     mode: WebPreviewMode = .app,
     agentLocalhostURL: URL? = nil,
     monitorState: SessionMonitorState? = nil,
+    isExpanded: Bool = false,
+    onToggleExpanded: (() -> Void)? = nil,
+    onCollapseExpandedAfterSend: (() -> Void)? = nil,
     reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe(),
     inlineEditReconciler: (any InlineEditStyleReconcilerProtocol)? = nil
   ) {
@@ -203,6 +209,9 @@ public struct WebPreviewView: View {
     self.mode = mode
     self.agentLocalhostURL = agentLocalhostURL
     self.monitorState = monitorState
+    self.isExpanded = isExpanded
+    self.onToggleExpanded = onToggleExpanded
+    self.onCollapseExpandedAfterSend = onCollapseExpandedAfterSend
     self.reachabilityProbe = reachabilityProbe
     self._inspectorViewModel = State(
       initialValue: WebPreviewInspectorViewModel(
@@ -516,8 +525,8 @@ public struct WebPreviewView: View {
       .buttonStyle(.plain)
       .help(
         inspectState.isActive
-          ? "Stop \(inspectBehavior.modeName) mode. Cmd+Shift+I cycles modes."
-          : "Start inspect mode (Cmd+Shift+I)"
+          ? "Stop \(inspectBehavior.modeName) mode. ⌘⇧I cycles modes."
+          : "Start inspect mode (⌘⇧I)"
       )
 
       if inspectState.isActive {
@@ -578,10 +587,24 @@ public struct WebPreviewView: View {
         EmptyView()
       }
 
+      if isEmbedded, let onToggleExpanded {
+        Button(action: onToggleExpanded) {
+          Image(systemName: isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isExpanded ? "Collapse preview" : "Expand preview to full width")
+        .help(isExpanded ? "Collapse preview (⌘⇧O)" : "Expand preview to full width (⌘⇧O)")
+      }
+
       Button("Close") {
         onDismiss()
       }
       .controlSize(.small)
+      .help("Close preview (Esc)")
     }
     .overlay {
       // Hidden keyboard shortcuts — kept outside HStack layout to avoid phantom spacing
@@ -594,6 +617,10 @@ public struct WebPreviewView: View {
           Button("") { handleManualUpdate() }
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(!updateState.isEnabled)
+        }
+        if isEmbedded, let onToggleExpanded {
+          Button("") { onToggleExpanded() }
+            .keyboardShortcut("o", modifiers: [.command, .shift])
         }
       }
       .hidden()
@@ -1749,11 +1776,13 @@ public struct WebPreviewView: View {
         queueSendFailureMessage = "Could not find an active terminal for this session. Keep the preview open and try again when the terminal is ready."
         return false
       }
+      onCollapseExpandedAfterSend?()
       return true
     }
 
     guard let onInspectSubmit else { return false }
     onInspectSubmit(finalPrompt, session)
+    onCollapseExpandedAfterSend?()
     return true
   }
 

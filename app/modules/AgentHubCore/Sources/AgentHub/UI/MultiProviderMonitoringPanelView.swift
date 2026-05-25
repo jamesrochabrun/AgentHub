@@ -148,6 +148,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var sidePanelPresentation = EmbeddedSidePanelPresentationState<SidePanelPayload>()
+  @State private var sidePanelExpansion = EmbeddedSidePanelExpansionState<SidePanelPayload>()
   @State private var autoOpenedSidePanelKeys: Set<MonitoringAutoOpenSidePanelKey> = []
   @State private var autoOpenBaselineDate: Date?
   @State private var observedAutoOpenKeysBySessionID: [String: Set<MonitoringAutoOpenSidePanelKey>] = [:]
@@ -179,6 +180,10 @@ public struct MultiProviderMonitoringPanelView: View {
       embeddedSidePanelMaxWidth,
       max(embeddedSidePanelMinWidth, availablePanelWidth)
     )
+  }
+
+  private var expandedEmbeddedSidePanelWidth: CGFloat {
+    max(embeddedSidePanelMinWidth, availableDetailWidth)
   }
 
   private func wantsEmbeddedSidePanelPresentation(snapshot: MonitoringItemsSnapshot<ProviderMonitoringItem>) -> Bool {
@@ -653,17 +658,33 @@ public struct MultiProviderMonitoringPanelView: View {
     @ViewBuilder content: () -> Content
   ) -> some View {
     HStack(spacing: 0) {
+      let isSidePanelExpanded = sidePanelPresentation.shellPayload.map {
+        sidePanelExpansion.isExpanded(for: $0)
+      } ?? false
+
       content()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(width: isSidePanelExpanded ? 0 : nil)
+        .frame(
+          maxWidth: isSidePanelExpanded ? 0 : .infinity,
+          maxHeight: .infinity,
+          alignment: .leading
+        )
+        .opacity(isSidePanelExpanded ? 0 : 1)
+        .allowsHitTesting(!isSidePanelExpanded)
+        .accessibilityHidden(isSidePanelExpanded)
+        .clipped()
         .blursWhileResizing()
 
       if let shellPayload = sidePanelPresentation.shellPayload {
+        let isExpanded = sidePanelExpansion.isExpanded(for: shellPayload)
+
         ResizablePanelContainer(
           side: .trailing,
           minWidth: embeddedSidePanelMinWidth,
           maxWidth: allowedEmbeddedSidePanelWidth,
           defaultWidth: min(embeddedSidePanelDefaultWidth, allowedEmbeddedSidePanelWidth),
-          userDefaultsKey: AgentHubDefaults.sidePanelWidth
+          userDefaultsKey: AgentHubDefaults.sidePanelWidth,
+          fixedWidth: isExpanded ? expandedEmbeddedSidePanelWidth : nil
         ) {
           ZStack {
             if let mountedPayload = sidePanelPresentation.mountedPayload,
@@ -678,6 +699,7 @@ public struct MultiProviderMonitoringPanelView: View {
           .clipped()
         }
         .animation(embeddedSidePanelContentAnimation, value: sidePanelPresentation.mountedPayload)
+        .animation(embeddedSidePanelContentAnimation, value: isExpanded)
       }
     }
   }
@@ -807,13 +829,27 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func openEmbeddedSidePanel(_ payload: SidePanelPayload) {
+    sidePanelExpansion.reconcile(currentPayload: payload)
     let transitionID = sidePanelPresentation.open(payload)
     completeDeferredSidePanelTransition(transitionID)
   }
 
   private func closeEmbeddedSidePanel() {
+    sidePanelExpansion.collapse()
     let transitionID = sidePanelPresentation.close()
     completeDeferredSidePanelTransition(transitionID, delay: embeddedSidePanelCloseShellDelay)
+  }
+
+  private func toggleEmbeddedSidePanelExpansion(for payload: SidePanelPayload) {
+    withAnimation(embeddedSidePanelContentAnimation) {
+      sidePanelExpansion.toggle(for: payload)
+    }
+  }
+
+  private func collapseEmbeddedSidePanelExpansion(for payload: SidePanelPayload) {
+    withAnimation(embeddedSidePanelContentAnimation) {
+      sidePanelExpansion.collapse(ifExpanded: payload)
+    }
   }
 
   private func completeDeferredSidePanelTransition(_ transitionID: UInt64, delay: Duration? = nil) {
@@ -893,6 +929,9 @@ public struct MultiProviderMonitoringPanelView: View {
         mode: mode,
         agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL,
         monitorState: viewModel.monitorStates[sessionId],
+        isExpanded: sidePanelExpansion.isExpanded(for: payload),
+        onToggleExpanded: { toggleEmbeddedSidePanelExpansion(for: payload) },
+        onCollapseExpandedAfterSend: { collapseEmbeddedSidePanelExpansion(for: payload) },
         inlineEditReconciler: viewModel.agentHubProvider?.inlineEditReconciler
       )
     case .mermaid(_, let session):

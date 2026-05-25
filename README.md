@@ -144,6 +144,7 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 | **Cmd+B** | Toggle sidebar |
 | **Cmd+J** | Toggle Hub auxiliary shell |
 | **Cmd+,** | Open settings |
+| **Cmd+Shift+O** | Expand/collapse the embedded web preview |
 | **Cmd+[** | Navigate to previous session |
 | **Cmd+]** | Navigate to next session |
 | **Cmd+\\** | Toggle focus mode (single ↔ previous layout) |
@@ -167,6 +168,16 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 | **Cmd+P** | Open quick file picker |
 | **Cmd+S** | Save current file in file editor |
 | **Escape** | Close quick file picker or file editor |
+
+### Web Preview
+
+| Shortcut | Action |
+|---|---|
+| **Cmd+Shift+O** | Expand/collapse the embedded web preview |
+| **Cmd+Shift+I** | Cycle inspect, crop, edit, and off |
+| **Cmd+R** | Reload preview |
+| **Cmd+Return** | Send queued canvas feedback or update preview |
+| **Escape** | Close preview |
 
 ### Embedded Terminal
 
