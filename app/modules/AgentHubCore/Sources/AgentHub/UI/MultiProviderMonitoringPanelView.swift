@@ -892,7 +892,8 @@ public struct MultiProviderMonitoringPanelView: View {
         viewModel: viewModel,
         mode: mode,
         agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL,
-        monitorState: viewModel.monitorStates[sessionId]
+        monitorState: viewModel.monitorStates[sessionId],
+        inlineEditReconciler: viewModel.agentHubProvider?.inlineEditReconciler
       )
     case .mermaid(_, let session):
       MermaidDiagramView(

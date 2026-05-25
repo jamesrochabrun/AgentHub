@@ -2,6 +2,7 @@ import Canvas
 import Foundation
 import SwiftUI
 import Testing
+import WebKit
 
 @testable import AgentHubCore
 
@@ -656,6 +657,408 @@ struct WebPreviewInspectorViewModelTests {
     #expect(displayedMargin == "24px")
   }
 
+  @Test("Toolbar edits are propagated to the live preview before the debounced write")
+  func toolbarEditsPropagateToLivePreviewImmediately() async throws {
+    let filePath = "/project/styles/site.css"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: """
+      .cta {
+        margin: 12px;
+      }
+      """
+    ])
+    let liveEditApplier = MockWebPreviewLiveEditApplier()
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-live-toolbar",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        liveEditApplier: liveEditApplier,
+        writeDebounceDuration: .milliseconds(50)
+      )
+    }
+    let element = makeElement(selector: ".cta", className: "cta", textContent: "Launch")
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateProperty(.margin, value: "24px")))
+    }
+
+    let liveEdits = await MainActor.run { liveEditApplier.appliedEdits }
+    let writesBeforeDebounce = await fileService.recordedWrites()
+
+    #expect(liveEdits == [DesignEdit(element: element, action: .updateProperty(.margin, value: "24px"))])
+    #expect(writesBeforeDebounce.isEmpty)
+
+    try await Task.sleep(for: .milliseconds(90))
+    let writes = await fileService.recordedWrites()
+    #expect(writes.count == 1)
+    #expect(writes[0].content.contains("margin: 24px;"))
+  }
+
+  @Test("Toolbar text edits update live preview and source")
+  func toolbarTextEditsUpdateLivePreviewAndSource() async throws {
+    let filePath = "/project/index.html"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high
+      )
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: "<button>Launch</button>"
+    ])
+    let liveEditApplier = MockWebPreviewLiveEditApplier()
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-live-text-toolbar",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        liveEditApplier: liveEditApplier,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+    let element = makeElement(selector: "button", className: "", textContent: "Launch")
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateTextContent("Buy now")))
+    }
+    try await Task.sleep(for: .milliseconds(40))
+
+    let liveEdits = await MainActor.run { liveEditApplier.appliedEdits }
+    let writes = await fileService.recordedWrites()
+    let toolbarText = await MainActor.run { viewModel.toolbarValues?.textContent }
+    let displayedText = await MainActor.run { viewModel.contentDisplayText }
+
+    #expect(liveEdits == [DesignEdit(element: element, action: .updateTextContent("Buy now"))])
+    #expect(writes.count == 1)
+    #expect(writes[0].content == "<button>Buy now</button>")
+    #expect(toolbarText == "Buy now")
+    #expect(displayedText == "Buy now")
+  }
+
+  @Test("Toolbar text edits preserve nested inline markup")
+  func toolbarTextEditsPreserveNestedInlineMarkup() async throws {
+    let filePath = "/project/index.html"
+    let originalContent = """
+    <header class="hero">
+      <h1 class="hero-title">Manage Claude Code<br>and Codex CLI <span class="accent">from one native hub.</span></h1>
+    </header>
+    """
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".hero-title"
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: originalContent])
+    let liveEditApplier = MockWebPreviewLiveEditApplier()
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-structured-text-toolbar",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        liveEditApplier: liveEditApplier,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+    let element = makeElement(
+      tagName: "H1",
+      selector: ".hero-title",
+      className: "hero-title",
+      textContent: "Manage Claude Codeand Codex CLI from one native hub."
+    )
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    let canEditContent = await MainActor.run { viewModel.canEditContent }
+
+    await MainActor.run {
+      viewModel.apply(DesignEdit(
+        element: element,
+        action: .updateTextContent("Manage Claude Codeand Codex and Claude CLI from one native hub.")
+      ))
+    }
+    try await Task.sleep(for: .milliseconds(40))
+
+    let liveEdits = await MainActor.run { liveEditApplier.appliedEdits }
+    let writes = await fileService.recordedWrites()
+
+    #expect(canEditContent)
+    #expect(liveEdits == [
+      DesignEdit(
+        element: element,
+        action: .updateTextContent("Manage Claude Codeand Codex and Claude CLI from one native hub.")
+      )
+    ])
+    #expect(writes.count == 1)
+    #expect(writes[0].content.contains(
+      #"<h1 class="hero-title">Manage Claude Code<br>and Codex and Claude CLI <span class="accent">from one native hub.</span></h1>"#
+    ))
+  }
+
+  @Test("Clearing toolbar text keeps source range editable for follow-up typing")
+  func clearingToolbarTextKeepsSourceRangeEditable() async throws {
+    let filePath = "/project/index.html"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high
+      )
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: "<button>Launch</button>"
+    ])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-clear-text-toolbar",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+    let element = makeElement(selector: "button", className: "", textContent: "Launch")
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateTextContent("")))
+      viewModel.refreshFromLiveElement(makeElement(selector: "button", className: "", textContent: ""))
+      viewModel.apply(DesignEdit(element: element, action: .updateTextContent("Go")))
+    }
+    try await Task.sleep(for: .milliseconds(40))
+
+    let writes = await fileService.recordedWrites()
+    let canEditContent = await MainActor.run { viewModel.canEditContent }
+
+    #expect(canEditContent)
+    #expect(writes.count == 1)
+    #expect(writes[0].content == "<button>Go</button>")
+  }
+
+  @Test("Toolbar text edits do not mutate live preview without source text mapping")
+  func toolbarTextEditsRequireSourceTextMapping() async throws {
+    let filePath = "/project/index.html"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high
+      )
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: "<button>Launch</button><a>Launch</a>"
+    ])
+    let liveEditApplier = MockWebPreviewLiveEditApplier()
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-unsafe-text-toolbar",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        liveEditApplier: liveEditApplier,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+    let element = makeElement(selector: "button", className: "", textContent: "Launch")
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateTextContent("Buy now")))
+    }
+    try await Task.sleep(for: .milliseconds(40))
+
+    let liveEdits = await MainActor.run { liveEditApplier.appliedEdits }
+    let writes = await fileService.recordedWrites()
+
+    #expect(liveEdits.isEmpty)
+    #expect(writes.isEmpty)
+  }
+
+  @Test("Design rail edits propagate to the live preview")
+  func railEditsPropagateToLivePreview() async throws {
+    let filePath = "/project/styles/site.css"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: """
+      .cta {
+        font-size: 16px;
+      }
+      """
+    ])
+    let liveEditApplier = MockWebPreviewLiveEditApplier()
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-live-rail",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        liveEditApplier: liveEditApplier,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+    let element = makeElement(selector: ".cta", className: "cta", textContent: "Launch")
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.updateStyleEditorValue(.fontSize, value: "20")
+    }
+
+    let liveEdits = await MainActor.run { liveEditApplier.appliedEdits }
+
+    #expect(liveEdits == [DesignEdit(element: element, action: .updateProperty(.fontSize, value: "20px"))])
+  }
+
+  @Test("Stale toolbar edits are ignored after selecting another element")
+  func staleToolbarEditsAreIgnored() async throws {
+    let filePath = "/project/styles/site.css"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".first",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      ),
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".second",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      ),
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: """
+      .first {
+        color: red;
+      }
+      .second {
+        color: blue;
+      }
+      """
+    ])
+    let liveEditApplier = MockWebPreviewLiveEditApplier()
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-stale-live-edit",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        liveEditApplier: liveEditApplier,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+    let first = makeElement(selector: ".first", className: "first", textContent: "One")
+    let second = makeElement(selector: ".second", className: "second", textContent: "Two")
+
+    await viewModel.inspect(element: first, previewFilePath: filePath, recentActivities: [])
+    await viewModel.inspect(element: second, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: first, action: .updateProperty(.color, value: "green")))
+    }
+    try await Task.sleep(for: .milliseconds(40))
+
+    let liveEdits = await MainActor.run { liveEditApplier.appliedEdits }
+    let writes = await fileService.recordedWrites()
+    let displayedTextColor = await MainActor.run { viewModel.displayedStyleValue(for: .textColor) }
+
+    #expect(liveEdits.isEmpty)
+    #expect(writes.isEmpty)
+    #expect(displayedTextColor == "blue")
+  }
+
+  @Test("Live element updates refresh rail data without clearing mapped source")
+  func liveElementUpdatesRefreshRailDataWithoutClearingSource() async throws {
+    let filePath = "/project/styles/site.css"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [
+      filePath: """
+      .cta {
+        line-height: 24px;
+      }
+      """
+    ])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-live-refresh",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+    let element = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Launch",
+      computedStyles: ["font-size": "16px", "line-height": "24px"]
+    )
+    let refreshed = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Buy now",
+      computedStyles: ["font-size": "22px", "line-height": "24px"],
+      parentStyles: ["display": "grid"]
+    )
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.refreshFromLiveElement(refreshed)
+    }
+
+    let currentFilePath = await MainActor.run { viewModel.currentFilePath }
+    let fileContent = await MainActor.run { viewModel.fileContent }
+    let contentDisplayText = await MainActor.run { viewModel.contentDisplayText }
+    let toolbarText = await MainActor.run { viewModel.toolbarValues?.textContent }
+    let displayedFontSize = await MainActor.run { viewModel.displayedStyleValue(for: .fontSize) }
+    let displayedLineHeight = await MainActor.run { viewModel.displayedStyleValue(for: .lineHeight) }
+
+    #expect(currentFilePath == filePath)
+    #expect(fileContent.contains("line-height: 24px;"))
+    #expect(contentDisplayText == "Buy now")
+    #expect(toolbarText == "Buy now")
+    #expect(displayedFontSize == "22px")
+    #expect(displayedLineHeight == "24px")
+  }
+
   @Test("Parent layout context and console state are surfaced for the rail")
   func parentContextAndConsoleEntriesAreExposed() async throws {
     let filePath = "/project/index.html"
@@ -728,5 +1131,335 @@ struct WebPreviewInspectorViewModelTests {
 
     let clearedConsoleCount = await MainActor.run { viewModel.consoleEntries.count }
     #expect(clearedConsoleCount == 0)
+  }
+
+  @Test("Inline-toolbar edits are reformatted by the reconciler after the direct write")
+  func reconcilerOverwritesDirectWriteWithReformattedContent() async throws {
+    let filePath = "/project/styles/site.css"
+    let originalContent = """
+    .cta {
+    \tcolor: #ffffff;
+    }
+    """
+    let reconciledContent = """
+    .cta {
+    \tcolor: #ffffff;
+    \tline-height: 30px;
+    }
+    """
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: originalContent])
+    let reconciler = MockInlineEditStyleReconciler(behavior: .success(reconciledContent))
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-reconcile-success",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        inlineEditReconciler: reconciler,
+        writeDebounceDuration: .milliseconds(10),
+        reconcileDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    let element = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Launch",
+      computedStyles: ["line-height": "26px", "color": "rgb(255, 255, 255)"]
+    )
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateProperty(.lineHeight, value: "30px")))
+    }
+
+    try await Task.sleep(for: .milliseconds(150))
+
+    let calls = await reconciler.recordedCalls()
+    let writes = await fileService.recordedWrites()
+
+    #expect(calls.count == 1)
+    #expect(calls.first?.changeSummary.contains("line-height") == true)
+    #expect(calls.first?.changeSummary.contains(".cta") == true)
+    #expect(calls.first?.originalContent == originalContent)
+    #expect(writes.count == 2)
+    #expect(writes.first?.content.contains("line-height: 30px;") == true)
+    #expect(writes.last?.content == reconciledContent)
+  }
+
+  @Test("Reconciler waits for the reconcile debounce before invoking the CLI")
+  func reconcilerWaitsForDebounce() async throws {
+    let filePath = "/project/styles/site.css"
+    let originalContent = """
+    .cta {
+      font-size: 68px;
+    }
+    """
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: originalContent])
+    let reconciler = MockInlineEditStyleReconciler(behavior: .success(originalContent))
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-reconcile-delay",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        inlineEditReconciler: reconciler,
+        writeDebounceDuration: .milliseconds(10),
+        reconcileDebounceDuration: .milliseconds(80)
+      )
+    }
+    let element = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Launch",
+      computedStyles: ["font-size": "68px"]
+    )
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateProperty(.fontSize, value: "56px")))
+    }
+
+    try await Task.sleep(for: .milliseconds(40))
+    let callsBeforeDebounce = await reconciler.recordedCalls()
+    #expect(callsBeforeDebounce.isEmpty)
+
+    try await Task.sleep(for: .milliseconds(90))
+    let callsAfterDebounce = await reconciler.recordedCalls()
+    #expect(callsAfterDebounce.count == 1)
+  }
+
+  @Test("Rapid toolbar edits collapse into one reconcile request")
+  func rapidToolbarEditsCollapseIntoOneReconcileRequest() async throws {
+    let filePath = "/project/styles/site.css"
+    let originalContent = """
+    .cta {
+      font-size: 68px;
+    }
+    """
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: originalContent])
+    let reconciler = MockInlineEditStyleReconciler(behavior: .success(originalContent))
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-reconcile-rapid",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        inlineEditReconciler: reconciler,
+        writeDebounceDuration: .milliseconds(10),
+        reconcileDebounceDuration: .milliseconds(80)
+      )
+    }
+    let element = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Launch",
+      computedStyles: ["font-size": "68px"]
+    )
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateProperty(.fontSize, value: "67px")))
+    }
+    try await Task.sleep(for: .milliseconds(40))
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateProperty(.fontSize, value: "56px")))
+    }
+
+    try await Task.sleep(for: .milliseconds(140))
+
+    let calls = await reconciler.recordedCalls()
+    #expect(calls.count == 1)
+    #expect(calls.first?.changeSummary.contains("56px") == true)
+  }
+
+  @Test("Reconciler failures leave the direct write untouched")
+  func reconcilerFailureKeepsDirectWrite() async throws {
+    let filePath = "/project/styles/site.css"
+    let originalContent = """
+    .cta {
+      color: #ffffff;
+    }
+    """
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high,
+        matchedSelector: ".cta",
+        matchedStylesheetPath: filePath,
+        allowsInlineStyleEditing: true
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: originalContent])
+    let reconciler = MockInlineEditStyleReconciler(
+      behavior: .failure(InlineEditStyleReconcilerError.emptyOutput)
+    )
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-reconcile-failure",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        inlineEditReconciler: reconciler,
+        writeDebounceDuration: .milliseconds(10),
+        reconcileDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    let element = makeElement(
+      selector: ".cta",
+      className: "cta",
+      textContent: "Launch",
+      computedStyles: ["line-height": "26px", "color": "rgb(255, 255, 255)"]
+    )
+
+    await viewModel.inspect(element: element, previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.apply(DesignEdit(element: element, action: .updateProperty(.lineHeight, value: "30px")))
+    }
+
+    try await Task.sleep(for: .milliseconds(150))
+
+    let calls = await reconciler.recordedCalls()
+    let writes = await fileService.recordedWrites()
+
+    #expect(calls.count == 1)
+    #expect(writes.count == 1)
+    #expect(writes.first?.content.contains("line-height: 30px;") == true)
+  }
+
+  @Test("Editor-only edits (no DesignEdit) skip the reconciler")
+  func nonToolbarEditsBypassReconciler() async throws {
+    let filePath = "/project/index.html"
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(
+        primaryFilePath: filePath,
+        candidateFilePaths: [filePath],
+        confidence: .high
+      )
+    ])
+    let fileService = MockProjectFileService(files: [filePath: "<button>Launch</button>"])
+    let reconciler = MockInlineEditStyleReconciler(behavior: .success("<button>Reformatted</button>"))
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-reconcile-bypass",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        inlineEditReconciler: reconciler,
+        writeDebounceDuration: .milliseconds(10),
+        reconcileDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(element: makeElement(), previewFilePath: filePath, recentActivities: [])
+    await MainActor.run {
+      viewModel.updateEditorContent("<button>Edited</button>")
+    }
+
+    try await Task.sleep(for: .milliseconds(80))
+
+    let calls = await reconciler.recordedCalls()
+    let writes = await fileService.recordedWrites()
+
+    #expect(calls.isEmpty)
+    #expect(writes == [.init(path: filePath, content: "<button>Edited</button>")])
+  }
+}
+
+private actor MockInlineEditStyleReconciler: InlineEditStyleReconcilerProtocol {
+  struct Call: Sendable {
+    let originalContent: String
+    let editedContent: String
+    let filePath: String
+    let changeSummary: String
+    let projectPath: String
+  }
+
+  enum Behavior: Sendable {
+    case success(String)
+    case failure(InlineEditStyleReconcilerError)
+  }
+
+  private let behavior: Behavior
+  private var calls: [Call] = []
+
+  init(behavior: Behavior) {
+    self.behavior = behavior
+  }
+
+  func recordedCalls() -> [Call] {
+    calls
+  }
+
+  func reconcile(
+    originalContent: String,
+    editedContent: String,
+    filePath: String,
+    changeSummary: String,
+    projectPath: String
+  ) async throws -> String {
+    calls.append(Call(
+      originalContent: originalContent,
+      editedContent: editedContent,
+      filePath: filePath,
+      changeSummary: changeSummary,
+      projectPath: projectPath
+    ))
+    switch behavior {
+    case .success(let output):
+      return output
+    case .failure(let error):
+      throw error
+    }
+  }
+}
+
+private final class MockWebPreviewLiveEditApplier: WebPreviewLiveEditApplying {
+  @MainActor
+  private(set) var appliedEdits: [DesignEdit] = []
+
+  @MainActor
+  private(set) var refreshCount = 0
+
+  @MainActor
+  func apply(_ edit: DesignEdit, in webView: WKWebView?) {
+    appliedEdits.append(edit)
+  }
+
+  @MainActor
+  func refreshSelectedElement(in webView: WKWebView?) {
+    refreshCount += 1
   }
 }

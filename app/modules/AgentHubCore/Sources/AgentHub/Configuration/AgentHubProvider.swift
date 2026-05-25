@@ -153,11 +153,24 @@ public final class AgentHubProvider {
     return AIConfigService(metadataStore: store)
   }()
 
-  /// Claude-backed service for naming launcher-generated worktree branches.
-  public private(set) lazy var worktreeBranchNamingService: any WorktreeBranchNamingServiceProtocol = {
-    ClaudeWorktreeBranchNamingService(
+  /// Shared `claude -p` invocation service used by short, non-interactive
+  /// callers (branch naming, inline-edit style reconciliation, etc.).
+  public private(set) lazy var programmaticClaudeService: any ClaudeProgrammaticServiceProtocol = {
+    ClaudeProgrammaticService(
       additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths)
     )
+  }()
+
+  /// Claude-backed service for naming launcher-generated worktree branches.
+  public private(set) lazy var worktreeBranchNamingService: any WorktreeBranchNamingServiceProtocol = {
+    ClaudeWorktreeBranchNamingService(programmaticService: programmaticClaudeService)
+  }()
+
+  /// Reformats Canvas inline-toolbar edits so the persisted file matches the
+  /// project's existing code style. Runs Haiku via `claude -p` after the
+  /// debounced direct write so the UX stays snappy.
+  public private(set) lazy var inlineEditReconciler: any InlineEditStyleReconcilerProtocol = {
+    ClaudeInlineEditStyleReconciler(programmaticService: programmaticClaudeService)
   }()
 
   /// Success sound service for completed launcher-created worktrees.

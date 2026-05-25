@@ -8,6 +8,7 @@
 //
 
 import AgentHubGitDiff
+import AppKit
 import SwiftUI
 import Canvas
 import WebKit
@@ -29,11 +30,7 @@ private final class WebPreviewConsoleMessageHandler: NSObject, WKScriptMessageHa
 }
 
 private enum WebPreviewAdvancedEditing {
-#if DEBUG
   static let isSupported = true
-#else
-  static let isSupported = false
-#endif
 }
 
 private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
@@ -160,8 +157,8 @@ public struct WebPreviewView: View {
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
 
-  @AppStorage(AgentHubDefaults.webPreviewAdvancedEditingEnabled)
-  private var webPreviewAdvancedEditingEnabled: Bool = true
+  @AppStorage(AgentHubDefaults.webPreviewDesignPanelEnabled)
+  private var webPreviewDesignPanelEnabled: Bool = false
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -193,7 +190,8 @@ public struct WebPreviewView: View {
     mode: WebPreviewMode = .app,
     agentLocalhostURL: URL? = nil,
     monitorState: SessionMonitorState? = nil,
-    reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe()
+    reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe(),
+    inlineEditReconciler: (any InlineEditStyleReconcilerProtocol)? = nil
   ) {
     self.session = session
     self.projectPath = projectPath
@@ -209,7 +207,8 @@ public struct WebPreviewView: View {
     self._inspectorViewModel = State(
       initialValue: WebPreviewInspectorViewModel(
         sessionID: session.id,
-        projectPath: projectPath
+        projectPath: projectPath,
+        inlineEditReconciler: inlineEditReconciler
       )
     )
   }
@@ -219,15 +218,28 @@ public struct WebPreviewView: View {
   }
 
   private var isAdvancedEditingEnabled: Bool {
-#if DEBUG
-    WebPreviewAdvancedEditing.isSupported && webPreviewAdvancedEditingEnabled
-#else
-    false
-#endif
+    WebPreviewAdvancedEditing.isSupported
   }
 
   private var showsInspectorRail: Bool {
-    isAdvancedEditingEnabled && inspectBehavior == .edit && inspectorViewModel.isPanelVisible
+    isAdvancedEditingEnabled
+      && inspectBehavior == .edit
+      && usesPanelDesignTools
+      && inspectorViewModel.isPanelVisible
+  }
+
+  private var showsInlineDesignToolbar: Bool {
+    isAdvancedEditingEnabled
+      && inspectBehavior == .edit
+      && !usesPanelDesignTools
+  }
+
+  private var usesPanelDesignTools: Bool {
+#if DEBUG
+    webPreviewDesignPanelEnabled
+#else
+    false
+#endif
   }
 
   private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
@@ -331,10 +343,6 @@ public struct WebPreviewView: View {
           await inspectorViewModel.closePanel()
         }
       }
-    }
-    .onChange(of: webPreviewAdvancedEditingEnabled) { _, _ in
-      guard !isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
-      inspectBehavior = .input
     }
     .onChange(of: selectedFilePath) { _, newPath in
       if let path = newPath {
@@ -506,7 +514,11 @@ public struct WebPreviewView: View {
           .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
       }
       .buttonStyle(.plain)
-      .help("\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior.modeName) mode (Cmd+Shift+I)")
+      .help(
+        inspectState.isActive
+          ? "Stop \(inspectBehavior.modeName) mode. Cmd+Shift+I cycles modes."
+          : "Start inspect mode (Cmd+Shift+I)"
+      )
 
       if inspectState.isActive {
         let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
@@ -574,7 +586,7 @@ public struct WebPreviewView: View {
     .overlay {
       // Hidden keyboard shortcuts — kept outside HStack layout to avoid phantom spacing
       HStack(spacing: 0) {
-        Button("") { toggleInspector() }
+        Button("") { handleInspectModeShortcut() }
           .keyboardShortcut("i", modifiers: [.command, .shift])
         Button("") { refreshPreview() }
           .keyboardShortcut("r", modifiers: .command)
@@ -1250,6 +1262,9 @@ public struct WebPreviewView: View {
           onElementSelected: { data in
             handleElementSelection(data)
           },
+          onSelectedElementDataChange: { data in
+            handleSelectedElementDataChange(data)
+          },
           onSelectedElementViewportRectChange: { rect in
             inspectState.updateSelectedElementViewportRect(rect)
           },
@@ -1262,17 +1277,23 @@ public struct WebPreviewView: View {
           if inspectState.isActive {
             VStack(spacing: 8) {
               editModeBanner
-              if let element = inspectorViewModel.selectedElement,
+              if showsInlineDesignToolbar,
+                 let element = inspectorViewModel.selectedElement,
                  let toolbarValues = inspectorViewModel.toolbarValues {
                 DesignToolbarContent(
                   values: toolbarValues,
                   element: element,
+                  isTextContentEditable: inspectorViewModel.canEditContent,
                   onEdit: inspectorViewModel.apply
                 )
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                 .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+                .inspectOverlayCursor(label: "inlineDesignToolbar") { hovering in
+                  handleInspectOverlayHover(hovering)
+                }
               }
             }
           }
@@ -1293,6 +1314,9 @@ public struct WebPreviewView: View {
           reloadToken: reloadToken,
           onElementSelected: { data in
             handleElementSelection(data)
+          },
+          onSelectedElementDataChange: { data in
+            handleSelectedElementDataChange(data)
           },
           onSelectedElementViewportRectChange: { rect in
             inspectState.updateSelectedElementViewportRect(rect)
@@ -1315,11 +1339,20 @@ public struct WebPreviewView: View {
           onSubmit: { element, instruction in
             handleInspectUpdateSubmit(element: element, instruction: instruction)
           },
+          onSubmitAndSend: { element, instruction in
+            handleInspectUpdateSubmitAndSend(element: element, instruction: instruction)
+          },
           onContextSelection: { element in
             handleContextSelection(element)
           },
           onCropSubmit: { rect, elements, instruction in
             handleCropSubmit(rect: rect, elements: elements, instruction: instruction)
+          },
+          onCropSubmitAndSend: { rect, elements, instruction in
+            handleCropSubmitAndSend(rect: rect, elements: elements, instruction: instruction)
+          },
+          onOverlayHoverChange: { hovering in
+            handleInspectOverlayHover(hovering)
           },
           deactivateOnSubmit: false
         )
@@ -1331,6 +1364,7 @@ public struct WebPreviewView: View {
     WebPreviewQueuedContextView(
       queuedItems: queuedContext.items,
       isQueueing: inspectState.isActive && inspectBehavior != .edit,
+      isSendShortcutEnabled: !inspectState.isInputShowing && !inspectState.isCropInputShowing,
       failureMessage: queueSendFailureMessage,
       onRemoveItem: removeQueuedContextElement,
       onSendAll: sendQueuedUpdates,
@@ -1360,6 +1394,30 @@ public struct WebPreviewView: View {
     } else {
       inspectState.activate(mode: inspectBehavior.canvasMode)
     }
+  }
+
+  private func handleInspectModeShortcut() {
+    let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
+    guard let firstMode = availableModes.first else { return }
+
+    guard inspectState.isActive else {
+      inspectBehavior = firstMode
+      inspectState.activate(mode: firstMode.canvasMode)
+      return
+    }
+
+    guard let currentIndex = availableModes.firstIndex(of: inspectBehavior) else {
+      inspectBehavior = firstMode
+      return
+    }
+
+    let nextIndex = availableModes.index(after: currentIndex)
+    guard nextIndex < availableModes.endIndex else {
+      deactivateInspector()
+      return
+    }
+
+    inspectBehavior = availableModes[nextIndex]
   }
 
   private func deactivateInspector() {
@@ -1509,8 +1567,49 @@ public struct WebPreviewView: View {
     }
   }
 
+  private func handleSelectedElementDataChange(_ element: ElementInspectorData) {
+    lastSelectedSelector = element.cssSelector
+    inspectState.refreshSelectedElement(element)
+
+    guard isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
+    inspectorViewModel.refreshFromLiveElement(element)
+  }
+
+  private func handleInspectOverlayHover(_ hovering: Bool) {
+    let shouldRestoreCrosshair = inspectState.isActive
+    let cursor = hovering ? "default" : (shouldRestoreCrosshair ? "crosshair" : "")
+    let script = cursor.isEmpty
+      ? "document.body.style.cursor = ''"
+      : "document.body.style.cursor = '\(cursor)'"
+    previewWebView?.evaluateJavaScript(script) { _, _ in }
+    if hovering {
+      NSCursor.arrow.set()
+    }
+  }
+
   private func handleInspectUpdateSubmit(element: ElementInspectorData, instruction: String) {
+    queueInspectUpdate(element: element, instruction: instruction)
+  }
+
+  private func handleInspectUpdateSubmitAndSend(element: ElementInspectorData, instruction: String) {
     queueSendFailureMessage = nil
+    var queue = WebPreviewContextQueue()
+    queue.append(element, instruction: instruction)
+
+    guard sendWebPreviewQueue(queue) else {
+      queueInspectUpdate(element: element, instruction: instruction, resetFailure: false)
+      return
+    }
+  }
+
+  private func queueInspectUpdate(
+    element: ElementInspectorData,
+    instruction: String,
+    resetFailure: Bool = true
+  ) {
+    if resetFailure {
+      queueSendFailureMessage = nil
+    }
     if let viewModel {
       viewModel.queueWebPreviewUpdate(element, instruction: instruction, for: session.id)
     } else {
@@ -1520,31 +1619,78 @@ public struct WebPreviewView: View {
 
   private func handleCropSubmit(rect: CGRect, elements: [ElementInspectorData], instruction: String) {
     Task { @MainActor in
-      var screenshotPath: String? = nil
-      if let webView = previewWebView {
-        if let image = try? await ElementSnapshotCapture.captureSnapshot(of: rect, in: webView) {
-          screenshotPath = saveCropScreenshot(image, sessionId: session.id)
-        }
-      }
+      let screenshotPath = await captureCropScreenshotPath(for: rect)
       clearCropSelection()
-      if let viewModel {
-        queueSendFailureMessage = nil
-        viewModel.queueWebPreviewCropUpdate(
-          cropRect: rect,
+      queueCropUpdate(
+        rect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath
+      )
+    }
+  }
+
+  private func handleCropSubmitAndSend(rect: CGRect, elements: [ElementInspectorData], instruction: String) {
+    Task { @MainActor in
+      queueSendFailureMessage = nil
+      let screenshotPath = await captureCropScreenshotPath(for: rect)
+      clearCropSelection()
+
+      var queue = WebPreviewContextQueue()
+      queue.appendCrop(
+        cropRect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath
+      )
+
+      guard sendWebPreviewQueue(queue) else {
+        queueCropUpdate(
+          rect: rect,
           elements: elements,
           instruction: instruction,
           screenshotPath: screenshotPath,
-          for: session.id
+          resetFailure: false
         )
-      } else {
-        queueSendFailureMessage = nil
-        localContextQueue.appendCrop(
-          cropRect: rect,
-          elements: elements,
-          instruction: instruction,
-          screenshotPath: screenshotPath
-        )
+        return
       }
+    }
+  }
+
+  @MainActor
+  private func captureCropScreenshotPath(for rect: CGRect) async -> String? {
+    guard let webView = previewWebView,
+          let image = try? await ElementSnapshotCapture.captureSnapshot(of: rect, in: webView) else {
+      return nil
+    }
+    return saveCropScreenshot(image, sessionId: session.id)
+  }
+
+  private func queueCropUpdate(
+    rect: CGRect,
+    elements: [ElementInspectorData],
+    instruction: String,
+    screenshotPath: String?,
+    resetFailure: Bool = true
+  ) {
+    if resetFailure {
+      queueSendFailureMessage = nil
+    }
+    if let viewModel {
+      viewModel.queueWebPreviewCropUpdate(
+        cropRect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath,
+        for: session.id
+      )
+    } else {
+      localContextQueue.appendCrop(
+        cropRect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath
+      )
     }
   }
 
@@ -1586,35 +1732,37 @@ public struct WebPreviewView: View {
   }
 
   private func sendQueuedUpdates() {
-    guard let prompt = queuedContext.composedContextPrompt() else {
-      return
+    guard sendWebPreviewQueue(queuedContext) else { return }
+    clearQueuedContext()
+  }
+
+  @discardableResult
+  private func sendWebPreviewQueue(_ queue: WebPreviewContextQueue) -> Bool {
+    guard let prompt = queue.composedContextPrompt() else {
+      return false
     }
 
-    // Prepend screenshot paths so Claude Code detects them as image
-    // attachments (same mechanism as drag-and-drop file paths).
-    let screenshotPaths = queuedContext.screenshotPaths()
-    let finalPrompt: String
-    if screenshotPaths.isEmpty {
-      finalPrompt = prompt
-    } else {
-      let pathsPrefix = screenshotPaths
-        .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
-        .joined(separator: " ")
-      finalPrompt = "\(pathsPrefix) \(prompt)"
-    }
+    let finalPrompt = terminalPrompt(for: prompt, screenshotPaths: queue.screenshotPaths())
 
     if let onQueuedSubmit {
       guard onQueuedSubmit(finalPrompt, session) else {
         queueSendFailureMessage = "Could not find an active terminal for this session. Keep the preview open and try again when the terminal is ready."
-        return
+        return false
       }
-      clearQueuedContext()
-      return
+      return true
     }
 
-    guard let onInspectSubmit else { return }
-    clearQueuedContext()
+    guard let onInspectSubmit else { return false }
     onInspectSubmit(finalPrompt, session)
+    return true
+  }
+
+  private func terminalPrompt(for prompt: String, screenshotPaths: [String]) -> String {
+    guard !screenshotPaths.isEmpty else { return prompt }
+    let pathsPrefix = screenshotPaths
+      .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
+      .joined(separator: " ")
+    return "\(pathsPrefix) \(prompt)"
   }
 
   private func removeQueuedContextElement(_ elementID: UUID) {
@@ -1647,6 +1795,8 @@ public struct WebPreviewView: View {
         Image(systemName: "xmark")
           .font(.system(size: 10))
           .foregroundColor(.white.opacity(0.8))
+          .frame(width: 24, height: 24)
+          .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .help("Exit inspect mode (Esc)")
@@ -1654,6 +1804,10 @@ public struct WebPreviewView: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 6)
     .background(Color.accentColor.opacity(0.9))
+    .contentShape(Rectangle())
+    .inspectOverlayCursor(label: "editModeBanner") { hovering in
+      handleInspectOverlayHover(hovering)
+    }
     .padding(12)
   }
 
@@ -1720,6 +1874,42 @@ public struct WebPreviewView: View {
       setTimeout(restore, 50);
     })();
     """
+  }
+}
+
+private struct InspectOverlayCursorModifier: ViewModifier {
+  let label: String
+  let onHoverChange: (Bool) -> Void
+  @State private var isHovering = false
+
+  func body(content: Content) -> some View {
+    content
+      .onHover { hovering in
+        print("[HOVER] \(label) hovering=\(hovering)")
+        updateCursor(isHovering: hovering)
+        onHoverChange(hovering)
+      }
+      .onDisappear {
+        print("[HOVER] \(label) disappear")
+        updateCursor(isHovering: false)
+        onHoverChange(false)
+      }
+  }
+
+  private func updateCursor(isHovering: Bool) {
+    guard isHovering != self.isHovering else { return }
+    self.isHovering = isHovering
+    if isHovering {
+      NSCursor.arrow.push()
+    } else {
+      NSCursor.pop()
+    }
+  }
+}
+
+private extension View {
+  func inspectOverlayCursor(label: String, onHoverChange: @escaping (Bool) -> Void) -> some View {
+    modifier(InspectOverlayCursorModifier(label: label, onHoverChange: onHoverChange))
   }
 }
 
