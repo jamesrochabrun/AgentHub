@@ -26,6 +26,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var accessoryAgentProvidersByTabID: [TerminalTabID: SessionProviderKind] = [:]
   private var linkedSessionsByTabID: [TerminalTabID: TerminalWorkspaceLinkedSessionSnapshot] = [:]
   private var splitRoot: TerminalSplitLayout.Node?
+  private var maximizedPanelID: TerminalPanelID?
   private var pendingMount: PendingMount?
   private var pendingMountTask: Task<Void, Never>?
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
@@ -201,6 +202,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     accessoryAgentProvidersByTabID.removeAll()
     linkedSessionsByTabID.removeAll()
     splitRoot = nil
+    maximizedPanelID = nil
     resetPaneActivities()
     isConfigured = false
     hasDeliveredInitialPrompt = false
@@ -355,6 +357,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       configureControllerHooks(for: panel.activeTab?.controller)
       markPaneStarting(panel.id)
       splitRoot = terminalSession.splitLayout?.root ?? .panel(terminalSession.primaryPanelID)
+      maximizedPanelID = nil
       refreshWorkspaceRootView()
       notifyWorkspaceChanged()
       panel.activeTab?.controller.focusTerminal()
@@ -434,6 +437,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     guard !snapshot.panels.isEmpty else { return }
 
     isRestoringWorkspace = true
+    maximizedPanelID = nil
     defer {
       isRestoringWorkspace = false
       lastWorkspaceSnapshot = captureWorkspaceSnapshot()
@@ -559,6 +563,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         protectedAgentTabID = primaryTab.id
       }
       splitRoot = .panel(session.primaryPanelID)
+      maximizedPanelID = nil
       configureControllerHooks(for: session.primaryPanel.activeTab?.controller)
       mount(session)
       terminalSession = session
@@ -638,6 +643,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     AgentHubGhosttyTerminalWorkspaceView(
       session: session,
       splitRoot: splitRoot,
+      maximizedPanelID: maximizedPanelID,
       canClosePanel: { [weak self] panel in
         self?.canCloseGhosttyPanel(panel) ?? false
       },
@@ -662,6 +668,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       onSplitPanel: { [weak self] panel, axis in
         self?.openShellPane(axis: axis, anchorPanelID: panel.id)
       },
+      onToggleMaximizedPanel: { [weak self] panel in
+        self?.toggleMaximizedPanel(panel)
+      },
       activityForPanel: { [weak self] panelID in
         self?.paneActivityRegistry.activity(for: panelID)
       }
@@ -670,6 +679,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   private func refreshWorkspaceRootView() {
     guard let terminalSession, let hostingView else { return }
+    if let maximizedPanelID, terminalSession.panel(for: maximizedPanelID) == nil {
+      self.maximizedPanelID = nil
+    }
     hostingView.rootView = makeWorkspaceRootView(for: terminalSession)
   }
 
@@ -900,6 +912,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
     focusProtectedAgentTab()
     splitRoot = .panel(terminalSession.primaryPanelID)
+    maximizedPanelID = nil
   }
 
   private func restoreShellTabs(
@@ -1128,8 +1141,14 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       openShellPane(axis: axis)
     case .closePanel:
       closeActiveOrLastAuxiliaryPanel()
+    case .toggleMaximizedPanel:
+      if let terminalSession,
+         let activePanel = terminalSession.panel(for: terminalSession.activePanelID) {
+        toggleMaximizedPanel(activePanel)
+      }
     case .focusPanel(let direction):
-      if terminalSession?.focusPanel(direction: direction) == true {
+      if maximizedPanelID == nil,
+         terminalSession?.focusPanel(direction: direction) == true {
         notifyWorkspaceChanged()
       }
     case .selectTab(let direction):
@@ -1161,6 +1180,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     anchorPanelID: TerminalPanelID? = nil
   ) {
     guard let terminalSession, terminalSession.canOpenPanel else { return }
+    maximizedPanelID = nil
     let resolvedAnchorPanelID = anchorPanelID ?? terminalSession.activePanelID
     let projectedPlaceholderID = TerminalPanelID()
     let projectedRoot = projectedSplitRoot(
@@ -1285,6 +1305,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     requestClose(panel)
     if terminalSession.closePanel(panel.id) {
       clearPaneActivity(panel.id)
+      if maximizedPanelID == panel.id {
+        maximizedPanelID = nil
+      }
       splitRoot = projectedRoot
       refreshWorkspaceRootView()
       notifyWorkspaceChanged()
@@ -1325,6 +1348,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     if terminalSession.closeTab(tab.id, in: panel.id) {
       clearPaneActivity(panel.id)
       if closesPanel {
+        if maximizedPanelID == panel.id {
+          maximizedPanelID = nil
+        }
         splitRoot = projectedRoot
       }
       refreshWorkspaceRootView()
@@ -1339,6 +1365,14 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     for tab in panel.tabs {
       requestClose(tab)
     }
+  }
+
+  private func toggleMaximizedPanel(_ panel: TerminalPanel) {
+    guard let terminalSession, terminalSession.visiblePanels.count > 1 else { return }
+    guard terminalSession.focusPanel(panel.id) else { return }
+    maximizedPanelID = maximizedPanelID == panel.id ? nil : panel.id
+    refreshWorkspaceRootView()
+    panel.activeTab?.controller.focusTerminal()
   }
 
   private func prepareVisiblePanelsForPaneTransition(projectedRoot: TerminalSplitLayout.Node) {
@@ -1516,6 +1550,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     if terminalSession.closeTab(located.tab.id, in: located.panel.id) {
       if closesPanel {
         clearPaneActivity(located.panel.id)
+        if maximizedPanelID == located.panel.id {
+          maximizedPanelID = nil
+        }
         splitRoot = projectedRoot
       }
       refreshWorkspaceRootView()

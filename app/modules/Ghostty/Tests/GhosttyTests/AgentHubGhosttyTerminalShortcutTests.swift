@@ -20,6 +20,7 @@ struct AgentHubGhosttyTerminalShortcutTests {
   func shiftedCommandShortcuts() {
     expectAction(.openPane(axis: .vertical), key: "d", flags: [.command, .shift])
     expectAction(.searchPrevious, key: "g", flags: [.command, .shift])
+    expectAction(.toggleMaximizedPanel, key: "m", flags: [.command, .shift])
     expectAction(.closePanel, key: "w", flags: [.command, .shift])
   }
 

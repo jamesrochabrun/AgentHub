@@ -146,6 +146,20 @@ public struct CommandPaletteView: View {
   private var shortcutInfoItems: [CommandPaletteItem] {
     [
       .shortcut(
+        id: "shortcut-terminal-pane-maximize",
+        title: "Terminal Pane: Maximize or Restore",
+        subtitle: "Show the active pane by itself, then restore the split layout",
+        icon: "arrow.up.left.and.arrow.down.right",
+        shortcut: "⌘⇧M"
+      ),
+      .shortcut(
+        id: "shortcut-terminal-pane-focus",
+        title: "Terminal Pane: Focus Adjacent Pane",
+        subtitle: "Move focus left, right, up, or down between terminal panes",
+        icon: "keyboard",
+        shortcut: "⌘⌃←/→/↑/↓"
+      ),
+      .shortcut(
         id: "shortcut-web-preview-width",
         title: "Web Preview: Toggle Width",
         subtitle: "Expand or collapse the embedded preview",

@@ -222,6 +222,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var terminalPanelSession: TerminalPanelKit.Session<SafeLocalProcessTerminalView>?
   private var protectedAgentPanelID: RegularTerminalPanelID?
   private var protectedAgentTabID: RegularTerminalTabID?
+  private var maximizedPanelID: RegularTerminalPanelID?
   private var workspaceHostingView: NSHostingView<RegularTerminalWorkspaceView>?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
@@ -880,6 +881,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     terminalPanelSession = nil
     protectedAgentPanelID = nil
     protectedAgentTabID = nil
+    maximizedPanelID = nil
     terminalView = nil
     lastWorkspaceSnapshot = nil
   }
@@ -893,6 +895,11 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   private func refreshWorkspaceRootView() {
+    maximizedPanelID = TerminalPanelKit.SplitPresentationResolver.validMaximizedPanelID(
+      maximizedPanelID,
+      panelIDs: panels.map(\.id)
+    )
+
     guard !panels.isEmpty else {
       removeMountedContent()
       return
@@ -922,6 +929,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       panels: panels,
       splitRoot: splitRoot,
       activePanelID: activePanelID,
+      maximizedPanelID: maximizedPanelID,
       canClosePanel: { [weak self] panel in
         self?.canCloseRegularPanel(panel) ?? false
       },
@@ -945,6 +953,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       },
       onSplitPanel: { [weak self] panel, axis in
         self?.openShellPane(axis: axis, anchorPanelID: panel.id)
+      },
+      onToggleMaximizedPanel: { [weak self] panel in
+        self?.toggleMaximizedPanel(panel)
       }
     )
   }
@@ -1086,6 +1097,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard let anchorPanel = panel(for: anchorPanelID ?? activePanelID ?? primaryPanelID) else { return }
     let tab = makeShellTab(workingDirectory: anchorPanel.activeTab?.workingDirectory)
     guard session.openPanel(with: tab, beside: anchorPanel.id, axis: axis) != nil else { return }
+    maximizedPanelID = nil
     refreshWorkspaceRootView()
     syncAppearance(
       isDark: currentIsDark,
@@ -1123,6 +1135,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard session.openPanel(with: tab, beside: anchorPanel.id, axis: .horizontal) != nil else {
       return nil
     }
+    maximizedPanelID = nil
     refreshWorkspaceRootView()
     syncAppearance(
       isDark: currentIsDark,
@@ -1195,6 +1208,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard canCloseRegularPanel(panel) else { return }
     let wasActivePanel = activePanelID == panel.id
     let closeResult = terminalPanelSession?.closePanel(panel.id) ?? .empty
+    if maximizedPanelID == panel.id {
+      maximizedPanelID = nil
+    }
     refreshWorkspaceRootView()
     notifyWorkspaceChanged()
     if wasActivePanel, let activeTab {
@@ -1207,6 +1223,9 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     guard canCloseRegularTab(tab, in: panel) else { return }
     let wasActiveTab = panel.activeTabID == tab.id
     let closeResult = terminalPanelSession?.closeTab(tab.id, in: panel.id) ?? .empty
+    if closeResult.closedPanelID == maximizedPanelID {
+      maximizedPanelID = nil
+    }
     refreshWorkspaceRootView()
     notifyWorkspaceChanged()
     if wasActiveTab, let replacementTab = activePanel?.activeTab {
@@ -1270,6 +1289,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     focus(tab)
   }
 
+  private func toggleMaximizedPanel(_ panel: RegularTerminalPanel) {
+    guard panels.count > 1 else { return }
+    guard terminalPanelSession?.focusPanel(panel.id) == true else { return }
+    maximizedPanelID = maximizedPanelID == panel.id ? nil : panel.id
+    refreshWorkspaceRootView()
+    if let activeTab = panel.activeTab {
+      focus(activeTab)
+    }
+  }
+
   private func handleShortcut(
     _ shortcut: RegularTerminalShortcut,
     focusedTerminal: SafeLocalProcessTerminalView
@@ -1284,6 +1313,10 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       openShellPane(axis: axis)
     case .closePanel:
       closeActiveOrLastAuxiliaryPanel()
+    case .toggleMaximizedPanel:
+      if let activePanel {
+        toggleMaximizedPanel(activePanel)
+      }
     case .focusPanel(let direction):
       if focusPanel(direction: direction) {
         notifyWorkspaceChanged()
@@ -1305,6 +1338,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   private func focusPanel(direction: RegularTerminalPanelNavigationDirection) -> Bool {
+    guard maximizedPanelID == nil else { return false }
     guard terminalPanelSession?.focusPanel(direction: direction, viewportSize: bounds.size) == true else {
       return false
     }
@@ -1361,6 +1395,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   public func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {
     guard !panels.isEmpty, !snapshot.panels.isEmpty else { return }
     isRestoringWorkspace = true
+    maximizedPanelID = nil
     defer {
       isRestoringWorkspace = false
       lastWorkspaceSnapshot = captureWorkspaceSnapshot()
@@ -1445,6 +1480,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private func resetToPrimaryTerminal() {
     guard let session = terminalPanelSession,
           let primary = panel(for: primaryPanelID) ?? panels.first else { return }
+    maximizedPanelID = nil
     let keepTabID = protectedAgentTabID ?? primary.tabs.first?.id
     let closeResult = session.resetToPrimary(keeping: keepTabID)
     for terminal in closeResult.payloads {

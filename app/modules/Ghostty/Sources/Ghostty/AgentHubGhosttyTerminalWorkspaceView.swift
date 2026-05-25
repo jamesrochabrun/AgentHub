@@ -10,6 +10,7 @@ import SwiftUI
 struct AgentHubGhosttyTerminalWorkspaceView: View {
   let session: TerminalSession
   let splitRoot: TerminalSplitLayout.Node?
+  let maximizedPanelID: TerminalPanelID?
   let canClosePanel: (TerminalPanel) -> Bool
   let canCloseTab: (TerminalPanel, TerminalTab) -> Bool
   let onActivatePanel: (TerminalPanel) -> Void
@@ -18,6 +19,7 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
   let onCloseTab: (TerminalPanel, TerminalTab) -> Void
   let onOpenTab: (TerminalPanel) -> Void
   let onSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Void
+  let onToggleMaximizedPanel: (TerminalPanel) -> Void
   let activityForPanel: (TerminalPanelID) -> AgentHubGhosttyTerminalPaneActivity?
 
   var body: some View {
@@ -29,6 +31,7 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
       AgentHubGhosttyTerminalSplitView(
         node: resolvedSplitRoot,
         session: session,
+        maximizedPanelID: effectiveMaximizedPanelID,
         canClosePanel: canClosePanel,
         canCloseTab: canCloseTab,
         onActivatePanel: onActivatePanel,
@@ -37,12 +40,23 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
         onCloseTab: onCloseTab,
         onOpenTab: onOpenTab,
         onSplitPanel: onSplitPanel,
+        onToggleMaximizedPanel: onToggleMaximizedPanel,
         activityForPanel: activityForPanel
       )
     }
   }
 
   private var resolvedSplitRoot: TerminalSplitLayout.Node {
-    splitRoot ?? session.splitLayout?.root ?? .panel(session.primaryPanelID)
+    if let effectiveMaximizedPanelID {
+      return .panel(effectiveMaximizedPanelID)
+    }
+    return splitRoot ?? session.splitLayout?.root ?? .panel(session.primaryPanelID)
+  }
+
+  private var effectiveMaximizedPanelID: TerminalPanelID? {
+    guard let maximizedPanelID, session.panel(for: maximizedPanelID) != nil else {
+      return nil
+    }
+    return maximizedPanelID
   }
 }

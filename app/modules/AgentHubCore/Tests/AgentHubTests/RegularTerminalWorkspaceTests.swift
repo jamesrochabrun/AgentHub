@@ -92,6 +92,12 @@ struct RegularTerminalWorkspaceTests {
       charactersIgnoringModifiers: "w",
       modifierFlags: [.command, .shift]
     ) == .closePanel)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 46,
+      charactersIgnoringModifiers: "m",
+      modifierFlags: [.command, .shift]
+    ) == .toggleMaximizedPanel)
   }
 
   @Test("Terminal editing shortcuts pass through when terminal input is focused")
@@ -144,6 +150,13 @@ struct RegularTerminalWorkspaceTests {
       modifierFlags: [.command],
       terminalTextInputActive: true
     ) == .openTab)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 46,
+      charactersIgnoringModifiers: "m",
+      modifierFlags: [.command, .shift],
+      terminalTextInputActive: true
+    ) == .toggleMaximizedPanel)
   }
 
   @Test("Split layout builder adds and removes panels")
@@ -214,6 +227,47 @@ struct RegularTerminalWorkspaceTests {
         panelIDs: [primary, shell1, shell2]
       ) == root
     )
+  }
+
+  @Test("Split presentation resolver renders a valid maximized panel")
+  func splitPresentationResolverRendersValidMaximizedPanel() {
+    let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+    let shell = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let root = RegularTerminalSplitNode.split(
+      axis: .horizontal,
+      children: [.panel(primary), .panel(shell)]
+    )
+
+    let resolved = TerminalPanelKit.SplitPresentationResolver.resolvedRoot(
+      splitRoot: root,
+      panelIDs: [primary, shell],
+      maximizedPanelID: shell
+    )
+
+    #expect(resolved == .panel(shell))
+  }
+
+  @Test("Split presentation resolver ignores stale maximized panels")
+  func splitPresentationResolverIgnoresStaleMaximizedPanel() {
+    let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+    let shell = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let stale = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+    let root = RegularTerminalSplitNode.split(
+      axis: .horizontal,
+      children: [.panel(primary), .panel(shell)]
+    )
+
+    let resolved = TerminalPanelKit.SplitPresentationResolver.resolvedRoot(
+      splitRoot: root,
+      panelIDs: [primary, shell],
+      maximizedPanelID: stale
+    )
+
+    #expect(resolved == root)
+    #expect(TerminalPanelKit.SplitPresentationResolver.validMaximizedPanelID(
+      stale,
+      panelIDs: [primary, shell]
+    ) == nil)
   }
 
   @MainActor

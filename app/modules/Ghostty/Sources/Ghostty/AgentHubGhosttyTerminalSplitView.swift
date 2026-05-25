@@ -10,6 +10,7 @@ import SwiftUI
 struct AgentHubGhosttyTerminalSplitView: View {
   let node: TerminalSplitLayout.Node
   let session: TerminalSession
+  let maximizedPanelID: TerminalPanelID?
   let canClosePanel: (TerminalPanel) -> Bool
   let canCloseTab: (TerminalPanel, TerminalTab) -> Bool
   let onActivatePanel: (TerminalPanel) -> Void
@@ -18,6 +19,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
   let onCloseTab: (TerminalPanel, TerminalTab) -> Void
   let onOpenTab: (TerminalPanel) -> Void
   let onSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Void
+  let onToggleMaximizedPanel: (TerminalPanel) -> Void
   let activityForPanel: (TerminalPanelID) -> AgentHubGhosttyTerminalPaneActivity?
 
   var body: some View {
@@ -32,6 +34,9 @@ struct AgentHubGhosttyTerminalSplitView: View {
         AgentHubGhosttyTerminalPaneView(
           panel: panel,
           session: session,
+          isMaximized: panel.id == maximizedPanelID,
+          showsSelectionBorder: session.visiblePanels.count > 1 && maximizedPanelID == nil,
+          canMaximize: session.visiblePanels.count > 1,
           canClosePanel: canClosePanel,
           canCloseTab: canCloseTab,
           onActivatePanel: onActivatePanel,
@@ -40,6 +45,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
+          onToggleMaximizedPanel: onToggleMaximizedPanel,
           activity: activityForPanel(panel.id)
         )
       } else if let activity = activityForPanel(panelID) {
@@ -85,6 +91,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
         AgentHubGhosttyTerminalSplitView(
           node: child,
           session: session,
+          maximizedPanelID: maximizedPanelID,
           canClosePanel: canClosePanel,
           canCloseTab: canCloseTab,
           onActivatePanel: onActivatePanel,
@@ -93,6 +100,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
+          onToggleMaximizedPanel: onToggleMaximizedPanel,
           activityForPanel: activityForPanel
         )
         .frame(width: childWidth, height: size.height)
@@ -117,6 +125,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
         AgentHubGhosttyTerminalSplitView(
           node: child,
           session: session,
+          maximizedPanelID: maximizedPanelID,
           canClosePanel: canClosePanel,
           canCloseTab: canCloseTab,
           onActivatePanel: onActivatePanel,
@@ -125,6 +134,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
+          onToggleMaximizedPanel: onToggleMaximizedPanel,
           activityForPanel: activityForPanel
         )
         .frame(width: size.width, height: childHeight)

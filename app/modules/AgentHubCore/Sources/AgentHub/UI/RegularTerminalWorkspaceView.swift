@@ -54,6 +54,7 @@ struct RegularTerminalWorkspaceView: View {
   let panels: [RegularTerminalPanel]
   let splitRoot: RegularTerminalSplitNode?
   let activePanelID: RegularTerminalPanelID?
+  let maximizedPanelID: RegularTerminalPanelID?
   let canClosePanel: (RegularTerminalPanel) -> Bool
   let canCloseTab: (RegularTerminalPanel, RegularTerminalTab) -> Bool
   let onActivatePanel: (RegularTerminalPanel) -> Void
@@ -62,6 +63,7 @@ struct RegularTerminalWorkspaceView: View {
   let onCloseTab: (RegularTerminalPanel, RegularTerminalTab) -> Void
   let onOpenTab: (RegularTerminalPanel) -> Void
   let onSplitPanel: (RegularTerminalPanel, RegularTerminalSplitAxis) -> Void
+  let onToggleMaximizedPanel: (RegularTerminalPanel) -> Void
 
   var body: some View {
     if panels.isEmpty {
@@ -73,6 +75,7 @@ struct RegularTerminalWorkspaceView: View {
         node: resolvedSplitRoot,
         panels: panels,
         activePanelID: activePanelID,
+        maximizedPanelID: effectiveMaximizedPanelID,
         canClosePanel: canClosePanel,
         canCloseTab: canCloseTab,
         onActivatePanel: onActivatePanel,
@@ -80,13 +83,25 @@ struct RegularTerminalWorkspaceView: View {
         onClosePanel: onClosePanel,
         onCloseTab: onCloseTab,
         onOpenTab: onOpenTab,
-        onSplitPanel: onSplitPanel
+        onSplitPanel: onSplitPanel,
+        onToggleMaximizedPanel: onToggleMaximizedPanel
       )
     }
   }
 
   private var resolvedSplitRoot: RegularTerminalSplitNode {
-    splitRoot ?? panels.first.map { .panel($0.id) } ?? .panel(RegularTerminalPanelID())
+    TerminalPanelKit.SplitPresentationResolver.resolvedRoot(
+      splitRoot: splitRoot,
+      panelIDs: panels.map(\.id),
+      maximizedPanelID: maximizedPanelID
+    ) ?? .panel(RegularTerminalPanelID())
+  }
+
+  private var effectiveMaximizedPanelID: RegularTerminalPanelID? {
+    TerminalPanelKit.SplitPresentationResolver.validMaximizedPanelID(
+      maximizedPanelID,
+      panelIDs: panels.map(\.id)
+    )
   }
 }
 
@@ -95,6 +110,7 @@ private struct RegularTerminalSplitView: View {
   let node: RegularTerminalSplitNode
   let panels: [RegularTerminalPanel]
   let activePanelID: RegularTerminalPanelID?
+  let maximizedPanelID: RegularTerminalPanelID?
   let canClosePanel: (RegularTerminalPanel) -> Bool
   let canCloseTab: (RegularTerminalPanel, RegularTerminalTab) -> Bool
   let onActivatePanel: (RegularTerminalPanel) -> Void
@@ -103,6 +119,7 @@ private struct RegularTerminalSplitView: View {
   let onCloseTab: (RegularTerminalPanel, RegularTerminalTab) -> Void
   let onOpenTab: (RegularTerminalPanel) -> Void
   let onSplitPanel: (RegularTerminalPanel, RegularTerminalSplitAxis) -> Void
+  let onToggleMaximizedPanel: (RegularTerminalPanel) -> Void
 
   var body: some View {
     content(for: node)
@@ -116,7 +133,9 @@ private struct RegularTerminalSplitView: View {
         RegularTerminalPaneView(
           panel: panel,
           isActive: panel.id == activePanelID,
-          showsSelectionBorder: panels.count > 1,
+          isMaximized: panel.id == maximizedPanelID,
+          showsSelectionBorder: panels.count > 1 && maximizedPanelID == nil,
+          canMaximize: panels.count > 1,
           canSplit: panels.count < 4,
           canClosePanel: canClosePanel(panel),
           canCloseTab: { tab in canCloseTab(panel, tab) },
@@ -126,7 +145,8 @@ private struct RegularTerminalSplitView: View {
           onCloseTab: { tab in onCloseTab(panel, tab) },
           onOpenTab: { onOpenTab(panel) },
           onSplitRight: { onSplitPanel(panel, .horizontal) },
-          onSplitBelow: { onSplitPanel(panel, .vertical) }
+          onSplitBelow: { onSplitPanel(panel, .vertical) },
+          onToggleMaximizedPanel: { onToggleMaximizedPanel(panel) }
         )
       } else {
         EmptyView()
@@ -170,6 +190,7 @@ private struct RegularTerminalSplitView: View {
           node: child,
           panels: panels,
           activePanelID: activePanelID,
+          maximizedPanelID: maximizedPanelID,
           canClosePanel: canClosePanel,
           canCloseTab: canCloseTab,
           onActivatePanel: onActivatePanel,
@@ -177,7 +198,8 @@ private struct RegularTerminalSplitView: View {
           onClosePanel: onClosePanel,
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
-          onSplitPanel: onSplitPanel
+          onSplitPanel: onSplitPanel,
+          onToggleMaximizedPanel: onToggleMaximizedPanel
         )
         .frame(width: childWidth, height: size.height)
       }
@@ -202,6 +224,7 @@ private struct RegularTerminalSplitView: View {
           node: child,
           panels: panels,
           activePanelID: activePanelID,
+          maximizedPanelID: maximizedPanelID,
           canClosePanel: canClosePanel,
           canCloseTab: canCloseTab,
           onActivatePanel: onActivatePanel,
@@ -209,7 +232,8 @@ private struct RegularTerminalSplitView: View {
           onClosePanel: onClosePanel,
           onCloseTab: onCloseTab,
           onOpenTab: onOpenTab,
-          onSplitPanel: onSplitPanel
+          onSplitPanel: onSplitPanel,
+          onToggleMaximizedPanel: onToggleMaximizedPanel
         )
         .frame(width: size.width, height: childHeight)
       }
@@ -233,7 +257,9 @@ private struct RegularTerminalSplitView: View {
 private struct RegularTerminalPaneView: View {
   let panel: RegularTerminalPanel
   let isActive: Bool
+  let isMaximized: Bool
   let showsSelectionBorder: Bool
+  let canMaximize: Bool
   let canSplit: Bool
   let canClosePanel: Bool
   let canCloseTab: (RegularTerminalTab) -> Bool
@@ -244,11 +270,14 @@ private struct RegularTerminalPaneView: View {
   let onOpenTab: () -> Void
   let onSplitRight: () -> Void
   let onSplitBelow: () -> Void
+  let onToggleMaximizedPanel: () -> Void
 
   var body: some View {
     VStack(spacing: 0) {
       RegularTerminalPaneHeader(
         panel: panel,
+        isMaximized: isMaximized,
+        canMaximize: canMaximize,
         canSplit: canSplit,
         canClosePanel: canClosePanel,
         canCloseTab: canCloseTab,
@@ -257,6 +286,7 @@ private struct RegularTerminalPaneView: View {
         onOpenTab: onOpenTab,
         onSplitRight: onSplitRight,
         onSplitBelow: onSplitBelow,
+        onToggleMaximizedPanel: onToggleMaximizedPanel,
         onClosePanel: onClosePanel
       )
 
@@ -286,6 +316,8 @@ private struct RegularTerminalPaneView: View {
 @MainActor
 private struct RegularTerminalPaneHeader: View {
   let panel: RegularTerminalPanel
+  let isMaximized: Bool
+  let canMaximize: Bool
   let canSplit: Bool
   let canClosePanel: Bool
   let canCloseTab: (RegularTerminalTab) -> Bool
@@ -294,6 +326,7 @@ private struct RegularTerminalPaneHeader: View {
   let onOpenTab: () -> Void
   let onSplitRight: () -> Void
   let onSplitBelow: () -> Void
+  let onToggleMaximizedPanel: () -> Void
   let onClosePanel: () -> Void
 
   var body: some View {
@@ -340,6 +373,19 @@ private struct RegularTerminalPaneHeader: View {
               systemImage: "plus",
               help: "New terminal tab",
               action: onOpenTab
+            )
+          }
+
+          if canMaximize {
+            RegularTerminalToolbarButton(
+              title: isMaximized ? "Restore Pane" : "Maximize Pane",
+              systemImage: isMaximized
+                ? "arrow.down.right.and.arrow.up.left"
+                : "arrow.up.left.and.arrow.down.right",
+              help: isMaximized
+                ? "Restore terminal panes (Cmd+Shift+M)"
+                : "Maximize terminal pane (Cmd+Shift+M)",
+              action: onToggleMaximizedPanel
             )
           }
 
