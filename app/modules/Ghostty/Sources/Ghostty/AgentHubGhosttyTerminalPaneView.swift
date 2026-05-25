@@ -12,6 +12,9 @@ struct AgentHubGhosttyTerminalPaneView: View {
 
   let panel: TerminalPanel
   let session: TerminalSession
+  let isMaximized: Bool
+  let showsSelectionBorder: Bool
+  let canMaximize: Bool
   let canClosePanel: (TerminalPanel) -> Bool
   let canCloseTab: (TerminalPanel, TerminalTab) -> Bool
   let onActivatePanel: (TerminalPanel) -> Void
@@ -20,12 +23,15 @@ struct AgentHubGhosttyTerminalPaneView: View {
   let onCloseTab: (TerminalPanel, TerminalTab) -> Void
   let onOpenTab: (TerminalPanel) -> Void
   let onSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Void
+  let onToggleMaximizedPanel: (TerminalPanel) -> Void
   let activity: AgentHubGhosttyTerminalPaneActivity?
 
   var body: some View {
     VStack(spacing: 0) {
       AgentHubGhosttyTerminalPaneHeader(
         panel: panel,
+        isMaximized: isMaximized,
+        canMaximize: canMaximize,
         canSplit: session.canOpenPanel,
         canClosePanel: canClosePanel(panel),
         canCloseTab: { tab in canCloseTab(panel, tab) },
@@ -34,6 +40,7 @@ struct AgentHubGhosttyTerminalPaneView: View {
         onOpenTab: { onOpenTab(panel) },
         onSplitRight: { onSplitPanel(panel, .horizontal) },
         onSplitBelow: { onSplitPanel(panel, .vertical) },
+        onToggleMaximizedPanel: { onToggleMaximizedPanel(panel) },
         onClosePanel: closePanel
       )
 
@@ -56,7 +63,7 @@ struct AgentHubGhosttyTerminalPaneView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color.clear)
     .overlay {
-      if panel.id == session.activePanelID && session.visiblePanels.count > 1 {
+      if panel.id == session.activePanelID && showsSelectionBorder {
         Rectangle()
           .stroke(Color.accentColor.opacity(0.55), lineWidth: 1)
       }

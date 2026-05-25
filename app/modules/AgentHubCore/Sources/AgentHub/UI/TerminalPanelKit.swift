@@ -76,6 +76,7 @@ public enum TerminalPanelKit {
     case openTab
     case openPane(axis: SplitAxis)
     case closePanel
+    case toggleMaximizedPanel
     case focusPanel(PanelNavigationDirection)
     case selectTab(TabNavigationDirection)
 
@@ -136,6 +137,7 @@ public enum TerminalPanelKit {
       if flags == [.command, .shift] {
         switch key {
         case "d": return .openPane(axis: .vertical)
+        case "m": return .toggleMaximizedPanel
         case "w": return .closePanel
         default: return nil
         }
@@ -167,6 +169,30 @@ public enum TerminalPanelKit {
       default:
         return false
       }
+    }
+  }
+
+  public enum SplitPresentationResolver {
+    public static func resolvedRoot(
+      splitRoot: SplitNode?,
+      panelIDs: [PanelID],
+      maximizedPanelID: PanelID?
+    ) -> SplitNode? {
+      if let maximizedPanelID, panelIDs.contains(maximizedPanelID) {
+        return .panel(maximizedPanelID)
+      }
+
+      return splitRoot ?? panelIDs.first.map(SplitNode.panel)
+    }
+
+    public static func validMaximizedPanelID(
+      _ maximizedPanelID: PanelID?,
+      panelIDs: [PanelID]
+    ) -> PanelID? {
+      guard let maximizedPanelID, panelIDs.contains(maximizedPanelID) else {
+        return nil
+      }
+      return maximizedPanelID
     }
   }
 

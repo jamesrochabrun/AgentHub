@@ -13,6 +13,7 @@ public enum AgentHubGhosttyTerminalShortcut: Equatable {
   case openTab
   case openPane(axis: TerminalSplitAxis)
   case closePanel
+  case toggleMaximizedPanel
   case focusPanel(TerminalPanelNavigationDirection)
   case selectTab(TerminalTabNavigationDirection)
 
@@ -66,6 +67,7 @@ public enum AgentHubGhosttyTerminalShortcut: Equatable {
       switch key {
       case "d": return .openPane(axis: .vertical)
       case "g": return .searchPrevious
+      case "m": return .toggleMaximizedPanel
       case "w": return .closePanel
       default: return nil
       }

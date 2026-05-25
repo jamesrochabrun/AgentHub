@@ -9,6 +9,8 @@ import SwiftUI
 @MainActor
 struct AgentHubGhosttyTerminalPaneHeader: View {
   let panel: TerminalPanel
+  let isMaximized: Bool
+  let canMaximize: Bool
   let canSplit: Bool
   let canClosePanel: Bool
   let canCloseTab: (TerminalTab) -> Bool
@@ -17,6 +19,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
   let onOpenTab: () -> Void
   let onSplitRight: () -> Void
   let onSplitBelow: () -> Void
+  let onToggleMaximizedPanel: () -> Void
   let onClosePanel: () -> Void
 
   var body: some View {
@@ -45,6 +48,19 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
             help: "New terminal tab",
             action: onOpenTab
           )
+
+          if canMaximize {
+            AgentHubGhosttyTerminalToolbarButton(
+              title: isMaximized ? "Restore Pane" : "Maximize Pane",
+              systemImage: isMaximized
+                ? "arrow.down.right.and.arrow.up.left"
+                : "arrow.up.left.and.arrow.down.right",
+              help: isMaximized
+                ? "Restore terminal panes (Cmd+Shift+M)"
+                : "Maximize terminal pane (Cmd+Shift+M)",
+              action: onToggleMaximizedPanel
+            )
+          }
 
           AgentHubGhosttyTerminalToolbarButton(
             title: "Split Right",
