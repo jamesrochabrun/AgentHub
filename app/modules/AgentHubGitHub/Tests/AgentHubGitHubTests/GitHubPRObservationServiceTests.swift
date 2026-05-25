@@ -58,6 +58,18 @@ private func makeObservationConfiguration(
   )
 }
 
+private actor ObservationSnapshotCollector {
+  private var values: [GitHubPRObservationSnapshot] = []
+
+  func append(_ snapshot: GitHubPRObservationSnapshot) {
+    values.append(snapshot)
+  }
+
+  func snapshots() -> [GitHubPRObservationSnapshot] {
+    values
+  }
+}
+
 @Suite("GitHubPRObservationService")
 struct GitHubPRObservationServiceTests {
 
@@ -107,6 +119,106 @@ struct GitHubPRObservationServiceTests {
     #expect(service.getChecksCallCount == 1)
     #expect(service.getChecksPRNumber == 42)
 
+    await observer.unsubscribe(subscriptionID: subscription.id)
+  }
+
+  @Test("current branch PR publishes when no checks are reported")
+  func currentBranchPRPublishesWhenNoChecksAreReported() async {
+    let service = MockGitHubCLIService()
+    service.currentBranchPRResult = makeObservedPR(number: 88)
+    service.checksResult = []
+    let observer = GitHubPRObservationService(
+      service: service,
+      configuration: makeObservationConfiguration()
+    )
+    let target = GitHubPRObservationTarget.currentBranch(projectPath: "/tmp/repo", branchName: "feature")
+    let collector = ObservationSnapshotCollector()
+
+    let subscription = await observer.subscribe(to: target, refreshOnSubscribe: false)
+    let collectionTask = Task {
+      for await snapshot in subscription.updates {
+        await collector.append(snapshot)
+      }
+    }
+    await observer.recordActivity(for: target, at: .now)
+    try? await Task.sleep(for: .milliseconds(30))
+
+    let readySnapshot = await collector.snapshots().last { $0.state == .ready }
+    #expect(readySnapshot?.pullRequest?.number == 88)
+    #expect(readySnapshot?.checks.isEmpty == true)
+    #expect(readySnapshot?.ciSummary.total == 0)
+    #expect(service.getCurrentBranchPRCallCount == 1)
+    #expect(service.getChecksCallCount == 1)
+
+    collectionTask.cancel()
+    await observer.unsubscribe(subscriptionID: subscription.id)
+  }
+
+  @Test("current branch PR still publishes when checks fail")
+  func currentBranchPRStillPublishesWhenChecksFail() async {
+    let service = MockGitHubCLIService()
+    service.currentBranchPRResult = makeObservedPR(number: 89)
+    service.checksResults = [.failure(GitHubCLIError.timeout)]
+    let observer = GitHubPRObservationService(
+      service: service,
+      configuration: makeObservationConfiguration()
+    )
+    let target = GitHubPRObservationTarget.currentBranch(projectPath: "/tmp/repo", branchName: "feature")
+    let collector = ObservationSnapshotCollector()
+
+    let subscription = await observer.subscribe(to: target, refreshOnSubscribe: false)
+    let collectionTask = Task {
+      for await snapshot in subscription.updates {
+        await collector.append(snapshot)
+      }
+    }
+    await observer.recordActivity(for: target, at: .now)
+    try? await Task.sleep(for: .milliseconds(30))
+
+    let degradedSnapshot = await collector.snapshots().last { snapshot in
+      if case .error = snapshot.state { return true }
+      return false
+    }
+    #expect(degradedSnapshot?.pullRequest?.number == 89)
+    #expect(degradedSnapshot?.checks.isEmpty == true)
+    #expect(service.getCurrentBranchPRCallCount == 1)
+    #expect(service.getChecksCallCount == 1)
+
+    collectionTask.cancel()
+    await observer.unsubscribe(subscriptionID: subscription.id)
+  }
+
+  @Test("selected PR still publishes metadata when checks fail")
+  func selectedPRStillPublishesMetadataWhenChecksFail() async {
+    let service = MockGitHubCLIService()
+    service.pullRequestResult = makeObservedPR(number: 90)
+    service.checksResults = [.failure(GitHubCLIError.timeout)]
+    let observer = GitHubPRObservationService(
+      service: service,
+      configuration: makeObservationConfiguration()
+    )
+    let target = GitHubPRObservationTarget.pullRequest(projectPath: "/tmp/repo", number: 90)
+    let collector = ObservationSnapshotCollector()
+
+    let subscription = await observer.subscribe(to: target, refreshOnSubscribe: false)
+    let collectionTask = Task {
+      for await snapshot in subscription.updates {
+        await collector.append(snapshot)
+      }
+    }
+    await observer.recordActivity(for: target, at: .now)
+    try? await Task.sleep(for: .milliseconds(30))
+
+    let degradedSnapshot = await collector.snapshots().last { snapshot in
+      if case .error = snapshot.state { return true }
+      return false
+    }
+    #expect(degradedSnapshot?.pullRequest?.number == 90)
+    #expect(degradedSnapshot?.checks.isEmpty == true)
+    #expect(service.getPullRequestCallCount == 1)
+    #expect(service.getChecksCallCount == 1)
+
+    collectionTask.cancel()
     await observer.unsubscribe(subscriptionID: subscription.id)
   }
 

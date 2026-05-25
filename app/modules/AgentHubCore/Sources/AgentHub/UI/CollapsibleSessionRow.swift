@@ -98,8 +98,8 @@ struct CollapsibleSessionRow: View {
         // Row 1: name + provider + status + time
         HStack(spacing: 6) {
           Text(displayName)
-            .font(.secondaryDefault)
-            .foregroundColor(.primary)
+            .font(.secondarySmall)
+            .foregroundColor(.secondary.opacity(0.7))
             .lineLimit(1)
             .layoutPriority(1)
 
@@ -128,8 +128,8 @@ struct CollapsibleSessionRow: View {
         HStack(spacing: 0) {
           if let message = session.firstMessage, !message.isEmpty {
             Text(message)
-              .font(.secondarySmall)
-              .foregroundColor(.secondary.opacity(0.7))
+              .font(.secondaryDefault)
+              .foregroundColor(.primary)
               .lineLimit(1)
           }
 

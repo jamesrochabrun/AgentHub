@@ -46,6 +46,7 @@ public actor GitHubCLIService {
   private static let commandTimeout: TimeInterval = 30.0
   static let checksJSONFields = "name,state,link,bucket"
   static let noPullRequestsFoundMessageFragment = "no pull requests found"
+  static let noChecksReportedMessageFragment = "no checks reported"
 
   /// Cached gh executable path
   private var ghPath: String?
@@ -427,8 +428,20 @@ public actor GitHubCLIService {
     }
     args.append(contentsOf: ["--json", Self.checksJSONFields])
 
-    let json = try await runGH(args, at: repoPath, allowedExitCodes: [0, 8])
-    return try Self.decodeCheckRuns(json)
+    do {
+      let json = try await runGH(
+        args,
+        at: repoPath,
+        allowedExitCodes: [0, 8],
+        quietFailureMessages: [Self.noChecksReportedMessageFragment]
+      )
+      return try Self.decodeCheckRuns(json)
+    } catch let error as GitHubCLIError {
+      if case .commandFailed(let message) = error, Self.isNoChecksReportedMessage(message) {
+        return []
+      }
+      throw error
+    }
   }
 
   // MARK: - Notifications / Workflow Runs
@@ -594,6 +607,10 @@ public actor GitHubCLIService {
 
   static func isNoCurrentBranchPRMessage(_ message: String) -> Bool {
     message.localizedCaseInsensitiveContains(noPullRequestsFoundMessageFragment)
+  }
+
+  static func isNoChecksReportedMessage(_ message: String) -> Bool {
+    message.localizedCaseInsensitiveContains(noChecksReportedMessageFragment)
   }
 
   private static func shouldLogFailureQuietly(

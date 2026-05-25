@@ -465,30 +465,41 @@ public actor GitHubPRObservationService: GitHubPRObservationServiceProtocol {
             lastRefreshedAt: .now
           ))
         }
-        let checks = try await service.getChecks(prNumber: pullRequest.number, at: projectPath)
+        let checksResult = await fetchChecks(prNumber: pullRequest.number, at: projectPath)
         return .success(GitHubPRObservationSnapshot(
           target: target,
           pullRequest: pullRequest,
-          checks: checks,
-          state: .ready,
+          checks: checksResult.checks,
+          state: checksResult.state,
           lastRefreshedAt: .now
         ))
 
       case .pullRequest(let projectPath, let number):
-        async let pullRequest = service.getPullRequest(number: number, at: projectPath)
-        async let checks = service.getChecks(prNumber: number, at: projectPath)
-        let (resolvedPullRequest, resolvedChecks) = try await (pullRequest, checks)
+        let resolvedPullRequest = try await service.getPullRequest(number: number, at: projectPath)
+        let checksResult = await fetchChecks(prNumber: number, at: projectPath)
         let snapshot = GitHubPRObservationSnapshot(
           target: target,
           pullRequest: resolvedPullRequest,
-          checks: resolvedChecks,
-          state: .ready,
+          checks: checksResult.checks,
+          state: checksResult.state,
           lastRefreshedAt: .now
         )
         return .success(snapshot)
       }
     } catch {
       return .failure(error)
+    }
+  }
+
+  private func fetchChecks(
+    prNumber: Int,
+    at projectPath: String
+  ) async -> (checks: [GitHubCheckRun], state: GitHubPRObservationState) {
+    do {
+      let checks = try await service.getChecks(prNumber: prNumber, at: projectPath)
+      return (checks, .ready)
+    } catch {
+      return ([], .error(error.localizedDescription))
     }
   }
 
