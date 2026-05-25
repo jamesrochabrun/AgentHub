@@ -12,6 +12,7 @@ import SwiftUI
 struct WebPreviewQueuedContextView: View {
   let queuedItems: [WebPreviewQueuedUpdate]
   let isQueueing: Bool
+  let isSendShortcutEnabled: Bool
   let failureMessage: String?
   let onRemoveItem: (UUID) -> Void
   let onSendAll: () -> Void
@@ -63,12 +64,7 @@ struct WebPreviewQueuedContextView: View {
 
         Spacer()
 
-        Button("Send") {
-          onSendAll()
-        }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .help("Send queued updates")
+        sendButton
 
         Button("Clear") {
           onClearAll()
@@ -87,6 +83,26 @@ struct WebPreviewQueuedContextView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
+  }
+
+  @ViewBuilder
+  private var sendButton: some View {
+    let button = Button(action: onSendAll) {
+      HStack(spacing: 5) {
+        Text("Send")
+        Text("⌘ ↩")
+          .font(.system(.caption, design: .monospaced))
+      }
+    }
+    .buttonStyle(.borderedProminent)
+    .controlSize(.small)
+    .help("Send queued updates (Command-Return)")
+
+    if isSendShortcutEnabled {
+      button.keyboardShortcut(.return, modifiers: .command)
+    } else {
+      button
+    }
   }
 
   private var queuedItemList: some View {

@@ -74,9 +74,6 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
 
-  @AppStorage(AgentHubDefaults.webPreviewAdvancedEditingEnabled)
-  private var webPreviewAdvancedEditingEnabled: Bool = true
-
   @AppStorage(AgentHubDefaults.webPreviewDesignToolsMode)
   private var webPreviewDesignToolsModeRawValue: String = WebPreviewDesignToolsMode.inline.rawValue
 
@@ -382,23 +379,10 @@ public struct SettingsView: View {
 
       Section {
         settingsToggle(
-          title: "Enable web preview design tools",
-          description: "Shows the debug-only Design/Code/Console editing surface in web preview",
-          isOn: $webPreviewAdvancedEditingEnabled
+          title: "Enable web preview design panel",
+          description: "Uses the side-panel Design/Code/Console editor instead of the inline toolbar",
+          isOn: webPreviewDesignPanelBinding
         )
-
-        if webPreviewAdvancedEditingEnabled {
-          Picker("Design tools mode", selection: $webPreviewDesignToolsModeRawValue) {
-            ForEach(WebPreviewDesignToolsMode.allCases) { mode in
-              Text(mode.settingsLabel).tag(mode.rawValue)
-            }
-          }
-          .pickerStyle(.segmented)
-
-          Text(selectedWebPreviewDesignToolsMode.settingsDescription)
-            .font(.caption)
-            .foregroundColor(.secondary)
-        }
 
         Picker("Inspector payload", selection: webPreviewInspectorDataLevelBinding) {
           ForEach(webPreviewInspectorDataLevels, id: \.rawValue) { level in
@@ -412,7 +396,7 @@ public struct SettingsView: View {
       } header: {
         Text("Web Preview")
       } footer: {
-        Text("These controls only affect debug builds. Production users never see the design editing surface. Source edit mode still upgrades capture to Full when enabled.")
+        Text("Inline source edit tools are always available. This toggle enables the developer side panel.")
       }
     }
     .formStyle(.grouped)
@@ -628,14 +612,21 @@ public struct SettingsView: View {
     ElementInspectorDataLevel(rawValue: webPreviewInspectorDataLevelRawValue) ?? .regular
   }
 
-  private var selectedWebPreviewDesignToolsMode: WebPreviewDesignToolsMode {
-    WebPreviewDesignToolsMode(rawValue: webPreviewDesignToolsModeRawValue) ?? .inline
-  }
-
   private var webPreviewInspectorDataLevelBinding: Binding<ElementInspectorDataLevel> {
     Binding(
       get: { selectedWebPreviewInspectorDataLevel },
       set: { webPreviewInspectorDataLevelRawValue = $0.rawValue }
+    )
+  }
+
+  private var webPreviewDesignPanelBinding: Binding<Bool> {
+    Binding(
+      get: { WebPreviewDesignToolsMode(rawValue: webPreviewDesignToolsModeRawValue) == .panel },
+      set: {
+        webPreviewDesignToolsModeRawValue = $0
+          ? WebPreviewDesignToolsMode.panel.rawValue
+          : WebPreviewDesignToolsMode.inline.rawValue
+      }
     )
   }
 }

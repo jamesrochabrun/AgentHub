@@ -2,7 +2,7 @@
 //  WebPreviewDesignToolsMode.swift
 //  AgentHub
 //
-//  Presentation mode for the debug web preview design editing surface.
+//  Presentation mode for the web preview design editing surface.
 //
 
 import Foundation

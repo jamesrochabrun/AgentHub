@@ -30,11 +30,7 @@ private final class WebPreviewConsoleMessageHandler: NSObject, WKScriptMessageHa
 }
 
 private enum WebPreviewAdvancedEditing {
-#if DEBUG
   static let isSupported = true
-#else
-  static let isSupported = false
-#endif
 }
 
 private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
@@ -161,9 +157,6 @@ public struct WebPreviewView: View {
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
 
-  @AppStorage(AgentHubDefaults.webPreviewAdvancedEditingEnabled)
-  private var webPreviewAdvancedEditingEnabled: Bool = true
-
   @AppStorage(AgentHubDefaults.webPreviewDesignToolsMode)
   private var webPreviewDesignToolsModeRawValue: String = WebPreviewDesignToolsMode.inline.rawValue
 
@@ -225,28 +218,28 @@ public struct WebPreviewView: View {
   }
 
   private var isAdvancedEditingEnabled: Bool {
-#if DEBUG
-    WebPreviewAdvancedEditing.isSupported && webPreviewAdvancedEditingEnabled
-#else
-    false
-#endif
+    WebPreviewAdvancedEditing.isSupported
   }
 
   private var showsInspectorRail: Bool {
     isAdvancedEditingEnabled
       && inspectBehavior == .edit
-      && webPreviewDesignToolsMode == .panel
+      && usesPanelDesignTools
       && inspectorViewModel.isPanelVisible
   }
 
   private var showsInlineDesignToolbar: Bool {
     isAdvancedEditingEnabled
       && inspectBehavior == .edit
-      && webPreviewDesignToolsMode == .inline
+      && !usesPanelDesignTools
   }
 
-  private var webPreviewDesignToolsMode: WebPreviewDesignToolsMode {
-    WebPreviewDesignToolsMode(rawValue: webPreviewDesignToolsModeRawValue) ?? .inline
+  private var usesPanelDesignTools: Bool {
+#if DEBUG
+    WebPreviewDesignToolsMode(rawValue: webPreviewDesignToolsModeRawValue) == .panel
+#else
+    false
+#endif
   }
 
   private var latestLocalhostReloadSignal: WebPreviewLocalhostReloadSignal? {
@@ -350,10 +343,6 @@ public struct WebPreviewView: View {
           await inspectorViewModel.closePanel()
         }
       }
-    }
-    .onChange(of: webPreviewAdvancedEditingEnabled) { _, _ in
-      guard !isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
-      inspectBehavior = .input
     }
     .onChange(of: selectedFilePath) { _, newPath in
       if let path = newPath {
@@ -1350,11 +1339,17 @@ public struct WebPreviewView: View {
           onSubmit: { element, instruction in
             handleInspectUpdateSubmit(element: element, instruction: instruction)
           },
+          onSubmitAndSend: { element, instruction in
+            handleInspectUpdateSubmitAndSend(element: element, instruction: instruction)
+          },
           onContextSelection: { element in
             handleContextSelection(element)
           },
           onCropSubmit: { rect, elements, instruction in
             handleCropSubmit(rect: rect, elements: elements, instruction: instruction)
+          },
+          onCropSubmitAndSend: { rect, elements, instruction in
+            handleCropSubmitAndSend(rect: rect, elements: elements, instruction: instruction)
           },
           onOverlayHoverChange: { hovering in
             handleInspectOverlayHover(hovering)
@@ -1369,6 +1364,7 @@ public struct WebPreviewView: View {
     WebPreviewQueuedContextView(
       queuedItems: queuedContext.items,
       isQueueing: inspectState.isActive && inspectBehavior != .edit,
+      isSendShortcutEnabled: !inspectState.isInputShowing && !inspectState.isCropInputShowing,
       failureMessage: queueSendFailureMessage,
       onRemoveItem: removeQueuedContextElement,
       onSendAll: sendQueuedUpdates,
@@ -1592,7 +1588,28 @@ public struct WebPreviewView: View {
   }
 
   private func handleInspectUpdateSubmit(element: ElementInspectorData, instruction: String) {
+    queueInspectUpdate(element: element, instruction: instruction)
+  }
+
+  private func handleInspectUpdateSubmitAndSend(element: ElementInspectorData, instruction: String) {
     queueSendFailureMessage = nil
+    var queue = WebPreviewContextQueue()
+    queue.append(element, instruction: instruction)
+
+    guard sendWebPreviewQueue(queue) else {
+      queueInspectUpdate(element: element, instruction: instruction, resetFailure: false)
+      return
+    }
+  }
+
+  private func queueInspectUpdate(
+    element: ElementInspectorData,
+    instruction: String,
+    resetFailure: Bool = true
+  ) {
+    if resetFailure {
+      queueSendFailureMessage = nil
+    }
     if let viewModel {
       viewModel.queueWebPreviewUpdate(element, instruction: instruction, for: session.id)
     } else {
@@ -1602,31 +1619,78 @@ public struct WebPreviewView: View {
 
   private func handleCropSubmit(rect: CGRect, elements: [ElementInspectorData], instruction: String) {
     Task { @MainActor in
-      var screenshotPath: String? = nil
-      if let webView = previewWebView {
-        if let image = try? await ElementSnapshotCapture.captureSnapshot(of: rect, in: webView) {
-          screenshotPath = saveCropScreenshot(image, sessionId: session.id)
-        }
-      }
+      let screenshotPath = await captureCropScreenshotPath(for: rect)
       clearCropSelection()
-      if let viewModel {
-        queueSendFailureMessage = nil
-        viewModel.queueWebPreviewCropUpdate(
-          cropRect: rect,
+      queueCropUpdate(
+        rect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath
+      )
+    }
+  }
+
+  private func handleCropSubmitAndSend(rect: CGRect, elements: [ElementInspectorData], instruction: String) {
+    Task { @MainActor in
+      queueSendFailureMessage = nil
+      let screenshotPath = await captureCropScreenshotPath(for: rect)
+      clearCropSelection()
+
+      var queue = WebPreviewContextQueue()
+      queue.appendCrop(
+        cropRect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath
+      )
+
+      guard sendWebPreviewQueue(queue) else {
+        queueCropUpdate(
+          rect: rect,
           elements: elements,
           instruction: instruction,
           screenshotPath: screenshotPath,
-          for: session.id
+          resetFailure: false
         )
-      } else {
-        queueSendFailureMessage = nil
-        localContextQueue.appendCrop(
-          cropRect: rect,
-          elements: elements,
-          instruction: instruction,
-          screenshotPath: screenshotPath
-        )
+        return
       }
+    }
+  }
+
+  @MainActor
+  private func captureCropScreenshotPath(for rect: CGRect) async -> String? {
+    guard let webView = previewWebView,
+          let image = try? await ElementSnapshotCapture.captureSnapshot(of: rect, in: webView) else {
+      return nil
+    }
+    return saveCropScreenshot(image, sessionId: session.id)
+  }
+
+  private func queueCropUpdate(
+    rect: CGRect,
+    elements: [ElementInspectorData],
+    instruction: String,
+    screenshotPath: String?,
+    resetFailure: Bool = true
+  ) {
+    if resetFailure {
+      queueSendFailureMessage = nil
+    }
+    if let viewModel {
+      viewModel.queueWebPreviewCropUpdate(
+        cropRect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath,
+        for: session.id
+      )
+    } else {
+      localContextQueue.appendCrop(
+        cropRect: rect,
+        elements: elements,
+        instruction: instruction,
+        screenshotPath: screenshotPath
+      )
     }
   }
 
@@ -1668,35 +1732,37 @@ public struct WebPreviewView: View {
   }
 
   private func sendQueuedUpdates() {
-    guard let prompt = queuedContext.composedContextPrompt() else {
-      return
+    guard sendWebPreviewQueue(queuedContext) else { return }
+    clearQueuedContext()
+  }
+
+  @discardableResult
+  private func sendWebPreviewQueue(_ queue: WebPreviewContextQueue) -> Bool {
+    guard let prompt = queue.composedContextPrompt() else {
+      return false
     }
 
-    // Prepend screenshot paths so Claude Code detects them as image
-    // attachments (same mechanism as drag-and-drop file paths).
-    let screenshotPaths = queuedContext.screenshotPaths()
-    let finalPrompt: String
-    if screenshotPaths.isEmpty {
-      finalPrompt = prompt
-    } else {
-      let pathsPrefix = screenshotPaths
-        .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
-        .joined(separator: " ")
-      finalPrompt = "\(pathsPrefix) \(prompt)"
-    }
+    let finalPrompt = terminalPrompt(for: prompt, screenshotPaths: queue.screenshotPaths())
 
     if let onQueuedSubmit {
       guard onQueuedSubmit(finalPrompt, session) else {
         queueSendFailureMessage = "Could not find an active terminal for this session. Keep the preview open and try again when the terminal is ready."
-        return
+        return false
       }
-      clearQueuedContext()
-      return
+      return true
     }
 
-    guard let onInspectSubmit else { return }
-    clearQueuedContext()
+    guard let onInspectSubmit else { return false }
     onInspectSubmit(finalPrompt, session)
+    return true
+  }
+
+  private func terminalPrompt(for prompt: String, screenshotPaths: [String]) -> String {
+    guard !screenshotPaths.isEmpty else { return prompt }
+    let pathsPrefix = screenshotPaths
+      .map { $0.contains(" ") ? "\"\($0)\"" : $0 }
+      .joined(separator: " ")
+    return "\(pathsPrefix) \(prompt)"
   }
 
   private func removeQueuedContextElement(_ elementID: UUID) {
