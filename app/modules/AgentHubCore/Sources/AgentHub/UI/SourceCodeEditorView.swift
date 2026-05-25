@@ -88,7 +88,7 @@ private struct SourceCodeEditorHost: View {
   let onIdleTextSnapshot: (String) -> Void
 
   @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
-  private var sourceEditorMinimapEnabled: Bool = false
+  private var sourceEditorMinimapEnabled: Bool = true
   @AppStorage(AgentHubDefaults.sourceEditorWrapLinesEnabled)
   private var sourceEditorWrapLinesEnabled: Bool = true
   @Environment(\.colorScheme) private var colorScheme
