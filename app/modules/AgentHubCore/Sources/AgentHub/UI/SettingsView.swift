@@ -36,7 +36,7 @@ public struct SettingsView: View {
   private var terminalGhosttyConfigPath: String = ""
 
   @AppStorage(AgentHubDefaults.sourceEditorMinimapEnabled)
-  private var sourceEditorMinimapEnabled: Bool = false
+  private var sourceEditorMinimapEnabled: Bool = true
 
   @AppStorage(AgentHubDefaults.sourceEditorWrapLinesEnabled)
   private var sourceEditorWrapLinesEnabled: Bool = true
