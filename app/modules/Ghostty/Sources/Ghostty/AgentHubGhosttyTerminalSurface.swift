@@ -416,7 +416,13 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
     return TerminalWorkspaceSnapshot(
       panels: panels,
-      activePanelIndex: terminalSession.panels.firstIndex { $0.id == terminalSession.activePanelID } ?? 0
+      activePanelIndex: terminalSession.panels.firstIndex { $0.id == terminalSession.activePanelID } ?? 0,
+      splitLayout: currentSplitRoot().flatMap {
+        AgentHubGhosttySplitLayoutBuilder.snapshotNode(
+          from: $0,
+          panelIDs: terminalSession.panels.map(\.id)
+        )
+      }
     )
   }
 
@@ -435,8 +441,16 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
     resetToPrimaryAgentTab(in: terminalSession)
 
-    let panelSnapshots = normalizedPanelSnapshots(snapshot.panels)
+    let panelSnapshotEntries = normalizedPanelSnapshotEntries(snapshot.panels)
+    let panelSnapshots = panelSnapshotEntries.map(\.snapshot)
+    let normalizedIndexByOriginalIndex = Dictionary(
+      uniqueKeysWithValues: panelSnapshotEntries.enumerated().map { normalizedIndex, entry in
+        (entry.originalIndex, normalizedIndex)
+      }
+    )
+    let restoredSplitLayout = snapshot.splitLayout?.remappingPanelIndexes(normalizedIndexByOriginalIndex)
     var restoredPanelIDs: [TerminalPanelID] = [terminalSession.primaryPanelID]
+    var restoredPanelIDByIndex: [Int: TerminalPanelID] = [0: terminalSession.primaryPanelID]
     var restoredTabIDs: [[TerminalTabID]] = [[protectedAgentTabID ?? terminalSession.primaryPanel.activeTabID]]
 
     if let primarySnapshot = panelSnapshots.first {
@@ -447,7 +461,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       )
     }
 
-    for panelSnapshot in panelSnapshots.dropFirst() {
+    for (panelIndex, panelSnapshot) in panelSnapshots.enumerated().dropFirst() {
       guard terminalSession.canOpenPanel else { break }
       guard let firstAccessoryTab = firstRestorableAccessoryTab(in: panelSnapshot) else { continue }
       guard let configuration = configurationForRestoredAccessoryTab(firstAccessoryTab) else { continue }
@@ -464,6 +478,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         }
         configureControllerHooks(for: panel.activeTab?.controller)
         restoredPanelIDs.append(panel.id)
+        restoredPanelIDByIndex[panelIndex] = panel.id
 
         var tabIDs = panel.activeTab.map { [$0.id] } ?? []
         tabIDs = restoreShellTabs(
@@ -479,7 +494,17 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     terminalSession.showPrimaryAndAuxiliaries()
-    splitRoot = terminalSession.splitLayout?.root ?? .panel(terminalSession.primaryPanelID)
+    if let restoredSplitLayout,
+       let restoredRoot = AgentHubGhosttySplitLayoutBuilder.terminalNode(
+         from: restoredSplitLayout,
+         panelIDByIndex: restoredPanelIDByIndex
+       ),
+       Set(restoredRoot.panelIDs) == Set(restoredPanelIDs),
+       Set(restoredRoot.panelIDs).count == restoredRoot.panelIDs.count {
+      splitRoot = restoredRoot
+    } else {
+      splitRoot = terminalSession.splitLayout?.root ?? .panel(terminalSession.primaryPanelID)
+    }
     refreshWorkspaceRootView()
     restoreActiveSelection(
       from: snapshot,
@@ -848,12 +873,18 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     return expandedPath
   }
 
-  private func normalizedPanelSnapshots(
+  private func normalizedPanelSnapshotEntries(
     _ panels: [TerminalWorkspacePanelSnapshot]
-  ) -> [TerminalWorkspacePanelSnapshot] {
+  ) -> [(originalIndex: Int, snapshot: TerminalWorkspacePanelSnapshot)] {
     let primary = panels.first { $0.role == .primary } ?? panels.first
-    let auxiliaries = panels.filter { $0.role == .auxiliary }
-    return ([primary].compactMap { $0 } + auxiliaries).prefix(4).map { $0 }
+    let primaryIndex = primary.flatMap { primary in
+      panels.firstIndex { $0 == primary }
+    }
+    let primaryEntry = primaryIndex.map { (originalIndex: $0, snapshot: panels[$0]) }
+    let auxiliaries = panels.enumerated()
+      .filter { $0.element.role == .auxiliary && $0.offset != primaryIndex }
+      .map { (originalIndex: $0.offset, snapshot: $0.element) }
+    return Array(([primaryEntry].compactMap { $0 } + auxiliaries).prefix(4))
   }
 
   private func resetToPrimaryAgentTab(in terminalSession: TerminalSession) {

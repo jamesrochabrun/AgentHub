@@ -49,12 +49,42 @@ struct RegularTerminalWorkspaceTests {
       keyCode: 123,
       charactersIgnoringModifiers: nil,
       modifierFlags: [.command, .numericPad]
+    ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 123,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad]
     ) == .focusPanel(.left))
 
     #expect(RegularTerminalShortcut.action(
       keyCode: 124,
       charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad]
+    ) == .focusPanel(.right))
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 125,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad]
+    ) == .focusPanel(.down))
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 126,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad]
+    ) == .focusPanel(.up))
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 124,
+      charactersIgnoringModifiers: nil,
       modifierFlags: [.command, .shift, .numericPad]
+    ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 124,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .shift, .numericPad]
     ) == .selectTab(.next))
 
     #expect(RegularTerminalShortcut.action(
@@ -79,6 +109,20 @@ struct RegularTerminalWorkspaceTests {
       modifierFlags: [.command, .shift, .numericPad],
       terminalTextInputActive: true
     ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 123,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad],
+      terminalTextInputActive: true
+    ) == .focusPanel(.left))
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 124,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .shift, .numericPad],
+      terminalTextInputActive: true
+    ) == .selectTab(.next))
 
     #expect(RegularTerminalShortcut.action(
       keyCode: 51,
@@ -137,6 +181,41 @@ struct RegularTerminalWorkspaceTests {
     #expect(result == .split(axis: .horizontal, children: [.panel(primary), .panel(shell2)]))
   }
 
+  @Test("Split layouts convert to persisted panel indexes")
+  func splitLayoutsConvertToPersistedPanelIndexes() {
+    let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+    let shell1 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let shell2 = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+    let root = RegularTerminalSplitNode.split(
+      axis: .horizontal,
+      children: [
+        .panel(primary),
+        .split(axis: .vertical, children: [.panel(shell1), .panel(shell2)])
+      ]
+    )
+
+    let snapshotNode = RegularTerminalSplitLayoutBuilder.snapshotNode(
+      from: root,
+      panelIDs: [primary, shell1, shell2]
+    )
+
+    #expect(
+      snapshotNode == .split(
+        axis: .horizontal,
+        children: [
+          .panel(index: 0),
+          .split(axis: .vertical, children: [.panel(index: 1), .panel(index: 2)])
+        ]
+      )
+    )
+    #expect(
+      RegularTerminalSplitLayoutBuilder.splitNode(
+        from: snapshotNode!,
+        panelIDs: [primary, shell1, shell2]
+      ) == root
+    )
+  }
+
   @MainActor
   @Test("Panel kit opens tabs and panels without replacing existing payloads")
   func panelKitOpensTabsAndPanels() {
@@ -157,6 +236,33 @@ struct RegularTerminalWorkspaceTests {
     #expect(session.primaryPanel?.tabs.map(\.payload) == ["agent", "shell-tab"])
     #expect(shellPanel?.activeTab?.payload == "shell-panel")
     #expect(session.activePanelID == shellPanel?.id)
+  }
+
+  @MainActor
+  @Test("Panel kit restores a persisted split root")
+  func panelKitRestoresPersistedSplitRoot() {
+    let agent = TerminalPanelKit.Tab(role: .agent, payload: "agent")
+    let session = TerminalPanelKit.Session(primaryTab: agent)
+    let shell1 = TerminalPanelKit.Tab(role: .shell, payload: "shell-1")
+    let panel1 = session.openPanel(with: shell1, beside: session.primaryPanelID, axis: .horizontal)
+    let shell2 = TerminalPanelKit.Tab(role: .shell, payload: "shell-2")
+    let panel2 = session.openPanel(with: shell2, beside: session.primaryPanelID, axis: .horizontal)
+
+    guard let panel1, let panel2 else {
+      Issue.record("Expected panels to open")
+      return
+    }
+
+    let root = RegularTerminalSplitNode.split(
+      axis: .horizontal,
+      children: [
+        .panel(session.primaryPanelID),
+        .split(axis: .vertical, children: [.panel(panel1.id), .panel(panel2.id)])
+      ]
+    )
+
+    #expect(session.restoreSplitRoot(root))
+    #expect(session.currentSplitRoot() == root)
   }
 
   @MainActor

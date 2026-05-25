@@ -23,18 +23,20 @@ struct AgentHubGhosttyTerminalShortcutTests {
     expectAction(.closePanel, key: "w", flags: [.command, .shift])
   }
 
-  @Test("Command arrow shortcuts focus panes")
+  @Test("Control-command arrow shortcuts focus panes")
   func paneFocusShortcuts() {
-    expectFocusPanel(.left, keyCode: 123, flags: [.command, .numericPad])
-    expectFocusPanel(.right, keyCode: 124, flags: [.command, .numericPad])
-    expectFocusPanel(.down, keyCode: 125, flags: [.command, .numericPad])
-    expectFocusPanel(.up, keyCode: 126, flags: [.command, .numericPad])
+    expectNoAction(keyCode: 123, flags: [.command, .numericPad])
+    expectFocusPanel(.left, keyCode: 123, flags: [.command, .control, .numericPad])
+    expectFocusPanel(.right, keyCode: 124, flags: [.command, .control, .numericPad])
+    expectFocusPanel(.down, keyCode: 125, flags: [.command, .control, .numericPad])
+    expectFocusPanel(.up, keyCode: 126, flags: [.command, .control, .numericPad])
   }
 
-  @Test("Shift-command arrow shortcuts select tabs")
+  @Test("Control-shift-command arrow shortcuts select tabs")
   func tabSelectionShortcuts() {
-    expectSelectTab(.previous, keyCode: 123, flags: [.command, .shift, .numericPad])
-    expectSelectTab(.next, keyCode: 124, flags: [.command, .shift, .numericPad])
+    expectNoAction(keyCode: 123, flags: [.command, .shift, .numericPad])
+    expectSelectTab(.previous, keyCode: 123, flags: [.command, .control, .shift, .numericPad])
+    expectSelectTab(.next, keyCode: 124, flags: [.command, .control, .shift, .numericPad])
   }
 }
 
@@ -60,6 +62,19 @@ private func expectNoAction(
   let action = AgentHubGhosttyTerminalShortcut.action(
     keyCode: 0,
     charactersIgnoringModifiers: key,
+    modifierFlags: flags
+  )
+  #expect(action == nil, sourceLocation: sourceLocation)
+}
+
+private func expectNoAction(
+  keyCode: UInt16,
+  flags: NSEvent.ModifierFlags,
+  sourceLocation: SourceLocation = #_sourceLocation
+) {
+  let action = AgentHubGhosttyTerminalShortcut.action(
+    keyCode: keyCode,
+    charactersIgnoringModifiers: nil,
     modifierFlags: flags
   )
   #expect(action == nil, sourceLocation: sourceLocation)

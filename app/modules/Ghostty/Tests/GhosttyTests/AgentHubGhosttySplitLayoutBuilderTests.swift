@@ -87,4 +87,39 @@ struct AgentHubGhosttySplitLayoutBuilderTests {
 
     #expect(result == .split(axis: .vertical, children: [.panel(primary), .panel(shell)]))
   }
+
+  @Test("Split layouts convert to persisted panel indexes")
+  func splitLayoutsConvertToPersistedPanelIndexes() {
+    let primary = TerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+    let shell1 = TerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+    let shell2 = TerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+    let root = TerminalSplitLayout.Node.split(
+      axis: .horizontal,
+      children: [
+        .panel(primary),
+        .split(axis: .vertical, children: [.panel(shell1), .panel(shell2)])
+      ]
+    )
+
+    let snapshotNode = AgentHubGhosttySplitLayoutBuilder.snapshotNode(
+      from: root,
+      panelIDs: [primary, shell1, shell2]
+    )
+
+    #expect(
+      snapshotNode == .split(
+        axis: .horizontal,
+        children: [
+          .panel(index: 0),
+          .split(axis: .vertical, children: [.panel(index: 1), .panel(index: 2)])
+        ]
+      )
+    )
+    #expect(
+      AgentHubGhosttySplitLayoutBuilder.terminalNode(
+        from: snapshotNode!,
+        panelIDByIndex: [0: primary, 1: shell1, 2: shell2]
+      ) == root
+    )
+  }
 }

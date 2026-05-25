@@ -196,6 +196,8 @@ When the embedded Claude or Codex terminal is focused, text editing shortcuts fo
 | **Option+Right** | Move forward one word |
 | **Option+Backspace** | Delete previous word |
 | **Option+Forward Delete** | Delete next word |
+| **Cmd+Ctrl+Arrow** | Focus adjacent terminal pane |
+| **Cmd+Ctrl+Shift+Left / Right** | Select previous / next terminal tab |
 | **⌥↩ / ⌘↩ / ⇧↩** | Insert newline (configurable in Settings → Terminal) |
 
 ### Command Palette
