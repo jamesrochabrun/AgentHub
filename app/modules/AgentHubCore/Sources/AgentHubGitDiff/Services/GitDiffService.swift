@@ -101,7 +101,6 @@ public actor GitDiffService: GitDiffServiceProtocol {
       return state
     } catch {
       Self.logger.warning("libgit2 changedFiles fallback: \(error.localizedDescription)")
-      assertionFailure("libgit2 changedFiles fallback in \(mode.rawValue): \(error.localizedDescription)")
     }
 
     switch mode {
