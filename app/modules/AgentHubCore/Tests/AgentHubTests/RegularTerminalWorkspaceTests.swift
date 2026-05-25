@@ -49,12 +49,42 @@ struct RegularTerminalWorkspaceTests {
       keyCode: 123,
       charactersIgnoringModifiers: nil,
       modifierFlags: [.command, .numericPad]
+    ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 123,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad]
     ) == .focusPanel(.left))
 
     #expect(RegularTerminalShortcut.action(
       keyCode: 124,
       charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad]
+    ) == .focusPanel(.right))
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 125,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad]
+    ) == .focusPanel(.down))
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 126,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad]
+    ) == .focusPanel(.up))
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 124,
+      charactersIgnoringModifiers: nil,
       modifierFlags: [.command, .shift, .numericPad]
+    ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 124,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .shift, .numericPad]
     ) == .selectTab(.next))
 
     #expect(RegularTerminalShortcut.action(
@@ -79,6 +109,20 @@ struct RegularTerminalWorkspaceTests {
       modifierFlags: [.command, .shift, .numericPad],
       terminalTextInputActive: true
     ) == nil)
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 123,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .numericPad],
+      terminalTextInputActive: true
+    ) == .focusPanel(.left))
+
+    #expect(RegularTerminalShortcut.action(
+      keyCode: 124,
+      charactersIgnoringModifiers: nil,
+      modifierFlags: [.command, .control, .shift, .numericPad],
+      terminalTextInputActive: true
+    ) == .selectTab(.next))
 
     #expect(RegularTerminalShortcut.action(
       keyCode: 51,
