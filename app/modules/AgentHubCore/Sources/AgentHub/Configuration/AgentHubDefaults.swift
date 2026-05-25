@@ -137,13 +137,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let smartModeEnabled = "\(keyPrefix)features.smartModeEnabled"
 
-  /// Legacy preference for the old web preview design tools gate.
-  /// Inline source edit mode is now always available.
-  public static let webPreviewAdvancedEditingEnabled = "\(keyPrefix)developer.webPreviewAdvancedEditingEnabled"
-
-  /// Developer-only presentation override for web preview design tools
-  /// Type: String (default: "inline")
-  public static let webPreviewDesignToolsMode = "\(keyPrefix)developer.webPreviewDesignToolsMode"
+  /// Whether the debug web preview Design/Code/Console panel is enabled.
+  /// Inline source edit mode is always available.
+  /// Type: Bool (default: false)
+  public static let webPreviewDesignPanelEnabled = "\(keyPrefix)developer.webPreviewDesignPanelEnabled"
 
   /// Inspector payload level used by debug web preview inspect flows
   /// Type: String (default: "regular")

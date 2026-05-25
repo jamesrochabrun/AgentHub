@@ -74,8 +74,8 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
 
-  @AppStorage(AgentHubDefaults.webPreviewDesignToolsMode)
-  private var webPreviewDesignToolsModeRawValue: String = WebPreviewDesignToolsMode.inline.rawValue
+  @AppStorage(AgentHubDefaults.webPreviewDesignPanelEnabled)
+  private var webPreviewDesignPanelEnabled: Bool = false
 
   @Environment(ThemeManager.self) private var themeManager
   @Environment(\.colorScheme) private var colorScheme
@@ -381,7 +381,7 @@ public struct SettingsView: View {
         settingsToggle(
           title: "Enable web preview design panel",
           description: "Uses the side-panel Design/Code/Console editor instead of the inline toolbar",
-          isOn: webPreviewDesignPanelBinding
+          isOn: $webPreviewDesignPanelEnabled
         )
 
         Picker("Inspector payload", selection: webPreviewInspectorDataLevelBinding) {
@@ -619,16 +619,6 @@ public struct SettingsView: View {
     )
   }
 
-  private var webPreviewDesignPanelBinding: Binding<Bool> {
-    Binding(
-      get: { WebPreviewDesignToolsMode(rawValue: webPreviewDesignToolsModeRawValue) == .panel },
-      set: {
-        webPreviewDesignToolsModeRawValue = $0
-          ? WebPreviewDesignToolsMode.panel.rawValue
-          : WebPreviewDesignToolsMode.inline.rawValue
-      }
-    )
-  }
 }
 
 private extension ElementInspectorDataLevel {

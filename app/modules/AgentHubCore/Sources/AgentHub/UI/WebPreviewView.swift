@@ -157,8 +157,8 @@ public struct WebPreviewView: View {
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
 
-  @AppStorage(AgentHubDefaults.webPreviewDesignToolsMode)
-  private var webPreviewDesignToolsModeRawValue: String = WebPreviewDesignToolsMode.inline.rawValue
+  @AppStorage(AgentHubDefaults.webPreviewDesignPanelEnabled)
+  private var webPreviewDesignPanelEnabled: Bool = false
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -236,7 +236,7 @@ public struct WebPreviewView: View {
 
   private var usesPanelDesignTools: Bool {
 #if DEBUG
-    WebPreviewDesignToolsMode(rawValue: webPreviewDesignToolsModeRawValue) == .panel
+    webPreviewDesignPanelEnabled
 #else
     false
 #endif
