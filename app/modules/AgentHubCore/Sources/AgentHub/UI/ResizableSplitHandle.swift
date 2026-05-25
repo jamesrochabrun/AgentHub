@@ -136,6 +136,7 @@ struct ResizablePanelContainer<Content: View>: View {
   let maxWidth: CGFloat
   let defaultWidth: CGFloat
   let userDefaultsKey: String
+  let fixedWidth: CGFloat?
   let content: Content
 
   @State private var width: CGFloat
@@ -146,6 +147,7 @@ struct ResizablePanelContainer<Content: View>: View {
     maxWidth: CGFloat,
     defaultWidth: CGFloat,
     userDefaultsKey: String,
+    fixedWidth: CGFloat? = nil,
     @ViewBuilder content: () -> Content
   ) {
     self.side = side
@@ -153,6 +155,7 @@ struct ResizablePanelContainer<Content: View>: View {
     self.maxWidth = maxWidth
     self.defaultWidth = defaultWidth
     self.userDefaultsKey = userDefaultsKey
+    self.fixedWidth = fixedWidth
     self.content = content()
 
     let savedWidth = UserDefaults.standard.double(forKey: userDefaultsKey)
@@ -161,18 +164,25 @@ struct ResizablePanelContainer<Content: View>: View {
   }
 
   private var resolvedWidth: CGFloat {
-    Self.clamped(width, minWidth: minWidth, maxWidth: maxWidth)
+    if let fixedWidth {
+      return max(0, fixedWidth)
+    }
+    return Self.clamped(width, minWidth: minWidth, maxWidth: maxWidth)
+  }
+
+  private var isFixedWidth: Bool {
+    fixedWidth != nil
   }
 
   var body: some View {
     HStack(spacing: 0) {
       if side == .trailing {
-        handle
+        handleSlot
           .zIndex(2)
         resizableContent
       } else {
         resizableContent
-        handle
+        handleSlot
           .zIndex(2)
       }
     }
@@ -184,6 +194,15 @@ struct ResizablePanelContainer<Content: View>: View {
     content
       .frame(width: resolvedWidth)
       .blursWhileResizing()
+  }
+
+  private var handleSlot: some View {
+    handle
+      .opacity(isFixedWidth ? 0 : 1)
+      .frame(width: isFixedWidth ? 0 : 8)
+      .clipped()
+      .allowsHitTesting(!isFixedWidth)
+      .accessibilityHidden(isFixedWidth)
   }
 
   private var handle: some View {

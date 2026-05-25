@@ -79,6 +79,43 @@ public enum CommandPaletteAction: Identifiable {
   }
 }
 
+private struct CommandPaletteItem: Identifiable {
+  let id: String
+  let title: String
+  let subtitle: String?
+  let icon: String
+  let shortcut: String?
+  let action: CommandPaletteAction?
+
+  static func action(_ action: CommandPaletteAction) -> CommandPaletteItem {
+    CommandPaletteItem(
+      id: action.id,
+      title: action.title,
+      subtitle: action.subtitle,
+      icon: action.icon,
+      shortcut: action.shortcut,
+      action: action
+    )
+  }
+
+  static func shortcut(
+    id: String,
+    title: String,
+    subtitle: String,
+    icon: String,
+    shortcut: String
+  ) -> CommandPaletteItem {
+    CommandPaletteItem(
+      id: id,
+      title: title,
+      subtitle: subtitle,
+      icon: icon,
+      shortcut: shortcut,
+      action: nil
+    )
+  }
+}
+
 // MARK: - CommandPaletteView
 
 public struct CommandPaletteView: View {
@@ -106,8 +143,54 @@ public struct CommandPaletteView: View {
     ]
   }
 
-  private var displayedActions: [CommandPaletteAction] {
-    quickActions + filteredSessionActions
+  private var shortcutInfoItems: [CommandPaletteItem] {
+    [
+      .shortcut(
+        id: "shortcut-web-preview-width",
+        title: "Web Preview: Toggle Width",
+        subtitle: "Expand or collapse the embedded preview",
+        icon: "arrow.up.left.and.arrow.down.right",
+        shortcut: "⌘⇧O"
+      ),
+      .shortcut(
+        id: "shortcut-web-preview-inspect",
+        title: "Web Preview: Cycle Inspect Modes",
+        subtitle: "Inspect, crop, edit, then off",
+        icon: "cursorarrow.rays",
+        shortcut: "⌘⇧I"
+      ),
+      .shortcut(
+        id: "shortcut-web-preview-reload",
+        title: "Web Preview: Reload",
+        subtitle: "Reload the current preview",
+        icon: "arrow.clockwise",
+        shortcut: "⌘R"
+      ),
+      .shortcut(
+        id: "shortcut-web-preview-submit",
+        title: "Web Preview: Send or Update",
+        subtitle: "Send queued canvas feedback or update preview",
+        icon: "paperplane",
+        shortcut: "⌘↩"
+      ),
+      .shortcut(
+        id: "shortcut-web-preview-close",
+        title: "Web Preview: Close",
+        subtitle: "Close the preview",
+        icon: "xmark",
+        shortcut: "Esc"
+      ),
+    ]
+  }
+
+  private var nonSessionItemCount: Int {
+    quickActions.count + shortcutInfoItems.count
+  }
+
+  private var displayedItems: [CommandPaletteItem] {
+    quickActions.map(CommandPaletteItem.action)
+      + shortcutInfoItems
+      + filteredSessionActions.map(CommandPaletteItem.action)
   }
 
   private func performSearch() {
@@ -180,8 +263,8 @@ public struct CommandPaletteView: View {
     }
   }
 
-  private var displayedActionIDs: [String] {
-    displayedActions.map(\.id)
+  private var displayedItemIDs: [String] {
+    displayedItems.map(\.id)
   }
 
   public var body: some View {
@@ -238,16 +321,16 @@ public struct CommandPaletteView: View {
         ScrollViewReader { proxy in
           ScrollView {
             LazyVStack(spacing: 2) {
-              if displayedActions.isEmpty {
+              if displayedItems.isEmpty {
                 emptyState
               } else {
-                ForEach(Array(displayedActions.enumerated()), id: \.element.id) { index, action in
+                ForEach(Array(displayedItems.enumerated()), id: \.element.id) { index, item in
                   CommandPaletteRow(
-                    action: action,
+                    item: item,
                     isSelected: index == selectedIndex
                   )
-                  .id(action.id)
-                  .onTapGesture { executeAction(action) }
+                  .id(item.id)
+                  .onTapGesture { executeItem(item) }
                 }
               }
             }
@@ -255,10 +338,10 @@ public struct CommandPaletteView: View {
           }
           .frame(maxHeight: 400)
           .onChange(of: selectedIndex) { _, newIndex in
-            let actions = displayedActions
-            guard newIndex >= 0, newIndex < actions.count else { return }
+            let items = displayedItems
+            guard newIndex >= 0, newIndex < items.count else { return }
             withAnimation(.easeInOut(duration: 0.15)) {
-              proxy.scrollTo(actions[newIndex].id, anchor: .center)
+              proxy.scrollTo(items[newIndex].id, anchor: .center)
             }
           }
         }
@@ -285,9 +368,9 @@ public struct CommandPaletteView: View {
     .onDisappear {
       searchTask?.cancel()
     }
-    .onChange(of: displayedActionIDs) { _, _ in
+    .onChange(of: displayedItemIDs) { _, _ in
       if !normalizedQuery.isEmpty && !filteredSessionActions.isEmpty {
-        selectedIndex = quickActions.count
+        selectedIndex = nonSessionItemCount
       } else {
         clampSelectedIndex()
       }
@@ -301,31 +384,31 @@ public struct CommandPaletteView: View {
       }
 
       if !filteredSessionActions.isEmpty {
-        selectedIndex = quickActions.count
+        selectedIndex = nonSessionItemCount
       } else {
         selectedIndex = 0
       }
     }
     .onKeyPress(.upArrow) {
-      guard !displayedActions.isEmpty else { return .handled }
+      guard !displayedItems.isEmpty else { return .handled }
       if selectedIndex > 0 {
         selectedIndex -= 1
       }
       return .handled
     }
     .onKeyPress(.downArrow) {
-      guard !displayedActions.isEmpty else { return .handled }
-      if selectedIndex < displayedActions.count - 1 {
+      guard !displayedItems.isEmpty else { return .handled }
+      if selectedIndex < displayedItems.count - 1 {
         selectedIndex += 1
       }
       return .handled
     }
     .onKeyPress(.return) {
-      let actions = displayedActions
-      guard !actions.isEmpty else { return .handled }
-      let safeIndex = max(0, min(selectedIndex, actions.count - 1))
+      let items = displayedItems
+      guard !items.isEmpty else { return .handled }
+      let safeIndex = max(0, min(selectedIndex, items.count - 1))
       selectedIndex = safeIndex
-      executeAction(actions[safeIndex])
+      executeItem(items[safeIndex])
       return .handled
     }
     .onKeyPress(.escape) {
@@ -356,7 +439,7 @@ public struct CommandPaletteView: View {
   }
 
   private func clampSelectedIndex() {
-    let count = displayedActions.count
+    let count = displayedItems.count
     if count == 0 {
       selectedIndex = 0
       return
@@ -364,7 +447,9 @@ public struct CommandPaletteView: View {
     selectedIndex = max(0, min(selectedIndex, count - 1))
   }
 
-  private func executeAction(_ action: CommandPaletteAction) {
+  private func executeItem(_ item: CommandPaletteItem) {
+    guard let action = item.action else { return }
+
     isPresented = false
 
     Task { @MainActor in
@@ -384,22 +469,22 @@ private struct SessionMatch {
 // MARK: - CommandPaletteRow
 
 private struct CommandPaletteRow: View {
-  let action: CommandPaletteAction
+  let item: CommandPaletteItem
   let isSelected: Bool
 
   var body: some View {
     HStack(spacing: 12) {
-      Image(systemName: action.icon)
+      Image(systemName: item.icon)
         .font(.system(size: 16))
         .foregroundColor(isSelected ? .brandPrimary : .secondary)
         .frame(width: 20)
 
       VStack(alignment: .leading, spacing: 2) {
-        Text(action.title)
+        Text(item.title)
           .font(.geist(size: 13, weight: isSelected ? .semibold : .regular))
           .foregroundColor(.primary)
 
-        if let subtitle = action.subtitle {
+        if let subtitle = item.subtitle {
           Text(subtitle)
             .font(.secondarySmall)
             .foregroundColor(.secondary)
@@ -409,7 +494,7 @@ private struct CommandPaletteRow: View {
 
       Spacer()
 
-      if let shortcut = action.shortcut {
+      if let shortcut = item.shortcut {
         Text(shortcut)
           .font(.primarySmall)
           .foregroundColor(.secondary.opacity(0.7))
