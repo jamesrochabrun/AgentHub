@@ -1,0 +1,162 @@
+import Foundation
+
+struct WorktreeSettingsSnapshot: Equatable {
+  let modules: [WorktreeSettingsModule]
+
+  var worktreeCount: Int {
+    modules.reduce(0) { $0 + $1.worktrees.count }
+  }
+}
+
+struct WorktreeSettingsModule: Identifiable, Equatable {
+  var id: String { path }
+
+  let name: String
+  let path: String
+  let worktrees: [WorktreeSettingsWorktree]
+}
+
+struct WorktreeSettingsWorktree: Identifiable, Equatable {
+  var id: String { path }
+
+  let branchName: String
+  let path: String
+  let worktree: WorktreeBranch
+  let parentModulePath: String
+  let providerKinds: [SessionProviderKind]
+  let deletionProviderKind: SessionProviderKind
+  let monitoredSessionCount: Int
+  let activeMonitoredSessionCount: Int
+  let historicalSessionCount: Int
+
+  var providerLabel: String {
+    providerKinds.map(\.rawValue).joined(separator: " + ")
+  }
+}
+
+enum WorktreeSettingsInventoryBuilder {
+  static func snapshot(
+    claudeRepositories: [SelectedRepository],
+    codexRepositories: [SelectedRepository],
+    claudeMonitoredSessions: [CLISession],
+    codexMonitoredSessions: [CLISession]
+  ) -> WorktreeSettingsSnapshot {
+    let mergedRepositories = WorktreeModuleResolver
+      .mergedRepositories(claudeRepositories + codexRepositories)
+      .reversed()
+
+    let modules = mergedRepositories.map { repository in
+      let modulePath = normalized(repository.path)
+      let worktrees = worktreeItems(
+        for: repository,
+        modulePath: modulePath,
+        claudeRepositories: claudeRepositories,
+        codexRepositories: codexRepositories,
+        claudeMonitoredSessions: claudeMonitoredSessions,
+        codexMonitoredSessions: codexMonitoredSessions
+      )
+
+      return WorktreeSettingsModule(
+        name: repository.name,
+        path: modulePath,
+        worktrees: worktrees
+      )
+    }
+
+    return WorktreeSettingsSnapshot(modules: modules)
+  }
+
+  private static func worktreeItems(
+    for repository: SelectedRepository,
+    modulePath: String,
+    claudeRepositories: [SelectedRepository],
+    codexRepositories: [SelectedRepository],
+    claudeMonitoredSessions: [CLISession],
+    codexMonitoredSessions: [CLISession]
+  ) -> [WorktreeSettingsWorktree] {
+    let providerRepositories = [
+      (kind: SessionProviderKind.claude, repositories: claudeRepositories),
+      (kind: SessionProviderKind.codex, repositories: codexRepositories),
+    ]
+
+    var orderedPaths: [String] = []
+    var seenPaths: Set<String> = []
+    for worktree in repository.worktrees where worktree.isWorktree {
+      appendPath(worktree.path, to: &orderedPaths, seen: &seenPaths)
+    }
+    for provider in providerRepositories {
+      guard let providerRepository = provider.repositories.first(where: { normalized($0.path) == modulePath }) else {
+        continue
+      }
+      for worktree in providerRepository.worktrees where worktree.isWorktree {
+        appendPath(worktree.path, to: &orderedPaths, seen: &seenPaths)
+      }
+    }
+
+    return orderedPaths.compactMap { worktreePath in
+      let providerMatches = providerRepositories.compactMap { provider -> (SessionProviderKind, WorktreeBranch)? in
+        guard let repository = provider.repositories.first(where: { normalized($0.path) == modulePath }),
+              let worktree = repository.worktrees.first(where: { normalized($0.path) == worktreePath && $0.isWorktree }) else {
+          return nil
+        }
+        return (provider.kind, normalizedWorktree(worktree))
+      }
+
+      guard let deletionMatch = providerMatches.first else { return nil }
+      let providerKinds = providerMatches.map(\.0)
+      let representative = deletionMatch.1
+      let monitoredSessions = providerMatches.flatMap { providerKind, _ in
+        switch providerKind {
+        case .claude:
+          return sessions(in: worktreePath, from: claudeMonitoredSessions)
+        case .codex:
+          return sessions(in: worktreePath, from: codexMonitoredSessions)
+        }
+      }
+      let historicalSessionCount = Set(providerMatches.flatMap { $0.1.sessions.map(\.id) }).count
+      let monitoredSessionsById = Dictionary(
+        monitoredSessions.map { ($0.id, $0) },
+        uniquingKeysWith: { existing, new in existing.isActive ? existing : new }
+      )
+
+      return WorktreeSettingsWorktree(
+        branchName: representative.name,
+        path: worktreePath,
+        worktree: representative,
+        parentModulePath: modulePath,
+        providerKinds: providerKinds,
+        deletionProviderKind: deletionMatch.0,
+        monitoredSessionCount: monitoredSessionsById.count,
+        activeMonitoredSessionCount: monitoredSessionsById.values.filter(\.isActive).count,
+        historicalSessionCount: historicalSessionCount
+      )
+    }
+  }
+
+  private static func sessions(in worktreePath: String, from sessions: [CLISession]) -> [CLISession] {
+    sessions.filter { session in
+      let projectPath = normalized(session.projectPath)
+      return projectPath == worktreePath || projectPath.hasPrefix(worktreePath + "/")
+    }
+  }
+
+  private static func appendPath(_ path: String, to paths: inout [String], seen: inout Set<String>) {
+    let normalizedPath = normalized(path)
+    guard seen.insert(normalizedPath).inserted else { return }
+    paths.append(normalizedPath)
+  }
+
+  private static func normalizedWorktree(_ worktree: WorktreeBranch) -> WorktreeBranch {
+    WorktreeBranch(
+      name: worktree.name,
+      path: normalized(worktree.path),
+      isWorktree: worktree.isWorktree,
+      sessions: worktree.sessions,
+      isExpanded: worktree.isExpanded
+    )
+  }
+
+  private static func normalized(_ path: String) -> String {
+    WorktreeModuleResolver.normalizedDirectoryPath(path)
+  }
+}

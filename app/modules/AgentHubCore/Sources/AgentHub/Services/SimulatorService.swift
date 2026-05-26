@@ -51,12 +51,12 @@ private struct BuildSetup: Sendable {
   let derivedDataPath: String
 }
 
-private struct BuiltAppInfo: Sendable {
+struct BuiltAppInfo: Sendable {
   let appPath: String
   let bundleIdentifier: String?
 }
 
-private enum BuildPlatform {
+enum BuildPlatform {
   case macOS
   case iOSSimulator
 
@@ -66,6 +66,42 @@ private enum BuildPlatform {
       return "Debug"
     case .iOSSimulator:
       return "Debug-iphonesimulator"
+    }
+  }
+
+  func scoreProductPathComponents(_ components: [String]) -> Int? {
+    let lowercased = components.map { $0.lowercased() }
+
+    switch self {
+    case .macOS:
+      let excludedFragments = [
+        "iphoneos",
+        "iphonesimulator",
+        "appletvos",
+        "appletvsimulator",
+        "watchos",
+        "watchsimulator",
+        "xros",
+        "xrsimulator"
+      ]
+      if lowercased.contains(where: { component in
+        excludedFragments.contains(where: component.contains)
+      }) {
+        return nil
+      }
+
+      if lowercased.contains(where: { $0.contains("macosx") || $0.contains("maccatalyst") }) {
+        return 30
+      }
+      if lowercased.contains(where: { $0 == "debug" || $0 == "release" }) {
+        return 20
+      }
+      return 10
+    case .iOSSimulator:
+      guard lowercased.contains(where: { $0.contains("iphonesimulator") }) else {
+        return nil
+      }
+      return 30
     }
   }
 }
@@ -822,21 +858,61 @@ public final class SimulatorService {
     in productsDirectory: String,
     preferredAppName: String
   ) -> String? {
-    let directoryURL = URL(fileURLWithPath: productsDirectory, isDirectory: true)
+    preferredAppBundlePaths(
+      in: productsDirectory,
+      preferredAppName: preferredAppName,
+      platform: nil
+    ).first
+  }
+
+  nonisolated static func preferredAppBundlePaths(
+    in productsDirectory: String,
+    preferredAppName: String,
+    platform: BuildPlatform?
+  ) -> [String] {
+    struct Candidate {
+      let url: URL
+      let nameScore: Int
+      let platformScore: Int
+      let modified: Date
+    }
+
+    let rootURL = URL(fileURLWithPath: productsDirectory, isDirectory: true)
+      .standardizedFileURL
+    let fileManager = FileManager.default
     guard let candidates = try? FileManager.default.contentsOfDirectory(
-      at: directoryURL,
+      at: rootURL,
       includingPropertiesForKeys: [.contentModificationDateKey],
       options: [.skipsHiddenFiles]
     ) else {
-      return nil
+      return []
     }
 
-    let apps = candidates.filter { $0.pathExtension == "app" }
-    guard !apps.isEmpty else { return nil }
+    var searchURLs = candidates
+    if let enumerator = fileManager.enumerator(
+      at: rootURL,
+      includingPropertiesForKeys: [.contentModificationDateKey, .isDirectoryKey],
+      options: [.skipsHiddenFiles]
+    ) {
+      while let item = enumerator.nextObject() as? URL {
+        searchURLs.append(item)
+        if item.pathExtension == "app" {
+          enumerator.skipDescendants()
+        }
+      }
+    }
 
     let preferredBundleName = "\(preferredAppName).app".lowercased()
 
-    func rank(for url: URL) -> (Int, Date) {
+    func relativeComponents(for url: URL) -> [String] {
+      let parentURL = url.deletingLastPathComponent().standardizedFileURL
+      let rootComponents = rootURL.pathComponents
+      let parentComponents = parentURL.pathComponents
+      guard parentComponents.count >= rootComponents.count else { return [] }
+      return Array(parentComponents.dropFirst(rootComponents.count))
+    }
+
+    func scoreName(for url: URL) -> Int {
       let name = url.lastPathComponent.lowercased()
       var score = 0
 
@@ -850,21 +926,41 @@ public final class SimulatorService {
         score -= 100
       }
 
-      let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-        ?? .distantPast
-      return (score, modified)
+      return score
     }
 
-    let bestCandidate = apps.sorted { lhs, rhs in
-      let left = rank(for: lhs)
-      let right = rank(for: rhs)
-      if left.0 != right.0 {
-        return left.0 > right.0
+    let apps = searchURLs.compactMap { url -> Candidate? in
+      guard url.pathExtension == "app" else { return nil }
+      let platformScore: Int
+      if let platform {
+        guard let score = platform.scoreProductPathComponents(relativeComponents(for: url)) else {
+          return nil
+        }
+        platformScore = score
+      } else {
+        platformScore = 0
       }
-      return left.1 > right.1
-    }.first
 
-    return bestCandidate?.path
+      let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+        ?? .distantPast
+      return Candidate(
+        url: url.standardizedFileURL,
+        nameScore: scoreName(for: url),
+        platformScore: platformScore,
+        modified: modified
+      )
+    }
+
+    return apps.sorted { lhs, rhs in
+      if lhs.nameScore != rhs.nameScore {
+        return lhs.nameScore > rhs.nameScore
+      }
+      if lhs.platformScore != rhs.platformScore {
+        return lhs.platformScore > rhs.platformScore
+      }
+      return lhs.modified > rhs.modified
+    }
+    .map(\.url.path)
   }
 
   nonisolated static func bundleIdentifier(atAppPath appPath: String) -> String? {
@@ -875,27 +971,28 @@ public final class SimulatorService {
     return plist["CFBundleIdentifier"] as? String
   }
 
-  private nonisolated static func resolveBuiltApp(
+  nonisolated static func resolveBuiltApp(
     derivedDataPath: String,
     scheme: String,
     platform: BuildPlatform,
     requiresBundleIdentifier: Bool
   ) -> BuiltAppInfo? {
     let productsDirectory = (derivedDataPath as NSString)
-      .appendingPathComponent("Build/Products/\(platform.productsDirectoryName)")
-    guard let appPath = preferredAppBundlePath(
+      .appendingPathComponent("Build/Products")
+    let candidatePaths = preferredAppBundlePaths(
       in: productsDirectory,
-      preferredAppName: scheme
-    ) else {
-      return nil
+      preferredAppName: scheme,
+      platform: platform
+    )
+    for appPath in candidatePaths {
+      let bundleIdentifier = requiresBundleIdentifier ? bundleIdentifier(atAppPath: appPath) : nil
+      if requiresBundleIdentifier && bundleIdentifier == nil {
+        continue
+      }
+      return BuiltAppInfo(appPath: appPath, bundleIdentifier: bundleIdentifier)
     }
 
-    let bundleIdentifier = requiresBundleIdentifier ? bundleIdentifier(atAppPath: appPath) : nil
-    if requiresBundleIdentifier && bundleIdentifier == nil {
-      return nil
-    }
-
-    return BuiltAppInfo(appPath: appPath, bundleIdentifier: bundleIdentifier)
+    return nil
   }
 
   private nonisolated static func ensureDirectoryExists(atPath path: String) throws {
