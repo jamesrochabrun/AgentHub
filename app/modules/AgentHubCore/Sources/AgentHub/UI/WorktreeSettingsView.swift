@@ -6,6 +6,7 @@
 import SwiftUI
 
 public struct WorktreeSettingsView: View {
+  @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
   @AppStorage(AgentHubDefaults.worktreeBranchPrefix)
@@ -44,6 +45,19 @@ public struct WorktreeSettingsView: View {
             .foregroundStyle(.secondary)
 
           previewBox
+        }
+      }
+
+      if let agentHub {
+        WorktreeInventorySection(
+          claudeViewModel: agentHub.claudeSessionsViewModel,
+          codexViewModel: agentHub.codexSessionsViewModel
+        )
+      } else {
+        Section("Worktrees") {
+          Text("AgentHub provider not found")
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
       }
     }

@@ -10,7 +10,14 @@ public struct LocalBranchesResult: Sendable {
   public let currentBranchName: String
 }
 
-public actor GitWorktreeService {
+public protocol GitWorktreeRemovalServiceProtocol: Sendable {
+  func removeWorktree(at worktreePath: String, force: Bool) async throws
+  func removeWorktree(at worktreePath: String, relativeTo parentRepoPath: String, force: Bool) async throws
+  func checkIfOrphaned(at worktreePath: String) -> (isOrphaned: Bool, parentRepoPath: String?)?
+  func removeOrphanedWorktree(at worktreePath: String, parentRepoPath: String) async throws
+}
+
+public actor GitWorktreeService: GitWorktreeRemovalServiceProtocol {
   private let service: WorktreeManagementService
 
   public init(service: WorktreeManagementService = WorktreeManagementService()) {
