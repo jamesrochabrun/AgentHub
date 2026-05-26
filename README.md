@@ -1,28 +1,17 @@
 # AgentHub
 
-A native macOS app for managing Claude Code and Codex CLI sessions. Monitor sessions in real-time, run multiple terminals in parallel, preview diffs, browse GitHub pull requests and issues, create worktrees, launch multi-provider sessions, and more — all from a single hub.
-
-## Demo
-
-<img width="1913" height="1079" alt="Hub" src="https://github.com/user-attachments/assets/99518d02-8ca6-458a-900c-bfd1f4e57419" />
-
-[Point to code](https://x.com/jamesrochabrun/status/2036492646039036003?s=20)
-
-<img width="1911" height="1077" alt="Image" src="https://github.com/user-attachments/assets/f9e15c46-b907-4d7b-9b8e-f9dbcad06da4" />
-
-Full screen mode
-
-https://github.com/user-attachments/assets/c616c904-d165-4516-8478-afb810c13606
-
-Custom Theme
-
-https://github.com/user-attachments/assets/d4462101-a42b-446c-8491-9a4344539ac6
-
-Shortcuts 
-
-https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
+<img width="1365" height="388" alt="Screenshot 2026-05-26 at 4 24 53 PM" src="https://github.com/user-attachments/assets/5d6185b7-3b06-483b-b28a-2bc17047c64d" />
 
 ## Features
+
+<img width="1364" height="670" alt="Screenshot 2026-05-26 at 4 33 58 PM" src="https://github.com/user-attachments/assets/515b657d-9c89-41aa-a51b-a063f27cbb60" />
+<img width="1347" height="667" alt="Screenshot 2026-05-26 at 4 34 27 PM" src="https://github.com/user-attachments/assets/cb688da8-21ab-411a-973d-eb699c0e52ab" />
+<img width="1334" height="651" alt="Screenshot 2026-05-26 at 4 35 23 PM" src="https://github.com/user-attachments/assets/c06cd1d5-4ef3-41d2-95b7-07722d537012" />
+<img width="1316" height="621" alt="Screenshot 2026-05-26 at 4 35 38 PM" src="https://github.com/user-attachments/assets/eb5a73bd-f6a6-46a2-8788-2ff25d0415bb" />
+<img width="1293" height="655" alt="Screenshot 2026-05-26 at 4 35 48 PM" src="https://github.com/user-attachments/assets/4c83b798-967a-4f7b-be93-a02d265ccd12" />
+<img width="1341" height="685" alt="Screenshot 2026-05-26 at 4 36 03 PM" src="https://github.com/user-attachments/assets/8ce8a951-1b58-4d41-a719-e5c8a605b301" />
+<img width="1299" height="692" alt="Screenshot 2026-05-26 at 4 36 20 PM" src="https://github.com/user-attachments/assets/602cae08-8cd9-40b0-a797-47e78a53568d" />
+<img width="1330" height="660" alt="Screenshot 2026-05-26 at 4 36 36 PM" src="https://github.com/user-attachments/assets/9b08937b-0847-44c0-aa82-26946aedacae" />
 
 - **Multi-provider support** — Monitor and launch Claude Code and Codex sessions side by side
 - **Real-time session monitoring** — Watch all sessions update live via file-system watchers (no polling)
@@ -31,7 +20,8 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Auxiliary Hub shell** — Toggle a session-scoped shell dock from the Hub with **Cmd+J**; it follows the selected session's worktree and preserves shell state per session
 - **Resizable list cards** — In list mode, monitoring cards can be resized with a preview guide for a smoother, less distracting resize experience
 - **Inline diff review** — Full split-pane diff view with inline editor to send change requests directly to Claude
-- **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, monitor current-branch PR status from session rows, and send GitHub context back into a session
+- **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, monitor current-branch PR status f![Uploading Screenshot 2026-05-26 at 4.23.24 PM.png…]()
+rom session rows, and send GitHub context back into a session
 - **File explorer and built-in editor** — Browse the project tree, jump to files with Cmd+P, edit files in-app with syntax highlighting, and save changes without leaving AgentHub
 - **Git worktree management** — Create and delete worktrees from the UI, launch sessions on new branches, and choose whether AgentHub-owned worktree sessions appear under the parent module or as separate modules
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
@@ -53,18 +43,6 @@ https://github.com/user-attachments/assets/ee453a78-e417-488a-96c7-20732d1d1f60
 - **Notification sounds** — Configurable audio alert when a tool call awaits approval
 - **Privacy-first** — Runs entirely on your machine; no data is collected or transmitted
 - **Process cleanup** — When a monitored Hub card is removed, AgentHub terminates both the card terminal and the auxiliary Hub shell process tree so shell/CLI sessions are not left orphaned
-
-Parallel execution with Claude Code and Codex
-
-https://github.com/user-attachments/assets/c20c1f3e-745d-4a39-8599-37ad242b3ae6
-
-Plan view with inline review and batch feedback
-
-https://github.com/user-attachments/assets/b7661b65-dc58-4f8e-a4c5-df1e17a4076d
-
-Mermaid diagram rendering with image export
-
-https://github.com/user-attachments/assets/f6a304de-fc7c-4024-94c6-9e2222210dff
 
 ## GitHub Support
 
