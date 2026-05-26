@@ -63,6 +63,23 @@ struct GitDiffServiceTests {
     #expect(!payload.isLimitedContext)
   }
 
+  @Test("branch changes are scoped to the selected worktree")
+  func branchChangesAreScopedToSelectedWorktree() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+    let worktreePath = try fixture.addWorktree(branch: "feature-worktree-scoped-diff")
+    try "parent only".write(toFile: fixture.repoPath + "/ParentOnly.swift", atomically: true, encoding: .utf8)
+    try "worktree branch".write(toFile: worktreePath + "/WorktreeOnly.swift", atomically: true, encoding: .utf8)
+    try fixture.runGit("add", "WorktreeOnly.swift", at: worktreePath)
+    try fixture.runGit("commit", "-m", "worktree branch change", at: worktreePath)
+
+    let service = GitDiffService()
+    let state = try await service.changedFiles(at: worktreePath, mode: .branch, baseBranch: "main")
+
+    #expect(state.files.map(\.relativePath) == ["WorktreeOnly.swift"])
+    #expect(state.files.allSatisfy { $0.filePath.hasPrefix(worktreePath + "/") })
+  }
+
   @Test("renders deleted unstaged files")
   func rendersDeletedUnstagedFiles() async throws {
     let fixture = try GitRepoFixture.create()

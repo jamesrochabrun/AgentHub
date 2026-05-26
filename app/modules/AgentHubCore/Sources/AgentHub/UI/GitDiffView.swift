@@ -56,6 +56,7 @@ public struct GitDiffView: View {
   @State private var treeCommonPrefix: String = ""
   @State private var fileLoadTask: Task<Void, Never>?
   @State private var loadGeneration = UUID()
+  @State private var suppressNextDiffModeReload = false
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -148,7 +149,7 @@ public struct GitDiffView: View {
       return .handled
     }
     .task {
-      await loadChanges(for: diffMode)
+      await loadInitialChanges()
     }
     .onDisappear {
       fileLoadTask?.cancel()
@@ -227,6 +228,10 @@ public struct GitDiffView: View {
       .frame(width: 250)
       .tint(Color.primary)
       .onChange(of: diffMode) { _, newMode in
+        if suppressNextDiffModeReload {
+          suppressNextDiffModeReload = false
+          return
+        }
         Task { await loadChanges(for: newMode) }
       }
 
@@ -448,7 +453,14 @@ public struct GitDiffView: View {
 
   // MARK: - Data Loading
 
-  private func loadChanges(for mode: DiffMode) async {
+  private func loadInitialChanges() async {
+    await loadChanges(for: diffMode, autoSelectFirstNonEmptyMode: true)
+  }
+
+  private func loadChanges(
+    for mode: DiffMode,
+    autoSelectFirstNonEmptyMode: Bool = false
+  ) async {
     let clock = ContinuousClock()
     let totalStart = clock.now
     let generation = UUID()
@@ -471,53 +483,41 @@ public struct GitDiffView: View {
     }
 
     do {
-      // Detect base branch for branch mode (cache it for later use)
-      let baseBranch: String?
-      if mode == .branch && detectedBaseBranch == nil {
-        let branchStart = clock.now
-        let detectedBranch = try await gitDiffService.detectBaseBranch(at: projectPath)
-        AppLogger.git.info("[perf] detectBaseBranch: \(clock.now - branchStart)")
-        baseBranch = detectedBranch
-        await MainActor.run {
-          guard loadGeneration == generation else { return }
-          detectedBaseBranch = detectedBranch
-        }
-      } else {
-        baseBranch = mode == .branch ? detectedBaseBranch : nil
-      }
-
       let gitRootStart = clock.now
       _ = try await gitDiffService.findGitRoot(at: projectPath)
       AppLogger.git.info("[perf] findGitRoot/cache: \(clock.now - gitRootStart)")
 
-      let changedFilesStart = clock.now
-      let state = try await gitDiffService.changedFiles(
-        at: projectPath,
-        mode: mode,
-        baseBranch: baseBranch
+      let selected = try await loadBestDiffState(
+        preferredMode: mode,
+        autoSelectFirstNonEmptyMode: autoSelectFirstNonEmptyMode,
+        generation: generation,
+        clock: clock
       )
-      AppLogger.git.info("[perf] changedFiles: \(clock.now - changedFilesStart)")
 
       await MainActor.run {
         guard loadGeneration == generation else { return }
 
-        diffState = state
+        if diffMode != selected.mode {
+          suppressNextDiffModeReload = true
+          diffMode = selected.mode
+        }
+        diffState = selected.state
         isLoading = false
 
         // Build tree and auto-expand all folders
-        let treeResult = GitDiffTreeBuilder.build(from: state.files)
+        let treeResult = GitDiffTreeBuilder.build(from: selected.state.files)
         fileTree = treeResult.nodes
         treeCommonPrefix = treeResult.commonPrefix
         expandedPaths = treeResult.allFolderPaths
 
         // Auto-select first file
-        if let first = state.files.first {
+        if let first = selected.state.files.first {
           selectedFileId = first.id
-          loadFileDiff(for: first, mode: mode, generation: generation)
+          loadFileDiff(for: first, mode: selected.mode, generation: generation)
         }
       }
 
-      AppLogger.git.info("[perf] loadChanges total (\(mode.rawValue)): \(clock.now - totalStart)")
+      AppLogger.git.info("[perf] loadChanges total (\(selected.mode.rawValue)): \(clock.now - totalStart)")
 
     } catch {
       await MainActor.run {
@@ -526,6 +526,78 @@ public struct GitDiffView: View {
         isLoading = false
       }
     }
+  }
+
+  private func loadBestDiffState(
+    preferredMode: DiffMode,
+    autoSelectFirstNonEmptyMode: Bool,
+    generation: UUID,
+    clock: ContinuousClock
+  ) async throws -> (mode: DiffMode, state: GitDiffState) {
+    let candidateModes: [DiffMode]
+    if autoSelectFirstNonEmptyMode {
+      candidateModes = [preferredMode] + DiffMode.allCases.filter { $0 != preferredMode }
+    } else {
+      candidateModes = [preferredMode]
+    }
+
+    var firstLoaded: (mode: DiffMode, state: GitDiffState)?
+    var lastError: Error?
+
+    for candidateMode in candidateModes {
+      do {
+        let baseBranch = try await baseBranchIfNeeded(
+          for: candidateMode,
+          generation: generation,
+          clock: clock
+        )
+
+        let changedFilesStart = clock.now
+        let state = try await gitDiffService.changedFiles(
+          at: projectPath,
+          mode: candidateMode,
+          baseBranch: baseBranch
+        )
+        AppLogger.git.info("[perf] changedFiles (\(candidateMode.rawValue)): \(clock.now - changedFilesStart)")
+
+        if firstLoaded == nil {
+          firstLoaded = (candidateMode, state)
+        }
+        if !autoSelectFirstNonEmptyMode || !state.files.isEmpty {
+          return (candidateMode, state)
+        }
+      } catch {
+        lastError = error
+        if !autoSelectFirstNonEmptyMode {
+          throw error
+        }
+      }
+    }
+
+    if let firstLoaded {
+      return firstLoaded
+    }
+    throw lastError ?? GitDiffError.gitCommandFailed("No diff modes could be loaded")
+  }
+
+  private func baseBranchIfNeeded(
+    for mode: DiffMode,
+    generation: UUID,
+    clock: ContinuousClock
+  ) async throws -> String? {
+    guard mode == .branch else { return nil }
+    if let detectedBaseBranch {
+      return detectedBaseBranch
+    }
+
+    let branchStart = clock.now
+    let detectedBranch = try await gitDiffService.detectBaseBranch(at: projectPath)
+    AppLogger.git.info("[perf] detectBaseBranch: \(clock.now - branchStart)")
+    await MainActor.run {
+      guard loadGeneration == generation else { return }
+      detectedBaseBranch = detectedBranch
+    }
+    return detectedBranch
   }
 
   private func loadFileDiff(
