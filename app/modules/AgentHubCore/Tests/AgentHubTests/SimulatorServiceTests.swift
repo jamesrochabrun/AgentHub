@@ -209,15 +209,72 @@ struct BuildHelperTests {
     #expect(URL(fileURLWithPath: try #require(appPath)).standardizedFileURL.path == expectedPath)
   }
 
+  @Test func resolveBuiltMacAppSearchesProductsTree() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("SimulatorServiceTests-\(UUID().uuidString)", isDirectory: true)
+    let macProducts = root.appendingPathComponent("Build/Products/Debug-macosx", isDirectory: true)
+    let simulatorProducts = root.appendingPathComponent("Build/Products/Debug-iphonesimulator", isDirectory: true)
+    let expectedApp = macProducts.appendingPathComponent("Demo.app", isDirectory: true)
+
+    try FileManager.default.createDirectory(at: expectedApp, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: simulatorProducts.appendingPathComponent("Demo.app", isDirectory: true),
+      withIntermediateDirectories: true
+    )
+
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let builtApp = try #require(SimulatorService.resolveBuiltApp(
+      derivedDataPath: root.path,
+      scheme: "Demo",
+      platform: .macOS,
+      requiresBundleIdentifier: false
+    ))
+
+    #expect(URL(fileURLWithPath: builtApp.appPath).standardizedFileURL.path == expectedApp.standardizedFileURL.path)
+  }
+
+  @Test func resolveSimulatorAppSkipsCandidatesWithoutBundleIdentifier() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("SimulatorServiceTests-\(UUID().uuidString)", isDirectory: true)
+    let products = root.appendingPathComponent("Build/Products/Debug-iphonesimulator", isDirectory: true)
+    let staleApp = products.appendingPathComponent("Demo.app", isDirectory: true)
+    let launchableApp = products.appendingPathComponent("DemoPreview.app", isDirectory: true)
+
+    try FileManager.default.createDirectory(at: staleApp, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: launchableApp, withIntermediateDirectories: true)
+    try writeInfoPlist(bundleIdentifier: "com.agenthub.demo-preview", to: launchableApp)
+
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let builtApp = try #require(SimulatorService.resolveBuiltApp(
+      derivedDataPath: root.path,
+      scheme: "Demo",
+      platform: .iOSSimulator,
+      requiresBundleIdentifier: true
+    ))
+
+    #expect(URL(fileURLWithPath: builtApp.appPath).standardizedFileURL.path == launchableApp.standardizedFileURL.path)
+    #expect(builtApp.bundleIdentifier == "com.agenthub.demo-preview")
+  }
+
   @Test func bundleIdentifierReadsInfoPlist() throws {
     let root = URL(fileURLWithPath: NSTemporaryDirectory())
       .appendingPathComponent("SimulatorServiceTests-\(UUID().uuidString)", isDirectory: true)
     let app = root.appendingPathComponent("Demo.app", isDirectory: true)
 
     try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
+    try writeInfoPlist(bundleIdentifier: "com.agenthub.demo", to: app)
 
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let bundleIdentifier = SimulatorService.bundleIdentifier(atAppPath: app.path)
+    #expect(bundleIdentifier == "com.agenthub.demo")
+  }
+
+  private func writeInfoPlist(bundleIdentifier: String, to app: URL) throws {
     let infoPlist: [String: Any] = [
-      "CFBundleIdentifier": "com.agenthub.demo"
+      "CFBundleIdentifier": bundleIdentifier
     ]
     let data = try PropertyListSerialization.data(
       fromPropertyList: infoPlist,
@@ -225,10 +282,5 @@ struct BuildHelperTests {
       options: 0
     )
     try data.write(to: app.appendingPathComponent("Info.plist"))
-
-    defer { try? FileManager.default.removeItem(at: root) }
-
-    let bundleIdentifier = SimulatorService.bundleIdentifier(atAppPath: app.path)
-    #expect(bundleIdentifier == "com.agenthub.demo")
   }
 }
