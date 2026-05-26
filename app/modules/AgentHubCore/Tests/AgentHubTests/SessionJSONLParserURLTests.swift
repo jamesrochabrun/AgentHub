@@ -91,6 +91,22 @@ struct SessionJSONLParserURLTests {
     #expect(count == 1)
   }
 
+  @Test("Prioritizes PR URL from tool_result JSON over incidental URLs")
+  func prioritizesPRURLFromToolResultJSON() {
+    let assistantLine = """
+      {"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"github_create_pull_request","input":{"repository_full_name":"jamesrochabrun/AgentHub"}}]}}
+      """
+    let userLine = """
+      {"type":"user","timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"{\\"url\\":\\"https://github.com/jamesrochabrun/AgentHub/pull/322\\",\\"avatar_url\\":\\"https://avatars.githubusercontent.com/u/5378604\\"}"}]}}
+      """
+    var result = SessionJSONLParser.ParseResult()
+    SessionJSONLParser.parseNewLines([assistantLine, userLine], into: &result)
+
+    #expect(result.detectedResourceLinks.map(\.url) == [
+      "https://github.com/jamesrochabrun/AgentHub/pull/322"
+    ])
+  }
+
   // MARK: - URL accumulation across multiple messages
 
   @Test("Accumulates URLs across multiple incremental parse calls")

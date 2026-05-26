@@ -5,6 +5,7 @@
 //  Collapsible bottom panel for displaying selected/monitored sessions.
 //
 
+import AgentHubGitHub
 import SwiftUI
 
 // MARK: - CollapsibleSelectedSessionsPanel (Multi-Provider)
@@ -149,6 +150,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
             isPrimary: item.id == primarySessionId,
             customName: customName(for: item),
             sessionStatus: item.sessionStatus,
+            linkedPullRequestNumber: item.linkedPullRequestNumber,
             colorScheme: colorScheme,
             isPinned: {
               switch item.providerKind {
@@ -200,6 +202,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
     let timestamp: Date
     let isPending: Bool
     let sessionStatus: SessionStatus?
+    let linkedPullRequestNumber: Int?
   }
 
   private var items: [SelectedSessionItem] {
@@ -212,7 +215,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
         providerKind: .claude,
         timestamp: pending.startedAt,
         isPending: true,
-        sessionStatus: nil
+        sessionStatus: nil,
+        linkedPullRequestNumber: nil
       ))
     }
 
@@ -223,7 +227,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
         providerKind: .codex,
         timestamp: pending.startedAt,
         isPending: true,
-        sessionStatus: nil
+        sessionStatus: nil,
+        linkedPullRequestNumber: nil
       ))
     }
 
@@ -234,7 +239,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
         providerKind: .claude,
         timestamp: item.session.lastActivityAt,
         isPending: false,
-        sessionStatus: item.state?.status
+        sessionStatus: item.state?.status,
+        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -245,7 +251,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
         providerKind: .codex,
         timestamp: item.session.lastActivityAt,
         isPending: false,
-        sessionStatus: item.state?.status
+        sessionStatus: item.state?.status,
+        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -259,6 +266,10 @@ public struct CollapsibleSelectedSessionsPanel: View {
     case .codex:
       return codexViewModel.sessionCustomNames[item.session.id]
     }
+  }
+
+  private static func latestPullRequestNumber(in links: [ResourceLink]) -> Int? {
+    GitHubPullRequestURLReference.latestNumber(in: links.map(\.url))
   }
 
   private func ensurePrimarySelection() {
@@ -403,6 +414,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
             isPrimary: item.id == primarySessionId,
             customName: viewModel.sessionCustomNames[item.session.id],
             sessionStatus: item.sessionStatus,
+            linkedPullRequestNumber: item.linkedPullRequestNumber,
             colorScheme: colorScheme,
             isPinned: viewModel.pinnedSessionIds.contains(item.session.id),
             onPin: {
@@ -438,6 +450,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     let timestamp: Date
     let isPending: Bool
     let sessionStatus: SessionStatus?
+    let linkedPullRequestNumber: Int?
   }
 
   private var items: [SelectedSessionItem] {
@@ -449,7 +462,8 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
         session: pending.placeholderSession,
         timestamp: pending.startedAt,
         isPending: true,
-        sessionStatus: nil
+        sessionStatus: nil,
+        linkedPullRequestNumber: nil
       ))
     }
 
@@ -459,7 +473,8 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
         session: item.session,
         timestamp: item.session.lastActivityAt,
         isPending: false,
-        sessionStatus: item.state?.status
+        sessionStatus: item.state?.status,
+        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -478,5 +493,8 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
 
     primarySessionId = items.first?.id
   }
-}
 
+  private static func latestPullRequestNumber(in links: [ResourceLink]) -> Int? {
+    GitHubPullRequestURLReference.latestNumber(in: links.map(\.url))
+  }
+}

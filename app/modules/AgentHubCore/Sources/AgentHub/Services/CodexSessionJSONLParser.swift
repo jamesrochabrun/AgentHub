@@ -5,6 +5,7 @@
 //  Parser for Codex session JSONL files with minimal monitoring data.
 //
 
+import AgentHubGitHub
 import Foundation
 
 public struct CodexSessionJSONLParser {
@@ -295,6 +296,9 @@ public struct CodexSessionJSONLParser {
         result.lastOutputTokens = output
       }
 
+    case "mcp_tool_call_end":
+      appendResourceLinks(extractResourceLinks(fromJSONValue: payload, timestamp: timestamp), to: &result)
+
     default:
       break
     }
@@ -323,6 +327,7 @@ public struct CodexSessionJSONLParser {
            let localhostURL = extractLocalhostURLFromText(output) {
           result.detectedLocalhostURL = localhostURL
         }
+        appendResourceLinks(extractResourceLinks(fromJSONValue: payload, timestamp: timestamp), to: &result)
       }
 
     case "custom_tool_call":
@@ -398,6 +403,23 @@ public struct CodexSessionJSONLParser {
     }
   }
 
+  private static func extractResourceLinks(fromJSONValue value: Any, timestamp: Date?) -> [ResourceLink] {
+    switch value {
+    case let string as String:
+      return prioritizedResourceLinks(from: string, timestamp: timestamp)
+    case let array as [Any]:
+      return prioritizingPullRequestLinks(
+        array.flatMap { extractResourceLinks(fromJSONValue: $0, timestamp: timestamp) }
+      )
+    case let dictionary as [String: Any]:
+      return prioritizingPullRequestLinks(
+        dictionary.values.flatMap { extractResourceLinks(fromJSONValue: $0, timestamp: timestamp) }
+      )
+    default:
+      return []
+    }
+  }
+
   private static func extractResourceLinks(from text: String, timestamp: Date?) -> [ResourceLink] {
     guard let regex = try? NSRegularExpression(
       pattern: "https?://[^\\s)\\]>\"'`]+",
@@ -417,6 +439,16 @@ public struct CodexSessionJSONLParser {
       links.append(ResourceLink(url: urlString, timestamp: timestamp ?? Date()))
     }
     return links
+  }
+
+  private static func prioritizedResourceLinks(from text: String, timestamp: Date?) -> [ResourceLink] {
+    let links = extractResourceLinks(from: text, timestamp: timestamp)
+    return prioritizingPullRequestLinks(links)
+  }
+
+  private static func prioritizingPullRequestLinks(_ links: [ResourceLink]) -> [ResourceLink] {
+    let pullRequestLinks = links.filter { GitHubPullRequestURLReference(urlString: $0.url) != nil }
+    return pullRequestLinks.isEmpty ? links : pullRequestLinks
   }
 
   // MARK: - Localhost URL Extraction

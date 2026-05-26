@@ -189,3 +189,41 @@ struct GitDiffServiceTests {
     #expect(payload.newContent == "alpha\nbeta")
   }
 }
+
+@Suite("LocalDiffSummaryService")
+struct LocalDiffSummaryServiceTests {
+
+  @Test("counts unique files across branch staged and unstaged diffs")
+  func countsUniqueFilesAcrossDiffModes() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.runGit("checkout", "-b", "feature/summary")
+    try "branch".write(toFile: fixture.repoPath + "/README.md", atomically: true, encoding: .utf8)
+    try fixture.runGit("add", "README.md")
+    try fixture.runGit("commit", "-m", "branch change")
+
+    try "unstaged".write(toFile: fixture.repoPath + "/README.md", atomically: true, encoding: .utf8)
+    try "staged".write(toFile: fixture.repoPath + "/StagedOnly.swift", atomically: true, encoding: .utf8)
+    try fixture.runGit("add", "StagedOnly.swift")
+    try "untracked".write(toFile: fixture.repoPath + "/UntrackedOnly.swift", atomically: true, encoding: .utf8)
+
+    let service = LocalDiffSummaryService(minimumRefreshInterval: 0)
+    let summary = await service.summary(for: fixture.repoPath)
+
+    #expect(summary.fileCount == 3)
+  }
+
+  @Test("returns empty summary for non git paths")
+  func returnsEmptySummaryForNonGitPaths() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appending(path: "LocalDiffSummaryServiceTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let service = LocalDiffSummaryService(minimumRefreshInterval: 0)
+    let summary = await service.summary(for: directory.path)
+
+    #expect(summary == .empty)
+  }
+}

@@ -15,20 +15,22 @@ private func makeQuickAccessPR(
   title: String = "Quick Access PR",
   changedFiles: Int = 3,
   additions: Int = 10,
-  deletions: Int = 5
+  deletions: Int = 5,
+  state: String = "OPEN",
+  isDraft: Bool = false
 ) -> GitHubPullRequest {
   GitHubPullRequest(
     number: number,
     title: title,
     body: nil,
-    state: "OPEN",
+    state: state,
     url: "https://github.com/test/repo/pull/\(number)",
     headRefName: "feature-branch",
     baseRefName: "main",
     author: GitHubAuthor(login: "testuser", name: "Test User"),
     createdAt: .now,
     updatedAt: .now,
-    isDraft: false,
+    isDraft: isDraft,
     mergeable: "MERGEABLE",
     additions: additions,
     deletions: deletions,
@@ -125,6 +127,7 @@ private actor MockSessionGitHubPRObservationService: GitHubPRObservationServiceP
   private(set) var subscribedTargets: [GitHubPRObservationTarget] = []
   private(set) var unsubscribedIDs: [UUID] = []
   private(set) var recordedActivityTargets: [GitHubPRObservationTarget] = []
+  private(set) var refreshedTargets: [GitHubPRObservationTarget] = []
 
   func subscribe(
     to target: GitHubPRObservationTarget,
@@ -152,7 +155,9 @@ private actor MockSessionGitHubPRObservationService: GitHubPRObservationServiceP
     subscriptionTargets.removeValue(forKey: subscriptionID)
   }
 
-  func refresh(_ target: GitHubPRObservationTarget) async {}
+  func refresh(_ target: GitHubPRObservationTarget) async {
+    refreshedTargets.append(target)
+  }
 
   func recordActivity(for target: GitHubPRObservationTarget, at: Date) async {
     recordedActivityTargets.append(target)
@@ -241,6 +246,92 @@ struct SessionGitHubQuickAccessViewModelTests {
     #expect(viewModel.observationState == .ready)
     #expect(await observer.subscribedTargets == [target])
     #expect(await observer.recordedActivityTargets == [target])
+  }
+
+  @Test("linked pull request subscribes to explicit PR observation")
+  @MainActor
+  func linkedPullRequestSubscribesToExplicitPRObservation() async {
+    let observer = MockSessionGitHubPRObservationService()
+    let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
+    let target = GitHubPRObservationTarget.pullRequest(projectPath: "/tmp/repo", number: 322)
+
+    await viewModel.load(
+      projectPath: "/tmp/repo",
+      branchName: "feature/github",
+      linkedPullRequestNumber: 322
+    )
+    await observer.publish(GitHubPRObservationSnapshot(
+      target: target,
+      pullRequest: makeQuickAccessPR(number: 322, isDraft: true),
+      checks: [],
+      state: .ready,
+      lastRefreshedAt: .now
+    ))
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(viewModel.currentBranchPR?.number == 322)
+    #expect(viewModel.currentBranchPR?.isDraft == true)
+    #expect(await observer.subscribedTargets == [target])
+    #expect(await observer.recordedActivityTargets == [target])
+    #expect(await observer.refreshedTargets == [target])
+  }
+
+  @Test("linked pull request activity force refreshes and applies state changes")
+  @MainActor
+  func linkedPullRequestActivityForceRefreshesAndAppliesStateChanges() async {
+    let observer = MockSessionGitHubPRObservationService()
+    let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
+    let target = GitHubPRObservationTarget.pullRequest(projectPath: "/tmp/repo", number: 322)
+
+    await viewModel.load(
+      projectPath: "/tmp/repo",
+      branchName: "feature/github",
+      linkedPullRequestNumber: 322
+    )
+    await observer.publish(GitHubPRObservationSnapshot(
+      target: target,
+      pullRequest: makeQuickAccessPR(number: 322, isDraft: true),
+      checks: [],
+      state: .ready,
+      lastRefreshedAt: .now
+    ))
+    await viewModel.notifySessionActivity()
+    await observer.publish(GitHubPRObservationSnapshot(
+      target: target,
+      pullRequest: makeQuickAccessPR(number: 322, isDraft: false),
+      checks: [],
+      state: .ready,
+      lastRefreshedAt: .now
+    ))
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(viewModel.currentBranchPR?.isDraft == false)
+    #expect(await observer.refreshedTargets == [target, target])
+  }
+
+  @Test("linked merged pull request remains visible")
+  @MainActor
+  func linkedMergedPullRequestRemainsVisible() async {
+    let observer = MockSessionGitHubPRObservationService()
+    let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
+    let target = GitHubPRObservationTarget.pullRequest(projectPath: "/tmp/repo", number: 322)
+
+    await viewModel.load(
+      projectPath: "/tmp/repo",
+      branchName: "feature/github",
+      linkedPullRequestNumber: 322
+    )
+    await observer.publish(GitHubPRObservationSnapshot(
+      target: target,
+      pullRequest: makeQuickAccessPR(number: 322, state: "MERGED"),
+      checks: [],
+      state: .ready,
+      lastRefreshedAt: .now
+    ))
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(viewModel.currentBranchPR?.number == 322)
+    #expect(viewModel.currentBranchPR?.stateKind == .merged)
   }
 
   @Test("observation service can defer initial activity for list rows")

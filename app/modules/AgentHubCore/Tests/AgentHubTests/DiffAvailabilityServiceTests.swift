@@ -62,6 +62,38 @@ private actor MockDiffAvailabilityService: DiffAvailabilityServiceProtocol {
   }
 }
 
+private actor MockLocalDiffSummaryService: LocalDiffSummaryServiceProtocol {
+  private let summaryResult: LocalDiffSummary
+  private let cachedSummaryResult: LocalDiffSummary?
+  private(set) var invalidatedProjectPaths: [String] = []
+  private(set) var summaryCallCount = 0
+
+  init(
+    summaryResult: LocalDiffSummary = .empty,
+    cachedSummaryResult: LocalDiffSummary? = nil
+  ) {
+    self.summaryResult = summaryResult
+    self.cachedSummaryResult = cachedSummaryResult
+  }
+
+  func cachedSummary(for projectPath: String) async -> LocalDiffSummary? {
+    cachedSummaryResult
+  }
+
+  func summary(for projectPath: String) async -> LocalDiffSummary {
+    summaryCallCount += 1
+    return summaryResult
+  }
+
+  func invalidate(projectPath: String) async {
+    invalidatedProjectPaths.append(projectPath)
+  }
+
+  func recordedInvalidations() -> [String] {
+    invalidatedProjectPaths
+  }
+}
+
 private actor DiffStubMonitorService: SessionMonitorServiceProtocol {
   nonisolated var repositoriesPublisher: AnyPublisher<[SelectedRepository], Never> {
     Empty<[SelectedRepository], Never>().eraseToAnyPublisher()
@@ -72,6 +104,78 @@ private actor DiffStubMonitorService: SessionMonitorServiceProtocol {
   func getSelectedRepositories() async -> [SelectedRepository] { [] }
   func setSelectedRepositories(_ repositories: [SelectedRepository]) async {}
   func refreshSessions(skipWorktreeRedetection: Bool) async {}
+}
+
+@Suite("CLISessionsViewModel Local Diff Summary")
+struct CLISessionsViewModelLocalDiffSummaryTests {
+  @Test("ensureLocalDiffSummary stores resolved summary")
+  @MainActor
+  func ensureLocalDiffSummaryStoresResolvedSummary() async {
+    let summaryService = MockLocalDiffSummaryService(
+      summaryResult: LocalDiffSummary(fileCount: 5, additions: 10, deletions: 2)
+    )
+    let viewModel = CLISessionsViewModel(
+      monitorService: DiffStubMonitorService(),
+      fileWatcher: DiffStubFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      localDiffSummaryService: summaryService,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await viewModel.ensureLocalDiffSummary(for: "/tmp/project")
+
+    #expect(viewModel.localDiffSummary(for: "/tmp/project")?.fileCount == 5)
+    #expect(await summaryService.summaryCallCount == 1)
+  }
+
+  @Test("ensureLocalDiffSummary uses cached summary")
+  @MainActor
+  func ensureLocalDiffSummaryUsesCachedSummary() async {
+    let summaryService = MockLocalDiffSummaryService(
+      summaryResult: LocalDiffSummary(fileCount: 5, additions: 10, deletions: 2),
+      cachedSummaryResult: LocalDiffSummary(fileCount: 2, additions: 3, deletions: 1)
+    )
+    let viewModel = CLISessionsViewModel(
+      monitorService: DiffStubMonitorService(),
+      fileWatcher: DiffStubFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      localDiffSummaryService: summaryService,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await viewModel.ensureLocalDiffSummary(for: "/tmp/project")
+
+    #expect(viewModel.localDiffSummary(for: "/tmp/project")?.fileCount == 2)
+    #expect(await summaryService.summaryCallCount == 0)
+  }
+
+  @Test("force refresh invalidates local diff summary")
+  @MainActor
+  func forceRefreshInvalidatesLocalDiffSummary() async {
+    let summaryService = MockLocalDiffSummaryService(
+      summaryResult: LocalDiffSummary(fileCount: 5, additions: 10, deletions: 2),
+      cachedSummaryResult: LocalDiffSummary(fileCount: 2, additions: 3, deletions: 1)
+    )
+    let viewModel = CLISessionsViewModel(
+      monitorService: DiffStubMonitorService(),
+      fileWatcher: DiffStubFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      localDiffSummaryService: summaryService,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+
+    await viewModel.ensureLocalDiffSummary(for: "/tmp/project")
+    await viewModel.ensureLocalDiffSummary(for: "/tmp/project", forceRefresh: true)
+
+    #expect(viewModel.localDiffSummary(for: "/tmp/project")?.fileCount == 5)
+    #expect(await summaryService.recordedInvalidations().count == 1)
+  }
 }
 
 private actor DiffStubFileWatcher: SessionFileWatcherProtocol {

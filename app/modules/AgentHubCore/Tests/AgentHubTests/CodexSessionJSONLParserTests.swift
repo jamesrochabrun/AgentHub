@@ -77,6 +77,58 @@ struct CodexSessionJSONLParserTests {
     #expect(urls.first == "https://codex6.example.dev/page")
     #expect(urls.last == "https://codex55.example.dev/page")
   }
+
+  @Test("Extracts pull request URL from function call output before final text")
+  func extractsPullRequestURLFromFunctionCallOutput() {
+    let line = jsonLine([
+      "type": "response_item",
+      "timestamp": "2026-01-01T00:00:01.000Z",
+      "payload": [
+        "type": "function_call_output",
+        "call_id": "call-1",
+        "output": """
+        {"url":"https://github.com/jamesrochabrun/AgentHub/pull/322","avatar_url":"https://avatars.githubusercontent.com/u/5378604"}
+        """
+      ]
+    ])
+
+    var result = CodexSessionJSONLParser.ParseResult()
+    CodexSessionJSONLParser.parseNewLines([line], into: &result)
+
+    #expect(result.detectedResourceLinks.map(\.url) == [
+      "https://github.com/jamesrochabrun/AgentHub/pull/322"
+    ])
+  }
+
+  @Test("Extracts pull request URL from MCP tool result")
+  func extractsPullRequestURLFromMCPToolResult() {
+    let line = jsonLine([
+      "type": "event_msg",
+      "timestamp": "2026-01-01T00:00:01.000Z",
+      "payload": [
+        "type": "mcp_tool_call_end",
+        "result": [
+          "Ok": [
+            "content": [
+              [
+                "type": "text",
+                "text": """
+                {"url":"https://github.com/jamesrochabrun/AgentHub/pull/322","avatar_url":"https://avatars.githubusercontent.com/u/5378604"}
+                """
+              ]
+            ]
+          ]
+        ]
+      ]
+    ])
+
+    var result = CodexSessionJSONLParser.ParseResult()
+    CodexSessionJSONLParser.parseNewLines([line], into: &result)
+
+    #expect(result.detectedResourceLinks.map(\.url) == [
+      "https://github.com/jamesrochabrun/AgentHub/pull/322"
+    ])
+  }
 }
 
 private func jsonLine(_ object: [String: Any]) -> String {
