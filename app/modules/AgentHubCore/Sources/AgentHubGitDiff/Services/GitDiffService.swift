@@ -389,7 +389,6 @@ public actor GitDiffService: GitDiffServiceProtocol {
       return payload
     } catch {
       Self.logger.warning("libgit2 renderPayload fallback for \(file.relativePath): \(error.localizedDescription)")
-      assertionFailure("libgit2 renderPayload fallback in \(mode.rawValue) for \(file.relativePath): \(error.localizedDescription)")
     }
 
     if try await shouldUseLimitedContext(for: file, at: repoPath, mode: mode, baseBranch: baseBranch) {
