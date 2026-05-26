@@ -5,6 +5,7 @@
 //  Created by Assistant on 1/10/26.
 //
 
+import AgentHubGitHub
 import Foundation
 
 // MARK: - SessionJSONLParser
@@ -261,8 +262,7 @@ public struct SessionJSONLParser {
             to: &result
           )
 
-          // Note: URL extraction from tool_use inputs is intentionally skipped
-          // to reduce noise — only user/assistant text links are shown
+          appendResourceLinks(extractResourceLinks(from: block.input, timestamp: timestamp), to: &result)
         }
 
       case "tool_result":
@@ -286,6 +286,7 @@ public struct SessionJSONLParser {
             AppLogger.devServer.info("[SessionJSONLParser] Detected localhost URL from tool_result: \(localhostURL.absoluteString)")
             result.detectedLocalhostURL = localhostURL
           }
+          appendResourceLinks(extractResourceLinks(from: block.content, timestamp: timestamp), to: &result)
         }
 
       case "thinking":
@@ -544,6 +545,28 @@ public struct SessionJSONLParser {
     }
   }
 
+  private static func extractResourceLinks(from content: AnyCodable?, timestamp: Date?) -> [ResourceLink] {
+    guard let content else { return [] }
+    return extractResourceLinks(fromJSONValue: content.value, timestamp: timestamp)
+  }
+
+  private static func extractResourceLinks(fromJSONValue value: Any, timestamp: Date?) -> [ResourceLink] {
+    switch value {
+    case let string as String:
+      return prioritizedResourceLinks(from: string, timestamp: timestamp)
+    case let array as [Any]:
+      return prioritizingPullRequestLinks(
+        array.flatMap { extractResourceLinks(fromJSONValue: $0, timestamp: timestamp) }
+      )
+    case let dictionary as [String: Any]:
+      return prioritizingPullRequestLinks(
+        dictionary.values.flatMap { extractResourceLinks(fromJSONValue: $0, timestamp: timestamp) }
+      )
+    default:
+      return []
+    }
+  }
+
   /// Extract URLs from text content and return as ResourceLink instances
   private static func extractResourceLinks(from text: String, timestamp: Date?) -> [ResourceLink] {
     // Match http:// and https:// URLs
@@ -567,6 +590,16 @@ public struct SessionJSONLParser {
       links.append(ResourceLink(url: urlString, timestamp: timestamp ?? Date()))
     }
     return links
+  }
+
+  private static func prioritizedResourceLinks(from text: String, timestamp: Date?) -> [ResourceLink] {
+    let links = extractResourceLinks(from: text, timestamp: timestamp)
+    return prioritizingPullRequestLinks(links)
+  }
+
+  private static func prioritizingPullRequestLinks(_ links: [ResourceLink]) -> [ResourceLink] {
+    let pullRequestLinks = links.filter { GitHubPullRequestURLReference(urlString: $0.url) != nil }
+    return pullRequestLinks.isEmpty ? links : pullRequestLinks
   }
 
   // MARK: - Localhost URL Extraction

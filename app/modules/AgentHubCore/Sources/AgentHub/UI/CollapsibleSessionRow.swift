@@ -11,6 +11,7 @@ struct CollapsibleSessionRow: View {
   let isPrimary: Bool
   let customName: String?
   let sessionStatus: SessionStatus?
+  var linkedPullRequestNumber: Int? = nil
   let colorScheme: ColorScheme
   let isPinned: Bool
   let onPin: (() -> Void)?
@@ -70,7 +71,8 @@ struct CollapsibleSessionRow: View {
   private var gitHubObservationTaskID: String {
     let repositoryKey = SessionGitHubQuickAccessViewModel.repositoryKey(
       projectPath: session.projectPath,
-      branchName: session.branchName
+      branchName: session.branchName,
+      linkedPullRequestNumber: linkedPullRequestNumber
     )
     return "\(repositoryKey)|\(isPending)|\(agentHub != nil)"
   }
@@ -314,15 +316,19 @@ struct CollapsibleSessionRow: View {
       return
     }
 
-    try? await Task.sleep(for: .milliseconds(observationStartupDelayMilliseconds))
-    guard !Task.isCancelled else { return }
+    if linkedPullRequestNumber == nil {
+      try? await Task.sleep(for: .milliseconds(observationStartupDelayMilliseconds))
+      guard !Task.isCancelled else { return }
+    }
 
     await sessionGitHubQuickAccessViewModel.load(
       projectPath: session.projectPath,
       branchName: session.branchName,
+      linkedPullRequestNumber: linkedPullRequestNumber,
       observationService: observationService,
       refreshOnSubscribe: false,
-      recordInitialActivity: false
+      recordInitialActivity: false,
+      forceRefreshLinkedPullRequest: linkedPullRequestNumber != nil
     )
     await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: timestamp)
   }

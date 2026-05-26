@@ -186,8 +186,18 @@ public struct MonitoringCardView: View {
     state?.detectedResourceLinks ?? []
   }
 
+  private var linkedPullRequestNumber: Int? {
+    GitHubPullRequestURLReference.latestNumber(in: resourceLinks.map(\.url))
+  }
+
+  private var localDiffSummary: LocalDiffSummary? {
+    viewModel?.localDiffSummary(for: session.projectPath)
+  }
+
   private var shouldShowResourcesPanel: Bool {
-    !resourceLinks.isEmpty || sessionGitHubQuickAccessViewModel.currentBranchPR != nil
+    !resourceLinks.isEmpty
+      || sessionGitHubQuickAccessViewModel.currentBranchPR != nil
+      || (localDiffSummary?.fileCount ?? 0) > 0
   }
 
   private var gitHubQuickAccessCoordinator: (any SessionGitHubQuickAccessCoordinatorProtocol)? {
@@ -220,7 +230,9 @@ public struct MonitoringCardView: View {
       ResourceLinksPanel(
         links: resourceLinks,
         providerKind: providerKind,
-        currentPullRequest: sessionGitHubQuickAccessViewModel.currentBranchPR
+        currentPullRequest: sessionGitHubQuickAccessViewModel.currentBranchPR,
+        localDiffSummary: localDiffSummary,
+        onCreatePullRequest: createPullRequestFromSession
       ) {
         Button {
           showingActionsPopover = true
@@ -263,12 +275,18 @@ public struct MonitoringCardView: View {
     .task(id: session.projectPath) {
       await viewModel?.ensureDiffAvailability(for: session.projectPath, forceRefresh: true)
     }
-    .task(id: SessionGitHubQuickAccessViewModel.repositoryKey(projectPath: session.projectPath, branchName: session.branchName)) {
-      try? await Task.sleep(for: .seconds(2))
-      guard !Task.isCancelled else { return }
+    .task(id: session.projectPath) {
+      await viewModel?.ensureLocalDiffSummary(for: session.projectPath, forceRefresh: true)
+    }
+    .task(id: gitHubObservationTaskID) {
+      if linkedPullRequestNumber == nil {
+        try? await Task.sleep(for: .seconds(2))
+        guard !Task.isCancelled else { return }
+      }
       await sessionGitHubQuickAccessViewModel.load(
         projectPath: session.projectPath,
         branchName: session.branchName,
+        linkedPullRequestNumber: linkedPullRequestNumber,
         coordinator: gitHubQuickAccessCoordinator,
         observationService: gitHubPRObservationService
       )
@@ -285,6 +303,7 @@ public struct MonitoringCardView: View {
         await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: newValue)
         await loadWebPreviewCandidateIfNeeded()
         await viewModel?.ensureDiffAvailability(for: session.projectPath, forceRefresh: true)
+        await viewModel?.ensureLocalDiffSummary(for: session.projectPath, forceRefresh: true)
       }
     }
     .onChange(of: state?.detectedLocalhostURL) { _, newValue in
@@ -547,6 +566,26 @@ public struct MonitoringCardView: View {
 
   private func presentGitHubPanel() {
     onShowGitHub?(session, session.projectPath)
+  }
+
+  private var gitHubObservationTaskID: String {
+    SessionGitHubQuickAccessViewModel.repositoryKey(
+      projectPath: session.projectPath,
+      branchName: session.branchName,
+      linkedPullRequestNumber: linkedPullRequestNumber
+    )
+  }
+
+  private static let createPullRequestPrompt = "Make a PR for the current branch. Include the local changes in this worktree and use the session context for the title, body, and validation notes."
+
+  private func createPullRequestFromSession() {
+    guard let viewModel else { return }
+    let key = terminalKey ?? session.id
+    contentMode = .terminal
+    if !viewModel.sendPromptToActiveTerminal(forKey: key, prompt: Self.createPullRequestPrompt) {
+      viewModel.showTerminalWithPrompt(for: session, prompt: Self.createPullRequestPrompt)
+    }
+    viewModel.focusTerminal(forKey: key)
   }
 
   // MARK: - Header

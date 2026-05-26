@@ -38,6 +38,7 @@ public final class CLISessionsViewModel {
   private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
   private let projectCapabilityService: any ProjectCapabilityServiceProtocol
   private let diffAvailabilityService: any DiffAvailabilityServiceProtocol
+  private let localDiffSummaryService: any LocalDiffSummaryServiceProtocol
   private let approvalNotificationService: any ApprovalNotificationServiceProtocol
   private let accessorySessionDetectionService: any AccessorySessionDetectionServiceProtocol
   private let approvalClaimStore: (any ApprovalClaimStoreProtocol)?
@@ -172,6 +173,10 @@ public final class CLISessionsViewModel {
     diffAvailability[DiffAvailabilityService.normalize(projectPath)]
   }
 
+  public func localDiffSummary(for projectPath: String) -> LocalDiffSummary? {
+    localDiffSummaries[LocalDiffSummaryService.normalize(projectPath)]
+  }
+
   public func ensureProjectCapabilities(
     for projectPath: String,
     forceRefresh: Bool = false
@@ -241,6 +246,29 @@ public final class CLISessionsViewModel {
     diffAvailability[normalizedProjectPath] = .checking
     let status = await diffAvailabilityService.availability(for: normalizedProjectPath)
     diffAvailability[normalizedProjectPath] = status
+  }
+
+  public func ensureLocalDiffSummary(
+    for projectPath: String,
+    forceRefresh: Bool = false
+  ) async {
+    let normalizedProjectPath = LocalDiffSummaryService.normalize(projectPath)
+
+    if forceRefresh {
+      await localDiffSummaryService.invalidate(projectPath: normalizedProjectPath)
+    } else {
+      if localDiffSummaries[normalizedProjectPath] != nil {
+        return
+      }
+
+      if let cachedSummary = await localDiffSummaryService.cachedSummary(for: normalizedProjectPath) {
+        localDiffSummaries[normalizedProjectPath] = cachedSummary
+        return
+      }
+    }
+
+    let summary = await localDiffSummaryService.summary(for: normalizedProjectPath)
+    localDiffSummaries[normalizedProjectPath] = summary
   }
 
   /// Start polling for a session
@@ -1273,6 +1301,9 @@ public final class CLISessionsViewModel {
   /// Cached project-level git diff availability keyed by normalized project path.
   public private(set) var diffAvailability: [String: DiffAvailabilityStatus] = [:]
 
+  /// Cached project-level local/branch diff summaries keyed by normalized project path.
+  public private(set) var localDiffSummaries: [String: LocalDiffSummary] = [:]
+
   /// Combine cancellables for monitoring subscriptions (keyed by session ID)
   private var monitoringCancellables: [String: AnyCancellable] = [:]
 
@@ -1314,6 +1345,7 @@ public final class CLISessionsViewModel {
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
     projectCapabilityService: any ProjectCapabilityServiceProtocol = ProjectCapabilityService.shared,
     diffAvailabilityService: any DiffAvailabilityServiceProtocol = DiffAvailabilityService.shared,
+    localDiffSummaryService: any LocalDiffSummaryServiceProtocol = LocalDiffSummaryService.shared,
     approvalNotificationService: any ApprovalNotificationServiceProtocol = ApprovalNotificationService.shared,
     accessorySessionDetectionService: any AccessorySessionDetectionServiceProtocol = AccessorySessionDetectionService(),
     approvalClaimStore: (any ApprovalClaimStoreProtocol)? = nil,
@@ -1334,6 +1366,7 @@ public final class CLISessionsViewModel {
     self.webPreviewCandidateService = webPreviewCandidateService
     self.projectCapabilityService = projectCapabilityService
     self.diffAvailabilityService = diffAvailabilityService
+    self.localDiffSummaryService = localDiffSummaryService
     self.approvalNotificationService = approvalNotificationService
     self.accessorySessionDetectionService = accessorySessionDetectionService
     self.approvalClaimStore = approvalClaimStore

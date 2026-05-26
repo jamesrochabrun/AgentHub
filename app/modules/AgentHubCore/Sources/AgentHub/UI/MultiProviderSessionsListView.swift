@@ -756,6 +756,7 @@ public struct MultiProviderSessionsListView: View {
     let timestamp: Date
     let isPending: Bool
     let sessionStatus: SessionStatus?
+    let linkedPullRequestNumber: Int?
   }
 
   private var selectedSessionItems: [SelectedSessionItem] {
@@ -768,7 +769,8 @@ public struct MultiProviderSessionsListView: View {
         providerKind: .claude,
         timestamp: pending.startedAt,
         isPending: true,
-        sessionStatus: nil
+        sessionStatus: nil,
+        linkedPullRequestNumber: nil
       ))
     }
 
@@ -779,7 +781,8 @@ public struct MultiProviderSessionsListView: View {
         providerKind: .codex,
         timestamp: pending.startedAt,
         isPending: true,
-        sessionStatus: nil
+        sessionStatus: nil,
+        linkedPullRequestNumber: nil
       ))
     }
 
@@ -790,7 +793,8 @@ public struct MultiProviderSessionsListView: View {
         providerKind: .claude,
         timestamp: item.session.lastActivityAt,
         isPending: false,
-        sessionStatus: item.state?.status
+        sessionStatus: item.state?.status,
+        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -801,7 +805,8 @@ public struct MultiProviderSessionsListView: View {
         providerKind: .codex,
         timestamp: item.session.lastActivityAt,
         isPending: false,
-        sessionStatus: item.state?.status
+        sessionStatus: item.state?.status,
+        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -1060,6 +1065,7 @@ public struct MultiProviderSessionsListView: View {
           isPrimary: item.id == primarySessionId,
           customName: selectedSessionCustomName(for: item),
           sessionStatus: item.sessionStatus,
+          linkedPullRequestNumber: item.linkedPullRequestNumber,
           colorScheme: colorScheme,
           isPinned: isPinned(item),
           onPin: item.isPending ? nil : {
@@ -1404,6 +1410,10 @@ public struct MultiProviderSessionsListView: View {
   private var gitHubPRObservationService: (any GitHubPRObservationServiceProtocol)? {
     claudeViewModel.agentHubProvider?.gitHubPRObservationService
       ?? codexViewModel.agentHubProvider?.gitHubPRObservationService
+  }
+
+  private static func latestPullRequestNumber(in links: [ResourceLink]) -> Int? {
+    GitHubPullRequestURLReference.latestNumber(in: links.map(\.url))
   }
 
   private var gitHubRefreshTargets: [GitHubPRObservationTarget] {
