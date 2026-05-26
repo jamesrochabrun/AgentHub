@@ -29,18 +29,29 @@ enum LibGit2DiffBackend {
     let repo = try openRepository(at: path)
     defer { git_repository_free(repo) }
 
-    let candidates = [
-      ("refs/heads/main", "main"),
-      ("refs/heads/master", "master"),
-      ("refs/remotes/origin/main", "origin/main"),
-      ("refs/remotes/origin/master", "origin/master"),
-    ]
+    return try detectBaseBranch(in: repo)
+  }
 
-    for (refName, displayName) in candidates where referenceExists(refName, in: repo) {
-      return displayName
+  static func diffAvailability(at path: String) throws -> DiffAvailabilityStatus {
+    Self.initialize()
+
+    let repo = try openRepository(at: path)
+    defer { git_repository_free(repo) }
+
+    if try hasChanges(repo: repo, mode: .unstaged, baseBranch: nil) {
+      return .available
     }
 
-    throw GitDiffError.gitCommandFailed("Could not detect base branch (tried main, master, origin/main, origin/master)")
+    if try hasChanges(repo: repo, mode: .staged, baseBranch: nil) {
+      return .available
+    }
+
+    guard let baseBranch = try? detectBaseBranch(in: repo),
+          try hasChanges(repo: repo, mode: .branch, baseBranch: baseBranch) else {
+      return .unavailable
+    }
+
+    return .available
   }
 
   static func changedFiles(
@@ -59,7 +70,8 @@ enum LibGit2DiffBackend {
       mode: mode,
       baseBranch: baseBranch,
       paths: [],
-      renderPolicy: renderPolicy
+      renderPolicy: renderPolicy,
+      includeUntrackedContent: true
     )
     defer { git_diff_free(diff) }
 
@@ -96,7 +108,8 @@ enum LibGit2DiffBackend {
       mode: mode,
       baseBranch: baseBranch,
       paths: pathspec,
-      renderPolicy: renderPolicy
+      renderPolicy: renderPolicy,
+      includeUntrackedContent: true
     )
     defer { git_diff_free(diff) }
 
@@ -154,7 +167,8 @@ private extension LibGit2DiffBackend {
     mode: DiffMode,
     baseBranch: String?,
     paths: [String],
-    renderPolicy: GitDiffRenderPolicy
+    renderPolicy: GitDiffRenderPolicy,
+    includeUntrackedContent: Bool
   ) throws -> OpaquePointer {
     var options = git_diff_options()
     try check(git_diff_options_init(&options, UInt32(GIT_DIFF_OPTIONS_VERSION)), operation: "initialize diff options")
@@ -164,7 +178,9 @@ private extension LibGit2DiffBackend {
     if mode == .unstaged {
       flags |= UInt32(GIT_DIFF_INCLUDE_UNTRACKED.rawValue)
       flags |= UInt32(GIT_DIFF_RECURSE_UNTRACKED_DIRS.rawValue)
-      flags |= UInt32(GIT_DIFF_SHOW_UNTRACKED_CONTENT.rawValue)
+      if includeUntrackedContent {
+        flags |= UInt32(GIT_DIFF_SHOW_UNTRACKED_CONTENT.rawValue)
+      }
     }
     if !paths.isEmpty {
       flags |= UInt32(GIT_DIFF_DISABLE_PATHSPEC_MATCH.rawValue)
@@ -237,6 +253,24 @@ private extension LibGit2DiffBackend {
         return diff
       }
     }
+  }
+
+  static func hasChanges(
+    repo: OpaquePointer,
+    mode: DiffMode,
+    baseBranch: String?
+  ) throws -> Bool {
+    let diff = try makeDiff(
+      repo: repo,
+      mode: mode,
+      baseBranch: baseBranch,
+      paths: [],
+      renderPolicy: .default,
+      includeUntrackedContent: false
+    )
+    defer { git_diff_free(diff) }
+
+    return git_diff_num_deltas(diff) > 0
   }
 
   static func repositoryIndex(_ repo: OpaquePointer) throws -> OpaquePointer {
@@ -567,6 +601,21 @@ private extension LibGit2DiffBackend {
   static func referenceExists(_ refName: String, in repo: OpaquePointer) -> Bool {
     var oid = git_oid()
     return git_reference_name_to_id(&oid, repo, refName) == 0
+  }
+
+  static func detectBaseBranch(in repo: OpaquePointer) throws -> String {
+    let candidates = [
+      ("refs/heads/main", "main"),
+      ("refs/heads/master", "master"),
+      ("refs/remotes/origin/main", "origin/main"),
+      ("refs/remotes/origin/master", "origin/master"),
+    ]
+
+    for (refName, displayName) in candidates where referenceExists(refName, in: repo) {
+      return displayName
+    }
+
+    throw GitDiffError.gitCommandFailed("Could not detect base branch (tried main, master, origin/main, origin/master)")
   }
 
   static func resolvedBaseBranch(_ baseBranch: String?) throws -> String {

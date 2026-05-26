@@ -148,6 +148,32 @@ struct DiffAvailabilityServiceTests {
     #expect(status == .available)
   }
 
+  @Test("Parent repository changes do not make a clean worktree available")
+  func parentRepositoryChangesDoNotMakeCleanWorktreeAvailable() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+    let worktreePath = try fixture.addWorktree(branch: "feature-clean-worktree")
+    try "parent only".write(toFile: fixture.repoPath + "/ParentOnly.swift", atomically: true, encoding: .utf8)
+
+    let status = await DiffAvailabilityService().availability(for: worktreePath)
+
+    #expect(status == .unavailable)
+  }
+
+  @Test("Worktree branch changes are available from that worktree")
+  func worktreeBranchChangesAreAvailableFromThatWorktree() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+    let worktreePath = try fixture.addWorktree(branch: "feature-worktree-diff")
+    try "worktree branch".write(toFile: worktreePath + "/WorktreeOnly.swift", atomically: true, encoding: .utf8)
+    try fixture.runGit("add", "WorktreeOnly.swift", at: worktreePath)
+    try fixture.runGit("commit", "-m", "worktree branch change", at: worktreePath)
+
+    let status = await DiffAvailabilityService().availability(for: worktreePath)
+
+    #expect(status == .available)
+  }
+
   @Test("Non-git path is unavailable")
   func nonGitPathIsUnavailable() async throws {
     let path = FileManager.default.temporaryDirectory
