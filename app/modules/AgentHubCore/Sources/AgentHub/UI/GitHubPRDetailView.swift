@@ -221,47 +221,93 @@ struct GitHubPRDetailView: View {
         .font(GitHubTypography.sectionTitle)
         .fixedSize(horizontal: false, vertical: true)
 
-      // Metadata row
-      HStack(spacing: DesignTokens.Spacing.md) {
-        if let author = pr.author {
-          HStack(spacing: DesignTokens.Spacing.xs) {
-            AuthorAvatarView(login: author.login, size: 18)
-            Text(author.login)
-              .font(GitHubTypography.bodySmall)
-          }
-          .foregroundStyle(.secondary)
-        }
-
-        HStack(spacing: DesignTokens.Spacing.xs) {
-          BranchBadge(name: pr.headRefName)
-          Image(systemName: "arrow.right")
-            .font(.system(size: 8))
-            .foregroundStyle(.tertiary)
-          BranchBadge(name: pr.baseRefName)
-        }
-
-        AdditionsDeletionsBadge(additions: pr.additions, deletions: pr.deletions)
-
-        Text("\(pr.changedFiles) files")
-          .font(GitHubTypography.bodySmall)
-          .foregroundStyle(.secondary)
-
-        if let decision = pr.reviewDecision {
-          ReviewDecisionBadge(decision: decision)
-        }
-      }
+      prMetadataRows
 
       if let labels = pr.labels, !labels.isEmpty {
-        HStack(spacing: DesignTokens.Spacing.xs) {
-          ForEach(labels) { label in
-            GitHubLabelPill(label: label)
-          }
-        }
+        prLabelRows(labels)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, DesignTokens.Spacing.md)
     .padding(.vertical, DesignTokens.Spacing.sm)
+  }
+
+  private var prMetadataRows: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: DesignTokens.Spacing.md) {
+        prAuthorMetadata
+        prBranchMetadata
+        prChangeMetadata
+      }
+      .fixedSize(horizontal: true, vertical: false)
+
+      VStack(alignment: .leading, spacing: 6) {
+        HStack(spacing: DesignTokens.Spacing.md) {
+          prAuthorMetadata
+          prBranchMetadata
+        }
+
+        prChangeMetadata
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var prAuthorMetadata: some View {
+    if let author = pr.author {
+      HStack(spacing: DesignTokens.Spacing.xs) {
+        AuthorAvatarView(login: author.login, size: 18)
+        Text(author.login)
+          .font(GitHubTypography.bodySmall)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .frame(maxWidth: 140, alignment: .leading)
+      }
+      .foregroundStyle(.secondary)
+    }
+  }
+
+  private var prBranchMetadata: some View {
+    HStack(spacing: DesignTokens.Spacing.xs) {
+      BranchBadge(name: pr.headRefName)
+      Image(systemName: "arrow.right")
+        .font(.system(size: 8))
+        .foregroundStyle(.tertiary)
+      BranchBadge(name: pr.baseRefName)
+    }
+  }
+
+  private var prChangeMetadata: some View {
+    HStack(spacing: DesignTokens.Spacing.md) {
+      AdditionsDeletionsBadge(additions: pr.additions, deletions: pr.deletions)
+
+      Text("\(pr.changedFiles) files")
+        .font(GitHubTypography.bodySmall)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+
+      if let decision = pr.reviewDecision {
+        ReviewDecisionBadge(decision: decision)
+      }
+    }
+    .fixedSize(horizontal: true, vertical: false)
+  }
+
+  private func prLabelRows(_ labels: [GitHubLabel]) -> some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: DesignTokens.Spacing.xs) {
+        ForEach(labels) { label in
+          GitHubLabelPill(label: label)
+        }
+      }
+
+      VStack(alignment: .leading, spacing: 4) {
+        ForEach(labels) { label in
+          GitHubLabelPill(label: label)
+        }
+      }
+    }
   }
 
   private var prStateColor: Color {

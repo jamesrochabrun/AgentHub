@@ -103,6 +103,7 @@ struct AdditionsDeletionsBadge: View {
     HStack(spacing: 3) {
       Text("+\(additions)")
         .font(GitHubTypography.monoCaption)
+        .lineLimit(1)
         .foregroundStyle(GitHubPalette.addition)
         .padding(.horizontal, 4)
         .padding(.vertical, 1)
@@ -111,12 +112,14 @@ struct AdditionsDeletionsBadge: View {
 
       Text("-\(deletions)")
         .font(GitHubTypography.monoCaption)
+        .lineLimit(1)
         .foregroundStyle(GitHubPalette.deletion)
         .padding(.horizontal, 4)
         .padding(.vertical, 1)
         .background(GitHubPalette.deletion.opacity(0.1))
         .clipShape(RoundedRectangle(cornerRadius: 3))
     }
+    .fixedSize(horizontal: true, vertical: false)
   }
 }
 
@@ -132,6 +135,7 @@ struct BranchBadge: View {
       Text(name)
         .font(GitHubTypography.monoCaption)
         .lineLimit(1)
+        .truncationMode(.middle)
     }
     .padding(.horizontal, 6)
     .padding(.vertical, 2)
@@ -154,11 +158,14 @@ struct GitHubLabelPill: View {
   var body: some View {
     Text(label.name)
       .font(GitHubTypography.badge)
+      .lineLimit(1)
+      .truncationMode(.tail)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)
       .background(pillColor.opacity(0.15))
       .foregroundStyle(pillColor)
       .clipShape(Capsule())
+      .fixedSize(horizontal: true, vertical: false)
   }
 }
 
@@ -173,12 +180,14 @@ struct CIStatusBadge: View {
         .font(.system(size: 9))
       Text(status.rawValue.capitalized)
         .font(GitHubTypography.badge)
+        .lineLimit(1)
     }
     .padding(.horizontal, 6)
     .padding(.vertical, 2)
     .background(statusColor.opacity(0.15))
     .foregroundStyle(statusColor)
     .clipShape(Capsule())
+    .fixedSize(horizontal: true, vertical: false)
   }
 
   private var statusColor: Color {
@@ -233,12 +242,14 @@ struct ReviewDecisionBadge: View {
         .font(.system(size: 10))
       Text(label)
         .font(GitHubTypography.badge)
+        .lineLimit(1)
     }
     .padding(.horizontal, 6)
     .padding(.vertical, 2)
     .background(color.opacity(0.15))
     .foregroundStyle(color)
     .clipShape(Capsule())
+    .fixedSize(horizontal: true, vertical: false)
   }
 }
 
