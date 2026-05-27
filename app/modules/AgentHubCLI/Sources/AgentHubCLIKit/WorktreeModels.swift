@@ -56,6 +56,20 @@ public struct WorktreeCancellationCleanupResult: Sendable, Equatable {
   }
 }
 
+public struct WorktreeChangeSnapshot: Sendable, Equatable {
+  public let stashRef: String?
+  public let untrackedRelativePaths: [String]
+
+  public init(stashRef: String?, untrackedRelativePaths: [String]) {
+    self.stashRef = stashRef
+    self.untrackedRelativePaths = untrackedRelativePaths
+  }
+
+  public var isEmpty: Bool {
+    stashRef == nil && untrackedRelativePaths.isEmpty
+  }
+}
+
 public struct BranchInfo: Codable, Equatable, Identifiable, Sendable {
   public let name: String
   public let remote: String

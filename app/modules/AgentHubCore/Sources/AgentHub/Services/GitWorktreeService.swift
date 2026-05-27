@@ -120,6 +120,18 @@ public actor GitWorktreeService: GitWorktreeRemovalServiceProtocol {
     try await service.applyStash(ref, at: path)
   }
 
+  public func captureWorkingTreeChanges(at repoPath: String) async throws -> WorktreeChangeSnapshot? {
+    try await service.captureWorkingTreeChanges(at: repoPath)
+  }
+
+  public func applyWorkingTreeChanges(
+    _ snapshot: WorktreeChangeSnapshot,
+    from sourcePath: String,
+    to targetPath: String
+  ) async throws {
+    try await service.applyWorkingTreeChanges(snapshot, from: sourcePath, to: targetPath)
+  }
+
   public func getCurrentBranch(at repoPath: String) async throws -> String {
     try await service.getCurrentBranch(at: repoPath)
   }

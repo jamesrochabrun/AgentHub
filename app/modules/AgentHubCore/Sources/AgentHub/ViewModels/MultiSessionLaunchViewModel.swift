@@ -154,6 +154,7 @@ public final class MultiSessionLaunchViewModel {
   public var manualCodexDirectoryName: String = ""
   public var baseBranch: RemoteBranch?
   public var selectedRepository: SelectedRepository?
+  public var carrySourceChangesPath: String?
 
   // MARK: - Loaded Data
 
@@ -301,6 +302,7 @@ public final class MultiSessionLaunchViewModel {
     availableBranches = []
     currentBranchName = ""
     baseBranch = nil
+    carrySourceChangesPath = nil
     isLoadingBranches = false
     isLoadingCurrentBranch = false
     resetBranchNamingProgress()
@@ -338,6 +340,56 @@ public final class MultiSessionLaunchViewModel {
     return true
   }
 
+  /// Configures the launcher for the Fork flow. Fork uses normal worktree
+  /// creation, but seeds the form with the original session's location,
+  /// transcript reference, provider, branch name, and source changes path.
+  @discardableResult
+  public func configureForFork(
+    from session: CLISession,
+    targetProvider: SessionProviderKind
+  ) async -> Bool {
+    reset()
+
+    let didPreselect = await preselectRepository(path: session.projectPath)
+    if !didPreselect {
+      selectedRepository = SelectedRepository(
+        path: session.projectPath,
+        name: session.projectName,
+        worktrees: [
+          WorktreeBranch(
+            name: session.branchName ?? session.projectName,
+            path: session.projectPath,
+            isWorktree: session.isWorktree
+          )
+        ],
+        isExpanded: true
+      )
+      await loadBranches()
+    }
+
+    launchMode = .manual
+    workMode = .worktree
+    worktreeNamingMode = .manual
+    baseBranch = nil
+    currentBranchName = session.branchName ?? currentBranchName
+    sharedPrompt = Self.forkInitialPrompt(for: session)
+    carrySourceChangesPath = session.projectPath
+
+    switch targetProvider {
+    case .claude:
+      claudeMode = .enabled
+      isCodexSelected = false
+    case .codex:
+      claudeMode = .disabled
+      isCodexSelected = true
+    }
+
+    let branchName = Self.forkBranchName(for: session)
+    manualSingleBranchName = branchName
+    manualSingleDirectoryName = directoryName(for: branchName)
+    return selectedRepository != nil
+  }
+
   /// Loads local branches and current branch for the selected repository.
   /// Uses a single `git branch` call to get both, reducing process spawns from 3 to 1-2.
   public func loadBranches() async {
@@ -365,6 +417,22 @@ public final class MultiSessionLaunchViewModel {
   public func directoryName(for branchName: String) -> String {
     guard let repo = selectedRepository else { return branchName }
     return GitWorktreeService.worktreeDirectoryName(for: branchName, repoName: repo.name)
+  }
+
+  public static func forkBranchName(for session: CLISession, timestamp: Int = Int(Date().timeIntervalSince1970)) -> String {
+    let branchSuffix = session.branchName.map { GitWorktreeService.sanitizeBranchName($0) } ?? "no-branch"
+    return "fork-\(branchSuffix)-\(session.shortId)-\(timestamp)"
+  }
+
+  public static func forkInitialPrompt(for session: CLISession) -> String {
+    var reference = "If you need specific details from the previous session, read the full transcript at:"
+    if let filePath = session.sessionFilePath {
+      reference += " \(filePath)"
+    } else {
+      let encodedPath = session.projectPath.claudeProjectPathEncoded
+      reference += " ~/.claude/projects/\(encodedPath)/\(session.id).jsonl"
+    }
+    return reference
   }
 
   /// Creates worktrees and starts sessions based on the selected providers and work/launch mode
@@ -841,6 +909,7 @@ public final class MultiSessionLaunchViewModel {
     singleBranchName = ""
     baseBranch = nil
     selectedRepository = nil
+    carrySourceChangesPath = nil
     availableBranches = []
     currentBranchName = ""
     launchMode = .manual
@@ -1338,6 +1407,9 @@ public final class MultiSessionLaunchViewModel {
       "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation started provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public)"
     )
 
+    let sourceChangesPath = carrySourceChangesPath
+    let sourceChangeSnapshot = try await captureSourceChangesIfNeeded(at: sourceChangesPath)
+
     let progressUpdater: @MainActor (WorktreeCreationProgress) -> Void = { [weak self] progress in
       self?.applyWorktreeProgress(progress, to: progressKeyPath)
     }
@@ -1352,6 +1424,15 @@ public final class MultiSessionLaunchViewModel {
       ) { progress in
         await progressUpdater(progress)
       }
+
+      if let sourceChangesPath, let sourceChangeSnapshot {
+        try await worktreeService.applyWorkingTreeChanges(
+          sourceChangeSnapshot,
+          from: sourceChangesPath,
+          to: path
+        )
+      }
+
       activeWorktreeOperations.removeValue(forKey: operationID)
       AppLogger.intelligence.info(
         "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation completed provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public) elapsed=\(Self.formattedElapsed(since: operation.startedAt), privacy: .public)"
@@ -1379,6 +1460,17 @@ public final class MultiSessionLaunchViewModel {
       )
       throw error
     }
+  }
+
+  private func captureSourceChangesIfNeeded(at sourcePath: String?) async throws -> WorktreeChangeSnapshot? {
+    guard let sourcePath else { return nil }
+    let snapshot = try await worktreeService.captureWorkingTreeChanges(at: sourcePath)
+    if let snapshot {
+      AppLogger.intelligence.info(
+        "\(Self.aiWorktreeLogPrefix, privacy: .public) Captured source changes for fork tracked=\(snapshot.stashRef != nil) untracked=\(snapshot.untrackedRelativePaths.count, privacy: .public)"
+      )
+    }
+    return snapshot
   }
 
   private static func formattedElapsed(since startDate: Date) -> String {

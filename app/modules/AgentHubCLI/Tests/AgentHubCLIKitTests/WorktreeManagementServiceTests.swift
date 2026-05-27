@@ -166,6 +166,32 @@ struct WorktreeConventionTests {
 
     #expect(FileManager.default.fileExists(atPath: path + "/BASE.md"))
   }
+
+  @Test("Applies tracked and untracked source changes to another worktree")
+  func appliesWorkingTreeChanges() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try "changed".write(toFile: fixture.repoPath + "/README.md", atomically: true, encoding: .utf8)
+    try FileManager.default.createDirectory(atPath: fixture.repoPath + "/Notes", withIntermediateDirectories: true)
+    try "draft".write(toFile: fixture.repoPath + "/Notes/draft.md", atomically: true, encoding: .utf8)
+
+    let service = WorktreeManagementService()
+    let snapshot = try #require(await service.captureWorkingTreeChanges(at: fixture.repoPath))
+    let path = try await service.createWorktreeWithNewBranch(
+      at: fixture.repoPath,
+      newBranchName: "feature/carry-changes",
+      directoryName: "feature-carry-changes"
+    )
+
+    try await service.applyWorkingTreeChanges(snapshot, from: fixture.repoPath, to: path)
+
+    let readme = try String(contentsOfFile: path + "/README.md", encoding: .utf8)
+    let draft = try String(contentsOfFile: path + "/Notes/draft.md", encoding: .utf8)
+
+    #expect(readme == "changed")
+    #expect(draft == "draft")
+  }
 }
 
 @Suite("WorktreeManagementService removal and cancellation")

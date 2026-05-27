@@ -40,6 +40,7 @@ public struct MonitoringCardView: View {
   let onShowMermaid: ((CLISession) -> Void)?
   let onShowGitHub: ((CLISession, String) -> Void)?
   let onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)?
+  let onFork: ((CLISession, SessionProviderKind) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
   let onRequestShowEditor: (() -> Void)?
@@ -55,7 +56,6 @@ public struct MonitoringCardView: View {
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
-  @State private var showingRemixProviderPicker = false
   @AppStorage(AgentHubDefaults.diffDisplayMode)
   private var diffDisplayModeRawValue: String = DiffDisplayMode.inline.rawValue
   @Environment(\.agentHub) private var agentHub
@@ -90,6 +90,7 @@ public struct MonitoringCardView: View {
     onShowMermaid: ((CLISession) -> Void)? = nil,
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)? = nil,
+    onFork: ((CLISession, SessionProviderKind) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
     onRequestShowEditor: (() -> Void)? = nil,
@@ -125,6 +126,7 @@ public struct MonitoringCardView: View {
     self.onShowMermaid = onShowMermaid
     self.onShowGitHub = onShowGitHub
     self.onShowPendingChanges = onShowPendingChanges
+    self.onFork = onFork
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
     self.onRequestShowEditor = onRequestShowEditor
@@ -339,9 +341,6 @@ public struct MonitoringCardView: View {
         },
         onDismiss: { showingNameSheet = false }
       )
-    }
-    .sheet(isPresented: $showingRemixProviderPicker) {
-      RemixProviderPickerView(session: session, viewModel: viewModel)
     }
     .fileImporter(
       isPresented: $showingFilePicker,
@@ -801,10 +800,13 @@ public struct MonitoringCardView: View {
         showingNameSheet = true
       }
 
-      // Remix action
-      PopoverButton(icon: "arrowshape.zigzag.forward", title: "Remix") {
+      PopoverButton(icon: "arrow.triangle.branch", title: "Fork") {
         showingActionsPopover = false
-        showingRemixProviderPicker = true
+        if let onFork {
+          onFork(session, providerKind)
+        } else {
+          viewModel?.forkSession(session, targetProvider: providerKind)
+        }
       }
 
       Divider()

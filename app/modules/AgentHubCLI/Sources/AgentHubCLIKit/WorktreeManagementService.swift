@@ -24,6 +24,8 @@ public protocol WorktreeManagementServiceProtocol: Sendable {
   func cleanupCancelledWorktreeCreation(repoPath: String, newBranchName: String, directoryName: String) async -> WorktreeCancellationCleanupResult
   func captureStash(at repoPath: String) async throws -> String?
   func applyStash(_ ref: String, at path: String) async throws
+  func captureWorkingTreeChanges(at repoPath: String) async throws -> WorktreeChangeSnapshot?
+  func applyWorkingTreeChanges(_ snapshot: WorktreeChangeSnapshot, from sourcePath: String, to targetPath: String) async throws
   func getCurrentBranch(at repoPath: String) async throws -> String
   func getCurrentBranchFast(at repoPath: String) async throws -> String
   func hasUncommittedChanges(at repoPath: String) async throws -> Bool
@@ -330,6 +332,44 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     try await runGitCommand(["stash", "apply", ref], at: gitRoot, timeout: 60)
   }
 
+  public func captureWorkingTreeChanges(at repoPath: String) async throws -> WorktreeChangeSnapshot? {
+    let gitRoot = try await findGitRoot(at: repoPath)
+    let stashRef = try await captureStash(at: gitRoot)
+    let untrackedOutput = try await runGitCommand(
+      ["ls-files", "--others", "--exclude-standard", "-z"],
+      at: gitRoot
+    )
+    let untrackedPaths = untrackedOutput
+      .components(separatedBy: "\0")
+      .filter { !$0.isEmpty }
+
+    let snapshot = WorktreeChangeSnapshot(
+      stashRef: stashRef,
+      untrackedRelativePaths: untrackedPaths
+    )
+    return snapshot.isEmpty ? nil : snapshot
+  }
+
+  public func applyWorkingTreeChanges(
+    _ snapshot: WorktreeChangeSnapshot,
+    from sourcePath: String,
+    to targetPath: String
+  ) async throws {
+    if let stashRef = snapshot.stashRef {
+      try await applyStash(stashRef, at: targetPath)
+    }
+
+    guard !snapshot.untrackedRelativePaths.isEmpty else { return }
+
+    let sourceRoot = try await findGitRoot(at: sourcePath)
+    let targetRoot = try await findGitRoot(at: targetPath)
+    try copyUntrackedFiles(
+      snapshot.untrackedRelativePaths,
+      from: sourceRoot,
+      to: targetRoot
+    )
+  }
+
   public func getCurrentBranch(at repoPath: String) async throws -> String {
     let output = try await runGitCommand(["branch", "--show-current"], at: repoPath)
     return output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -503,6 +543,41 @@ private extension WorktreeManagementService {
     }
 
     return worktreePath
+  }
+
+  func copyUntrackedFiles(
+    _ relativePaths: [String],
+    from sourceRoot: String,
+    to targetRoot: String
+  ) throws {
+    for relativePath in relativePaths {
+      let sourcePath = try resolvedPath(root: sourceRoot, relativePath: relativePath)
+      let targetPath = try resolvedPath(root: targetRoot, relativePath: relativePath)
+
+      guard FileManager.default.fileExists(atPath: sourcePath) else { continue }
+
+      let targetDirectory = (targetPath as NSString).deletingLastPathComponent
+      try FileManager.default.createDirectory(
+        atPath: targetDirectory,
+        withIntermediateDirectories: true
+      )
+
+      if FileManager.default.fileExists(atPath: targetPath) {
+        try FileManager.default.removeItem(atPath: targetPath)
+      }
+
+      try FileManager.default.copyItem(atPath: sourcePath, toPath: targetPath)
+    }
+  }
+
+  func resolvedPath(root: String, relativePath: String) throws -> String {
+    let components = relativePath.split(separator: "/", omittingEmptySubsequences: false)
+    guard !relativePath.hasPrefix("/"),
+          !components.contains(where: { $0 == ".." || $0 == "." || $0.isEmpty }) else {
+      throw WorktreeManagementError.gitCommandFailed("Invalid relative path: \(relativePath)")
+    }
+
+    return (root as NSString).appendingPathComponent(relativePath)
   }
 
   func ensureWorktreesDirectory(mainRoot: String, repoPath: String) throws {

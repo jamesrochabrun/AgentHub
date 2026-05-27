@@ -540,6 +540,70 @@ struct MultiSessionLaunchViewModelManualWorktreeNamingTests {
   }
 }
 
+@Suite("MultiSessionLaunchViewModel — fork")
+struct MultiSessionLaunchViewModelForkTests {
+
+  @Test("Fork preselects worktree launch from current session")
+  @MainActor
+  func forkPreselectsWorktreeLaunch() async {
+    let vm = makeViewModel()
+    let session = CLISession(
+      id: "abcdef1234567890",
+      projectPath: "/tmp/repo",
+      branchName: "feature/current-work",
+      isWorktree: true,
+      sessionFilePath: "/tmp/session.jsonl"
+    )
+
+    await vm.configureForFork(from: session, targetProvider: .codex)
+
+    #expect(vm.selectedRepository?.path == "/tmp/repo")
+    #expect(vm.launchMode == .manual)
+    #expect(vm.workMode == .worktree)
+    #expect(vm.worktreeNamingMode == .manual)
+    #expect(vm.baseBranch == nil)
+    #expect(vm.claudeMode == .disabled)
+    #expect(vm.isCodexSelected)
+    #expect(vm.carrySourceChangesPath == "/tmp/repo")
+    #expect(vm.sharedPrompt.contains("/tmp/session.jsonl"))
+    #expect(vm.manualSingleBranchName.hasPrefix("fork-feature-current-work-abcdef12-"))
+    #expect(vm.manualSingleDirectoryName == vm.directoryName(for: vm.manualSingleBranchName))
+  }
+
+  @Test("Fork launch carries tracked and untracked source changes")
+  @MainActor
+  func forkLaunchCarriesSourceChanges() async throws {
+    let repo = try LauncherGitRepoFixture.create()
+    defer { repo.cleanup() }
+
+    try "changed".write(toFile: repo.repoPath + "/README.md", atomically: true, encoding: .utf8)
+    try "new".write(toFile: repo.repoPath + "/NewFile.md", atomically: true, encoding: .utf8)
+
+    let fixture = makeViewModelFixture()
+    let viewModel = fixture.viewModel
+    let codexViewModel = fixture.codexViewModel
+    let session = CLISession(
+      id: "abcdef1234567890",
+      projectPath: repo.repoPath,
+      branchName: "main",
+      sessionFilePath: repo.repoPath + "/session.jsonl"
+    )
+
+    await viewModel.configureForFork(from: session, targetProvider: .codex)
+    await viewModel.launchSessions()
+
+    let pending = try #require(codexViewModel.pendingHubSessions.first)
+    let readme = try String(contentsOfFile: pending.worktree.path + "/README.md", encoding: .utf8)
+    let newFile = try String(contentsOfFile: pending.worktree.path + "/NewFile.md", encoding: .utf8)
+
+    #expect(readme == "changed")
+    #expect(newFile == "new")
+    #expect(pending.initialPrompt?.contains(repo.repoPath + "/session.jsonl") == true)
+
+    codexViewModel.pendingHubSessions.removeAll()
+  }
+}
+
 @Suite("MultiSessionLaunchViewModel — AI worktree naming")
 struct MultiSessionLaunchViewModelAIWorktreeNamingTests {
 

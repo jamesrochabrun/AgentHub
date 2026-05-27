@@ -209,6 +209,9 @@ public struct MultiProviderSessionsListView: View {
           onAddFolder: { showAddRepositoryPicker() },
           onRequestStartSession: { preferredRepositoryPath in
             triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
+          },
+          onRequestForkSession: { session, targetProvider in
+            triggerForkSessionFlow(session: session, targetProvider: targetProvider)
           }
         )
         .padding(12)
@@ -1713,6 +1716,20 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  private func triggerForkSessionFlow(session: CLISession, targetProvider: SessionProviderKind) {
+    guard let multiLaunchViewModel else { return }
+
+    Task { @MainActor in
+      let didConfigure = await multiLaunchViewModel.configureForFork(
+        from: session,
+        targetProvider: targetProvider
+      )
+      if didConfigure {
+        isStartSessionSheetPresented = true
+      }
+    }
+  }
+
   private func toggleAuxiliaryShellDock() {
     ensurePrimarySelection()
     guard !selectedSessionItems.isEmpty else { return }
@@ -1982,7 +1999,7 @@ private struct StartSessionSheet: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack {
-        Text("Start Session")
+        Text(launchViewModel.carrySourceChangesPath == nil ? "Start Session" : "Fork Session")
           .font(.heading)
         Spacer()
         Button {
@@ -2077,6 +2094,7 @@ private struct SessionsSectionHeader: View {
               Button {
                 guard let vm = launchViewModel else { return }
                 Task { @MainActor in
+                  vm.reset()
                   _ = await vm.preselectRepository(path: repo.path)
                   showStartSheet = true
                 }
