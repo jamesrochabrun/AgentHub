@@ -145,6 +145,7 @@ public struct MultiProviderMonitoringPanelView: View {
   let onEmbeddedSidePanelVisibilityChange: (Bool) -> Void
   let onAddFolder: () -> Void
   let onRequestStartSession: (String?) -> Void
+  let onRequestForkSession: (CLISession, SessionProviderKind) -> Void
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
   @State private var sidePanelPresentation = EmbeddedSidePanelPresentationState<SidePanelPayload>()
@@ -203,7 +204,8 @@ public struct MultiProviderMonitoringPanelView: View {
     selectedModuleLandingPath: Binding<String?> = .constant(nil),
     onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
     onAddFolder: @escaping () -> Void,
-    onRequestStartSession: @escaping (String?) -> Void
+    onRequestStartSession: @escaping (String?) -> Void,
+    onRequestForkSession: @escaping (CLISession, SessionProviderKind) -> Void = { _, _ in }
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
@@ -212,6 +214,7 @@ public struct MultiProviderMonitoringPanelView: View {
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onAddFolder = onAddFolder
     self.onRequestStartSession = onRequestStartSession
+    self.onRequestForkSession = onRequestForkSession
   }
 
   public var body: some View {
@@ -637,6 +640,7 @@ public struct MultiProviderMonitoringPanelView: View {
                 forItemID: item.id
               )
             },
+            onFork: onRequestForkSession,
             onPromptConsumed: {
               viewModel.clearPendingPrompt(for: session.id)
             },

@@ -6,21 +6,21 @@ import Testing
 
 // MARK: - Private Git Fixture
 
-private struct RemixTestGitFixture {
+private struct ForkTestGitFixture {
   let repoPath: String
   let parentDir: String
 
-  static func create() throws -> RemixTestGitFixture {
+  static func create() throws -> ForkTestGitFixture {
     var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
     guard realpath(NSTemporaryDirectory(), &resolved) != nil else {
-      throw RemixFixtureError.commandFailed
+      throw ForkFixtureError.commandFailed
     }
     let tempBase = String(cString: resolved)
-    let parentDir = tempBase + "/RemixTests-\(UUID().uuidString)"
+    let parentDir = tempBase + "/ForkTests-\(UUID().uuidString)"
     let repoPath = parentDir + "/repo"
     try FileManager.default.createDirectory(atPath: repoPath, withIntermediateDirectories: true)
 
-    let fixture = RemixTestGitFixture(repoPath: repoPath, parentDir: parentDir)
+    let fixture = ForkTestGitFixture(repoPath: repoPath, parentDir: parentDir)
     try fixture.git("init", "-b", "main")
     try fixture.git("config", "user.email", "test@test.com")
     try fixture.git("config", "user.name", "Test")
@@ -43,7 +43,7 @@ private struct RemixTestGitFixture {
     try process.run()
     process.waitUntilExit()
     guard process.terminationStatus == 0 else {
-      throw RemixFixtureError.commandFailed
+      throw ForkFixtureError.commandFailed
     }
     let data = stdout.fileHandleForReading.readDataToEndOfFile()
     return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -54,7 +54,7 @@ private struct RemixTestGitFixture {
   }
 }
 
-private enum RemixFixtureError: Error {
+private enum ForkFixtureError: Error {
   case commandFailed
 }
 
@@ -178,15 +178,15 @@ struct CLISessionProjectNameTests {
   }
 }
 
-// MARK: - remixSession Provider Routing Tests
+// MARK: - forkSession Provider Routing Tests
 
-@Suite("remixSession provider routing")
-struct RemixSessionProviderRoutingTests {
+@Suite("forkSession provider routing")
+struct ForkSessionProviderRoutingTests {
 
   @Test("Defaults to same provider when targetProvider is nil")
   @MainActor
   func defaultsToSameProvider() async throws {
-    let fixture = try RemixTestGitFixture.create()
+    let fixture = try ForkTestGitFixture.create()
     defer { fixture.cleanup() }
 
     let claudeVM = makeViewModel(providerKind: .claude)
@@ -197,7 +197,7 @@ struct RemixSessionProviderRoutingTests {
       sessionFilePath: "\(fixture.repoPath)/session.jsonl"
     )
 
-    claudeVM.remixSession(session)
+    claudeVM.forkSession(session)
     try await Task.sleep(for: .seconds(3))
 
     #expect(claudeVM.pendingHubSessions.count == 1)
@@ -206,7 +206,7 @@ struct RemixSessionProviderRoutingTests {
   @Test("Same targetProvider as providerKind routes to self")
   @MainActor
   func sameTargetProviderRoutesToSelf() async throws {
-    let fixture = try RemixTestGitFixture.create()
+    let fixture = try ForkTestGitFixture.create()
     defer { fixture.cleanup() }
 
     let claudeVM = makeViewModel(providerKind: .claude)
@@ -217,7 +217,7 @@ struct RemixSessionProviderRoutingTests {
       sessionFilePath: "\(fixture.repoPath)/session.jsonl"
     )
 
-    claudeVM.remixSession(session, targetProvider: .claude)
+    claudeVM.forkSession(session, targetProvider: .claude)
     try await Task.sleep(for: .seconds(3))
 
     #expect(claudeVM.pendingHubSessions.count == 1)
@@ -226,7 +226,7 @@ struct RemixSessionProviderRoutingTests {
   @Test("Falls back to self when agentHubProvider is nil even with different targetProvider")
   @MainActor
   func fallsBackToSelfWithNoProvider() async throws {
-    let fixture = try RemixTestGitFixture.create()
+    let fixture = try ForkTestGitFixture.create()
     defer { fixture.cleanup() }
 
     let claudeVM = makeViewModel(providerKind: .claude)
@@ -238,7 +238,7 @@ struct RemixSessionProviderRoutingTests {
       sessionFilePath: "\(fixture.repoPath)/session.jsonl"
     )
 
-    claudeVM.remixSession(session, targetProvider: .codex)
+    claudeVM.forkSession(session, targetProvider: .codex)
     try await Task.sleep(for: .seconds(3))
 
     #expect(claudeVM.pendingHubSessions.count == 1)
@@ -247,7 +247,7 @@ struct RemixSessionProviderRoutingTests {
   @Test("Routes to target ViewModel when targetProvider differs and agentHubProvider is set")
   @MainActor
   func routesToTargetViewModelWhenProviderDiffers() async throws {
-    let fixture = try RemixTestGitFixture.create()
+    let fixture = try ForkTestGitFixture.create()
     defer { fixture.cleanup() }
 
     let metadataStore = try SessionMetadataStore(path: fixture.parentDir + "/session-metadata.sqlite")
@@ -265,7 +265,7 @@ struct RemixSessionProviderRoutingTests {
       sessionFilePath: "\(fixture.repoPath)/session.jsonl"
     )
 
-    claudeVM.remixSession(session, targetProvider: .codex)
+    claudeVM.forkSession(session, targetProvider: .codex)
     try await Task.sleep(for: .seconds(3))
 
     #expect(claudeVM.pendingHubSessions.isEmpty)
@@ -275,7 +275,7 @@ struct RemixSessionProviderRoutingTests {
   @Test("Pending session initialPrompt contains provided sessionFilePath")
   @MainActor
   func pendingSessionUsesSessionFilePath() async throws {
-    let fixture = try RemixTestGitFixture.create()
+    let fixture = try ForkTestGitFixture.create()
     defer { fixture.cleanup() }
 
     let sessionFilePath = "\(fixture.repoPath)/sessions/abc.jsonl"
@@ -287,7 +287,7 @@ struct RemixSessionProviderRoutingTests {
       sessionFilePath: sessionFilePath
     )
 
-    claudeVM.remixSession(session)
+    claudeVM.forkSession(session)
     try await Task.sleep(for: .seconds(3))
 
     let pending = try #require(claudeVM.pendingHubSessions.first)
@@ -298,7 +298,7 @@ struct RemixSessionProviderRoutingTests {
   @Test("Pending session initialPrompt falls back to encoded Claude path when sessionFilePath is nil")
   @MainActor
   func pendingSessionFallsBackToEncodedPath() async throws {
-    let fixture = try RemixTestGitFixture.create()
+    let fixture = try ForkTestGitFixture.create()
     defer { fixture.cleanup() }
 
     let sessionId = UUID().uuidString
@@ -310,7 +310,7 @@ struct RemixSessionProviderRoutingTests {
       sessionFilePath: nil
     )
 
-    claudeVM.remixSession(session)
+    claudeVM.forkSession(session)
     try await Task.sleep(for: .seconds(3))
 
     let pending = try #require(claudeVM.pendingHubSessions.first)

@@ -1,3 +1,4 @@
 import AgentHubCLIKit
 
 public typealias WorktreeCreationProgress = AgentHubCLIKit.WorktreeCreationProgress
+public typealias WorktreeChangeSnapshot = AgentHubCLIKit.WorktreeChangeSnapshot

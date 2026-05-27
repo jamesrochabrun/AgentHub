@@ -2537,18 +2537,16 @@ public final class CLISessionsViewModel {
   /// - Returns: An error if launching failed, nil on success
   /// Creates a git worktree from the session's HEAD, optionally carries uncommitted changes,
   /// then opens a new hub session pre-filled with a reference to the original.
-  public func remixSession(_ session: CLISession, targetProvider: SessionProviderKind? = nil) {
+  public func forkSession(_ session: CLISession, targetProvider: SessionProviderKind? = nil) {
     Task { @MainActor in
       let worktreeService = GitWorktreeService()
       let projectName = session.projectName
-      let branchSuffix = session.branchName.map { GitWorktreeService.sanitizeBranchName($0) } ?? "no-branch"
-      let timestamp = Int(Date().timeIntervalSince1970)
-      let branchName = "remix-\(branchSuffix)-\(session.shortId)-\(timestamp)"
+      let branchName = MultiSessionLaunchViewModel.forkBranchName(for: session)
       let dirName = "\(projectName)-\(branchName)"
 
       do {
-        // 1. Capture uncommitted state as a stash object (non-destructive)
-        let stashRef = try await worktreeService.captureStash(at: session.projectPath)
+        // 1. Capture source changes non-destructively before creating the worktree.
+        let changeSnapshot = try await worktreeService.captureWorkingTreeChanges(at: session.projectPath)
 
         // 2. Create worktree at HEAD
         let worktreePath = try await worktreeService.createWorktreeWithNewBranch(
@@ -2557,25 +2555,16 @@ public final class CLISessionsViewModel {
           directoryName: dirName
         )
 
-        // 3. Apply uncommitted changes into the new worktree (if any existed)
-        if let stashRef {
-          try await worktreeService.applyStash(stashRef, at: worktreePath)
+        // 3. Apply source changes into the new worktree (if any existed)
+        if let changeSnapshot {
+          try await worktreeService.applyWorkingTreeChanges(
+            changeSnapshot,
+            from: session.projectPath,
+            to: worktreePath
+          )
         }
 
-        // Build a transcript reference to orient the new session.
-        // sessionFilePath is the canonical, provider-agnostic path already stored on the model:
-        //   - Claude sessions: ~/.claude/projects/{encoded-path}/{sessionId}.jsonl
-        //   - Codex sessions:  ~/.codex/sessions/{date-path}/{sessionId}.jsonl
-        // The fallback only fires for Claude sessions where sessionFilePath was not populated
-        // at scan time; it must never be reached for Codex (sessionFilePath is always set there).
-        var reference = "If you need specific details from the previous session, read the full transcript at:"
-        if let filePath = session.sessionFilePath {
-          reference += " \(filePath)"
-        } else {
-          // Claude-specific fallback: reconstruct the path from the encoded project path.
-          let encodedPath = session.projectPath.claudeProjectPathEncoded
-          reference += " ~/.claude/projects/\(encodedPath)/\(session.id).jsonl"
-        }
+        let reference = MultiSessionLaunchViewModel.forkInitialPrompt(for: session)
 
         // Resolve which ViewModel launches the new session
         let resolvedProvider = targetProvider ?? providerKind
@@ -2599,7 +2588,7 @@ public final class CLISessionsViewModel {
           startNewSessionInHub(worktree, initialPrompt: reference)
         }
       } catch {
-        AppLogger.session.error("[Remix] Failed: \(error)")
+        AppLogger.session.error("[Fork] Failed: \(error)")
       }
     }
   }
