@@ -10,10 +10,43 @@ import Foundation
 
 // MARK: - FileIndexService
 
-public enum FileSearchIndexStatus: Sendable {
+public enum FileSearchIndexStatus: Sendable, Equatable {
   case idle
   case building
   case ready
+}
+
+public enum FileSearchResultSource: Sendable, Equatable {
+  case spotlight
+  case localIndex
+}
+
+public struct FileSearchDiagnostics: Sendable, Equatable {
+  public let results: [FileSearchResult]
+  public let source: FileSearchResultSource
+  public let spotlightCandidateCount: Int
+  public let spotlightElapsedSeconds: TimeInterval
+  public let localIndexStatusBeforeFallback: FileSearchIndexStatus
+  public let localIndexedFileCount: Int
+  public let localIndexElapsedSeconds: TimeInterval?
+
+  public init(
+    results: [FileSearchResult],
+    source: FileSearchResultSource,
+    spotlightCandidateCount: Int,
+    spotlightElapsedSeconds: TimeInterval,
+    localIndexStatusBeforeFallback: FileSearchIndexStatus,
+    localIndexedFileCount: Int,
+    localIndexElapsedSeconds: TimeInterval?
+  ) {
+    self.results = results
+    self.source = source
+    self.spotlightCandidateCount = spotlightCandidateCount
+    self.spotlightElapsedSeconds = spotlightElapsedSeconds
+    self.localIndexStatusBeforeFallback = localIndexStatusBeforeFallback
+    self.localIndexedFileCount = localIndexedFileCount
+    self.localIndexElapsedSeconds = localIndexElapsedSeconds
+  }
 }
 
 /// Scans project directories, respects .gitignore, caches tree nodes, and provides project file search.
@@ -155,10 +188,7 @@ public actor FileIndexService {
 
   public func searchIndexStatus(projectPath: String) async -> FileSearchIndexStatus {
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
-    if searchBuildTasks[resolvedProjectPath] != nil {
-      return .building
-    }
-    return .ready
+    return searchIndexStatus(resolvedProjectPath: resolvedProjectPath)
   }
 
   /// Searches files using Spotlight first, then falls back to the legacy in-process index if
@@ -168,14 +198,29 @@ public actor FileIndexService {
   /// 3. Path contains query as substring → medium score
   /// All matching is case-insensitive substring, no fuzzy.
   public func search(query: String, in projectPath: String) async -> [FileSearchResult] {
-    guard !query.isEmpty, query.count < 200 else { return [] }
+    await searchWithDiagnostics(query: query, in: projectPath).results
+  }
+
+  public func searchWithDiagnostics(query: String, in projectPath: String) async -> FileSearchDiagnostics {
+    guard !query.isEmpty, query.count < 200 else {
+      return FileSearchDiagnostics(
+        results: [],
+        source: .localIndex,
+        spotlightCandidateCount: 0,
+        spotlightElapsedSeconds: 0,
+        localIndexStatusBeforeFallback: .idle,
+        localIndexedFileCount: 0,
+        localIndexElapsedSeconds: nil
+      )
+    }
+
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
-    let spotlightResults = await projectFileSearchService.search(
+    let spotlightResponse = await projectFileSearchService.searchWithDiagnostics(
       query: query,
       in: resolvedProjectPath,
       limit: Self.maxSearchResults * 10
     )
-    let filteredSpotlightResults = spotlightResults
+    let filteredSpotlightResults = spotlightResponse.results
       .compactMap { spotlightResult -> FileSearchResult? in
         let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
         guard Self.shouldIncludeSearchResult(at: absolutePath, rootPath: resolvedProjectPath),
@@ -195,50 +240,33 @@ public actor FileIndexService {
       .sortedBySearchScore()
 
     if !filteredSpotlightResults.isEmpty {
-      return Array(filteredSpotlightResults.prefix(Self.maxSearchResults))
+      return FileSearchDiagnostics(
+        results: Array(filteredSpotlightResults.prefix(Self.maxSearchResults)),
+        source: .spotlight,
+        spotlightCandidateCount: spotlightResponse.candidateCount,
+        spotlightElapsedSeconds: spotlightResponse.elapsedSeconds,
+        localIndexStatusBeforeFallback: searchIndexStatus(resolvedProjectPath: resolvedProjectPath),
+        localIndexedFileCount: searchCache[resolvedProjectPath]?.files.count ?? 0,
+        localIndexElapsedSeconds: nil
+      )
     }
 
+    let localStatusBeforeFallback = searchIndexStatus(resolvedProjectPath: resolvedProjectPath)
+    let localIndexStart = Date()
     let allFiles = await searchIndex(projectPath: resolvedProjectPath)
+    let localIndexElapsed = Date().timeIntervalSince(localIndexStart)
     let q = query.lowercased()
 
-    var scored: [FileSearchResult] = []
-    for file in allFiles {
-      let nameLower = file.name.lowercased()
-      let nameNoExt = (file.name as NSString).deletingPathExtension.lowercased()
-      let pathLower = file.relativePath.lowercased()
-
-      var score = 0
-      if nameNoExt == q {
-        // Exact match (without extension)
-        score = 5000
-      } else if nameNoExt.hasPrefix(q) {
-        // Filename starts with query (without extension)
-        score = 4000 + (100 - min(nameLower.count, 100))
-      } else if nameLower.hasPrefix(q) {
-        // Filename starts with query (with extension)
-        score = 3500 + (100 - min(nameLower.count, 100))
-      } else if nameLower.contains(q), let nameRange = nameLower.range(of: q) {
-        // Filename contains query
-        let pos = nameRange.lowerBound.utf16Offset(in: nameLower)
-        score = 2000 + (200 - pos) + (100 - min(nameLower.count, 100))
-      } else if pathLower.contains(q), let pathRange = pathLower.range(of: q) {
-        // Path contains query
-        let pos = pathRange.lowerBound.utf16Offset(in: pathLower)
-        score = 1000 + (500 - min(pos, 500))
-      }
-
-      guard score > 0 else { continue }
-      scored.append(FileSearchResult(
-        id: file.absolutePath, name: file.name, relativePath: file.relativePath,
-        absolutePath: file.absolutePath, score: score
-      ))
-    }
-
-    scored.sort {
-      if $0.score != $1.score { return $0.score > $1.score }
-      return $0.name < $1.name
-    }
-    return Array(scored.prefix(Self.maxSearchResults))
+    let scored = Self.rankIndexedFiles(allFiles, query: q)
+    return FileSearchDiagnostics(
+      results: Array(scored.prefix(Self.maxSearchResults)),
+      source: .localIndex,
+      spotlightCandidateCount: spotlightResponse.candidateCount,
+      spotlightElapsedSeconds: spotlightResponse.elapsedSeconds,
+      localIndexStatusBeforeFallback: localStatusBeforeFallback,
+      localIndexedFileCount: allFiles.count,
+      localIndexElapsedSeconds: localIndexElapsed
+    )
   }
 
   /// Removes the cache entry for `projectPath`.
@@ -306,6 +334,18 @@ public actor FileIndexService {
 
   private func isCacheStale(_ date: Date) -> Bool {
     Date().timeIntervalSince(date) > Self.cacheTTL
+  }
+
+  private func searchIndexStatus(resolvedProjectPath: String) -> FileSearchIndexStatus {
+    if searchBuildTasks[resolvedProjectPath] != nil {
+      return .building
+    }
+
+    if let entry = searchCache[resolvedProjectPath], !isCacheStale(entry.date) {
+      return .ready
+    }
+
+    return .idle
   }
 
   // MARK: - Scanning
@@ -688,6 +728,43 @@ public actor FileIndexService {
   }
 
   // MARK: - Search Helpers
+
+  private static func rankIndexedFiles(_ files: [IndexedFile], query: String) -> [FileSearchResult] {
+    var scored: [FileSearchResult] = []
+    scored.reserveCapacity(min(files.count, maxSearchResults))
+
+    for file in files {
+      let nameLower = file.name.lowercased()
+      let nameNoExt = (file.name as NSString).deletingPathExtension.lowercased()
+      let pathLower = file.relativePath.lowercased()
+
+      var score = 0
+      if nameNoExt == query {
+        score = 5000
+      } else if nameNoExt.hasPrefix(query) {
+        score = 4000 + (100 - min(nameLower.count, 100))
+      } else if nameLower.hasPrefix(query) {
+        score = 3500 + (100 - min(nameLower.count, 100))
+      } else if nameLower.contains(query), let nameRange = nameLower.range(of: query) {
+        let position = nameRange.lowerBound.utf16Offset(in: nameLower)
+        score = 2000 + (200 - position) + (100 - min(nameLower.count, 100))
+      } else if pathLower.contains(query), let pathRange = pathLower.range(of: query) {
+        let position = pathRange.lowerBound.utf16Offset(in: pathLower)
+        score = 1000 + (500 - min(position, 500))
+      }
+
+      guard score > 0 else { continue }
+      scored.append(FileSearchResult(
+        id: file.absolutePath,
+        name: file.name,
+        relativePath: file.relativePath,
+        absolutePath: file.absolutePath,
+        score: score
+      ))
+    }
+
+    return scored.sortedBySearchScore()
+  }
 
 }
 

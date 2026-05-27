@@ -42,7 +42,7 @@ public struct FileTreeNode: Identifiable, Equatable, Sendable {
 
 // MARK: - FileSearchResult
 
-public struct FileSearchResult: Identifiable, Sendable {
+public struct FileSearchResult: Identifiable, Equatable, Sendable {
   public let id: String           // absolute path
   public let name: String
   public let relativePath: String // path relative to projectPath
