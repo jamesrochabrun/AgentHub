@@ -50,6 +50,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
   public func argumentsForSession(
     sessionId: String?,
     prompt: String?,
+    agentHubMCPServerPath: String? = nil,
     dangerouslySkipPermissions: Bool = false,
     worktreeName: String? = nil,
     permissionModePlan: Bool = false,
@@ -66,6 +67,11 @@ public struct CLICommandConfiguration: Codable, Sendable {
       var args: [String] = []
 
       let isNewSession = sessionId == nil || sessionId?.isEmpty == true || sessionId?.hasPrefix("pending-") == true
+
+      if let agentHubMCPServerPath, !agentHubMCPServerPath.isEmpty {
+        args += ["--mcp-config", claudeMCPConfig(agentHubCLIPath: agentHubMCPServerPath)]
+        args += ["--append-system-prompt", Self.agentHubMCPRoutingInstructions]
+      }
 
       // Add flags only for NEW sessions (not resume)
       if isNewSession {
@@ -114,11 +120,18 @@ public struct CLICommandConfiguration: Codable, Sendable {
     case .codex:
       if let sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
         // Codex CLI resume: codex resume <SESSION_ID>
-        return prefix + ["resume", sessionId]
+        var args: [String] = []
+        if let agentHubMCPServerPath, !agentHubMCPServerPath.isEmpty {
+          args += codexMCPConfigArgs(agentHubCLIPath: agentHubMCPServerPath)
+        }
+        return prefix + args + ["resume", sessionId]
       }
 
       // AI configuration flags for new Codex sessions
       var args: [String] = []
+      if let agentHubMCPServerPath, !agentHubMCPServerPath.isEmpty {
+        args += codexMCPConfigArgs(agentHubCLIPath: agentHubMCPServerPath)
+      }
       if let model, !model.isEmpty {
         args += ["--model", model]
       }
@@ -145,4 +158,59 @@ public struct CLICommandConfiguration: Codable, Sendable {
       return prefix + args
     }
   }
+
+  private func claudeMCPConfig(agentHubCLIPath: String) -> String {
+    let config: [String: Any] = [
+      "mcpServers": [
+        "agenthub": [
+          "command": "/bin/sh",
+          "args": ["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]
+        ]
+      ]
+    ]
+    guard let data = try? JSONSerialization.data(withJSONObject: config),
+          let encoded = String(data: data, encoding: .utf8) else {
+      return "{}"
+    }
+    return encoded
+  }
+
+  private func codexMCPConfigArgs(agentHubCLIPath: String) -> [String] {
+    [
+      "-c", "mcp_servers.agenthub.command=\(tomlStringLiteral("/bin/sh"))",
+      "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]))",
+      "-c", "developer_instructions=\(tomlStringLiteral(Self.agentHubMCPRoutingInstructions))"
+    ]
+  }
+
+  private func mcpServerShellScript(agentHubCLIPath: String) -> String {
+    let escapedCLIPath = shellSingleQuoted(agentHubCLIPath)
+    return """
+    if [ -n "${AGENTHUB_CLI:-}" ] && [ -x "${AGENTHUB_CLI:-}" ]; then exec "$AGENTHUB_CLI" mcp-server; fi
+    if [ -x \(escapedCLIPath) ]; then exec \(escapedCLIPath) mcp-server; fi
+    exec agenthub mcp-server
+    """
+  }
+
+  private func shellSingleQuoted(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+  }
+
+  private func tomlStringLiteral(_ value: String) -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.withoutEscapingSlashes]
+    guard let data = try? encoder.encode(value),
+          let encoded = String(data: data, encoding: .utf8) else {
+      return "\"\""
+    }
+    return encoded
+  }
+
+  private func tomlStringArray(_ values: [String]) -> String {
+    "[\(values.map(tomlStringLiteral).joined(separator: ","))]"
+  }
+
+  private static let agentHubMCPRoutingInstructions = """
+  In AgentHub sessions, when the user asks to create worktrees, launch agents/sessions, fan out work, split work across tasks, or start parallel/background work, immediately use the AgentHub MCP worktree-session tool. For one task use agenthub_create_worktree_session; for multiple tasks use agenthub_create_worktree_sessions. Infer concise branch names from the tasks. Pass only the actual task to perform as each launched session prompt; do not pass the user's worktree/session creation request itself. Do not use provider-native worktree/background-agent features for AgentHub-managed launches.
+  """
 }

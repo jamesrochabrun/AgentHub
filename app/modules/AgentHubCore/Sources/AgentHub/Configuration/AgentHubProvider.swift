@@ -7,6 +7,7 @@
 
 import AgentHubGitHub
 import AgentHubGitDiff
+import AgentHubCLIKit
 import Foundation
 import os
 import ClaudeCodeClient
@@ -47,6 +48,7 @@ public final class AgentHubProvider {
   /// SwiftTerm surface when `.ghostty` is selected.
   public let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
   private let metadataStoreOverride: SessionMetadataStore?
+  private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
 
   // MARK: - Lazy Services
 
@@ -178,6 +180,20 @@ public final class AgentHubProvider {
     WorktreeSuccessSoundService()
   }()
 
+  /// Watches requests written by the bundled `agenthub` helper.
+  public private(set) lazy var worktreeLaunchRequestMonitor: any WorktreeLaunchRequestMonitorProtocol = {
+    worktreeLaunchRequestMonitorOverride ?? WorktreeLaunchRequestMonitor()
+  }()
+
+  public private(set) lazy var worktreeLaunchRequestHandler: any WorktreeLaunchRequestHandlingProtocol = {
+    WorktreeLaunchRequestHandler(
+      claudeViewModel: claudeSessionsViewModel,
+      codexViewModel: codexSessionsViewModel
+    )
+  }()
+
+  private var isWorktreeLaunchRequestMonitoringStarted = false
+
   // MARK: - GitHub Integration
 
   /// GitHub CLI service for PR/issue operations
@@ -236,12 +252,14 @@ public final class AgentHubProvider {
   public init(
     configuration: AgentHubConfiguration = .default,
     terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
-    metadataStore: SessionMetadataStore? = nil
+    metadataStore: SessionMetadataStore? = nil,
+    worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil
   ) {
     self.configuration = configuration
     self.terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
     self.metadataStoreOverride = metadataStore
+    self.worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
     if let metadataStore {
       Task {
         await TerminalProcessRegistry.shared.configure(store: metadataStore)
@@ -373,6 +391,31 @@ public final class AgentHubProvider {
   public func cleanupOrphanedProcesses() {
     Task(priority: .utility) {
       await TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
+    }
+  }
+
+  public func startWorktreeLaunchRequestMonitoring() {
+    guard !isWorktreeLaunchRequestMonitoringStarted else { return }
+    isWorktreeLaunchRequestMonitoringStarted = true
+
+    let monitor = worktreeLaunchRequestMonitor
+    Task {
+      await monitor.start { [weak self] queued in
+        guard let self else {
+          throw WorktreeLaunchRequestHandlingError.providerUnavailable
+        }
+        try await self.worktreeLaunchRequestHandler.handle(queued.request)
+      }
+    }
+  }
+
+  public func stopWorktreeLaunchRequestMonitoring() {
+    guard isWorktreeLaunchRequestMonitoringStarted else { return }
+    isWorktreeLaunchRequestMonitoringStarted = false
+
+    let monitor = worktreeLaunchRequestMonitor
+    Task {
+      await monitor.stop()
     }
   }
 

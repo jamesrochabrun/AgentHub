@@ -36,6 +36,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // session begins monitoring.
     provider.reconcileClaudeHooksOnLaunch()
     provider.cleanupOrphanedProcesses()
+    provider.startWorktreeLaunchRequestMonitoring()
   }
 
   /// Register all bundled fonts (Geist, GeistMono, JetBrains Mono)
@@ -64,6 +65,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    provider.stopWorktreeLaunchRequestMonitoring()
     // Terminate all active terminal processes on app quit
     provider.terminateAllTerminals()
     // Stop all dev servers spawned for web preview

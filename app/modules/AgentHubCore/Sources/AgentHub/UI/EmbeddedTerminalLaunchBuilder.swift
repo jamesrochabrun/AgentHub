@@ -74,25 +74,24 @@ public enum EmbeddedTerminalLaunchBuilder {
     }
 
     let resolvedAgentHubCLIPath = agentHubCLIPath ?? AgentHubCLILocator.bundledCLIPath()
+    let workingDirectory = projectPath.isEmpty ? NSHomeDirectory() : projectPath
+    let providerKind = SessionProviderKind(cliMode: cliConfiguration.mode)
     let environment = makeProcessEnvironment(
       additionalPaths: cliConfiguration.additionalPaths,
-      agentHubCLIPath: resolvedAgentHubCLIPath
+      agentHubCLIPath: resolvedAgentHubCLIPath,
+      providerKind: providerKind,
+      projectPath: workingDirectory,
+      sessionId: sessionId
     )
-    let workingDirectory = projectPath.isEmpty ? NSHomeDirectory() : projectPath
     let escapedPath = shellEscape(workingDirectory)
     let escapedCLIPath = shellEscape(executablePath)
-    let launchPrompt = AgentHubSessionInstructionBuilder.decoratedPrompt(
-      initialPrompt,
-      sessionId: sessionId,
-      agentHubCLIPath: resolvedAgentHubCLIPath
-    )
-
     let aiConfig = metadataStore?.getAIConfigSync(for: cliConfiguration.mode.rawValue)
     let allowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.allowedTools)
     let disallowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.disallowedTools)
     let args = cliConfiguration.argumentsForSession(
       sessionId: sessionId,
-      prompt: launchPrompt,
+      prompt: initialPrompt,
+      agentHubMCPServerPath: resolvedAgentHubCLIPath,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       worktreeName: worktreeName,
       permissionModePlan: permissionModePlan,
@@ -126,19 +125,36 @@ public enum EmbeddedTerminalLaunchBuilder {
 
   static func makeProcessEnvironment(
     additionalPaths: [String],
-    agentHubCLIPath: String? = AgentHubCLILocator.bundledCLIPath()
+    agentHubCLIPath: String? = AgentHubCLILocator.bundledCLIPath(),
+    providerKind: SessionProviderKind? = nil,
+    projectPath: String? = nil,
+    sessionId: String? = nil
   ) -> [String: String] {
     var environment = ProcessInfo.processInfo.environment
     environment["TERM"] = "xterm-256color"
     environment["COLORTERM"] = "truecolor"
     environment["LANG"] = "en_US.UTF-8"
     environment.removeValue(forKey: "TERM_PROGRAM")
+    environment.removeValue(forKey: "AGENTHUB_CLI")
+    environment.removeValue(forKey: "AGENTHUB_PROVIDER")
+    environment.removeValue(forKey: "AGENTHUB_PROJECT_PATH")
+    environment.removeValue(forKey: "AGENTHUB_SESSION_ID")
 
     var paths = CLIPathResolver.executableSearchPaths(additionalPaths: additionalPaths)
     if let agentHubCLIPath, !agentHubCLIPath.isEmpty {
       environment["AGENTHUB_CLI"] = agentHubCLIPath
       let agentHubCLIDirectory = (agentHubCLIPath as NSString).deletingLastPathComponent
       paths.insert(agentHubCLIDirectory, at: 0)
+    }
+
+    if let providerKind {
+      environment["AGENTHUB_PROVIDER"] = providerKind.rawValue
+    }
+    if let projectPath, !projectPath.isEmpty {
+      environment["AGENTHUB_PROJECT_PATH"] = projectPath
+    }
+    if let sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
+      environment["AGENTHUB_SESSION_ID"] = sessionId
     }
 
     let pathString = paths.joined(separator: ":")
@@ -181,36 +197,5 @@ enum AgentHubCLILocator {
       return nil
     }
     return cliPath
-  }
-}
-
-enum AgentHubSessionInstructionBuilder {
-  private static let marker = "AgentHub session context:"
-
-  static func decoratedPrompt(
-    _ prompt: String?,
-    sessionId: String?,
-    agentHubCLIPath: String?
-  ) -> String? {
-    guard isNewSession(sessionId),
-          agentHubCLIPath != nil,
-          let prompt,
-          !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-          !prompt.hasPrefix(marker) else {
-      return prompt
-    }
-
-    return """
-    \(marker)
-    - The AgentHub CLI is available as `agenthub` and at `$AGENTHUB_CLI`.
-    - For AgentHub-managed worktree operations, use `agenthub worktree ... --json` instead of direct `git worktree` commands.
-
-    User request:
-    \(prompt)
-    """
-  }
-
-  private static func isNewSession(_ sessionId: String?) -> Bool {
-    sessionId == nil || sessionId?.isEmpty == true || sessionId?.hasPrefix("pending-") == true
   }
 }

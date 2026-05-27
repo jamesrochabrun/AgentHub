@@ -8,9 +8,21 @@ struct AgentHubCLI: AsyncParsableCommand {
     commandName: "agenthub",
     abstract: "AgentHub command-line helper.",
     subcommands: [
+      AgentHubMCPServerCommand.self,
       WorktreeCommand.self,
     ]
   )
+}
+
+struct AgentHubMCPServerCommand: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "mcp-server",
+    abstract: "Run the AgentHub MCP server over stdio."
+  )
+
+  func run() async throws {
+    try await AgentHubMCPServer().run()
+  }
 }
 
 struct WorktreeCommand: AsyncParsableCommand {
@@ -75,6 +87,15 @@ struct CreateWorktree: AsyncParsableCommand {
 
   @OptionGroup var options: WorktreeOptions
 
+  @Flag(name: .long, help: "Request AgentHub to launch an embedded session in the worktree.")
+  var launchSession = false
+
+  @Option(name: .long, help: "Provider for the launched session: claude or codex. Defaults to AGENTHUB_PROVIDER.")
+  var provider: String?
+
+  @Option(name: .long, help: "Prompt for the launched session. Required with --launch-session.")
+  var prompt: String?
+
   func run() async throws {
     let service = WorktreeManagementService()
     let directoryName = WorktreeNaming.worktreeDirectoryName(for: branch)
@@ -84,7 +105,16 @@ struct CreateWorktree: AsyncParsableCommand {
       directoryName: directoryName,
       startPoint: from
     )
-    try printResult(path: path, branch: branch, json: options.json)
+    let launchRequestId = try await queueLaunchIfRequested(
+      launchSession: launchSession,
+      provider: provider,
+      prompt: prompt,
+      service: service,
+      repositoryPath: options.repositoryPath,
+      worktreePath: path,
+      branch: branch
+    )
+    try printResult(path: path, branch: branch, launchRequestId: launchRequestId, json: options.json)
   }
 }
 
@@ -99,6 +129,15 @@ struct CheckoutWorktree: AsyncParsableCommand {
 
   @OptionGroup var options: WorktreeOptions
 
+  @Flag(name: .long, help: "Request AgentHub to launch an embedded session in the worktree.")
+  var launchSession = false
+
+  @Option(name: .long, help: "Provider for the launched session: claude or codex. Defaults to AGENTHUB_PROVIDER.")
+  var provider: String?
+
+  @Option(name: .long, help: "Prompt for the launched session. Required with --launch-session.")
+  var prompt: String?
+
   func run() async throws {
     let service = WorktreeManagementService()
     let directoryName = WorktreeNaming.worktreeDirectoryName(for: branch)
@@ -108,7 +147,16 @@ struct CheckoutWorktree: AsyncParsableCommand {
       directoryName: directoryName
     )
 
-    try printResult(path: resolvedPath, branch: branch, json: options.json)
+    let launchRequestId = try await queueLaunchIfRequested(
+      launchSession: launchSession,
+      provider: provider,
+      prompt: prompt,
+      service: service,
+      repositoryPath: options.repositoryPath,
+      worktreePath: resolvedPath,
+      branch: branch
+    )
+    try printResult(path: resolvedPath, branch: branch, launchRequestId: launchRequestId, json: options.json)
   }
 }
 
@@ -164,6 +212,7 @@ struct PrintWorktreeRoot: AsyncParsableCommand {
 private struct WorktreePathResult: Codable {
   let path: String
   let branch: String
+  let launchRequestId: String?
 }
 
 private struct DeleteResult: Codable {
@@ -187,10 +236,67 @@ private enum JSONPrinter {
   }
 }
 
-private func printResult(path: String, branch: String, json: Bool) throws {
+private func printResult(path: String, branch: String, launchRequestId: String? = nil, json: Bool) throws {
   if json {
-    try JSONPrinter.print(WorktreePathResult(path: path, branch: branch))
+    try JSONPrinter.print(WorktreePathResult(path: path, branch: branch, launchRequestId: launchRequestId))
   } else {
     Swift.print(path)
   }
+}
+
+private func queueLaunchIfRequested(
+  launchSession: Bool,
+  provider providerOption: String?,
+  prompt promptOption: String?,
+  service: WorktreeManagementService,
+  repositoryPath: String,
+  worktreePath: String,
+  branch: String
+) async throws -> String? {
+  guard launchSession else { return nil }
+
+  let launchProvider = try resolveLaunchProvider(providerOption)
+  let prompt = try resolveLaunchPrompt(promptOption)
+  let sourceProvider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
+    .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
+  let sourceSessionId = ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"]
+  let mainRepositoryPath = try await service.findMainRepositoryRoot(at: repositoryPath)
+  let request = WorktreeLaunchRequest(
+    provider: launchProvider,
+    repositoryPath: mainRepositoryPath,
+    worktreePath: worktreePath,
+    branchName: branch,
+    prompt: prompt,
+    sourceProvider: sourceProvider,
+    sourceSessionId: sourceSessionId
+  )
+
+  let queued = try WorktreeLaunchRequestQueue().enqueue(request)
+  return queued.request.id
+}
+
+private func resolveLaunchProvider(_ providerOption: String?) throws -> WorktreeLaunchProvider {
+  let explicitProvider = providerOption.flatMap(WorktreeLaunchProvider.init(commandLineValue:))
+  if let explicitProvider {
+    return explicitProvider
+  }
+
+  if let providerOption, !providerOption.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    throw ValidationError("Invalid provider '\(providerOption)'. Expected claude or codex.")
+  }
+
+  if let environmentProvider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
+    .flatMap(WorktreeLaunchProvider.init(commandLineValue:)) {
+    return environmentProvider
+  }
+
+  throw ValidationError(WorktreeLaunchRequestQueueError.missingProvider.localizedDescription)
+}
+
+private func resolveLaunchPrompt(_ promptOption: String?) throws -> String {
+  let prompt = promptOption?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  guard !prompt.isEmpty else {
+    throw ValidationError(WorktreeLaunchRequestQueueError.missingPrompt.localizedDescription)
+  }
+  return prompt
 }
