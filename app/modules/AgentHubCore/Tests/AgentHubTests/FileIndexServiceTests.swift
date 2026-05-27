@@ -250,7 +250,7 @@ struct FileIndexServicePrivacyTests {
 
     try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
 
-    let service = FileIndexService()
+    let service = FileIndexService(projectFileSearchService: FakeProjectFileSearchService(results: []))
     let initialResults = await service.search(query: "app", in: fixture.projectPath)
     let initialStatus = await service.searchIndexStatus(projectPath: fixture.projectPath)
 
@@ -266,6 +266,40 @@ struct FileIndexServicePrivacyTests {
     #expect(initialResults.map(\.absolutePath) == resultsAfterWrite.map(\.absolutePath))
     #expect(initialStatus == .ready)
     #expect(statusAfterWrite == .ready)
+  }
+
+  @Test("Reports idle search status until the local fallback index is built")
+  func reportsIdleSearchStatusBeforeFallbackIndexIsBuilt() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+
+    let service = FileIndexService(projectFileSearchService: FakeProjectFileSearchService(results: []))
+
+    let initialStatus = await service.searchIndexStatus(projectPath: fixture.projectPath)
+    await service.prepareSearchIndex(projectPath: fixture.projectPath)
+    let readyStatus = await service.searchIndexStatus(projectPath: fixture.projectPath)
+
+    #expect(initialStatus == .idle)
+    #expect(readyStatus == .ready)
+  }
+
+  @Test("Search diagnostics identify local fallback results when Spotlight returns no matches")
+  func searchDiagnosticsIdentifyLocalFallbackResults() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+
+    let service = FileIndexService(projectFileSearchService: FakeProjectFileSearchService(results: []))
+    let diagnostics = await service.searchWithDiagnostics(query: "app", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.spotlightCandidateCount == 0)
+    #expect(diagnostics.localIndexStatusBeforeFallback == .idle)
+    #expect(diagnostics.localIndexedFileCount == 1)
+    #expect(diagnostics.results.map(\.relativePath) == ["Sources/App.swift"])
   }
 
   @Test("Creating a new file invalidates cached directory listings")

@@ -62,14 +62,24 @@ private struct FakeSpotlightMetadataClient: SpotlightMetadataQuerying {
 
 @Suite("SpotlightProjectFileSearchService")
 struct SpotlightProjectFileSearchServiceTests {
-  @Test("Builds the Spotlight metadata query across file name and path attributes")
+  @Test("Builds the Spotlight metadata query across filename attributes")
   func buildsQueryExpression() {
     let expression = SpotlightQueryBuilder.expression(for: "App")
 
     #expect(expression == """
-    (kMDItemDisplayName == "*App*"cd || kMDItemFSName == "*App*"cd || kMDItemPath == "*App*"cd)
+    (kMDItemFSName == "*App*"cd || kMDItemDisplayName == "*App*"cd)
     """)
+    #expect(expression?.contains("kMDItemPath") == false)
     #expect(SpotlightQueryBuilder.expression(for: "   ") == nil)
+  }
+
+  @Test("Uses the filename component for path-like queries")
+  func pathLikeQueryExpressionUsesFilenameComponent() {
+    let expression = SpotlightQueryBuilder.expression(for: "Sources/App")
+
+    #expect(expression == """
+    (kMDItemFSName == "*App*"cd || kMDItemDisplayName == "*App*"cd)
+    """)
   }
 
   @Test("Escapes quoted query literals before building the metadata query")
@@ -111,4 +121,3 @@ struct SpotlightProjectFileSearchServiceTests {
     #expect(results.allSatisfy { $0.absolutePath.hasPrefix(fixture.projectPath + "/") })
   }
 }
-

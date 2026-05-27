@@ -4,6 +4,9 @@ import Foundation
 public actor SpotlightProjectFileSearchService: ProjectFileSearchServiceProtocol {
   public static let shared = SpotlightProjectFileSearchService()
 
+  private static let minimumMetadataCandidateLimit = 100
+  private static let maximumMetadataCandidateLimit = 800
+
   private let metadataClient: any SpotlightMetadataQuerying
   private let fileChecker: any SearchableFileChecking
 
@@ -23,10 +26,20 @@ public actor SpotlightProjectFileSearchService: ProjectFileSearchServiceProtocol
   }
 
   public func search(query: String, in projectPath: String, limit: Int) async -> [ProjectFileSearchResult] {
-    guard !query.isEmpty, query.count < 200, limit > 0 else { return [] }
+    await searchWithDiagnostics(query: query, in: projectPath, limit: limit).results
+  }
 
+  public func searchWithDiagnostics(query: String, in projectPath: String, limit: Int) async -> ProjectFileSearchResponse {
+    guard !query.isEmpty, query.count < 200, limit > 0 else {
+      return ProjectFileSearchResponse(results: [], candidateCount: 0, elapsedSeconds: 0)
+    }
+
+    let start = Date()
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
-    let candidateLimit = max(limit * 8, 200)
+    let candidateLimit = min(
+      max(limit * 2, Self.minimumMetadataCandidateLimit),
+      Self.maximumMetadataCandidateLimit
+    )
     let metadataClient = metadataClient
     let paths = await Task.detached(priority: .userInitiated) {
       metadataClient.searchFilePaths(
@@ -36,12 +49,17 @@ public actor SpotlightProjectFileSearchService: ProjectFileSearchServiceProtocol
       )
     }.value
 
-    return SpotlightFileSearchRanker.rankedResults(
+    let results = SpotlightFileSearchRanker.rankedResults(
       paths: paths,
       query: query,
       projectPath: resolvedProjectPath,
       limit: limit,
       fileChecker: fileChecker
+    )
+    return ProjectFileSearchResponse(
+      results: results,
+      candidateCount: paths.count,
+      elapsedSeconds: Date().timeIntervalSince(start)
     )
   }
 
@@ -100,13 +118,12 @@ struct CoreServicesSpotlightMetadataClient: SpotlightMetadataQuerying {
 
 enum SpotlightQueryBuilder {
   private static let searchableAttributes = [
-    "kMDItemDisplayName",
     "kMDItemFSName",
-    "kMDItemPath"
+    "kMDItemDisplayName"
   ]
 
   static func expression(for query: String) -> String? {
-    let term = normalizedTerm(query)
+    let term = normalizedFileNameTerm(query)
     guard !term.isEmpty else { return nil }
 
     let pattern = "*\(escapeQuotedString(term))*"
@@ -122,6 +139,17 @@ enum SpotlightQueryBuilder {
       CharacterSet.controlCharacters.contains(scalar) ? " " : String(scalar)
     }
     return scalars.joined()
+  }
+
+  private static func normalizedFileNameTerm(_ query: String) -> String {
+    let term = normalizedTerm(query)
+    let separators = CharacterSet(charactersIn: "/\\")
+    let components = term
+      .components(separatedBy: separators)
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+
+    return components.last ?? term
   }
 
   private static func escapeQuotedString(_ value: String) -> String {
