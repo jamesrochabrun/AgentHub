@@ -2605,11 +2605,14 @@ public final class CLISessionsViewModel {
     permissionModePlan: Bool = false,
     worktreeName: String? = nil
   ) {
+    let promptForTerminalSubmission = providerKind == .claude ? nonEmpty(initialPrompt) : nil
+    let promptForProcessLaunch = providerKind == .claude ? nil : initialPrompt
+
     // Each pending session gets a unique ID, so no need to clear existing terminals
     // Terminals are now keyed by session ID, not worktree path
     let pending = PendingHubSession(
       worktree: worktree,
-      initialPrompt: initialPrompt,
+      initialPrompt: promptForProcessLaunch,
       initialInputText: initialInputText,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
@@ -2617,6 +2620,9 @@ public final class CLISessionsViewModel {
     )
     pendingHubSessions.append(pending)
     lastCreatedPendingId = pending.id
+    if let promptForTerminalSubmission {
+      pendingTerminalPrompts["pending-\(pending.id.uuidString)"] = promptForTerminalSubmission
+    }
 
 #if DEBUG
     let encodedPath = worktree.path.claudeProjectPathEncoded

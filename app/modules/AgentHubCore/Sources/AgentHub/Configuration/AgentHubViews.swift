@@ -60,6 +60,9 @@ public struct AgentHubSessionsView: View {
     )
       .frame(minWidth: 1200, minHeight: 750)
       .modifier(RemoveTitleToolbarModifier())
+      .task {
+        provider.startWorktreeLaunchRequestMonitoring()
+      }
   }
 
   private var missingProviderView: some View {

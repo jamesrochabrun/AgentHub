@@ -144,6 +144,7 @@ let package = Package(
       name: "AgentHubTests",
       dependencies: [
         "AgentHubCore",
+        .product(name: "AgentHubCLIKit", package: "AgentHubCLI"),
         "AgentHubGitDiff",
         "AgentHubFileSearch",
         "ClaudeCodeClient",
