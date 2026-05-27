@@ -654,37 +654,61 @@ struct FilterChipWithCount: View {
 
   var body: some View {
     Button(action: action) {
-      HStack(spacing: 5) {
-        Text(title)
-          .font(GitHubTypography.button)
-          .foregroundStyle(isActive ? accent : .secondary)
-        if count > 0 {
-          Text("\(count)")
-            .font(GitHubTypography.monoCaption)
-            .foregroundStyle(isActive ? accent : .secondary)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 1)
-            .background(
-              (isActive ? accent : Color.secondary).opacity(colorScheme == .dark ? 0.18 : 0.14)
+      chipContent
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+          RoundedRectangle(cornerRadius: AgentHubLayout.chipCornerRadius, style: .continuous)
+            .fill(isActive ? accent.opacity(colorScheme == .dark ? 0.15 : 0.12) : .clear)
+        )
+        .overlay(
+          RoundedRectangle(cornerRadius: AgentHubLayout.chipCornerRadius, style: .continuous)
+            .stroke(
+              isActive ? accent.opacity(0.35) : Color.secondary.opacity(0.18),
+              lineWidth: 1
             )
-            .clipShape(Capsule())
-        }
-      }
-      .padding(.horizontal, 10)
-      .padding(.vertical, 4)
-      .background(
-        RoundedRectangle(cornerRadius: AgentHubLayout.chipCornerRadius, style: .continuous)
-          .fill(isActive ? accent.opacity(colorScheme == .dark ? 0.15 : 0.12) : .clear)
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: AgentHubLayout.chipCornerRadius, style: .continuous)
-          .stroke(
-            isActive ? accent.opacity(0.35) : Color.secondary.opacity(0.18),
-            lineWidth: 1
-          )
-      )
+        )
     }
     .buttonStyle(.plain)
+  }
+
+  private var chipContent: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(spacing: 5) {
+        titleLabel
+        countBadge
+      }
+
+      VStack(spacing: 2) {
+        titleLabel
+        countBadge
+      }
+    }
+  }
+
+  private var titleLabel: some View {
+    Text(title)
+      .font(GitHubTypography.button)
+      .foregroundStyle(isActive ? accent : .secondary)
+      .lineLimit(1)
+      .fixedSize(horizontal: true, vertical: false)
+  }
+
+  @ViewBuilder
+  private var countBadge: some View {
+    if count > 0 {
+      Text("\(count)")
+        .font(GitHubTypography.monoCaption)
+        .foregroundStyle(isActive ? accent : .secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .background(
+          (isActive ? accent : Color.secondary).opacity(colorScheme == .dark ? 0.18 : 0.14)
+        )
+        .clipShape(Capsule())
+        .fixedSize(horizontal: true, vertical: false)
+    }
   }
 }
 
@@ -695,75 +719,21 @@ struct GitHubPRRow: View {
   var isCurrentBranch: Bool = false
   let onSelect: () -> Void
 
-  @Environment(\.runtimeTheme) private var runtimeTheme
-
   var body: some View {
     Button(action: onSelect) {
-      HStack(spacing: DesignTokens.Spacing.sm) {
+      HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
         PRStatusDot(state: pr.stateKind, isDraft: pr.isDraft)
+          .padding(.top, 9)
 
         if let author = pr.author {
           AuthorAvatarView(login: author.login, size: 26)
         }
 
-        VStack(alignment: .leading, spacing: 2) {
-          HStack(spacing: DesignTokens.Spacing.xs) {
-            Text(pr.title)
-              .font(.geist(size: 13, weight: .semibold))
-              .foregroundStyle(.primary)
-              .lineLimit(1)
-
-            if pr.isDraft {
-              Text("Draft")
-                .font(GitHubTypography.badge)
-                .padding(.horizontal, 5)
-                .padding(.vertical, 1)
-                .background(Color.secondary.opacity(0.15))
-                .foregroundStyle(.secondary)
-                .clipShape(Capsule())
-            }
-          }
-
-          HStack(spacing: DesignTokens.Spacing.sm) {
-            Text("#\(pr.number)")
-              .font(GitHubTypography.monoCaption)
-              .foregroundStyle(.tertiary)
-
-            if let author = pr.author {
-              Text("@\(author.login)")
-                .font(GitHubTypography.caption)
-                .foregroundStyle(.tertiary)
-            }
-
-            AdditionsDeletionsBadge(
-              additions: pr.additions,
-              deletions: pr.deletions
-            )
-
-            if let labels = pr.labels, !labels.isEmpty {
-              ForEach(labels.prefix(1)) { label in
-                GitHubLabelPill(label: label)
-              }
-            }
-          }
+        VStack(alignment: .leading, spacing: 5) {
+          titleRow
+          detailRows
         }
-
-        Spacer()
-
-        HStack(spacing: DesignTokens.Spacing.sm) {
-          if let decision = pr.reviewDecision {
-            ReviewDecisionBadge(decision: decision)
-          }
-
-          ciIcon(pr.ciStatus)
-
-          if let updated = pr.updatedAt {
-            Text(relativeTime(updated))
-              .font(GitHubTypography.caption)
-              .foregroundStyle(.tertiary)
-              .monospacedDigit()
-          }
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
       .padding(.horizontal, DesignTokens.Spacing.md)
       .padding(.vertical, DesignTokens.Spacing.sm)
@@ -783,6 +753,105 @@ struct GitHubPRRow: View {
         Label("Open in Browser", systemImage: "safari")
       }
     }
+  }
+
+  private var titleRow: some View {
+    HStack(spacing: DesignTokens.Spacing.xs) {
+      Text(pr.title)
+        .font(.geist(size: 13, weight: .semibold))
+        .foregroundStyle(.primary)
+        .lineLimit(1)
+        .truncationMode(.tail)
+
+      if pr.isDraft {
+        Text("Draft")
+          .font(GitHubTypography.badge)
+          .lineLimit(1)
+          .padding(.horizontal, 5)
+          .padding(.vertical, 1)
+          .background(Color.secondary.opacity(0.15))
+          .foregroundStyle(.secondary)
+          .clipShape(Capsule())
+          .fixedSize(horizontal: true, vertical: false)
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var detailRows: some View {
+    if hasTrailingMetadata {
+      ViewThatFits(in: .horizontal) {
+        HStack(alignment: .center, spacing: DesignTokens.Spacing.sm) {
+          metadataRow
+
+          Spacer(minLength: DesignTokens.Spacing.sm)
+
+          trailingMetadataRow
+        }
+
+        VStack(alignment: .leading, spacing: 4) {
+          metadataRow
+          trailingMetadataRow
+        }
+      }
+    } else {
+      metadataRow
+    }
+  }
+
+  private var hasTrailingMetadata: Bool {
+    pr.reviewDecision != nil || pr.ciStatus != .none || pr.updatedAt != nil
+  }
+
+  private var metadataRow: some View {
+    HStack(spacing: DesignTokens.Spacing.sm) {
+      Text("#\(pr.number)")
+        .font(GitHubTypography.monoCaption)
+        .foregroundStyle(.tertiary)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+
+      if let author = pr.author {
+        Text("@\(author.login)")
+          .font(GitHubTypography.caption)
+          .foregroundStyle(.tertiary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+          .frame(maxWidth: 120, alignment: .leading)
+      }
+
+      AdditionsDeletionsBadge(
+        additions: pr.additions,
+        deletions: pr.deletions
+      )
+
+      if let labels = pr.labels, !labels.isEmpty {
+        ForEach(labels.prefix(1)) { label in
+          GitHubLabelPill(label: label)
+        }
+      }
+    }
+    .fixedSize(horizontal: true, vertical: false)
+  }
+
+  private var trailingMetadataRow: some View {
+    HStack(spacing: DesignTokens.Spacing.sm) {
+      if let decision = pr.reviewDecision {
+        ReviewDecisionBadge(decision: decision)
+      }
+
+      ciIcon(pr.ciStatus)
+
+      if let updated = pr.updatedAt {
+        Text(relativeTime(updated))
+          .font(GitHubTypography.caption)
+          .foregroundStyle(.tertiary)
+          .monospacedDigit()
+          .lineLimit(1)
+          .fixedSize(horizontal: true, vertical: false)
+      }
+    }
+    .fixedSize(horizontal: true, vertical: false)
   }
 
   @ViewBuilder
