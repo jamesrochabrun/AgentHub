@@ -83,7 +83,7 @@ public struct FileExplorerView: View {
 
   public var body: some View {
     VStack(spacing: 0) {
-      if isLoading {
+      if isLoading && selectedFilePath == nil {
         VStack(spacing: 12) {
           ProgressView()
           Text("Loading files…")
@@ -121,9 +121,11 @@ public struct FileExplorerView: View {
       maxHeight: .infinity
     )
     .task(id: loadTaskID) {
-      await loadFileTree()
-      if navigationRequest == nil, let initialPath = selectedFilePath {
+      guard navigationRequest == nil else { return }
+      if let initialPath = selectedFilePath {
         await navigateToFile(at: initialPath)
+      } else {
+        await loadFileTree()
       }
     }
     .task(id: navigationRequest?.id) {
@@ -267,24 +269,36 @@ public struct FileExplorerView: View {
 
       ScrollViewReader { proxy in
         ScrollView {
-          LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(treeNodes) { node in
-              FileTreeNodeView(
-                node: node,
-                depth: 0,
-                selectedFilePath: $selectedFilePath,
-                expandedPaths: $expandedPaths,
-                loadingPaths: loadingDirectories,
-                onSelectFile: { path in
-                  Task { await openFile(at: path) }
-                },
-                onToggleDirectory: { directory in
-                  Task { await toggleDirectory(directory) }
-                }
-              )
+          if isLoading && treeNodes.isEmpty {
+            HStack(spacing: 8) {
+              ProgressView()
+                .controlSize(.small)
+              Text("Loading…")
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+          } else {
+            LazyVStack(alignment: .leading, spacing: 0) {
+              ForEach(treeNodes) { node in
+                FileTreeNodeView(
+                  node: node,
+                  depth: 0,
+                  selectedFilePath: $selectedFilePath,
+                  expandedPaths: $expandedPaths,
+                  loadingPaths: loadingDirectories,
+                  onSelectFile: { path in
+                    Task { await openFile(at: path) }
+                  },
+                  onToggleDirectory: { directory in
+                    Task { await toggleDirectory(directory) }
+                  }
+                )
+              }
+            }
+            .padding(8)
           }
-          .padding(8)
         }
         .onChange(of: scrollToPath) { _, target in
           guard let target else { return }
@@ -422,8 +436,8 @@ public struct FileExplorerView: View {
       .standardizedFileURL
       .resolvingSymlinksInPath()
       .path
-    await expandToFile(resolvedPath)
     await openFile(at: resolvedPath)
+    await expandToFile(resolvedPath)
     try? await Task.sleep(for: .milliseconds(100))
     scrollToPath = resolvedPath
   }

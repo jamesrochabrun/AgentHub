@@ -49,6 +49,195 @@ public struct FileSearchDiagnostics: Sendable, Equatable {
   }
 }
 
+enum ProjectFileEnumerationKind: Sendable, Equatable {
+  case gitRepository
+  case gitWorktree
+}
+
+struct ProjectFileEnumeratorFile: Sendable, Equatable {
+  let relativePath: String
+}
+
+enum ProjectFileEnumerationResult: Sendable {
+  case files([ProjectFileEnumeratorFile], kind: ProjectFileEnumerationKind)
+  case notGitProject
+  case failed
+}
+
+protocol ProjectFileEnumerating: Sendable {
+  func gitProjectKind(at projectPath: String) -> ProjectFileEnumerationKind?
+  func enumerateFiles(in projectPath: String) async -> ProjectFileEnumerationResult
+}
+
+struct GitProjectFileEnumerator: ProjectFileEnumerating {
+  private struct GitCommandResult: Sendable {
+    let stdout: Data
+    let exitCode: Int32
+    let timedOut: Bool
+  }
+
+  private static let commandTimeout: TimeInterval = 3
+
+  func gitProjectKind(at projectPath: String) -> ProjectFileEnumerationKind? {
+    guard let gitPath = Self.nearestGitPath(containing: projectPath) else {
+      return nil
+    }
+
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: gitPath, isDirectory: &isDirectory) else {
+      return nil
+    }
+
+    return isDirectory.boolValue ? .gitRepository : .gitWorktree
+  }
+
+  func enumerateFiles(in projectPath: String) async -> ProjectFileEnumerationResult {
+    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    let knownKind = gitProjectKind(at: resolvedProjectPath)
+    guard let result = await runGitLSFiles(in: resolvedProjectPath) else {
+      return knownKind == nil ? .notGitProject : .failed
+    }
+
+    guard !result.timedOut, result.exitCode == 0 else {
+      return knownKind == nil ? .notGitProject : .failed
+    }
+
+    let files = Self.parseGitLSFilesOutput(result.stdout)
+    return .files(files, kind: knownKind ?? .gitRepository)
+  }
+
+  private func runGitLSFiles(in projectPath: String) async -> GitCommandResult? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = [
+      "ls-files",
+      "-z",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "--",
+      "."
+    ]
+    process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
+
+    var environment = ProcessInfo.processInfo.environment
+    environment["GIT_TERMINAL_PROMPT"] = "0"
+    environment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    process.environment = environment
+
+    let inputPipe = Pipe()
+    let outputPipe = Pipe()
+    let errorPipe = Pipe()
+    process.standardInput = inputPipe
+    process.standardOutput = outputPipe
+    process.standardError = errorPipe
+
+    var outputData: Data?
+    let readGroup = DispatchGroup()
+
+    do {
+      try process.run()
+      try? inputPipe.fileHandleForWriting.close()
+    } catch {
+      return nil
+    }
+
+    readGroup.enter()
+    DispatchQueue.global(qos: .userInitiated).async {
+      outputData = try? outputPipe.fileHandleForReading.readToEnd()
+      readGroup.leave()
+    }
+
+    readGroup.enter()
+    DispatchQueue.global(qos: .utility).async {
+      _ = try? errorPipe.fileHandleForReading.readToEnd()
+      readGroup.leave()
+    }
+
+    let timedOut = await withTaskGroup(of: Bool.self) { group in
+      group.addTask {
+        await withCheckedContinuation { continuation in
+          DispatchQueue.global(qos: .utility).async {
+            readGroup.wait()
+            process.waitUntilExit()
+            continuation.resume(returning: false)
+          }
+        }
+      }
+
+      group.addTask {
+        do {
+          try await Task.sleep(for: .seconds(Self.commandTimeout))
+          if process.isRunning {
+            process.terminate()
+          }
+          return true
+        } catch {
+          return false
+        }
+      }
+
+      let result = await group.next() ?? false
+      group.cancelAll()
+      return result
+    }
+
+    return GitCommandResult(
+      stdout: outputData ?? Data(),
+      exitCode: process.terminationStatus,
+      timedOut: timedOut
+    )
+  }
+
+  private static func parseGitLSFilesOutput(_ data: Data) -> [ProjectFileEnumeratorFile] {
+    guard let output = String(data: data, encoding: .utf8) else { return [] }
+    var seen = Set<String>()
+    return output
+      .split(separator: "\0")
+      .compactMap { rawPath -> ProjectFileEnumeratorFile? in
+        let path = String(rawPath)
+        guard isSafeRelativePath(path), seen.insert(path).inserted else {
+          return nil
+        }
+        return ProjectFileEnumeratorFile(relativePath: path)
+      }
+  }
+
+  private static func isSafeRelativePath(_ path: String) -> Bool {
+    guard !path.isEmpty, !path.hasPrefix("/") else { return false }
+    return path.split(separator: "/").allSatisfy { component in
+      component != "." && component != ".."
+    }
+  }
+
+  private static func nearestGitPath(containing path: String) -> String? {
+    var currentPath = resolvedURL(for: path).path
+    var isDirectory: ObjCBool = false
+    if !FileManager.default.fileExists(atPath: currentPath, isDirectory: &isDirectory) || !isDirectory.boolValue {
+      currentPath = (currentPath as NSString).deletingLastPathComponent
+    }
+
+    while !currentPath.isEmpty {
+      let gitPath = (currentPath as NSString).appendingPathComponent(".git")
+      if FileManager.default.fileExists(atPath: gitPath) {
+        return gitPath
+      }
+
+      let parentPath = (currentPath as NSString).deletingLastPathComponent
+      if parentPath == currentPath {
+        return nil
+      }
+      currentPath = parentPath
+    }
+
+    return nil
+  }
+
+  private static func resolvedURL(for path: String) -> URL {
+    URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+  }
+}
+
 /// Scans project directories, respects .gitignore, caches tree nodes, and provides project file search.
 public actor FileIndexService {
 
@@ -121,15 +310,21 @@ public actor FileIndexService {
   private var recentPaths: [String] = []
   private static let maxRecentFiles = 20
   private let projectFileSearchService: any ProjectFileSearchServiceProtocol
+  private let projectFileEnumerator: any ProjectFileEnumerating
 
   // MARK: - Initialization
 
   public init() {
     self.projectFileSearchService = SpotlightProjectFileSearchService.shared
+    self.projectFileEnumerator = GitProjectFileEnumerator()
   }
 
-  init(projectFileSearchService: any ProjectFileSearchServiceProtocol) {
+  init(
+    projectFileSearchService: any ProjectFileSearchServiceProtocol,
+    projectFileEnumerator: any ProjectFileEnumerating = GitProjectFileEnumerator()
+  ) {
     self.projectFileSearchService = projectFileSearchService
+    self.projectFileEnumerator = projectFileEnumerator
   }
 
   // MARK: - Public API
@@ -191,8 +386,10 @@ public actor FileIndexService {
     return searchIndexStatus(resolvedProjectPath: resolvedProjectPath)
   }
 
-  /// Searches files using Spotlight first, then falls back to the legacy in-process index if
-  /// Spotlight has no usable results for the project. Ranking uses a strict 3-tier approach:
+  /// Searches files using Spotlight first, then falls back to a local index if
+  /// Spotlight has no usable results for the project. Git worktrees use the local
+  /// Git-backed index first because Spotlight often lags or misses them entirely.
+  /// Ranking uses a strict 3-tier approach:
   /// 1. Filename starts with query → highest score
   /// 2. Filename contains query as substring → high score
   /// 3. Path contains query as substring → medium score
@@ -215,43 +412,52 @@ public actor FileIndexService {
     }
 
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
-    let spotlightResponse = await projectFileSearchService.searchWithDiagnostics(
-      query: query,
-      in: resolvedProjectPath,
-      limit: Self.maxSearchResults * 10
-    )
-    let filteredSpotlightResults = spotlightResponse.results
-      .compactMap { spotlightResult -> FileSearchResult? in
-        let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
-        guard Self.shouldIncludeSearchResult(at: absolutePath, rootPath: resolvedProjectPath),
-              let relativePath = Self.relativePathIfContained(absolutePath, within: resolvedProjectPath) else {
-          return nil
-        }
-        let name = URL(fileURLWithPath: absolutePath).lastPathComponent
+    let localStatusBeforeFallback = searchIndexStatus(resolvedProjectPath: resolvedProjectPath)
+    let usesWorktreeLocalIndexFirst = projectFileEnumerator.gitProjectKind(at: resolvedProjectPath) == .gitWorktree
 
-        return FileSearchResult(
-          id: absolutePath,
-          name: name,
-          relativePath: relativePath,
-          absolutePath: absolutePath,
-          score: spotlightResult.score
+    var spotlightCandidateCount = 0
+    var spotlightElapsedSeconds: TimeInterval = 0
+    if !usesWorktreeLocalIndexFirst {
+      let spotlightResponse = await projectFileSearchService.searchWithDiagnostics(
+        query: query,
+        in: resolvedProjectPath,
+        limit: Self.maxSearchResults * 10
+      )
+      spotlightCandidateCount = spotlightResponse.candidateCount
+      spotlightElapsedSeconds = spotlightResponse.elapsedSeconds
+
+      let filteredSpotlightResults = spotlightResponse.results
+        .compactMap { spotlightResult -> FileSearchResult? in
+          let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
+          guard Self.shouldIncludeSearchResult(at: absolutePath, rootPath: resolvedProjectPath),
+                let relativePath = Self.relativePathIfContained(absolutePath, within: resolvedProjectPath) else {
+            return nil
+          }
+          let name = URL(fileURLWithPath: absolutePath).lastPathComponent
+
+          return FileSearchResult(
+            id: absolutePath,
+            name: name,
+            relativePath: relativePath,
+            absolutePath: absolutePath,
+            score: spotlightResult.score
+          )
+        }
+        .sortedBySearchScore()
+
+      if !filteredSpotlightResults.isEmpty {
+        return FileSearchDiagnostics(
+          results: Array(filteredSpotlightResults.prefix(Self.maxSearchResults)),
+          source: .spotlight,
+          spotlightCandidateCount: spotlightCandidateCount,
+          spotlightElapsedSeconds: spotlightElapsedSeconds,
+          localIndexStatusBeforeFallback: localStatusBeforeFallback,
+          localIndexedFileCount: searchCache[resolvedProjectPath]?.files.count ?? 0,
+          localIndexElapsedSeconds: nil
         )
       }
-      .sortedBySearchScore()
-
-    if !filteredSpotlightResults.isEmpty {
-      return FileSearchDiagnostics(
-        results: Array(filteredSpotlightResults.prefix(Self.maxSearchResults)),
-        source: .spotlight,
-        spotlightCandidateCount: spotlightResponse.candidateCount,
-        spotlightElapsedSeconds: spotlightResponse.elapsedSeconds,
-        localIndexStatusBeforeFallback: searchIndexStatus(resolvedProjectPath: resolvedProjectPath),
-        localIndexedFileCount: searchCache[resolvedProjectPath]?.files.count ?? 0,
-        localIndexElapsedSeconds: nil
-      )
     }
 
-    let localStatusBeforeFallback = searchIndexStatus(resolvedProjectPath: resolvedProjectPath)
     let localIndexStart = Date()
     let allFiles = await searchIndex(projectPath: resolvedProjectPath)
     let localIndexElapsed = Date().timeIntervalSince(localIndexStart)
@@ -261,8 +467,8 @@ public actor FileIndexService {
     return FileSearchDiagnostics(
       results: Array(scored.prefix(Self.maxSearchResults)),
       source: .localIndex,
-      spotlightCandidateCount: spotlightResponse.candidateCount,
-      spotlightElapsedSeconds: spotlightResponse.elapsedSeconds,
+      spotlightCandidateCount: spotlightCandidateCount,
+      spotlightElapsedSeconds: spotlightElapsedSeconds,
       localIndexStatusBeforeFallback: localStatusBeforeFallback,
       localIndexedFileCount: allFiles.count,
       localIndexElapsedSeconds: localIndexElapsed
@@ -395,8 +601,12 @@ public actor FileIndexService {
   }
 
   private func makeSearchBuildTask(projectPath: String) -> Task<SearchCacheEntry, Never> {
-    Task.detached(priority: .utility) {
-      let files = FileIndexService.buildSearchIndexSync(projectPath: projectPath)
+    let projectFileEnumerator = projectFileEnumerator
+    return Task.detached(priority: .utility) {
+      let files = await FileIndexService.buildSearchIndex(
+        projectPath: projectPath,
+        projectFileEnumerator: projectFileEnumerator
+      )
       return SearchCacheEntry(files: files, date: Date())
     }
   }
@@ -426,6 +636,39 @@ public actor FileIndexService {
       into: &files
     )
     return files
+  }
+
+  private static func buildSearchIndex(
+    projectPath: String,
+    projectFileEnumerator: any ProjectFileEnumerating
+  ) async -> [IndexedFile] {
+    switch await projectFileEnumerator.enumerateFiles(in: projectPath) {
+    case .files(let files, _):
+      return buildSearchIndexFromGitFiles(files, rootPath: projectPath)
+    case .notGitProject:
+      return buildSearchIndexSync(projectPath: projectPath)
+    case .failed:
+      return []
+    }
+  }
+
+  private static func buildSearchIndexFromGitFiles(
+    _ files: [ProjectFileEnumeratorFile],
+    rootPath: String
+  ) -> [IndexedFile] {
+    files.compactMap { file in
+      let absolutePath = (rootPath as NSString).appendingPathComponent(file.relativePath)
+      guard shouldIncludeSearchResult(at: absolutePath, rootPath: rootPath),
+            let relativePath = relativePathIfContained(absolutePath, within: rootPath) else {
+        return nil
+      }
+
+      return IndexedFile(
+        name: URL(fileURLWithPath: absolutePath).lastPathComponent,
+        relativePath: relativePath,
+        absolutePath: absolutePath
+      )
+    }
   }
 
   private static func collectSearchEntriesSync(
@@ -528,14 +771,26 @@ public actor FileIndexService {
     rootPath: String,
     rules: [IgnoreRule]
   ) -> Bool {
-    if hardExcludedNames.contains(entry.name) { return false }
-
-    if entry.name.hasPrefix(".") && !allowedHiddenNames.contains(entry.name) {
-      return false
-    }
-
     let relativePath = projectRelativePath(for: entry.path, relativeTo: rootPath)
+    guard pathComponentsAreSearchable(relativePath) else { return false }
     return !isIgnored(relativePath: relativePath, isDirectory: entry.isDirectory, rules: rules)
+  }
+
+  private static func pathComponentsAreSearchable(_ relativePath: String) -> Bool {
+    relativePath
+      .split(separator: "/")
+      .allSatisfy { component in
+        let name = String(component)
+        if hardExcludedNames.contains(name) {
+          return false
+        }
+
+        if name.hasPrefix(".") && !allowedHiddenNames.contains(name) {
+          return false
+        }
+
+        return true
+      }
   }
 
   private static func shouldIncludeSearchResult(at path: String, rootPath: String) -> Bool {

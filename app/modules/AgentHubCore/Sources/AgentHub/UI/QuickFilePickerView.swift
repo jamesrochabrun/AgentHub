@@ -261,9 +261,6 @@ public struct QuickFilePickerView: View {
         }
       }
     }
-    .task(id: projectPath) {
-      await FileIndexService.shared.prepareSearchIndex(projectPath: projectPath)
-    }
     .task(id: searchQuery) {
       // Automatically cancels previous task when searchQuery changes
       if searchQuery.isEmpty {

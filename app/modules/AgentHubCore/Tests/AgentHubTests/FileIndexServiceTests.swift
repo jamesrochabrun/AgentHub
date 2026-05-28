@@ -34,6 +34,10 @@ private struct FileIndexFixture {
     try writeFile(at: projectPath + "/" + relativePath, content: content)
   }
 
+  func writeFile(_ relativePath: String, inProjectAt path: String, content: String) throws {
+    try writeFile(at: path + "/" + relativePath, content: content)
+  }
+
   func writeExternalFile(_ relativePath: String, content: String) throws {
     try writeFile(at: externalPath + "/" + relativePath, content: content)
   }
@@ -45,6 +49,45 @@ private struct FileIndexFixture {
     )
   }
 
+  func initializeGitRepository() throws {
+    try runGit("init", "-b", "main")
+    try runGit("config", "user.email", "test@test.com")
+    try runGit("config", "user.name", "Test")
+  }
+
+  func addWorktree(branch: String) throws -> String {
+    try runGit("branch", branch)
+    let worktreePath = tempDir + "/" + branch.replacingOccurrences(of: "/", with: "-")
+    try runGit("worktree", "add", worktreePath, branch)
+    return worktreePath
+  }
+
+  @discardableResult
+  func runGit(_ args: String..., at path: String? = nil) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = args
+    process.currentDirectoryURL = URL(fileURLWithPath: path ?? projectPath)
+
+    let outputPipe = Pipe()
+    let errorPipe = Pipe()
+    process.standardOutput = outputPipe
+    process.standardError = errorPipe
+
+    try process.run()
+    process.waitUntilExit()
+
+    let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    let error = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    guard process.terminationStatus == 0 else {
+      throw CocoaError(.fileReadUnknown, userInfo: [
+        NSLocalizedDescriptionKey: "git \(args.joined(separator: " ")) failed: \(error)"
+      ])
+    }
+
+    return output
+  }
+
   private func writeFile(at path: String, content: String) throws {
     let parentPath = URL(fileURLWithPath: path).deletingLastPathComponent().path
     try FileManager.default.createDirectory(atPath: parentPath, withIntermediateDirectories: true)
@@ -54,9 +97,23 @@ private struct FileIndexFixture {
 
 private struct FakeProjectFileSearchService: ProjectFileSearchServiceProtocol {
   let results: [ProjectFileSearchResult]
+  var resultsByQuery: [String: [ProjectFileSearchResult]] = [:]
 
   func search(query: String, in projectPath: String, limit: Int) async -> [ProjectFileSearchResult] {
-    Array(results.prefix(limit))
+    Array((resultsByQuery[query] ?? results).prefix(limit))
+  }
+}
+
+private struct FakeProjectFileEnumerator: ProjectFileEnumerating {
+  let kind: ProjectFileEnumerationKind?
+  let result: ProjectFileEnumerationResult
+
+  func gitProjectKind(at projectPath: String) -> ProjectFileEnumerationKind? {
+    kind
+  }
+
+  func enumerateFiles(in projectPath: String) async -> ProjectFileEnumerationResult {
+    result
   }
 }
 
@@ -300,6 +357,149 @@ struct FileIndexServicePrivacyTests {
     #expect(diagnostics.localIndexStatusBeforeFallback == .idle)
     #expect(diagnostics.localIndexedFileCount == 1)
     #expect(diagnostics.results.map(\.relativePath) == ["Sources/App.swift"])
+  }
+
+  @Test("Git-backed index searches worktree files and excludes ignored files")
+  func gitBackedIndexSearchesWorktreeFiles() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.initializeGitRepository()
+    try fixture.writeProjectFile(".gitignore", content: "ignored/\n")
+    try fixture.writeProjectFile("Sources/MainSearchTarget.swift", content: "struct MainSearchTarget {}")
+    try fixture.runGit("add", ".")
+    try fixture.runGit("commit", "-m", "initial")
+
+    let worktreePath = try fixture.addWorktree(branch: "feature/file-index")
+    try fixture.writeFile("Sources/WorktreeSearchTarget.swift", inProjectAt: worktreePath, content: "struct WorktreeSearchTarget {}")
+    try fixture.runGit("add", "Sources/WorktreeSearchTarget.swift", at: worktreePath)
+    try fixture.runGit("commit", "-m", "worktree file", at: worktreePath)
+    try fixture.writeFile("Sources/UntrackedSearchTarget.swift", inProjectAt: worktreePath, content: "struct UntrackedSearchTarget {}")
+    try fixture.writeFile("ignored/IgnoredSearchTarget.swift", inProjectAt: worktreePath, content: "struct IgnoredSearchTarget {}")
+
+    let service = FileIndexService(projectFileSearchService: FakeProjectFileSearchService(results: []))
+    let diagnostics = await service.searchWithDiagnostics(query: "searchtarget", in: worktreePath)
+    let relativePaths = Set(diagnostics.results.map(\.relativePath))
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.spotlightCandidateCount == 0)
+    #expect(relativePaths.contains("Sources/MainSearchTarget.swift"))
+    #expect(relativePaths.contains("Sources/WorktreeSearchTarget.swift"))
+    #expect(relativePaths.contains("Sources/UntrackedSearchTarget.swift"))
+    #expect(!relativePaths.contains("ignored/IgnoredSearchTarget.swift"))
+  }
+
+  @Test("Worktree search uses local Git index before Spotlight")
+  func worktreeSearchSkipsSpotlight() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("LocalOnly.swift", content: "struct LocalOnly {}")
+    try fixture.writeProjectFile("SpotlightOnly.swift", content: "struct SpotlightOnly {}")
+
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: [
+        ProjectFileSearchResult(
+          id: fixture.projectPath + "/SpotlightOnly.swift",
+          name: "SpotlightOnly.swift",
+          relativePath: "SpotlightOnly.swift",
+          absolutePath: fixture.projectPath + "/SpotlightOnly.swift",
+          score: 5000
+        )
+      ]),
+      projectFileEnumerator: FakeProjectFileEnumerator(
+        kind: .gitWorktree,
+        result: .files([
+          ProjectFileEnumeratorFile(relativePath: "LocalOnly.swift")
+        ], kind: .gitWorktree)
+      )
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "only", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.spotlightCandidateCount == 0)
+    #expect(diagnostics.results.map(\.relativePath) == ["LocalOnly.swift"])
+  }
+
+  @Test("Non-Git folders fall back to recursive indexing")
+  func nonGitFoldersUseRecursiveIndex() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: []),
+      projectFileEnumerator: FakeProjectFileEnumerator(
+        kind: nil,
+        result: .notGitProject
+      )
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "app", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.localIndexedFileCount == 1)
+    #expect(diagnostics.results.map(\.relativePath) == ["Sources/App.swift"])
+  }
+
+  @Test("Git enumeration failure stays bounded instead of recursively scanning")
+  func gitEnumerationFailureReturnsEmptyLocalIndex() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: []),
+      projectFileEnumerator: FakeProjectFileEnumerator(
+        kind: .gitRepository,
+        result: .failed
+      )
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "app", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.localIndexedFileCount == 0)
+    #expect(diagnostics.results.isEmpty)
+  }
+
+  @Test("Filters hidden ancestor directories from search results")
+  func filtersHiddenAncestorDirectoriesFromSearchResults() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    let claudePath = fixture.projectPath + "/.claude/settings.local.json"
+    let githubPath = fixture.projectPath + "/.github/workflows/build.yml"
+    try fixture.writeProjectFile(".claude/settings.local.json", content: "{}")
+    try fixture.writeProjectFile(".github/workflows/build.yml", content: "name: build")
+
+    let hiddenService = FileIndexService(projectFileSearchService: FakeProjectFileSearchService(results: [
+      ProjectFileSearchResult(
+        id: claudePath,
+        name: "settings.local.json",
+        relativePath: ".claude/settings.local.json",
+        absolutePath: claudePath,
+        score: 5000
+      )
+    ]))
+    let allowedService = FileIndexService(projectFileSearchService: FakeProjectFileSearchService(results: [
+      ProjectFileSearchResult(
+        id: githubPath,
+        name: "build.yml",
+        relativePath: ".github/workflows/build.yml",
+        absolutePath: githubPath,
+        score: 5000
+      )
+    ]))
+
+    let hiddenResults = await hiddenService.search(query: "settings", in: fixture.projectPath)
+    let allowedResults = await allowedService.search(query: "build", in: fixture.projectPath)
+
+    #expect(hiddenResults.isEmpty)
+    #expect(allowedResults.map(\.relativePath) == [".github/workflows/build.yml"])
   }
 
   @Test("Creating a new file invalidates cached directory listings")
