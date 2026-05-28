@@ -20,6 +20,8 @@ struct CollapsibleSessionRow: View {
   var isDeletingWorktree: Bool = false
   let onSelect: () -> Void
 
+  private static let statusLabelMaxWidth: CGFloat = 96
+
   @State private var isHovered = false
   @State private var showArchiveConfirm = false
   @State private var pulseScale: CGFloat = 1.0
@@ -115,7 +117,8 @@ struct CollapsibleSessionRow: View {
 
           statusLabel
             .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
+            .truncationMode(.tail)
+            .frame(maxWidth: Self.statusLabelMaxWidth, alignment: .trailing)
             .animation(.easeInOut(duration: 0.3), value: isPending)
             .animation(.easeInOut(duration: 0.3), value: sessionStatus)
 
@@ -133,14 +136,18 @@ struct CollapsibleSessionRow: View {
               .font(.secondaryDefault)
               .foregroundColor(.primary)
               .lineLimit(1)
+              .truncationMode(.tail)
+              .frame(maxWidth: .infinity, alignment: .leading)
           }
 
           Spacer(minLength: 4)
 
           actionsView
+            .fixedSize(horizontal: true, vertical: false)
             .opacity(showActions ? 1 : 0)
             .animation(.easeInOut(duration: 0.25), value: showActions)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
 
         if let pullRequest = sessionGitHubQuickAccessViewModel.currentBranchPR {
           GitHubSessionRowStatusLine(
@@ -151,7 +158,9 @@ struct CollapsibleSessionRow: View {
           .transition(.opacity)
         }
       }
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(.horizontal, 10)
     .padding(.vertical, 8)
     .contentShape(Rectangle())
