@@ -536,54 +536,69 @@ enum SourceEditorLanguageResolver {
 
 private enum AgentHubSourceEditorTheme {
   static func theme(for colorScheme: ColorScheme) -> EditorTheme {
-    colorScheme == .dark ? darkTheme() : lightTheme()
+    switch colorScheme {
+    case .dark:
+      darkTheme(resolvingIn: .darkAqua)
+    case .light:
+      lightTheme(resolvingIn: .aqua)
+    @unknown default:
+      lightTheme(resolvingIn: .aqua)
+    }
   }
 
-  private static func lightTheme() -> EditorTheme {
+  private static func lightTheme(resolvingIn appearanceName: NSAppearance.Name) -> EditorTheme {
     EditorTheme(
-      text: .init(color: rgb(.labelColor)),
-      insertionPoint: rgb(.controlAccentColor),
-      invisibles: .init(color: rgb(.tertiaryLabelColor)),
-      background: rgb(.textBackgroundColor),
-      lineHighlight: rgb(NSColor.black.withAlphaComponent(0.05)),
-      selection: rgb(.selectedTextBackgroundColor),
-      keywords: .init(color: rgb(.systemPurple)),
-      commands: .init(color: rgb(.systemBlue)),
-      types: .init(color: rgb(.systemTeal)),
-      attributes: .init(color: rgb(.systemIndigo)),
-      variables: .init(color: rgb(.labelColor)),
-      values: .init(color: rgb(.systemMint)),
-      numbers: .init(color: rgb(.systemOrange)),
-      strings: .init(color: rgb(.systemRed)),
-      characters: .init(color: rgb(.systemPink)),
-      comments: .init(color: rgb(.secondaryLabelColor), italic: true)
+      text: .init(color: rgb(.labelColor, resolvingIn: appearanceName)),
+      insertionPoint: rgb(.controlAccentColor, resolvingIn: appearanceName),
+      invisibles: .init(color: rgb(.tertiaryLabelColor, resolvingIn: appearanceName)),
+      background: rgb(.textBackgroundColor, resolvingIn: appearanceName),
+      lineHighlight: rgb(NSColor.black.withAlphaComponent(0.05), resolvingIn: appearanceName),
+      selection: rgb(.selectedTextBackgroundColor, resolvingIn: appearanceName),
+      keywords: .init(color: rgb(.systemPurple, resolvingIn: appearanceName)),
+      commands: .init(color: rgb(.systemBlue, resolvingIn: appearanceName)),
+      types: .init(color: rgb(.systemTeal, resolvingIn: appearanceName)),
+      attributes: .init(color: rgb(.systemIndigo, resolvingIn: appearanceName)),
+      variables: .init(color: rgb(.labelColor, resolvingIn: appearanceName)),
+      values: .init(color: rgb(.systemMint, resolvingIn: appearanceName)),
+      numbers: .init(color: rgb(.systemOrange, resolvingIn: appearanceName)),
+      strings: .init(color: rgb(.systemRed, resolvingIn: appearanceName)),
+      characters: .init(color: rgb(.systemPink, resolvingIn: appearanceName)),
+      comments: .init(color: rgb(.secondaryLabelColor, resolvingIn: appearanceName), italic: true)
     )
   }
 
-  private static func darkTheme() -> EditorTheme {
+  private static func darkTheme(resolvingIn appearanceName: NSAppearance.Name) -> EditorTheme {
     EditorTheme(
-      text: .init(color: rgb(.labelColor)),
-      insertionPoint: rgb(.controlAccentColor),
-      invisibles: .init(color: rgb(.tertiaryLabelColor)),
-      background: rgb(.windowBackgroundColor),
-      lineHighlight: rgb(NSColor.white.withAlphaComponent(0.08)),
-      selection: rgb(.selectedTextBackgroundColor),
-      keywords: .init(color: rgb(.systemPurple)),
-      commands: .init(color: rgb(.systemBlue)),
-      types: .init(color: rgb(.systemTeal)),
-      attributes: .init(color: rgb(.systemIndigo)),
-      variables: .init(color: rgb(.labelColor)),
-      values: .init(color: rgb(.systemMint)),
-      numbers: .init(color: rgb(.systemOrange)),
-      strings: .init(color: rgb(.systemRed)),
-      characters: .init(color: rgb(.systemPink)),
-      comments: .init(color: rgb(.secondaryLabelColor), italic: true)
+      text: .init(color: rgb(.labelColor, resolvingIn: appearanceName)),
+      insertionPoint: rgb(.controlAccentColor, resolvingIn: appearanceName),
+      invisibles: .init(color: rgb(.tertiaryLabelColor, resolvingIn: appearanceName)),
+      background: rgb(.windowBackgroundColor, resolvingIn: appearanceName),
+      lineHighlight: rgb(NSColor.white.withAlphaComponent(0.08), resolvingIn: appearanceName),
+      selection: rgb(.selectedTextBackgroundColor, resolvingIn: appearanceName),
+      keywords: .init(color: rgb(.systemPurple, resolvingIn: appearanceName)),
+      commands: .init(color: rgb(.systemBlue, resolvingIn: appearanceName)),
+      types: .init(color: rgb(.systemTeal, resolvingIn: appearanceName)),
+      attributes: .init(color: rgb(.systemIndigo, resolvingIn: appearanceName)),
+      variables: .init(color: rgb(.labelColor, resolvingIn: appearanceName)),
+      values: .init(color: rgb(.systemMint, resolvingIn: appearanceName)),
+      numbers: .init(color: rgb(.systemOrange, resolvingIn: appearanceName)),
+      strings: .init(color: rgb(.systemRed, resolvingIn: appearanceName)),
+      characters: .init(color: rgb(.systemPink, resolvingIn: appearanceName)),
+      comments: .init(color: rgb(.secondaryLabelColor, resolvingIn: appearanceName), italic: true)
     )
   }
 
   // CodeEditSourceEditor reads color components (e.g. brightness) from theme
   // colors; catalog/system NSColors throw until resolved into an RGB colorspace.
-  private static func rgb(_ color: NSColor) -> NSColor {
-    color.usingColorSpace(.sRGB) ?? color
+  private static func rgb(_ color: NSColor, resolvingIn appearanceName: NSAppearance.Name) -> NSColor {
+    guard let appearance = NSAppearance(named: appearanceName) else {
+      return color.usingColorSpace(.sRGB) ?? color
+    }
+
+    var resolvedColor = color
+    appearance.performAsCurrentDrawingAppearance {
+      resolvedColor = color.usingColorSpace(.sRGB) ?? color
+    }
+    return resolvedColor
   }
 }

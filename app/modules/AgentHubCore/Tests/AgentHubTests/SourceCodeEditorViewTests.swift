@@ -1,10 +1,25 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import AgentHubCore
 
 private final class FindPanelHostingView: NSView {}
+
+private func withCurrentDrawingAppearance<T>(_ name: NSAppearance.Name, _ body: () -> T) -> T {
+  guard let appearance = NSAppearance(named: name) else { return body() }
+
+  var result: T?
+  appearance.performAsCurrentDrawingAppearance {
+    result = body()
+  }
+  return result ?? body()
+}
+
+private func brightness(of color: NSColor) -> CGFloat {
+  (color.usingColorSpace(.sRGB) ?? color).brightnessComponent
+}
 
 @Suite("SourceCodeEditorView")
 struct SourceCodeEditorViewTests {
@@ -234,6 +249,28 @@ struct SourceCodeEditorViewTests {
 
     #expect(highlighted.showFoldingRibbon)
     #expect(plainText.showFoldingRibbon == false)
+  }
+
+  @Test("Editor theme resolves colors from requested color scheme")
+  func editorThemeResolvesColorsFromRequestedColorScheme() {
+    let options = AgentHubSourceEditorOptions(
+      displayMode: .highlighted,
+      isEditable: true,
+      isMinimapEnabled: true,
+      isWrapLinesEnabled: true
+    )
+
+    let lightThemeCreatedInDarkAppearance = withCurrentDrawingAppearance(.darkAqua) {
+      options.makeSourceEditorConfiguration(colorScheme: .light).appearance.theme
+    }
+    let darkThemeCreatedInLightAppearance = withCurrentDrawingAppearance(.aqua) {
+      options.makeSourceEditorConfiguration(colorScheme: .dark).appearance.theme
+    }
+
+    #expect(brightness(of: lightThemeCreatedInDarkAppearance.background) > 0.8)
+    #expect(brightness(of: lightThemeCreatedInDarkAppearance.text.color) < 0.3)
+    #expect(brightness(of: darkThemeCreatedInLightAppearance.background) < 0.3)
+    #expect(brightness(of: darkThemeCreatedInLightAppearance.text.color) > 0.7)
   }
 
   @Test("Language resolver detects supported extensions and special filenames")
