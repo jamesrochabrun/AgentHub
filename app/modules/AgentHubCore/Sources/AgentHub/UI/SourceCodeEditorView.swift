@@ -114,10 +114,27 @@ private struct SourceCodeEditorHost: View {
         onTextChange: onTextChange,
         onIdleTextSnapshot: onIdleTextSnapshot
       )
+      editCoordinator.repairFindPanelHitTesting()
+      editCoordinator.updateFindNavigation(
+        text: editorState.findText,
+        isPanelVisible: editorState.findPanelVisible == true
+      )
       editCoordinator.syncExternalText(text)
     }
     .onChange(of: text) { _, newText in
       editCoordinator.syncExternalText(newText)
+    }
+    .onChange(of: editorState.findText) { _, newText in
+      editCoordinator.updateFindNavigation(
+        text: newText,
+        isPanelVisible: editorState.findPanelVisible == true
+      )
+    }
+    .onChange(of: editorState.findPanelVisible) { _, isVisible in
+      editCoordinator.updateFindNavigation(
+        text: editorState.findText,
+        isPanelVisible: isVisible == true
+      )
     }
   }
 
@@ -207,6 +224,11 @@ private final class SourceEditorEditCoordinator: TextViewCoordinator {
   private weak var controller: TextViewController?
   private var isApplyingExternalText = false
   private var idleTask: Task<Void, Never>?
+  private var findNavigationEventMonitor: Any?
+  private var findNavigationText = ""
+  private var isFindPanelVisible = false
+  private var isUsingFindPanelNavigation = false
+  private var lastFindNavigationRange: NSRange?
   private var onTextChange: (String) -> Void = { _ in }
   private var onIdleTextSnapshot: (String) -> Void = { _ in }
 
@@ -220,6 +242,30 @@ private final class SourceEditorEditCoordinator: TextViewCoordinator {
 
   func prepareCoordinator(controller: TextViewController) {
     self.controller = controller
+    installFindNavigationEventMonitor()
+  }
+
+  func controllerDidAppear(controller: TextViewController) {
+    SourceEditorFindPanelHitTestingFix.apply(to: controller)
+  }
+
+  func repairFindPanelHitTesting() {
+    guard let controller else { return }
+    SourceEditorFindPanelHitTestingFix.apply(to: controller)
+  }
+
+  func updateFindNavigation(text: String?, isPanelVisible: Bool) {
+    let nextText = text ?? ""
+    if nextText != findNavigationText {
+      lastFindNavigationRange = nil
+    }
+    findNavigationText = nextText
+    self.isFindPanelVisible = isPanelVisible
+    if isPanelVisible, !nextText.isEmpty {
+      isUsingFindPanelNavigation = true
+    } else if !isPanelVisible {
+      isUsingFindPanelNavigation = false
+    }
   }
 
   func textViewDidChangeText(controller: TextViewController) {
@@ -227,6 +273,15 @@ private final class SourceEditorEditCoordinator: TextViewCoordinator {
     let updatedText = controller.text
     onTextChange(updatedText)
     scheduleIdleSnapshot(updatedText)
+  }
+
+  func textViewDidChangeSelection(controller: TextViewController, newPositions: [CursorPosition]) {
+    guard let range = newPositions.first?.range else { return }
+    lastFindNavigationRange = range
+    syncFindNavigationTextFromPanel(in: controller)
+    guard shouldHandleFindNavigation(in: controller) else { return }
+    guard isFindMatchRange(range, in: controller) else { return }
+    scrollFindMatch(range, in: controller)
   }
 
   func syncExternalText(_ text: String) {
@@ -238,6 +293,10 @@ private final class SourceEditorEditCoordinator: TextViewCoordinator {
 
   func destroy() {
     idleTask?.cancel()
+    if let findNavigationEventMonitor {
+      NSEvent.removeMonitor(findNavigationEventMonitor)
+      self.findNavigationEventMonitor = nil
+    }
   }
 
   private func scheduleIdleSnapshot(_ text: String) {
@@ -246,6 +305,166 @@ private final class SourceEditorEditCoordinator: TextViewCoordinator {
       try? await Task.sleep(for: .milliseconds(650))
       guard !Task.isCancelled else { return }
       self?.onIdleTextSnapshot(text)
+    }
+  }
+
+  private func installFindNavigationEventMonitor() {
+    guard findNavigationEventMonitor == nil else { return }
+    findNavigationEventMonitor = NSEvent.addLocalMonitorForEvents(
+      matching: [.keyDown, .leftMouseDown, .leftMouseUp]
+    ) { [weak self] event in
+      self?.handleFindNavigationEvent(event) ?? event
+    }
+  }
+
+  private func handleFindNavigationEvent(_ event: NSEvent) -> NSEvent? {
+    guard let controller,
+          controller.view.window?.isKeyWindow == true,
+          shouldHandleFindNavigation(in: controller) else {
+      return event
+    }
+
+    syncFindNavigationTextFromPanel(in: controller)
+    guard !findNavigationText.isEmpty else { return event }
+
+    switch event.type {
+    case .keyDown:
+      return handleFindNavigationKeyDown(event, controller: controller)
+    case .leftMouseDown:
+      return handleFindNavigationMouseDown(event, controller: controller)
+    case .leftMouseUp:
+      return handleFindNavigationMouseUp(event, controller: controller)
+    default:
+      return event
+    }
+  }
+
+  private func handleFindNavigationKeyDown(
+    _ event: NSEvent,
+    controller: TextViewController
+  ) -> NSEvent? {
+    let returnKey: UInt16 = 36
+    let keypadEnterKey: UInt16 = 76
+    guard event.keyCode == returnKey || event.keyCode == keypadEnterKey else {
+      return event
+    }
+
+    let modifierFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+    guard modifierFlags.subtracting(.shift).isEmpty else {
+      return event
+    }
+
+    if controller.view.window?.firstResponder === controller.textView,
+       isUsingFindPanelNavigation == false {
+      return event
+    }
+
+    let direction: SourceEditorFindNavigationDirection = modifierFlags.contains(.shift)
+      ? .previous
+      : .next
+    navigateFindMatch(direction, in: controller)
+    return nil
+  }
+
+  private func handleFindNavigationMouseDown(
+    _ event: NSEvent,
+    controller: TextViewController
+  ) -> NSEvent? {
+    guard let findPanel = SourceEditorFindPanelHitTestingFix.findPanel(in: controller.view),
+          findPanel.isHidden == false else {
+      return event
+    }
+
+    let panelPoint = findPanel.convert(event.locationInWindow, from: nil)
+    isUsingFindPanelNavigation = findPanel.bounds.contains(panelPoint)
+    return event
+  }
+
+  private func handleFindNavigationMouseUp(
+    _ event: NSEvent,
+    controller: TextViewController
+  ) -> NSEvent? {
+    guard let findPanel = SourceEditorFindPanelHitTestingFix.findPanel(in: controller.view),
+          findPanel.isHidden == false else {
+      return event
+    }
+
+    let panelPoint = findPanel.convert(event.locationInWindow, from: nil)
+    guard let direction = SourceEditorFindNavigationControlRegion.direction(
+      for: panelPoint,
+      panelSize: findPanel.bounds.size
+    ) else {
+      return event
+    }
+
+    navigateFindMatch(direction, in: controller)
+    return nil
+  }
+
+  private func navigateFindMatch(
+    _ direction: SourceEditorFindNavigationDirection,
+    in controller: TextViewController
+  ) {
+    syncFindNavigationTextFromPanel(in: controller)
+    let codeEditFindEmphases = controller.textView.emphasisManager?
+      .getEmphases(for: SourceEditorFindNavigator.codeEditFindEmphasisGroup)
+      .sorted { $0.range.location < $1.range.location } ?? []
+    let codeEditFindRanges = codeEditFindEmphases.map(\.range)
+    let activeFindRange = codeEditFindEmphases.first { $0.selectInDocument }?.range
+      ?? codeEditFindEmphases.first { !$0.inactive }?.range
+    let currentRange = lastFindNavigationRange
+      ?? activeFindRange
+      ?? controller.cursorPositions.first?.range
+    guard let range = SourceEditorFindNavigator.targetRange(
+      matches: codeEditFindRanges.isEmpty
+        ? SourceEditorFindNavigator.matchRanges(query: findNavigationText, in: controller.text)
+        : codeEditFindRanges,
+      currentRange: currentRange,
+      direction: direction
+    ) else {
+      NSSound.beep()
+      return
+    }
+
+    isUsingFindPanelNavigation = true
+    lastFindNavigationRange = range
+    controller.setCursorPositions([CursorPosition(range: range)], scrollToVisible: true)
+    scrollFindMatch(range, in: controller)
+  }
+
+  private func shouldHandleFindNavigation(in controller: TextViewController) -> Bool {
+    isFindPanelVisible || SourceEditorFindPanelHitTestingFix.isFindPanelVisible(in: controller.view)
+  }
+
+  private func syncFindNavigationTextFromPanel(in controller: TextViewController) {
+    guard let panelText = SourceEditorFindPanelHitTestingFix.findText(in: controller.view) else {
+      return
+    }
+    if panelText != findNavigationText {
+      lastFindNavigationRange = nil
+    }
+    findNavigationText = panelText
+  }
+
+  private func isFindMatchRange(_ range: NSRange, in controller: TextViewController) -> Bool {
+    guard range.location != NSNotFound, !findNavigationText.isEmpty else { return false }
+    let codeEditFindRanges = controller.textView.emphasisManager?
+      .getEmphases(for: SourceEditorFindNavigator.codeEditFindEmphasisGroup)
+      .map(\.range) ?? []
+    let findRanges = codeEditFindRanges.isEmpty
+      ? SourceEditorFindNavigator.matchRanges(query: findNavigationText, in: controller.text)
+      : codeEditFindRanges
+    return findRanges.contains(range)
+  }
+
+  private func scrollFindMatch(_ range: NSRange, in controller: TextViewController) {
+    guard range.location != NSNotFound else { return }
+    controller.textView.scrollToRange(range, center: true)
+
+    DispatchQueue.main.async { [weak controller] in
+      guard let controller else { return }
+      controller.textView.scrollToRange(range, center: true)
+      controller.scrollView.reflectScrolledClipView(controller.scrollView.contentView)
     }
   }
 }
