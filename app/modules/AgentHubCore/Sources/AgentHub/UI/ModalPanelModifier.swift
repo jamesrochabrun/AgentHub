@@ -158,10 +158,13 @@ private struct FloatingPanelModifier<PanelContent: View>: ViewModifier {
     dismissPanel()
 
     let view = panelContent()
+      .frame(width: defaultSize.width, height: defaultSize.height)
     let hostingView = NSHostingView(rootView: view)
     // Floating panels own their AppKit frame; SwiftUI should not resize the window
     // while animating internal content changes.
     hostingView.sizingOptions = []
+    hostingView.frame = NSRect(origin: .zero, size: defaultSize)
+    hostingView.autoresizingMask = [.width, .height]
 
     let newPanel = KeyablePanel(
       contentRect: NSRect(origin: .zero, size: defaultSize),
@@ -176,6 +179,8 @@ private struct FloatingPanelModifier<PanelContent: View>: ViewModifier {
     newPanel.backgroundColor = .clear
     newPanel.isOpaque = false
     newPanel.hasShadow = false
+    newPanel.contentMinSize = defaultSize
+    newPanel.contentMaxSize = defaultSize
     newPanel.contentView = hostingView
 
     let delegate = PanelWindowDelegate()
