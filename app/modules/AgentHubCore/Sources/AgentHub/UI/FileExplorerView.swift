@@ -128,6 +128,9 @@ public struct FileExplorerView: View {
         await loadFileTree()
       }
     }
+    .task(id: normalizedProjectPath) {
+      await FileIndexService.shared.prepareSearchIndex(projectPath: normalizedProjectPath)
+    }
     .task(id: navigationRequest?.id) {
       guard let navigationRequest else { return }
       await navigateToFile(at: navigationRequest.filePath)
@@ -280,14 +283,12 @@ public struct FileExplorerView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
           } else {
+            let rows = visibleTreeRows
             LazyVStack(alignment: .leading, spacing: 0) {
-              ForEach(treeNodes) { node in
-                FileTreeNodeView(
-                  node: node,
-                  depth: 0,
+              ForEach(rows) { row in
+                FileTreeRowView(
+                  row: row,
                   selectedFilePath: $selectedFilePath,
-                  expandedPaths: $expandedPaths,
-                  loadingPaths: loadingDirectories,
                   onSelectFile: { path in
                     Task { await openFile(at: path) }
                   },
@@ -357,13 +358,12 @@ public struct FileExplorerView: View {
         fileName: selectedFilePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
         documentID: editorDocumentID,
         displayMode: editorDisplayMode,
-        onTextChange: { updatedText in
-          if updatedText != savedFileContent {
+        onTextChange: { _ in
+          if !hasUnsavedChanges {
             hasUnsavedChanges = true
           }
         },
         onIdleTextSnapshot: { idleText in
-          guard editorDisplayMode == .highlighted else { return }
           hasUnsavedChanges = idleText != savedFileContent
         }
       )
@@ -415,11 +415,11 @@ public struct FileExplorerView: View {
     isLoadingFile = true
 
     do {
-      let content = try await FileIndexService.shared.readFile(at: resolvedPath, projectPath: normalizedProjectPath)
-      fileContent = content
-      savedFileContent = content
+      let file = try await FileIndexService.shared.readTextFile(at: resolvedPath, projectPath: normalizedProjectPath)
+      fileContent = file.content
+      savedFileContent = file.content
       hasUnsavedChanges = false
-      editorDisplayMode = .displayMode(for: content)
+      editorDisplayMode = .displayMode(for: file.metrics)
       editorDocumentID = UUID()
       await FileIndexService.shared.addToRecent(resolvedPath)
     } catch {
@@ -484,11 +484,7 @@ public struct FileExplorerView: View {
     guard !loadingDirectories.contains(directoryPath) else { return }
     loadingDirectories.insert(directoryPath)
     let children = await FileIndexService.shared.children(of: directoryPath, in: normalizedProjectPath)
-    treeNodes = updatingChildren(
-      in: treeNodes,
-      for: directoryPath,
-      children: children
-    )
+    setChildren(children, for: directoryPath)
     loadingDirectories.remove(directoryPath)
   }
 
@@ -530,59 +526,112 @@ public struct FileExplorerView: View {
     return nil
   }
 
-  private func updatingChildren(
-    in nodes: [FileTreeNode],
+  private var visibleTreeRows: [FileTreeVisibleRow] {
+    var rows: [FileTreeVisibleRow] = []
+    rows.reserveCapacity(treeNodes.count)
+    appendVisibleRows(from: treeNodes, depth: 0, into: &rows)
+    return rows
+  }
+
+  private func appendVisibleRows(
+    from nodes: [FileTreeNode],
+    depth: Int,
+    into rows: inout [FileTreeVisibleRow]
+  ) {
+    for node in nodes {
+      let isExpanded = expandedPaths.contains(node.path)
+      rows.append(.node(node, depth: depth, isExpanded: isExpanded))
+      guard node.isDirectory, isExpanded else { continue }
+      if loadingDirectories.contains(node.path) {
+        rows.append(.loading(path: node.path, depth: depth + 1))
+      } else if let children = node.children {
+        appendVisibleRows(from: children, depth: depth + 1, into: &rows)
+      }
+    }
+  }
+
+  private func setChildren(_ children: [FileTreeNode], for targetPath: String) {
+    _ = setChildren(children, for: targetPath, in: &treeNodes)
+  }
+
+  private func setChildren(
+    _ children: [FileTreeNode],
     for targetPath: String,
-    children: [FileTreeNode]
-  ) -> [FileTreeNode] {
-    nodes.map { node in
-      var updated = node
-      if node.path == targetPath {
-        updated.children = children
-        return updated
+    in nodes: inout [FileTreeNode]
+  ) -> Bool {
+    for index in nodes.indices {
+      if nodes[index].path == targetPath {
+        nodes[index].children = children
+        return true
       }
-      if let existingChildren = node.children {
-        updated.children = updatingChildren(
-          in: existingChildren,
-          for: targetPath,
-          children: children
-        )
+
+      guard var existingChildren = nodes[index].children else { continue }
+      if setChildren(children, for: targetPath, in: &existingChildren) {
+        nodes[index].children = existingChildren
+        return true
       }
-      return updated
+    }
+
+    return false
+  }
+}
+
+// MARK: - FileTreeRowView
+
+private enum FileTreeVisibleRow: Identifiable, Equatable {
+  case node(FileTreeNode, depth: Int, isExpanded: Bool)
+  case loading(path: String, depth: Int)
+
+  var id: String {
+    switch self {
+    case .node(let node, _, _):
+      node.path
+    case .loading(let path, _):
+      path + "#loading"
     }
   }
 }
 
-// MARK: - FileTreeNodeView
-
-/// Recursive view that renders a single ``FileTreeNode`` and, when expanded, its children.
-private struct FileTreeNodeView: View {
-  let node: FileTreeNode
-  let depth: Int
+/// Renders one flattened tree row so the outer LazyVStack can virtualize a high-fanout directory.
+private struct FileTreeRowView: View {
+  let row: FileTreeVisibleRow
   @Binding var selectedFilePath: String?
-  @Binding var expandedPaths: Set<String>
-  let loadingPaths: Set<String>
   let onSelectFile: (String) -> Void
   let onToggleDirectory: (FileTreeNode) -> Void
 
   @State private var isHovered = false
 
-  private var isExpanded: Bool {
-    expandedPaths.contains(node.path)
+  private var node: FileTreeNode? {
+    if case .node(let node, _, _) = row {
+      return node
+    }
+    return nil
   }
 
-  private var isSelected: Bool {
-    !node.isDirectory && selectedFilePath == node.path
+  private var depth: Int {
+    switch row {
+    case .node(_, let depth, _), .loading(_, let depth):
+      depth
+    }
   }
 
   private var rowBackground: Color {
+    guard let node else { return Color.clear }
+    let isSelected = !node.isDirectory && selectedFilePath == node.path
     if isSelected { return Color.accentColor }
     if isHovered { return Color.primary.opacity(0.08) }
     return Color.clear
   }
 
+  private var isSelected: Bool {
+    guard let node else { return false }
+    return !node.isDirectory && selectedFilePath == node.path
+  }
+
+  @ViewBuilder
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
+    switch row {
+    case .node(let node, _, let isExpanded):
       Button(action: handleTap) {
         HStack(spacing: 4) {
           // Indentation
@@ -628,38 +677,22 @@ private struct FileTreeNodeView: View {
       .buttonStyle(.plain)
       .onHover { isHovered = $0 }
       .id(node.path)
-
-      // Children
-      if node.isDirectory && isExpanded {
-        if loadingPaths.contains(node.path) {
-          HStack(spacing: 8) {
-            Spacer()
-              .frame(width: CGFloat(depth + 1) * 12 + 28)
-            ProgressView()
-              .controlSize(.small)
-            Text("Loading…")
-              .font(.system(size: 11))
-              .foregroundColor(.secondary)
-          }
-          .padding(.vertical, 4)
-        } else if let children = node.children {
-          ForEach(children) { child in
-            FileTreeNodeView(
-              node: child,
-              depth: depth + 1,
-              selectedFilePath: $selectedFilePath,
-              expandedPaths: $expandedPaths,
-              loadingPaths: loadingPaths,
-              onSelectFile: onSelectFile,
-              onToggleDirectory: onToggleDirectory
-            )
-          }
-        }
+    case .loading:
+      HStack(spacing: 8) {
+        Spacer()
+          .frame(width: CGFloat(depth) * 12 + 28)
+        ProgressView()
+          .controlSize(.small)
+        Text("Loading…")
+          .font(.system(size: 11))
+          .foregroundColor(.secondary)
       }
+      .padding(.vertical, 4)
     }
   }
 
   private func handleTap() {
+    guard let node else { return }
     if node.isDirectory {
       onToggleDirectory(node)
     } else {
