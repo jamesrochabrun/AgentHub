@@ -542,7 +542,7 @@ public struct SettingsView: View {
           Button(role: .destructive, action: clearCLIEnvironmentVariables) {
             Label("Clear all", systemImage: "trash")
           }
-          .transition(.opacity.combined(with: .move(edge: .trailing)))
+          .transition(.opacity)
         }
       }
     }
