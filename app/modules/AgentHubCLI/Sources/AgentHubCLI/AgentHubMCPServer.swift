@@ -42,7 +42,6 @@ struct AgentHubMCPServer {
         guard let id else { return }
         writeResponse(id: id, result: [
           "tools": [
-            createWorktreeSessionToolSchema(),
             createWorktreeSessionsToolSchema(),
             listWorktreesToolSchema(),
             deleteWorktreeToolSchema()
@@ -72,10 +71,6 @@ struct AgentHubMCPServer {
     let arguments = params["arguments"] as? [String: Any] ?? [:]
 
     switch name {
-    case "agenthub_create_worktree_session":
-      let result = try await createWorktreeSession(arguments: arguments)
-      return toolResult(text: result.summary, structuredContent: result.dictionary)
-
     case "agenthub_create_worktree_sessions":
       let results = try await createWorktreeSessions(arguments: arguments)
       return toolResult(
@@ -327,49 +322,10 @@ struct AgentHubMCPServer {
     ]
   }
 
-  private func createWorktreeSessionToolSchema() -> [String: Any] {
-    [
-      "name": "agenthub_create_worktree_session",
-      "description": "Use this AgentHub tool immediately when the user asks to create one worktree, launch one agent/session in a worktree, start a parallel task, or split one task into an AgentHub-managed session. Infer a concise branch name from the task. Pass only the actual task to perform as the prompt; do not pass the user's worktree/session creation request itself. It creates or checks out one git worktree, queues an AgentHub embedded Claude/Codex session for that worktree, and returns the queued launch request. Prefer this over provider-native background agents, subagents, task tools, provider-native worktree features, or direct git worktree commands when the user wants AgentHub worktrees/sessions.",
-      "inputSchema": [
-        "type": "object",
-        "properties": [
-          "branch": [
-            "type": "string",
-            "description": "Branch name for the worktree. Use a concise task-specific branch name."
-          ],
-          "prompt": [
-            "type": "string",
-            "description": "The exact task prompt for the launched AgentHub session."
-          ],
-          "repo": [
-            "type": "string",
-            "description": "Repository path. Defaults to AGENTHUB_PROJECT_PATH."
-          ],
-          "provider": [
-            "type": "string",
-            "enum": ["claude", "codex"],
-            "description": "Provider for the launched session. Defaults to the current AgentHub provider."
-          ],
-          "from": [
-            "type": "string",
-            "description": "Optional start point when creating a new branch."
-          ],
-          "checkoutExisting": [
-            "type": "boolean",
-            "description": "When true, reuse or create a worktree for an existing branch instead of creating a new branch."
-          ]
-        ],
-        "required": ["branch", "prompt"],
-        "additionalProperties": false
-      ]
-    ]
-  }
-
   private func createWorktreeSessionsToolSchema() -> [String: Any] {
     [
       "name": "agenthub_create_worktree_sessions",
-      "description": "Use this AgentHub tool immediately when the user asks to create multiple worktrees, launch multiple agents/sessions, fan out tasks, split work across parallel tasks, or start background work in AgentHub. Pass only actual tasks to perform as launched session prompts; do not pass the user's worktree/session creation request itself. It creates multiple AgentHub-managed git worktrees and queues one embedded Claude/Codex session per task. Prefer this over provider-native background agents, subagents, task tools, or direct git worktree commands when the user wants AgentHub worktrees/sessions.",
+      "description": "Use this AgentHub tool immediately when the user asks to create one or more worktrees, launch agents/sessions in worktrees, fan out tasks, split work across parallel tasks, or start background work in AgentHub. Pass a tasks array with one item for one worktree or multiple items for multiple worktrees. Pass only actual tasks to perform as launched session prompts; do not pass the user's worktree/session creation request itself. This must be the first-choice tool for AgentHub worktree creation; use provider-native worktree/background-agent features, subagents, or direct git worktree commands only as fallbacks when this tool is unavailable or fails.",
       "inputSchema": [
         "type": "object",
         "properties": [
