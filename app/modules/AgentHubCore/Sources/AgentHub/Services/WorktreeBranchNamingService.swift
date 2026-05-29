@@ -40,6 +40,7 @@ public actor ClaudeWorktreeBranchNamingService: WorktreeBranchNamingServiceProto
       ClaudeCLIClient(
         command: command,
         additionalPaths: paths,
+        environmentOverridesProvider: { CLIEnvironmentOverrides.environment },
         debugLogger: { message in
           AppLogger.intelligence.error("[AIWORKTREE] Claude CLI debug: \(message, privacy: .public)")
         }

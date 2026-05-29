@@ -163,6 +163,7 @@ public enum EmbeddedTerminalLaunchBuilder {
     } else {
       environment["PATH"] = pathString
     }
+    environment.merge(CLIEnvironmentOverrides.environment) { _, new in new }
     return environment
   }
 

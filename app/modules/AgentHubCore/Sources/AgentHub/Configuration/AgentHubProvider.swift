@@ -308,6 +308,7 @@ public final class AgentHubProvider {
     return ClaudeCLIClient(
       command: configuration.cliCommand,
       additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths),
+      environmentOverridesProvider: { CLIEnvironmentOverrides.environment },
       debugLogger: debugLogger
     )
   }

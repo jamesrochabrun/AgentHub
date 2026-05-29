@@ -19,6 +19,7 @@ public struct SettingsView: View {
   @State private var isCodexConfigurationExpanded = true
   @State private var pendingTerminalBackend: EmbeddedTerminalBackend?
   @State private var showTerminalBackendRelaunchAlert = false
+  @State private var cliEnvironmentVariables = CLIEnvironmentOverrides.variables
 
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
@@ -141,8 +142,12 @@ public struct SettingsView: View {
     }
     .frame(width: 700, height: 620)
     .task {
+      cliEnvironmentVariables = CLIEnvironmentOverrides.variables
       await ensureSupportedThemeSelection()
       await aiConfigViewModel.load(service: agentHub?.aiConfigService)
+    }
+    .onChange(of: cliEnvironmentVariables) { _, newValue in
+      CLIEnvironmentOverrides.save(newValue)
     }
     .onDisappear {
       themeSelectionTask?.cancel()
@@ -253,6 +258,9 @@ public struct SettingsView: View {
         }
       }
 
+      Section("Environment Variables") {
+        CLIEnvironmentVariablesEditor(variables: $cliEnvironmentVariables)
+      }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)

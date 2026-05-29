@@ -23,6 +23,7 @@ public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable
 
   private let command: String
   private let additionalPaths: [String]
+  private let environmentOverridesProvider: @Sendable () -> [String: String]
   private let debugLogger: (@Sendable (String) -> Void)?
 
   private var runningProcess: Process?
@@ -31,10 +32,13 @@ public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable
   public init(
     command: String = "claude",
     additionalPaths: [String] = [],
+    environmentOverrides: [String: String] = [:],
+    environmentOverridesProvider: (@Sendable () -> [String: String])? = nil,
     debugLogger: (@Sendable (String) -> Void)? = nil
   ) {
     self.command = command
     self.additionalPaths = additionalPaths
+    self.environmentOverridesProvider = environmentOverridesProvider ?? { environmentOverrides }
     self.debugLogger = debugLogger
   }
 
@@ -59,6 +63,7 @@ public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable
     let subject = PassthroughSubject<StreamJSONChunk, Error>()
     let decoder = JSONDecoder()
     let allPaths = ClaudeCLIExecutableResolver.searchPaths(additionalPaths: additionalPaths)
+    let environmentOverrides = environmentOverridesProvider()
 
     var args = parsedCommand.prefixArguments + ["-p", "--output-format", "stream-json", "--verbose"]
 
@@ -97,6 +102,7 @@ public final class ClaudeCLIClient: ClaudeCLIClientProtocol, @unchecked Sendable
           environment["PATH"] = joinedPaths
         }
       }
+      environment.merge(environmentOverrides) { _, new in new }
       process.environment = environment
 
       let stdinPipe = Pipe()

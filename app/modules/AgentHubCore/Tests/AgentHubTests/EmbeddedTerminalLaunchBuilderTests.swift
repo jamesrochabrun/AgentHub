@@ -3,9 +3,80 @@ import Testing
 
 @testable import AgentHubCore
 
-@Suite("EmbeddedTerminalLaunchBuilder AgentHub CLI context")
+@Suite("EmbeddedTerminalLaunchBuilder AgentHub CLI context", .serialized)
 struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
   private let agentHubCLIPath = "/Applications/AgentHub.app/Contents/Helpers/agenthub"
+
+  @Test("CLI environment variables are empty by default")
+  func cliEnvironmentVariablesAreEmptyByDefault() {
+    let suiteName = "AgentHubTests.CLIEnvironment.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    #expect(CLIEnvironmentOverrides.variables(defaults: defaults).isEmpty)
+    #expect(CLIEnvironmentOverrides.environment(from: CLIEnvironmentOverrides.variables(defaults: defaults)).isEmpty)
+  }
+
+  @Test("Invalid CLI environment variable names are filtered")
+  func invalidCLIEnvironmentVariableNamesAreFiltered() {
+    let environment = CLIEnvironmentOverrides.environment(from: [
+      CLIEnvironmentVariable(name: "VALID", value: "first"),
+      CLIEnvironmentVariable(name: "", value: "empty"),
+      CLIEnvironmentVariable(name: "HAS=EQUALS", value: "equals"),
+      CLIEnvironmentVariable(name: "HAS\nNEWLINE", value: "newline"),
+      CLIEnvironmentVariable(name: "HAS\0NUL", value: "nul"),
+      CLIEnvironmentVariable(name: " VALID ", value: "last")
+    ])
+
+    #expect(environment == ["VALID": "last"])
+  }
+
+  @Test("CLI environment variable values persist through UserDefaults")
+  func cliEnvironmentVariablesPersistThroughUserDefaults() {
+    let suiteName = "AgentHubTests.CLIEnvironment.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+
+    let variables = [
+      CLIEnvironmentVariable(id: UUID(), name: "ONE", value: "1"),
+      CLIEnvironmentVariable(id: UUID(), name: "TWO", value: "value with spaces")
+    ]
+
+    CLIEnvironmentOverrides.save(variables, defaults: defaults)
+
+    #expect(CLIEnvironmentOverrides.variables(defaults: defaults) == variables)
+  }
+
+  @Test("Embedded terminal environment merges configured CLI variables")
+  func embeddedTerminalEnvironmentMergesConfiguredCLIVariables() {
+    withStandardCLIEnvironmentVariables([
+      CLIEnvironmentVariable(name: "AGENTHUB_TEST_ENV_OVERRIDE", value: "embedded")
+    ]) {
+      let environment = EmbeddedTerminalLaunchBuilder.makeProcessEnvironment(
+        additionalPaths: [],
+        agentHubCLIPath: agentHubCLIPath
+      )
+
+      #expect(environment["AGENTHUB_TEST_ENV_OVERRIDE"] == "embedded")
+    }
+  }
+
+  @Test("Terminal launcher exports CLI variables with deterministic shell escaping")
+  func terminalLauncherExportsCLIVariablesWithDeterministicShellEscaping() {
+    let exports = TerminalLauncher.cliEnvironmentExports(environment: [
+      "B": "two words",
+      "A": "quote'value",
+      "C": "line1\nline2"
+    ])
+    let expected = """
+    export A='quote'\\''value'
+    export B='two words'
+    export C='line1
+    line2'
+    """
+
+    #expect(exports == expected)
+  }
 
   @Test("Environment exposes AgentHub CLI and prepends its directory to PATH")
   func environmentExposesAgentHubCLI() {
@@ -119,5 +190,23 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(launch.shellCommand.contains("agenthub_create_worktree_session"))
     #expect(!launch.shellCommand.contains("\\/"))
     #expect(!launch.shellCommand.contains("AgentHub session context:"))
+  }
+
+  private func withStandardCLIEnvironmentVariables(
+    _ variables: [CLIEnvironmentVariable],
+    perform: () -> Void
+  ) {
+    let defaults = UserDefaults.standard
+    let previousData = defaults.data(forKey: AgentHubDefaults.cliEnvironmentVariables)
+    CLIEnvironmentOverrides.save(variables, defaults: defaults)
+    defer {
+      if let previousData {
+        defaults.set(previousData, forKey: AgentHubDefaults.cliEnvironmentVariables)
+      } else {
+        defaults.removeObject(forKey: AgentHubDefaults.cliEnvironmentVariables)
+      }
+    }
+
+    perform()
   }
 }

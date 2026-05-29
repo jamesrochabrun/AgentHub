@@ -69,6 +69,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let codexCommandLockedByDeveloper = "\(keyPrefix)cli.codexCommandLocked"
 
+  /// Extra environment variables applied to launched CLI processes
+  /// Type: Data (JSON-encoded [CLIEnvironmentVariable])
+  public static let cliEnvironmentVariables = "\(keyPrefix)cli.environmentVariables"
+
   /// Selected provider in side panel segmented control
   /// Type: String (default: "Claude")
   public static let selectedSidePanelProvider = "\(keyPrefix)sidepanel.selectedProvider"
