@@ -5,6 +5,7 @@ struct AgentHubMCPServer {
   private let service = WorktreeManagementService()
   private let queue = WorktreeLaunchRequestQueue()
   private let deletionQueue = WorktreeDeletionRequestQueue()
+  private let progressQueue = WorktreeProgressQueue()
 
   func run() async throws {
     while let line = readLine(strippingNewline: true) {
@@ -104,23 +105,53 @@ struct AgentHubMCPServer {
     let checkoutExisting = arguments["checkoutExisting"] as? Bool ?? false
     let directoryName = WorktreeNaming.worktreeDirectoryName(for: branch)
 
+    // Resolve the main repo root up front so progress snapshots (which the app
+    // watches via kqueue) carry it for display. Resolving from `repositoryPath`
+    // — the original repo — is unaffected by creating a new worktree.
+    let mainRepositoryPath = try await service.findMainRepositoryRoot(at: repositoryPath)
+
+    // Stream live progress to a sidecar file the app reads. The closure is
+    // `@Sendable` (the service invokes it from detached tasks), so capture only
+    // the `Sendable` queue and value-type metadata.
+    let snapshotQueue = progressQueue
+    let operationID = WorktreeOperationID()
+    let snapshotID = operationID.value.uuidString
+    let writeProgress: @Sendable (WorktreeCreationProgress) -> Void = { progress in
+      try? snapshotQueue.write(WorktreeProgressSnapshot(
+        operationID: snapshotID,
+        branchName: branch,
+        repositoryPath: mainRepositoryPath,
+        provider: provider,
+        progress: progress
+      ))
+    }
+    writeProgress(.preparing(message: "Preparing worktree…"))
+
     let worktreePath: String
-    if checkoutExisting {
-      worktreePath = try await service.checkoutWorktree(
-        at: repositoryPath,
-        branch: branch,
-        directoryName: directoryName
-      )
-    } else {
-      worktreePath = try await service.createWorktreeWithNewBranch(
-        at: repositoryPath,
-        newBranchName: branch,
-        directoryName: directoryName,
-        startPoint: startPoint
-      )
+    do {
+      if checkoutExisting {
+        // No progress-enabled overload for checkout; emit preparing→completed bookends.
+        worktreePath = try await service.checkoutWorktree(
+          at: repositoryPath,
+          branch: branch,
+          directoryName: directoryName
+        )
+      } else {
+        worktreePath = try await service.createWorktreeWithNewBranch(
+          at: repositoryPath,
+          newBranchName: branch,
+          directoryName: directoryName,
+          startPoint: startPoint,
+          operationID: operationID,
+          onProgress: { progress in writeProgress(progress) }
+        )
+      }
+    } catch {
+      writeProgress(.failed(error: error.localizedDescription))
+      throw error
     }
 
-    let mainRepositoryPath = try await service.findMainRepositoryRoot(at: repositoryPath)
+    writeProgress(.completed(path: worktreePath))
     let sourceProvider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
       .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
     let sourceSessionId = ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"]

@@ -128,6 +128,9 @@ public final class MultiSessionLaunchViewModel {
   private let worktreeBranchNamingService: (any WorktreeBranchNamingServiceProtocol)?
   private let worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)?
   private var playedWorktreeSuccessPaths: Set<String> = []
+  /// Stable id for the in-flight branch-naming step, so its progress maps to a
+  /// single transient row in the unified top bar (the coordinator).
+  private var namingCoordinatorOperationID: String?
   private var activeLaunchTask: Task<Void, Never>?
   private var activeWorktreeOperations: [WorktreeCreationOperationID: ActiveWorktreeOperation] = [:]
 
@@ -1172,11 +1175,11 @@ public final class MultiSessionLaunchViewModel {
     if let worktreeBranchNamingService {
       branchNamingStartedAt = Date()
       branchNamingCompletedAt = nil
-      branchNamingProgress = .preparingContext(
+      applyBranchNamingProgress(.preparingContext(
         message: request.hasMeaningfulContext
           ? "Preparing branch naming context"
           : "Preparing repository context"
-      )
+      ))
       do {
         let result = try await worktreeBranchNamingService.resolveBranchNames(for: request) { [weak self] progress in
           self?.applyBranchNamingProgress(progress)
@@ -1200,7 +1203,7 @@ public final class MultiSessionLaunchViewModel {
 
     branchNamingStartedAt = Date()
     branchNamingCompletedAt = nil
-    branchNamingProgress = .preparingContext(message: "Preparing fallback branch name")
+    applyBranchNamingProgress(.preparingContext(message: "Preparing fallback branch name"))
     let fallback = ClaudeWorktreeBranchNamingService.deterministicFallback(for: request)
     finalizeBranchNamingProgress(with: fallback)
     AppLogger.intelligence.info(
@@ -1318,6 +1321,33 @@ public final class MultiSessionLaunchViewModel {
     } else {
       branchNamingCompletedAt = nil
     }
+
+    forwardNamingProgressToCoordinator(progress)
+  }
+
+  /// Mirrors the AI branch-naming step into the unified top bar so the user
+  /// sees "Generating branch name…" before git creation begins.
+  private func forwardNamingProgressToCoordinator(_ progress: WorktreeBranchNamingProgress) {
+    guard let coordinator = progressCoordinator else { return }
+
+    if namingCoordinatorOperationID == nil {
+      // Only start tracking once a real in-progress state arrives.
+      guard progress.isInProgress else { return }
+      namingCoordinatorOperationID = UUID().uuidString
+    }
+    guard let operationID = namingCoordinatorOperationID else { return }
+
+    coordinator.reportNamingProgress(
+      operationID: operationID,
+      repoName: selectedRepository?.name ?? "",
+      providerKind: .claude,
+      progress: progress
+    )
+
+    if progress.isFinished {
+      // Coordinator now owns the transient row's clear timer.
+      namingCoordinatorOperationID = nil
+    }
   }
 
   private func finalizeBranchNamingProgress(with result: WorktreeBranchNamingResult) {
@@ -1346,6 +1376,10 @@ public final class MultiSessionLaunchViewModel {
     branchNamingProgress = .idle
     branchNamingStartedAt = nil
     branchNamingCompletedAt = nil
+    if let operationID = namingCoordinatorOperationID {
+      progressCoordinator?.dismiss(id: operationID)
+      namingCoordinatorOperationID = nil
+    }
   }
 
   private func handleLaunchCancellation() {
@@ -1410,8 +1444,22 @@ public final class MultiSessionLaunchViewModel {
     let sourceChangesPath = carrySourceChangesPath
     let sourceChangeSnapshot = try await captureSourceChangesIfNeeded(at: sourceChangesPath)
 
+    // Mirror progress into the app-wide coordinator so the top bar shows this
+    // launch-flow creation alongside side-panel and MCP creations.
+    let coordinator = progressCoordinator
+    let coordinatorProvider = SessionProviderKind(rawValue: providerLabel) ?? .claude
+    let coordinatorRepoName = URL(fileURLWithPath: repoPath).lastPathComponent
+    let coordinatorOperationID = operationID.value.uuidString
+
     let progressUpdater: @MainActor (WorktreeCreationProgress) -> Void = { [weak self] progress in
       self?.applyWorktreeProgress(progress, to: progressKeyPath)
+      coordinator?.reportLaunchProgress(
+        operationID: coordinatorOperationID,
+        branchName: branchName,
+        repoName: coordinatorRepoName,
+        providerKind: coordinatorProvider,
+        progress: progress
+      )
     }
 
     do {
@@ -1441,6 +1489,13 @@ public final class MultiSessionLaunchViewModel {
     } catch WorktreeCreationError.cancelled {
       activeWorktreeOperations.removeValue(forKey: operationID)
       applyWorktreeProgress(.cancelled(message: "Worktree creation cancelled"), to: progressKeyPath)
+      coordinator?.reportLaunchProgress(
+        operationID: coordinatorOperationID,
+        branchName: branchName,
+        repoName: coordinatorRepoName,
+        providerKind: coordinatorProvider,
+        progress: .cancelled(message: "Worktree creation cancelled")
+      )
       AppLogger.intelligence.info(
         "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation cancelled provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public) elapsed=\(Self.formattedElapsed(since: operation.startedAt), privacy: .public)"
       )
@@ -1455,6 +1510,13 @@ public final class MultiSessionLaunchViewModel {
       throw CancellationError()
     } catch {
       activeWorktreeOperations.removeValue(forKey: operationID)
+      coordinator?.reportLaunchProgress(
+        operationID: coordinatorOperationID,
+        branchName: branchName,
+        repoName: coordinatorRepoName,
+        providerKind: coordinatorProvider,
+        progress: .failed(error: error.localizedDescription)
+      )
       AppLogger.intelligence.error(
         "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation failed provider=\(providerLabel, privacy: .public) branch=\(branchName, privacy: .public) elapsed=\(Self.formattedElapsed(since: operation.startedAt), privacy: .public) error=\(error.localizedDescription, privacy: .public)"
       )
@@ -1477,6 +1539,13 @@ public final class MultiSessionLaunchViewModel {
     String(format: "%.2fs", Date().timeIntervalSince(startDate))
   }
 
+  /// The app-wide progress coordinator, reached via the injected view models'
+  /// provider. When present it owns the unified top-bar progress plus the batch
+  /// completion sound and macOS notification.
+  private var progressCoordinator: WorktreeGenerationProgressCoordinator? {
+    claudeViewModel.agentHubProvider?.worktreeGenerationProgressCoordinator
+  }
+
   private func applyWorktreeProgress(
     _ progress: WorktreeCreationProgress,
     to keyPath: ReferenceWritableKeyPath<MultiSessionLaunchViewModel, WorktreeCreationProgress>
@@ -1487,6 +1556,10 @@ public final class MultiSessionLaunchViewModel {
           playedWorktreeSuccessPaths.insert(path).inserted else {
       return
     }
+
+    // When the unified coordinator is active it fires a single batch completion
+    // sound + notification; skip the per-worktree ding to avoid duplicates.
+    if progressCoordinator != nil { return }
 
     AppLogger.intelligence.info(
       "\(Self.aiWorktreeLogPrefix, privacy: .public) Worktree creation completed path=\(path, privacy: .public); playing success sound"

@@ -117,7 +117,7 @@ public struct WorktreeInfo: Codable, Equatable, Identifiable, Sendable {
   public var id: String { path }
 }
 
-public enum WorktreeCreationProgress: Equatable, Sendable {
+public enum WorktreeCreationProgress: Equatable, Sendable, Codable {
   case idle
   case preparing(message: String)
   case updatingFiles(current: Int, total: Int)

@@ -14,14 +14,16 @@ public struct CreateWorktreeSheet: View {
   let repositoryPath: String
   let repositoryName: String
   let onDismiss: () -> Void
-  let onCreate: (String, String, String?, @escaping @Sendable (WorktreeCreationProgress) async -> Void) async throws -> Void
+  /// Fire-and-forget: hands the creation off to the progress coordinator and
+  /// the sheet dismisses immediately. Live progress and any failure surface in
+  /// the top bar, not here.
+  let onCreate: (_ branchName: String, _ directoryName: String, _ baseBranch: String?) -> Void
 
   @State private var branchName: String = ""
   @State private var baseBranch: RemoteBranch?
   @State private var directoryName: String = ""
   @State private var availableBranches: [RemoteBranch] = []
   @State private var isLoading: Bool = true
-  @State private var creationProgress: WorktreeCreationProgress = .idle
   @State private var errorMessage: String?
   @State private var showError: Bool = false
 
@@ -31,7 +33,7 @@ public struct CreateWorktreeSheet: View {
     repositoryPath: String,
     repositoryName: String,
     onDismiss: @escaping () -> Void,
-    onCreate: @escaping (String, String, String?, @escaping @Sendable (WorktreeCreationProgress) async -> Void) async throws -> Void
+    onCreate: @escaping (_ branchName: String, _ directoryName: String, _ baseBranch: String?) -> Void
   ) {
     self.repositoryPath = repositoryPath
     self.repositoryName = repositoryName
@@ -236,71 +238,22 @@ public struct CreateWorktreeSheet: View {
   // MARK: - Action Buttons
 
   private var actionButtons: some View {
-    VStack(spacing: 12) {
-      // Progress indicator (only show when creating)
-      if creationProgress.isInProgress {
-        worktreeProgressView
+    HStack {
+      Button("Cancel") {
+        onDismiss()
       }
+      .keyboardShortcut(.escape)
 
-      // Buttons
-      HStack {
-        Button("Cancel") {
-          onDismiss()
-        }
-        .keyboardShortcut(.escape)
-        .disabled(creationProgress.isInProgress)
+      Spacer()
 
-        Spacer()
-
-        Button(action: { Task { await createWorktree() } }) {
-          HStack(spacing: 6) {
-            if creationProgress.isInProgress {
-              ProgressView()
-                .scaleEffect(0.7)
-            }
-            Text(creationProgress.isInProgress ? "Creating..." : "Create Worktree")
-          }
-        }
-        .keyboardShortcut(.return)
-        .disabled(!isValid || creationProgress.isInProgress)
-        .buttonStyle(.borderedProminent)
-        .tint(.primary)
+      Button("Create Worktree") {
+        startCreation()
       }
+      .keyboardShortcut(.return)
+      .disabled(!isValid)
+      .buttonStyle(.borderedProminent)
+      .tint(.primary)
     }
-  }
-
-  // MARK: - Progress View
-
-  private var worktreeProgressView: some View {
-    VStack(alignment: .leading, spacing: 8) {
-      // Progress bar with real file counts
-      ProgressView(value: creationProgress.progressValue)
-        .tint(.primary)
-        .animation(.linear(duration: 0.1), value: creationProgress.progressValue)
-
-      // Status message: "Updating files: 84/194"
-      HStack {
-        Image(systemName: creationProgress.icon)
-          .font(.caption)
-          .foregroundColor(.primary)
-
-        Text(creationProgress.statusMessage)
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .monospacedDigit()
-
-        Spacer()
-
-        // Percentage
-        Text("\(Int(creationProgress.progressValue * 100))%")
-          .font(.caption)
-          .foregroundColor(.secondary)
-          .monospacedDigit()
-      }
-    }
-    .padding(12)
-    .background(Color.primary.opacity(0.05))
-    .cornerRadius(8)
   }
 
   // MARK: - Computed Properties
@@ -334,28 +287,12 @@ public struct CreateWorktreeSheet: View {
     isLoading = false
   }
 
-  private func createWorktree() async {
-    creationProgress = .preparing(message: "Preparing worktree...")
-
-    do {
-      try await onCreate(branchName, directoryName, baseBranch?.displayName) { [self] newProgress in
-        await MainActor.run {
-          self.creationProgress = newProgress
-        }
-      }
-
-      // Brief delay to show completion state
-      try? await Task.sleep(for: .milliseconds(500))
-      onDismiss()
-    } catch {
-      creationProgress = .failed(error: error.localizedDescription)
-      errorMessage = error.localizedDescription
-      showError = true
-
-      // Reset to idle after showing error
-      try? await Task.sleep(for: .seconds(2))
-      creationProgress = .idle
-    }
+  /// Hands the creation off to the progress coordinator (which owns the work
+  /// and surfaces progress in the top bar) and dismisses the sheet immediately.
+  private func startCreation() {
+    guard isValid else { return }
+    onCreate(branchName, directoryName, baseBranch?.displayName)
+    onDismiss()
   }
 }
 
@@ -366,14 +303,8 @@ public struct CreateWorktreeSheet: View {
     repositoryPath: "/Users/james/git/ClaudeCodeUI",
     repositoryName: "ClaudeCodeUI",
     onDismiss: { },
-    onCreate: { branch, directory, baseBranch, onProgress in
-      // Simulate progress
-      await onProgress(.preparing(message: "Preparing worktree..."))
-      try? await Task.sleep(for: .milliseconds(500))
-      for i in stride(from: 0, through: 100, by: 10) {
-        await onProgress(.updatingFiles(current: i, total: 100))
-        try? await Task.sleep(for: .milliseconds(100))
-      }
+    onCreate: { branch, directory, baseBranch in
+      print("Create worktree: \(branch) at \(directory) from \(baseBranch ?? "HEAD")")
     }
   )
 }
