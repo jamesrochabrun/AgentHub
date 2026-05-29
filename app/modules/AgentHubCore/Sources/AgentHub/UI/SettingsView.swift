@@ -259,7 +259,7 @@ public struct SettingsView: View {
       }
 
       Section("Environment Variables") {
-        cliEnvironmentVariablesEditor
+        CLIEnvironmentVariablesEditor(variables: $cliEnvironmentVariables)
       }
     }
     .formStyle(.grouped)
@@ -481,93 +481,6 @@ public struct SettingsView: View {
       }
     }
     .padding(.vertical, 4)
-  }
-
-  private var cliEnvironmentVariablesEditor: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      if cliEnvironmentVariables.isEmpty {
-        Text("No environment variables configured.")
-          .foregroundColor(.secondary)
-          .transition(.opacity.combined(with: .move(edge: .top)))
-      } else {
-        VStack(alignment: .leading, spacing: 8) {
-          ForEach($cliEnvironmentVariables) { $variable in
-            HStack(spacing: 8) {
-              TextField(
-                text: $variable.name,
-                prompt: Text("VARIABLE_NAME")
-              ) {
-                EmptyView()
-              }
-              .labelsHidden()
-              .textFieldStyle(.roundedBorder)
-              .font(.system(.body, design: .monospaced))
-              .lineLimit(1)
-              .frame(maxWidth: .infinity)
-
-              Text("=")
-                .foregroundColor(.secondary)
-
-              TextField(
-                text: $variable.value,
-                prompt: Text("value")
-              ) {
-                EmptyView()
-              }
-              .labelsHidden()
-              .textFieldStyle(.roundedBorder)
-              .font(.system(.body, design: .monospaced))
-              .lineLimit(1)
-              .frame(maxWidth: .infinity)
-
-              Button(action: { removeCLIEnvironmentVariable(id: variable.id) }) {
-                Image(systemName: "minus.circle")
-              }
-              .buttonStyle(.borderless)
-              .foregroundColor(.secondary)
-              .accessibilityLabel("Remove variable")
-            }
-            .transition(.opacity.combined(with: .move(edge: .top)))
-          }
-        }
-        .transition(.opacity.combined(with: .move(edge: .top)))
-      }
-
-      HStack(spacing: 12) {
-        Button(action: addCLIEnvironmentVariable) {
-          Label("Add variable", systemImage: "plus")
-        }
-
-        if !cliEnvironmentVariables.isEmpty {
-          Button(role: .destructive, action: clearCLIEnvironmentVariables) {
-            Label("Clear all", systemImage: "trash")
-          }
-          .transition(.opacity)
-        }
-      }
-    }
-    .animation(.easeInOut(duration: 0.18), value: cliEnvironmentVariables.isEmpty)
-    .animation(.easeInOut(duration: 0.18), value: cliEnvironmentVariables.count)
-    .frame(maxWidth: .infinity, alignment: .leading)
-  }
-
-  private func addCLIEnvironmentVariable() {
-    _ = withAnimation(.easeInOut(duration: 0.18)) {
-      cliEnvironmentVariables.append(CLIEnvironmentVariable(name: "", value: ""))
-    }
-  }
-
-  private func removeCLIEnvironmentVariable(id: UUID) {
-    guard let index = cliEnvironmentVariables.firstIndex(where: { $0.id == id }) else { return }
-    _ = withAnimation(.easeInOut(duration: 0.18)) {
-      cliEnvironmentVariables.remove(at: index)
-    }
-  }
-
-  private func clearCLIEnvironmentVariables() {
-    _ = withAnimation(.easeInOut(duration: 0.18)) {
-      cliEnvironmentVariables.removeAll()
-    }
   }
 
   private func settingsToggle(
