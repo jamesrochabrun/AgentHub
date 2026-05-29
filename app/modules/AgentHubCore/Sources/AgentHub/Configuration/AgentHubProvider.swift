@@ -49,6 +49,7 @@ public final class AgentHubProvider {
   public let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
   private let metadataStoreOverride: SessionMetadataStore?
   private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
+  private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
 
   // MARK: - Lazy Services
 
@@ -185,6 +186,11 @@ public final class AgentHubProvider {
     worktreeLaunchRequestMonitorOverride ?? WorktreeLaunchRequestMonitor()
   }()
 
+  /// Watches worktree deletion cleanup requests written by the bundled `agenthub` helper.
+  public private(set) lazy var worktreeDeletionRequestMonitor: any WorktreeDeletionRequestMonitorProtocol = {
+    worktreeDeletionRequestMonitorOverride ?? WorktreeDeletionRequestMonitor()
+  }()
+
   public private(set) lazy var worktreeLaunchRequestHandler: any WorktreeLaunchRequestHandlingProtocol = {
     WorktreeLaunchRequestHandler(
       claudeViewModel: claudeSessionsViewModel,
@@ -192,7 +198,15 @@ public final class AgentHubProvider {
     )
   }()
 
+  public private(set) lazy var worktreeDeletionRequestHandler: any WorktreeDeletionRequestHandlingProtocol = {
+    WorktreeDeletionRequestHandler(
+      claudeViewModel: claudeSessionsViewModel,
+      codexViewModel: codexSessionsViewModel
+    )
+  }()
+
   private var isWorktreeLaunchRequestMonitoringStarted = false
+  private var isWorktreeDeletionRequestMonitoringStarted = false
 
   // MARK: - GitHub Integration
 
@@ -253,13 +267,15 @@ public final class AgentHubProvider {
     configuration: AgentHubConfiguration = .default,
     terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
     metadataStore: SessionMetadataStore? = nil,
-    worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil
+    worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
+    worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil
   ) {
     self.configuration = configuration
     self.terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
     self.metadataStoreOverride = metadataStore
     self.worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
+    self.worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
     if let metadataStore {
       Task {
         await TerminalProcessRegistry.shared.configure(store: metadataStore)
@@ -396,6 +412,11 @@ public final class AgentHubProvider {
   }
 
   public func startWorktreeLaunchRequestMonitoring() {
+    startWorktreeLaunchQueueMonitoring()
+    startWorktreeDeletionQueueMonitoring()
+  }
+
+  private func startWorktreeLaunchQueueMonitoring() {
     guard !isWorktreeLaunchRequestMonitoringStarted else { return }
     isWorktreeLaunchRequestMonitoringStarted = true
 
@@ -410,13 +431,38 @@ public final class AgentHubProvider {
     }
   }
 
-  public func stopWorktreeLaunchRequestMonitoring() {
-    guard isWorktreeLaunchRequestMonitoringStarted else { return }
-    isWorktreeLaunchRequestMonitoringStarted = false
+  private func startWorktreeDeletionQueueMonitoring() {
+    guard !isWorktreeDeletionRequestMonitoringStarted else { return }
+    isWorktreeDeletionRequestMonitoringStarted = true
 
-    let monitor = worktreeLaunchRequestMonitor
+    let monitor = worktreeDeletionRequestMonitor
     Task {
-      await monitor.stop()
+      await monitor.start { [weak self] queued in
+        guard let self else {
+          throw WorktreeDeletionRequestHandlingError.deletionFailed("AgentHub provider is unavailable.")
+        }
+        try await self.worktreeDeletionRequestHandler.handle(queued.request)
+      }
+    }
+  }
+
+  public func stopWorktreeLaunchRequestMonitoring() {
+    if isWorktreeLaunchRequestMonitoringStarted {
+      isWorktreeLaunchRequestMonitoringStarted = false
+
+      let monitor = worktreeLaunchRequestMonitor
+      Task {
+        await monitor.stop()
+      }
+    }
+
+    if isWorktreeDeletionRequestMonitoringStarted {
+      isWorktreeDeletionRequestMonitoringStarted = false
+
+      let monitor = worktreeDeletionRequestMonitor
+      Task {
+        await monitor.stop()
+      }
     }
   }
 

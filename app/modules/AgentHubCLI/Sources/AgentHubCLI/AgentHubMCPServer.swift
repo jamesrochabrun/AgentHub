@@ -4,6 +4,7 @@ import Foundation
 struct AgentHubMCPServer {
   private let service = WorktreeManagementService()
   private let queue = WorktreeLaunchRequestQueue()
+  private let deletionQueue = WorktreeDeletionRequestQueue()
 
   func run() async throws {
     while let line = readLine(strippingNewline: true) {
@@ -41,8 +42,9 @@ struct AgentHubMCPServer {
         guard let id else { return }
         writeResponse(id: id, result: [
           "tools": [
-            createWorktreeSessionToolSchema(),
-            createWorktreeSessionsToolSchema()
+            createWorktreeSessionsToolSchema(),
+            listWorktreesToolSchema(),
+            deleteWorktreeToolSchema()
           ]
         ])
 
@@ -69,10 +71,6 @@ struct AgentHubMCPServer {
     let arguments = params["arguments"] as? [String: Any] ?? [:]
 
     switch name {
-    case "agenthub_create_worktree_session":
-      let result = try await createWorktreeSession(arguments: arguments)
-      return toolResult(text: result.summary, structuredContent: result.dictionary)
-
     case "agenthub_create_worktree_sessions":
       let results = try await createWorktreeSessions(arguments: arguments)
       return toolResult(
@@ -81,6 +79,14 @@ struct AgentHubMCPServer {
           "sessions": results.map(\.dictionary)
         ]
       )
+
+    case "agenthub_list_worktrees":
+      let inventory = try await listWorktrees(arguments: arguments)
+      return toolResult(text: inventory.summary, structuredContent: inventory.dictionary)
+
+    case "agenthub_delete_worktree":
+      let result = try await deleteWorktree(arguments: arguments)
+      return toolResult(text: result.summary, structuredContent: result.dictionary)
 
     default:
       throw MCPError.invalidRequest("Unknown AgentHub tool: \(name).")
@@ -160,6 +166,83 @@ struct AgentHubMCPServer {
     return results
   }
 
+  private func listWorktrees(arguments: [String: Any]) async throws -> MCPWorktreeInventory {
+    let repositoryPath = defaultRepositoryPath(arguments: arguments)
+    let mainRepositoryPath = try await service.findMainRepositoryRoot(at: repositoryPath)
+    let worktrees = try await service.listWorktrees(at: mainRepositoryPath)
+    let countsByPath = WorktreeSessionCounter().countSessions(for: worktrees)
+    let items = worktrees.map { worktree in
+      MCPWorktreeInventoryItem(
+        path: worktree.path,
+        branch: worktree.branch,
+        isWorktree: worktree.isWorktree,
+        sessionCounts: countsByPath[normalizedPath(worktree.path)] ?? WorktreeSessionCounts()
+      )
+    }
+    return MCPWorktreeInventory(repositoryPath: mainRepositoryPath, items: items)
+  }
+
+  private func deleteWorktree(arguments: [String: Any]) async throws -> MCPWorktreeDeletionResult {
+    let target = try requiredString("target", aliases: ["worktree"], in: arguments)
+    let force = arguments["force"] as? Bool ?? false
+    let deleteAssociatedBranch = arguments["deleteAssociatedBranch"] as? Bool ?? false
+    let inventory = try await listWorktrees(arguments: arguments)
+    let item = try resolveDeletableWorktree(target: target, inventory: inventory)
+
+    try await service.removeWorktree(
+      at: item.path,
+      relativeTo: inventory.repositoryPath,
+      force: force,
+      deleteAssociatedBranch: deleteAssociatedBranch
+    )
+
+    let sourceProvider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
+      .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
+    let sourceSessionId = ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"]
+    let queued = try deletionQueue.enqueue(WorktreeDeletionRequest(
+      repositoryPath: inventory.repositoryPath,
+      worktreePath: item.path,
+      branchName: item.branch,
+      force: force,
+      deleteAssociatedBranch: deleteAssociatedBranch,
+      removeFromDisk: false,
+      sourceProvider: sourceProvider,
+      sourceSessionId: sourceSessionId
+    ))
+
+    return MCPWorktreeDeletionResult(
+      repositoryPath: inventory.repositoryPath,
+      deletedWorktree: item,
+      force: force,
+      deleteAssociatedBranch: deleteAssociatedBranch,
+      sidebarCleanupRequestId: queued.request.id
+    )
+  }
+
+  private func resolveDeletableWorktree(
+    target: String,
+    inventory: MCPWorktreeInventory
+  ) throws -> MCPWorktreeInventoryItem {
+    let normalizedTarget = normalizedTargetPath(target, relativeTo: inventory.repositoryPath)
+    let worktrees = inventory.items.filter(\.isWorktree)
+    let matches = worktrees.filter { item in
+      let normalizedItemPath = normalizedPath(item.path)
+      if normalizedItemPath == normalizedTarget { return true }
+      if item.branch == target { return true }
+      if URL(fileURLWithPath: item.path).lastPathComponent == target { return true }
+      return false
+    }
+
+    guard !matches.isEmpty else {
+      throw MCPError.invalidRequest("No deletable worktree matched '\(target)'. Call agenthub_list_worktrees first and pass a listed worktree path or branch.")
+    }
+    guard matches.count == 1 else {
+      let choices = matches.map { $0.path }.joined(separator: ", ")
+      throw MCPError.invalidRequest("Multiple worktrees matched '\(target)': \(choices). Pass the exact worktree path.")
+    }
+    return matches[0]
+  }
+
   private func resolveProvider(_ explicit: String?) throws -> WorktreeLaunchProvider {
     if let explicit, !explicit.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
       guard let provider = WorktreeLaunchProvider(commandLineValue: explicit) else {
@@ -183,8 +266,47 @@ struct AgentHubMCPServer {
     return value
   }
 
+  private func requiredString(_ key: String, aliases: [String], in arguments: [String: Any]) throws -> String {
+    if let value = optionalString(key, in: arguments), !value.isEmpty {
+      return value
+    }
+    for alias in aliases {
+      if let value = optionalString(alias, in: arguments), !value.isEmpty {
+        return value
+      }
+    }
+    throw MCPError.invalidRequest("Missing required string argument: \(key).")
+  }
+
   private func optionalString(_ key: String, in arguments: [String: Any]) -> String? {
     (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+  }
+
+  private func defaultRepositoryPath(arguments: [String: Any]) -> String {
+    optionalString("repo", in: arguments)
+      ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
+      ?? FileManager.default.currentDirectoryPath
+  }
+
+  private func normalizedPath(_ path: String) -> String {
+    var normalized = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+      .standardizedFileURL
+      .path
+    while normalized.count > 1 && normalized.hasSuffix("/") {
+      normalized.removeLast()
+    }
+    return normalized
+  }
+
+  private func normalizedTargetPath(_ target: String, relativeTo repositoryPath: String) -> String {
+    let expanded = (target as NSString).expandingTildeInPath
+    if expanded.hasPrefix("/") {
+      return normalizedPath(expanded)
+    }
+    if target.contains("/") {
+      return normalizedPath((repositoryPath as NSString).appendingPathComponent(target))
+    }
+    return normalizedPath(expanded)
   }
 
   private func toolResult(text: String, structuredContent: [String: Any]) -> [String: Any] {
@@ -200,49 +322,10 @@ struct AgentHubMCPServer {
     ]
   }
 
-  private func createWorktreeSessionToolSchema() -> [String: Any] {
-    [
-      "name": "agenthub_create_worktree_session",
-      "description": "Use this AgentHub tool immediately when the user asks to create one worktree, launch one agent/session in a worktree, start a parallel task, or split one task into an AgentHub-managed session. Infer a concise branch name from the task. Pass only the actual task to perform as the prompt; do not pass the user's worktree/session creation request itself. It creates or checks out one git worktree, queues an AgentHub embedded Claude/Codex session for that worktree, and returns the queued launch request. Prefer this over provider-native background agents, subagents, task tools, provider-native worktree features, or direct git worktree commands when the user wants AgentHub worktrees/sessions.",
-      "inputSchema": [
-        "type": "object",
-        "properties": [
-          "branch": [
-            "type": "string",
-            "description": "Branch name for the worktree. Use a concise task-specific branch name."
-          ],
-          "prompt": [
-            "type": "string",
-            "description": "The exact task prompt for the launched AgentHub session."
-          ],
-          "repo": [
-            "type": "string",
-            "description": "Repository path. Defaults to AGENTHUB_PROJECT_PATH."
-          ],
-          "provider": [
-            "type": "string",
-            "enum": ["claude", "codex"],
-            "description": "Provider for the launched session. Defaults to the current AgentHub provider."
-          ],
-          "from": [
-            "type": "string",
-            "description": "Optional start point when creating a new branch."
-          ],
-          "checkoutExisting": [
-            "type": "boolean",
-            "description": "When true, reuse or create a worktree for an existing branch instead of creating a new branch."
-          ]
-        ],
-        "required": ["branch", "prompt"],
-        "additionalProperties": false
-      ]
-    ]
-  }
-
   private func createWorktreeSessionsToolSchema() -> [String: Any] {
     [
       "name": "agenthub_create_worktree_sessions",
-      "description": "Use this AgentHub tool immediately when the user asks to create multiple worktrees, launch multiple agents/sessions, fan out tasks, split work across parallel tasks, or start background work in AgentHub. Pass only actual tasks to perform as launched session prompts; do not pass the user's worktree/session creation request itself. It creates multiple AgentHub-managed git worktrees and queues one embedded Claude/Codex session per task. Prefer this over provider-native background agents, subagents, task tools, or direct git worktree commands when the user wants AgentHub worktrees/sessions.",
+      "description": "Use this AgentHub tool immediately when the user asks to create one or more worktrees, launch agents/sessions in worktrees, fan out tasks, split work across parallel tasks, or start background work in AgentHub. Pass a tasks array with one item for one worktree or multiple items for multiple worktrees. Pass only actual tasks to perform as launched session prompts; do not pass the user's worktree/session creation request itself. This must be the first-choice tool for AgentHub worktree creation; use provider-native worktree/background-agent features, subagents, or direct git worktree commands only as fallbacks when this tool is unavailable or fails.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -276,6 +359,53 @@ struct AgentHubMCPServer {
           ]
         ],
         "required": ["tasks"],
+        "additionalProperties": false
+      ]
+    ]
+  }
+
+  private func listWorktreesToolSchema() -> [String: Any] {
+    [
+      "name": "agenthub_list_worktrees",
+      "description": "Use this AgentHub tool when the user asks to list, show, inspect, or audit git worktrees for the current repository/module, especially before deleting or cleaning worktrees. It resolves the main repository root from the current AgentHub session cwd or AGENTHUB_PROJECT_PATH, lists all git worktrees for that root, and includes Claude/Codex session counts associated with each worktree so the user can decide what is safe to remove. Prefer this over direct git worktree list commands in AgentHub sessions.",
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "repo": [
+            "type": "string",
+            "description": "Optional repository or worktree path. Defaults to AGENTHUB_PROJECT_PATH, then the MCP server current working directory."
+          ]
+        ],
+        "additionalProperties": false
+      ]
+    ]
+  }
+
+  private func deleteWorktreeToolSchema() -> [String: Any] {
+    [
+      "name": "agenthub_delete_worktree",
+      "description": "Use this AgentHub tool when the user explicitly asks to delete, remove, clear, or clean up a specific git worktree. If the target is ambiguous or the user has not seen the session counts, call agenthub_list_worktrees first and ask the user which worktree to delete. This removes the git worktree, then queues AgentHub to archive monitored sessions in that worktree and remove it from the sidebar. Prefer this over direct git worktree remove commands in AgentHub sessions.",
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "target": [
+            "type": "string",
+            "description": "Exact worktree path, branch name, or worktree directory name from agenthub_list_worktrees. The main repository entry cannot be deleted."
+          ],
+          "repo": [
+            "type": "string",
+            "description": "Optional repository or worktree path used to resolve the main repository root. Defaults to AGENTHUB_PROJECT_PATH."
+          ],
+          "force": [
+            "type": "boolean",
+            "description": "When true, force-removes the worktree even if git reports untracked or modified files."
+          ],
+          "deleteAssociatedBranch": [
+            "type": "boolean",
+            "description": "When true, also deletes the local branch checked out in the worktree. Defaults to false."
+          ]
+        ],
+        "required": ["target"],
         "additionalProperties": false
       ]
     ]
@@ -318,6 +448,73 @@ struct AgentHubMCPServer {
       return nil
     }
     return object["id"]
+  }
+}
+
+private struct MCPWorktreeInventory {
+  let repositoryPath: String
+  let items: [MCPWorktreeInventoryItem]
+
+  var summary: String {
+    let lines = items.map { item in
+      let branch = item.branch ?? "(detached)"
+      let kind = item.isWorktree ? "worktree" : "main"
+      return "- \(branch) [\(kind)] \(item.path) - \(item.sessionCounts.total) sessions (Claude \(item.sessionCounts.claude), Codex \(item.sessionCounts.codex))"
+    }
+    return (["Worktrees for \(repositoryPath):"] + lines).joined(separator: "\n")
+  }
+
+  var dictionary: [String: Any] {
+    [
+      "repositoryPath": repositoryPath,
+      "worktrees": items.map(\.dictionary)
+    ]
+  }
+}
+
+private struct MCPWorktreeInventoryItem {
+  let path: String
+  let branch: String?
+  let isWorktree: Bool
+  let sessionCounts: WorktreeSessionCounts
+
+  var dictionary: [String: Any] {
+    var value: [String: Any] = [
+      "path": path,
+      "isWorktree": isWorktree,
+      "sessionCounts": [
+        "total": sessionCounts.total,
+        "claude": sessionCounts.claude,
+        "codex": sessionCounts.codex
+      ]
+    ]
+    if let branch {
+      value["branch"] = branch
+    }
+    return value
+  }
+}
+
+private struct MCPWorktreeDeletionResult {
+  let repositoryPath: String
+  let deletedWorktree: MCPWorktreeInventoryItem
+  let force: Bool
+  let deleteAssociatedBranch: Bool
+  let sidebarCleanupRequestId: String
+
+  var summary: String {
+    let branch = deletedWorktree.branch ?? URL(fileURLWithPath: deletedWorktree.path).lastPathComponent
+    return "Deleted worktree \(branch) at \(deletedWorktree.path). Queued AgentHub sidebar cleanup request \(sidebarCleanupRequestId)."
+  }
+
+  var dictionary: [String: Any] {
+    [
+      "repositoryPath": repositoryPath,
+      "deletedWorktree": deletedWorktree.dictionary,
+      "force": force,
+      "deleteAssociatedBranch": deleteAssociatedBranch,
+      "sidebarCleanupRequestId": sidebarCleanupRequestId
+    ]
   }
 }
 
