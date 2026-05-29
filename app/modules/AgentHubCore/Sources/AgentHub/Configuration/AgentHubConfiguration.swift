@@ -90,3 +90,55 @@ public struct AgentHubConfiguration: Sendable {
     )
   }
 }
+
+public struct CLIEnvironmentVariable: Codable, Equatable, Identifiable, Sendable {
+  public var id: UUID
+  public var name: String
+  public var value: String
+
+  public init(id: UUID = UUID(), name: String, value: String) {
+    self.id = id
+    self.name = name
+    self.value = value
+  }
+}
+
+public enum CLIEnvironmentOverrides {
+  public static let defaultVariables: [CLIEnvironmentVariable] = []
+
+  public static var variables: [CLIEnvironmentVariable] {
+    variables(defaults: .standard)
+  }
+
+  public static var environment: [String: String] {
+    environment(from: variables)
+  }
+
+  public static func variables(defaults: UserDefaults) -> [CLIEnvironmentVariable] {
+    guard let data = defaults.data(forKey: AgentHubDefaults.cliEnvironmentVariables) else {
+      return defaultVariables
+    }
+    return (try? JSONDecoder().decode([CLIEnvironmentVariable].self, from: data)) ?? defaultVariables
+  }
+
+  public static func save(_ variables: [CLIEnvironmentVariable], defaults: UserDefaults = .standard) {
+    guard let data = try? JSONEncoder().encode(variables) else { return }
+    defaults.set(data, forKey: AgentHubDefaults.cliEnvironmentVariables)
+  }
+
+  public static func environment(from variables: [CLIEnvironmentVariable]) -> [String: String] {
+    var environment: [String: String] = [:]
+    for variable in variables {
+      let name = variable.name.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard isValidName(name) else { continue }
+      environment[name] = variable.value
+    }
+    return environment
+  }
+
+  private static func isValidName(_ name: String) -> Bool {
+    !name.isEmpty
+      && !name.contains("=")
+      && !name.contains(where: { $0.isNewline || $0 == "\0" })
+  }
+}

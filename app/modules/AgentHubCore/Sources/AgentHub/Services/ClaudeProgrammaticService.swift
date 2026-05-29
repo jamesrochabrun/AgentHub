@@ -125,6 +125,7 @@ public actor ClaudeProgrammaticService: ClaudeProgrammaticServiceProtocol {
       ClaudeCLIClient(
         command: command,
         additionalPaths: paths,
+        environmentOverridesProvider: { CLIEnvironmentOverrides.environment },
         debugLogger: { message in
           AppLogger.intelligence.error("[CLAUDEPROG] Claude CLI debug: \(message, privacy: .public)")
         }

@@ -19,6 +19,7 @@ public struct SettingsView: View {
   @State private var isCodexConfigurationExpanded = true
   @State private var pendingTerminalBackend: EmbeddedTerminalBackend?
   @State private var showTerminalBackendRelaunchAlert = false
+  @State private var cliEnvironmentVariables = CLIEnvironmentOverrides.variables
 
   @AppStorage(AgentHubDefaults.smartModeEnabled)
   private var smartModeEnabled: Bool = false
@@ -141,8 +142,12 @@ public struct SettingsView: View {
     }
     .frame(width: 700, height: 620)
     .task {
+      cliEnvironmentVariables = CLIEnvironmentOverrides.variables
       await ensureSupportedThemeSelection()
       await aiConfigViewModel.load(service: agentHub?.aiConfigService)
+    }
+    .onChange(of: cliEnvironmentVariables) { _, newValue in
+      CLIEnvironmentOverrides.save(newValue)
     }
     .onDisappear {
       themeSelectionTask?.cancel()
@@ -253,6 +258,9 @@ public struct SettingsView: View {
         }
       }
 
+      Section("Environment Variables") {
+        cliEnvironmentVariablesEditor
+      }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
@@ -473,6 +481,81 @@ public struct SettingsView: View {
       }
     }
     .padding(.vertical, 4)
+  }
+
+  private var cliEnvironmentVariablesEditor: some View {
+    VStack(alignment: .leading, spacing: 10) {
+      if cliEnvironmentVariables.isEmpty {
+        Text("No environment variables configured.")
+          .foregroundColor(.secondary)
+      } else {
+        VStack(alignment: .leading, spacing: 8) {
+          ForEach(cliEnvironmentVariables.indices, id: \.self) { index in
+            HStack(spacing: 8) {
+              TextField(
+                text: $cliEnvironmentVariables[index].name,
+                prompt: Text("VARIABLE_NAME")
+              ) {
+                EmptyView()
+              }
+              .labelsHidden()
+              .textFieldStyle(.roundedBorder)
+              .font(.system(.body, design: .monospaced))
+              .lineLimit(1)
+              .frame(maxWidth: .infinity)
+
+              Text("=")
+                .foregroundColor(.secondary)
+
+              TextField(
+                text: $cliEnvironmentVariables[index].value,
+                prompt: Text("value")
+              ) {
+                EmptyView()
+              }
+              .labelsHidden()
+              .textFieldStyle(.roundedBorder)
+              .font(.system(.body, design: .monospaced))
+              .lineLimit(1)
+              .frame(maxWidth: .infinity)
+
+              Button(action: { removeCLIEnvironmentVariable(at: index) }) {
+                Image(systemName: "minus.circle")
+              }
+              .buttonStyle(.borderless)
+              .foregroundColor(.secondary)
+              .accessibilityLabel("Remove variable")
+            }
+          }
+        }
+      }
+
+      HStack(spacing: 12) {
+        Button(action: addCLIEnvironmentVariable) {
+          Label("Add variable", systemImage: "plus")
+        }
+
+        if !cliEnvironmentVariables.isEmpty {
+          Button(role: .destructive, action: clearCLIEnvironmentVariables) {
+            Label("Clear all", systemImage: "trash")
+          }
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func addCLIEnvironmentVariable() {
+    cliEnvironmentVariables.append(CLIEnvironmentVariable(name: "", value: ""))
+  }
+
+  private func removeCLIEnvironmentVariable(at index: Int) {
+    guard cliEnvironmentVariables.indices.contains(index) else { return }
+    cliEnvironmentVariables.remove(at: index)
+  }
+
+  private func clearCLIEnvironmentVariables() {
+    cliEnvironmentVariables.removeAll()
   }
 
   private func settingsToggle(

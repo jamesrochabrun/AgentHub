@@ -34,6 +34,17 @@ public struct TerminalLauncher {
     return "'\(escaped)'"
   }
 
+  static var cliEnvironmentExports: String {
+    cliEnvironmentExports(environment: CLIEnvironmentOverrides.environment)
+  }
+
+  static func cliEnvironmentExports(environment: [String: String]) -> String {
+    environment
+      .sorted { $0.key < $1.key }
+      .map { "export \($0.key)=\(shellEscapeSingleQuotedAllowingNewlines($0.value))" }
+      .joined(separator: "\n")
+  }
+
   /// Runs a Claude session in the background without opening Terminal
   /// - Parameters:
   ///   - sessionId: The session ID to resume
@@ -87,6 +98,7 @@ public struct TerminalLauncher {
           environment["PATH"] = additionalPaths
         }
       }
+      environment.merge(CLIEnvironmentOverrides.environment) { _, new in new }
       process.environment = environment
 
       let stdoutPipe = Pipe()
@@ -272,7 +284,8 @@ public struct TerminalLauncher {
     let tempDir = NSTemporaryDirectory()
     let scriptPath = (tempDir as NSString).appendingPathComponent("\(scriptPrefix)_\(UUID().uuidString).command")
 
-    let scriptContent = "#!/bin/bash\n\(command)\n"
+    let cliEnvironmentExports = Self.cliEnvironmentExports
+    let scriptContent = "#!/bin/bash\n\(cliEnvironmentExports)\n\(command)\n"
 
     // Atomically create the file with O_CREAT | O_EXCL (fails if path exists)
     // and set permissions to 0o700 at creation time — no separate chmod step.

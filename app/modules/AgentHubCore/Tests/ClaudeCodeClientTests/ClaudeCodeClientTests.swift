@@ -8,6 +8,14 @@ private final class CancellableBox: @unchecked Sendable {
   var cancellable: AnyCancellable?
 }
 
+private final class EnvironmentOverrideBox: @unchecked Sendable {
+  var value: String
+
+  init(value: String) {
+    self.value = value
+  }
+}
+
 private func awaitCompletion<Output>(
   from publisher: AnyPublisher<Output, Error>
 ) async -> Subscribers.Completion<Error> {
@@ -157,6 +165,50 @@ struct ClaudeCLIClientTests {
       .filter { !$0.isEmpty }
 
     #expect(!capturedArgs.contains("--model"))
+  }
+
+  @Test("Environment override provider is applied to launched process")
+  func environmentOverrideProviderIsAppliedToLaunchedProcess() async throws {
+    let tempDir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-client-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let environmentFile = tempDir.appendingPathComponent("environment.txt")
+    let scriptURL = tempDir.appendingPathComponent("mock-claude.sh")
+    let escapedEnvironmentPath = environmentFile.path.replacingOccurrences(of: "\"", with: "\\\"")
+    let script = """
+    #!/bin/sh
+    printf '%s' "$AGENTHUB_TEST_ENV_OVERRIDE" > "\(escapedEnvironmentPath)"
+    cat >/dev/null
+    printf '{"type":"result","subtype":"success","result":"env"}\n'
+    """
+    try script.write(to: scriptURL, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptURL.path)
+
+    let overrideBox = EnvironmentOverrideBox(value: "initial")
+    let client = ClaudeCLIClient(
+      command: scriptURL.path,
+      environmentOverridesProvider: { ["AGENTHUB_TEST_ENV_OVERRIDE": overrideBox.value] }
+    )
+    overrideBox.value = "from-provider"
+
+    let (_, completion) = await awaitOutputs(from: client.runStreamingPrompt(
+      prompt: "hello",
+      workingDirectory: "",
+      systemPrompt: nil,
+      permissionMode: nil,
+      disallowedTools: nil,
+      model: nil
+    ))
+
+    guard case .finished = completion else {
+      Issue.record("Expected successful completion, got \(completion)")
+      return
+    }
+
+    let capturedEnvironment = try String(contentsOf: environmentFile, encoding: .utf8)
+    #expect(capturedEnvironment == "from-provider")
   }
 }
 
