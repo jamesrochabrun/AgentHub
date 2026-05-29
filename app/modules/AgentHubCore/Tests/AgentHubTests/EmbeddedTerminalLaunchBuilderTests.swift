@@ -132,6 +132,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(launch.shellCommand.contains("mcp-server"))
     #expect(launch.shellCommand.contains("--append-system-prompt"))
     #expect(launch.shellCommand.contains("agenthub_create_worktree_session"))
+    #expect(launch.shellCommand.contains("agenthub_list_worktrees"))
+    #expect(launch.shellCommand.contains("agenthub_delete_worktree"))
     #expect(!launch.shellCommand.contains("AgentHub session context:"))
     #expect(!launch.shellCommand.contains("User request:"))
     #expect(launch.shellCommand.contains("Create a worktree for the issue"))
@@ -161,6 +163,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(launch.shellCommand.contains("mcp-server"))
     #expect(launch.shellCommand.contains("--append-system-prompt"))
     #expect(launch.shellCommand.contains("agenthub_create_worktree_session"))
+    #expect(launch.shellCommand.contains("agenthub_list_worktrees"))
+    #expect(launch.shellCommand.contains("agenthub_delete_worktree"))
     #expect(!launch.shellCommand.contains("AgentHub session context:"))
   }
 
@@ -188,6 +192,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(launch.shellCommand.contains("mcp-server"))
     #expect(launch.shellCommand.contains("developer_instructions="))
     #expect(launch.shellCommand.contains("agenthub_create_worktree_session"))
+    #expect(launch.shellCommand.contains("agenthub_list_worktrees"))
+    #expect(launch.shellCommand.contains("agenthub_delete_worktree"))
     #expect(!launch.shellCommand.contains("\\/"))
     #expect(!launch.shellCommand.contains("AgentHub session context:"))
   }

@@ -211,6 +211,10 @@ public struct CLICommandConfiguration: Codable, Sendable {
   }
 
   private static let agentHubMCPRoutingInstructions = """
-  In AgentHub sessions, when the user asks to create worktrees, launch agents/sessions, fan out work, split work across tasks, or start parallel/background work, immediately use the AgentHub MCP worktree-session tool. For one task use agenthub_create_worktree_session; for multiple tasks use agenthub_create_worktree_sessions. Infer concise branch names from the tasks. Pass only the actual task to perform as each launched session prompt; do not pass the user's worktree/session creation request itself. Do not use provider-native worktree/background-agent features for AgentHub-managed launches.
+  In AgentHub sessions, when the user asks to create worktrees, launch agents/sessions, fan out work, split work across tasks, or start parallel/background work, immediately use the AgentHub MCP worktree-session tool.
+  For one task use agenthub_create_worktree_session; for multiple tasks use agenthub_create_worktree_sessions. Infer concise branch names from the tasks. Pass only the actual task to perform as each launched session prompt; do not pass the user's worktree/session creation request itself.
+  When the user asks to list, inspect, audit, clean up, or delete worktrees, use AgentHub MCP worktree tools instead of direct git worktree commands. Use agenthub_list_worktrees to show the main repository's worktrees and associated Claude/Codex session counts.
+  Before deleting, list first when the target or session impact is unclear; once the user has identified a specific worktree, use agenthub_delete_worktree so AgentHub also removes it from the sidebar.
+  Do not use provider-native worktree/background-agent features for AgentHub-managed launches.
   """
 }
