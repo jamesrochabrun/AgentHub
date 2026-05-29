@@ -192,9 +192,7 @@ public struct MultiProviderSessionsListView: View {
   public var body: some View {
     GeometryReader { proxy in
       let sidebarMax = max(280, proxy.size.width * 0.20)
-    VStack(spacing: 0) {
-      WorktreeGenerationProgressBar()
-      ZStack {
+    ZStack {
       NavigationSplitView(columnVisibility: $columnVisibility) {
         sidePanelView
           .agentHubPanel()
@@ -202,29 +200,34 @@ public struct MultiProviderSessionsListView: View {
           .padding(.vertical, 8)
           .padding(.horizontal, 8)
       } detail: {
-        MultiProviderMonitoringPanelView(
-          claudeViewModel: claudeViewModel,
-          codexViewModel: codexViewModel,
-          primarySessionId: $primarySessionId,
-          selectedModuleLandingPath: $selectedModuleLandingPath,
-          onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
-          onAddFolder: { showAddRepositoryPicker() },
-          onRequestStartSession: { preferredRepositoryPath in
-            triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
-          },
-          onRequestForkSession: { session, targetProvider in
-            triggerForkSessionFlow(session: session, targetProvider: targetProvider)
+        VStack(spacing: 0) {
+          // Progress bar lives above the detail pane only (not over the sidebar).
+          WorktreeGenerationProgressBar()
+
+          MultiProviderMonitoringPanelView(
+            claudeViewModel: claudeViewModel,
+            codexViewModel: codexViewModel,
+            primarySessionId: $primarySessionId,
+            selectedModuleLandingPath: $selectedModuleLandingPath,
+            onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
+            onAddFolder: { showAddRepositoryPicker() },
+            onRequestStartSession: { preferredRepositoryPath in
+              triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
+            },
+            onRequestForkSession: { session, targetProvider in
+              triggerForkSessionFlow(session: session, targetProvider: targetProvider)
+            }
+          )
+          .padding(12)
+          .agentHubPanel()
+          .frame(minWidth: 300)
+          .padding(.vertical, 8)
+          .padding(.horizontal, 8)
+          .background {
+            NSSplitViewAutosaveDisabler()
+              .frame(width: 0, height: 0)
+              .allowsHitTesting(false)
           }
-        )
-        .padding(12)
-        .agentHubPanel()
-        .frame(minWidth: 300)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 8)
-        .background {
-          NSSplitViewAutosaveDisabler()
-            .frame(width: 0, height: 0)
-            .allowsHitTesting(false)
         }
       }
       .navigationSplitViewStyle(.balanced)
@@ -415,7 +418,6 @@ public struct MultiProviderSessionsListView: View {
     }
     .modifier(ArchiveConfirmationAlert(confirmation: $archiveConfirmation))
     .modifier(RemoveConfirmationAlert(confirmation: $removeConfirmation))
-    }
     }
   }
 
