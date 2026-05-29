@@ -23,14 +23,16 @@ public struct WorktreeGenerationProgressBar: View {
     Group {
       if let coordinator, coordinator.isActive {
         card(coordinator)
-          .padding(.horizontal, 8)
+          .padding(.horizontal, 12)
           .padding(.top, 8)
           .transition(.move(edge: .top).combined(with: .opacity))
       }
     }
-    .animation(.spring(response: 0.34, dampingFraction: 0.86), value: coordinator?.isActive ?? false)
-    .animation(.easeInOut(duration: 0.2), value: coordinator?.operations.count ?? 0)
-    .animation(.easeInOut(duration: 0.18), value: isExpanded)
+    // Whole-bar appear/dismiss; inner content (expand, rows) animates in card().
+    .animation(.spring(response: 0.36, dampingFraction: 0.85), value: coordinator?.isActive ?? false)
+    .onChange(of: coordinator?.isActive ?? false) { _, active in
+      if !active { isExpanded = false }
+    }
   }
 
   // MARK: - Card
@@ -38,11 +40,15 @@ public struct WorktreeGenerationProgressBar: View {
   private func card(_ coordinator: WorktreeGenerationProgressCoordinator) -> some View {
     VStack(spacing: 0) {
       header(coordinator)
-      if isExpanded {
+      // Only multi-worktree batches expand; a single worktree is already shown
+      // uniquely in the header, so there's nothing extra to reveal.
+      if isExpanded && coordinator.operations.count > 1 {
         Divider().opacity(0.5)
         detailList(coordinator)
       }
     }
+    .animation(.easeInOut(duration: 0.18), value: isExpanded)
+    .animation(.easeInOut(duration: 0.2), value: coordinator.operations.count)
     .background(
       RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
         .fill(cardColor)
@@ -92,15 +98,19 @@ public struct WorktreeGenerationProgressBar: View {
           .monospacedDigit()
       }
 
-      Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
+      if coordinator.operations.count > 1 {
+        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(.secondary)
+      }
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .contentShape(Rectangle())
-    .onTapGesture { isExpanded.toggle() }
-    .help(isExpanded ? "Hide details" : "Show details")
+    .onTapGesture {
+      guard coordinator.operations.count > 1 else { return }
+      isExpanded.toggle()
+    }
   }
 
   @ViewBuilder
