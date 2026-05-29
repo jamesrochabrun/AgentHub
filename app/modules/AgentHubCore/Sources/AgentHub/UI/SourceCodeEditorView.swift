@@ -16,6 +16,10 @@ enum EditorDisplayMode: Equatable {
   case highlighted
   case plainText
 
+  private static let highlightedByteLimit = 300_000
+  private static let highlightedLineLimit = 5_000
+  private static let highlightedMaxLineByteLimit = 2_000
+
   var badgeLabel: String? {
     switch self {
     case .highlighted:
@@ -34,21 +38,16 @@ enum EditorDisplayMode: Equatable {
   }
 
   static func displayMode(for content: String) -> EditorDisplayMode {
-    let byteCount = content.utf8.count
-    let lineCount = lineCount(for: content)
-    if byteCount <= 300_000 && lineCount <= 5_000 {
+    displayMode(for: TextFileMetrics.metrics(for: content))
+  }
+
+  static func displayMode(for metrics: TextFileMetrics) -> EditorDisplayMode {
+    if metrics.byteCount <= highlightedByteLimit,
+       metrics.lineCount <= highlightedLineLimit,
+       metrics.maxLineByteCount <= highlightedMaxLineByteLimit {
       return .highlighted
     }
     return .plainText
-  }
-
-  private static func lineCount(for content: String) -> Int {
-    guard !content.isEmpty else { return 0 }
-    return content.utf8.reduce(into: 1) { count, byte in
-      if byte == 0x0A {
-        count += 1
-      }
-    }
   }
 }
 
@@ -169,7 +168,7 @@ struct AgentHubSourceEditorOptions {
   let additionalTextInsets = NSEdgeInsets(top: 2, left: 0, bottom: 2, right: 0)
 
   var wrapLines: Bool {
-    isWrapLinesEnabled
+    isWrapLinesEnabled && displayMode.usesFullEditorFeatures
   }
 
   var bracketPairEmphasis: BracketPairEmphasis? {
@@ -223,6 +222,7 @@ struct AgentHubSourceEditorOptions {
 private final class SourceEditorEditCoordinator: TextViewCoordinator {
   private weak var controller: TextViewController?
   private var isApplyingExternalText = false
+  private var shouldSkipNextExternalTextSync = false
   private var idleTask: Task<Void, Never>?
   private var findNavigationEventMonitor: Any?
   private var findNavigationText = ""
@@ -271,6 +271,7 @@ private final class SourceEditorEditCoordinator: TextViewCoordinator {
   func textViewDidChangeText(controller: TextViewController) {
     guard !isApplyingExternalText else { return }
     let updatedText = controller.text
+    shouldSkipNextExternalTextSync = true
     onTextChange(updatedText)
     scheduleIdleSnapshot(updatedText)
   }
@@ -285,7 +286,12 @@ private final class SourceEditorEditCoordinator: TextViewCoordinator {
   }
 
   func syncExternalText(_ text: String) {
-    guard let controller, controller.text != text else { return }
+    guard let controller else { return }
+    if shouldSkipNextExternalTextSync {
+      shouldSkipNextExternalTextSync = false
+      return
+    }
+    guard controller.text != text else { return }
     isApplyingExternalText = true
     controller.text = text
     isApplyingExternalText = false

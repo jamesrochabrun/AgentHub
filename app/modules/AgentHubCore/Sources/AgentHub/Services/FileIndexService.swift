@@ -60,6 +60,7 @@ struct ProjectFileEnumeratorFile: Sendable, Equatable {
 
 enum ProjectFileEnumerationResult: Sendable {
   case files([ProjectFileEnumeratorFile], kind: ProjectFileEnumerationKind)
+  case partialFiles([ProjectFileEnumeratorFile], kind: ProjectFileEnumerationKind)
   case notGitProject
   case failed
 }
@@ -98,7 +99,15 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
       return knownKind == nil ? .notGitProject : .failed
     }
 
-    guard !result.timedOut, result.exitCode == 0 else {
+    if result.timedOut {
+      let files = Self.parseGitLSFilesOutput(result.stdout)
+      guard !files.isEmpty, let knownKind else {
+        return knownKind == nil ? .notGitProject : .failed
+      }
+      return .partialFiles(files, kind: knownKind)
+    }
+
+    guard result.exitCode == 0 else {
       return knownKind == nil ? .notGitProject : .failed
     }
 
@@ -248,6 +257,7 @@ public actor FileIndexService {
   // MARK: - Constants
 
   private static let cacheTTL: TimeInterval = 5 * 60  // 5 minutes
+  private static let degradedSearchCacheTTL: TimeInterval = 10
   private static let maxDepth = 20
   private static let maxSearchResults = 50
 
@@ -271,7 +281,7 @@ public actor FileIndexService {
     ".github", ".vscode", ".cursor"
   ]
 
-  private struct IgnoreRule {
+  private struct IgnoreRule: Sendable {
     let basePath: String
     let pattern: String
     let isNegated: Bool
@@ -286,15 +296,26 @@ public actor FileIndexService {
     let date: Date
   }
 
+  private struct IgnoreRulesCacheEntry {
+    let rules: [IgnoreRule]
+    let date: Date
+  }
+
   private struct IndexedFile: Sendable {
     let name: String
     let relativePath: String
     let absolutePath: String
   }
 
+  private struct SearchIndexBuildResult: Sendable {
+    let files: [IndexedFile]
+    let ttl: TimeInterval
+  }
+
   private struct SearchCacheEntry: Sendable {
     let files: [IndexedFile]
     let date: Date
+    let ttl: TimeInterval
   }
 
   private struct DirectoryEntry: Sendable {
@@ -303,12 +324,20 @@ public actor FileIndexService {
     let isDirectory: Bool
   }
 
+  private struct ParsedGitignoreCacheEntry {
+    let modificationDate: Date?
+    let rules: [IgnoreRule]
+  }
+
   private var directoryCache: [String: CacheEntry] = [:]
   private var directoryLoadTasks: [String: Task<[FileTreeNode], Never>] = [:]
   private var searchCache: [String: SearchCacheEntry] = [:]
   private var searchBuildTasks: [String: Task<SearchCacheEntry, Never>] = [:]
+  private var parsedGitignoreCache: [String: ParsedGitignoreCacheEntry] = [:]
+  private var ignoreRulesCache: [String: IgnoreRulesCacheEntry] = [:]
   private var recentPaths: [String] = []
   private static let maxRecentFiles = 20
+  private static let globRegexCache = NSCache<NSString, NSRegularExpression>()
   private let projectFileSearchService: any ProjectFileSearchServiceProtocol
   private let projectFileEnumerator: any ProjectFileEnumerating
 
@@ -429,10 +458,10 @@ public actor FileIndexService {
       let filteredSpotlightResults = spotlightResponse.results
         .compactMap { spotlightResult -> FileSearchResult? in
           let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
-          guard Self.shouldIncludeSearchResult(at: absolutePath, rootPath: resolvedProjectPath),
-                let relativePath = Self.relativePathIfContained(absolutePath, within: resolvedProjectPath) else {
+          guard shouldIncludeSearchResultCached(at: absolutePath, rootPath: resolvedProjectPath) else {
             return nil
           }
+          let relativePath = Self.projectRelativePath(for: absolutePath, relativeTo: resolvedProjectPath)
           let name = URL(fileURLWithPath: absolutePath).lastPathComponent
 
           return FileSearchResult(
@@ -490,13 +519,34 @@ public actor FileIndexService {
     searchCache.removeValue(forKey: resolvedProjectPath)
     searchBuildTasks[resolvedProjectPath]?.cancel()
     searchBuildTasks.removeValue(forKey: resolvedProjectPath)
+    ignoreRulesCache.keys
+      .filter { $0.hasPrefix(resolvedProjectPath + "\u{0}") }
+      .forEach { ignoreRulesCache.removeValue(forKey: $0) }
+    parsedGitignoreCache.keys
+      .filter { Self.isPath(($0 as NSString).deletingLastPathComponent, within: resolvedProjectPath) }
+      .forEach { parsedGitignoreCache.removeValue(forKey: $0) }
   }
 
   /// Reads a file at `path` as a UTF-8 string.
   /// `projectPath` is required so the read is validated to stay within the project root.
   public func readFile(at path: String, projectPath: String) throws -> String {
+    try readTextFile(at: path, projectPath: projectPath).content
+  }
+
+  /// Reads a UTF-8 file and returns lightweight metrics gathered from the bytes
+  /// before the editor is configured.
+  func readTextFile(at path: String, projectPath: String) throws -> ProjectTextFile {
     let validatedURL = try validatePath(path, within: projectPath, forWrite: false)
-    return try String(contentsOf: validatedURL, encoding: .utf8)
+    let data = try Data(contentsOf: validatedURL, options: [.mappedIfSafe])
+    guard let content = String(data: data, encoding: .utf8) else {
+      throw CocoaError(.fileReadCorruptFile, userInfo: [
+        NSLocalizedDescriptionKey: "File is not valid UTF-8 text."
+      ])
+    }
+    return ProjectTextFile(
+      content: content,
+      metrics: TextFileMetrics.metrics(forUTF8Data: data)
+    )
   }
 
   /// Writes `content` to the file at `path` atomically, then invalidates any matching project cache.
@@ -505,7 +555,7 @@ public actor FileIndexService {
     let validatedURL = try validatePath(path, within: projectPath, forWrite: true)
     let didExist = FileManager.default.fileExists(atPath: validatedURL.path)
     try content.write(to: validatedURL, atomically: true, encoding: .utf8)
-    if !didExist {
+    if !didExist || validatedURL.lastPathComponent == ".gitignore" {
       invalidate(projectPath: projectPath)
     }
   }
@@ -542,12 +592,16 @@ public actor FileIndexService {
     Date().timeIntervalSince(date) > Self.cacheTTL
   }
 
+  private func isSearchCacheStale(_ entry: SearchCacheEntry) -> Bool {
+    Date().timeIntervalSince(entry.date) > entry.ttl
+  }
+
   private func searchIndexStatus(resolvedProjectPath: String) -> FileSearchIndexStatus {
     if searchBuildTasks[resolvedProjectPath] != nil {
       return .building
     }
 
-    if let entry = searchCache[resolvedProjectPath], !isCacheStale(entry.date) {
+    if let entry = searchCache[resolvedProjectPath], !isSearchCacheStale(entry) {
       return .ready
     }
 
@@ -581,7 +635,7 @@ public actor FileIndexService {
   }
 
   private func searchIndex(projectPath: String) async -> [IndexedFile] {
-    if let entry = searchCache[projectPath], !isCacheStale(entry.date) {
+    if let entry = searchCache[projectPath], !isSearchCacheStale(entry) {
       return entry.files
     }
 
@@ -603,11 +657,11 @@ public actor FileIndexService {
   private func makeSearchBuildTask(projectPath: String) -> Task<SearchCacheEntry, Never> {
     let projectFileEnumerator = projectFileEnumerator
     return Task.detached(priority: .utility) {
-      let files = await FileIndexService.buildSearchIndex(
+      let result = await FileIndexService.buildSearchIndex(
         projectPath: projectPath,
         projectFileEnumerator: projectFileEnumerator
       )
-      return SearchCacheEntry(files: files, date: Date())
+      return SearchCacheEntry(files: result.files, date: Date(), ttl: result.ttl)
     }
   }
 
@@ -641,14 +695,22 @@ public actor FileIndexService {
   private static func buildSearchIndex(
     projectPath: String,
     projectFileEnumerator: any ProjectFileEnumerating
-  ) async -> [IndexedFile] {
+  ) async -> SearchIndexBuildResult {
     switch await projectFileEnumerator.enumerateFiles(in: projectPath) {
     case .files(let files, _):
-      return buildSearchIndexFromGitFiles(files, rootPath: projectPath)
+      return SearchIndexBuildResult(
+        files: buildSearchIndexFromGitFiles(files, rootPath: projectPath),
+        ttl: cacheTTL
+      )
+    case .partialFiles(let files, _):
+      return SearchIndexBuildResult(
+        files: buildSearchIndexFromGitFiles(files, rootPath: projectPath),
+        ttl: degradedSearchCacheTTL
+      )
     case .notGitProject:
-      return buildSearchIndexSync(projectPath: projectPath)
+      return SearchIndexBuildResult(files: buildSearchIndexSync(projectPath: projectPath), ttl: cacheTTL)
     case .failed:
-      return []
+      return SearchIndexBuildResult(files: [], ttl: degradedSearchCacheTTL)
     }
   }
 
@@ -656,17 +718,48 @@ public actor FileIndexService {
     _ files: [ProjectFileEnumeratorFile],
     rootPath: String
   ) -> [IndexedFile] {
-    files.compactMap { file in
+    var rulesByDirectory: [String: [IgnoreRule]] = [:]
+    return files.compactMap { file in
       let absolutePath = (rootPath as NSString).appendingPathComponent(file.relativePath)
-      guard shouldIncludeSearchResult(at: absolutePath, rootPath: rootPath),
-            let relativePath = relativePathIfContained(absolutePath, within: rootPath) else {
+      let standardizedPath = URL(fileURLWithPath: absolutePath).standardizedFileURL.path
+      guard isPath(standardizedPath, within: rootPath),
+            standardizedPath != rootPath else {
+        return nil
+      }
+
+      let url = URL(fileURLWithPath: standardizedPath)
+      guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+            values.isDirectory != true,
+            values.isSymbolicLink != true else {
+        return nil
+      }
+
+      let directoryPath = (standardizedPath as NSString).deletingLastPathComponent
+      let rules: [IgnoreRule]
+      if let cachedRules = rulesByDirectory[directoryPath] {
+        rules = cachedRules
+      } else {
+        let parsedRules = ignoreRules(forDirectoryAt: directoryPath, rootPath: rootPath)
+        rulesByDirectory[directoryPath] = parsedRules
+        rules = parsedRules
+      }
+
+      guard shouldIncludeEntry(
+        DirectoryEntry(
+          name: url.lastPathComponent,
+          path: standardizedPath,
+          isDirectory: false
+        ),
+        rootPath: rootPath,
+        rules: rules
+      ) else {
         return nil
       }
 
       return IndexedFile(
-        name: URL(fileURLWithPath: absolutePath).lastPathComponent,
-        relativePath: relativePath,
-        absolutePath: absolutePath
+        name: url.lastPathComponent,
+        relativePath: file.relativePath,
+        absolutePath: standardizedPath
       )
     }
   }
@@ -821,7 +914,82 @@ public actor FileIndexService {
     )
   }
 
+  private func shouldIncludeSearchResultCached(at path: String, rootPath: String) -> Bool {
+    let resolvedRootPath = Self.resolvedURL(for: rootPath).path
+    let resolvedPath = Self.resolvedURL(for: path).path
+    guard Self.isPath(resolvedPath, within: resolvedRootPath),
+          resolvedPath != resolvedRootPath else {
+      return false
+    }
+
+    let url = URL(fileURLWithPath: resolvedPath)
+    guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+          values.isDirectory != true,
+          values.isSymbolicLink != true else {
+      return false
+    }
+
+    let directoryPath = (resolvedPath as NSString).deletingLastPathComponent
+    let rules = cachedIgnoreRules(forDirectoryAt: directoryPath, rootPath: resolvedRootPath)
+    return Self.shouldIncludeEntry(
+      DirectoryEntry(
+        name: url.lastPathComponent,
+        path: resolvedPath,
+        isDirectory: false
+      ),
+      rootPath: resolvedRootPath,
+      rules: rules
+    )
+  }
+
   // MARK: - Gitignore Parsing
+
+  private func cachedIgnoreRules(forDirectoryAt directoryPath: String, rootPath: String) -> [IgnoreRule] {
+    let resolvedRootPath = Self.resolvedURL(for: rootPath).path
+    let resolvedDirectoryPath = Self.resolvedURL(for: directoryPath).path
+    let cacheKey = resolvedRootPath + "\u{0}" + resolvedDirectoryPath
+
+    if let entry = ignoreRulesCache[cacheKey], !isCacheStale(entry.date) {
+      return entry.rules
+    }
+
+    guard Self.isPath(resolvedDirectoryPath, within: resolvedRootPath) else { return [] }
+
+    var rules: [IgnoreRule] = []
+    var currentPath = resolvedRootPath
+    rules += cachedParseGitignore(at: currentPath, relativeTo: resolvedRootPath)
+
+    if resolvedDirectoryPath != resolvedRootPath {
+      let relativePath = String(resolvedDirectoryPath.dropFirst(resolvedRootPath.count + 1))
+      for component in relativePath.split(separator: "/") {
+        currentPath = (currentPath as NSString).appendingPathComponent(String(component))
+        rules += cachedParseGitignore(at: currentPath, relativeTo: resolvedRootPath)
+      }
+    }
+
+    ignoreRulesCache[cacheKey] = IgnoreRulesCacheEntry(rules: rules, date: Date())
+    return rules
+  }
+
+  private func cachedParseGitignore(at directoryPath: String, relativeTo rootPath: String) -> [IgnoreRule] {
+    let gitignorePath = (directoryPath as NSString).appendingPathComponent(".gitignore")
+    let modificationDate = Self.fileModificationDate(at: gitignorePath)
+    if let entry = parsedGitignoreCache[gitignorePath],
+       entry.modificationDate == modificationDate {
+      return entry.rules
+    }
+
+    let rules = Self.parseGitignore(at: directoryPath, relativeTo: rootPath)
+    parsedGitignoreCache[gitignorePath] = ParsedGitignoreCacheEntry(
+      modificationDate: modificationDate,
+      rules: rules
+    )
+    return rules
+  }
+
+  private static func fileModificationDate(at path: String) -> Date? {
+    (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date
+  }
 
   private static func parseGitignore(at directoryPath: String, relativeTo rootPath: String) -> [IgnoreRule] {
     let gitignorePath = (directoryPath as NSString).appendingPathComponent(".gitignore")
@@ -919,6 +1087,13 @@ public actor FileIndexService {
   /// Lightweight glob match for gitignore-style matching.
   /// Supports `*`, `**`, and `?`, with `*` not crossing path separators.
   private static func globMatch(pattern: String, string: String) -> Bool {
+    if let cachedRegex = globRegexCache.object(forKey: pattern as NSString) {
+      return cachedRegex.firstMatch(
+        in: string,
+        range: NSRange(location: 0, length: (string as NSString).length)
+      ) != nil
+    }
+
     let regexMetaCharacters = CharacterSet(charactersIn: "\\.^$+()[]{}|")
     var regex = "^"
     var index = pattern.startIndex
@@ -953,7 +1128,14 @@ public actor FileIndexService {
     }
 
     regex += "$"
-    return string.range(of: regex, options: .regularExpression) != nil
+    guard let compiledRegex = try? NSRegularExpression(pattern: regex) else {
+      return false
+    }
+    globRegexCache.setObject(compiledRegex, forKey: pattern as NSString)
+    return compiledRegex.firstMatch(
+      in: string,
+      range: NSRange(location: 0, length: (string as NSString).length)
+    ) != nil
   }
 
   private static func projectRelativePath(for path: String, relativeTo rootPath: String) -> String {

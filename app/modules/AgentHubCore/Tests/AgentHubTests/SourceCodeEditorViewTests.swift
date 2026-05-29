@@ -160,7 +160,7 @@ struct SourceCodeEditorViewTests {
 
   @Test("Display mode enables highlighting for normal source files")
   func displayModeHighlightsNormalFiles() {
-    let content = String(repeating: "a", count: 300_000)
+    let content = Array(repeating: "let value = 1", count: 1_000).joined(separator: "\n")
 
     #expect(EditorDisplayMode.displayMode(for: content) == .highlighted)
   }
@@ -172,6 +172,22 @@ struct SourceCodeEditorViewTests {
 
     #expect(EditorDisplayMode.displayMode(for: largeByteContent) == .plainText)
     #expect(EditorDisplayMode.displayMode(for: largeLineContent) == .plainText)
+  }
+
+  @Test("Display mode uses fast mode for long-line files")
+  func displayModeUsesFastModeForLongLineFiles() {
+    let longLineContent = String(repeating: "a", count: 2_001)
+
+    #expect(EditorDisplayMode.displayMode(for: longLineContent) == .plainText)
+  }
+
+  @Test("Text file metrics track bytes, lines, and longest line")
+  func textFileMetricsTrackLargestLine() {
+    let metrics = TextFileMetrics.metrics(for: "abc\nabcdef\nz")
+
+    #expect(metrics.byteCount == 12)
+    #expect(metrics.lineCount == 3)
+    #expect(metrics.maxLineByteCount == 6)
   }
 
   @Test("Editor options use neutral spacing and disable line wrapping")
@@ -201,9 +217,16 @@ struct SourceCodeEditorViewTests {
       isMinimapEnabled: false,
       isWrapLinesEnabled: false
     )
+    let plainText = AgentHubSourceEditorOptions(
+      displayMode: .plainText,
+      isEditable: true,
+      isMinimapEnabled: false,
+      isWrapLinesEnabled: true
+    )
 
     #expect(wrapped.wrapLines)
     #expect(unwrapped.wrapLines == false)
+    #expect(plainText.wrapLines == false)
   }
 
   @Test("Editor options only enable minimap when the setting is on")

@@ -466,6 +466,31 @@ struct FileIndexServicePrivacyTests {
     #expect(diagnostics.results.isEmpty)
   }
 
+  @Test("Partial Git enumeration still returns degraded search results")
+  func partialGitEnumerationReturnsDegradedResults() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+    try fixture.writeProjectFile("Sources/Other.swift", content: "struct Other {}")
+
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: []),
+      projectFileEnumerator: FakeProjectFileEnumerator(
+        kind: .gitWorktree,
+        result: .partialFiles([
+          ProjectFileEnumeratorFile(relativePath: "Sources/App.swift")
+        ], kind: .gitWorktree)
+      )
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "app", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.localIndexedFileCount == 1)
+    #expect(diagnostics.results.map(\.relativePath) == ["Sources/App.swift"])
+  }
+
   @Test("Filters hidden ancestor directories from search results")
   func filtersHiddenAncestorDirectoriesFromSearchResults() async throws {
     let fixture = try FileIndexFixture.create()
