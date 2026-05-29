@@ -488,12 +488,13 @@ public struct SettingsView: View {
       if cliEnvironmentVariables.isEmpty {
         Text("No environment variables configured.")
           .foregroundColor(.secondary)
+          .transition(.opacity.combined(with: .move(edge: .top)))
       } else {
         VStack(alignment: .leading, spacing: 8) {
-          ForEach(cliEnvironmentVariables.indices, id: \.self) { index in
+          ForEach($cliEnvironmentVariables) { $variable in
             HStack(spacing: 8) {
               TextField(
-                text: $cliEnvironmentVariables[index].name,
+                text: $variable.name,
                 prompt: Text("VARIABLE_NAME")
               ) {
                 EmptyView()
@@ -508,7 +509,7 @@ public struct SettingsView: View {
                 .foregroundColor(.secondary)
 
               TextField(
-                text: $cliEnvironmentVariables[index].value,
+                text: $variable.value,
                 prompt: Text("value")
               ) {
                 EmptyView()
@@ -519,15 +520,17 @@ public struct SettingsView: View {
               .lineLimit(1)
               .frame(maxWidth: .infinity)
 
-              Button(action: { removeCLIEnvironmentVariable(at: index) }) {
+              Button(action: { removeCLIEnvironmentVariable(id: variable.id) }) {
                 Image(systemName: "minus.circle")
               }
               .buttonStyle(.borderless)
               .foregroundColor(.secondary)
               .accessibilityLabel("Remove variable")
             }
+            .transition(.opacity.combined(with: .move(edge: .top)))
           }
         }
+        .transition(.opacity.combined(with: .move(edge: .top)))
       }
 
       HStack(spacing: 12) {
@@ -539,23 +542,32 @@ public struct SettingsView: View {
           Button(role: .destructive, action: clearCLIEnvironmentVariables) {
             Label("Clear all", systemImage: "trash")
           }
+          .transition(.opacity.combined(with: .move(edge: .trailing)))
         }
       }
     }
+    .animation(.easeInOut(duration: 0.18), value: cliEnvironmentVariables.isEmpty)
+    .animation(.easeInOut(duration: 0.18), value: cliEnvironmentVariables.count)
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private func addCLIEnvironmentVariable() {
-    cliEnvironmentVariables.append(CLIEnvironmentVariable(name: "", value: ""))
+    _ = withAnimation(.easeInOut(duration: 0.18)) {
+      cliEnvironmentVariables.append(CLIEnvironmentVariable(name: "", value: ""))
+    }
   }
 
-  private func removeCLIEnvironmentVariable(at index: Int) {
-    guard cliEnvironmentVariables.indices.contains(index) else { return }
-    cliEnvironmentVariables.remove(at: index)
+  private func removeCLIEnvironmentVariable(id: UUID) {
+    guard let index = cliEnvironmentVariables.firstIndex(where: { $0.id == id }) else { return }
+    _ = withAnimation(.easeInOut(duration: 0.18)) {
+      cliEnvironmentVariables.remove(at: index)
+    }
   }
 
   private func clearCLIEnvironmentVariables() {
-    cliEnvironmentVariables.removeAll()
+    _ = withAnimation(.easeInOut(duration: 0.18)) {
+      cliEnvironmentVariables.removeAll()
+    }
   }
 
   private func settingsToggle(
