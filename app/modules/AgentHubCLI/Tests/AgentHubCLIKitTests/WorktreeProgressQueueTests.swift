@@ -75,6 +75,7 @@ struct WorktreeProgressQueueTests {
   func progressCodableRoundTrip() throws {
     let cases: [WorktreeCreationProgress] = [
       .idle,
+      .queued(message: "Waiting for another worktree"),
       .preparing(message: "Preparing worktree…"),
       .updatingFiles(current: 84, total: 194),
       .completed(path: "/tmp/repo/.worktrees/feature"),

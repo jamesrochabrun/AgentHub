@@ -346,7 +346,7 @@ public final class WorktreeGenerationProgressCoordinator {
       scheduleClear(id: op.id, delay: Self.failureClearDelay)
     case .cancelled:
       scheduleClear(id: op.id, delay: op.isNaming ? Self.namingClearDelay : Self.successClearDelay)
-    case .idle, .preparing, .updatingFiles:
+    case .idle, .queued, .preparing, .updatingFiles:
       break
     }
   }

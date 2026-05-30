@@ -194,6 +194,91 @@ struct WorktreeConventionTests {
   }
 }
 
+@Suite("WorktreeManagementService creation queue")
+struct WorktreeCreationQueueTests {
+  private actor EventRecorder {
+    private var events: [String] = []
+
+    func record(_ event: String) {
+      events.append(event)
+    }
+
+    func recordedEvents() -> [String] {
+      events
+    }
+  }
+
+  @Test("Serializes same-repository worktree creation and reports queued state")
+  func serializesSameRepositoryCreation() async throws {
+    let queue = WorktreeCreationQueue(maxConcurrentGlobally: 2, maxConcurrentPerRepository: 1)
+    let recorder = EventRecorder()
+    let firstTask = Task {
+      try await queue.withPermit(repoKey: "repo-a") {
+        await recorder.record("first-start")
+        try await Task.sleep(for: .milliseconds(250))
+        await recorder.record("first-end")
+      }
+    }
+
+    try await Task.sleep(for: .milliseconds(50))
+
+    let secondTask = Task {
+      try await queue.withPermit(
+        repoKey: "repo-a",
+        onQueued: {
+          await recorder.record("second-queued")
+        }
+      ) {
+        await recorder.record("second-start")
+      }
+    }
+
+    try await Task.sleep(for: .milliseconds(50))
+
+    let earlyEvents = await recorder.recordedEvents()
+    #expect(earlyEvents.contains("second-queued"))
+    #expect(!earlyEvents.contains("second-start"))
+
+    try await firstTask.value
+    try await secondTask.value
+
+    let events = await recorder.recordedEvents()
+    let firstEndIndex = try #require(events.firstIndex(of: "first-end"))
+    let secondStartIndex = try #require(events.firstIndex(of: "second-start"))
+
+    #expect(firstEndIndex < secondStartIndex)
+  }
+
+  @Test("Allows different repositories to run concurrently")
+  func allowsDifferentRepositoriesToRunConcurrently() async throws {
+    let queue = WorktreeCreationQueue(maxConcurrentGlobally: 2, maxConcurrentPerRepository: 1)
+    let recorder = EventRecorder()
+
+    let firstTask = Task {
+      try await queue.withPermit(repoKey: "repo-a") {
+        await recorder.record("first-start")
+        try await Task.sleep(for: .milliseconds(250))
+        await recorder.record("first-end")
+      }
+    }
+
+    try await Task.sleep(for: .milliseconds(50))
+
+    let secondTask = Task {
+      try await queue.withPermit(repoKey: "repo-b") {
+        await recorder.record("second-start")
+      }
+    }
+
+    try await secondTask.value
+    let earlyEvents = await recorder.recordedEvents()
+    #expect(earlyEvents.contains("second-start"))
+    #expect(!earlyEvents.contains("first-end"))
+
+    try await firstTask.value
+  }
+}
+
 @Suite("WorktreeManagementService removal and cancellation")
 struct WorktreeRemovalTests {
   @Test("Prunes stale reference when worktree directory is missing")

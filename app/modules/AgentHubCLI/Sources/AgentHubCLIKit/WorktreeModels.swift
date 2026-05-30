@@ -119,6 +119,7 @@ public struct WorktreeInfo: Codable, Equatable, Identifiable, Sendable {
 
 public enum WorktreeCreationProgress: Equatable, Sendable, Codable {
   case idle
+  case queued(message: String)
   case preparing(message: String)
   case updatingFiles(current: Int, total: Int)
   case completed(path: String)
@@ -128,6 +129,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable, Codable {
   public var progressValue: Double {
     switch self {
     case .idle:
+      return 0
+    case .queued:
       return 0
     case .preparing:
       return 0.05
@@ -144,6 +147,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable, Codable {
     switch self {
     case .idle:
       return ""
+    case .queued(let message):
+      return message
     case .preparing(let message):
       return message
     case .updatingFiles(let current, let total):
@@ -159,7 +164,7 @@ public enum WorktreeCreationProgress: Equatable, Sendable, Codable {
 
   public var isInProgress: Bool {
     switch self {
-    case .preparing, .updatingFiles:
+    case .queued, .preparing, .updatingFiles:
       return true
     case .idle, .completed, .cancelled, .failed:
       return false
@@ -170,6 +175,8 @@ public enum WorktreeCreationProgress: Equatable, Sendable, Codable {
     switch self {
     case .idle:
       return "circle"
+    case .queued:
+      return "clock"
     case .preparing:
       return "arrow.triangle.branch"
     case .updatingFiles:

@@ -915,6 +915,8 @@ public final class MultiSessionLaunchViewModel {
     carrySourceChangesPath = nil
     availableBranches = []
     currentBranchName = ""
+    isLoadingBranches = false
+    isLoadingCurrentBranch = false
     launchMode = .manual
     workMode = .local
     worktreeNamingMode = .automatic
@@ -933,6 +935,7 @@ public final class MultiSessionLaunchViewModel {
     claudeProgress = .idle
     codexProgress = .idle
     resetBranchNamingProgress()
+    isLaunching = false
     launchError = nil
     lastLaunchEndedByCancellation = false
     smartPhase = .idle
