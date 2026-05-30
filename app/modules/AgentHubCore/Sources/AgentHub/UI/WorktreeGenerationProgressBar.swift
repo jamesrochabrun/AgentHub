@@ -27,7 +27,6 @@ public struct WorktreeGenerationProgressBar: View {
       if let coordinator, coordinator.isActive {
         card(coordinator)
           .padding(.horizontal, 12)
-          .padding(.top, 8)
           .transition(.move(edge: .top).combined(with: .opacity))
       }
     }
