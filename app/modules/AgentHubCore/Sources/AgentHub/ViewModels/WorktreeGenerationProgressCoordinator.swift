@@ -302,6 +302,15 @@ public final class WorktreeGenerationProgressCoordinator {
     finalizeClear(id: id)
   }
 
+  /// Clears every failed operation. Backs the header's dismiss control so a
+  /// failed creation (which otherwise lingers) can be dismissed immediately —
+  /// including a single failure, which doesn't expand to a per-row dismiss.
+  public func dismissAllFailed() {
+    for op in operations where op.isFailure {
+      dismiss(id: op.id)
+    }
+  }
+
   // MARK: - Ingest / state machine
 
   private func ingest(_ progress: WorktreeCreationProgress, for id: String) {

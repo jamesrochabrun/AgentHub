@@ -111,6 +111,23 @@ struct WorktreeGenerationProgressCoordinatorTests {
     #expect(coord.hasFailures)
   }
 
+  @Test("dismissAllFailed clears failed operations")
+  func dismissAllFailedClears() async {
+    let coord = WorktreeGenerationProgressCoordinator(soundService: MockSound(), notificationService: MockNotifier())
+
+    struct Boom: Error {}
+    coord.beginSidePanelOperation(branchName: "feature/x", repoName: "repo", providerKind: .claude) { _ in
+      throw Boom()
+    }
+    try? await Task.sleep(for: .milliseconds(200))
+    #expect(coord.hasFailures)
+    #expect(coord.operations.count == 1)
+
+    coord.dismissAllFailed()
+    #expect(coord.operations.isEmpty)
+    #expect(!coord.hasFailures)
+  }
+
   @Test("Sequential MCP completions fire once, not per-worktree (debounce)")
   func sequentialMCPFiresOnce() async {
     UserDefaults.standard.set(true, forKey: AgentHubDefaults.notificationSoundsEnabled)

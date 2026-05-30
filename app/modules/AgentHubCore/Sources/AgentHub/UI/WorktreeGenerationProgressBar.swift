@@ -103,6 +103,18 @@ public struct WorktreeGenerationProgressBar: View {
           .font(.caption.weight(.semibold))
           .foregroundStyle(.secondary)
       }
+
+      if coordinator.hasFailures {
+        Button {
+          coordinator.dismissAllFailed()
+        } label: {
+          Image(systemName: "xmark.circle.fill")
+            .font(.system(size: 14))
+            .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Dismiss")
+      }
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
