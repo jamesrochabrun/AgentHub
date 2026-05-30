@@ -105,12 +105,10 @@ struct AgentHubMCPServer {
     let checkoutExisting = arguments["checkoutExisting"] as? Bool ?? false
     let directoryName = WorktreeNaming.worktreeDirectoryName(for: branch)
 
-    // Resolve the main repo root up front so progress snapshots (which the app
-    // watches via kqueue) carry it for display. Resolving from `repositoryPath`
-    // — the original repo — is unaffected by creating a new worktree.
-    let mainRepositoryPath = try await service.findMainRepositoryRoot(at: repositoryPath)
-
-    // Stream live progress to a sidecar file the app reads. The closure is
+    // Emit a "starting" progress snapshot IMMEDIATELY — before any git work —
+    // so the app's banner shows the creation the instant the tool is invoked,
+    // matching the in-process side-panel path. We use `repositoryPath` (the raw
+    // input) for display so nothing has to be resolved first; the closure is
     // `@Sendable` (the service invokes it from detached tasks), so capture only
     // the `Sendable` queue and value-type metadata.
     let snapshotQueue = progressQueue
@@ -120,12 +118,12 @@ struct AgentHubMCPServer {
       try? snapshotQueue.write(WorktreeProgressSnapshot(
         operationID: snapshotID,
         branchName: branch,
-        repositoryPath: mainRepositoryPath,
+        repositoryPath: repositoryPath,
         provider: provider,
         progress: progress
       ))
     }
-    writeProgress(.preparing(message: "Preparing worktree…"))
+    writeProgress(.preparing(message: "Starting worktree…"))
 
     let worktreePath: String
     do {
@@ -152,6 +150,8 @@ struct AgentHubMCPServer {
     }
 
     writeProgress(.completed(path: worktreePath))
+
+    let mainRepositoryPath = try await service.findMainRepositoryRoot(at: repositoryPath)
     let sourceProvider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
       .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
     let sourceSessionId = ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"]

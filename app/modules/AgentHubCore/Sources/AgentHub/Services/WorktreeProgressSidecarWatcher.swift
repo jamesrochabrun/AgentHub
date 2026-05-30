@@ -41,6 +41,11 @@ public actor WorktreeProgressSidecarWatcher: WorktreeProgressSidecarWatcherProto
   private var directorySource: DispatchSourceFileSystemObject?
   private var lastEmitted: [String: WorktreeProgressSnapshot] = [:]
   private var started = false
+  private var pollTask: Task<Void, Never>?
+  /// Poll cadence — a low-latency backstop alongside kqueue so a fast,
+  /// cross-process MCP creation is shown promptly even if a directory event is
+  /// coalesced or delayed.
+  private static let pollInterval: Duration = .milliseconds(250)
 
   public nonisolated var updates: AnyPublisher<WorktreeProgressSnapshot, Never> {
     subject.eraseToAnyPublisher()
@@ -61,12 +66,15 @@ public actor WorktreeProgressSidecarWatcher: WorktreeProgressSidecarWatcherProto
     started = true
     ensureDirectory()
     startDirectorySourceIfNeeded()
+    startPolling()
     // Emit anything already on disk (a creation may have started before we
     // attached the source).
     scanAndEmit()
   }
 
   public func wipeAll() async {
+    pollTask?.cancel()
+    pollTask = nil
     directorySource?.cancel()
     directorySource = nil
     started = false
@@ -84,6 +92,22 @@ public actor WorktreeProgressSidecarWatcher: WorktreeProgressSidecarWatcherProto
 
   private func ensureDirectory() {
     try? fileManager.createDirectory(at: queue.directoryURL, withIntermediateDirectories: true)
+  }
+
+  private func startPolling() {
+    guard pollTask == nil else { return }
+    pollTask = Task { [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: Self.pollInterval)
+        guard let self else { return }
+        await self.pollTick()
+      }
+    }
+  }
+
+  private func pollTick() {
+    guard started else { return }
+    scanAndEmit()
   }
 
   private func startDirectorySourceIfNeeded() {
@@ -132,6 +156,7 @@ public actor WorktreeProgressSidecarWatcher: WorktreeProgressSidecarWatcherProto
   }
 
   deinit {
+    pollTask?.cancel()
     directorySource?.cancel()
   }
 }
