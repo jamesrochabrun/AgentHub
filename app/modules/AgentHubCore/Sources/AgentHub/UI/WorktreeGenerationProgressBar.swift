@@ -83,9 +83,11 @@ public struct WorktreeGenerationProgressBar: View {
         if let subtitle = model.subtitle, !subtitle.isEmpty {
           Text(subtitle)
             .font(.caption2)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+            .foregroundStyle(coordinator.hasFailures ? Color.red.opacity(0.9) : Color.secondary)
+            .lineLimit(coordinator.hasFailures ? 4 : 1)
+            .fixedSize(horizontal: false, vertical: true)
             .monospacedDigit()
+            .help(subtitle)
         }
       }
 
@@ -261,8 +263,10 @@ private struct WorktreeGenerationOperationRow: View {
 
         Text(statusLine)
           .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
+          .foregroundStyle(operation.isFailure ? Color.red.opacity(0.9) : .secondary)
+          .lineLimit(operation.isFailure ? 4 : 1)
+          .fixedSize(horizontal: false, vertical: true)
+          .help(statusLine)
       }
 
       if operation.isFailure {
