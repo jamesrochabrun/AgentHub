@@ -67,6 +67,35 @@ struct WorktreeModuleResolverTests {
     ])
   }
 
+  @Test("Worktree module lookup only resolves separate worktree modules")
+  func worktreeModuleLookupOnlyResolvesSeparateWorktreeModules() throws {
+    let repositories = [
+      repositoryWithWorktree(
+        repoPath: "/tmp/ModuleA",
+        worktreePath: "/tmp/ModuleA-feature"
+      )
+    ]
+
+    let worktree = try #require(WorktreeModuleResolver.worktreeModule(
+      for: "/tmp/ModuleA-feature/",
+      repositories: repositories,
+      mode: .separateModules
+    ))
+
+    #expect(worktree.name == "feature")
+    #expect(worktree.path == "/tmp/ModuleA-feature")
+    #expect(WorktreeModuleResolver.worktreeModule(
+      for: "/tmp/ModuleA",
+      repositories: repositories,
+      mode: .separateModules
+    ) == nil)
+    #expect(WorktreeModuleResolver.worktreeModule(
+      for: "/tmp/ModuleA-feature",
+      repositories: repositories,
+      mode: .parent
+    ) == nil)
+  }
+
   @Test("Merged repositories keep worktrees from both providers")
   func mergedRepositoriesKeepProviderWorktrees() throws {
     let claude = SelectedRepository(

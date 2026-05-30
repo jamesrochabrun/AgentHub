@@ -38,9 +38,18 @@ private struct ArchiveConfirmation {
 // MARK: - RemoveConfirmation
 
 private struct RemoveConfirmation {
-  let repoName: String
-  let sessionCount: Int
+  let title: String
+  let message: String
   let action: () -> Void
+}
+
+// MARK: - WorktreeModuleDeleteConfirmation
+
+private struct WorktreeModuleDeleteConfirmation {
+  let worktree: WorktreeBranch
+  let displayName: String
+  let sessionCount: Int
+  let providerKind: SessionProviderKind
 }
 
 // MARK: - ArchiveConfirmationAlert
@@ -76,7 +85,7 @@ private struct RemoveConfirmationAlert: ViewModifier {
 
   func body(content: Content) -> some View {
     content.alert(
-      confirmation.map { "Remove \($0.repoName)?" } ?? "",
+      confirmation?.title ?? "",
       isPresented: Binding(
         get: { confirmation != nil },
         set: { if !$0 { confirmation = nil } }
@@ -89,11 +98,7 @@ private struct RemoveConfirmationAlert: ViewModifier {
       }
     } message: {
       if let confirmation {
-        if confirmation.sessionCount > 0 {
-          Text("This will archive \(confirmation.sessionCount) active threads and remove \(confirmation.repoName) from your list.")
-        } else {
-          Text("This will remove \(confirmation.repoName) from your list.")
-        }
+        Text(confirmation.message)
       }
     }
   }
@@ -141,6 +146,7 @@ public struct MultiProviderSessionsListView: View {
   @State private var gitHubSheetItem: GitHubSheetItem?
   @State private var archiveConfirmation: ArchiveConfirmation?
   @State private var removeConfirmation: RemoveConfirmation?
+  @State private var worktreeModuleDeleteConfirmation: WorktreeModuleDeleteConfirmation?
   @State private var selectedModuleLandingPath: String?
   @State private var pendingAddedModulePaths: [String] = []
   @State private var isStartSessionSheetPresented = false
@@ -365,6 +371,40 @@ public struct MultiProviderSessionsListView: View {
       }
     } message: {
       Text("You are about to delete this worktree. This cannot be recovered.")
+    }
+    .alert(
+      "Delete Worktree?",
+      isPresented: Binding(
+        get: { worktreeModuleDeleteConfirmation != nil },
+        set: { if !$0 { worktreeModuleDeleteConfirmation = nil } }
+      ),
+      presenting: worktreeModuleDeleteConfirmation
+    ) { confirmation in
+      Button("Cancel", role: .cancel) {
+        worktreeModuleDeleteConfirmation = nil
+      }
+      Button("Delete", role: .destructive) {
+        deleteWorktreeModule(confirmation)
+      }
+    } message: { confirmation in
+      if confirmation.sessionCount > 0 {
+        let threadLabel = confirmation.sessionCount == 1 ? "thread" : "threads"
+        Text(
+          "This will archive \(confirmation.sessionCount) \(threadLabel) "
+            + "and delete \(confirmation.displayName) at:\n"
+            + "\(confirmation.worktree.path)\n\n"
+            + "This cannot be undone."
+        )
+      } else {
+        Text(
+          """
+          Delete \(confirmation.displayName) at:
+          \(confirmation.worktree.path)
+
+          This cannot be undone.
+          """
+        )
+      }
     }
     .sheet(item: $createWorktreeContext) { context in
       CreateWorktreeSheet(
@@ -879,6 +919,144 @@ public struct MultiProviderSessionsListView: View {
     )
   }
 
+  private func worktreeModule(for modulePath: String) -> WorktreeBranch? {
+    WorktreeModuleResolver.worktreeModule(
+      for: modulePath,
+      repositories: Array(orderedTrackedRepos),
+      mode: worktreeDisplayMode
+    )
+  }
+
+  private func removeAction(
+    for group: SidebarSessionGroup<SelectedSessionItem>,
+    worktreeModule: WorktreeBranch?,
+    worktreeSessionCount: Int
+  ) -> (() -> Void)? {
+    if let worktreeModule {
+      return {
+        removeConfirmation = RemoveConfirmation(
+          title: "Remove \(group.displayName) from AgentHub?",
+          message: worktreeRemovalMessage(
+            name: group.displayName,
+            sessionCount: worktreeSessionCount
+          )
+        ) {
+          removeWorktreeModuleFocus(worktreeModule)
+        }
+      }
+    }
+
+    guard isTrackedRepositoryModule(group.id) else { return nil }
+    return {
+      removeConfirmation = RemoveConfirmation(
+        title: "Remove \(group.displayName)?",
+        message: repositoryRemovalMessage(name: group.displayName, sessionCount: group.items.count)
+      ) {
+        if selectedModuleLandingPath == group.id {
+          selectedModuleLandingPath = nil
+        }
+        if let repo = selectedRepository(in: claudeViewModel.selectedRepositories, matching: group.id) {
+          claudeViewModel.removeRepository(repo)
+        }
+        if let repo = selectedRepository(in: codexViewModel.selectedRepositories, matching: group.id) {
+          codexViewModel.removeRepository(repo)
+        }
+      }
+    }
+  }
+
+  private func repositoryRemovalMessage(name: String, sessionCount: Int) -> String {
+    if sessionCount > 0 {
+      let threadLabel = sessionCount == 1 ? "thread" : "threads"
+      return "This will archive \(sessionCount) active \(threadLabel) "
+        + "and remove \(name) from your list."
+    }
+    return "This will remove \(name) from your list."
+  }
+
+  private func worktreeRemovalMessage(name: String, sessionCount: Int) -> String {
+    if sessionCount > 0 {
+      let threadLabel = sessionCount == 1 ? "thread" : "threads"
+      return "This will archive \(sessionCount) focused \(threadLabel) "
+        + "and stop focusing \(name) in AgentHub. The worktree stays on disk."
+    }
+    return "This will stop focusing \(name) in AgentHub. The worktree stays on disk."
+  }
+
+  private func isTrackedRepositoryModule(_ modulePath: String) -> Bool {
+    selectedRepository(in: orderedTrackedRepos, matching: modulePath) != nil
+  }
+
+  private func selectedRepository(
+    in repositories: [SelectedRepository],
+    matching path: String
+  ) -> SelectedRepository? {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    return repositories.first {
+      WorktreeModuleResolver.normalizedDirectoryPath($0.path) == normalizedPath
+    }
+  }
+
+  private func providerKindForWorktreeModule(
+    _ worktree: WorktreeBranch,
+    items: [SelectedSessionItem]
+  ) -> SessionProviderKind {
+    if let item = items.first(where: { !$0.isPending }) ?? items.first {
+      return item.providerKind
+    }
+    if repositories(claudeViewModel.selectedRepositories, containWorktreePath: worktree.path) {
+      return .claude
+    }
+    if repositories(codexViewModel.selectedRepositories, containWorktreePath: worktree.path) {
+      return .codex
+    }
+    return .claude
+  }
+
+  private func repositories(
+    _ repositories: [SelectedRepository],
+    containWorktreePath path: String
+  ) -> Bool {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    return repositories.contains { repository in
+      repository.worktrees.contains { worktree in
+        worktree.isWorktree && WorktreeModuleResolver.normalizedDirectoryPath(worktree.path) == normalizedPath
+      }
+    }
+  }
+
+  private func focusedSessionCount(inWorktreePath worktreePath: String) -> Int {
+    selectedSessionItems.filter { item in
+      !item.isPending && isProjectPath(item.session.projectPath, containedIn: worktreePath)
+    }.count
+  }
+
+  private func isProjectPath(_ path: String, containedIn root: String) -> Bool {
+    let path = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    let root = WorktreeModuleResolver.normalizedDirectoryPath(root)
+    return path == root || path.hasPrefix(root + "/")
+  }
+
+  private func removeWorktreeModuleFocus(_ worktree: WorktreeBranch) {
+    let path = WorktreeModuleResolver.normalizedDirectoryPath(worktree.path)
+    if selectedModuleLandingPath == path {
+      selectedModuleLandingPath = nil
+    }
+    claudeViewModel.removeFocusedWorktree(at: path)
+    codexViewModel.removeFocusedWorktree(at: path)
+  }
+
+  private func deleteWorktreeModule(_ confirmation: WorktreeModuleDeleteConfirmation) {
+    worktreeModuleDeleteConfirmation = nil
+    Task { @MainActor in
+      let viewModel = confirmation.providerKind == .claude ? claudeViewModel : codexViewModel
+      let succeeded = await viewModel.deleteWorktree(confirmation.worktree)
+      if succeeded {
+        removeWorktreeModuleFocus(confirmation.worktree)
+      }
+    }
+  }
+
   /// Sessions grouped by status category (Working / Needs Attention / Idle).
   private var statusGroupedSessions: [StatusGroupCategory: [SelectedSessionItem]] {
     SidebarSessionOrdering.statusGroups(
@@ -957,6 +1135,10 @@ public struct MultiProviderSessionsListView: View {
         if !groups.isEmpty {
           ForEach(groups) { group in
             let isExpanded = !collapsedProjectGroups.contains(group.id)
+            let worktreeModule = worktreeModule(for: group.id)
+            let worktreeSessionCount = worktreeModule.map {
+              focusedSessionCount(inWorktreePath: $0.path)
+            } ?? 0
 
             ProjectGroupHeader(
               name: group.displayName,
@@ -1001,22 +1183,22 @@ public struct MultiProviderSessionsListView: View {
                   }
                 }
               },
-              onRemove: orderedTrackedRepos.contains(where: { $0.path == group.id }) ? {
-                removeConfirmation = RemoveConfirmation(
-                  repoName: group.displayName,
-                  sessionCount: group.items.count
-                ) {
-                  if selectedModuleLandingPath == group.id {
-                    selectedModuleLandingPath = nil
-                  }
-                  if let repo = claudeViewModel.selectedRepositories.first(where: { $0.path == group.id }) {
-                    claudeViewModel.removeRepository(repo)
-                  }
-                  if let repo = codexViewModel.selectedRepositories.first(where: { $0.path == group.id }) {
-                    codexViewModel.removeRepository(repo)
-                  }
+              removeTitle: worktreeModule == nil ? "Remove" : "Remove from AgentHub",
+              onRemove: removeAction(
+                for: group,
+                worktreeModule: worktreeModule,
+                worktreeSessionCount: worktreeSessionCount
+              ),
+              onDeleteWorktree: worktreeModule.map { worktree in
+                {
+                  worktreeModuleDeleteConfirmation = WorktreeModuleDeleteConfirmation(
+                    worktree: worktree,
+                    displayName: group.displayName,
+                    sessionCount: worktreeSessionCount,
+                    providerKind: providerKindForWorktreeModule(worktree, items: group.items)
+                  )
                 }
-              } : nil
+              }
             )
 
             if isExpanded {
@@ -1859,7 +2041,9 @@ private struct ProjectGroupHeader: View {
   let onOpenInFinder: () -> Void
   let onOpenGitHub: () -> Void
   let onArchiveSessions: (() -> Void)?
+  let removeTitle: String
   let onRemove: (() -> Void)?
+  let onDeleteWorktree: (() -> Void)?
 
   @State private var isHovered: Bool = false
   @Environment(\.colorScheme) private var colorScheme
@@ -1897,15 +2081,22 @@ private struct ProjectGroupHeader: View {
         Button(action: onOpenGitHub) {
           Label("GitHub", systemImage: "arrow.triangle.pull")
         }
-        Divider()
-        if let onArchiveSessions {
-          Button(action: onArchiveSessions) {
-            Label("Archive Sessions", systemImage: "archivebox")
+        if onArchiveSessions != nil || onRemove != nil || onDeleteWorktree != nil {
+          Divider()
+          if let onArchiveSessions {
+            Button(action: onArchiveSessions) {
+              Label("Archive Sessions", systemImage: "archivebox")
+            }
           }
-        }
-        if let onRemove {
-          Button(action: onRemove) {
-            Label("Remove", systemImage: "xmark")
+          if let onRemove {
+            Button(action: onRemove) {
+              Label(removeTitle, systemImage: "xmark")
+            }
+          }
+          if let onDeleteWorktree {
+            Button(role: .destructive, action: onDeleteWorktree) {
+              Label("Delete Worktree", systemImage: "trash")
+            }
           }
         }
       }
