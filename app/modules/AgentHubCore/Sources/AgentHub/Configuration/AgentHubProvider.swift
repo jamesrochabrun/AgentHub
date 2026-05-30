@@ -205,8 +205,29 @@ public final class AgentHubProvider {
     )
   }()
 
+  /// Watches the worktree-progress sidecar directory the `agenthub` CLI writes
+  /// during MCP-initiated creations, so the app can surface live git progress.
+  public private(set) lazy var worktreeProgressSidecarWatcher: any WorktreeProgressSidecarWatcherProtocol = {
+    WorktreeProgressSidecarWatcher()
+  }()
+
+  /// Posts the "worktrees ready" macOS notification when a batch completes.
+  public private(set) lazy var worktreeReadyNotificationService: any WorktreeReadyNotificationServiceProtocol = {
+    WorktreeReadyNotificationService()
+  }()
+
+  /// App-wide coordinator unifying worktree creation progress (side panel + MCP)
+  /// for the top bar; fires the completion sound/notification once per batch.
+  public private(set) lazy var worktreeGenerationProgressCoordinator: WorktreeGenerationProgressCoordinator = {
+    WorktreeGenerationProgressCoordinator(
+      soundService: worktreeSuccessSoundService,
+      notificationService: worktreeReadyNotificationService
+    )
+  }()
+
   private var isWorktreeLaunchRequestMonitoringStarted = false
   private var isWorktreeDeletionRequestMonitoringStarted = false
+  private var isWorktreeProgressMonitoringStarted = false
 
   // MARK: - GitHub Integration
 
@@ -414,6 +435,24 @@ public final class AgentHubProvider {
   public func startWorktreeLaunchRequestMonitoring() {
     startWorktreeLaunchQueueMonitoring()
     startWorktreeDeletionQueueMonitoring()
+    startWorktreeProgressMonitoring()
+  }
+
+  private func startWorktreeProgressMonitoring() {
+    guard !isWorktreeProgressMonitoringStarted else { return }
+    isWorktreeProgressMonitoringStarted = true
+
+    let watcher = worktreeProgressSidecarWatcher
+    // Subscribe before starting the watcher so we don't miss its initial scan.
+    worktreeGenerationProgressCoordinator.startObservingMCP(watcher: watcher)
+    let notifications = worktreeReadyNotificationService
+    Task {
+      // Drop snapshots left behind by a creation that finished while the app
+      // was down, then begin watching for live progress.
+      await watcher.wipeAll()
+      await watcher.start()
+      await notifications.requestPermission()
+    }
   }
 
   private func startWorktreeLaunchQueueMonitoring() {

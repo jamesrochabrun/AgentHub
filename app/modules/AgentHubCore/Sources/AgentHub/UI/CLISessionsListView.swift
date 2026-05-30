@@ -132,14 +132,32 @@ public struct CLISessionsListView: View {
         repositoryPath: repository.path,
         repositoryName: repository.name,
         onDismiss: { createWorktreeRepository = nil },
-        onCreate: { branchName, directoryName, baseBranch, onProgress in
-          try await viewModel.createWorktree(
-            for: repository,
-            branchName: branchName,
-            directoryName: directoryName,
-            baseBranch: baseBranch,
-            onProgress: onProgress
-          )
+        onCreate: { branchName, directoryName, baseBranch in
+          if let coordinator = viewModel.agentHubProvider?.worktreeGenerationProgressCoordinator {
+            coordinator.beginSidePanelOperation(
+              branchName: branchName,
+              repoName: repository.name,
+              providerKind: viewModel.providerKind
+            ) { onProgress in
+              try await viewModel.createWorktree(
+                for: repository,
+                branchName: branchName,
+                directoryName: directoryName,
+                baseBranch: baseBranch,
+                onProgress: onProgress
+              )
+            }
+          } else {
+            Task {
+              try? await viewModel.createWorktree(
+                for: repository,
+                branchName: branchName,
+                directoryName: directoryName,
+                baseBranch: baseBranch,
+                onProgress: { _ in }
+              )
+            }
+          }
         }
       )
     }

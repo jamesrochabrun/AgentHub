@@ -200,29 +200,34 @@ public struct MultiProviderSessionsListView: View {
           .padding(.vertical, 8)
           .padding(.horizontal, 8)
       } detail: {
-        MultiProviderMonitoringPanelView(
-          claudeViewModel: claudeViewModel,
-          codexViewModel: codexViewModel,
-          primarySessionId: $primarySessionId,
-          selectedModuleLandingPath: $selectedModuleLandingPath,
-          onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
-          onAddFolder: { showAddRepositoryPicker() },
-          onRequestStartSession: { preferredRepositoryPath in
-            triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
-          },
-          onRequestForkSession: { session, targetProvider in
-            triggerForkSessionFlow(session: session, targetProvider: targetProvider)
+        VStack(spacing: 0) {
+          // Progress bar lives above the detail pane only (not over the sidebar).
+          WorktreeGenerationProgressBar()
+
+          MultiProviderMonitoringPanelView(
+            claudeViewModel: claudeViewModel,
+            codexViewModel: codexViewModel,
+            primarySessionId: $primarySessionId,
+            selectedModuleLandingPath: $selectedModuleLandingPath,
+            onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
+            onAddFolder: { showAddRepositoryPicker() },
+            onRequestStartSession: { preferredRepositoryPath in
+              triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
+            },
+            onRequestForkSession: { session, targetProvider in
+              triggerForkSessionFlow(session: session, targetProvider: targetProvider)
+            }
+          )
+          .padding(12)
+          .agentHubPanel()
+          .frame(minWidth: 300)
+          .padding(.vertical, 8)
+          .padding(.horizontal, 8)
+          .background {
+            NSSplitViewAutosaveDisabler()
+              .frame(width: 0, height: 0)
+              .allowsHitTesting(false)
           }
-        )
-        .padding(12)
-        .agentHubPanel()
-        .frame(minWidth: 300)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 8)
-        .background {
-          NSSplitViewAutosaveDisabler()
-            .frame(width: 0, height: 0)
-            .allowsHitTesting(false)
         }
       }
       .navigationSplitViewStyle(.balanced)
@@ -366,14 +371,12 @@ public struct MultiProviderSessionsListView: View {
         repositoryPath: context.repository.path,
         repositoryName: context.repository.name,
         onDismiss: { createWorktreeContext = nil },
-        onCreate: { branchName, directoryName, baseBranch, onProgress in
-          let vm = viewModel(for: context.providerKind)
-          try await vm.createWorktree(
-            for: context.repository,
+        onCreate: { branchName, directoryName, baseBranch in
+          beginSidePanelWorktree(
+            context: context,
             branchName: branchName,
             directoryName: directoryName,
-            baseBranch: baseBranch,
-            onProgress: onProgress
+            baseBranch: baseBranch
           )
         }
       )
@@ -1402,6 +1405,46 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
+  /// Hands a side-panel worktree creation to the app-wide progress coordinator
+  /// (which owns the work and surfaces it in the top bar) so the sheet can
+  /// dismiss immediately. Falls back to a direct, untracked creation if no
+  /// coordinator is available (e.g. previews).
+  private func beginSidePanelWorktree(
+    context: WorktreeCreateContext,
+    branchName: String,
+    directoryName: String,
+    baseBranch: String?
+  ) {
+    let vm = viewModel(for: context.providerKind)
+    let repo = context.repository
+    let providerKind = context.providerKind
+    if let coordinator = vm.agentHubProvider?.worktreeGenerationProgressCoordinator {
+      coordinator.beginSidePanelOperation(
+        branchName: branchName,
+        repoName: repo.name,
+        providerKind: providerKind
+      ) { onProgress in
+        try await vm.createWorktree(
+          for: repo,
+          branchName: branchName,
+          directoryName: directoryName,
+          baseBranch: baseBranch,
+          onProgress: onProgress
+        )
+      }
+    } else {
+      Task {
+        try? await vm.createWorktree(
+          for: repo,
+          branchName: branchName,
+          directoryName: directoryName,
+          baseBranch: baseBranch,
+          onProgress: { _ in }
+        )
+      }
+    }
+  }
+
   private var selectedProvider: SessionProviderKind {
     SessionProviderKind(rawValue: selectedProviderRaw) ?? .claude
   }
@@ -2030,10 +2073,20 @@ private struct StartSessionSheet: View {
     .frame(minWidth: 480, idealWidth: 520)
     .background(colorScheme == .dark ? Color.black : Color(nsColor: .windowBackgroundColor))
     .onChange(of: launchViewModel.isLaunching) { wasLaunching, isLaunching in
-      guard wasLaunching, !isLaunching else { return }
-      if launchViewModel.isSmartInteractive { return }
-      if launchViewModel.lastLaunchEndedByCancellation { return }
-      onDismiss()
+      if !wasLaunching, isLaunching {
+        // Launch started: manual launches hand progress off to the top bar and
+        // close immediately. Smart (interactive) launches stay open to review
+        // the orchestration plan.
+        if !launchViewModel.isSmartInteractive {
+          onDismiss()
+        }
+      } else if wasLaunching, !isLaunching {
+        // Launch finished: dismiss flows that stayed open (e.g. smart), unless
+        // still interactive or ended by cancellation.
+        if launchViewModel.isSmartInteractive { return }
+        if launchViewModel.lastLaunchEndedByCancellation { return }
+        onDismiss()
+      }
     }
   }
 }
