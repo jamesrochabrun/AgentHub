@@ -71,10 +71,91 @@ struct WorktreeSettingsInventoryTests {
     #expect(module.worktrees.count == 1)
     #expect(worktree.path == "/tmp/AgentHub-feature")
     #expect(worktree.providerKinds == [.claude, .codex])
-    #expect(worktree.deletionProviderKind == .claude)
+    #expect(worktree.isFocusedInAgentHub)
     #expect(worktree.monitoredSessionCount == 2)
     #expect(worktree.activeMonitoredSessionCount == 1)
     #expect(worktree.historicalSessionCount == 2)
+  }
+
+  @Test("Snapshot includes external discovered worktrees")
+  func snapshotIncludesExternalDiscoveredWorktrees() throws {
+    let repository = SelectedRepository(
+      path: "/tmp/AgentHub",
+      worktrees: [
+        WorktreeBranch(name: "main", path: "/tmp/AgentHub", isWorktree: false),
+      ]
+    )
+
+    let snapshot = WorktreeSettingsInventoryBuilder.snapshot(
+      claudeRepositories: [repository],
+      codexRepositories: [],
+      claudeMonitoredSessions: [],
+      codexMonitoredSessions: [],
+      discoveredWorktreesByRepositoryPath: [
+        "/tmp/AgentHub": [
+          GitWorktreeInventoryItem(
+            path: "/tmp/AgentHub",
+            branchName: "main",
+            isWorktree: false,
+            mainRepoPath: nil
+          ),
+          GitWorktreeInventoryItem(
+            path: "/tmp/AgentHub-external",
+            branchName: "feature/external",
+            isWorktree: true,
+            mainRepoPath: "/tmp/AgentHub"
+          ),
+        ]
+      ]
+    )
+
+    let module = try #require(snapshot.modules.first)
+    let worktree = try #require(module.worktrees.first)
+
+    #expect(module.worktrees.count == 1)
+    #expect(worktree.branchName == "feature/external")
+    #expect(worktree.path == "/tmp/AgentHub-external")
+    #expect(worktree.parentModulePath == "/tmp/AgentHub")
+    #expect(worktree.providerKinds.isEmpty)
+    #expect(!worktree.isFocusedInAgentHub)
+    #expect(worktree.monitoredSessionCount == 0)
+    #expect(worktree.historicalSessionCount == 0)
+  }
+
+  @Test("Snapshot deduplicates discovered and focused worktrees")
+  func snapshotDeduplicatesDiscoveredAndFocusedWorktrees() throws {
+    let repository = SelectedRepository(
+      path: "/tmp/AgentHub",
+      worktrees: [
+        WorktreeBranch(name: "main", path: "/tmp/AgentHub", isWorktree: false),
+        WorktreeBranch(name: "feature/focused", path: "/tmp/AgentHub-focused", isWorktree: true),
+      ]
+    )
+
+    let snapshot = WorktreeSettingsInventoryBuilder.snapshot(
+      claudeRepositories: [repository],
+      codexRepositories: [],
+      claudeMonitoredSessions: [],
+      codexMonitoredSessions: [],
+      discoveredWorktreesByRepositoryPath: [
+        "/tmp/AgentHub": [
+          GitWorktreeInventoryItem(
+            path: "/tmp/AgentHub-focused/",
+            branchName: "feature/focused",
+            isWorktree: true,
+            mainRepoPath: "/tmp/AgentHub"
+          )
+        ]
+      ]
+    )
+
+    let module = try #require(snapshot.modules.first)
+    let worktree = try #require(module.worktrees.first)
+
+    #expect(module.worktrees.count == 1)
+    #expect(worktree.path == "/tmp/AgentHub-focused")
+    #expect(worktree.providerKinds == [.claude])
+    #expect(worktree.isFocusedInAgentHub)
   }
 }
 

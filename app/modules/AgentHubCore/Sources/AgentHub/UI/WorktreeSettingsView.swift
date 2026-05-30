@@ -51,7 +51,9 @@ public struct WorktreeSettingsView: View {
       if let agentHub {
         WorktreeInventorySection(
           claudeViewModel: agentHub.claudeSessionsViewModel,
-          codexViewModel: agentHub.codexSessionsViewModel
+          codexViewModel: agentHub.codexSessionsViewModel,
+          inventoryService: agentHub.gitService,
+          worktreeRemovalService: agentHub.gitService
         )
       } else {
         Section("Worktrees") {

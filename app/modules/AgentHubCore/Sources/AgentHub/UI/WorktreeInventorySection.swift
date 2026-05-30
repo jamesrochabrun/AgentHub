@@ -1,17 +1,32 @@
 import SwiftUI
 
 struct WorktreeInventorySection: View {
-  @Bindable var claudeViewModel: CLISessionsViewModel
-  @Bindable var codexViewModel: CLISessionsViewModel
+  let claudeViewModel: CLISessionsViewModel
+  let codexViewModel: CLISessionsViewModel
 
+  @State private var inventoryViewModel: WorktreeInventoryViewModel
   @State private var pendingDeletion: WorktreeSettingsWorktree?
   @State private var isDeleteConfirmationPresented = false
-  @State private var deletionFailure: WorktreeSettingsDeletionFailure?
+  @State private var deletionFailure: WorktreeInventoryDeletionError?
   @State private var isFailureAlertPresented = false
+
+  init(
+    claudeViewModel: CLISessionsViewModel,
+    codexViewModel: CLISessionsViewModel,
+    inventoryService: any GitWorktreeInventoryServiceProtocol = GitWorktreeService(),
+    worktreeRemovalService: any GitWorktreeRemovalServiceProtocol = GitWorktreeService()
+  ) {
+    self.claudeViewModel = claudeViewModel
+    self.codexViewModel = codexViewModel
+    self._inventoryViewModel = State(initialValue: WorktreeInventoryViewModel(
+      inventoryService: inventoryService,
+      removalService: worktreeRemovalService
+    ))
+  }
 
   var body: some View {
     Section("Worktrees") {
-      let currentSnapshot = snapshot
+      let currentSnapshot = inventoryViewModel.snapshot
 
       if currentSnapshot.modules.isEmpty {
         WorktreeInventoryEmptyView()
@@ -19,16 +34,23 @@ struct WorktreeInventorySection: View {
         VStack(alignment: .leading, spacing: 14) {
           WorktreeInventorySummaryView(snapshot: currentSnapshot)
 
+          if !inventoryViewModel.loadFailuresByRepositoryPath.isEmpty {
+            WorktreeInventoryLoadFailureView()
+          }
+
           ForEach(currentSnapshot.modules) { module in
             WorktreeInventoryModuleView(
               module: module,
-              isDeleting: { isDeletingWorktree(at: $0.path) },
+              isDeleting: { inventoryViewModel.deletingWorktreePath == $0.path },
               onDelete: requestDelete
             )
           }
         }
         .padding(.vertical, 4)
       }
+    }
+    .task(id: inventoryReloadID) {
+      await reloadInventory()
     }
     .alert("Delete Worktree?", isPresented: $isDeleteConfirmationPresented, presenting: pendingDeletion) { worktree in
       Button("Cancel", role: .cancel) {
@@ -45,7 +67,7 @@ struct WorktreeInventorySection: View {
       }
     }
     .alert("Failed to Delete Worktree", isPresented: $isFailureAlertPresented, presenting: deletionFailure) { failure in
-      if failure.error.isOrphaned, failure.error.parentRepoPath != nil {
+      if failure.isOrphaned, failure.parentRepoPath != nil {
         Button("Prune & Delete", role: .destructive) {
           pruneAndDelete(failure)
         }
@@ -58,21 +80,12 @@ struct WorktreeInventorySection: View {
         clearFailure(failure)
       }
     } message: { failure in
-      if failure.error.isOrphaned, let parentRepoPath = failure.error.parentRepoPath {
-        Text("The worktree at:\n\(failure.error.worktree.path)\n\nhas no parent repo. You can prune and delete it from:\n\(parentRepoPath)")
+      if failure.isOrphaned, let parentRepoPath = failure.parentRepoPath {
+        Text("The worktree at:\n\(failure.worktree.path)\n\nhas no parent repo. You can prune and delete it from:\n\(parentRepoPath)")
       } else {
-        Text("\(failure.error.message)\n\n\"Force Delete\" will remove the worktree even if it contains untracked files.")
+        Text("\(failure.message)\n\n\"Force Delete\" will remove the worktree even if it contains untracked files.")
       }
     }
-  }
-
-  private var snapshot: WorktreeSettingsSnapshot {
-    WorktreeSettingsInventoryBuilder.snapshot(
-      claudeRepositories: claudeViewModel.selectedRepositories,
-      codexRepositories: codexViewModel.selectedRepositories,
-      claudeMonitoredSessions: claudeViewModel.monitoredSessions.map(\.session),
-      codexMonitoredSessions: codexViewModel.monitoredSessions.map(\.session)
-    )
   }
 
   private func requestDelete(_ worktree: WorktreeSettingsWorktree) {
@@ -87,40 +100,40 @@ struct WorktreeInventorySection: View {
     }
   }
 
-  private func forceDelete(_ failure: WorktreeSettingsDeletionFailure) {
+  private func forceDelete(_ failure: WorktreeInventoryDeletionError) {
     Task {
       await delete(failure.worktree, force: true)
     }
   }
 
-  private func pruneAndDelete(_ failure: WorktreeSettingsDeletionFailure) {
-    guard let parentRepoPath = failure.error.parentRepoPath else { return }
+  private func pruneAndDelete(_ failure: WorktreeInventoryDeletionError) {
+    guard let parentRepoPath = failure.parentRepoPath else { return }
     clearFailure(failure)
 
     Task {
-      let viewModel = viewModel(for: failure.providerKind)
-      let succeeded = await viewModel.deleteOrphanedWorktree(
-        failure.error.worktree,
+      let succeeded = await inventoryViewModel.deleteOrphaned(
+        failure.worktree,
         parentRepoPath: parentRepoPath
       )
 
       if succeeded {
         completeSuccessfulDeletion(of: failure.worktree)
+        await reloadInventory()
       } else {
-        showFailure(from: viewModel, worktree: failure.worktree)
+        showFailure(worktree: failure.worktree)
       }
     }
   }
 
   private func delete(_ worktree: WorktreeSettingsWorktree, force: Bool) async {
-    clearFailure(providerKind: worktree.deletionProviderKind)
-    let viewModel = viewModel(for: worktree.deletionProviderKind)
-    let succeeded = await viewModel.deleteWorktree(worktree.worktree, force: force)
+    clearFailure()
+    let succeeded = await inventoryViewModel.delete(worktree, force: force)
 
     if succeeded {
       completeSuccessfulDeletion(of: worktree)
+      await reloadInventory()
     } else {
-      showFailure(from: viewModel, worktree: worktree)
+      showFailure(worktree: worktree)
     }
   }
 
@@ -133,48 +146,61 @@ struct WorktreeInventorySection: View {
     codexViewModel.refresh()
   }
 
-  private func showFailure(from viewModel: CLISessionsViewModel, worktree: WorktreeSettingsWorktree) {
-    let error = viewModel.worktreeDeletionError ?? CLISessionsViewModel.WorktreeDeletionError(
-      worktree: worktree.worktree,
+  private func showFailure(worktree: WorktreeSettingsWorktree) {
+    let error = inventoryViewModel.deletionError ?? WorktreeInventoryDeletionError(
+      worktree: worktree,
       message: "The worktree could not be deleted."
     )
-    deletionFailure = WorktreeSettingsDeletionFailure(
-      providerKind: viewModel.providerKind,
-      worktree: worktree,
-      error: error
-    )
+    deletionFailure = error
     isFailureAlertPresented = true
   }
 
-  private func clearFailure(_ failure: WorktreeSettingsDeletionFailure) {
-    clearFailure(providerKind: failure.providerKind)
+  private func clearFailure(_ failure: WorktreeInventoryDeletionError) {
+    clearFailure()
     deletionFailure = nil
   }
 
-  private func clearFailure(providerKind: SessionProviderKind) {
-    viewModel(for: providerKind).clearWorktreeDeletionError()
+  private func clearFailure() {
+    inventoryViewModel.clearDeletionError()
     deletionFailure = nil
     isFailureAlertPresented = false
   }
 
-  private func viewModel(for providerKind: SessionProviderKind) -> CLISessionsViewModel {
-    switch providerKind {
-    case .claude:
-      return claudeViewModel
-    case .codex:
-      return codexViewModel
+  private func reloadInventory() async {
+    await inventoryViewModel.reload(
+      claudeRepositories: claudeViewModel.selectedRepositories,
+      codexRepositories: codexViewModel.selectedRepositories,
+      claudeMonitoredSessions: claudeViewModel.monitoredSessions.map(\.session),
+      codexMonitoredSessions: codexViewModel.monitoredSessions.map(\.session)
+    )
+  }
+
+  private var inventoryReloadID: String {
+    [
+      repositoriesSignature(claudeViewModel.selectedRepositories),
+      repositoriesSignature(codexViewModel.selectedRepositories),
+      sessionsSignature(claudeViewModel.monitoredSessions.map(\.session)),
+      sessionsSignature(codexViewModel.monitoredSessions.map(\.session)),
+    ].joined(separator: "|")
+  }
+
+  private func repositoriesSignature(_ repositories: [SelectedRepository]) -> String {
+    repositories.map { repository in
+      let worktrees = repository.worktrees.map { worktree in
+        "\(worktree.path):\(worktree.name):\(worktree.isWorktree)"
+      }.joined(separator: ",")
+      return "\(repository.path)[\(worktrees)]"
     }
+    .joined(separator: ";")
   }
 
-  private func isDeletingWorktree(at path: String) -> Bool {
-    claudeViewModel.deletingWorktreePath == path || codexViewModel.deletingWorktreePath == path
+  private func sessionsSignature(_ sessions: [CLISession]) -> String {
+    sessions.map { session in
+      "\(session.id):\(session.projectPath):\(session.isActive)"
+    }
+    .sorted()
+    .joined(separator: ";")
   }
-}
-
-private struct WorktreeSettingsDeletionFailure {
-  let providerKind: SessionProviderKind
-  let worktree: WorktreeSettingsWorktree
-  let error: CLISessionsViewModel.WorktreeDeletionError
 }
 
 private struct WorktreeInventorySummaryView: View {
@@ -254,15 +280,23 @@ private struct WorktreeInventoryRow: View {
             .font(.subheadline.weight(.semibold))
             .lineLimit(1)
 
-          Text(worktree.providerLabel)
-            .font(.caption2.weight(.medium))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(
-              RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(Color.primary.opacity(0.06))
+          WorktreeInventoryBadge(
+            title: worktree.isFocusedInAgentHub ? "Focused in AgentHub" : "External",
+            systemImage: worktree.isFocusedInAgentHub ? "scope" : "externaldrive",
+            isProminent: worktree.isFocusedInAgentHub,
+            helpText: worktree.isFocusedInAgentHub
+              ? "This worktree is focused in AgentHub, so its sessions can appear in the session list and grouping."
+              : "This worktree belongs to a tracked repository, but AgentHub has not focused it for session grouping."
+          )
+
+          if worktree.isFocusedInAgentHub, !worktree.providerLabel.isEmpty {
+            WorktreeInventoryBadge(
+              title: worktree.providerLabel,
+              systemImage: "terminal",
+              isProminent: false,
+              helpText: "Providers with AgentHub session history for this worktree."
             )
+          }
         }
 
         Text(worktree.path)
@@ -286,16 +320,14 @@ private struct WorktreeInventoryRow: View {
           .scaleEffect(0.7)
           .frame(width: 28, height: 28)
       } else {
-        Button(action: onDelete) {
-          Image(systemName: "trash")
-            .font(.system(size: 13))
-            .frame(width: 28, height: 28)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .help("Delete worktree")
-        .accessibilityLabel("Delete worktree \(worktree.branchName)")
+        Button("Delete worktree \(worktree.branchName)", systemImage: "trash", action: onDelete)
+          .labelStyle(.iconOnly)
+          .font(.system(size: 13))
+          .frame(width: 28, height: 28)
+          .contentShape(Rectangle())
+          .buttonStyle(.plain)
+          .foregroundStyle(.secondary)
+          .help("Delete worktree")
       }
     }
     .padding(8)
@@ -303,6 +335,48 @@ private struct WorktreeInventoryRow: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .fill(Color.primary.opacity(0.04))
     )
+  }
+}
+
+private struct WorktreeInventoryBadge: View {
+  let title: String
+  let systemImage: String
+  let isProminent: Bool
+  let helpText: String
+
+  @State private var isHelpPresented = false
+
+  var body: some View {
+    Label(title, systemImage: systemImage)
+      .font(.caption)
+      .labelStyle(.titleAndIcon)
+      .foregroundStyle(isProminent ? .primary : .secondary)
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(
+        RoundedRectangle(cornerRadius: 5)
+          .fill(Color.primary.opacity(isProminent ? 0.08 : 0.05))
+      )
+      .contentShape(RoundedRectangle(cornerRadius: 5))
+      .help(helpText)
+      .onHover { isHovering in
+        isHelpPresented = isHovering
+      }
+      .popover(isPresented: $isHelpPresented, arrowEdge: .top) {
+        Text(helpText)
+          .font(.caption)
+          .foregroundStyle(.primary)
+          .padding(10)
+          .frame(width: 240, alignment: .leading)
+      }
+  }
+}
+
+private struct WorktreeInventoryLoadFailureView: View {
+  var body: some View {
+    Label("Some git worktrees could not be loaded", systemImage: "exclamationmark.triangle")
+      .font(.caption)
+      .foregroundStyle(.secondary)
   }
 }
 

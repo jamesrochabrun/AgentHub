@@ -245,7 +245,7 @@ Toggle between modes in the app settings.
 
 Worktree sessions are grouped under their parent module by default, so `ModuleA` shows its regular sessions plus AgentHub-owned worktree sessions. The Worktrees settings tab can switch to separate modules, where each AgentHub-owned worktree appears as its own module section.
 
-AgentHub only treats worktrees it created, explicitly added, or focused through monitored sessions as owned. External Git worktrees discovered from the repository are ignored for session grouping, which keeps large local worktree setups from flooding the session list.
+AgentHub only treats worktrees it created, explicitly added, or focused through monitored sessions as owned. External Git worktrees discovered from the repository are ignored for session grouping, which keeps large local worktree setups from flooding the session list. The Worktrees settings inventory still lists all Git worktrees for tracked repositories: focused rows participate in AgentHub grouping, while external rows can be deleted without becoming focused.
 
 ### Provider Defaults
 
