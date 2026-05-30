@@ -66,6 +66,10 @@ public extension WorktreeManagementServiceProtocol {
 public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
   private static let gitCommandTimeout: TimeInterval = 10.0
   private static let gitWorktreeTimeout: TimeInterval = 300.0
+  private static let creationQueue = WorktreeCreationQueue(
+    maxConcurrentGlobally: 2,
+    maxConcurrentPerRepository: 1
+  )
   private static let updatingFilesPattern = #/Updating files:\s+\d+%\s+\((\d+)/(\d+)\)/#
 
   private var gitRootCache: [String: String] = [:]
@@ -153,16 +157,19 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     branch: String,
     directoryName: String
   ) async throws -> String {
-    let sourceRoot = try await findGitRoot(at: repoPath)
-    let worktreePath = try await prepareWorktreePath(repoPath: repoPath, directoryName: directoryName)
+    let repoKey = try await findMainRepositoryRoot(at: repoPath)
+    return try await Self.creationQueue.withPermit(repoKey: repoKey) { [self] in
+      let sourceRoot = try await findGitRoot(at: repoPath)
+      let worktreePath = try await prepareWorktreePath(repoPath: repoPath, directoryName: directoryName)
 
-    try await runGitCommand(
-      ["worktree", "add", worktreePath, branch],
-      at: sourceRoot,
-      timeout: Self.gitWorktreeTimeout
-    )
+      try await runGitCommand(
+        ["worktree", "add", worktreePath, branch],
+        at: sourceRoot,
+        timeout: Self.gitWorktreeTimeout
+      )
 
-    return worktreePath
+      return worktreePath
+    }
   }
 
   public func checkoutWorktree(
@@ -188,16 +195,19 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     directoryName: String,
     startPoint: String? = nil
   ) async throws -> String {
-    let sourceRoot = try await findGitRoot(at: repoPath)
-    let worktreePath = try await prepareWorktreePath(repoPath: repoPath, directoryName: directoryName)
+    let repoKey = try await findMainRepositoryRoot(at: repoPath)
+    return try await Self.creationQueue.withPermit(repoKey: repoKey) { [self] in
+      let sourceRoot = try await findGitRoot(at: repoPath)
+      let worktreePath = try await prepareWorktreePath(repoPath: repoPath, directoryName: directoryName)
 
-    var args = ["worktree", "add", "-b", newBranchName, worktreePath]
-    if let startPoint {
-      args.append(startPoint)
+      var args = ["worktree", "add", "-b", newBranchName, worktreePath]
+      if let startPoint {
+        args.append(startPoint)
+      }
+
+      try await runGitCommand(args, at: sourceRoot, timeout: Self.gitWorktreeTimeout)
+      return worktreePath
     }
-
-    try await runGitCommand(args, at: sourceRoot, timeout: Self.gitWorktreeTimeout)
-    return worktreePath
   }
 
   public func createWorktreeWithNewBranch(
@@ -208,32 +218,44 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     operationID: WorktreeOperationID,
     onProgress: @escaping @Sendable (WorktreeCreationProgress) async -> Void
   ) async throws -> String {
-    if cancelledWorktreeOperations.contains(operationID) {
+    if consumeCancellation(for: operationID) {
       await onProgress(.cancelled(message: "Cancelled before worktree creation began"))
-      cancelledWorktreeOperations.remove(operationID)
       throw WorktreeManagementError.cancelled
     }
 
-    await onProgress(.preparing(message: "Preparing worktree..."))
+    let repoKey = try await findMainRepositoryRoot(at: repoPath)
+    return try await Self.creationQueue.withPermit(
+      repoKey: repoKey,
+      onQueued: {
+        await onProgress(.queued(message: "Queued behind another worktree for this repository"))
+      }
+    ) { [self] in
+      if await consumeCancellation(for: operationID) {
+        await onProgress(.cancelled(message: "Cancelled before worktree creation began"))
+        throw WorktreeManagementError.cancelled
+      }
 
-    let sourceRoot = try await findGitRoot(at: repoPath)
-    let worktreePath = try await prepareWorktreePath(repoPath: repoPath, directoryName: directoryName)
+      await onProgress(.preparing(message: "Preparing worktree..."))
 
-    var args = ["worktree", "add", "-b", newBranchName, worktreePath]
-    if let startPoint {
-      args.append(startPoint)
+      let sourceRoot = try await findGitRoot(at: repoPath)
+      let worktreePath = try await prepareWorktreePath(repoPath: repoPath, directoryName: directoryName)
+
+      var args = ["worktree", "add", "-b", newBranchName, worktreePath]
+      if let startPoint {
+        args.append(startPoint)
+      }
+
+      try await runGitCommandWithProgress(
+        args,
+        at: sourceRoot,
+        timeout: Self.gitWorktreeTimeout,
+        operationID: operationID,
+        onProgress: onProgress
+      )
+
+      await onProgress(.completed(path: worktreePath))
+      return worktreePath
     }
-
-    try await runGitCommandWithProgress(
-      args,
-      at: sourceRoot,
-      timeout: Self.gitWorktreeTimeout,
-      operationID: operationID,
-      onProgress: onProgress
-    )
-
-    await onProgress(.completed(path: worktreePath))
-    return worktreePath
   }
 
   public func cancelWorktreeCreation(_ operationID: WorktreeOperationID) async {
@@ -241,6 +263,12 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     if let process = activeWorktreeProcesses[operationID] {
       Self.terminateIfRunning(process)
     }
+  }
+
+  private func consumeCancellation(for operationID: WorktreeOperationID) -> Bool {
+    guard cancelledWorktreeOperations.contains(operationID) else { return false }
+    cancelledWorktreeOperations.remove(operationID)
+    return true
   }
 
   public func cleanupCancelledWorktreeCreation(

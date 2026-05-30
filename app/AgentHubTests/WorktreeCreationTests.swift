@@ -408,6 +408,21 @@ struct MultiSessionLaunchViewModelResetTests {
     #expect(vm.branchNamingCompletedAt == nil)
   }
 
+  @Test("reset() clears launcher busy state")
+  @MainActor
+  func resetClearsLauncherBusyState() {
+    let vm = makeViewModel()
+    vm.isLaunching = true
+    vm.isLoadingBranches = true
+    vm.isLoadingCurrentBranch = true
+
+    vm.reset()
+
+    #expect(vm.isLaunching == false)
+    #expect(vm.isLoadingBranches == false)
+    #expect(vm.isLoadingCurrentBranch == false)
+  }
+
   @Test("reset() clears manual worktree naming state")
   @MainActor
   func resetClearsManualWorktreeNamingState() {

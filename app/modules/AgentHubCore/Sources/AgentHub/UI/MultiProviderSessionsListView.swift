@@ -123,6 +123,11 @@ private struct WorktreeCreateContext: Identifiable {
   let repository: SelectedRepository
 }
 
+private struct StartSessionSheetContext: Identifiable {
+  let id = UUID()
+  let launchViewModel: MultiSessionLaunchViewModel
+}
+
 public struct MultiProviderSessionsListView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
@@ -143,13 +148,13 @@ public struct MultiProviderSessionsListView: View {
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
+  @State private var startSessionSheetContext: StartSessionSheetContext?
   @State private var gitHubSheetItem: GitHubSheetItem?
   @State private var archiveConfirmation: ArchiveConfirmation?
   @State private var removeConfirmation: RemoveConfirmation?
   @State private var worktreeModuleDeleteConfirmation: WorktreeModuleDeleteConfirmation?
   @State private var selectedModuleLandingPath: String?
   @State private var pendingAddedModulePaths: [String] = []
-  @State private var isStartSessionSheetPresented = false
   @State private var isRefreshingGitHubStates = false
   @State private var didScheduleInitialGitHubStateRefresh = false
 
@@ -247,13 +252,7 @@ public struct MultiProviderSessionsListView: View {
     }
     .onAppear {
       if multiLaunchViewModel == nil {
-        multiLaunchViewModel = MultiSessionLaunchViewModel(
-          claudeViewModel: claudeViewModel,
-          codexViewModel: codexViewModel,
-          intelligenceViewModel: intelligenceViewModel,
-          worktreeBranchNamingService: worktreeBranchNamingService,
-          worktreeSuccessSoundService: worktreeSuccessSoundService
-        )
+        multiLaunchViewModel = makeLaunchViewModel()
       }
       ensurePrimarySelection()
       scheduleInitialGitHubStateRefreshIfNeeded()
@@ -447,14 +446,12 @@ public struct MultiProviderSessionsListView: View {
         }
       )
     }
-    .sheet(isPresented: $isStartSessionSheetPresented) {
-      if let multiLaunchViewModel {
-        StartSessionSheet(
-          launchViewModel: multiLaunchViewModel,
-          intelligenceViewModel: intelligenceViewModel,
-          onDismiss: { isStartSessionSheetPresented = false }
-        )
-      }
+    .sheet(item: $startSessionSheetContext) { context in
+      StartSessionSheet(
+        launchViewModel: context.launchViewModel,
+        intelligenceViewModel: intelligenceViewModel,
+        onDismiss: { startSessionSheetContext = nil }
+      )
     }
     .modifier(ArchiveConfirmationAlert(confirmation: $archiveConfirmation))
     .modifier(RemoveConfirmationAlert(confirmation: $removeConfirmation))
@@ -1091,12 +1088,13 @@ public struct MultiProviderSessionsListView: View {
       SessionsSectionHeader(
         groupMode: $sidebarGroupMode,
         repos: orderedTrackedRepos,
-        launchViewModel: multiLaunchViewModel,
-        intelligenceViewModel: intelligenceViewModel,
         isRefreshingGitHubStates: isRefreshingGitHubStates,
         canRefreshGitHubStates: canRefreshGitHubStates,
         onRefreshGitHubStates: refreshGitHubStates,
-        onAddFolder: { showAddRepositoryPicker() }
+        onAddFolder: { showAddRepositoryPicker() },
+        onStartSession: { repoPath in
+          triggerNewSessionFlow(preferredRepositoryPath: repoPath)
+        }
       )
 
       let pendingModules = pendingModulePaths
@@ -1909,6 +1907,16 @@ public struct MultiProviderSessionsListView: View {
     )
   }
 
+  private func makeLaunchViewModel() -> MultiSessionLaunchViewModel {
+    MultiSessionLaunchViewModel(
+      claudeViewModel: claudeViewModel,
+      codexViewModel: codexViewModel,
+      intelligenceViewModel: intelligenceViewModel,
+      worktreeBranchNamingService: worktreeBranchNamingService,
+      worktreeSuccessSoundService: worktreeSuccessSoundService
+    )
+  }
+
   private func triggerFocusedNewSessionFlow() {
     guard let focusedSessionLaunchPath else { return }
     triggerNewSessionFlow(
@@ -1921,36 +1929,35 @@ public struct MultiProviderSessionsListView: View {
     preferredRepositoryPath: String? = nil,
     fallsBackToRepositoryPicker: Bool = true
   ) {
-    guard let multiLaunchViewModel else { return }
-    multiLaunchViewModel.reset()
+    let launchViewModel = makeLaunchViewModel()
 
     guard let preferredRepositoryPath else {
-      isStartSessionSheetPresented = true
-      multiLaunchViewModel.selectRepository()
+      startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
+      launchViewModel.selectRepository()
       return
     }
 
     Task { @MainActor in
-      let didPreselect = await multiLaunchViewModel.preselectRepository(path: preferredRepositoryPath)
+      let didPreselect = await launchViewModel.preselectRepository(path: preferredRepositoryPath)
       if didPreselect {
-        isStartSessionSheetPresented = true
+        startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
       } else if fallsBackToRepositoryPicker {
-        isStartSessionSheetPresented = true
-        multiLaunchViewModel.selectRepository()
+        startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
+        launchViewModel.selectRepository()
       }
     }
   }
 
   private func triggerForkSessionFlow(session: CLISession, targetProvider: SessionProviderKind) {
-    guard let multiLaunchViewModel else { return }
+    let launchViewModel = makeLaunchViewModel()
 
     Task { @MainActor in
-      let didConfigure = await multiLaunchViewModel.configureForFork(
+      let didConfigure = await launchViewModel.configureForFork(
         from: session,
         targetProvider: targetProvider
       )
       if didConfigure {
-        isStartSessionSheetPresented = true
+        startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
       }
     }
   }
@@ -2287,15 +2294,13 @@ private struct StartSessionSheet: View {
 private struct SessionsSectionHeader: View {
   @Binding var groupMode: SidebarGroupMode
   let repos: [SelectedRepository]
-  let launchViewModel: MultiSessionLaunchViewModel?
-  let intelligenceViewModel: IntelligenceViewModel?
   let isRefreshingGitHubStates: Bool
   let canRefreshGitHubStates: Bool
   let onRefreshGitHubStates: () -> Void
   let onAddFolder: () -> Void
+  let onStartSession: (String) -> Void
 
   @State private var showGroupPopover = false
-  @State private var showStartSheet = false
 
   var body: some View {
     VStack(spacing: 0) {
@@ -2336,27 +2341,13 @@ private struct SessionsSectionHeader: View {
           ) {
             ForEach(repos, id: \.path) { repo in
               Button {
-                guard let vm = launchViewModel else { return }
-                Task { @MainActor in
-                  vm.reset()
-                  _ = await vm.preselectRepository(path: repo.path)
-                  showStartSheet = true
-                }
+                onStartSession(repo.path)
               } label: {
                 Label(
                   URL(fileURLWithPath: repo.path).lastPathComponent,
                   systemImage: "folder"
                 )
               }
-            }
-          }
-          .sheet(isPresented: $showStartSheet) {
-            if let vm = launchViewModel {
-              StartSessionSheet(
-                launchViewModel: vm,
-                intelligenceViewModel: intelligenceViewModel,
-                onDismiss: { showStartSheet = false }
-              )
             }
           }
         }

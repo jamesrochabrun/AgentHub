@@ -245,7 +245,7 @@ public struct WorktreeGenerationProgressBar: View {
       return (op.branchName.isEmpty ? "Creation failed" : op.branchName, error)
     case .cancelled:
       return (op.branchName.isEmpty ? "Cancelled" : op.branchName, "Cancelled")
-    case .idle, .preparing, .updatingFiles:
+    case .idle, .queued, .preparing, .updatingFiles:
       let title = op.branchName.isEmpty ? "Creating worktree" : op.branchName
       let subtitle = op.progress.statusMessage.isEmpty ? op.repoName : op.progress.statusMessage
       return (title, subtitle)
@@ -350,7 +350,7 @@ private struct WorktreeGenerationOperationRow: View {
     case .completed: return .green
     case .failed: return .red
     case .cancelled: return .secondary
-    case .idle, .preparing, .updatingFiles: return .brandPrimary
+    case .idle, .queued, .preparing, .updatingFiles: return .brandPrimary
     }
   }
 
