@@ -92,6 +92,24 @@ struct WorktreeGenerationProgressCoordinatorTests {
     #expect(notif.calls.isEmpty)
   }
 
+  @Test("Naming + creation announces a single ready worktree, not two")
+  func namingPlusCreationCountsOnce() async {
+    UserDefaults.standard.set(true, forKey: AgentHubDefaults.notificationSoundsEnabled)
+    let sound = MockSound()
+    let notif = MockNotifier()
+    let coord = WorktreeGenerationProgressCoordinator(soundService: sound, notificationService: notif)
+
+    // The transient naming step followed by the real creation, same worktree.
+    coord.reportNamingProgress(operationID: "N1", repoName: "repo", providerKind: .claude, progress: .preparingContext(message: "Preparing"))
+    coord.reportNamingProgress(operationID: "N1", repoName: "repo", providerKind: .claude, progress: .completed(message: "ready", source: .ai, branchNames: ["feature/x"]))
+    coord.reportLaunchProgress(operationID: "C1", branchName: "feature/x", repoName: "repo", providerKind: .claude, progress: .updatingFiles(current: 1, total: 4))
+    coord.reportLaunchProgress(operationID: "C1", branchName: "feature/x", repoName: "repo", providerKind: .claude, progress: .completed(path: "/tmp/x"))
+    try? await Task.sleep(for: .milliseconds(1100))
+
+    #expect(sound.count == 1)
+    #expect(notif.calls == [["feature/x"]])
+  }
+
   @Test("Failure does not fire ready and keeps the entry visible")
   func failureDoesNotFire() async {
     let sound = MockSound()

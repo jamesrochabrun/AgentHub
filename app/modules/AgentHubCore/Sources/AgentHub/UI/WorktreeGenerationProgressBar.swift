@@ -12,6 +12,10 @@ import SwiftUI
 /// (side panel, MCP, and Start Session) above the detail pane. Collapsed: a
 /// context-aware summary with a progress hairline. Expanded: per-worktree rows.
 /// Renders nothing (zero height) when no creations are tracked.
+///
+/// Counts and the single/multi summary are based on **creation** operations
+/// only — the transient branch-naming step is shown as a display state but
+/// never counted as a worktree.
 public struct WorktreeGenerationProgressBar: View {
   @Environment(WorktreeGenerationProgressCoordinator.self) private var coordinator: WorktreeGenerationProgressCoordinator?
   @Environment(\.colorScheme) private var colorScheme
@@ -35,20 +39,46 @@ public struct WorktreeGenerationProgressBar: View {
     }
   }
 
+  // MARK: - Derived state (creation ops are the real worktrees; naming is transient)
+
+  private func creations(_ coordinator: WorktreeGenerationProgressCoordinator) -> [WorktreeGenerationOperation] {
+    coordinator.operations.filter { $0.kind == .creation }
+  }
+
+  private func canExpand(_ coordinator: WorktreeGenerationProgressCoordinator) -> Bool {
+    creations(coordinator).count > 1
+  }
+
+  private func anyInFlight(_ coordinator: WorktreeGenerationProgressCoordinator) -> Bool {
+    coordinator.operations.contains { $0.progress.isInProgress }
+  }
+
+  private func creationInFlight(_ coordinator: WorktreeGenerationProgressCoordinator) -> Bool {
+    creations(coordinator).contains { $0.progress.isInProgress }
+  }
+
+  /// Mean progress over the real worktrees, or the naming step before any
+  /// creation exists.
+  private func displayProgress(_ coordinator: WorktreeGenerationProgressCoordinator) -> Double {
+    let set = creations(coordinator).isEmpty ? coordinator.operations : creations(coordinator)
+    guard !set.isEmpty else { return 0 }
+    return set.reduce(0.0) { $0 + $1.progress.progressValue } / Double(set.count)
+  }
+
   // MARK: - Card
 
   private func card(_ coordinator: WorktreeGenerationProgressCoordinator) -> some View {
     VStack(spacing: 0) {
       header(coordinator)
       // Only multi-worktree batches expand; a single worktree is already shown
-      // uniquely in the header, so there's nothing extra to reveal.
-      if isExpanded && coordinator.operations.count > 1 {
+      // uniquely in the header.
+      if isExpanded && canExpand(coordinator) {
         Divider().opacity(0.5)
         detailList(coordinator)
       }
     }
     .animation(.easeInOut(duration: 0.18), value: isExpanded)
-    .animation(.easeInOut(duration: 0.2), value: coordinator.operations.count)
+    .animation(.easeInOut(duration: 0.2), value: creations(coordinator).count)
     .background(
       RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
         .fill(cardColor)
@@ -93,14 +123,14 @@ public struct WorktreeGenerationProgressBar: View {
 
       Spacer(minLength: 8)
 
-      if coordinator.inFlightCount > 0 {
-        Text("\(Int(coordinator.aggregateProgress * 100))%")
+      if creationInFlight(coordinator) {
+        Text("\(Int(displayProgress(coordinator) * 100))%")
           .font(.system(.caption, design: .monospaced))
           .foregroundStyle(.secondary)
           .monospacedDigit()
       }
 
-      if coordinator.operations.count > 1 {
+      if canExpand(coordinator) {
         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
           .font(.caption.weight(.semibold))
           .foregroundStyle(.secondary)
@@ -122,14 +152,14 @@ public struct WorktreeGenerationProgressBar: View {
     .padding(.vertical, 8)
     .contentShape(Rectangle())
     .onTapGesture {
-      guard coordinator.operations.count > 1 else { return }
+      guard canExpand(coordinator) else { return }
       isExpanded.toggle()
     }
   }
 
   @ViewBuilder
   private func leadingIcon(_ coordinator: WorktreeGenerationProgressCoordinator) -> some View {
-    if coordinator.inFlightCount > 0 {
+    if anyInFlight(coordinator) {
       ProgressView()
         .controlSize(.small)
         .scaleEffect(0.85)
@@ -148,17 +178,18 @@ public struct WorktreeGenerationProgressBar: View {
   // MARK: - Progress hairline (bottom edge)
 
   private func progressHairline(_ coordinator: WorktreeGenerationProgressCoordinator) -> some View {
-    GeometryReader { geo in
+    let progress = displayProgress(coordinator)
+    return GeometryReader { geo in
       ZStack(alignment: .leading) {
         Rectangle().fill(Color.secondary.opacity(0.12))
         Rectangle()
           .fill(accent(coordinator))
-          .frame(width: geo.size.width * min(max(coordinator.aggregateProgress, 0), 1))
-          .animation(.linear(duration: 0.2), value: coordinator.aggregateProgress)
+          .frame(width: geo.size.width * min(max(progress, 0), 1))
+          .animation(.linear(duration: 0.2), value: progress)
       }
     }
     .frame(height: 3)
-    .opacity(coordinator.inFlightCount > 0 ? 1 : 0.6)
+    .opacity(anyInFlight(coordinator) ? 1 : 0.6)
   }
 
   // MARK: - Expanded detail
@@ -166,7 +197,7 @@ public struct WorktreeGenerationProgressBar: View {
   private func detailList(_ coordinator: WorktreeGenerationProgressCoordinator) -> some View {
     ScrollView {
       VStack(spacing: 6) {
-        ForEach(coordinator.operations) { op in
+        ForEach(creations(coordinator)) { op in
           WorktreeGenerationOperationRow(operation: op) {
             coordinator.dismiss(id: op.id)
           }
@@ -181,26 +212,44 @@ public struct WorktreeGenerationProgressBar: View {
   // MARK: - Summary model
 
   private func accent(_ coordinator: WorktreeGenerationProgressCoordinator) -> Color {
-    if coordinator.hasFailures && coordinator.inFlightCount == 0 { return .orange }
-    if coordinator.inFlightCount == 0 { return .green }
+    if coordinator.hasFailures && !anyInFlight(coordinator) { return .orange }
+    if !anyInFlight(coordinator) { return .green }
     return .brandPrimary
   }
 
   private func summary(_ coordinator: WorktreeGenerationProgressCoordinator) -> (title: String, subtitle: String?) {
-    if coordinator.operations.count == 1, let op = coordinator.operations.first {
-      return singleSummary(op)
+    let worktrees = creations(coordinator)
+
+    // Before any worktree exists, the only operation is the naming step.
+    if worktrees.isEmpty {
+      if let naming = coordinator.operations.first(where: { $0.isNaming }) {
+        return singleSummary(naming)
+      }
+      return ("Preparing worktree…", nil)
     }
-    if coordinator.inFlightCount > 0 {
-      return ("Creating \(coordinator.inFlightCount) worktrees…", "\(coordinator.operations.count) total")
+
+    if worktrees.count == 1 {
+      return singleSummary(worktrees[0])
     }
-    if coordinator.hasFailures {
+
+    let inFlight = worktrees.filter { $0.progress.isInProgress }.count
+    if inFlight > 0 {
+      return ("Creating \(inFlight) worktrees…", "\(worktrees.count) total")
+    }
+    if worktrees.contains(where: { $0.isFailure }) {
       return ("Worktree creation failed", nil)
     }
-    return ("\(coordinator.operations.count) worktrees ready", nil)
+    return ("\(worktrees.count) worktrees ready", nil)
   }
 
   private func singleSummary(_ op: WorktreeGenerationOperation) -> (title: String, subtitle: String?) {
     if op.isNaming {
+      if case .completed = op.progress {
+        return ("Branch name ready", op.repoName)
+      }
+      if case .failed(let error) = op.progress {
+        return ("Branch naming failed", error)
+      }
       return ("Generating branch name", op.repoName.isEmpty ? op.progress.statusMessage : op.repoName)
     }
     switch op.progress {
