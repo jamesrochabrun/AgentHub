@@ -1647,6 +1647,21 @@ public final class CLISessionsViewModel {
     removeOwnedWorktreePath(path)
   }
 
+  public func removeFocusedWorktree(at path: String) {
+    let normalizedPath = normalizedDirectoryPath(path)
+
+    let pendingToCancel = pendingHubSessions.filter {
+      isProjectPath($0.worktree.path, containedIn: normalizedPath)
+    }
+    for pending in pendingToCancel {
+      cancelPendingSession(pending)
+    }
+
+    archiveMonitoredSessions(inWorktreePath: normalizedPath)
+    removeOwnedWorktreePath(normalizedPath)
+    refresh()
+  }
+
   private func filterOwnedWorktrees(in repositories: [SelectedRepository]) -> [SelectedRepository] {
     repositories.map { repository in
       var filtered = repository

@@ -78,6 +78,29 @@ public enum WorktreeModuleResolver {
     return paths
   }
 
+  public static func worktreeModule(
+    for modulePath: String,
+    repositories: [SelectedRepository],
+    mode: WorktreeDisplayMode
+  ) -> WorktreeBranch? {
+    guard mode == .separateModules else { return nil }
+
+    let normalizedModulePath = normalizedDirectoryPath(modulePath)
+    for repository in repositories {
+      for worktree in repository.worktrees where worktree.isWorktree {
+        guard normalizedDirectoryPath(worktree.path) == normalizedModulePath else { continue }
+        return WorktreeBranch(
+          name: worktree.name,
+          path: normalizedModulePath,
+          isWorktree: true,
+          sessions: worktree.sessions,
+          isExpanded: worktree.isExpanded
+        )
+      }
+    }
+    return nil
+  }
+
   public static func mergedRepositories(_ repositories: [SelectedRepository]) -> [SelectedRepository] {
     var result: [SelectedRepository] = []
     var indicesByPath: [String: Int] = [:]
