@@ -6,6 +6,7 @@
 //
 
 import AgentHubFileSearch
+import Darwin
 import Foundation
 
 // MARK: - FileIndexService
@@ -71,13 +72,23 @@ protocol ProjectFileEnumerating: Sendable {
 }
 
 struct GitProjectFileEnumerator: ProjectFileEnumerating {
-  private struct GitCommandResult: Sendable {
+  struct GitCommandResult: Sendable {
     let stdout: Data
     let exitCode: Int32
     let timedOut: Bool
   }
 
-  private static let commandTimeout: TimeInterval = 3
+  /// Tracked listing (`--cached`) reads the git index and is effectively instant; its
+  /// timeout is only a guard against a wedged process. The untracked walk (`--others`)
+  /// traverses the whole working tree and can take many seconds in large monorepos, so it
+  /// is bounded more tightly and treated as best-effort.
+  private static let trackedScanTimeout: TimeInterval = 5
+  private static let untrackedScanTimeout: TimeInterval = 3
+  /// Grace period between SIGTERM and SIGKILL when tearing down a timed-out scan.
+  private static let terminationGrace: TimeInterval = 0.4
+
+  private static let trackedArguments = ["ls-files", "-z", "--cached", "--", "."]
+  private static let untrackedArguments = ["ls-files", "-z", "--others", "--exclude-standard", "--", "."]
 
   func gitProjectKind(at projectPath: String) -> ProjectFileEnumerationKind? {
     guard let gitPath = Self.nearestGitPath(containing: projectPath) else {
@@ -95,38 +106,101 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
   func enumerateFiles(in projectPath: String) async -> ProjectFileEnumerationResult {
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
     let knownKind = gitProjectKind(at: resolvedProjectPath)
-    guard let result = await runGitLSFiles(in: resolvedProjectPath) else {
-      return knownKind == nil ? .notGitProject : .failed
-    }
 
-    if result.timedOut {
-      let files = Self.parseGitLSFilesOutput(result.stdout)
-      guard !files.isEmpty, let knownKind else {
-        return knownKind == nil ? .notGitProject : .failed
-      }
-      return .partialFiles(files, kind: knownKind)
-    }
+    // Tracked and untracked files come from two independent, read-only `git ls-files`
+    // scans run concurrently. `git ls-files` takes no index lock, so this is safe, and a
+    // slow untracked walk can no longer block — or discard — the fast tracked listing,
+    // which is the authoritative set of files for Cmd+P.
+    async let trackedAsync = runGitLSFiles(
+      arguments: Self.trackedArguments,
+      in: resolvedProjectPath,
+      timeout: Self.trackedScanTimeout
+    )
+    async let untrackedAsync = runGitLSFiles(
+      arguments: Self.untrackedArguments,
+      in: resolvedProjectPath,
+      timeout: Self.untrackedScanTimeout
+    )
+    let tracked = await trackedAsync
+    let untracked = await untrackedAsync
 
-    guard result.exitCode == 0 else {
-      return knownKind == nil ? .notGitProject : .failed
-    }
-
-    let files = Self.parseGitLSFilesOutput(result.stdout)
-    return .files(files, kind: knownKind ?? .gitRepository)
+    return Self.classify(tracked: tracked, untracked: untracked, knownKind: knownKind)
   }
 
-  private func runGitLSFiles(in projectPath: String) async -> GitCommandResult? {
+  /// Pure classification of the two scan results into an enumeration result. Extracted so
+  /// the tracked/untracked/timeout matrix is unit-testable without spawning git.
+  static func classify(
+    tracked: GitCommandResult?,
+    untracked: GitCommandResult?,
+    knownKind: ProjectFileEnumerationKind?
+  ) -> ProjectFileEnumerationResult {
+    // git could not be launched at all.
+    guard let tracked else {
+      return knownKind == nil ? .notGitProject : .failed
+    }
+
+    let trackedFiles = parseGitLSFilesOutput(tracked.stdout)
+    let untrackedFiles = untracked.map { parseGitLSFilesOutput($0.stdout) } ?? []
+    let merged = mergeFiles(trackedFiles, untrackedFiles)
+
+    let trackedComplete = !tracked.timedOut && tracked.exitCode == 0
+    let untrackedComplete = untracked.map { !$0.timedOut && $0.exitCode == 0 } ?? false
+
+    // `git ls-files` exits non-zero (typically 128) when run outside a working tree. If
+    // the tracked scan failed cleanly with no output and we have no other evidence this is
+    // a git project, hand off to the recursive scanner.
+    if !trackedComplete, !tracked.timedOut, merged.isEmpty {
+      return knownKind == nil ? .notGitProject : .failed
+    }
+
+    let resolvedKind = knownKind ?? .gitRepository
+
+    if trackedComplete, untrackedComplete {
+      return .files(merged, kind: resolvedKind)
+    }
+
+    // Either the untracked walk did not finish (tracked files are still authoritative and
+    // present) or the tracked scan itself was only partial. Surface whatever we captured
+    // at a degraded TTL so the slow scan is retried and freshly-created untracked files
+    // reappear quickly.
+    if !merged.isEmpty {
+      return .partialFiles(merged, kind: resolvedKind)
+    }
+
+    return .failed
+  }
+
+  /// Merges tracked and untracked file lists, preserving tracked order and deduplicating
+  /// any path that appears in both sets.
+  private static func mergeFiles(
+    _ tracked: [ProjectFileEnumeratorFile],
+    _ untracked: [ProjectFileEnumeratorFile]
+  ) -> [ProjectFileEnumeratorFile] {
+    var seen = Set<String>()
+    var merged: [ProjectFileEnumeratorFile] = []
+    merged.reserveCapacity(tracked.count + untracked.count)
+    for file in tracked where seen.insert(file.relativePath).inserted {
+      merged.append(file)
+    }
+    for file in untracked where seen.insert(file.relativePath).inserted {
+      merged.append(file)
+    }
+    return merged
+  }
+
+  /// Runs a single `git ls-files` invocation bounded by `timeout`. Output is captured
+  /// race-free through a dedicated reader task, and a timed-out process is torn down with
+  /// SIGTERM then SIGKILL so the reader is always guaranteed to reach EOF (the previous
+  /// implementation read a `var` written on a background queue and `terminationStatus`
+  /// with no happens-before edge, which both raced and risked a precondition trap).
+  private func runGitLSFiles(
+    arguments: [String],
+    in projectPath: String,
+    timeout: TimeInterval
+  ) async -> GitCommandResult? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    process.arguments = [
-      "ls-files",
-      "-z",
-      "--cached",
-      "--others",
-      "--exclude-standard",
-      "--",
-      "."
-    ]
+    process.arguments = arguments
     process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
 
     var environment = ProcessInfo.processInfo.environment
@@ -134,65 +208,68 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
     environment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
     process.environment = environment
 
-    let inputPipe = Pipe()
     let outputPipe = Pipe()
     let errorPipe = Pipe()
-    process.standardInput = inputPipe
+    // Never block git on stdin; the null device returns EOF immediately.
+    process.standardInput = FileHandle.nullDevice
     process.standardOutput = outputPipe
     process.standardError = errorPipe
 
-    var outputData: Data?
-    let readGroup = DispatchGroup()
-
     do {
       try process.run()
-      try? inputPipe.fileHandleForWriting.close()
     } catch {
       return nil
     }
 
-    readGroup.enter()
-    DispatchQueue.global(qos: .userInitiated).async {
-      outputData = try? outputPipe.fileHandleForReading.readToEnd()
-      readGroup.leave()
+    // Drain stdout/stderr continuously so git never blocks on a full pipe buffer.
+    // readToEnd() returns once the process closes its write end — guaranteed once the
+    // process dies — so the captured bytes flow exclusively through the task's value and
+    // are never read across an unsynchronized boundary.
+    let outputHandle = outputPipe.fileHandleForReading
+    let errorHandle = errorPipe.fileHandleForReading
+    let stdoutTask = Task<Data, Never>.detached(priority: .userInitiated) {
+      (try? outputHandle.readToEnd()) ?? Data()
+    }
+    let stderrTask = Task<Void, Never>.detached(priority: .utility) {
+      _ = try? errorHandle.readToEnd()
     }
 
-    readGroup.enter()
-    DispatchQueue.global(qos: .utility).async {
-      _ = try? errorPipe.fileHandleForReading.readToEnd()
-      readGroup.leave()
-    }
-
-    let timedOut = await withTaskGroup(of: Bool.self) { group in
-      group.addTask {
-        await withCheckedContinuation { continuation in
-          DispatchQueue.global(qos: .utility).async {
-            readGroup.wait()
-            process.waitUntilExit()
-            continuation.resume(returning: false)
-          }
-        }
+    // Watchdog: if the scan outlives its budget, escalate SIGTERM -> (grace) -> SIGKILL.
+    // SIGKILL is uncatchable, so the kernel closes the write end and the reader is
+    // guaranteed to reach EOF even against a wedged child. The timeout is reported
+    // explicitly via this task's return value, never inferred from which branch won a race.
+    let watchdog = Task<Bool, Never> {
+      do {
+        try await Task.sleep(for: .seconds(timeout))
+      } catch {
+        return false  // cancelled because the process exited within budget
       }
-
-      group.addTask {
-        do {
-          try await Task.sleep(for: .seconds(Self.commandTimeout))
-          if process.isRunning {
-            process.terminate()
-          }
-          return true
-        } catch {
-          return false
-        }
+      process.terminate()  // SIGTERM
+      try? await Task.sleep(for: .seconds(Self.terminationGrace))
+      if process.isRunning {
+        kill(process.processIdentifier, SIGKILL)
       }
-
-      let result = await group.next() ?? false
-      group.cancelAll()
-      return result
+      AppLogger.git.warning("git \(arguments.first ?? "", privacy: .public) scan timed out after \(timeout, privacy: .public)s")
+      return true
     }
 
+    // Wait for the process to exit. It always will: either it finishes on its own (the
+    // watchdog is then cancelled) or the watchdog tears it down.
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      DispatchQueue.global(qos: .userInitiated).async {
+        process.waitUntilExit()
+        continuation.resume()
+      }
+    }
+    watchdog.cancel()
+    let timedOut = await watchdog.value
+
+    let stdout = await stdoutTask.value
+    await stderrTask.value
+
+    // Safe to read now: waitUntilExit() above reaped the process.
     return GitCommandResult(
-      stdout: outputData ?? Data(),
+      stdout: stdout,
       exitCode: process.terminationStatus,
       timedOut: timedOut
     )
@@ -310,12 +387,21 @@ public actor FileIndexService {
   private struct SearchIndexBuildResult: Sendable {
     let files: [IndexedFile]
     let ttl: TimeInterval
+    /// True when the underlying git enumeration was degraded (a timed-out or failed scan),
+    /// so the index may be missing files and an empty result warrants a Spotlight fallback.
+    let isPartial: Bool
   }
 
   private struct SearchCacheEntry: Sendable {
     let files: [IndexedFile]
     let date: Date
     let ttl: TimeInterval
+    let isPartial: Bool
+  }
+
+  private struct LocalSearchIndex: Sendable {
+    let files: [IndexedFile]
+    let isPartial: Bool
   }
 
   private struct DirectoryEntry: Sendable {
@@ -446,37 +532,16 @@ public actor FileIndexService {
 
     var spotlightCandidateCount = 0
     var spotlightElapsedSeconds: TimeInterval = 0
+
+    // Outside worktrees, Spotlight is queried first: it is fast and broadly indexed.
     if !usesWorktreeLocalIndexFirst {
-      let spotlightResponse = await projectFileSearchService.searchWithDiagnostics(
-        query: query,
-        in: resolvedProjectPath,
-        limit: Self.maxSearchResults * 10
-      )
-      spotlightCandidateCount = spotlightResponse.candidateCount
-      spotlightElapsedSeconds = spotlightResponse.elapsedSeconds
+      let spotlight = await filteredSpotlightResults(query: query, resolvedProjectPath: resolvedProjectPath)
+      spotlightCandidateCount = spotlight.candidateCount
+      spotlightElapsedSeconds = spotlight.elapsedSeconds
 
-      let filteredSpotlightResults = spotlightResponse.results
-        .compactMap { spotlightResult -> FileSearchResult? in
-          let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
-          guard shouldIncludeSearchResultCached(at: absolutePath, rootPath: resolvedProjectPath) else {
-            return nil
-          }
-          let relativePath = Self.projectRelativePath(for: absolutePath, relativeTo: resolvedProjectPath)
-          let name = URL(fileURLWithPath: absolutePath).lastPathComponent
-
-          return FileSearchResult(
-            id: absolutePath,
-            name: name,
-            relativePath: relativePath,
-            absolutePath: absolutePath,
-            score: spotlightResult.score
-          )
-        }
-        .sortedBySearchScore()
-
-      if !filteredSpotlightResults.isEmpty {
+      if !spotlight.results.isEmpty {
         return FileSearchDiagnostics(
-          results: Array(filteredSpotlightResults.prefix(Self.maxSearchResults)),
+          results: Array(spotlight.results.prefix(Self.maxSearchResults)),
           source: .spotlight,
           spotlightCandidateCount: spotlightCandidateCount,
           spotlightElapsedSeconds: spotlightElapsedSeconds,
@@ -488,20 +553,78 @@ public actor FileIndexService {
     }
 
     let localIndexStart = Date()
-    let allFiles = await searchIndex(projectPath: resolvedProjectPath)
+    let localIndex = await searchIndex(projectPath: resolvedProjectPath)
     let localIndexElapsed = Date().timeIntervalSince(localIndexStart)
     let q = query.lowercased()
+    let scored = Self.rankIndexedFiles(localIndex.files, query: q)
 
-    let scored = Self.rankIndexedFiles(allFiles, query: q)
+    // Worktree safety net: worktrees lean on the local Git index instead of Spotlight, but
+    // if that index failed to build (degraded/empty) and produced no match, fall back to
+    // Spotlight as a last resort. This never fires on a fully-built index, so a genuine
+    // no-match in an indexed worktree costs no extra Spotlight query.
+    if usesWorktreeLocalIndexFirst, scored.isEmpty, localIndex.isPartial {
+      let spotlight = await filteredSpotlightResults(query: query, resolvedProjectPath: resolvedProjectPath)
+      spotlightCandidateCount = spotlight.candidateCount
+      spotlightElapsedSeconds = spotlight.elapsedSeconds
+
+      if !spotlight.results.isEmpty {
+        return FileSearchDiagnostics(
+          results: Array(spotlight.results.prefix(Self.maxSearchResults)),
+          source: .spotlight,
+          spotlightCandidateCount: spotlightCandidateCount,
+          spotlightElapsedSeconds: spotlightElapsedSeconds,
+          localIndexStatusBeforeFallback: localStatusBeforeFallback,
+          localIndexedFileCount: localIndex.files.count,
+          localIndexElapsedSeconds: localIndexElapsed
+        )
+      }
+    }
+
     return FileSearchDiagnostics(
       results: Array(scored.prefix(Self.maxSearchResults)),
       source: .localIndex,
       spotlightCandidateCount: spotlightCandidateCount,
       spotlightElapsedSeconds: spotlightElapsedSeconds,
       localIndexStatusBeforeFallback: localStatusBeforeFallback,
-      localIndexedFileCount: allFiles.count,
+      localIndexedFileCount: localIndex.files.count,
       localIndexElapsedSeconds: localIndexElapsed
     )
+  }
+
+  /// Queries Spotlight and reshapes its results into project-relative `FileSearchResult`s,
+  /// applying the same ignore-rule/secret filtering used everywhere else so a fallback can
+  /// never surface gitignored or secret-bearing files. Shared by the Spotlight-first path
+  /// and the worktree last-resort fallback.
+  private func filteredSpotlightResults(
+    query: String,
+    resolvedProjectPath: String
+  ) async -> (results: [FileSearchResult], candidateCount: Int, elapsedSeconds: TimeInterval) {
+    let spotlightResponse = await projectFileSearchService.searchWithDiagnostics(
+      query: query,
+      in: resolvedProjectPath,
+      limit: Self.maxSearchResults * 10
+    )
+
+    let filtered = spotlightResponse.results
+      .compactMap { spotlightResult -> FileSearchResult? in
+        let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
+        guard shouldIncludeSearchResultCached(at: absolutePath, rootPath: resolvedProjectPath) else {
+          return nil
+        }
+        let relativePath = Self.projectRelativePath(for: absolutePath, relativeTo: resolvedProjectPath)
+        let name = URL(fileURLWithPath: absolutePath).lastPathComponent
+
+        return FileSearchResult(
+          id: absolutePath,
+          name: name,
+          relativePath: relativePath,
+          absolutePath: absolutePath,
+          score: spotlightResult.score
+        )
+      }
+      .sortedBySearchScore()
+
+    return (filtered, spotlightResponse.candidateCount, spotlightResponse.elapsedSeconds)
   }
 
   /// Removes the cache entry for `projectPath`.
@@ -634,9 +757,9 @@ public actor FileIndexService {
     return nodes
   }
 
-  private func searchIndex(projectPath: String) async -> [IndexedFile] {
+  private func searchIndex(projectPath: String) async -> LocalSearchIndex {
     if let entry = searchCache[projectPath], !isSearchCacheStale(entry) {
-      return entry.files
+      return LocalSearchIndex(files: entry.files, isPartial: entry.isPartial)
     }
 
     let task: Task<SearchCacheEntry, Never>
@@ -651,7 +774,7 @@ public actor FileIndexService {
     let entry = await task.value
     searchBuildTasks.removeValue(forKey: projectPath)
     searchCache[projectPath] = entry
-    return entry.files
+    return LocalSearchIndex(files: entry.files, isPartial: entry.isPartial)
   }
 
   private func makeSearchBuildTask(projectPath: String) -> Task<SearchCacheEntry, Never> {
@@ -661,7 +784,7 @@ public actor FileIndexService {
         projectPath: projectPath,
         projectFileEnumerator: projectFileEnumerator
       )
-      return SearchCacheEntry(files: result.files, date: Date(), ttl: result.ttl)
+      return SearchCacheEntry(files: result.files, date: Date(), ttl: result.ttl, isPartial: result.isPartial)
     }
   }
 
@@ -700,17 +823,19 @@ public actor FileIndexService {
     case .files(let files, _):
       return SearchIndexBuildResult(
         files: buildSearchIndexFromGitFiles(files, rootPath: projectPath),
-        ttl: cacheTTL
+        ttl: cacheTTL,
+        isPartial: false
       )
     case .partialFiles(let files, _):
       return SearchIndexBuildResult(
         files: buildSearchIndexFromGitFiles(files, rootPath: projectPath),
-        ttl: degradedSearchCacheTTL
+        ttl: degradedSearchCacheTTL,
+        isPartial: true
       )
     case .notGitProject:
-      return SearchIndexBuildResult(files: buildSearchIndexSync(projectPath: projectPath), ttl: cacheTTL)
+      return SearchIndexBuildResult(files: buildSearchIndexSync(projectPath: projectPath), ttl: cacheTTL, isPartial: false)
     case .failed:
-      return SearchIndexBuildResult(files: [], ttl: degradedSearchCacheTTL)
+      return SearchIndexBuildResult(files: [], ttl: degradedSearchCacheTTL, isPartial: true)
     }
   }
 

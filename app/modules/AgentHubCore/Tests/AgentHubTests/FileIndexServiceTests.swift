@@ -554,4 +554,227 @@ struct FileIndexServicePrivacyTests {
     #expect(initialChildren.map(\.name) == ["App.swift"])
     #expect(refreshedChildren.map(\.name) == ["App.swift", "NewFile.swift"])
   }
+
+  // MARK: - Split-scan classification
+
+  private func gitCommandResult(
+    _ paths: [String],
+    exitCode: Int32 = 0,
+    timedOut: Bool = false
+  ) -> GitProjectFileEnumerator.GitCommandResult {
+    GitProjectFileEnumerator.GitCommandResult(
+      stdout: Data(paths.joined(separator: "\u{0}").utf8),
+      exitCode: exitCode,
+      timedOut: timedOut
+    )
+  }
+
+  @Test("Merges and dedups completed tracked + untracked scans")
+  func classifyMergesCompletedScans() {
+    let result = GitProjectFileEnumerator.classify(
+      tracked: gitCommandResult(["a.swift", "b.swift"]),
+      untracked: gitCommandResult(["b.swift", "c.swift"]),
+      knownKind: .gitWorktree
+    )
+
+    guard case .files(let files, let kind) = result else {
+      Issue.record("Expected .files, got \(result)")
+      return
+    }
+    #expect(files.map(\.relativePath) == ["a.swift", "b.swift", "c.swift"])
+    #expect(kind == .gitWorktree)
+  }
+
+  @Test("Tracked-complete + untracked-timeout yields degraded partial files")
+  func classifyTrackedCompleteUntrackedTimeout() {
+    let result = GitProjectFileEnumerator.classify(
+      tracked: gitCommandResult(["Sources/App.swift"]),
+      untracked: gitCommandResult([], timedOut: true),
+      knownKind: .gitWorktree
+    )
+
+    guard case .partialFiles(let files, _) = result else {
+      Issue.record("Expected .partialFiles, got \(result)")
+      return
+    }
+    #expect(files.map(\.relativePath) == ["Sources/App.swift"])
+  }
+
+  @Test("Tracked scan that times out with partial bytes still returns partial files")
+  func classifyTrackedTimeoutWithBytes() {
+    let result = GitProjectFileEnumerator.classify(
+      tracked: gitCommandResult(["Sources/App.swift"], timedOut: true),
+      untracked: nil,
+      knownKind: .gitWorktree
+    )
+
+    guard case .partialFiles = result else {
+      Issue.record("Expected .partialFiles, got \(result)")
+      return
+    }
+  }
+
+  @Test("Captures nothing for a known git project resolves to .failed, never a crash")
+  func classifyNothingCapturedKnownGit() {
+    let result = GitProjectFileEnumerator.classify(
+      tracked: gitCommandResult([], timedOut: true),
+      untracked: nil,
+      knownKind: .gitRepository
+    )
+
+    guard case .failed = result else {
+      Issue.record("Expected .failed, got \(result)")
+      return
+    }
+  }
+
+  @Test("Clean non-zero empty tracked scan with no git evidence is a non-git folder")
+  func classifyNonGitFolder() {
+    let result = GitProjectFileEnumerator.classify(
+      tracked: gitCommandResult([], exitCode: 128),
+      untracked: gitCommandResult([], exitCode: 128),
+      knownKind: nil
+    )
+
+    guard case .notGitProject = result else {
+      Issue.record("Expected .notGitProject, got \(result)")
+      return
+    }
+  }
+
+  // MARK: - Worktree Spotlight fallback
+
+  @Test("Worktree falls back to Spotlight when the local Git index failed to build")
+  func worktreeFallsBackToSpotlightWhenIndexDegraded() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile(".gitignore", content: "secrets/\n")
+    try fixture.writeProjectFile("secrets/token.swift", content: "let hidden = true")
+    try fixture.writeProjectFile("Sources/token.swift", content: "let visible = true")
+
+    let hiddenPath = fixture.projectPath + "/secrets/token.swift"
+    let visiblePath = fixture.projectPath + "/Sources/token.swift"
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: [
+        ProjectFileSearchResult(id: hiddenPath, name: "token.swift", relativePath: "secrets/token.swift", absolutePath: hiddenPath, score: 5000),
+        ProjectFileSearchResult(id: visiblePath, name: "token.swift", relativePath: "Sources/token.swift", absolutePath: visiblePath, score: 4000)
+      ]),
+      projectFileEnumerator: FakeProjectFileEnumerator(kind: .gitWorktree, result: .failed)
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "token", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .spotlight)
+    #expect(diagnostics.results.map(\.relativePath) == ["Sources/token.swift"])
+    #expect(diagnostics.localIndexedFileCount == 0)
+  }
+
+  @Test("Worktree fallback keeps local-index diagnostics when Spotlight is also empty")
+  func worktreeFallbackWithEmptySpotlight() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: []),
+      projectFileEnumerator: FakeProjectFileEnumerator(kind: .gitWorktree, result: .failed)
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "app", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.results.isEmpty)
+    #expect(diagnostics.localIndexedFileCount == 0)
+  }
+
+  @Test("Worktree does not consult Spotlight on a genuine no-match in a fully-built index")
+  func worktreeNoMatchDoesNotConsultSpotlight() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/App.swift", content: "struct App {}")
+    let appPath = fixture.projectPath + "/Sources/App.swift"
+
+    // Spotlight WOULD return a valid result; the test proves the fallback never fires
+    // when the local index built successfully (full .files), only on a genuine no-match.
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: [
+        ProjectFileSearchResult(id: appPath, name: "App.swift", relativePath: "Sources/App.swift", absolutePath: appPath, score: 5000)
+      ]),
+      projectFileEnumerator: FakeProjectFileEnumerator(
+        kind: .gitWorktree,
+        result: .files([ProjectFileEnumeratorFile(relativePath: "Sources/App.swift")], kind: .gitWorktree)
+      )
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "zzzznomatch", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.spotlightCandidateCount == 0)
+    #expect(diagnostics.results.isEmpty)
+  }
+
+  @Test("Worktree Spotlight fallback applies the same secret-file exclusion")
+  func worktreeFallbackExcludesSecrets() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile(".npmrc", content: "//registry.npmjs.org/:_authToken=secret")
+    let npmPath = fixture.projectPath + "/.npmrc"
+
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: [
+        ProjectFileSearchResult(id: npmPath, name: ".npmrc", relativePath: ".npmrc", absolutePath: npmPath, score: 5000)
+      ]),
+      projectFileEnumerator: FakeProjectFileEnumerator(kind: .gitWorktree, result: .failed)
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "npmrc", in: fixture.projectPath)
+
+    #expect(diagnostics.results.isEmpty)
+  }
+
+  @Test("Tracked-complete + a clean (non-timeout) untracked failure still degrades to partial files")
+  func classifyTrackedCompleteUntrackedCleanFailure() {
+    let result = GitProjectFileEnumerator.classify(
+      tracked: gitCommandResult(["a.swift"]),
+      untracked: gitCommandResult([], exitCode: 128),
+      knownKind: .gitWorktree
+    )
+
+    guard case .partialFiles(let files, _) = result else {
+      Issue.record("Expected .partialFiles, got \(result)")
+      return
+    }
+    #expect(files.map(\.relativePath) == ["a.swift"])
+  }
+
+  @Test("Worktree partial index (untracked scan incomplete) falls back to Spotlight on an empty local match")
+  func worktreePartialIndexFallsBackToSpotlight() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Sources/Tracked.swift", content: "struct Tracked {}")
+    try fixture.writeProjectFile("Sources/UntrackedFile.swift", content: "struct UntrackedFile {}")
+    let untrackedPath = fixture.projectPath + "/Sources/UntrackedFile.swift"
+
+    // Local index built from a degraded (.partialFiles) enumeration holds only the tracked
+    // file, which the query misses; Spotlight knows the untracked file the scan timed out on.
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: [
+        ProjectFileSearchResult(id: untrackedPath, name: "UntrackedFile.swift", relativePath: "Sources/UntrackedFile.swift", absolutePath: untrackedPath, score: 5000)
+      ]),
+      projectFileEnumerator: FakeProjectFileEnumerator(
+        kind: .gitWorktree,
+        result: .partialFiles([ProjectFileEnumeratorFile(relativePath: "Sources/Tracked.swift")], kind: .gitWorktree)
+      )
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "untrackedfile", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .spotlight)
+    #expect(diagnostics.results.map(\.relativePath) == ["Sources/UntrackedFile.swift"])
+  }
 }
