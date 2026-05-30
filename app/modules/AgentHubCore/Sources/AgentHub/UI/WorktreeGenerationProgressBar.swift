@@ -18,7 +18,6 @@ import SwiftUI
 /// never counted as a worktree.
 public struct WorktreeGenerationProgressBar: View {
   @Environment(WorktreeGenerationProgressCoordinator.self) private var coordinator: WorktreeGenerationProgressCoordinator?
-  @Environment(\.colorScheme) private var colorScheme
   @State private var isExpanded = false
 
   public init() {}
@@ -79,23 +78,11 @@ public struct WorktreeGenerationProgressBar: View {
     }
     .animation(.easeInOut(duration: 0.18), value: isExpanded)
     .animation(.easeInOut(duration: 0.2), value: creations(coordinator).count)
-    .background(
-      RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
-        .fill(cardColor)
-    )
+    // Flat: no background fill, border, rounded corners, or shadow — just the
+    // content with the progress hairline along the bottom.
     .overlay(alignment: .bottom) {
       progressHairline(coordinator)
     }
-    .clipShape(RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous))
-    .overlay(
-      RoundedRectangle(cornerRadius: AgentHubLayout.cardCornerRadius, style: .continuous)
-        .stroke(accent(coordinator).opacity(0.22), lineWidth: 1)
-    )
-    .shadow(color: .black.opacity(colorScheme == .dark ? 0.28 : 0.08), radius: 7, y: 2)
-  }
-
-  private var cardColor: Color {
-    colorScheme == .dark ? Color(white: 0.13) : Color(white: 0.99)
   }
 
   // MARK: - Header (collapsed summary)
