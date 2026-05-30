@@ -150,6 +150,30 @@ struct RemoveWorktreeRelativeToTests {
   }
 }
 
+@Suite("GitWorktreeService.listWorktrees")
+struct ListWorktreesTests {
+  @Test("Returns main repository and secondary worktrees")
+  func returnsMainAndSecondaryWorktrees() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let worktreePath = try fixture.addWorktree(branch: "inventory-branch")
+
+    let service = GitWorktreeService()
+    let worktrees = try await service.listWorktrees(at: fixture.repoPath)
+
+    let main = try #require(worktrees.first(where: { !$0.isWorktree }))
+    let secondary = try #require(worktrees.first(where: { $0.isWorktree }))
+
+    #expect(main.path == fixture.repoPath)
+    #expect(main.branchName == "main")
+    #expect(main.mainRepoPath == nil)
+    #expect(secondary.path == worktreePath)
+    #expect(secondary.branchName == "inventory-branch")
+    #expect(secondary.mainRepoPath == fixture.repoPath)
+  }
+}
+
 @Suite("GitWorktreeService cancellation")
 struct GitWorktreeServiceCancellationTests {
 

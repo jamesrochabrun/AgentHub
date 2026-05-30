@@ -10,6 +10,31 @@ public struct LocalBranchesResult: Sendable {
   public let currentBranchName: String
 }
 
+public struct GitWorktreeInventoryItem: Identifiable, Sendable, Equatable {
+  public var id: String { path }
+
+  public let path: String
+  public let branchName: String?
+  public let isWorktree: Bool
+  public let mainRepoPath: String?
+
+  public init(
+    path: String,
+    branchName: String?,
+    isWorktree: Bool,
+    mainRepoPath: String?
+  ) {
+    self.path = path
+    self.branchName = branchName
+    self.isWorktree = isWorktree
+    self.mainRepoPath = mainRepoPath
+  }
+}
+
+public protocol GitWorktreeInventoryServiceProtocol: Sendable {
+  func listWorktrees(at repoPath: String) async throws -> [GitWorktreeInventoryItem]
+}
+
 public protocol GitWorktreeRemovalServiceProtocol: Sendable {
   func removeWorktree(at worktreePath: String, force: Bool) async throws
   func removeWorktree(at worktreePath: String, relativeTo parentRepoPath: String, force: Bool) async throws
@@ -17,7 +42,7 @@ public protocol GitWorktreeRemovalServiceProtocol: Sendable {
   func removeOrphanedWorktree(at worktreePath: String, parentRepoPath: String) async throws
 }
 
-public actor GitWorktreeService: GitWorktreeRemovalServiceProtocol {
+public actor GitWorktreeService: GitWorktreeInventoryServiceProtocol, GitWorktreeRemovalServiceProtocol {
   private let service: WorktreeManagementService
 
   public init(service: WorktreeManagementService = WorktreeManagementService()) {
@@ -30,6 +55,10 @@ public actor GitWorktreeService: GitWorktreeRemovalServiceProtocol {
 
   public func findMainRepositoryRoot(at path: String) async throws -> String {
     try await service.findMainRepositoryRoot(at: path)
+  }
+
+  public func listWorktrees(at repoPath: String) async throws -> [GitWorktreeInventoryItem] {
+    try await service.listWorktrees(at: repoPath).map(Self.inventoryItem)
   }
 
   public func getRemoteBranches(at repoPath: String) async throws -> [RemoteBranch] {
@@ -178,5 +207,14 @@ public actor GitWorktreeService: GitWorktreeRemovalServiceProtocol {
 
   private static func remoteBranch(_ branch: BranchInfo) -> RemoteBranch {
     RemoteBranch(name: branch.name, remote: branch.remote)
+  }
+
+  private static func inventoryItem(_ worktree: WorktreeInfo) -> GitWorktreeInventoryItem {
+    GitWorktreeInventoryItem(
+      path: WorktreeModuleResolver.normalizedDirectoryPath(worktree.path),
+      branchName: worktree.branch,
+      isWorktree: worktree.isWorktree,
+      mainRepoPath: worktree.mainRepoPath.map(WorktreeModuleResolver.normalizedDirectoryPath)
+    )
   }
 }

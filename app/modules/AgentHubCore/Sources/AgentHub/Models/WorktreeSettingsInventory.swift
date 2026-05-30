@@ -24,7 +24,7 @@ struct WorktreeSettingsWorktree: Identifiable, Equatable {
   let worktree: WorktreeBranch
   let parentModulePath: String
   let providerKinds: [SessionProviderKind]
-  let deletionProviderKind: SessionProviderKind
+  let isFocusedInAgentHub: Bool
   let monitoredSessionCount: Int
   let activeMonitoredSessionCount: Int
   let historicalSessionCount: Int
@@ -39,7 +39,8 @@ enum WorktreeSettingsInventoryBuilder {
     claudeRepositories: [SelectedRepository],
     codexRepositories: [SelectedRepository],
     claudeMonitoredSessions: [CLISession],
-    codexMonitoredSessions: [CLISession]
+    codexMonitoredSessions: [CLISession],
+    discoveredWorktreesByRepositoryPath: [String: [GitWorktreeInventoryItem]] = [:]
   ) -> WorktreeSettingsSnapshot {
     let mergedRepositories = WorktreeModuleResolver
       .mergedRepositories(claudeRepositories + codexRepositories)
@@ -53,7 +54,8 @@ enum WorktreeSettingsInventoryBuilder {
         claudeRepositories: claudeRepositories,
         codexRepositories: codexRepositories,
         claudeMonitoredSessions: claudeMonitoredSessions,
-        codexMonitoredSessions: codexMonitoredSessions
+        codexMonitoredSessions: codexMonitoredSessions,
+        discoveredWorktrees: discoveredWorktreesByRepositoryPath[modulePath] ?? []
       )
 
       return WorktreeSettingsModule(
@@ -72,7 +74,8 @@ enum WorktreeSettingsInventoryBuilder {
     claudeRepositories: [SelectedRepository],
     codexRepositories: [SelectedRepository],
     claudeMonitoredSessions: [CLISession],
-    codexMonitoredSessions: [CLISession]
+    codexMonitoredSessions: [CLISession],
+    discoveredWorktrees: [GitWorktreeInventoryItem]
   ) -> [WorktreeSettingsWorktree] {
     let providerRepositories = [
       (kind: SessionProviderKind.claude, repositories: claudeRepositories),
@@ -92,6 +95,11 @@ enum WorktreeSettingsInventoryBuilder {
         appendPath(worktree.path, to: &orderedPaths, seen: &seenPaths)
       }
     }
+    for worktree in discoveredWorktrees where worktree.isWorktree {
+      let worktreePath = normalized(worktree.path)
+      guard worktreePath != modulePath else { continue }
+      appendPath(worktreePath, to: &orderedPaths, seen: &seenPaths)
+    }
 
     return orderedPaths.compactMap { worktreePath in
       let providerMatches = providerRepositories.compactMap { provider -> (SessionProviderKind, WorktreeBranch)? in
@@ -102,9 +110,12 @@ enum WorktreeSettingsInventoryBuilder {
         return (provider.kind, normalizedWorktree(worktree))
       }
 
-      guard let deletionMatch = providerMatches.first else { return nil }
       let providerKinds = providerMatches.map(\.0)
-      let representative = deletionMatch.1
+      let discoveredWorktree = discoveredWorktrees.first { normalized($0.path) == worktreePath && $0.isWorktree }
+      let representative = providerMatches.first?.1 ?? worktreeBranch(
+        from: discoveredWorktree,
+        fallbackPath: worktreePath
+      )
       let monitoredSessions = providerMatches.flatMap { providerKind, _ in
         switch providerKind {
         case .claude:
@@ -125,7 +136,7 @@ enum WorktreeSettingsInventoryBuilder {
         worktree: representative,
         parentModulePath: modulePath,
         providerKinds: providerKinds,
-        deletionProviderKind: deletionMatch.0,
+        isFocusedInAgentHub: !providerMatches.isEmpty,
         monitoredSessionCount: monitoredSessionsById.count,
         activeMonitoredSessionCount: monitoredSessionsById.values.filter(\.isActive).count,
         historicalSessionCount: historicalSessionCount
@@ -153,6 +164,21 @@ enum WorktreeSettingsInventoryBuilder {
       isWorktree: worktree.isWorktree,
       sessions: worktree.sessions,
       isExpanded: worktree.isExpanded
+    )
+  }
+
+  private static func worktreeBranch(
+    from discoveredWorktree: GitWorktreeInventoryItem?,
+    fallbackPath: String
+  ) -> WorktreeBranch {
+    let path = normalized(discoveredWorktree?.path ?? fallbackPath)
+    let fallbackName = URL(fileURLWithPath: path).lastPathComponent
+    let branchName = discoveredWorktree?.branchName.flatMap { $0.isEmpty ? nil : $0 } ?? fallbackName
+
+    return WorktreeBranch(
+      name: branchName,
+      path: path,
+      isWorktree: true
     )
   }
 
