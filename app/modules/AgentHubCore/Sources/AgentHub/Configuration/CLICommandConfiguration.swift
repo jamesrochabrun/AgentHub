@@ -216,6 +216,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
   Pass one task item for one worktree or multiple task items for multiple worktrees. Infer concise branch names from the tasks. Pass only the actual task to perform as each launched session prompt; do not pass the user's worktree/session creation request itself.
   When the user asks to list, inspect, audit, clean up, or delete worktrees, use AgentHub MCP worktree tools instead of direct git worktree commands. Use agenthub_list_worktrees to show the main repository's worktrees and associated Claude/Codex session counts.
   Before deleting, list first when the target or session impact is unclear; once the user has identified a specific worktree, use agenthub_delete_worktree so AgentHub also removes it from the sidebar.
+  When the user bundles several requests into one prompt and the work suits running agents in parallel, or asks to plan/delegate/split a multi-part task across agents, use agent_hub_planning first to produce a delegation plan, then create the worktrees with agenthub_create_worktree_sessions using each assignment's provider, branchSuggestion, and instructions.
   Do not use provider-native worktree/background-agent features for AgentHub-managed launches.
   """
 }
