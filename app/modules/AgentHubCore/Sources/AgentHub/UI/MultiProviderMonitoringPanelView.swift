@@ -296,15 +296,16 @@ public struct MultiProviderMonitoringPanelView: View {
     }
     .floatingPanel(isPresented: $showQuickFilePicker, defaultSize: CGSize(width: 680, height: 640)) {
       if let primaryItem = snapshot.effectivePrimaryItem {
+        let projectPath = defaultEditorProjectPath(for: primaryItem)
         QuickFilePickerView(
           isPresented: $showQuickFilePicker,
-          projectPath: editorState(for: primaryItem).projectPath,
+          projectPath: projectPath,
           onFileSelected: { path in
             showQuickFilePicker = false
             openFileInEditor(
               for: primaryItem.id,
               filePath: path,
-              projectPath: editorState(for: primaryItem).projectPath,
+              projectPath: projectPath,
               lineNumber: nil,
               makePrimary: false
             )
@@ -1233,11 +1234,36 @@ public struct MultiProviderMonitoringPanelView: View {
   }
 
   private func editorState(for item: ProviderMonitoringItem) -> MonitoringEditorState {
-    MonitoringEditorStateStore.state(
+    let defaultProjectPath = defaultEditorProjectPath(for: item)
+    var state = MonitoringEditorStateStore.state(
       for: item.id,
-      defaultProjectPath: item.projectPath,
+      defaultProjectPath: defaultProjectPath,
       in: editorStates
     )
+
+    if state.projectPath != defaultProjectPath {
+      state.projectPath = defaultProjectPath
+    }
+    if let selectedFilePath = state.selectedFilePath,
+       !Self.isPath(selectedFilePath, within: state.projectPath) {
+      state.selectedFilePath = nil
+      state.navigationRequest = nil
+    }
+
+    return state
+  }
+
+  private func defaultEditorProjectPath(for item: ProviderMonitoringItem) -> String {
+    WorktreeModuleResolver.bestMatch(for: item.projectPath, repositories: allSelectedRepositories)?
+      .worktree
+      .path
+      ?? item.projectPath
+  }
+
+  private static func isPath(_ path: String, within rootPath: String) -> Bool {
+    let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
+    let normalizedRootPath = WorktreeModuleResolver.normalizedDirectoryPath(rootPath)
+    return normalizedPath == normalizedRootPath || normalizedPath.hasPrefix(normalizedRootPath + "/")
   }
 
   private func editorContentModeBinding(for item: ProviderMonitoringItem) -> Binding<MonitoringCardContentMode> {

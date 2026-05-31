@@ -48,6 +48,32 @@ struct TerminalFileOpenProjectResolverTests {
     #expect(resolved == worktreePath)
   }
 
+  @Test func prefersSelectedWorktreeRootOverNestedSessionProject() {
+    let worktreePath = "/tmp/AgentHubResolver/agenthub-buenos-aires-692130"
+    let sessionProjectPath = worktreePath + "/android"
+    let filePath = sessionProjectPath + "/app/src/main/java/MainActivity.kt"
+    let repositories = [
+      SelectedRepository(
+        path: "/tmp/AgentHubResolver/agenthub",
+        worktrees: [
+          WorktreeBranch(
+            name: "agenthub-buenos-aires-692130",
+            path: worktreePath,
+            isWorktree: true
+          )
+        ]
+      )
+    ]
+
+    let resolved = TerminalFileOpenProjectResolver.projectPath(
+      forFile: filePath,
+      sessionProjectPath: sessionProjectPath,
+      repositories: repositories
+    )
+
+    #expect(resolved == worktreePath)
+  }
+
   @Test func fallsBackToNearestGitRootForUntrackedProject() throws {
     let root = try makeTemporaryDirectory()
     let gitDirectory = root.appendingPathComponent(".git", isDirectory: true)
