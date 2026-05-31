@@ -10,8 +10,57 @@ struct AgentHubCLI: AsyncParsableCommand {
     subcommands: [
       AgentHubMCPServerCommand.self,
       WorktreeCommand.self,
+      PlanCommand.self,
     ]
   )
+}
+
+struct PlanCommand: AsyncParsableCommand {
+  static let configuration = CommandConfiguration(
+    commandName: "plan",
+    abstract: "Break a bundled prompt into subtasks and delegate them to the best-suited installed agent."
+  )
+
+  @Argument(help: "The bundled, multi-part prompt to plan and delegate.")
+  var prompt: String
+
+  @Option(name: .long, help: "Repository path for context. Defaults to AGENTHUB_PROJECT_PATH.")
+  var repo: String?
+
+  @Flag(name: .long, help: "Print machine-readable JSON.")
+  var json = false
+
+  func run() async throws {
+    let repositoryPath = repo ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
+    let plan = await AgentHubPlanningService().buildPlan(
+      prompt: prompt,
+      providedSubtasks: [],
+      repositoryPath: repositoryPath
+    )
+
+    if json {
+      let encoder = JSONEncoder()
+      encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+      let data = try encoder.encode(plan)
+      Swift.print(String(decoding: data, as: UTF8.self))
+      return
+    }
+
+    Swift.print("Delegation plan: \(plan.assignments.count) subtask(s)")
+    for assignment in plan.assignments {
+      let agent = assignment.assignedModel ?? "unassigned"
+      Swift.print("\n[\(assignment.subtask.id)] \(assignment.subtask.title)")
+      Swift.print("  agent:  \(agent)")
+      Swift.print("  branch: \(assignment.branchSuggestion)")
+      Swift.print("  why:    \(assignment.rationale)")
+    }
+    if !plan.notes.isEmpty {
+      Swift.print("\nNotes:")
+      for note in plan.notes {
+        Swift.print("  • \(note)")
+      }
+    }
+  }
 }
 
 struct AgentHubMCPServerCommand: AsyncParsableCommand {

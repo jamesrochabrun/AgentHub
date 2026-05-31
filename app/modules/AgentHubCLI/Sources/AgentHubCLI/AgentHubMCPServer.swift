@@ -6,6 +6,7 @@ struct AgentHubMCPServer {
   private let queue = WorktreeLaunchRequestQueue()
   private let deletionQueue = WorktreeDeletionRequestQueue()
   private let progressQueue = WorktreeProgressQueue()
+  private let planningService: AgentHubPlanning = AgentHubPlanningService()
 
   func run() async throws {
     while let line = readLine(strippingNewline: true) {
@@ -45,7 +46,8 @@ struct AgentHubMCPServer {
           "tools": [
             createWorktreeSessionsToolSchema(),
             listWorktreesToolSchema(),
-            deleteWorktreeToolSchema()
+            deleteWorktreeToolSchema(),
+            planningToolSchema()
           ]
         ])
 
@@ -88,6 +90,10 @@ struct AgentHubMCPServer {
     case "agenthub_delete_worktree":
       let result = try await deleteWorktree(arguments: arguments)
       return toolResult(text: result.summary, structuredContent: result.dictionary)
+
+    case "agent_hub_planning":
+      let plan = try await buildDelegationPlan(arguments: arguments)
+      return toolResult(text: planSummary(plan), structuredContent: planJSONObject(plan))
 
     default:
       throw MCPError.invalidRequest("Unknown AgentHub tool: \(name).")
@@ -248,6 +254,94 @@ struct AgentHubMCPServer {
       deleteAssociatedBranch: deleteAssociatedBranch,
       sidebarCleanupRequestId: queued.request.id
     )
+  }
+
+  private func buildDelegationPlan(arguments: [String: Any]) async throws -> DelegationPlan {
+    let prompt = try requiredString("prompt", in: arguments)
+    let repositoryPath = optionalString("repo", in: arguments)
+      ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
+    let providedSubtasks = (arguments["subtasks"] as? [Any])?
+      .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      ?? []
+
+    return await planningService.buildPlan(
+      prompt: prompt,
+      providedSubtasks: providedSubtasks,
+      repositoryPath: repositoryPath
+    )
+  }
+
+  private func planSummary(_ plan: DelegationPlan) -> String {
+    var lines = ["Delegation plan: \(plan.assignments.count) subtask(s)."]
+    for assignment in plan.assignments {
+      let agent = assignment.assignedModel ?? "unassigned"
+      lines.append("- [\(assignment.subtask.id)] \(assignment.subtask.title) → \(agent) (branch \(assignment.branchSuggestion))")
+    }
+    if !plan.notes.isEmpty {
+      lines.append("Notes:")
+      lines.append(contentsOf: plan.notes.map { "  • \($0)" })
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  private func planJSONObject(_ plan: DelegationPlan) -> [String: Any] {
+    func tags(_ tags: [CapabilityTag]) -> [String] { tags.map(\.rawValue) }
+
+    let detectedCLIs = plan.detectedCLIs.map { cli -> [String: Any] in
+      [
+        "provider": cli.provider.commandLineValue,
+        "executablePath": cli.executablePath
+      ]
+    }
+
+    let modelProfiles = plan.modelProfiles.map { profile -> [String: Any] in
+      var value: [String: Any] = [
+        "provider": profile.provider.commandLineValue,
+        "model": profile.model,
+        "strengths": tags(profile.strengths),
+        "summary": profile.summary,
+        "sourcedFromWeb": profile.sourcedFromWeb
+      ]
+      if let sourceURL = profile.sourceURL {
+        value["sourceURL"] = sourceURL
+      }
+      return value
+    }
+
+    let assignments = plan.assignments.map { assignment -> [String: Any] in
+      var value: [String: Any] = [
+        "subtask": [
+          "id": assignment.subtask.id,
+          "title": assignment.subtask.title,
+          "detail": assignment.subtask.detail,
+          "tags": tags(assignment.subtask.tags)
+        ],
+        "matchedStrengths": tags(assignment.matchedStrengths),
+        "rationale": assignment.rationale,
+        "instructions": assignment.instructions,
+        "branchSuggestion": assignment.branchSuggestion
+      ]
+      if let provider = assignment.assignedProvider {
+        value["assignedProvider"] = provider.commandLineValue
+      }
+      if let model = assignment.assignedModel {
+        value["assignedModel"] = model
+      }
+      return value
+    }
+
+    var result: [String: Any] = [
+      "originalPrompt": plan.originalPrompt,
+      "detectedCLIs": detectedCLIs,
+      "modelProfiles": modelProfiles,
+      "assignments": assignments,
+      "notes": plan.notes
+    ]
+    if let repositoryPath = plan.repositoryPath {
+      result["repositoryPath"] = repositoryPath
+    }
+    return result
   }
 
   private func resolveDeletableWorktree(
@@ -437,6 +531,33 @@ struct AgentHubMCPServer {
           ]
         ],
         "required": ["target"],
+        "additionalProperties": false
+      ]
+    ]
+  }
+
+  private func planningToolSchema() -> [String: Any] {
+    [
+      "name": "agent_hub_planning",
+      "description": "Use this AgentHub planning tool when the user bundles several requests into one prompt and the work is well-suited to running agents in parallel, or explicitly asks to plan/delegate/split a multi-part task across agents. It breaks the prompt into discrete parallelizable subtasks, detects which agent CLIs (Claude Code, Codex) are installed, runs one web search per installed CLI to determine its latest model's strengths, matches each subtask to the best-suited agent, and returns a structured delegation plan (subtask, assigned provider/model, rationale, per-agent instructions, and a suggested branch). This tool only plans; to actually launch the work, follow up with agenthub_create_worktree_sessions using each assignment's provider, branchSuggestion, and instructions.",
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "prompt": [
+            "type": "string",
+            "description": "The full bundled, multi-part request to plan and delegate."
+          ],
+          "subtasks": [
+            "type": "array",
+            "items": ["type": "string"],
+            "description": "Optional pre-split subtasks. When provided, these override automatic decomposition of the prompt."
+          ],
+          "repo": [
+            "type": "string",
+            "description": "Optional repository path for context. Defaults to AGENTHUB_PROJECT_PATH."
+          ]
+        ],
+        "required": ["prompt"],
         "additionalProperties": false
       ]
     ]
