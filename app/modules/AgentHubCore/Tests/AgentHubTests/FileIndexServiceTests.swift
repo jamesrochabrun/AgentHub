@@ -389,8 +389,8 @@ struct FileIndexServicePrivacyTests {
     #expect(!relativePaths.contains("ignored/IgnoredSearchTarget.swift"))
   }
 
-  @Test("Worktree search uses local Git index before Spotlight")
-  func worktreeSearchSkipsSpotlight() async throws {
+  @Test("Worktree search checks Spotlight before local fallback")
+  func worktreeSearchChecksSpotlightBeforeLocalFallback() async throws {
     let fixture = try FileIndexFixture.create()
     defer { fixture.cleanup() }
 
@@ -417,9 +417,9 @@ struct FileIndexServicePrivacyTests {
 
     let diagnostics = await service.searchWithDiagnostics(query: "only", in: fixture.projectPath)
 
-    #expect(diagnostics.source == .localIndex)
-    #expect(diagnostics.spotlightCandidateCount == 0)
-    #expect(diagnostics.results.map(\.relativePath) == ["LocalOnly.swift"])
+    #expect(diagnostics.source == .spotlight)
+    #expect(diagnostics.spotlightCandidateCount == 1)
+    #expect(diagnostics.results.map(\.relativePath) == ["SpotlightOnly.swift"])
   }
 
   @Test("Non-Git folders fall back to recursive indexing")

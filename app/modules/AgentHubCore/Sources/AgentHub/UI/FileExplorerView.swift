@@ -41,7 +41,7 @@ public struct FileExplorerView: View {
   @State private var expandedPaths: Set<String> = []
   @State private var loadingDirectories: Set<String> = []
   @State private var scrollToPath: String?
-  @State private var hasLoadedTreeRoot = false
+  @State private var loadedTreeRootPath: String?
   @State private var editorDisplayMode: EditorDisplayMode = .highlighted
   @State private var editorDocumentID = UUID()
 
@@ -121,7 +121,10 @@ public struct FileExplorerView: View {
       maxHeight: .infinity
     )
     .task(id: loadTaskID) {
-      guard navigationRequest == nil else { return }
+      guard navigationRequest == nil else {
+        await ensureFileTreeLoaded()
+        return
+      }
       if let initialPath = selectedFilePath {
         await navigateToFile(at: initialPath)
       } else {
@@ -378,7 +381,7 @@ public struct FileExplorerView: View {
     loadingDirectories.removeAll()
     expandedPaths.removeAll()
     treeNodes = await FileIndexService.shared.rootNodes(projectPath: normalizedProjectPath)
-    hasLoadedTreeRoot = true
+    loadedTreeRootPath = normalizedProjectPath
     isLoading = false
   }
 
@@ -437,6 +440,7 @@ public struct FileExplorerView: View {
       .resolvingSymlinksInPath()
       .path
     await openFile(at: resolvedPath)
+    await ensureFileTreeLoaded()
     await expandToFile(resolvedPath)
     try? await Task.sleep(for: .milliseconds(100))
     scrollToPath = resolvedPath
@@ -500,11 +504,14 @@ public struct FileExplorerView: View {
     }
   }
 
+  private func ensureFileTreeLoaded() async {
+    guard loadedTreeRootPath != normalizedProjectPath else { return }
+    await loadFileTree()
+  }
+
   private func ensureDirectoryLoaded(_ directoryPath: String) async {
     if directoryPath == normalizedProjectPath {
-      if !hasLoadedTreeRoot {
-        await loadFileTree()
-      }
+      await ensureFileTreeLoaded()
       return
     }
 

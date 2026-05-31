@@ -44,6 +44,7 @@ Concrete types: `CLISessionMonitorService` / `CodexSessionMonitorService`, `Sess
 
 - Read `AccessorySessions.md` before editing accessory terminal panes, sub-session launch/detection, terminal workspace linked-session restore, or `session_relationships`.
 - AI override flags are applied only when starting a new CLI session, never when resuming an existing one
+- AgentHub-created worktrees live as sibling directories beside the main repository. Do not create a repo-local `.worktrees` folder or add `.worktrees/` to `.git/info/exclude`.
 - Empty or unsupported saved provider settings must fall back to the CLI's own defaults instead of emitting override flags
 - UserDefaults is only for app/UI preferences. Session/workspace management state must live in SQLite via `SessionMetadataStore`.
 - Never add `AgentHubDefaults` keys for selected repositories, monitored session IDs, session restore state, repo mappings, terminal workspace state, or terminal/dev-server process cleanup state.

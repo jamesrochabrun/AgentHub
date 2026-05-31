@@ -189,7 +189,7 @@ struct GitWorktreeServiceCancellationTests {
 
     #expect(cleanup.removedWorktree || cleanup.removedBranch || !cleanup.notes.isEmpty)
     #expect(try fixture.localBranchExists(branchName) == false)
-    #expect(FileManager.default.fileExists(atPath: fixture.repoPath + "/.worktrees/\(directoryName)") == false)
+    #expect(FileManager.default.fileExists(atPath: fixture.parentDir + "/\(directoryName)") == false)
   }
 }
 

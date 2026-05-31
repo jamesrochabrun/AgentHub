@@ -89,10 +89,10 @@ enum GitFixtureError: Error {
   case commandFailed(command: String, output: String, error: String)
 }
 
-@Suite("WorktreeManagementService .worktrees convention")
+@Suite("WorktreeManagementService sibling worktree convention")
 struct WorktreeConventionTests {
-  @Test("Creates new branch worktrees under repo-local .worktrees")
-  func createsWorktreeUnderRepoLocalDirectory() async throws {
+  @Test("Creates new branch worktrees beside the main repository")
+  func createsWorktreeBesideMainRepository() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }
 
@@ -103,11 +103,11 @@ struct WorktreeConventionTests {
       directoryName: WorktreeNaming.worktreeDirectoryName(for: "feature/example")
     )
 
-    #expect(path == fixture.repoPath + "/.worktrees/feature-example")
+    #expect(path == fixture.parentDir + "/feature-example")
     #expect(FileManager.default.fileExists(atPath: path))
-
-    let exclude = try String(contentsOfFile: fixture.repoPath + "/.git/info/exclude", encoding: .utf8)
-    #expect(exclude.components(separatedBy: .newlines).contains(".worktrees/"))
+    let worktrees = try await service.listWorktrees(at: fixture.repoPath)
+    let registeredWorktree = try #require(worktrees.first { $0.branch == "feature/example" })
+    #expect(path == registeredWorktree.path)
   }
 
   @Test("Creates from a linked worktree but stores under the main repository")
@@ -124,7 +124,7 @@ struct WorktreeConventionTests {
       directoryName: "feature-from-linked"
     )
 
-    #expect(path == fixture.repoPath + "/.worktrees/feature-from-linked")
+    #expect(path == fixture.parentDir + "/feature-from-linked")
     #expect(FileManager.default.fileExists(atPath: path))
   }
 
@@ -332,6 +332,6 @@ struct WorktreeRemovalTests {
 
     #expect(cleanup.removedWorktree || cleanup.removedBranch || !cleanup.notes.isEmpty)
     #expect(try fixture.localBranchExists(branchName) == false)
-    #expect(FileManager.default.fileExists(atPath: fixture.repoPath + "/.worktrees/\(directoryName)") == false)
+    #expect(FileManager.default.fileExists(atPath: fixture.parentDir + "/\(directoryName)") == false)
   }
 }

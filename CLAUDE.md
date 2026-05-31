@@ -295,6 +295,7 @@ The short version: GitHub observation is a shared actor service in `AgentHubGitH
 - Combine publishers bridge actor-isolated services to `@MainActor` ViewModels
 - `Task.detached` is used for file I/O off the actor's isolation context
 - `withTaskGroup` for parallel worktree detection and metadata reading
+- AgentHub-created worktrees are sibling directories beside the main repository. Do not create a repo-local `.worktrees` folder or write `.worktrees/` into `.git/info/exclude`.
 - Terminal PTY state is preserved across pending-to-real session transitions
 - `TerminalProcessRegistry` tracks child PIDs for cleanup on app termination
 - Theme system: built-in themes (Claude, Codex, Bat, Xcode) + YAML hot-reload via `ThemeFileWatcher`

@@ -109,7 +109,7 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
 
   public func worktreesDirectory(at repoPath: String) async throws -> String {
     let mainRoot = try await findMainRepositoryRoot(at: repoPath)
-    return (mainRoot as NSString).appendingPathComponent(".worktrees")
+    return siblingWorktreeDirectory(mainRoot: mainRoot)
   }
 
   public func listWorktrees(at repoPath: String) async throws -> [WorktreeInfo] {
@@ -168,7 +168,11 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
         timeout: Self.gitWorktreeTimeout
       )
 
-      return worktreePath
+      return await resolveCreatedWorktreePath(
+        requestedPath: worktreePath,
+        branch: branch,
+        repoPath: sourceRoot
+      )
     }
   }
 
@@ -206,7 +210,11 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
       }
 
       try await runGitCommand(args, at: sourceRoot, timeout: Self.gitWorktreeTimeout)
-      return worktreePath
+      return await resolveCreatedWorktreePath(
+        requestedPath: worktreePath,
+        branch: newBranchName,
+        repoPath: sourceRoot
+      )
     }
   }
 
@@ -253,8 +261,13 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
         onProgress: onProgress
       )
 
-      await onProgress(.completed(path: worktreePath))
-      return worktreePath
+      let resolvedWorktreePath = await resolveCreatedWorktreePath(
+        requestedPath: worktreePath,
+        branch: newBranchName,
+        repoPath: sourceRoot
+      )
+      await onProgress(.completed(path: resolvedWorktreePath))
+      return resolvedWorktreePath
     }
   }
 
@@ -283,8 +296,7 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     do {
       let sourceRoot = try await findGitRoot(at: repoPath)
       let mainRoot = try await findMainRepositoryRoot(at: repoPath)
-      let worktreesDirectory = (mainRoot as NSString).appendingPathComponent(".worktrees")
-      let worktreePath = (worktreesDirectory as NSString).appendingPathComponent(directoryName)
+      let worktreePath = siblingWorktreePath(mainRoot: mainRoot, directoryName: directoryName)
 
       let fileManager = FileManager.default
 
@@ -508,8 +520,7 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     } else {
       let mainRoot = try await findMainRepositoryRoot(at: repoPath)
       let directoryName = WorktreeNaming.worktreeDirectoryName(for: branchOrPath)
-      let worktreesDirectory = (mainRoot as NSString).appendingPathComponent(".worktrees")
-      targetPath = (worktreesDirectory as NSString).appendingPathComponent(directoryName)
+      targetPath = siblingWorktreePath(mainRoot: mainRoot, directoryName: directoryName)
     }
 
     let mainRoot = try await findMainRepositoryRoot(at: repoPath)
@@ -561,16 +572,49 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
 private extension WorktreeManagementService {
   func prepareWorktreePath(repoPath: String, directoryName: String) async throws -> String {
     let mainRoot = try await findMainRepositoryRoot(at: repoPath)
-    try ensureWorktreesDirectory(mainRoot: mainRoot, repoPath: repoPath)
-
-    let worktreesDirectory = (mainRoot as NSString).appendingPathComponent(".worktrees")
-    let worktreePath = (worktreesDirectory as NSString).appendingPathComponent(directoryName)
+    let worktreePath = siblingWorktreePath(mainRoot: mainRoot, directoryName: directoryName)
 
     if FileManager.default.fileExists(atPath: worktreePath) {
       throw WorktreeManagementError.directoryAlreadyExists(worktreePath)
     }
 
     return worktreePath
+  }
+
+  nonisolated func siblingWorktreeDirectory(mainRoot: String) -> String {
+    (mainRoot as NSString).deletingLastPathComponent
+  }
+
+  nonisolated func siblingWorktreePath(mainRoot: String, directoryName: String) -> String {
+    (siblingWorktreeDirectory(mainRoot: mainRoot) as NSString).appendingPathComponent(directoryName)
+  }
+
+  func resolveCreatedWorktreePath(
+    requestedPath: String,
+    branch: String,
+    repoPath: String
+  ) async -> String {
+    let normalizedRequestedPath = normalizedExistingPath(requestedPath)
+    if let worktrees = try? await listWorktrees(at: repoPath),
+       let gitRegisteredPath = worktrees.first(where: { worktree in
+         worktree.branch == branch
+           || normalizedExistingPath(worktree.path) == normalizedRequestedPath
+       })?.path {
+      return gitRegisteredPath
+    }
+
+    if let gitRoot = try? await findGitRoot(at: requestedPath), !gitRoot.isEmpty {
+      return gitRoot
+    }
+
+    return normalizedRequestedPath
+  }
+
+  nonisolated func normalizedExistingPath(_ path: String) -> String {
+    URL(fileURLWithPath: path)
+      .standardizedFileURL
+      .resolvingSymlinksInPath()
+      .path
   }
 
   func copyUntrackedFiles(
@@ -606,33 +650,6 @@ private extension WorktreeManagementService {
     }
 
     return (root as NSString).appendingPathComponent(relativePath)
-  }
-
-  func ensureWorktreesDirectory(mainRoot: String, repoPath: String) throws {
-    let worktreesDirectory = (mainRoot as NSString).appendingPathComponent(".worktrees")
-    try FileManager.default.createDirectory(
-      atPath: worktreesDirectory,
-      withIntermediateDirectories: true
-    )
-
-    let commonDirOutput = try runGitCommandSync(
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      at: repoPath
-    )
-    let commonDir = commonDirOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !commonDir.isEmpty else { return }
-
-    let infoDirectory = (commonDir as NSString).appendingPathComponent("info")
-    try FileManager.default.createDirectory(atPath: infoDirectory, withIntermediateDirectories: true)
-    let excludeFile = (infoDirectory as NSString).appendingPathComponent("exclude")
-
-    let existing = (try? String(contentsOfFile: excludeFile, encoding: .utf8)) ?? ""
-    let lines = existing.components(separatedBy: .newlines)
-    guard !lines.contains(".worktrees/") else { return }
-
-    let prefix = existing.isEmpty || existing.hasSuffix("\n") ? "" : "\n"
-    let updated = existing + prefix + ".worktrees/\n"
-    try updated.write(toFile: excludeFile, atomically: true, encoding: .utf8)
   }
 
   func branchExists(_ branchName: String, at repoPath: String) async throws -> Bool {

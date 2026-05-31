@@ -18,15 +18,15 @@ enum TerminalFileOpenProjectResolver {
     let resolvedFilePath = normalize(filePath)
     let resolvedSessionProjectPath = normalize(sessionProjectPath)
 
-    if isPath(resolvedFilePath, within: resolvedSessionProjectPath) {
-      return resolvedSessionProjectPath
-    }
-
     if let selectedRoot = selectedProjectRoot(
       containing: resolvedFilePath,
       repositories: repositories
     ) {
       return selectedRoot
+    }
+
+    if isPath(resolvedFilePath, within: resolvedSessionProjectPath) {
+      return resolvedSessionProjectPath
     }
 
     if let gitRoot = gitRoot(containing: resolvedFilePath, fileManager: fileManager) {

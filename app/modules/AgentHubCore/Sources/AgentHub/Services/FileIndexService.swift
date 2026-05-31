@@ -416,8 +416,7 @@ public actor FileIndexService {
   }
 
   /// Searches files using Spotlight first, then falls back to a local index if
-  /// Spotlight has no usable results for the project. Git worktrees use the local
-  /// Git-backed index first because Spotlight often lags or misses them entirely.
+  /// Spotlight has no usable results for the project.
   /// Ranking uses a strict 3-tier approach:
   /// 1. Filename starts with query → highest score
   /// 2. Filename contains query as substring → high score
@@ -442,49 +441,44 @@ public actor FileIndexService {
 
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
     let localStatusBeforeFallback = searchIndexStatus(resolvedProjectPath: resolvedProjectPath)
-    let usesWorktreeLocalIndexFirst = projectFileEnumerator.gitProjectKind(at: resolvedProjectPath) == .gitWorktree
 
-    var spotlightCandidateCount = 0
-    var spotlightElapsedSeconds: TimeInterval = 0
-    if !usesWorktreeLocalIndexFirst {
-      let spotlightResponse = await projectFileSearchService.searchWithDiagnostics(
-        query: query,
-        in: resolvedProjectPath,
-        limit: Self.maxSearchResults * 10
-      )
-      spotlightCandidateCount = spotlightResponse.candidateCount
-      spotlightElapsedSeconds = spotlightResponse.elapsedSeconds
+    let spotlightResponse = await projectFileSearchService.searchWithDiagnostics(
+      query: query,
+      in: resolvedProjectPath,
+      limit: Self.maxSearchResults * 10
+    )
+    let spotlightCandidateCount = spotlightResponse.candidateCount
+    let spotlightElapsedSeconds = spotlightResponse.elapsedSeconds
 
-      let filteredSpotlightResults = spotlightResponse.results
-        .compactMap { spotlightResult -> FileSearchResult? in
-          let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
-          guard shouldIncludeSearchResultCached(at: absolutePath, rootPath: resolvedProjectPath) else {
-            return nil
-          }
-          let relativePath = Self.projectRelativePath(for: absolutePath, relativeTo: resolvedProjectPath)
-          let name = URL(fileURLWithPath: absolutePath).lastPathComponent
-
-          return FileSearchResult(
-            id: absolutePath,
-            name: name,
-            relativePath: relativePath,
-            absolutePath: absolutePath,
-            score: spotlightResult.score
-          )
+    let filteredSpotlightResults = spotlightResponse.results
+      .compactMap { spotlightResult -> FileSearchResult? in
+        let absolutePath = Self.resolvedURL(for: spotlightResult.absolutePath).path
+        guard shouldIncludeSearchResultCached(at: absolutePath, rootPath: resolvedProjectPath) else {
+          return nil
         }
-        .sortedBySearchScore()
+        let relativePath = Self.projectRelativePath(for: absolutePath, relativeTo: resolvedProjectPath)
+        let name = URL(fileURLWithPath: absolutePath).lastPathComponent
 
-      if !filteredSpotlightResults.isEmpty {
-        return FileSearchDiagnostics(
-          results: Array(filteredSpotlightResults.prefix(Self.maxSearchResults)),
-          source: .spotlight,
-          spotlightCandidateCount: spotlightCandidateCount,
-          spotlightElapsedSeconds: spotlightElapsedSeconds,
-          localIndexStatusBeforeFallback: localStatusBeforeFallback,
-          localIndexedFileCount: searchCache[resolvedProjectPath]?.files.count ?? 0,
-          localIndexElapsedSeconds: nil
+        return FileSearchResult(
+          id: absolutePath,
+          name: name,
+          relativePath: relativePath,
+          absolutePath: absolutePath,
+          score: spotlightResult.score
         )
       }
+      .sortedBySearchScore()
+
+    if !filteredSpotlightResults.isEmpty {
+      return FileSearchDiagnostics(
+        results: Array(filteredSpotlightResults.prefix(Self.maxSearchResults)),
+        source: .spotlight,
+        spotlightCandidateCount: spotlightCandidateCount,
+        spotlightElapsedSeconds: spotlightElapsedSeconds,
+        localIndexStatusBeforeFallback: localStatusBeforeFallback,
+        localIndexedFileCount: searchCache[resolvedProjectPath]?.files.count ?? 0,
+        localIndexElapsedSeconds: nil
+      )
     }
 
     let localIndexStart = Date()

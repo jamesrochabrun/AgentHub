@@ -23,7 +23,7 @@
 - **GitHub support** — Browse pull requests and issues for the current repository, inspect PR diffs and CI checks, monitor current-branch PR status f![Uploading Screenshot 2026-05-26 at 4.23.24 PM.png…]()
 rom session rows, and send GitHub context back into a session
 - **File explorer and built-in editor** — Browse the project tree, jump to files with Cmd+P, edit files in-app with syntax highlighting, and save changes without leaving AgentHub
-- **Git worktree management** — Create and delete worktrees from the UI, launch sessions on new branches, and choose whether AgentHub-owned worktree sessions appear under the parent module or as separate modules
+- **Git worktree management** — Create and delete sibling worktrees from the UI, launch sessions on new branches, and choose whether AgentHub-owned worktree sessions appear under the parent module or as separate modules
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
 - **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
@@ -244,6 +244,8 @@ Toggle between modes in the app settings.
 ### Worktree Grouping
 
 Worktree sessions are grouped under their parent module by default, so `ModuleA` shows its regular sessions plus AgentHub-owned worktree sessions. The Worktrees settings tab can switch to separate modules, where each AgentHub-owned worktree appears as its own module section.
+
+AgentHub creates new worktrees as sibling directories beside the main repository, using the generated or manual directory name directly under the repository's parent directory. It no longer creates a repo-local `.worktrees` folder or adds `.worktrees/` to Git's exclude file.
 
 AgentHub only treats worktrees it created, explicitly added, or focused through monitored sessions as owned. External Git worktrees discovered from the repository are ignored for session grouping, which keeps large local worktree setups from flooding the session list. The Worktrees settings inventory still lists all Git worktrees for tracked repositories: focused rows participate in AgentHub grouping, while external rows can be deleted without becoming focused.
 
