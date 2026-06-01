@@ -315,6 +315,8 @@ public final class WorktreeGenerationProgressCoordinator {
 
   private func ingest(_ progress: WorktreeCreationProgress, for id: String) {
     guard let idx = operations.firstIndex(where: { $0.id == id }) else { return }
+    // Git stderr callbacks can arrive after the terminal sidecar snapshot; terminal states are final.
+    guard operations[idx].progress.isInProgress else { return }
     guard operations[idx].progress != progress else { return }
     operations[idx].progress = progress
     if !progress.isInProgress {

@@ -89,6 +89,18 @@ enum GitFixtureError: Error {
   case commandFailed(command: String, output: String, error: String)
 }
 
+private actor WorktreeProgressRecorder {
+  private var values: [WorktreeCreationProgress] = []
+
+  func record(_ progress: WorktreeCreationProgress) {
+    values.append(progress)
+  }
+
+  func recordedValues() -> [WorktreeCreationProgress] {
+    values
+  }
+}
+
 @Suite("WorktreeManagementService sibling worktree convention")
 struct WorktreeConventionTests {
   @Test("Creates new branch worktrees beside the main repository")
@@ -165,6 +177,45 @@ struct WorktreeConventionTests {
     )
 
     #expect(FileManager.default.fileExists(atPath: path + "/BASE.md"))
+  }
+
+  @Test("Progress-enabled creation leaves completed as the final update")
+  func progressEnabledCreationLeavesCompletedFinal() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let hookPath = fixture.repoPath + "/.git/hooks/post-checkout"
+    let hook = """
+    #!/bin/sh
+    echo "Preparing worktree from hook" >&2
+    """
+    try hook.write(toFile: hookPath, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hookPath)
+
+    let service = WorktreeManagementService()
+    let recorder = WorktreeProgressRecorder()
+
+    _ = try await service.createWorktreeWithNewBranch(
+      at: fixture.repoPath,
+      newBranchName: "feature/progress-order",
+      directoryName: "feature-progress-order",
+      operationID: WorktreeOperationID()
+    ) { progress in
+      if case .preparing = progress {
+        try? await Task.sleep(for: .milliseconds(150))
+      }
+      await recorder.record(progress)
+    }
+
+    try await Task.sleep(for: .milliseconds(250))
+    let progressUpdates = await recorder.recordedValues()
+    let completedIndex = try #require(progressUpdates.lastIndex(where: { progress in
+      if case .completed = progress { return true }
+      return false
+    }))
+
+    #expect(completedIndex == progressUpdates.indices.last)
+    #expect(!progressUpdates.dropFirst(completedIndex + 1).contains { $0.isInProgress })
   }
 
   @Test("Applies tracked and untracked source changes to another worktree")
