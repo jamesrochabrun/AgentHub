@@ -891,6 +891,7 @@ private extension WorktreeManagementService {
     process.standardError = errorPipe
 
     let stderrCollector = GitStderrCollector()
+    let progressForwarder = WorktreeProgressForwarder(onProgress: onProgress)
     errorPipe.fileHandleForReading.readabilityHandler = { handle in
       let data = handle.availableData
       guard !data.isEmpty,
@@ -900,15 +901,7 @@ private extension WorktreeManagementService {
 
       let lines = stderrCollector.append(chunk)
       for line in lines {
-        if let progress = Self.parseUpdatingFilesProgress(from: line) {
-          Task {
-            await onProgress(.updatingFiles(current: progress.current, total: progress.total))
-          }
-        } else if line.contains("Preparing worktree") {
-          Task {
-            await onProgress(.preparing(message: "Preparing worktree..."))
-          }
-        }
+        Self.forwardGitProgress(from: line, using: progressForwarder)
       }
     }
 
@@ -963,10 +956,16 @@ private extension WorktreeManagementService {
     let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
     errorPipe.fileHandleForReading.readabilityHandler = nil
     let remainingErrorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+    var remainingLines: [String] = []
     if let remainingError = String(data: remainingErrorData, encoding: .utf8),
        !remainingError.isEmpty {
-      _ = stderrCollector.append(remainingError)
+      remainingLines.append(contentsOf: stderrCollector.append(remainingError))
     }
+    remainingLines.append(contentsOf: stderrCollector.drainPartialLine())
+    for line in remainingLines {
+      Self.forwardGitProgress(from: line, using: progressForwarder)
+    }
+    await progressForwarder.waitForAll()
 
     let output = String(data: outputData, encoding: .utf8) ?? ""
     let wasCancelled = cancelledWorktreeOperations.remove(operationID) != nil || Task.isCancelled
@@ -998,10 +997,67 @@ private extension WorktreeManagementService {
     return (current, total)
   }
 
+  static func forwardGitProgress(
+    from line: String,
+    using forwarder: WorktreeProgressForwarder
+  ) {
+    if let progress = parseUpdatingFilesProgress(from: line) {
+      forwarder.enqueue(.updatingFiles(current: progress.current, total: progress.total))
+    } else if line.contains("Preparing worktree") {
+      forwarder.enqueue(.preparing(message: "Preparing worktree..."))
+    }
+  }
+
   static func terminateIfRunning(_ process: Process) {
     if process.isRunning {
       process.terminate()
     }
+  }
+}
+
+private final class WorktreeProgressForwarder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var tailTask: Task<Void, Never>?
+  private var generation = 0
+  private let onProgress: @Sendable (WorktreeCreationProgress) async -> Void
+
+  init(onProgress: @escaping @Sendable (WorktreeCreationProgress) async -> Void) {
+    self.onProgress = onProgress
+  }
+
+  func enqueue(_ progress: WorktreeCreationProgress) {
+    lock.lock()
+    defer { lock.unlock() }
+    let previousTask = tailTask
+    generation += 1
+    tailTask = Task {
+      await previousTask?.value
+      await onProgress(progress)
+    }
+  }
+
+  func waitForAll() async {
+    while true {
+      let (task, targetGeneration) = currentTail()
+
+      await task?.value
+
+      if isCurrentGeneration(targetGeneration) {
+        return
+      }
+    }
+  }
+
+  private func currentTail() -> (Task<Void, Never>?, Int) {
+    lock.lock()
+    defer { lock.unlock() }
+    return (tailTask, generation)
+  }
+
+  private func isCurrentGeneration(_ targetGeneration: Int) -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return generation == targetGeneration
   }
 }
 
@@ -1030,5 +1086,16 @@ private final class GitStderrCollector: @unchecked Sendable {
       output.append(partialLine)
     }
     return output.joined(separator: "\n")
+  }
+
+  func drainPartialLine() -> [String] {
+    lock.lock()
+    defer { lock.unlock() }
+
+    guard !partialLine.isEmpty else { return [] }
+    let line = partialLine
+    lines.append(line)
+    partialLine = ""
+    return [line]
   }
 }

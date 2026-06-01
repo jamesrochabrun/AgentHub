@@ -72,6 +72,22 @@ struct WorktreeGenerationProgressCoordinatorTests {
     #expect(notif.calls == [["add-logging"]])
   }
 
+  @Test("Terminal MCP progress does not regress to preparing")
+  func terminalMCPProgressDoesNotRegressToPreparing() async {
+    let watcher = MockProgressWatcher()
+    let coord = WorktreeGenerationProgressCoordinator(soundService: MockSound(), notificationService: MockNotifier())
+    coord.startObservingMCP(watcher: watcher)
+
+    watcher.send(snapshot("mcp-1", "mcp-opt-in", .completed(path: "/tmp/mcp-opt-in"), at: 1))
+    await settle()
+    watcher.send(snapshot("mcp-1", "mcp-opt-in", .preparing(message: "Preparing worktree..."), at: 2))
+    await settle()
+
+    #expect(coord.operations.count == 1)
+    #expect(coord.inFlightCount == 0)
+    #expect(coord.operations.first?.progress == .completed(path: "/tmp/mcp-opt-in"))
+  }
+
   @Test("Branch naming shows a transient row that never announces ready")
   func namingDoesNotFireReady() async {
     UserDefaults.standard.set(true, forKey: AgentHubDefaults.notificationSoundsEnabled)
