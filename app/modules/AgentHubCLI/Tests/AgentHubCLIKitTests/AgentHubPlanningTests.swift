@@ -5,12 +5,12 @@ import Testing
 
 // MARK: - Task decomposition
 
-@Suite("HeuristicTaskDecomposer")
-struct HeuristicTaskDecomposerTests {
-  let decomposer = HeuristicTaskDecomposer()
+@Suite("SemanticTaskDecomposer")
+struct SemanticTaskDecomposerTests {
+  let decomposer = SemanticTaskDecomposer()
 
-  @Test("Splits a numbered list into one subtask per item")
-  func splitsNumberedList() {
+  @Test("Does not split numbered text")
+  func doesNotSplitNumberedText() {
     let prompt = """
     Please do the following:
     1. Add a REST endpoint for users
@@ -18,29 +18,38 @@ struct HeuristicTaskDecomposerTests {
     3. Refactor the database access layer
     """
     let subtasks = decomposer.decompose(prompt: prompt)
-    #expect(subtasks.count == 3)
+    #expect(subtasks.count == 1)
     #expect(subtasks[0].id == "task-1")
-    #expect(subtasks[0].detail == "Add a REST endpoint for users")
-    #expect(subtasks[2].detail == "Refactor the database access layer")
+    #expect(subtasks[0].detail.contains("1. Add a REST endpoint for users"))
+    #expect(subtasks[0].detail.contains("3. Refactor the database access layer"))
   }
 
-  @Test("Splits a bulleted list into discrete subtasks")
-  func splitsBulletedList() {
+  @Test("Does not split bulleted text")
+  func doesNotSplitBulletedText() {
     let prompt = """
     - Write unit tests for the parser
     - Document the public API
     """
     let subtasks = decomposer.decompose(prompt: prompt)
-    #expect(subtasks.count == 2)
-    #expect(subtasks[0].tags.contains(.testing))
-    #expect(subtasks[1].tags.contains(.documentation))
+    #expect(subtasks.count == 1)
+    #expect(subtasks[0].detail.contains("Write unit tests"))
+    #expect(subtasks[0].detail.contains("Document the public API"))
   }
 
-  @Test("Splits prose on conjunctions when there is no list")
-  func splitsProse() {
+  @Test("Does not split prose on punctuation or conjunctions")
+  func doesNotSplitProse() {
     let prompt = "Implement the login API and then write tests for it; also update the README"
     let subtasks = decomposer.decompose(prompt: prompt)
-    #expect(subtasks.count == 3)
+    #expect(subtasks.count == 1)
+    #expect(subtasks[0].detail == prompt)
+  }
+
+  @Test("Keeps coherent qualifier prompts as one task")
+  func keepsCoherentQualifierPrompt() {
+    let prompt = "Implement OAuth, and ensure it handles SSO"
+    let subtasks = decomposer.decompose(prompt: prompt)
+    #expect(subtasks.count == 1)
+    #expect(subtasks[0].detail == prompt)
   }
 
   @Test("A single instruction yields exactly one subtask")
@@ -57,7 +66,7 @@ struct HeuristicTaskDecomposerTests {
 
   @Test("Untagged text defaults to the coding tag")
   func defaultsToCoding() {
-    let tags = HeuristicTaskDecomposer.tags(for: "Something unrelated to keywords")
+    let tags = SemanticTaskDecomposer.tags(for: "Something unrelated to keywords")
     #expect(tags == [.coding])
   }
 }
@@ -99,6 +108,17 @@ struct AgentCLIDetectorTests {
 
 @Suite("WebModelCapabilityResearchService")
 struct WebModelCapabilityResearchServiceTests {
+  @Test("Uses curated profile without network by default")
+  func defaultsToCuratedProfileWithoutNetwork() async {
+    let fetcher = RecordingFetcher(result: .success("<html></html>"))
+    let service = WebModelCapabilityResearchService(fetcher: fetcher)
+    let profile = await service.researchCapabilities(for: .claude)
+
+    #expect(!profile.sourcedFromWeb)
+    #expect(profile.model == "Claude Opus 4.8")
+    #expect(await fetcher.callCount() == 0)
+  }
+
   @Test("Derives strengths and model from a web search result")
   func parsesWebResult() async {
     let html = """
@@ -108,7 +128,10 @@ struct WebModelCapabilityResearchServiceTests {
       </a>
     </div>
     """
-    let service = WebModelCapabilityResearchService(fetcher: StubFetcher(result: .success(html)))
+    let service = WebModelCapabilityResearchService(
+      fetcher: StubFetcher(result: .success(html)),
+      allowsNetworkLookup: true
+    )
     let profile = await service.researchCapabilities(for: .claude)
 
     #expect(profile.sourcedFromWeb)
@@ -121,7 +144,10 @@ struct WebModelCapabilityResearchServiceTests {
 
   @Test("Falls back to the curated profile when the network fails")
   func fallsBackOnFailure() async {
-    let service = WebModelCapabilityResearchService(fetcher: StubFetcher(result: .failure(StubError.offline)))
+    let service = WebModelCapabilityResearchService(
+      fetcher: StubFetcher(result: .failure(StubError.offline)),
+      allowsNetworkLookup: true
+    )
     let profile = await service.researchCapabilities(for: .codex)
 
     #expect(!profile.sourcedFromWeb)
@@ -132,7 +158,10 @@ struct WebModelCapabilityResearchServiceTests {
 
   @Test("Falls back when the page has no parseable snippet")
   func fallsBackOnEmptySnippet() async {
-    let service = WebModelCapabilityResearchService(fetcher: StubFetcher(result: .success("<html><body>no results</body></html>")))
+    let service = WebModelCapabilityResearchService(
+      fetcher: StubFetcher(result: .success("<html><body>no results</body></html>")),
+      allowsNetworkLookup: true
+    )
     let profile = await service.researchCapabilities(for: .claude)
     #expect(!profile.sourcedFromWeb)
     #expect(profile.model == "Claude Opus 4.8")
@@ -157,11 +186,11 @@ struct AgentHubPlanningServiceTests {
     )
 
     let plan = await planner.buildPlan(
-      prompt: """
-      1. Build the React UI component for the dashboard
-      2. Refactor and debug the authentication module
-      """,
-      providedSubtasks: [],
+      prompt: "Plan these semantically inferred subtasks",
+      providedSubtasks: [
+        "Build the React UI component for the dashboard",
+        "Refactor and debug the authentication module",
+      ],
       repositoryPath: "/repo"
     )
 
@@ -187,8 +216,24 @@ struct AgentHubPlanningServiceTests {
       providedSubtasks: [],
       repositoryPath: nil
     )
+    #expect(plan.assignments.count == 1)
     #expect(plan.assignments.allSatisfy { $0.assignedProvider == .claude })
     #expect(plan.notes.contains { $0.contains("Only one agent CLI") })
+  }
+
+  @Test("Raw prompt text is not statically split")
+  func rawPromptTextIsNotStaticallySplit() async {
+    let planner = AgentHubPlanningService(
+      detector: StubDetector(clis: [DetectedAgentCLI(provider: .claude, executablePath: "/bin/claude")]),
+      research: StubResearch(profiles: [.claude: profile(.claude, "Claude Opus 4.8", [.coding])])
+    )
+    let prompt = """
+    1. Build the React UI
+    2. Refactor the API, and write tests; also update docs
+    """
+    let plan = await planner.buildPlan(prompt: prompt, providedSubtasks: [], repositoryPath: nil)
+    #expect(plan.assignments.count == 1)
+    #expect(plan.assignments[0].subtask.detail.contains("2. Refactor the API"))
   }
 
   @Test("Leaves subtasks unassigned and notes the gap when no CLI is installed")
@@ -223,6 +268,27 @@ struct AgentHubPlanningServiceTests {
     #expect(plan.assignments[0].subtask.detail == "First explicit task")
   }
 
+  @Test("Branch suggestions are unique when slug prefixes collide")
+  func branchSuggestionsAreUniqueWhenSlugPrefixesCollide() async {
+    let planner = AgentHubPlanningService(
+      detector: StubDetector(clis: [DetectedAgentCLI(provider: .claude, executablePath: "/bin/claude")]),
+      research: StubResearch(profiles: [.claude: profile(.claude, "Claude Opus 4.8", [.coding])])
+    )
+    let plan = await planner.buildPlan(
+      prompt: "Plan these semantically inferred subtasks",
+      providedSubtasks: [
+        "Implement OAuth login callback flow for the API",
+        "Implement OAuth login callback flow for the settings UI",
+      ],
+      repositoryPath: nil
+    )
+    let branches = plan.assignments.map(\.branchSuggestion)
+    #expect(branches.count == 2)
+    #expect(Set(branches).count == 2)
+    #expect(branches[0] == "agent-implement-oauth-login-callback-flow")
+    #expect(branches[1].hasPrefix("agent-implement-oauth-login-callback-flow-task-2"))
+  }
+
   private func profile(
     _ provider: WorktreeLaunchProvider,
     _ model: String,
@@ -247,6 +313,24 @@ private struct StubFetcher: WebPageFetching {
   let result: Result<String, Error>
   func fetchText(from url: URL) async throws -> String {
     try result.get()
+  }
+}
+
+private actor RecordingFetcher: WebPageFetching {
+  private let result: Result<String, Error>
+  private var requestedURLs: [URL] = []
+
+  init(result: Result<String, Error>) {
+    self.result = result
+  }
+
+  func fetchText(from url: URL) async throws -> String {
+    requestedURLs.append(url)
+    return try result.get()
+  }
+
+  func callCount() -> Int {
+    requestedURLs.count
   }
 }
 

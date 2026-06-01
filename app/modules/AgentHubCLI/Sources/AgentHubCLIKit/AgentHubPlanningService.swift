@@ -21,7 +21,7 @@ public struct AgentHubPlanningService: AgentHubPlanning {
   public init(
     detector: AgentCLIDetecting = AgentCLIDetector(),
     research: ModelCapabilityResearching = WebModelCapabilityResearchService(),
-    decomposer: TaskDecomposing = HeuristicTaskDecomposer()
+    decomposer: TaskDecomposing = SemanticTaskDecomposer()
   ) {
     self.detector = detector
     self.research = research
@@ -41,9 +41,11 @@ public struct AgentHubPlanningService: AgentHubPlanning {
       uniquingKeysWith: { first, _ in first }
     )
 
-    let assignments = subtasks.map { subtask in
+    let branchSuggestions = Self.uniqueBranchSuggestions(for: subtasks)
+    let assignments = zip(subtasks, branchSuggestions).map { subtask, branch in
       makeAssignment(
         for: subtask,
+        branchSuggestion: branch,
         detectedCLIs: detectedCLIs,
         profilesByProvider: profilesByProvider
       )
@@ -71,7 +73,7 @@ public struct AgentHubPlanningService: AgentHubPlanning {
           id: "task-\(index + 1)",
           title: Self.title(from: text),
           detail: text,
-          tags: HeuristicTaskDecomposer.tags(for: text)
+          tags: SemanticTaskDecomposer.tags(for: text)
         )
       }
     }
@@ -82,7 +84,7 @@ public struct AgentHubPlanningService: AgentHubPlanning {
 
   private func researchProfiles(for clis: [DetectedAgentCLI]) async -> [ModelCapabilityProfile] {
     guard !clis.isEmpty else { return [] }
-    // One web search per installed CLI, run in parallel.
+    // Capability lookup is local by default; an injected researcher may opt into web lookup.
     let research = self.research
     let collected = await withTaskGroup(of: ModelCapabilityProfile.self) { group in
       for cli in clis {
@@ -103,11 +105,10 @@ public struct AgentHubPlanningService: AgentHubPlanning {
 
   private func makeAssignment(
     for subtask: Subtask,
+    branchSuggestion: String,
     detectedCLIs: [DetectedAgentCLI],
     profilesByProvider: [WorktreeLaunchProvider: ModelCapabilityProfile]
   ) -> PlanAssignment {
-    let branch = Self.branchSuggestion(for: subtask)
-
     guard !detectedCLIs.isEmpty else {
       return PlanAssignment(
         subtask: subtask,
@@ -115,8 +116,8 @@ public struct AgentHubPlanningService: AgentHubPlanning {
         assignedModel: nil,
         matchedStrengths: [],
         rationale: "No agent CLI detected; install Claude Code or Codex to delegate this subtask.",
-        instructions: Self.instructions(for: subtask, model: nil, branch: branch),
-        branchSuggestion: branch
+        instructions: Self.instructions(for: subtask, model: nil, branch: branchSuggestion),
+        branchSuggestion: branchSuggestion
       )
     }
 
@@ -140,8 +141,8 @@ public struct AgentHubPlanningService: AgentHubPlanning {
       assignedModel: model,
       matchedStrengths: matched,
       rationale: Self.rationale(model: model, matched: matched, score: best.score),
-      instructions: Self.instructions(for: subtask, model: model, branch: branch),
-      branchSuggestion: branch
+      instructions: Self.instructions(for: subtask, model: model, branch: branchSuggestion),
+      branchSuggestion: branchSuggestion
     )
   }
 
@@ -164,11 +165,11 @@ public struct AgentHubPlanningService: AgentHubPlanning {
     for profile in profiles {
       let origin = profile.sourcedFromWeb
         ? "from web search (\(profile.sourceURL ?? "source"))"
-        : "from curated fallback (web search unavailable)"
+        : "from local curated profile"
       notes.append("\(profile.model) strengths \(origin): \(profile.strengths.map(\.displayName).joined(separator: ", ")).")
     }
 
-    notes.append("This plan is advisory. To execute it, create one worktree per subtask with agenthub_create_worktree_sessions, using each assignment's provider, branchSuggestion, and instructions.")
+    notes.append("This plan is advisory. If the user explicitly approves worktree creation, create one worktree per approved subtask with agenthub_create_worktree_sessions.")
     return notes
   }
 
@@ -194,6 +195,33 @@ public struct AgentHubPlanningService: AgentHubPlanning {
     let slug = words.joined(separator: "-")
     let cleaned = slug.isEmpty ? subtask.id : slug
     return WorktreeNaming.sanitizeBranchName("agent/\(cleaned)")
+  }
+
+  static func uniqueBranchSuggestions(for subtasks: [Subtask]) -> [String] {
+    var used = Set<String>()
+    return subtasks.enumerated().map { index, subtask in
+      let base = branchSuggestion(for: subtask)
+      var candidate = base
+      if used.contains(candidate) {
+        let suffix = branchSuffix(from: subtask.id)
+        let fallbackSuffix = suffix.isEmpty ? "task-\(index + 1)" : suffix
+        candidate = WorktreeNaming.sanitizeBranchName("\(base)-\(fallbackSuffix)")
+
+        var attempt = 2
+        while used.contains(candidate) {
+          candidate = WorktreeNaming.sanitizeBranchName("\(base)-task-\(index + 1)-\(attempt)")
+          attempt += 1
+        }
+      }
+      used.insert(candidate)
+      return candidate
+    }
+  }
+
+  private static func branchSuffix(from value: String) -> String {
+    let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789-")
+    let lowercased = value.lowercased().replacingOccurrences(of: " ", with: "-")
+    return String(lowercased.unicodeScalars.filter { allowed.contains($0) })
   }
 
   static func rationale(model: String, matched: [CapabilityTag], score: Int) -> String {
