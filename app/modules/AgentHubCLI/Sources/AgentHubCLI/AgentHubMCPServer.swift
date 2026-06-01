@@ -455,7 +455,7 @@ struct AgentHubMCPServer {
   private func createWorktreeSessionsToolSchema() -> [String: Any] {
     [
       "name": "agenthub_create_worktree_sessions",
-      "description": "Use this AgentHub tool only after the user explicitly asks for git/AgentHub worktrees and approves the proposed assignments. Pass a tasks array with one item per approved worktree, including the branch and the actual launched-session prompt. Do not use this for generic planning, parallel, fan-out, background, or subagent requests; preserve the current harness's native subagent/background capabilities.",
+      "description": "Use this AgentHub tool only after the user explicitly asks for git/AgentHub worktrees and approves the proposed assignments. For multiple worktrees, call agent_hub_planning first and then pass one task per approved assignment, including that assignment's provider, branchSuggestion as branch, and instructions as prompt. For single worktrees, still include the selected provider explicitly. Do not use this for generic planning, parallel, fan-out, background, or subagent requests; preserve the current harness's native subagent/background capabilities.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -478,12 +478,13 @@ struct AgentHubMCPServer {
                 "prompt": ["type": "string"],
                 "provider": [
                   "type": "string",
-                  "enum": ["claude", "codex"]
+                  "enum": ["claude", "codex"],
+                  "description": "Agent/provider that should run this task. Pass this explicitly from the approved proposal."
                 ],
                 "from": ["type": "string"],
                 "checkoutExisting": ["type": "boolean"]
               ],
-              "required": ["branch", "prompt"],
+              "required": ["branch", "prompt", "provider"],
               "additionalProperties": false
             ]
           ]
@@ -544,7 +545,7 @@ struct AgentHubMCPServer {
   private func planningToolSchema() -> [String: Any] {
     [
       "name": "agent_hub_planning",
-      "description": "Use this AgentHub planning tool to produce an advisory delegation plan. Natural-language decomposition should be semantically inferred by the caller and passed as subtasks; when subtasks are omitted, the prompt is planned as one task. Capability profiles are local-only by default. This tool only plans; if the user explicitly asked for worktrees, present the assignments and wait for approval before calling agenthub_create_worktree_sessions.",
+      "description": "Use this AgentHub planning tool to produce an advisory delegation plan. When the user explicitly asks for multiple worktrees, call this first, then present assignments that include assigned provider/agent, model when available, branchSuggestion, rationale, and launched-session prompt. Natural-language decomposition should be semantically inferred by the caller and passed as subtasks; when subtasks are omitted, the prompt is planned as one task. Capability profiles are local-only by default. This tool only plans; wait for approval before calling agenthub_create_worktree_sessions.",
       "inputSchema": [
         "type": "object",
         "properties": [
