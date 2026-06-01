@@ -70,7 +70,6 @@ public struct CLICommandConfiguration: Codable, Sendable {
 
       if let agentHubMCPServerPath, !agentHubMCPServerPath.isEmpty {
         args += ["--mcp-config", claudeMCPConfig(agentHubCLIPath: agentHubMCPServerPath)]
-        args += ["--append-system-prompt", Self.agentHubMCPRoutingInstructions]
       }
 
       // Add flags only for NEW sessions (not resume)
@@ -178,8 +177,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
   private func codexMCPConfigArgs(agentHubCLIPath: String) -> [String] {
     [
       "-c", "mcp_servers.agenthub.command=\(tomlStringLiteral("/bin/sh"))",
-      "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]))",
-      "-c", "developer_instructions=\(tomlStringLiteral(Self.agentHubMCPRoutingInstructions))"
+      "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]))"
     ]
   }
 
@@ -209,13 +207,4 @@ public struct CLICommandConfiguration: Codable, Sendable {
   private func tomlStringArray(_ values: [String]) -> String {
     "[\(values.map(tomlStringLiteral).joined(separator: ","))]"
   }
-
-  private static let agentHubMCPRoutingInstructions = """
-  Use AgentHub worktree MCP tools only when the user explicitly asks for git/AgentHub worktrees.
-  For explicit requests for multiple worktrees, call agent_hub_planning first, then present the proposed assignments with agent/provider, model when available, branch names, and prompts.
-  Before calling agenthub_create_worktree_sessions, wait for explicit approval and pass each approved assignment's provider, branchSuggestion, and instructions as provider, branch, and prompt.
-  For a single worktree, present a proposal with agent/provider, branch, and prompt, then wait for explicit approval before creating it.
-  Do not call AgentHub worktree tools for generic planning, parallel, fan-out, background, or subagent requests; preserve the current harness's native subagent/background capabilities.
-  For listing or deleting worktrees, prefer agenthub_list_worktrees and agenthub_delete_worktree over direct git commands; list first when the target or session impact is unclear.
-  """
 }

@@ -1,0 +1,7 @@
+interface:
+  display_name: "AgentHub Worktrees"
+  short_description: "Plan and create AgentHub-managed worktree sessions"
+  default_prompt: "Use $agenthub-worktrees to plan AgentHub worktrees for: "
+
+policy:
+  allow_implicit_invocation: false
