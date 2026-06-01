@@ -212,7 +212,9 @@ public struct CLICommandConfiguration: Codable, Sendable {
 
   private static let agentHubMCPRoutingInstructions = """
   Use AgentHub worktree MCP tools only when the user explicitly asks for git/AgentHub worktrees.
-  Before calling agenthub_create_worktree_sessions, present the proposed worktree assignments with branch names and prompts, then wait for explicit approval.
+  For explicit requests for multiple worktrees, call agent_hub_planning first, then present the proposed assignments with agent/provider, model when available, branch names, and prompts.
+  Before calling agenthub_create_worktree_sessions, wait for explicit approval and pass each approved assignment's provider, branchSuggestion, and instructions as provider, branch, and prompt.
+  For a single worktree, present a proposal with agent/provider, branch, and prompt, then wait for explicit approval before creating it.
   Do not call AgentHub worktree tools for generic planning, parallel, fan-out, background, or subagent requests; preserve the current harness's native subagent/background capabilities.
   For listing or deleting worktrees, prefer agenthub_list_worktrees and agenthub_delete_worktree over direct git commands; list first when the target or session impact is unclear.
   """
