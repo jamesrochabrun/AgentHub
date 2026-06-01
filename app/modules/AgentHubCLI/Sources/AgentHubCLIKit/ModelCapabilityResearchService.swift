@@ -34,18 +34,23 @@ public struct URLSessionWebPageFetcher: WebPageFetching {
   }
 }
 
-/// Performs one web search per provider against a lightweight HTML search endpoint
-/// (a reliable, key-free source of truth), derives the model's strengths from the
-/// result snippets, and falls back to a curated profile when the network is unavailable.
+/// Returns curated local model profiles by default. Optional web lookup is available
+/// only when explicitly enabled by the caller.
 public struct WebModelCapabilityResearchService: ModelCapabilityResearching {
   private let fetcher: WebPageFetching
+  private let allowsNetworkLookup: Bool
 
-  public init(fetcher: WebPageFetching = URLSessionWebPageFetcher()) {
+  public init(
+    fetcher: WebPageFetching = URLSessionWebPageFetcher(),
+    allowsNetworkLookup: Bool = false
+  ) {
     self.fetcher = fetcher
+    self.allowsNetworkLookup = allowsNetworkLookup
   }
 
   public func researchCapabilities(for provider: WorktreeLaunchProvider) async -> ModelCapabilityProfile {
     let baseline = Self.curatedProfile(for: provider)
+    guard allowsNetworkLookup else { return baseline }
     guard let url = Self.searchURL(for: provider) else { return baseline }
 
     do {

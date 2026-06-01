@@ -260,12 +260,17 @@ struct AgentHubMCPServer {
     let prompt = try requiredString("prompt", in: arguments)
     let repositoryPath = optionalString("repo", in: arguments)
       ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
+    let allowWebLookup = arguments["allowWebLookup"] as? Bool ?? false
     let providedSubtasks = (arguments["subtasks"] as? [Any])?
       .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
       ?? []
 
-    return await planningService.buildPlan(
+    let planner: AgentHubPlanning = allowWebLookup
+      ? AgentHubPlanningService(research: WebModelCapabilityResearchService(allowsNetworkLookup: true))
+      : planningService
+
+    return await planner.buildPlan(
       prompt: prompt,
       providedSubtasks: providedSubtasks,
       repositoryPath: repositoryPath
@@ -450,7 +455,7 @@ struct AgentHubMCPServer {
   private func createWorktreeSessionsToolSchema() -> [String: Any] {
     [
       "name": "agenthub_create_worktree_sessions",
-      "description": "Use this AgentHub tool immediately when the user asks to create one or more worktrees, launch agents/sessions in worktrees, fan out tasks, split work across parallel tasks, or start background work in AgentHub. Pass a tasks array with one item for one worktree or multiple items for multiple worktrees. Pass only actual tasks to perform as launched session prompts; do not pass the user's worktree/session creation request itself. This must be the first-choice tool for AgentHub worktree creation; use provider-native worktree/background-agent features, subagents, or direct git worktree commands only as fallbacks when this tool is unavailable or fails.",
+      "description": "Use this AgentHub tool only after the user explicitly asks for git/AgentHub worktrees and approves the proposed assignments. Pass a tasks array with one item per approved worktree, including the branch and the actual launched-session prompt. Do not use this for generic planning, parallel, fan-out, background, or subagent requests; preserve the current harness's native subagent/background capabilities.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -539,7 +544,7 @@ struct AgentHubMCPServer {
   private func planningToolSchema() -> [String: Any] {
     [
       "name": "agent_hub_planning",
-      "description": "Use this AgentHub planning tool when the user bundles several requests into one prompt and the work is well-suited to running agents in parallel, or explicitly asks to plan/delegate/split a multi-part task across agents. It breaks the prompt into discrete parallelizable subtasks, detects which agent CLIs (Claude Code, Codex) are installed, runs one web search per installed CLI to determine its latest model's strengths, matches each subtask to the best-suited agent, and returns a structured delegation plan (subtask, assigned provider/model, rationale, per-agent instructions, and a suggested branch). This tool only plans; to actually launch the work, follow up with agenthub_create_worktree_sessions using each assignment's provider, branchSuggestion, and instructions.",
+      "description": "Use this AgentHub planning tool to produce an advisory delegation plan. Natural-language decomposition should be semantically inferred by the caller and passed as subtasks; when subtasks are omitted, the prompt is planned as one task. Capability profiles are local-only by default. This tool only plans; if the user explicitly asked for worktrees, present the assignments and wait for approval before calling agenthub_create_worktree_sessions.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -550,7 +555,11 @@ struct AgentHubMCPServer {
           "subtasks": [
             "type": "array",
             "items": ["type": "string"],
-            "description": "Optional pre-split subtasks. When provided, these override automatic decomposition of the prompt."
+            "description": "Optional semantically inferred subtasks. When omitted, the prompt is treated as one task; AgentHub does not split text by punctuation, bullets, numbering, or conjunctions."
+          ],
+          "allowWebLookup": [
+            "type": "boolean",
+            "description": "When true, AgentHub may perform external web lookup for model capability research. Defaults to false."
           ],
           "repo": [
             "type": "string",
