@@ -455,7 +455,7 @@ struct AgentHubMCPServer {
   private func createWorktreeSessionsToolSchema() -> [String: Any] {
     [
       "name": "agenthub_create_worktree_sessions",
-      "description": "Use this AgentHub tool only after the user explicitly asks for git/AgentHub worktrees and approves the proposed assignments. For multiple worktrees, call agent_hub_planning first and then pass one task per approved assignment, including that assignment's provider, branchSuggestion as branch, and instructions as prompt. For single worktrees, still include the selected provider explicitly. Do not use this for generic planning, parallel, fan-out, background, or subagent requests; preserve the current harness's native subagent/background capabilities.",
+      "description": "Creates AgentHub-managed git worktree sessions from task objects. Each task requires an explicit provider, branch, and prompt. Optional repo/from values control repository resolution and base branch selection.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -479,7 +479,7 @@ struct AgentHubMCPServer {
                 "provider": [
                   "type": "string",
                   "enum": ["claude", "codex"],
-                  "description": "Agent/provider that should run this task. Pass this explicitly from the approved proposal."
+                  "description": "Agent/provider assigned to this task."
                 ],
                 "from": ["type": "string"],
                 "checkoutExisting": ["type": "boolean"]
@@ -498,7 +498,7 @@ struct AgentHubMCPServer {
   private func listWorktreesToolSchema() -> [String: Any] {
     [
       "name": "agenthub_list_worktrees",
-      "description": "Use this AgentHub tool when the user asks to list, show, inspect, or audit git worktrees for the current repository/module, especially before deleting or cleaning worktrees. It resolves the main repository root from the current AgentHub session cwd or AGENTHUB_PROJECT_PATH, lists all git worktrees for that root, and includes Claude/Codex session counts associated with each worktree so the user can decide what is safe to remove. Prefer this over direct git worktree list commands in AgentHub sessions.",
+      "description": "Lists git worktrees for an AgentHub repository. Resolves the main repository root from the current session cwd or AGENTHUB_PROJECT_PATH and includes Claude/Codex session counts associated with each worktree.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -515,7 +515,7 @@ struct AgentHubMCPServer {
   private func deleteWorktreeToolSchema() -> [String: Any] {
     [
       "name": "agenthub_delete_worktree",
-      "description": "Use this AgentHub tool when the user explicitly asks to delete, remove, clear, or clean up a specific git worktree. If the target is ambiguous or the user has not seen the session counts, call agenthub_list_worktrees first and ask the user which worktree to delete. This removes the git worktree, then queues AgentHub to archive monitored sessions in that worktree and remove it from the sidebar. Prefer this over direct git worktree remove commands in AgentHub sessions.",
+      "description": "Removes a specified AgentHub-managed git worktree, then queues AgentHub to archive monitored sessions in that worktree and remove it from the sidebar.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -545,7 +545,7 @@ struct AgentHubMCPServer {
   private func planningToolSchema() -> [String: Any] {
     [
       "name": "agent_hub_planning",
-      "description": "Use this AgentHub planning tool to produce an advisory delegation plan. When the user explicitly asks for multiple worktrees, call this first, then present assignments that include assigned provider/agent, model when available, branchSuggestion, rationale, and launched-session prompt. Natural-language decomposition should be semantically inferred by the caller and passed as subtasks; when subtasks are omitted, the prompt is planned as one task. Capability profiles are local-only by default. This tool only plans; wait for approval before calling agenthub_create_worktree_sessions.",
+      "description": "Builds a local-only advisory plan for AgentHub worktree assignments. Returns inferred assignments with provider, model when available, branch suggestion, rationale, and launch instructions. When subtasks are omitted, the prompt is planned as one task.",
       "inputSchema": [
         "type": "object",
         "properties": [
