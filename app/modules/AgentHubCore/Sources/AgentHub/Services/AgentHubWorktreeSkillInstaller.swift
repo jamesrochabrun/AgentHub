@@ -1,7 +1,7 @@
 import Foundation
 
 enum AgentHubWorktreeSkillInstaller {
-  static let skillName = "agenthub-worktrees"
+  static let skillName = "agenthub-task-manager"
 
   enum InstallError: LocalizedError {
     case missingBundledSkill
@@ -12,13 +12,13 @@ enum AgentHubWorktreeSkillInstaller {
     var errorDescription: String? {
       switch self {
       case .missingBundledSkill:
-        return "Missing bundled AgentHub worktree skill."
+        return "Missing bundled AgentHub task manager skill."
       case .invalidBundledSkillEncoding:
-        return "Bundled AgentHub worktree skill is not valid UTF-8."
+        return "Bundled AgentHub task manager skill is not valid UTF-8."
       case .missingBundledOpenAIMetadata:
-        return "Missing bundled AgentHub worktree OpenAI metadata."
+        return "Missing bundled AgentHub task manager OpenAI metadata."
       case .invalidBundledOpenAIMetadataEncoding:
-        return "Bundled AgentHub worktree OpenAI metadata is not valid UTF-8."
+        return "Bundled AgentHub task manager OpenAI metadata is not valid UTF-8."
       }
     }
   }
@@ -35,7 +35,7 @@ enum AgentHubWorktreeSkillInstaller {
         fileManager: fileManager
       )
     } catch {
-      AppLogger.session.error("Failed to install AgentHub worktree skill: \(error.localizedDescription)")
+      AppLogger.session.error("Failed to install AgentHub task manager skill: \(error.localizedDescription)")
     }
   }
 

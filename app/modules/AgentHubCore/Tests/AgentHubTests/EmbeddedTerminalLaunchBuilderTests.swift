@@ -231,15 +231,15 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(installCount == 0)
   }
 
-  @Test("Worktree skill installer writes Claude and Codex skill files")
-  func worktreeSkillInstallerWritesClaudeAndCodexSkillFiles() throws {
+  @Test("Task manager skill installer writes Claude and Codex skill files")
+  func taskManagerSkillInstallerWritesClaudeAndCodexSkillFiles() throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("AgentHubWorktreeSkillInstallerTests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
 
     let skillMarkdown = """
     ---
-    name: agenthub-worktrees
+    name: agenthub-task-manager
     description: Test skill
     ---
 
@@ -247,7 +247,7 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     """
     let openAIYAML = """
     interface:
-      display_name: "AgentHub Worktrees"
+      display_name: "AgentHub Task Manager"
     policy:
       allow_implicit_invocation: false
     """
@@ -259,11 +259,11 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     )
 
     let claudeSkillURL = temporaryDirectory
-      .appendingPathComponent(".claude/skills/agenthub-worktrees/SKILL.md")
+      .appendingPathComponent(".claude/skills/agenthub-task-manager/SKILL.md")
     let codexSkillURL = temporaryDirectory
-      .appendingPathComponent(".codex/skills/agenthub-worktrees/SKILL.md")
+      .appendingPathComponent(".codex/skills/agenthub-task-manager/SKILL.md")
     let codexMetadataURL = temporaryDirectory
-      .appendingPathComponent(".codex/skills/agenthub-worktrees/agents/openai.yaml")
+      .appendingPathComponent(".codex/skills/agenthub-task-manager/agents/openai.yaml")
 
     #expect(try String(contentsOf: claudeSkillURL, encoding: .utf8) == skillMarkdown)
     #expect(try String(contentsOf: codexSkillURL, encoding: .utf8) == skillMarkdown)
@@ -279,8 +279,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(try String(contentsOf: codexSkillURL, encoding: .utf8) == skillMarkdown)
   }
 
-  @Test("Bundled worktree skill installs explicit invocation metadata")
-  func bundledWorktreeSkillInstallsExplicitInvocationMetadata() throws {
+  @Test("Bundled task manager skill installs explicit invocation metadata")
+  func bundledTaskManagerSkillInstallsExplicitInvocationMetadata() throws {
     let temporaryDirectory = FileManager.default.temporaryDirectory
       .appendingPathComponent("AgentHubBundledWorktreeSkillTests-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
@@ -288,22 +288,24 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     try AgentHubWorktreeSkillInstaller.installBundledSkillForAllProviders(homeDirectory: temporaryDirectory)
 
     let claudeSkill = try String(
-      contentsOf: temporaryDirectory.appendingPathComponent(".claude/skills/agenthub-worktrees/SKILL.md"),
+      contentsOf: temporaryDirectory.appendingPathComponent(".claude/skills/agenthub-task-manager/SKILL.md"),
       encoding: .utf8
     )
     let codexSkill = try String(
-      contentsOf: temporaryDirectory.appendingPathComponent(".codex/skills/agenthub-worktrees/SKILL.md"),
+      contentsOf: temporaryDirectory.appendingPathComponent(".codex/skills/agenthub-task-manager/SKILL.md"),
       encoding: .utf8
     )
     let codexMetadata = try String(
-      contentsOf: temporaryDirectory.appendingPathComponent(".codex/skills/agenthub-worktrees/agents/openai.yaml"),
+      contentsOf: temporaryDirectory.appendingPathComponent(".codex/skills/agenthub-task-manager/agents/openai.yaml"),
       encoding: .utf8
     )
 
+    #expect(claudeSkill.contains("name: agenthub-task-manager"))
     #expect(claudeSkill.contains("user-invocable: true"))
     #expect(claudeSkill.contains("disable-model-invocation: true"))
     #expect(claudeSkill.contains("agent_hub_planning"))
     #expect(codexSkill == claudeSkill)
+    #expect(codexMetadata.contains("display_name: \"AgentHub Task Manager\""))
     #expect(codexMetadata.contains("allow_implicit_invocation: false"))
   }
 
