@@ -9,6 +9,127 @@ import Foundation
 import Testing
 @testable import AgentHubCore
 
+@Suite("CLICommandConfiguration — command and extra argument handling")
+struct CLICommandConfigurationArgumentHandlingTests {
+
+  @Test("Parses quoted command argument strings")
+  func parsesQuotedArgumentStrings() {
+    let args = CLICommandConfiguration.parseArgumentString("--api-mode enterprise --as-user 'Jane Doe' \"two words\"")
+
+    #expect(args == ["--api-mode", "enterprise", "--as-user", "Jane Doe", "two words"])
+  }
+
+  @Test("Parses empty quoted command arguments")
+  func parsesEmptyQuotedArgumentStrings() {
+    let args = CLICommandConfiguration.parseArgumentString("--name '' --label \"\"")
+
+    #expect(args == ["--name", "", "--label", ""])
+  }
+
+  @Test("AirChat Claude wrapper passes wrapper args before Claude direct args")
+  func airChatClaudeWrapperUsesDirectArgumentSeparator() {
+    let config = CLICommandConfiguration(
+      command: "airchat",
+      mode: .claude,
+      extraArgs: ["--api-mode", "enterprise"]
+    )
+
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: "Start work",
+      agentHubMCPServerPath: "/Applications/AgentHub.app/Contents/Helpers/agenthub"
+    )
+
+    #expect(Array(args.prefix(4)) == ["claude", "--api-mode", "enterprise", "--"])
+
+    guard let separatorIndex = args.firstIndex(of: "--"),
+          let mcpConfigIndex = args.firstIndex(of: "--mcp-config") else {
+      Issue.record("Expected AirChat direct-argument separator and Claude MCP flag")
+      return
+    }
+
+    #expect(mcpConfigIndex > separatorIndex)
+    #expect(args.last == "Start work")
+  }
+
+  @Test("AirChat Claude command does not duplicate explicit provider subcommand")
+  func airChatClaudeWrapperDoesNotDuplicateExplicitSubcommand() {
+    let config = CLICommandConfiguration(
+      command: "airchat claude",
+      mode: .claude,
+      extraArgs: ["--api-mode", "enterprise"]
+    )
+
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: nil,
+      agentHubMCPServerPath: "/Applications/AgentHub.app/Contents/Helpers/agenthub"
+    )
+
+    #expect(args.first == "claude")
+    #expect(args.filter { $0 == "claude" }.count == 1)
+    #expect(args.prefix(4).contains("--api-mode"))
+  }
+
+  @Test("AirChat Codex wrapper passes Codex config overrides after separator")
+  func airChatCodexWrapperUsesDirectArgumentSeparator() {
+    let config = CLICommandConfiguration(
+      command: "airchat codex",
+      mode: .codex,
+      extraArgs: ["--no-banner"]
+    )
+
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: "Start work",
+      agentHubMCPServerPath: "/Applications/AgentHub.app/Contents/Helpers/agenthub",
+      effortLevel: "high"
+    )
+
+    #expect(Array(args.prefix(3)) == ["codex", "--no-banner", "--"])
+
+    guard let separatorIndex = args.firstIndex(of: "--"),
+          let configIndex = args.firstIndex(of: "-c") else {
+      Issue.record("Expected AirChat direct-argument separator and Codex config flag")
+      return
+    }
+
+    #expect(configIndex > separatorIndex)
+    #expect(args.last == "Start work")
+  }
+
+  @Test("Direct CLI keeps extra args before prompt")
+  func directCLIKeepsExtraArgsBeforePrompt() {
+    let config = CLICommandConfiguration(
+      command: "claude",
+      mode: .claude,
+      extraArgs: ["--debug"]
+    )
+
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: "Start work"
+    )
+
+    #expect(Array(args.suffix(2)) == ["--debug", "Start work"])
+  }
+
+  @Test("Decodes previous CLI configuration payloads without extra args")
+  func decodesLegacyConfigurationWithoutExtraArgs() throws {
+    let data = Data("""
+    {
+      "command": "airchat claude",
+      "additionalPaths": [],
+      "mode": "claude"
+    }
+    """.utf8)
+
+    let config = try JSONDecoder().decode(CLICommandConfiguration.self, from: data)
+
+    #expect(config.extraArgs.isEmpty)
+  }
+}
+
 @Suite("CLICommandConfiguration — Claude AI config flags")
 struct ClaudeAIConfigArgumentTests {
 

@@ -169,7 +169,7 @@ public struct MonitoringPanelView: View {
         MonitoringCardView(
           session: pending.placeholderSession,
           state: nil,
-          cliConfiguration: viewModel.cliConfiguration,
+          cliConfiguration: viewModel.cliConfiguration(for: viewModel.providerKind),
           providerKind: viewModel.providerKind,
           initialPrompt: pending.initialPrompt,
           initialInputText: pending.initialInputText,
@@ -206,7 +206,7 @@ public struct MonitoringPanelView: View {
           session: session,
           state: state,
           planState: planState,
-          cliConfiguration: viewModel.cliConfiguration,
+          cliConfiguration: viewModel.cliConfiguration(for: viewModel.providerKind),
           providerKind: viewModel.providerKind,
           initialPrompt: initialPrompt,
           terminalKey: session.id,

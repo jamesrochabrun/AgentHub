@@ -508,7 +508,7 @@ public struct MultiProviderMonitoringPanelView: View {
           MonitoringCardView(
             session: pending.placeholderSession,
             state: nil,
-            cliConfiguration: viewModel.cliConfiguration,
+            cliConfiguration: viewModel.cliConfiguration(for: item.providerKind),
             providerKind: item.providerKind,
             initialPrompt: pending.initialPrompt,
             initialInputText: pending.initialInputText,
@@ -577,7 +577,7 @@ public struct MultiProviderMonitoringPanelView: View {
             session: session,
             state: state,
             planState: planState,
-            cliConfiguration: viewModel.cliConfiguration,
+            cliConfiguration: viewModel.cliConfiguration(for: item.providerKind),
             providerKind: item.providerKind,
             initialPrompt: initialPrompt,
             terminalKey: session.id,
@@ -886,7 +886,7 @@ public struct MultiProviderMonitoringPanelView: View {
         session: session,
         projectPath: projectPath,
         onDismiss: closeEmbeddedSidePanel,
-        cliConfiguration: viewModel.cliConfiguration,
+        cliConfiguration: viewModel.cliConfiguration(for: payload.providerKind),
         providerKind: payload.providerKind,
         onInlineRequestSubmit: { prompt, sess in
           closeEmbeddedSidePanel()
