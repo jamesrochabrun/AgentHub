@@ -439,12 +439,26 @@ public final class CLISessionsViewModel {
     }
   }
 
-  /// Returns a CLI configuration with the current command from UserDefaults
+  private var currentCLIExtraArgs: [String] {
+    let defaults = UserDefaults.standard
+    let rawArgs: String?
+    switch providerKind {
+    case .claude:
+      rawArgs = defaults.string(forKey: AgentHubDefaults.claudeCommandArgs)
+    case .codex:
+      rawArgs = defaults.string(forKey: AgentHubDefaults.codexCommandArgs)
+    }
+    guard let rawArgs else { return cliConfiguration.extraArgs }
+    return CLICommandConfiguration.parseArgumentString(rawArgs)
+  }
+
+  /// Returns a CLI configuration with the current command and extra arguments from UserDefaults.
   private var currentCLIConfiguration: CLICommandConfiguration {
     CLICommandConfiguration(
       command: currentCLICommand,
       additionalPaths: cliConfiguration.additionalPaths,
-      mode: cliConfiguration.mode
+      mode: cliConfiguration.mode,
+      extraArgs: currentCLIExtraArgs
     )
   }
 
@@ -2441,7 +2455,7 @@ public final class CLISessionsViewModel {
     }
     return TerminalLauncher.launchTerminalWithSession(
       session.id,
-      cliConfiguration: cliConfiguration,
+      cliConfiguration: currentCLIConfiguration,
       projectPath: session.projectPath
     )
   }
@@ -2465,7 +2479,7 @@ public final class CLISessionsViewModel {
       branchName: worktree.name,
       isWorktree: worktree.isWorktree,
       skipCheckout: skipCheckout,
-      cliConfiguration: cliConfiguration,
+      cliConfiguration: currentCLIConfiguration,
       dangerouslySkipPermissions: dangerouslySkipPermissions
     )
   }

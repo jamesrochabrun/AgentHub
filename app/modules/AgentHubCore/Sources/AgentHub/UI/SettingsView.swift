@@ -72,6 +72,12 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.codexCommandLockedByDeveloper)
   private var codexCommandLocked: Bool = false
 
+  @AppStorage(AgentHubDefaults.claudeCommandArgs)
+  private var claudeCommandArgs: String = ""
+
+  @AppStorage(AgentHubDefaults.codexCommandArgs)
+  private var codexCommandArgs: String = ""
+
   @AppStorage(AgentHubDefaults.webPreviewInspectorDataLevel)
   private var webPreviewInspectorDataLevelRawValue: String = ElementInspectorDataLevel.regular.rawValue
 
@@ -240,6 +246,7 @@ public struct SettingsView: View {
           provider: .claude,
           isExpanded: $isClaudeConfigurationExpanded,
           command: $claudeCommand,
+          commandArgs: $claudeCommandArgs,
           locked: claudeCommandLocked,
           installed: CLIDetectionService.isClaudeInstalled()
         ) {
@@ -251,6 +258,7 @@ public struct SettingsView: View {
           provider: .codex,
           isExpanded: $isCodexConfigurationExpanded,
           command: $codexCommand,
+          commandArgs: $codexCommandArgs,
           locked: codexCommandLocked,
           installed: CLIDetectionService.isCodexInstalled()
         ) {
@@ -418,6 +426,7 @@ public struct SettingsView: View {
     provider: SessionProviderKind,
     isExpanded: Binding<Bool>,
     command: Binding<String>,
+    commandArgs: Binding<String>,
     locked: Bool,
     installed: Bool,
     @ViewBuilder content: @escaping () -> Content
@@ -471,6 +480,19 @@ public struct SettingsView: View {
                   .font(.caption)
               }
             }
+          }
+
+          VStack(alignment: .leading, spacing: 6) {
+            Text("Extra arguments")
+              .font(.caption)
+              .foregroundColor(.secondary)
+
+            TextField("e.g. --api-mode enterprise", text: commandArgs)
+              .textFieldStyle(.roundedBorder)
+
+            Text("Arguments applied to each CLI launch.")
+              .font(.caption)
+              .foregroundColor(.secondary)
           }
 
           content()
