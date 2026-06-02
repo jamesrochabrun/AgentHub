@@ -202,6 +202,61 @@ struct WorktreeGenerationProgressCoordinatorTests {
     #expect(watcher.discarded == ["op-1"])
   }
 
+  @Test("A stuck in-flight MCP op clears after the staleness timeout without announcing")
+  func stuckMCPOperationClearsAfterStaleness() async {
+    UserDefaults.standard.set(true, forKey: AgentHubDefaults.notificationSoundsEnabled)
+    let sound = MockSound()
+    let notif = MockNotifier()
+    let watcher = MockProgressWatcher()
+    let coord = WorktreeGenerationProgressCoordinator(
+      soundService: sound,
+      notificationService: notif,
+      mcpStalenessTimeout: .milliseconds(50)
+    )
+    coord.startObservingMCP(watcher: watcher)
+
+    // A creation that only ever reports `.preparing` (e.g. git ran silently and
+    // the CLI was interrupted before a terminal snapshot) must not linger.
+    watcher.send(snapshot("stuck-op", "feature/stuck", .preparing(message: "Preparing worktree..."), at: 1))
+    await settle()
+    #expect(coord.operations.count == 1)
+    #expect(coord.inFlightCount == 1)
+
+    try? await Task.sleep(for: .milliseconds(160))
+
+    #expect(coord.operations.isEmpty)
+    #expect(watcher.discarded == ["stuck-op"])
+    // Silent clear — never announce a completion we can't confirm.
+    #expect(sound.count == 0)
+    #expect(notif.calls.isEmpty)
+  }
+
+  @Test("Completion cancels the staleness timeout so the row isn't force-dropped")
+  func completingMCPOperationSurvivesStaleness() async {
+    let watcher = MockProgressWatcher()
+    let coord = WorktreeGenerationProgressCoordinator(
+      soundService: MockSound(),
+      notificationService: MockNotifier(),
+      mcpStalenessTimeout: .milliseconds(50)
+    )
+    coord.startObservingMCP(watcher: watcher)
+
+    // Preparing then completed land back-to-back, so completion cancels the
+    // 50ms staleness well before it could fire.
+    watcher.send(snapshot("op-ok", "b-ok", .preparing(message: "Preparing worktree..."), at: 1))
+    watcher.send(snapshot("op-ok", "b-ok", .completed(path: "/tmp/ok"), at: 2))
+    await settle()
+    #expect(coord.operations.first?.progress == .completed(path: "/tmp/ok"))
+
+    // Wait well past the staleness window but within the 3s success-clear delay:
+    // the completed row must still be present (not force-dropped as stale) and
+    // must not have been discarded mid-flight.
+    try? await Task.sleep(for: .milliseconds(160))
+    #expect(coord.operations.count == 1)
+    #expect(coord.operations.first?.progress == .completed(path: "/tmp/ok"))
+    #expect(watcher.discarded.isEmpty)
+  }
+
   // MARK: - Helpers
 
   private func snapshot(

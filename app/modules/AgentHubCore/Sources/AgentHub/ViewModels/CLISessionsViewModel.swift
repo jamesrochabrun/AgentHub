@@ -46,6 +46,12 @@ public final class CLISessionsViewModel {
   private let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
   private let terminalBackend: EmbeddedTerminalBackend
   @ObservationIgnored private var terminalWorkspaceSaveTasks: [String: Task<Void, Never>] = [:]
+  @ObservationIgnored private var workspaceStatePersistTask: Task<Void, Never>?
+  /// Guards `refresh()` so overlapping callers never run `refreshSessions`
+  /// concurrently (which could clobber just-registered worktrees with a stale
+  /// snapshot). `pendingRefreshRequested` schedules exactly one trailing pass.
+  @ObservationIgnored private var isRefreshing = false
+  @ObservationIgnored private var pendingRefreshRequested = false
   @ObservationIgnored private var accessoryDetectionTasks: [AccessoryDetectionContextKey: Task<Void, Never>] = [:]
   @ObservationIgnored private var activeAccessoryDetectionKeysByParent: [String: Set<AccessoryDetectionContextKey>] = [:]
   @ObservationIgnored private var activeAccessoryRelationshipsByParent: [String: Set<AccessoryRelationshipIdentity>] = [:]
@@ -1753,6 +1759,7 @@ public final class CLISessionsViewModel {
           restoredOwnedWorktreePaths.insert(worktreePath)
         }
       }
+      restoredOwnedWorktreePaths.formUnion(ownedWorktreePaths)
       await setOwnedWorktreePaths(restoredOwnedWorktreePaths)
       await monitorService.setFocusedSessionIds(persistedSessionIds)
 
@@ -1760,17 +1767,20 @@ public final class CLISessionsViewModel {
       // deferred until the Browse panel is opened.
       loadingState = .restoringRepositories
       let restoredRepositories = await monitorService.restoreRepositoriesSkeleton(paths)
-      let restoredHookPaths = claudeHookInstallPaths(from: restoredRepositories)
+      let restoredRepositoriesWithCurrent = WorktreeModuleResolver.mergedRepositories(
+        restoredRepositories + selectedRepositories
+      )
+      let restoredHookPaths = claudeHookInstallPaths(from: restoredRepositoriesWithCurrent)
       if !skippedLaunchRestoreRepositoryHookSync {
         pendingLaunchRestoreRepositoryHookSyncSkip = restoredHookPaths
       }
       selectedRepositories = mergePreservingExpandedState(
         current: selectedRepositories,
-        updated: restoredRepositories
+        updated: restoredRepositoriesWithCurrent
       )
       restoreExpansionState(workspaceState.expansionState)
       persistSelectedRepositories()
-      syncClaudeHookInstalls(paths: restoredHookPaths)
+      syncClaudeHookInstalls(paths: claudeHookInstallPaths(from: selectedRepositories))
 
       if !persistedSessionIds.isEmpty {
         loadingState = .restoringMonitoredSessions
@@ -1920,7 +1930,10 @@ public final class CLISessionsViewModel {
     let state = currentWorkspaceState()
     let providerKind = providerKind
 
-    Task {
+    workspaceStatePersistTask?.cancel()
+    workspaceStatePersistTask = Task { [metadataStore, providerKind, state] in
+      await Task.yield()
+      guard !Task.isCancelled else { return }
       do {
         try await metadataStore.saveWorkspaceState(state, for: providerKind)
       } catch {
@@ -2304,17 +2317,29 @@ public final class CLISessionsViewModel {
     worktreeDeletionError = nil
   }
 
-  /// Refreshes sessions for all selected repositories
+  /// Refreshes sessions for all selected repositories.
+  ///
+  /// Coalesced: when several callers ask to refresh in quick succession (e.g.
+  /// a batch of queued worktree launch requests, each registering a worktree
+  /// then requesting a refresh), `refreshSessions` never runs concurrently with
+  /// itself. A refresh requested while one is in flight schedules exactly one
+  /// more pass afterward, so the final pass observes every registration instead
+  /// of racing them and writing back a stale repository snapshot.
   public func refresh() {
-    // [CLISessionsVM] refresh called")
-    Task {
-      // [CLISessionsVM] loadingState = .refreshing")
-      loadingState = .refreshing
-      // [CLISessionsVM] Calling monitorService.refreshSessions...")
-      await monitorService.refreshSessions()
-      // [CLISessionsVM] refreshSessions completed")
-      loadingState = .idle
-      // [CLISessionsVM] loadingState = .idle")
+    guard !isRefreshing else {
+      pendingRefreshRequested = true
+      return
+    }
+    isRefreshing = true
+    Task { [weak self] in
+      guard let self else { return }
+      repeat {
+        self.pendingRefreshRequested = false
+        self.loadingState = .refreshing
+        await self.monitorService.refreshSessions()
+        self.loadingState = .idle
+      } while self.pendingRefreshRequested
+      self.isRefreshing = false
     }
   }
 

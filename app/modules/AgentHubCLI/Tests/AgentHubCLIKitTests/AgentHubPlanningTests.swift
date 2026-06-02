@@ -9,8 +9,8 @@ import Testing
 struct SemanticTaskDecomposerTests {
   let decomposer = SemanticTaskDecomposer()
 
-  @Test("Does not split numbered text")
-  func doesNotSplitNumberedText() {
+  @Test("Splits numbered task lists")
+  func splitsNumberedList() {
     let prompt = """
     Please do the following:
     1. Add a REST endpoint for users
@@ -18,22 +18,23 @@ struct SemanticTaskDecomposerTests {
     3. Refactor the database access layer
     """
     let subtasks = decomposer.decompose(prompt: prompt)
-    #expect(subtasks.count == 1)
+    #expect(subtasks.count == 3)
     #expect(subtasks[0].id == "task-1")
-    #expect(subtasks[0].detail.contains("1. Add a REST endpoint for users"))
-    #expect(subtasks[0].detail.contains("3. Refactor the database access layer"))
+    #expect(subtasks[0].detail == "Add a REST endpoint for users")
+    #expect(subtasks[1].detail == "Build the React settings page")
+    #expect(subtasks[2].detail == "Refactor the database access layer")
   }
 
-  @Test("Does not split bulleted text")
-  func doesNotSplitBulletedText() {
+  @Test("Splits bulleted task lists")
+  func splitsBulletedList() {
     let prompt = """
     - Write unit tests for the parser
     - Document the public API
     """
     let subtasks = decomposer.decompose(prompt: prompt)
-    #expect(subtasks.count == 1)
-    #expect(subtasks[0].detail.contains("Write unit tests"))
-    #expect(subtasks[0].detail.contains("Document the public API"))
+    #expect(subtasks.count == 2)
+    #expect(subtasks[0].detail == "Write unit tests for the parser")
+    #expect(subtasks[1].detail == "Document the public API")
   }
 
   @Test("Does not split prose on punctuation or conjunctions")
@@ -221,19 +222,32 @@ struct AgentHubPlanningServiceTests {
     #expect(plan.notes.contains { $0.contains("Only one agent CLI") })
   }
 
-  @Test("Raw prompt text is not statically split")
-  func rawPromptTextIsNotStaticallySplit() async {
+  @Test("Raw prose text is not statically split")
+  func rawProseTextIsNotStaticallySplit() async {
+    let planner = AgentHubPlanningService(
+      detector: StubDetector(clis: [DetectedAgentCLI(provider: .claude, executablePath: "/bin/claude")]),
+      research: StubResearch(profiles: [.claude: profile(.claude, "Claude Opus 4.8", [.coding])])
+    )
+    let prompt = "Build the React UI, refactor the API, and write tests; also update docs"
+    let plan = await planner.buildPlan(prompt: prompt, providedSubtasks: [], repositoryPath: nil)
+    #expect(plan.assignments.count == 1)
+    #expect(plan.assignments[0].subtask.detail == prompt)
+  }
+
+  @Test("Numbered prompt text creates multiple assignments")
+  func numberedPromptTextCreatesMultipleAssignments() async {
     let planner = AgentHubPlanningService(
       detector: StubDetector(clis: [DetectedAgentCLI(provider: .claude, executablePath: "/bin/claude")]),
       research: StubResearch(profiles: [.claude: profile(.claude, "Claude Opus 4.8", [.coding])])
     )
     let prompt = """
     1. Build the React UI
-    2. Refactor the API, and write tests; also update docs
+    2. Refactor the API and write tests
     """
     let plan = await planner.buildPlan(prompt: prompt, providedSubtasks: [], repositoryPath: nil)
-    #expect(plan.assignments.count == 1)
-    #expect(plan.assignments[0].subtask.detail.contains("2. Refactor the API"))
+    #expect(plan.assignments.count == 2)
+    #expect(plan.assignments[0].subtask.detail == "Build the React UI")
+    #expect(plan.assignments[1].subtask.detail == "Refactor the API and write tests")
   }
 
   @Test("Leaves subtasks unassigned and notes the gap when no CLI is installed")

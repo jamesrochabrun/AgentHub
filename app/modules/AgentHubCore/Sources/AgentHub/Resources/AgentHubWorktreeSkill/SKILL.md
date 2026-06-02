@@ -18,8 +18,8 @@ Use this workflow only because the user explicitly invoked this skill for AgentH
 
 ## Create Worktrees
 
-1. Read the user's request and infer independent worktree subtasks semantically. Do not split only because of punctuation, bullets, numbering, commas, semicolons, or conjunctions.
-2. Call `agent_hub_planning` before creating worktrees. Pass the original prompt and, when the request clearly contains multiple independent work streams, pass those inferred subtasks as `subtasks`.
+1. Read the user's request and infer independent worktree subtasks semantically. If the request includes explicit independent numbered or bulleted work streams, preserve each list item as a subtask; otherwise do not split only because of punctuation, commas, semicolons, or conjunctions.
+2. Call `agent_hub_planning` before creating worktrees. Pass the original prompt and, when the request clearly contains multiple independent work streams, pass those preserved or inferred subtasks as `subtasks`.
 3. Present the proposed assignments and include task, provider/agent, model when available, branch, rationale, and launch prompt.
 4. Wait for explicit user approval.
 5. Call `agenthub_create_worktree_sessions` only for approved assignments. Pass one task per assignment with explicit `provider`, `branch`, and `prompt`.

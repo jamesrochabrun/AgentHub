@@ -55,6 +55,18 @@ public struct WorktreeGenerationProgressBar: View {
     creations(coordinator).contains { $0.progress.isInProgress }
   }
 
+  /// True once at least one creation reports real file-checkout progress. Git
+  /// emits no checkout progress over a pipe, so a creation can sit at the
+  /// `.preparing` floor (5%) with no movement for the whole checkout; until real
+  /// progress arrives we hide the numeric percentage so it doesn't read as
+  /// "stuck at 5%".
+  private func hasFileProgress(_ coordinator: WorktreeGenerationProgressCoordinator) -> Bool {
+    creations(coordinator).contains {
+      if case .updatingFiles = $0.progress { return true }
+      return false
+    }
+  }
+
   /// Mean progress over the real worktrees, or the naming step before any
   /// creation exists.
   private func displayProgress(_ coordinator: WorktreeGenerationProgressCoordinator) -> Double {
@@ -109,7 +121,7 @@ public struct WorktreeGenerationProgressBar: View {
 
       Spacer(minLength: 8)
 
-      if creationInFlight(coordinator) {
+      if creationInFlight(coordinator) && hasFileProgress(coordinator) {
         Text("\(Int(displayProgress(coordinator) * 100))%")
           .font(.system(.caption, design: .monospaced))
           .foregroundStyle(.secondary)
@@ -286,7 +298,9 @@ private struct WorktreeGenerationOperationRow: View {
           }
         }
 
-        if isNaming && operation.progress.isInProgress {
+        if showsIndeterminateProgress {
+          // No determinate value yet (naming, or a checkout that git runs
+          // silently over a pipe): animate so it reads as working, not stuck.
           ProgressView()
             .progressViewStyle(.linear)
             .tint(statusColor)
@@ -315,6 +329,20 @@ private struct WorktreeGenerationOperationRow: View {
     }
     .padding(10)
     .agentHubRow()
+  }
+
+  /// Whether to show an indeterminate (animated) bar rather than a determinate
+  /// value: the naming step, and any in-flight creation that hasn't reported
+  /// real file-checkout progress yet (git is silent over a pipe, so `.preparing`
+  /// would otherwise render as a frozen 5%).
+  private var showsIndeterminateProgress: Bool {
+    if isNaming { return operation.progress.isInProgress }
+    switch operation.progress {
+    case .idle, .queued, .preparing:
+      return true
+    case .updatingFiles, .completed, .failed, .cancelled:
+      return false
+    }
   }
 
   private var rowIcon: String {
@@ -364,7 +392,9 @@ private struct WorktreeGenerationOperationRow: View {
 
   private var detailTrailing: String {
     if isNaming { return "" }
-    if operation.progress.isInProgress {
+    // Only show a percentage once there's real, advancing file progress — a
+    // `.preparing` floor over a silent pipe checkout would read as "stuck at 5%".
+    if case .updatingFiles = operation.progress {
       return "\(Int(operation.progress.progressValue * 100))%"
     }
     switch operation.progress {

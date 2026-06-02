@@ -42,21 +42,39 @@ public final class WorktreeLaunchRequestHandler: WorktreeLaunchRequestHandlingPr
       throw WorktreeLaunchRequestHandlingError.emptyPrompt
     }
 
-    let viewModel: CLISessionsViewModel
+    let launchViewModel: CLISessionsViewModel
     switch request.provider {
     case .claude:
-      viewModel = claudeViewModel
+      launchViewModel = claudeViewModel
     case .codex:
-      viewModel = codexViewModel
+      launchViewModel = codexViewModel
     }
 
-    let worktree = await viewModel.registerCreatedWorktree(
-      name: request.branchName,
-      path: request.worktreePath,
-      parentRepositoryPath: request.repositoryPath
-    )
-    viewModel.startNewSessionInHub(worktree, initialPrompt: prompt)
-    viewModel.refresh()
+    var launchWorktree: WorktreeBranch?
+    for viewModel in uniqueViewModels([claudeViewModel, codexViewModel]) {
+      let worktree = await viewModel.registerCreatedWorktree(
+        name: request.branchName,
+        path: request.worktreePath,
+        parentRepositoryPath: request.repositoryPath
+      )
+      if viewModel === launchViewModel {
+        launchWorktree = worktree
+      }
+    }
+
+    guard let launchWorktree else {
+      throw WorktreeLaunchRequestHandlingError.providerUnavailable
+    }
+    launchViewModel.startNewSessionInHub(launchWorktree, initialPrompt: prompt)
+    launchViewModel.refresh()
+  }
+
+  private func uniqueViewModels(_ viewModels: [CLISessionsViewModel]) -> [CLISessionsViewModel] {
+    var result: [CLISessionsViewModel] = []
+    for viewModel in viewModels where !result.contains(where: { $0 === viewModel }) {
+      result.append(viewModel)
+    }
+    return result
   }
 }
 

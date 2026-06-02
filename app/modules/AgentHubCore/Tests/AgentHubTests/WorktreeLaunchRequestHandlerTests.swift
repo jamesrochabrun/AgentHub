@@ -46,12 +46,98 @@ struct WorktreeLaunchRequestHandlerTests {
     #expect(pending.worktree.name == "feature")
     #expect(pending.initialPrompt == "Implement the feature")
     #expect(
+      claudeViewModel.selectedRepositories.first?.worktrees.contains {
+        $0.path == worktreePath && $0.isWorktree
+      } == true
+    )
+    #expect(
       codexViewModel.selectedRepositories.first?.worktrees.contains {
         $0.path == worktreePath && $0.isWorktree
       } == true
     )
 
     codexViewModel.cancelPendingSession(pending)
+  }
+
+  @Test("Handler registers every requested worktree in both provider sidebars")
+  func handlerRegistersEveryRequestedWorktreeInBothProviderSidebars() async throws {
+    let claudeViewModel = makeLaunchRequestViewModel(providerKind: .claude)
+    let codexViewModel = makeLaunchRequestViewModel(providerKind: .codex)
+    let handler = WorktreeLaunchRequestHandler(
+      claudeViewModel: claudeViewModel,
+      codexViewModel: codexViewModel
+    )
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("agenthub-launch-handler-\(UUID().uuidString)", isDirectory: true)
+    let repoPath = root.appendingPathComponent("repo", isDirectory: true).path
+    let worktreePaths = [
+      root.appendingPathComponent("agent-one", isDirectory: true).path,
+      root.appendingPathComponent("agent-two", isDirectory: true).path,
+      root.appendingPathComponent("agent-three", isDirectory: true).path
+    ]
+    for path in worktreePaths {
+      try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+    }
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try await handler.handle(WorktreeLaunchRequest(
+      provider: .claude,
+      repositoryPath: repoPath,
+      worktreePath: worktreePaths[0],
+      branchName: "agent-one",
+      prompt: "First task"
+    ))
+    try await handler.handle(WorktreeLaunchRequest(
+      provider: .claude,
+      repositoryPath: repoPath,
+      worktreePath: worktreePaths[1],
+      branchName: "agent-two",
+      prompt: "Second task"
+    ))
+    try await handler.handle(WorktreeLaunchRequest(
+      provider: .codex,
+      repositoryPath: repoPath,
+      worktreePath: worktreePaths[2],
+      branchName: "agent-three",
+      prompt: "Third task"
+    ))
+
+    let claudePaths = Set(claudeViewModel.selectedRepositories.flatMap(\.worktrees).map(\.path))
+    let codexPaths = Set(codexViewModel.selectedRepositories.flatMap(\.worktrees).map(\.path))
+    for path in worktreePaths {
+      #expect(claudePaths.contains(path))
+      #expect(codexPaths.contains(path))
+    }
+    #expect(claudeViewModel.pendingHubSessions.count == 2)
+    #expect(codexViewModel.pendingHubSessions.count == 1)
+
+    for pending in claudeViewModel.pendingHubSessions {
+      claudeViewModel.cancelPendingSession(pending)
+    }
+    for pending in codexViewModel.pendingHubSessions {
+      codexViewModel.cancelPendingSession(pending)
+    }
+  }
+
+  @Test("refresh() coalesces a burst of overlapping callers into a single pass")
+  func refreshCoalescesOverlappingCallers() async {
+    let monitor = TestLaunchMonitorService()
+    let viewModel = makeLaunchRequestViewModel(providerKind: .claude, monitorService: monitor)
+
+    // A synchronous burst (mirroring several queued launch requests each asking
+    // for a refresh): the first call starts an in-flight refresh; the rest must
+    // collapse into it rather than each spawning a concurrent refreshSessions.
+    viewModel.refresh()
+    viewModel.refresh()
+    viewModel.refresh()
+
+    // Let the coalesced refresh task drain, then confirm it ran exactly once.
+    for _ in 0..<50 where await monitor.refreshSessionsCallCount == 0 {
+      await Task.yield()
+    }
+    try? await Task.sleep(for: .milliseconds(50))
+
+    #expect(await monitor.refreshSessionsCallCount == 1)
   }
 
   @Test("Handler strips worktree creation wording before launching child session")
@@ -245,7 +331,10 @@ private actor TestLaunchMonitorService: SessionMonitorServiceProtocol {
     subject.send(repositories)
   }
 
+  private(set) var refreshSessionsCallCount = 0
+
   func refreshSessions(skipWorktreeRedetection: Bool) async {
+    refreshSessionsCallCount += 1
     subject.send(repositories)
   }
 }
