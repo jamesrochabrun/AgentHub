@@ -146,11 +146,15 @@ struct MonitoringEditorStateTests {
     ) == .terminal)
   }
 
-  @Test("Inline available modes include diffs only when available")
-  func inlineAvailableModesIncludeDiffsOnlyWhenAvailable() {
+  @Test("Inline available modes include diffs while checking or available")
+  func inlineAvailableModesIncludeDiffsWhileCheckingOrAvailable() {
     let availableItems = MonitoringCardContentModeItems.items(
       diffDisplayMode: .inline,
       diffAvailabilityStatus: .available
+    )
+    let checkingItems = MonitoringCardContentModeItems.items(
+      diffDisplayMode: .inline,
+      diffAvailabilityStatus: .checking
     )
     let unavailableItems = MonitoringCardContentModeItems.items(
       diffDisplayMode: .inline,
@@ -162,6 +166,7 @@ struct MonitoringEditorStateTests {
     )
 
     #expect(availableItems.map(\.value) == [.terminal, .editor, .diffs])
+    #expect(checkingItems.map(\.value) == [.terminal, .editor, .diffs])
     #expect(unavailableItems.map(\.value) == [.terminal, .editor])
     #expect(sidePanelItems.map(\.value) == [.terminal, .editor])
   }

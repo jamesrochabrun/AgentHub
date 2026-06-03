@@ -65,16 +65,7 @@ enum LibGit2DiffBackend {
     let repo = try openRepository(at: path)
     defer { git_repository_free(repo) }
 
-    if try hasChanges(repo: repo, mode: .unstaged, baseBranch: nil) {
-      return .available
-    }
-
-    if try hasChanges(repo: repo, mode: .staged, baseBranch: nil) {
-      return .available
-    }
-
-    guard let baseBranch = try? detectBaseBranch(in: repo),
-          try hasChanges(repo: repo, mode: .branch, baseBranch: baseBranch) else {
+    guard git_repository_workdir(repo) != nil else {
       return .unavailable
     }
 

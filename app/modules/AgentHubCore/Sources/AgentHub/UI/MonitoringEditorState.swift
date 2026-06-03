@@ -84,7 +84,7 @@ enum MonitoringEditorStateStore {
   ) -> [MonitoringCardContentMode] {
     var modes: [MonitoringCardContentMode] = [.terminal, .editor]
     if diffDisplayMode == .inline,
-       diffAvailabilityStatus?.isAvailable == true {
+       diffAvailabilityStatus?.canShowDiffViewer == true {
       modes.append(.diffs)
     }
     return modes
