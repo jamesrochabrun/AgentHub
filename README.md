@@ -243,7 +243,7 @@ Toggle between modes in the app settings.
 
 ### Worktree Grouping
 
-Worktree sessions are grouped under their parent module by default, so `ModuleA` shows its regular sessions plus AgentHub-owned worktree sessions. The Worktrees settings tab can switch to separate modules, where each AgentHub-owned worktree appears as its own module section.
+Worktree sessions are grouped under their parent module by default, so `ModuleA` shows its regular sessions plus AgentHub-owned worktree sessions. The Worktrees settings tab can switch to separate modules, where the root module and its AgentHub-owned worktrees appear as sibling module rows grouped by repository.
 
 AgentHub creates new worktrees as sibling directories beside the main repository, using the generated or manual directory name directly under the repository's parent directory. It no longer creates a repo-local `.worktrees` folder or adds `.worktrees/` to Git's exclude file.
 

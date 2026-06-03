@@ -432,6 +432,7 @@ public struct MultiProviderMonitoringPanelView: View {
     if let modulePath = activeModuleLandingPath(snapshot: snapshot) {
       ModuleLandingView(
         modulePath: modulePath,
+        rootRepositoryPath: rootRepositoryPath(for: modulePath),
         onStartSession: { onRequestStartSession(modulePath) }
       )
     } else if !snapshot.allItems.isEmpty {
@@ -1078,6 +1079,13 @@ public struct MultiProviderMonitoringPanelView: View {
     )
   }
 
+  private func rootRepositoryPath(for modulePath: String) -> String {
+    WorktreeModuleResolver.bestMatch(for: modulePath, repositories: allSelectedRepositories)?
+      .repository
+      .path
+      ?? modulePath
+  }
+
   private func openSessionFile(for session: CLISession, viewModel: CLISessionsViewModel) {
     guard let fileURL = viewModel.sessionFileURL(for: session),
           let data = FileManager.default.contents(atPath: fileURL.path),
@@ -1379,6 +1387,7 @@ public struct MultiProviderMonitoringPanelView: View {
 
 private struct ModuleLandingView: View {
   let modulePath: String
+  let rootRepositoryPath: String
   let onStartSession: () -> Void
 
   @Environment(\.colorScheme) private var colorScheme
@@ -1396,6 +1405,13 @@ private struct ModuleLandingView: View {
         .lineLimit(nil)
         .minimumScaleFactor(0.65)
         .fixedSize(horizontal: false, vertical: true)
+
+      Text(rootRepositoryPath)
+        .font(.system(size: 13, weight: .medium, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .frame(maxWidth: .infinity)
 
       Button(action: onStartSession) {
         HStack(spacing: 8) {

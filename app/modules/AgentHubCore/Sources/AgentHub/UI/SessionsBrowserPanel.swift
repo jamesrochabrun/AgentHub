@@ -43,11 +43,17 @@ public struct SessionsBrowserPanel: View {
       } else {
         ScrollView(showsIndicators: false) {
           LazyVStack(spacing: 12, pinnedViews: [.sectionHeaders]) {
-            ForEach(groupedByModule, id: \.modulePath) { group in
-              Section(header: moduleSectionHeader(name: group.modulePath, count: group.items.count)) {
+            ForEach(groupedByRepository) { section in
+              ForEach(section.groups) { group in
+                moduleSectionHeader(name: group.displayName, count: group.items.count)
+
                 ForEach(group.items) { item in
                   sessionRow(for: item)
                 }
+              }
+
+              if worktreeDisplayMode == .separateModules {
+                repositorySectionDivider()
               }
             }
           }
@@ -81,9 +87,16 @@ public struct SessionsBrowserPanel: View {
 
   // MARK: - Section Header
 
+  private func repositorySectionDivider() -> some View {
+    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+      .fill(Color.borderSubtle.opacity(0.9))
+      .frame(height: 3)
+      .padding(.vertical, 8)
+  }
+
   private func moduleSectionHeader(name: String, count: Int) -> some View {
     HStack {
-      Text(URL(fileURLWithPath: name).lastPathComponent)
+      Text(name)
         .font(.caption.weight(.semibold))
         .foregroundColor(.secondary)
       Spacer()
@@ -179,24 +192,31 @@ public struct SessionsBrowserPanel: View {
     return claudePending + codexPending + claudeMonitored + codexMonitored
   }
 
-  private var groupedByModule: [(modulePath: String, items: [ProviderMonitoringItem])] {
-    let grouped = Dictionary(grouping: allMonitoredItems) { findModulePath(for: $0) }
-    return grouped.sorted { $0.key < $1.key }
-      .map { (modulePath: $0.key, items: $0.value.sorted { $0.timestamp > $1.timestamp }) }
+  private var groupedByRepository: [SidebarRepositoryModuleSection<ProviderMonitoringItem>] {
+    SidebarSessionOrdering.repositoryModuleSections(
+      from: allMonitoredItems,
+      repositories: allSelectedRepositories,
+      worktreeDisplayMode: worktreeDisplayMode,
+      isPinned: { _ in false },
+      projectPath: { $0.projectPath },
+      timestamp: { $0.timestamp },
+      id: { $0.id }
+    )
+    .compactMap { section in
+      let groups = section.groups.filter { !$0.items.isEmpty }
+      guard !groups.isEmpty else { return nil }
+      return SidebarRepositoryModuleSection(
+        id: section.id,
+        displayName: section.displayName,
+        groups: groups
+      )
+    }
   }
 
   private var allSelectedRepositories: [SelectedRepository] {
     WorktreeModuleResolver.mergedRepositories(
       claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
     ).sorted { $0.path < $1.path }
-  }
-
-  private func findModulePath(for item: ProviderMonitoringItem) -> String {
-    WorktreeModuleResolver.modulePath(
-      for: item.projectPath,
-      repositories: allSelectedRepositories,
-      mode: worktreeDisplayMode
-    )
   }
 
   private var worktreeDisplayMode: WorktreeDisplayMode {

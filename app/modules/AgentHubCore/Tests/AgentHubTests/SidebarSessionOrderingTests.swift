@@ -59,6 +59,36 @@ struct SidebarSessionOrderingTests {
     #expect(ids == ["a-main", "a-worktree", "b-newest"])
   }
 
+  @Test("Repository sections keep root and worktree modules as siblings")
+  func repositorySectionsKeepRootAndWorktreeModulesAsSiblings() {
+    let repoA = SelectedRepository(
+      path: "/tmp/RepoA",
+      worktrees: [
+        WorktreeBranch(name: "main", path: "/tmp/RepoA", isWorktree: false),
+        WorktreeBranch(name: "feature", path: "/tmp/RepoA-feature", isWorktree: true)
+      ]
+    )
+    let repoB = SelectedRepository(path: "/tmp/RepoB")
+
+    let sections = SidebarSessionOrdering.repositoryModuleSections(
+      from: [
+        item("b", projectPath: "/tmp/RepoB", timestamp: 300),
+        item("a-worktree", projectPath: "/tmp/RepoA-feature", timestamp: 200),
+        item("a-main", projectPath: "/tmp/RepoA", timestamp: 100)
+      ],
+      repositories: [repoA, repoB],
+      worktreeDisplayMode: .separateModules,
+      isPinned: { $0.isPinned },
+      projectPath: { $0.projectPath },
+      timestamp: { $0.timestamp },
+      id: { $0.id }
+    )
+
+    #expect(sections.map(\.id) == ["/tmp/RepoA", "/tmp/RepoB"])
+    #expect(sections[0].groups.map(\.id) == ["/tmp/RepoA", "/tmp/RepoA-feature"])
+    #expect(sections[1].groups.map(\.id) == ["/tmp/RepoB"])
+  }
+
   @Test("Status grouping flattens by status section order")
   func statusGroupingFlattensByStatusOrder() {
     let items = [

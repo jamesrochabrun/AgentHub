@@ -25,7 +25,7 @@ public enum WorktreeDisplayMode: String, CaseIterable, Identifiable, Sendable, C
     case .parent:
       return "Worktree sessions appear under their parent module."
     case .separateModules:
-      return "Worktrees appear as separate module sections without adding them as saved repositories."
+      return "Root modules and worktree modules appear as siblings grouped by repository."
     }
   }
 }
