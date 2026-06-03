@@ -7,6 +7,20 @@ struct AgentHubMCPServer {
   private let deletionQueue = WorktreeDeletionRequestQueue()
   private let progressQueue = WorktreeProgressQueue()
 
+  /// Hard ceiling on any single `tools/call`. Worktree creation normally
+  /// completes in seconds and each underlying `git` invocation has its own
+  /// (tighter) timeout, so reaching this bound means a genuine stall rather than
+  /// slow-but-healthy work. It is a backstop: rather than leave the calling
+  /// agent's tool call hanging indefinitely, we abort and return a recoverable
+  /// tool-level error. Override with `AGENTHUB_MCP_TOOL_TIMEOUT_SECONDS`.
+  private static let toolCallTimeout: Duration = {
+    if let raw = ProcessInfo.processInfo.environment["AGENTHUB_MCP_TOOL_TIMEOUT_SECONDS"],
+       let seconds = Int(raw.trimmingCharacters(in: .whitespaces)), seconds > 0 {
+      return .seconds(seconds)
+    }
+    return .seconds(300)
+  }()
+
   func run() async throws {
     while let line = readLine(strippingNewline: true) {
       guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -45,14 +59,30 @@ struct AgentHubMCPServer {
           "tools": [
             createWorktreeSessionsToolSchema(),
             listWorktreesToolSchema(),
-            deleteWorktreeToolSchema()
+            deleteWorktreeToolSchema(),
+            planningToolSchema()
           ]
         ])
 
       case "tools/call":
         guard let id else { return }
-        let result = try await handleToolCall(params: object["params"] as? [String: Any])
-        writeResponse(id: id, result: result)
+        do {
+          let result = try await handleToolCallWithTimeout(params: object["params"] as? [String: Any])
+          writeResponse(id: id, result: result)
+        } catch let timeout as ToolCallTimedOut {
+          // A wedged tool call must never leave the agent hanging. Respond with a
+          // tool-level error so the model receives a result it can act on. Any
+          // worktrees already created on disk persist and remain discoverable via
+          // agenthub_list_worktrees.
+          FileHandle.standardError.write(Data(
+            "agenthub mcp-server: tool '\(timeout.toolName)' timed out after \(timeout.seconds)s; aborted\n".utf8
+          ))
+          writeResponse(id: id, result: toolResult(
+            text: "AgentHub tool '\(timeout.toolName)' timed out after \(timeout.seconds) seconds and was aborted. Any worktrees already created remain on disk — call agenthub_list_worktrees to see them, then retry only the tasks that are still missing.",
+            structuredContent: ["timedOut": true, "tool": timeout.toolName],
+            isError: true
+          ))
+        }
 
       default:
         guard let id else { return }
@@ -61,6 +91,32 @@ struct AgentHubMCPServer {
     } catch {
       let id = requestId(from: line)
       writeError(id: id, code: -32000, message: error.localizedDescription)
+    }
+  }
+
+  /// Signals that a `tools/call` exceeded `toolCallTimeout` and was aborted.
+  private struct ToolCallTimedOut: Error {
+    let toolName: String
+    let seconds: Int
+  }
+
+  /// Races `handleToolCall` against `toolCallTimeout`. If the work wins, its
+  /// result is returned; if the timeout wins, the work task is cancelled
+  /// (propagating to the running `git` process via its cancellation handler) and
+  /// `ToolCallTimedOut` is thrown so the caller can answer the agent instead of
+  /// hanging. Cancellation is cooperative — this relies on the underlying work
+  /// actually honoring `Task` cancellation, which it now does once the EOF
+  /// busy-spin in `runGitCommandWithProgress` is removed.
+  private func handleToolCallWithTimeout(params: [String: Any]?) async throws -> [String: Any] {
+    do {
+      return try await withTimeout(Self.toolCallTimeout) {
+        try await handleToolCall(params: params)
+      }
+    } catch is TaskTimeoutError {
+      throw ToolCallTimedOut(
+        toolName: (params?["name"] as? String) ?? "unknown",
+        seconds: Int(Self.toolCallTimeout.components.seconds)
+      )
     }
   }
 
@@ -73,12 +129,18 @@ struct AgentHubMCPServer {
 
     switch name {
     case "agenthub_create_worktree_sessions":
-      let results = try await createWorktreeSessions(arguments: arguments)
+      let batch = try await createWorktreeSessions(arguments: arguments)
+      let summaryLines = batch.successes.map(\.summary) + batch.failures.map(\.summary)
+      var structured: [String: Any] = ["sessions": batch.successes.map(\.dictionary)]
+      if !batch.failures.isEmpty {
+        structured["failures"] = batch.failures.map(\.dictionary)
+      }
+      // Always return a complete per-task answer — even when some tasks failed —
+      // so the caller's tool call never hangs waiting on an all-or-nothing batch.
       return toolResult(
-        text: results.map(\.summary).joined(separator: "\n"),
-        structuredContent: [
-          "sessions": results.map(\.dictionary)
-        ]
+        text: summaryLines.joined(separator: "\n"),
+        structuredContent: structured,
+        isError: batch.successes.isEmpty
       )
 
     case "agenthub_list_worktrees":
@@ -89,13 +151,17 @@ struct AgentHubMCPServer {
       let result = try await deleteWorktree(arguments: arguments)
       return toolResult(text: result.summary, structuredContent: result.dictionary)
 
+    case "agent_hub_planning":
+      let plan = try await buildDelegationPlan(arguments: arguments)
+      return toolResult(text: planSummary(plan), structuredContent: planJSONObject(plan))
+
     default:
       throw MCPError.invalidRequest("Unknown AgentHub tool: \(name).")
     }
   }
 
   private func createWorktreeSession(arguments: [String: Any]) async throws -> MCPWorktreeLaunchResult {
-    let branch = try requiredString("branch", in: arguments)
+    let requestedBranch = try requiredString("branch", in: arguments)
     let prompt = try requiredString("prompt", in: arguments)
     let repositoryPath = optionalString("repo", in: arguments)
       ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
@@ -103,6 +169,15 @@ struct AgentHubMCPServer {
     let provider = try resolveProvider(optionalString("provider", in: arguments))
     let startPoint = optionalString("from", in: arguments)
     let checkoutExisting = arguments["checkoutExisting"] as? Bool ?? false
+
+    // Proactively avoid name collisions: when creating a NEW branch, derive a
+    // free branch/directory name from the existing branches and worktrees so
+    // `git worktree add -b` never fails on a name that's already taken (a
+    // leftover from a previous run, or a duplicate within the same batch).
+    // `checkoutExisting` intentionally reuses an existing branch, so skip it.
+    let branch = checkoutExisting
+      ? requestedBranch
+      : await availableBranchName(requestedBranch, at: repositoryPath)
     let directoryName = WorktreeNaming.worktreeDirectoryName(for: branch)
 
     // Emit a "starting" progress snapshot IMMEDIATELY — before any git work —
@@ -112,8 +187,7 @@ struct AgentHubMCPServer {
     // `@Sendable` (the service invokes it from detached tasks), so capture only
     // the `Sendable` queue and value-type metadata.
     let snapshotQueue = progressQueue
-    let operationID = WorktreeOperationID()
-    let snapshotID = operationID.value.uuidString
+    let snapshotID = UUID().uuidString
     let writeProgress: @Sendable (WorktreeCreationProgress) -> Void = { progress in
       try? snapshotQueue.write(WorktreeProgressSnapshot(
         operationID: snapshotID,
@@ -128,20 +202,27 @@ struct AgentHubMCPServer {
     let worktreePath: String
     do {
       if checkoutExisting {
-        // No progress-enabled overload for checkout; emit preparing→completed bookends.
         worktreePath = try await service.checkoutWorktree(
           at: repositoryPath,
           branch: branch,
           directoryName: directoryName
         )
       } else {
+        // Plain, NON-streaming creation. We deliberately avoid the
+        // progress-streaming overload (`operationID`/`onProgress`): it pipes git's
+        // stderr through an NSFileHandle readabilityHandler that, on EOF, busy-spins
+        // the shared `com.apple.NSFileHandle.fd_monitoring` serial queue at 100% CPU
+        // and starves `Process.waitUntilExit()` — livelocking the MCP server so the
+        // tool call never returns (the original "Stewing…" hang, added in #336).
+        // The MCP only needs the coarse preparing→completed snapshots written here
+        // for the app's top-bar banner, NOT git's per-file "Updating files" stream,
+        // so the simple blocking path (concurrently pipe-drained, timeout-bounded)
+        // is both sufficient and robust.
         worktreePath = try await service.createWorktreeWithNewBranch(
           at: repositoryPath,
           newBranchName: branch,
           directoryName: directoryName,
-          startPoint: startPoint,
-          operationID: operationID,
-          onProgress: { progress in writeProgress(progress) }
+          startPoint: startPoint
         )
       }
     } catch {
@@ -175,7 +256,32 @@ struct AgentHubMCPServer {
     )
   }
 
-  private func createWorktreeSessions(arguments: [String: Any]) async throws -> [MCPWorktreeLaunchResult] {
+  /// Resolves a non-colliding branch name from the repository's current
+  /// branches and worktrees. Best-effort: if git state can't be read, the
+  /// requested name is returned unchanged and the per-task error isolation in
+  /// `createWorktreeSessions` will surface any resulting failure.
+  private func availableBranchName(_ requested: String, at repositoryPath: String) async -> String {
+    var takenBranches: Set<String> = []
+    var takenDirectoryNames: Set<String> = []
+
+    if let branches = try? await service.getLocalBranches(at: repositoryPath) {
+      takenBranches.formUnion(branches.map(\.name))
+    }
+    if let worktrees = try? await service.listWorktrees(at: repositoryPath) {
+      takenBranches.formUnion(worktrees.compactMap(\.branch))
+      takenDirectoryNames.formUnion(
+        worktrees.map { URL(fileURLWithPath: $0.path).lastPathComponent }
+      )
+    }
+
+    return WorktreeNaming.availableBranchName(
+      for: requested,
+      takenBranches: takenBranches,
+      takenDirectoryNames: takenDirectoryNames
+    )
+  }
+
+  private func createWorktreeSessions(arguments: [String: Any]) async throws -> MCPWorktreeBatchResult {
     guard let tasks = arguments["tasks"] as? [[String: Any]], !tasks.isEmpty else {
       throw MCPError.invalidRequest("Expected a non-empty tasks array.")
     }
@@ -183,7 +289,7 @@ struct AgentHubMCPServer {
     let defaultRepo = optionalString("repo", in: arguments)
     let defaultProvider = optionalString("provider", in: arguments)
 
-    var results: [MCPWorktreeLaunchResult] = []
+    var batch = MCPWorktreeBatchResult()
     for task in tasks {
       var merged = task
       if merged["repo"] == nil, let defaultRepo {
@@ -192,9 +298,23 @@ struct AgentHubMCPServer {
       if merged["provider"] == nil, let defaultProvider {
         merged["provider"] = defaultProvider
       }
-      results.append(try await createWorktreeSession(arguments: merged))
+
+      // Isolate per-task failures: one bad task (invalid args, a git error)
+      // must not abort the whole batch. Every worktree that was created on disk
+      // still gets enqueued and reported, and a failed task surfaces an error
+      // entry instead of leaving the caller hanging. createWorktreeSession has
+      // already emitted a `.failed` progress snapshot before throwing.
+      do {
+        batch.successes.append(try await createWorktreeSession(arguments: merged))
+      } catch {
+        let branch = optionalString("branch", in: merged) ?? "(unknown)"
+        batch.failures.append(MCPWorktreeTaskFailure(
+          branch: branch,
+          message: error.localizedDescription
+        ))
+      }
     }
-    return results
+    return batch
   }
 
   private func listWorktrees(arguments: [String: Any]) async throws -> MCPWorktreeInventory {
@@ -248,6 +368,92 @@ struct AgentHubMCPServer {
       deleteAssociatedBranch: deleteAssociatedBranch,
       sidebarCleanupRequestId: queued.request.id
     )
+  }
+
+  private func buildDelegationPlan(arguments: [String: Any]) async throws -> DelegationPlan {
+    let prompt = try requiredString("prompt", in: arguments)
+    let repositoryPath = optionalString("repo", in: arguments)
+      ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
+    let providedSubtasks = (arguments["subtasks"] as? [Any])?
+      .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+      ?? []
+
+    let planner = AgentHubPlanningService()
+
+    return await planner.buildPlan(
+      prompt: prompt,
+      providedSubtasks: providedSubtasks,
+      repositoryPath: repositoryPath
+    )
+  }
+
+  private func planSummary(_ plan: DelegationPlan) -> String {
+    var lines = ["Delegation plan: \(plan.assignments.count) subtask(s)."]
+    for assignment in plan.assignments {
+      let agent = assignment.assignedProvider?.harnessName ?? "your choice (Claude Code or Codex)"
+      lines.append("- [\(assignment.subtask.id)] \(assignment.subtask.title) → \(agent) (branch \(assignment.branchSuggestion))")
+    }
+    if !plan.notes.isEmpty {
+      lines.append("Notes:")
+      lines.append(contentsOf: plan.notes.map { "  • \($0)" })
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  private func planJSONObject(_ plan: DelegationPlan) -> [String: Any] {
+    func tags(_ tags: [CapabilityTag]) -> [String] { tags.map(\.rawValue) }
+
+    let detectedCLIs = plan.detectedCLIs.map { cli -> [String: Any] in
+      [
+        "provider": cli.provider.commandLineValue,
+        "harness": cli.provider.harnessName,
+        "executablePath": cli.executablePath
+      ]
+    }
+
+    let harnessCapabilities = plan.harnessCapabilities.map { capability -> [String: Any] in
+      [
+        "provider": capability.provider.commandLineValue,
+        "harness": capability.provider.harnessName,
+        "skills": capability.skills.map { ["name": $0.name, "description": $0.description] },
+        "mcpServers": capability.mcpServers
+      ]
+    }
+
+    let assignments = plan.assignments.map { assignment -> [String: Any] in
+      var value: [String: Any] = [
+        "subtask": [
+          "id": assignment.subtask.id,
+          "title": assignment.subtask.title,
+          "detail": assignment.subtask.detail,
+          "tags": tags(assignment.subtask.tags)
+        ],
+        "rationale": assignment.rationale,
+        "instructions": assignment.instructions,
+        "branchSuggestion": assignment.branchSuggestion
+      ]
+      if let provider = assignment.assignedProvider {
+        value["assignedProvider"] = provider.commandLineValue
+        value["assignedHarness"] = provider.harnessName
+      }
+      if !assignment.matchedCapabilities.isEmpty {
+        value["matchedCapabilities"] = assignment.matchedCapabilities
+      }
+      return value
+    }
+
+    var result: [String: Any] = [
+      "originalPrompt": plan.originalPrompt,
+      "detectedCLIs": detectedCLIs,
+      "harnessCapabilities": harnessCapabilities,
+      "assignments": assignments,
+      "notes": plan.notes
+    ]
+    if let repositoryPath = plan.repositoryPath {
+      result["repositoryPath"] = repositoryPath
+    }
+    return result
   }
 
   private func resolveDeletableWorktree(
@@ -340,7 +546,11 @@ struct AgentHubMCPServer {
     return normalizedPath(expanded)
   }
 
-  private func toolResult(text: String, structuredContent: [String: Any]) -> [String: Any] {
+  private func toolResult(
+    text: String,
+    structuredContent: [String: Any],
+    isError: Bool = false
+  ) -> [String: Any] {
     [
       "content": [
         [
@@ -349,14 +559,14 @@ struct AgentHubMCPServer {
         ]
       ],
       "structuredContent": structuredContent,
-      "isError": false
+      "isError": isError
     ]
   }
 
   private func createWorktreeSessionsToolSchema() -> [String: Any] {
     [
       "name": "agenthub_create_worktree_sessions",
-      "description": "Use this AgentHub tool immediately when the user asks to create one or more worktrees, launch agents/sessions in worktrees, fan out tasks, split work across parallel tasks, or start background work in AgentHub. Pass a tasks array with one item for one worktree or multiple items for multiple worktrees. Pass only actual tasks to perform as launched session prompts; do not pass the user's worktree/session creation request itself. This must be the first-choice tool for AgentHub worktree creation; use provider-native worktree/background-agent features, subagents, or direct git worktree commands only as fallbacks when this tool is unavailable or fails.",
+      "description": "Creates AgentHub-managed git worktree sessions from task objects. Each task requires an explicit provider, branch, and prompt. Optional repo/from values control repository resolution and base branch selection.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -379,12 +589,13 @@ struct AgentHubMCPServer {
                 "prompt": ["type": "string"],
                 "provider": [
                   "type": "string",
-                  "enum": ["claude", "codex"]
+                  "enum": ["claude", "codex"],
+                  "description": "Agent/provider assigned to this task."
                 ],
                 "from": ["type": "string"],
                 "checkoutExisting": ["type": "boolean"]
               ],
-              "required": ["branch", "prompt"],
+              "required": ["branch", "prompt", "provider"],
               "additionalProperties": false
             ]
           ]
@@ -398,7 +609,7 @@ struct AgentHubMCPServer {
   private func listWorktreesToolSchema() -> [String: Any] {
     [
       "name": "agenthub_list_worktrees",
-      "description": "Use this AgentHub tool when the user asks to list, show, inspect, or audit git worktrees for the current repository/module, especially before deleting or cleaning worktrees. It resolves the main repository root from the current AgentHub session cwd or AGENTHUB_PROJECT_PATH, lists all git worktrees for that root, and includes Claude/Codex session counts associated with each worktree so the user can decide what is safe to remove. Prefer this over direct git worktree list commands in AgentHub sessions.",
+      "description": "Lists git worktrees for an AgentHub repository. Resolves the main repository root from the current session cwd or AGENTHUB_PROJECT_PATH and includes Claude/Codex session counts associated with each worktree.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -415,7 +626,7 @@ struct AgentHubMCPServer {
   private func deleteWorktreeToolSchema() -> [String: Any] {
     [
       "name": "agenthub_delete_worktree",
-      "description": "Use this AgentHub tool when the user explicitly asks to delete, remove, clear, or clean up a specific git worktree. If the target is ambiguous or the user has not seen the session counts, call agenthub_list_worktrees first and ask the user which worktree to delete. This removes the git worktree, then queues AgentHub to archive monitored sessions in that worktree and remove it from the sidebar. Prefer this over direct git worktree remove commands in AgentHub sessions.",
+      "description": "Removes a specified AgentHub-managed git worktree, then queues AgentHub to archive monitored sessions in that worktree and remove it from the sidebar.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -437,6 +648,33 @@ struct AgentHubMCPServer {
           ]
         ],
         "required": ["target"],
+        "additionalProperties": false
+      ]
+    ]
+  }
+
+  private func planningToolSchema() -> [String: Any] {
+    [
+      "name": "agent_hub_planning",
+      "description": "Builds an advisory plan for AgentHub task delegation. AgentHub launches an agent HARNESS (Claude Code or Codex) — it cannot pick or configure a model — so the plan only ever names the harness, never a model. Decomposition is YOUR job: pass the independent subtasks you inferred; when omitted, the whole prompt is treated as a single task (AgentHub does not statically split). Returns each detected harness's REAL capabilities (its installed skills + configured MCP servers) under `harnessCapabilities`. When one harness is installed it is assigned; when more than one is installed each subtask is SUGGESTED the harness whose skills/MCP tools best match it (see each assignment's `matchedCapabilities`) — confirm or override using that real capability data rather than the harness's general reputation. Advisory only.",
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "prompt": [
+            "type": "string",
+            "description": "The full bundled, multi-part request to plan and delegate."
+          ],
+          "subtasks": [
+            "type": "array",
+            "items": ["type": "string"],
+            "description": "The independent subtasks you inferred from the request, one entry per task. When omitted, AgentHub plans the whole prompt as a single task — it never statically splits prose or lists."
+          ],
+          "repo": [
+            "type": "string",
+            "description": "Optional repository path for context. Defaults to AGENTHUB_PROJECT_PATH."
+          ]
+        ],
+        "required": ["prompt"],
         "additionalProperties": false
       ]
     ]
@@ -467,6 +705,12 @@ struct AgentHubMCPServer {
   private func writeJSON(_ object: [String: Any]) {
     guard JSONSerialization.isValidJSONObject(object),
           let data = try? JSONSerialization.data(withJSONObject: object, options: []) else {
+      // Never silently drop a JSON-RPC message: a dropped response leaves the
+      // caller's tool call loading forever. Surface it on stderr (stdout is
+      // reserved for the protocol) so the failure is at least diagnosable.
+      FileHandle.standardError.write(
+        Data("agenthub mcp-server: failed to serialize a JSON-RPC message\n".utf8)
+      )
       return
     }
     FileHandle.standardOutput.write(data)
@@ -545,6 +789,30 @@ private struct MCPWorktreeDeletionResult {
       "force": force,
       "deleteAssociatedBranch": deleteAssociatedBranch,
       "sidebarCleanupRequestId": sidebarCleanupRequestId
+    ]
+  }
+}
+
+/// Outcome of a multi-task `agenthub_create_worktree_sessions` call. Successes
+/// and failures are reported together so one failing task never aborts the
+/// batch or leaves the caller's tool call hanging.
+private struct MCPWorktreeBatchResult {
+  var successes: [MCPWorktreeLaunchResult] = []
+  var failures: [MCPWorktreeTaskFailure] = []
+}
+
+private struct MCPWorktreeTaskFailure {
+  let branch: String
+  let message: String
+
+  var summary: String {
+    "Failed to create worktree \(branch): \(message)"
+  }
+
+  var dictionary: [String: Any] {
+    [
+      "branch": branch,
+      "error": message
     ]
   }
 }

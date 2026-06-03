@@ -105,8 +105,9 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(environment["AGENTHUB_SESSION_ID"] == "session-123")
   }
 
-  @Test("Claude launch passes raw prompt, AgentHub MCP config, and hidden routing instruction")
-  func claudeLaunchPassesRawPromptAgentHubMCPConfigAndRoutingInstruction() throws {
+  @Test("Claude launch passes raw prompt, AgentHub MCP config, and installs worktree skill")
+  func claudeLaunchPassesRawPromptAgentHubMCPConfigAndInstallsWorktreeSkill() throws {
+    var installCount = 0
     let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
       sessionId: nil,
       projectPath: "/tmp",
@@ -116,7 +117,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       permissionModePlan: false,
       worktreeName: nil,
       metadataStore: nil,
-      agentHubCLIPath: agentHubCLIPath
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: { installCount += 1 }
     )
 
     guard case .success(let launch) = result else {
@@ -124,24 +126,25 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       return
     }
 
+    #expect(installCount == 1)
     #expect(launch.environment["AGENTHUB_CLI"] == agentHubCLIPath)
     #expect(launch.environment["AGENTHUB_PROVIDER"] == "Claude")
     #expect(launch.environment["AGENTHUB_PROJECT_PATH"] == "/tmp")
     #expect(launch.shellCommand.contains("--mcp-config"))
     #expect(launch.shellCommand.contains("/bin/sh"))
     #expect(launch.shellCommand.contains("mcp-server"))
-    #expect(launch.shellCommand.contains("--append-system-prompt"))
-    #expect(launch.shellCommand.contains("agenthub_create_worktree_sessions"))
-    #expect(launch.shellCommand.contains("For worktree creation you MUST use the AgentHub tool first"))
-    #expect(launch.shellCommand.contains("agenthub_list_worktrees"))
-    #expect(launch.shellCommand.contains("agenthub_delete_worktree"))
+    #expect(!launch.shellCommand.contains("--append-system-prompt"))
+    #expect(!launch.shellCommand.contains("agenthub_create_worktree_sessions"))
+    #expect(!launch.shellCommand.contains("agent_hub_planning"))
+    #expect(!launch.shellCommand.contains("developer_instructions="))
     #expect(!launch.shellCommand.contains("AgentHub session context:"))
     #expect(!launch.shellCommand.contains("User request:"))
     #expect(launch.shellCommand.contains("Create a worktree for the issue"))
   }
 
-  @Test("Blank Claude launch still passes AgentHub MCP config")
-  func blankClaudeLaunchStillPassesAgentHubMCPConfig() throws {
+  @Test("Blank Claude launch still passes AgentHub MCP config and installs worktree skill")
+  func blankClaudeLaunchStillPassesAgentHubMCPConfigAndInstallsWorktreeSkill() throws {
+    var installCount = 0
     let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
       sessionId: nil,
       projectPath: "/tmp",
@@ -151,7 +154,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       permissionModePlan: false,
       worktreeName: nil,
       metadataStore: nil,
-      agentHubCLIPath: agentHubCLIPath
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: { installCount += 1 }
     )
 
     guard case .success(let launch) = result else {
@@ -159,19 +163,20 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       return
     }
 
+    #expect(installCount == 1)
     #expect(launch.shellCommand.contains("--mcp-config"))
     #expect(launch.shellCommand.contains("/bin/sh"))
     #expect(launch.shellCommand.contains("mcp-server"))
-    #expect(launch.shellCommand.contains("--append-system-prompt"))
-    #expect(launch.shellCommand.contains("agenthub_create_worktree_sessions"))
-    #expect(launch.shellCommand.contains("For worktree creation you MUST use the AgentHub tool first"))
-    #expect(launch.shellCommand.contains("agenthub_list_worktrees"))
-    #expect(launch.shellCommand.contains("agenthub_delete_worktree"))
+    #expect(!launch.shellCommand.contains("--append-system-prompt"))
+    #expect(!launch.shellCommand.contains("agenthub_create_worktree_sessions"))
+    #expect(!launch.shellCommand.contains("agent_hub_planning"))
+    #expect(!launch.shellCommand.contains("developer_instructions="))
     #expect(!launch.shellCommand.contains("AgentHub session context:"))
   }
 
-  @Test("Codex launch passes AgentHub MCP config and routing instruction")
-  func codexLaunchPassesAgentHubMCPConfigAndRoutingInstruction() throws {
+  @Test("Codex launch passes AgentHub MCP config and installs worktree skill")
+  func codexLaunchPassesAgentHubMCPConfigAndInstallsWorktreeSkill() throws {
+    var installCount = 0
     let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
       sessionId: nil,
       projectPath: "/tmp",
@@ -181,7 +186,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       permissionModePlan: false,
       worktreeName: nil,
       metadataStore: nil,
-      agentHubCLIPath: agentHubCLIPath
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: { installCount += 1 }
     )
 
     guard case .success(let launch) = result else {
@@ -189,16 +195,118 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       return
     }
 
+    #expect(installCount == 1)
     #expect(launch.shellCommand.contains("mcp_servers.agenthub.command"))
     #expect(launch.shellCommand.contains("/bin/sh"))
     #expect(launch.shellCommand.contains("mcp-server"))
-    #expect(launch.shellCommand.contains("developer_instructions="))
-    #expect(launch.shellCommand.contains("agenthub_create_worktree_sessions"))
-    #expect(launch.shellCommand.contains("For worktree creation you MUST use the AgentHub tool first"))
-    #expect(launch.shellCommand.contains("agenthub_list_worktrees"))
-    #expect(launch.shellCommand.contains("agenthub_delete_worktree"))
+    #expect(!launch.shellCommand.contains("developer_instructions="))
+    #expect(!launch.shellCommand.contains("--append-system-prompt"))
+    #expect(!launch.shellCommand.contains("agenthub_create_worktree_sessions"))
+    #expect(!launch.shellCommand.contains("agent_hub_planning"))
     #expect(!launch.shellCommand.contains("\\/"))
     #expect(!launch.shellCommand.contains("AgentHub session context:"))
+  }
+
+  @Test("Resume launch does not reinstall worktree skill")
+  func resumeLaunchDoesNotReinstallWorktreeSkill() throws {
+    var installCount = 0
+    let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: "session-123",
+      projectPath: "/tmp",
+      cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: .claude),
+      initialPrompt: nil,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: nil,
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: { installCount += 1 }
+    )
+
+    guard case .success = result else {
+      Issue.record("Expected launch builder success")
+      return
+    }
+
+    #expect(installCount == 0)
+  }
+
+  @Test("Task manager skill installer writes Claude and Codex skill files")
+  func taskManagerSkillInstallerWritesClaudeAndCodexSkillFiles() throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AgentHubWorktreeSkillInstallerTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    let skillMarkdown = """
+    ---
+    name: agenthub-task-manager
+    description: Test skill
+    ---
+
+    # Test
+    """
+    let openAIYAML = """
+    interface:
+      display_name: "AgentHub Task Manager"
+    policy:
+      allow_implicit_invocation: false
+    """
+
+    try AgentHubWorktreeSkillInstaller.installForAllProviders(
+      homeDirectory: temporaryDirectory,
+      skillMarkdown: skillMarkdown,
+      openAIYAML: openAIYAML
+    )
+
+    let claudeSkillURL = temporaryDirectory
+      .appendingPathComponent(".claude/skills/agenthub-task-manager/SKILL.md")
+    let codexSkillURL = temporaryDirectory
+      .appendingPathComponent(".codex/skills/agenthub-task-manager/SKILL.md")
+    let codexMetadataURL = temporaryDirectory
+      .appendingPathComponent(".codex/skills/agenthub-task-manager/agents/openai.yaml")
+
+    #expect(try String(contentsOf: claudeSkillURL, encoding: .utf8) == skillMarkdown)
+    #expect(try String(contentsOf: codexSkillURL, encoding: .utf8) == skillMarkdown)
+    #expect(try String(contentsOf: codexMetadataURL, encoding: .utf8) == openAIYAML)
+
+    try "stale".write(to: codexSkillURL, atomically: true, encoding: .utf8)
+    try AgentHubWorktreeSkillInstaller.installForAllProviders(
+      homeDirectory: temporaryDirectory,
+      skillMarkdown: skillMarkdown,
+      openAIYAML: openAIYAML
+    )
+
+    #expect(try String(contentsOf: codexSkillURL, encoding: .utf8) == skillMarkdown)
+  }
+
+  @Test("Bundled task manager skill installs explicit invocation metadata")
+  func bundledTaskManagerSkillInstallsExplicitInvocationMetadata() throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AgentHubBundledWorktreeSkillTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    try AgentHubWorktreeSkillInstaller.installBundledSkillForAllProviders(homeDirectory: temporaryDirectory)
+
+    let claudeSkill = try String(
+      contentsOf: temporaryDirectory.appendingPathComponent(".claude/skills/agenthub-task-manager/SKILL.md"),
+      encoding: .utf8
+    )
+    let codexSkill = try String(
+      contentsOf: temporaryDirectory.appendingPathComponent(".codex/skills/agenthub-task-manager/SKILL.md"),
+      encoding: .utf8
+    )
+    let codexMetadata = try String(
+      contentsOf: temporaryDirectory.appendingPathComponent(".codex/skills/agenthub-task-manager/agents/openai.yaml"),
+      encoding: .utf8
+    )
+
+    #expect(claudeSkill.contains("name: agenthub-task-manager"))
+    #expect(claudeSkill.contains("user-invocable: true"))
+    #expect(claudeSkill.contains("disable-model-invocation: true"))
+    #expect(claudeSkill.contains("agent_hub_planning"))
+    #expect(codexSkill == claudeSkill)
+    #expect(codexMetadata.contains("display_name: \"AgentHub Task Manager\""))
+    #expect(codexMetadata.contains("allow_implicit_invocation: false"))
   }
 
   private func withStandardCLIEnvironmentVariables(

@@ -286,7 +286,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -euo pipefail\n\nPACKAGE_DIR=\"${SRCROOT}/modules/AgentHubCLI\"\nSCRATCH_PATH=\"${DERIVED_FILE_DIR}/AgentHubCLI\"\nSWIFT_CONFIG=\"debug\"\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n  SWIFT_CONFIG=\"release\"\nfi\n\n/usr/bin/xcrun swift build \\\n  --package-path \"${PACKAGE_DIR}\" \\\n  --product agenthub \\\n  -c \"${SWIFT_CONFIG}\" \\\n  --scratch-path \"${SCRATCH_PATH}\"\n\nHELPERS_DIR=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers\"\nmkdir -p \"${HELPERS_DIR}\"\ncp \"${SCRATCH_PATH}/${SWIFT_CONFIG}/agenthub\" \"${HELPERS_DIR}/agenthub\"\n";
+			shellScript = "set -euo pipefail\n\nPACKAGE_DIR=\"${SRCROOT}/modules/AgentHubCLI\"\nSCRATCH_PATH=\"${DERIVED_FILE_DIR}/AgentHubCLI\"\nSWIFT_CONFIG=\"debug\"\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n  SWIFT_CONFIG=\"release\"\nfi\n\n/usr/bin/xcrun swift build \\\n  --package-path \"${PACKAGE_DIR}\" \\\n  --product agenthub \\\n  -c \"${SWIFT_CONFIG}\" \\\n  --scratch-path \"${SCRATCH_PATH}\"\n\nHELPERS_DIR=\"${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers\"\nmkdir -p \"${HELPERS_DIR}\"\ncp \"${SCRATCH_PATH}/${SWIFT_CONFIG}/agenthub\" \"${HELPERS_DIR}/agenthub\"\n\nif [ \"${CODE_SIGNING_ALLOWED:-YES}\" != \"NO\" ]; then\n  SIGN_IDENTITY=\"${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}\"\n  if [ -z \"${SIGN_IDENTITY}\" ]; then\n    SIGN_IDENTITY=\"-\"\n  fi\n\n  CODESIGN_OPTIONS=\"\"\n  if [ \"${ENABLE_HARDENED_RUNTIME:-NO}\" = \"YES\" ]; then\n    CODESIGN_OPTIONS=\"--options runtime\"\n  fi\n\n  /usr/bin/codesign --force --sign \"${SIGN_IDENTITY}\" --timestamp=none ${CODESIGN_OPTIONS} \"${HELPERS_DIR}/agenthub\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

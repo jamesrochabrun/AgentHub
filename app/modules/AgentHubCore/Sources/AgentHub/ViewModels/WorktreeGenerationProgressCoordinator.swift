@@ -102,22 +102,34 @@ public final class WorktreeGenerationProgressCoordinator {
 
   private let soundService: any WorktreeSuccessSoundServiceProtocol
   private let notificationService: any WorktreeReadyNotificationServiceProtocol
+  /// Upper bound an MCP-sourced creation may stay in-flight without any fresh
+  /// progress before the bar gives up on its row. `git worktree add` emits no
+  /// checkout progress over a pipe (only on a TTY), so a creation legitimately
+  /// sits at `.preparing` with no updates until `.completed`. This is the safety
+  /// net for the rare case where a terminal snapshot never arrives at all (e.g.
+  /// the CLI process was interrupted), so a row can't linger "Preparing…"
+  /// forever. Re-armed on every fresh snapshot, so an actively-progressing
+  /// creation is never cleared early.
+  private let mcpStalenessTimeout: Duration
 
   // MARK: Private state (not observed)
 
   @ObservationIgnored private var mcpWatcher: (any WorktreeProgressSidecarWatcherProtocol)?
   @ObservationIgnored private var mcpCancellable: AnyCancellable?
   @ObservationIgnored private var clearTasks: [String: Task<Void, Never>] = [:]
+  @ObservationIgnored private var mcpStalenessTasks: [String: Task<Void, Never>] = [:]
   @ObservationIgnored private var doneDebounceTask: Task<Void, Never>?
   /// Branch names that reached `.completed` since the last "all ready" fire.
   @ObservationIgnored private var pendingReadyBranches: [String] = []
 
   public init(
     soundService: any WorktreeSuccessSoundServiceProtocol,
-    notificationService: any WorktreeReadyNotificationServiceProtocol
+    notificationService: any WorktreeReadyNotificationServiceProtocol,
+    mcpStalenessTimeout: Duration = .seconds(150)
   ) {
     self.soundService = soundService
     self.notificationService = notificationService
+    self.mcpStalenessTimeout = mcpStalenessTimeout
   }
 
   // MARK: - Derived UI state
@@ -199,6 +211,41 @@ public final class WorktreeGenerationProgressCoordinator {
       progress: snapshot.progress,
       startedAt: snapshot.updatedAt
     )
+
+    // (Re)arm the staleness fallback while the op is in-flight; cancel it once a
+    // terminal snapshot lands so a completed/failed row is never force-cleared.
+    if let op = operations.first(where: { $0.id == snapshot.operationID }),
+       op.progress.isInProgress {
+      armMCPStaleness(id: snapshot.operationID)
+    } else {
+      cancelMCPStaleness(id: snapshot.operationID)
+    }
+  }
+
+  /// Schedules (or re-arms) the staleness fallback for an in-flight MCP op.
+  private func armMCPStaleness(id: String) {
+    mcpStalenessTasks[id]?.cancel()
+    let timeout = mcpStalenessTimeout
+    mcpStalenessTasks[id] = Task { [weak self] in
+      try? await Task.sleep(for: timeout)
+      guard !Task.isCancelled else { return }
+      self?.finalizeStaleMCPOperation(id: id)
+    }
+  }
+
+  private func cancelMCPStaleness(id: String) {
+    mcpStalenessTasks[id]?.cancel()
+    mcpStalenessTasks[id] = nil
+  }
+
+  /// Drops a stuck MCP row that never reached a terminal state. The worktree, if
+  /// it was actually created, still appears in the sidebar via the launch path,
+  /// so we clear silently rather than announce a possibly-false completion.
+  private func finalizeStaleMCPOperation(id: String) {
+    mcpStalenessTasks[id] = nil
+    guard let op = operations.first(where: { $0.id == id }),
+          op.progress.isInProgress else { return }
+    finalizeClear(id: id)
   }
 
   // MARK: - Launch-flow entry point
@@ -367,6 +414,8 @@ public final class WorktreeGenerationProgressCoordinator {
   private func finalizeClear(id: String) {
     clearTasks[id]?.cancel()
     clearTasks[id] = nil
+    mcpStalenessTasks[id]?.cancel()
+    mcpStalenessTasks[id] = nil
     let wasMCP = operations.first(where: { $0.id == id })?.source == .mcp
     operations.removeAll { $0.id == id }
     if wasMCP, let watcher = mcpWatcher {

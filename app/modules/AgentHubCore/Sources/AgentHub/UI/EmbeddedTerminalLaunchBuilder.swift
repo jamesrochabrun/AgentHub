@@ -55,6 +55,34 @@ public enum EmbeddedTerminalLaunchBuilder {
     metadataStore: SessionMetadataStore?,
     agentHubCLIPath: String? = nil
   ) -> Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError> {
+    cliLaunch(
+      sessionId: sessionId,
+      projectPath: projectPath,
+      cliConfiguration: cliConfiguration,
+      initialPrompt: initialPrompt,
+      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      permissionModePlan: permissionModePlan,
+      worktreeName: worktreeName,
+      metadataStore: metadataStore,
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: {
+        AgentHubWorktreeSkillInstaller.installBundledSkillForAllProvidersBestEffort()
+      }
+    )
+  }
+
+  static func cliLaunch(
+    sessionId: String?,
+    projectPath: String,
+    cliConfiguration: CLICommandConfiguration,
+    initialPrompt: String?,
+    dangerouslySkipPermissions: Bool,
+    permissionModePlan: Bool,
+    worktreeName: String?,
+    metadataStore: SessionMetadataStore?,
+    agentHubCLIPath: String? = nil,
+    installAgentHubWorktreeSkill: () -> Void
+  ) -> Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError> {
     let executablePath: String?
     switch cliConfiguration.mode {
     case .codex:
@@ -71,6 +99,11 @@ public enum EmbeddedTerminalLaunchBuilder {
 
     guard let executablePath else {
       return .failure(.executableNotFound(cliConfiguration.command))
+    }
+
+    let isNewSession = sessionId == nil || sessionId?.isEmpty == true || sessionId?.hasPrefix("pending-") == true
+    if isNewSession {
+      installAgentHubWorktreeSkill()
     }
 
     let resolvedAgentHubCLIPath = agentHubCLIPath ?? AgentHubCLILocator.bundledCLIPath()

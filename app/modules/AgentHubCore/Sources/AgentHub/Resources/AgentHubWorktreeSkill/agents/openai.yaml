@@ -1,0 +1,7 @@
+interface:
+  display_name: "AgentHub Task Manager"
+  short_description: "Plan and delegate work to parallel AgentHub agent sessions"
+  default_prompt: "Use $agenthub-task-manager to plan and delegate: "
+
+policy:
+  allow_implicit_invocation: false

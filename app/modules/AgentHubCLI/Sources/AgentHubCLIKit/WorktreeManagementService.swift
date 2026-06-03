@@ -483,7 +483,7 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     deleteAssociatedBranch: Bool = false
   ) async throws {
     guard FileManager.default.fileExists(atPath: worktreePath) else {
-      try runGitCommandSync(["worktree", "prune"], at: parentRepoPath)
+      try await runGitCommand(["worktree", "prune"], at: parentRepoPath)
       return
     }
 
@@ -499,10 +499,13 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
       args += ["--force", "--force"]
     }
     args.append(worktreePath)
-    try runGitCommandSync(args, at: parentRepoPath)
+    // Removing a worktree deletes its files, which can be slow on a large tree —
+    // use the longer worktree timeout so a healthy removal isn't cut short, while
+    // still bounding a genuine git hang (the old sync path waited forever).
+    try await runGitCommand(args, at: parentRepoPath, timeout: Self.gitWorktreeTimeout)
 
     if let branchToDelete, !branchToDelete.isEmpty {
-      try runGitCommandSync(["branch", force ? "-D" : "-d", branchToDelete], at: parentRepoPath)
+      try await runGitCommand(["branch", force ? "-D" : "-d", branchToDelete], at: parentRepoPath)
     }
   }
 
@@ -777,6 +780,15 @@ private extension WorktreeManagementService {
     process.standardOutput = outputPipe
     process.standardError = errorPipe
 
+    // Detect exit via terminationHandler — a reliable dispatch source — instead
+    // of polling `waitUntilExit()` on a background thread. Under the rapid Process
+    // churn of a multi-worktree batch, the background-thread `waitUntilExit` can
+    // miss the child-exit notification and hang forever (observed: a wedged git
+    // command with no live child and the 10s timeout never firing). Wire the
+    // handler BEFORE run() so a near-instant exit can't race ahead of it.
+    let exitNotifier = ProcessExitNotifier()
+    process.terminationHandler = { exitNotifier.complete(status: $0.terminationStatus) }
+
     do {
       try process.run()
       try inputPipe.fileHandleForWriting.close()
@@ -784,14 +796,17 @@ private extension WorktreeManagementService {
       throw WorktreeManagementError.gitCommandFailed("Failed to start git: \(error.localizedDescription)")
     }
 
+    // Drain stdout and stderr concurrently so a command whose output exceeds the
+    // kernel pipe buffer (~64KB) can't fill it, block git's write, and deadlock.
+    // Each drain reads to EOF on a background queue; EOF arrives when git exits
+    // or is terminated by the timeout below.
+    async let outputData = Self.readHandleToEnd(outputPipe.fileHandleForReading)
+    async let errorData = Self.readHandleToEnd(errorPipe.fileHandleForReading)
+
     let didTimeout = await withTaskGroup(of: Bool.self) { group in
       group.addTask {
-        await withCheckedContinuation { continuation in
-          DispatchQueue.global().async {
-            process.waitUntilExit()
-            continuation.resume(returning: false)
-          }
-        }
+        _ = await exitNotifier.wait()
+        return false
       }
 
       group.addTask {
@@ -811,11 +826,8 @@ private extension WorktreeManagementService {
       return result
     }
 
-    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-
-    let output = String(data: outputData, encoding: .utf8) ?? ""
-    let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+    let output = String(data: await outputData, encoding: .utf8) ?? ""
+    let errorOutput = String(data: await errorData, encoding: .utf8) ?? ""
 
     if didTimeout {
       throw WorktreeManagementError.timeout
@@ -830,39 +842,16 @@ private extension WorktreeManagementService {
     return output
   }
 
-  @discardableResult
-  func runGitCommandSync(_ arguments: [String], at path: String) throws -> String {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    process.arguments = arguments
-    process.currentDirectoryURL = URL(fileURLWithPath: path)
-
-    var environment = ProcessInfo.processInfo.environment
-    environment["GIT_TERMINAL_PROMPT"] = "0"
-    environment["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
-    process.environment = environment
-
-    let inputPipe = Pipe()
-    let outputPipe = Pipe()
-    let errorPipe = Pipe()
-    process.standardInput = inputPipe
-    process.standardOutput = outputPipe
-    process.standardError = errorPipe
-
-    try process.run()
-    try inputPipe.fileHandleForWriting.close()
-    process.waitUntilExit()
-
-    let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    let errorOutput = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-
-    if process.terminationStatus != 0 {
-      throw WorktreeManagementError.gitCommandFailed(
-        errorOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-      )
+  /// Reads a file handle to EOF on a background queue so a pipe can be drained
+  /// concurrently with `waitUntilExit()` instead of only after it (which would
+  /// deadlock once the kernel pipe buffer fills on large git output).
+  nonisolated static func readHandleToEnd(_ handle: FileHandle) async -> Data {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global().async {
+        let data = handle.readDataToEndOfFile()
+        continuation.resume(returning: data)
+      }
     }
-
-    return output
   }
 
   @discardableResult
@@ -894,16 +883,35 @@ private extension WorktreeManagementService {
     let progressForwarder = WorktreeProgressForwarder(onProgress: onProgress)
     errorPipe.fileHandleForReading.readabilityHandler = { handle in
       let data = handle.availableData
-      guard !data.isEmpty,
-            let chunk = String(data: data, encoding: .utf8) else {
+      guard !data.isEmpty else {
+        // EOF: git's stderr write end has closed (the command finished). The
+        // dispatch read source keeps firing on a descriptor that is now
+        // permanently "readable" — it is signaling EOF — so leaving the handler
+        // installed busy-spins the shared `com.apple.NSFileHandle.fd_monitoring`
+        // serial queue at 100% CPU. Worse, that same serial queue delivers
+        // `Process` termination, so the spin starves `waitUntilExit()` below and
+        // the call never reaches the `readabilityHandler = nil` teardown — a
+        // self-sustaining livelock that hangs the MCP tool call indefinitely.
+        // Remove the handler the instant we observe EOF so the source stops and
+        // the process can be reaped. Any trailing partial line is recovered after
+        // exit via `stderrCollector.drainPartialLine()`.
+        handle.readabilityHandler = nil
         return
       }
+
+      guard let chunk = String(data: data, encoding: .utf8) else { return }
 
       let lines = stderrCollector.append(chunk)
       for line in lines {
         Self.forwardGitProgress(from: line, using: progressForwarder)
       }
     }
+
+    // Guarantee the stderr handler is torn down on every exit path — including an
+    // early throw from `process.run()` below, which would otherwise skip the
+    // normal post-exit cleanup and leak the dispatch read source. The happy path
+    // also clears it explicitly before the final drain; this backstop is idempotent.
+    defer { errorPipe.fileHandleForReading.readabilityHandler = nil }
 
     activeWorktreeProcesses[operationID] = process
     defer {
@@ -915,6 +923,13 @@ private extension WorktreeManagementService {
         throw WorktreeManagementError.cancelled
       }
 
+      // Reliable exit detection via terminationHandler (see runGitCommand) — wired
+      // before run() so a near-instant exit can't race ahead of it — instead of a
+      // background-thread waitUntilExit that can miss the notification under rapid
+      // Process churn and hang forever.
+      let exitNotifier = ProcessExitNotifier()
+      process.terminationHandler = { exitNotifier.complete(status: $0.terminationStatus) }
+
       do {
         try process.run()
         try inputPipe.fileHandleForWriting.close()
@@ -924,12 +939,7 @@ private extension WorktreeManagementService {
 
       return await withTaskGroup(of: (Int32, Bool).self) { group in
         group.addTask {
-          let exitCode = await withCheckedContinuation { (continuation: CheckedContinuation<Int32, Never>) in
-            DispatchQueue.global().async {
-              process.waitUntilExit()
-              continuation.resume(returning: process.terminationStatus)
-            }
-          }
+          let exitCode = await exitNotifier.wait()
           return (exitCode, false)
         }
 
@@ -1011,6 +1021,43 @@ private extension WorktreeManagementService {
   static func terminateIfRunning(_ process: Process) {
     if process.isRunning {
       process.terminate()
+    }
+  }
+}
+
+/// One-shot bridge from `Process.terminationHandler` to an `async` awaiter.
+/// `terminationHandler` is delivered by a dispatch source and is reliable;
+/// polling `waitUntilExit()` on a background thread can miss the notification
+/// under rapid Process churn and hang forever. The handler fires exactly once
+/// (the process exits once), and `wait()` is awaited exactly once per command,
+/// so a single stored continuation is sufficient.
+private final class ProcessExitNotifier: @unchecked Sendable {
+  private let lock = NSLock()
+  private var status: Int32?
+  private var continuation: CheckedContinuation<Int32, Never>?
+
+  func complete(status: Int32) {
+    lock.lock()
+    if let continuation {
+      self.continuation = nil
+      lock.unlock()
+      continuation.resume(returning: status)
+    } else {
+      self.status = status
+      lock.unlock()
+    }
+  }
+
+  func wait() async -> Int32 {
+    await withCheckedContinuation { continuation in
+      lock.lock()
+      if let status {
+        lock.unlock()
+        continuation.resume(returning: status)
+      } else {
+        self.continuation = continuation
+        lock.unlock()
+      }
     }
   }
 }
