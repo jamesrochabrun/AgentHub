@@ -194,14 +194,14 @@ private actor DiffStubFileWatcher: SessionFileWatcherProtocol {
 
 @Suite("DiffAvailabilityService")
 struct DiffAvailabilityServiceTests {
-  @Test("Clean repository is unavailable")
-  func cleanRepositoryIsUnavailable() async throws {
+  @Test("Clean repository is available")
+  func cleanRepositoryIsAvailable() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }
 
     let status = await DiffAvailabilityService().availability(for: fixture.repoPath)
 
-    #expect(status == .unavailable)
+    #expect(status == .available)
   }
 
   @Test("Unstaged changes are available")
@@ -252,8 +252,8 @@ struct DiffAvailabilityServiceTests {
     #expect(status == .available)
   }
 
-  @Test("Parent repository changes do not make a clean worktree available")
-  func parentRepositoryChangesDoNotMakeCleanWorktreeAvailable() async throws {
+  @Test("Clean git worktree is available")
+  func cleanGitWorktreeIsAvailable() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }
     let worktreePath = try fixture.addWorktree(branch: "feature-clean-worktree")
@@ -261,7 +261,7 @@ struct DiffAvailabilityServiceTests {
 
     let status = await DiffAvailabilityService().availability(for: worktreePath)
 
-    #expect(status == .unavailable)
+    #expect(status == .available)
   }
 
   @Test("Worktree branch changes are available from that worktree")
