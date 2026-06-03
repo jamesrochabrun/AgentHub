@@ -11,9 +11,13 @@ import Foundation
 
 /// Represents the type of diff to display
 public enum DiffMode: String, CaseIterable, Identifiable, Sendable {
-  case unstaged = "Unstaged"
-  case staged = "Staged"
+  // Declaration order drives `allCases` and the diff tab picker. Ordered cheapest-to-load /
+  // preferred first: branch & staged are fast tree comparisons; unstaged is the expensive
+  // index→workdir scan (and slowest on large worktrees), so it goes last. Matches the
+  // auto-select ordering in GitDiffView.
   case branch = "Branch"
+  case staged = "Staged"
+  case unstaged = "Unstaged"
 
   public var id: String { rawValue }
 

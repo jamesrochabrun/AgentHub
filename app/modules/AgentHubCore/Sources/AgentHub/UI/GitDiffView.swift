@@ -46,7 +46,9 @@ public struct GitDiffView: View {
   @State private var diffStyle: DiffStyle = .unified
   @State private var overflowMode: OverflowMode = .wrap
   @State private var inlineEditorState = InlineEditorState()
-  @State private var diffMode: DiffMode = .unstaged
+  // Initial selection; auto-select (loadBestDiffState) overrides to the first non-empty mode.
+  // Defaults to .branch to match the cost-ordered picker and avoid a tab flicker on load.
+  @State private var diffMode: DiffMode = .branch
   @State private var detectedBaseBranch: String?
   @State private var commentsState = DiffCommentsState()
   @State private var showDiscardCommentsAlert = false
@@ -536,7 +538,11 @@ public struct GitDiffView: View {
   ) async throws -> (mode: DiffMode, state: GitDiffState) {
     let candidateModes: [DiffMode]
     if autoSelectFirstNonEmptyMode {
-      candidateModes = [preferredMode] + DiffMode.allCases.filter { $0 != preferredMode }
+      // Try cheap tree comparisons (branch, then staged) before the expensive index→workdir
+      // scan (unstaged). On large worktrees unstaged can take ~10s; probing it first stalls the
+      // whole view. Branch-first also surfaces the agent's committed work first.
+      let costOrdered: [DiffMode] = [.branch, .staged, .unstaged]
+      candidateModes = costOrdered + DiffMode.allCases.filter { !costOrdered.contains($0) }
     } else {
       candidateModes = [preferredMode]
     }

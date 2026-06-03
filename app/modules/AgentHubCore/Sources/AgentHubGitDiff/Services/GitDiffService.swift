@@ -53,11 +53,23 @@ public actor GitDiffService: GitDiffServiceProtocol {
   private static let backendPrintPrefix = "AGENTHUB_DIFF_BACKEND"
   private static let logger = Logger(subsystem: "com.agenthub.gitdiff", category: "GitDiff")
 
-  private let renderPolicy: GitDiffRenderPolicy
-  private var gitRootCache: [String: String] = [:]
+  /// Index-size threshold (bytes) above which a worktree is treated as "large" and the
+  /// unstaged/staged scans are routed to the native `git` CLI instead of libgit2.
+  /// ~4 MB ≈ tens of thousands of tracked files; normal repos stay below this and keep the
+  /// faster in-process libgit2 path. `branch` (tree↔tree) is never gated.
+  public static let defaultLargeWorktreeIndexByteThreshold: UInt64 = 4 * 1024 * 1024
 
-  public init(renderPolicy: GitDiffRenderPolicy = .default) {
+  private let renderPolicy: GitDiffRenderPolicy
+  private let largeWorktreeIndexByteThreshold: UInt64
+  private var gitRootCache: [String: String] = [:]
+  private var largeWorktreeCache: [String: Bool] = [:]
+
+  public init(
+    renderPolicy: GitDiffRenderPolicy = .default,
+    largeWorktreeIndexByteThreshold: UInt64 = GitDiffService.defaultLargeWorktreeIndexByteThreshold
+  ) {
     self.renderPolicy = renderPolicy
+    self.largeWorktreeIndexByteThreshold = largeWorktreeIndexByteThreshold
   }
 
   // MARK: - Public API
@@ -83,6 +95,17 @@ public actor GitDiffService: GitDiffServiceProtocol {
     mode: DiffMode,
     baseBranch: String? = nil
   ) async throws -> GitDiffState {
+    // Large-worktree gate: unstaged (index→workdir) and staged (tree→index) are single-threaded
+    // in libgit2 and dominated by per-file stats / a full index load on monorepo-scale worktrees.
+    // Native git parallelizes these and honors fsmonitor/untracked cache, so route only those two
+    // modes to the CLI for large worktrees. Small repos keep libgit2; `branch` always uses libgit2.
+    if mode == .unstaged || mode == .staged,
+       let gitRoot = try? await findGitRoot(at: repoPath),
+       isLargeWorktree(gitRoot: gitRoot) {
+      printBackend("changedFiles backend=cli mode=\(mode.rawValue) reason=large-worktree")
+      return try await nativeChangedFiles(mode: mode, gitRoot: gitRoot)
+    }
+
     do {
       let gitRoot = try await findGitRoot(at: repoPath)
       let branch: String?
@@ -703,6 +726,127 @@ public actor GitDiffService: GitDiffServiceProtocol {
     }
 
     return result
+  }
+
+  // MARK: - Large Worktree Gate
+
+  /// Whether the worktree is large enough to prefer native git over libgit2 for workdir scans.
+  /// Cached per git root — a repo's tracked-file scale is stable within a session.
+  private func isLargeWorktree(gitRoot: String) -> Bool {
+    if let cached = largeWorktreeCache[gitRoot] { return cached }
+    let isLarge = LibGit2DiffBackend.isLargeWorktree(
+      atGitRoot: gitRoot,
+      thresholdBytes: largeWorktreeIndexByteThreshold
+    )
+    largeWorktreeCache[gitRoot] = isLarge
+    return isLarge
+  }
+
+  /// Builds the changed-file list via the native `git` CLI for unstaged/staged modes.
+  /// Uses `--name-status -z` (file set + status + rename old/new paths) merged with
+  /// `--numstat -z` (line counts), so status badges and renames match the libgit2 path.
+  private func nativeChangedFiles(mode: DiffMode, gitRoot: String) async throws -> GitDiffState {
+    let scope: [String]
+    switch mode {
+    case .staged: scope = ["--staged"]
+    case .unstaged, .branch: scope = []
+    }
+
+    async let nameStatusOutput = runGitCommand(["diff"] + scope + ["--name-status", "-z"], at: gitRoot)
+    async let numstatOutput = runGitCommand(["diff"] + scope + ["--numstat", "-z"], at: gitRoot)
+
+    let statusEntries = Self.parseNameStatusZ(try await nameStatusOutput)
+    let counts = Self.parseNumstatZ(try await numstatOutput)
+
+    var files: [GitDiffFileEntry] = []
+    files.reserveCapacity(statusEntries.count)
+    for entry in statusEntries {
+      let stats = counts[entry.path]
+      let fullPath = (gitRoot as NSString).appendingPathComponent(entry.path)
+      files.append(GitDiffFileEntry(
+        filePath: fullPath,
+        relativePath: entry.path,
+        oldRelativePath: entry.oldPath,
+        additions: stats?.additions ?? 0,
+        deletions: stats?.deletions ?? 0,
+        status: entry.status
+      ))
+    }
+
+    // Untracked files are not reported by `git diff`; surface them like the libgit2 path does.
+    if mode == .unstaged {
+      let untracked = try await getUntrackedChanges(atGitRoot: gitRoot)
+      files.append(contentsOf: untracked)
+    }
+
+    return GitDiffState(files: deduplicateEntriesByRelativePath(files))
+  }
+
+  private struct NativeStatusEntry {
+    let path: String
+    let oldPath: String?
+    let status: GitDiffFileStatus
+  }
+
+  /// Parses `git diff --name-status -z`. Records are NUL-separated; rename/copy records
+  /// (`R`/`C`) carry an extra old-path token before the new path.
+  private static func parseNameStatusZ(_ output: String) -> [NativeStatusEntry] {
+    let tokens = output.components(separatedBy: "\u{0}").filter { !$0.isEmpty }
+    var entries: [NativeStatusEntry] = []
+    var index = 0
+    while index < tokens.count {
+      let code = tokens[index]
+      let letter = code.first.map(String.init) ?? ""
+      if letter == "R" || letter == "C" {
+        guard index + 2 < tokens.count else { break }
+        entries.append(NativeStatusEntry(path: tokens[index + 2], oldPath: tokens[index + 1], status: mapNativeStatus(letter)))
+        index += 3
+      } else {
+        guard index + 1 < tokens.count else { break }
+        entries.append(NativeStatusEntry(path: tokens[index + 1], oldPath: nil, status: mapNativeStatus(letter)))
+        index += 2
+      }
+    }
+    return entries
+  }
+
+  /// Parses `git diff --numstat -z`, returning line counts keyed by (new) path.
+  /// A rename/copy record has an empty inline path field, followed by old/new path tokens.
+  private static func parseNumstatZ(_ output: String) -> [String: (additions: Int, deletions: Int)] {
+    let tokens = output.components(separatedBy: "\u{0}")
+    var result: [String: (additions: Int, deletions: Int)] = [:]
+    var index = 0
+    while index < tokens.count {
+      let field = tokens[index]
+      if field.isEmpty { index += 1; continue }
+      let parts = field.components(separatedBy: "\t")
+      guard parts.count >= 3 else { index += 1; continue }
+      let additions = Int(parts[0]) ?? 0       // binary files report "-"
+      let deletions = Int(parts[1]) ?? 0
+      let inlinePath = parts[2]
+      if inlinePath.isEmpty {
+        guard index + 2 < tokens.count else { break }
+        result[tokens[index + 2]] = (additions, deletions)
+        index += 3
+      } else {
+        result[inlinePath] = (additions, deletions)
+        index += 1
+      }
+    }
+    return result
+  }
+
+  private static func mapNativeStatus(_ code: String) -> GitDiffFileStatus {
+    switch code {
+    case "A": return .added
+    case "D": return .deleted
+    case "M": return .modified
+    case "R": return .renamed
+    case "C": return .copied
+    case "T": return .typeChanged
+    case "U": return .conflicted
+    default: return .modified
+    }
   }
 
   // MARK: - Git Root Detection

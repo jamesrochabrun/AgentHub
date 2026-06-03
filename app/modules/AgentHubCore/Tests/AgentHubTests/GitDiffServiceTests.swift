@@ -188,6 +188,58 @@ struct GitDiffServiceTests {
     #expect(payload.oldContent == "")
     #expect(payload.newContent == "alpha\nbeta")
   }
+
+  // MARK: - Large-worktree gate (native git path)
+
+  /// Forcing the gate (threshold 0) must produce the same file set, counts, and statuses
+  /// as the default libgit2 path — so monorepos don't regress correctness, only get faster.
+  @Test("large-worktree gate: native unstaged matches libgit2 results")
+  func largeWorktreeNativeUnstagedMatchesLibgit2() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+    try "changed".write(toFile: fixture.repoPath + "/README.md", atomically: true, encoding: .utf8)
+    try "brand new".write(toFile: fixture.repoPath + "/Added.txt", atomically: true, encoding: .utf8)
+    let libgit2 = GitDiffService()
+    let native = GitDiffService(largeWorktreeIndexByteThreshold: 0)
+    let expected = try await libgit2.changedFiles(at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
+    let actual = try await native.changedFiles(at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
+    #expect(Set(actual.files.map(\.relativePath)) == Set(expected.files.map(\.relativePath)))
+    let readme = try #require(actual.files.first { $0.relativePath == "README.md" })
+    #expect(readme.status == .modified)
+    #expect(readme.additions == 1)
+    #expect(readme.deletions == 1)
+    let added = try #require(actual.files.first { $0.relativePath == "Added.txt" })
+    #expect(added.status == .untracked)
+  }
+
+  @Test("large-worktree gate: native staged reports status and renames")
+  func largeWorktreeNativeStagedReportsStatusAndRenames() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+    try fixture.runGit("mv", "README.md", "Doc.md")               // staged rename
+    try "added".write(toFile: fixture.repoPath + "/Added.txt", atomically: true, encoding: .utf8)
+    try fixture.runGit("add", "Added.txt")                         // staged add
+    let native = GitDiffService(largeWorktreeIndexByteThreshold: 0)
+    let state = try await native.changedFiles(at: fixture.repoPath, mode: .staged, baseBranch: nil)
+    let renamed = try #require(state.files.first { $0.relativePath == "Doc.md" })
+    #expect(renamed.status == .renamed)
+    #expect(renamed.oldRelativePath == "README.md")
+    let added = try #require(state.files.first { $0.relativePath == "Added.txt" })
+    #expect(added.status == .added)
+  }
+
+  @Test("large-worktree gate: renders a file listed via the native path")
+  func largeWorktreeGateRendersListedFile() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+    try "changed".write(toFile: fixture.repoPath + "/README.md", atomically: true, encoding: .utf8)
+    let native = GitDiffService(largeWorktreeIndexByteThreshold: 0)
+    let state = try await native.changedFiles(at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
+    let file = try #require(state.files.first { $0.relativePath == "README.md" })
+    let payload = try await native.renderPayload(for: file, at: fixture.repoPath, mode: .unstaged, baseBranch: nil)
+    #expect(payload.oldContent == "initial")
+    #expect(payload.newContent == "changed")
+  }
 }
 
 @Suite("LocalDiffSummaryService")
