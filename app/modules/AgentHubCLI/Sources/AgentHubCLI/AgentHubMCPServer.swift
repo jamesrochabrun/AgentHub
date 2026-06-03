@@ -6,7 +6,6 @@ struct AgentHubMCPServer {
   private let queue = WorktreeLaunchRequestQueue()
   private let deletionQueue = WorktreeDeletionRequestQueue()
   private let progressQueue = WorktreeProgressQueue()
-  private let planningService: AgentHubPlanning = AgentHubPlanningService()
 
   /// Hard ceiling on any single `tools/call`. Worktree creation normally
   /// completes in seconds and each underlying `git` invocation has its own
@@ -375,15 +374,12 @@ struct AgentHubMCPServer {
     let prompt = try requiredString("prompt", in: arguments)
     let repositoryPath = optionalString("repo", in: arguments)
       ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
-    let allowWebLookup = arguments["allowWebLookup"] as? Bool ?? false
     let providedSubtasks = (arguments["subtasks"] as? [Any])?
       .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
       .filter { !$0.isEmpty }
       ?? []
 
-    let planner: AgentHubPlanning = allowWebLookup
-      ? AgentHubPlanningService(research: WebModelCapabilityResearchService(allowsNetworkLookup: true))
-      : planningService
+    let planner = AgentHubPlanningService()
 
     return await planner.buildPlan(
       prompt: prompt,
@@ -395,7 +391,7 @@ struct AgentHubMCPServer {
   private func planSummary(_ plan: DelegationPlan) -> String {
     var lines = ["Delegation plan: \(plan.assignments.count) subtask(s)."]
     for assignment in plan.assignments {
-      let agent = assignment.assignedModel ?? "unassigned"
+      let agent = assignment.assignedProvider?.harnessName ?? "your choice (Claude Code or Codex)"
       lines.append("- [\(assignment.subtask.id)] \(assignment.subtask.title) → \(agent) (branch \(assignment.branchSuggestion))")
     }
     if !plan.notes.isEmpty {
@@ -411,22 +407,18 @@ struct AgentHubMCPServer {
     let detectedCLIs = plan.detectedCLIs.map { cli -> [String: Any] in
       [
         "provider": cli.provider.commandLineValue,
+        "harness": cli.provider.harnessName,
         "executablePath": cli.executablePath
       ]
     }
 
-    let modelProfiles = plan.modelProfiles.map { profile -> [String: Any] in
-      var value: [String: Any] = [
-        "provider": profile.provider.commandLineValue,
-        "model": profile.model,
-        "strengths": tags(profile.strengths),
-        "summary": profile.summary,
-        "sourcedFromWeb": profile.sourcedFromWeb
+    let harnessCapabilities = plan.harnessCapabilities.map { capability -> [String: Any] in
+      [
+        "provider": capability.provider.commandLineValue,
+        "harness": capability.provider.harnessName,
+        "skills": capability.skills.map { ["name": $0.name, "description": $0.description] },
+        "mcpServers": capability.mcpServers
       ]
-      if let sourceURL = profile.sourceURL {
-        value["sourceURL"] = sourceURL
-      }
-      return value
     }
 
     let assignments = plan.assignments.map { assignment -> [String: Any] in
@@ -437,16 +429,16 @@ struct AgentHubMCPServer {
           "detail": assignment.subtask.detail,
           "tags": tags(assignment.subtask.tags)
         ],
-        "matchedStrengths": tags(assignment.matchedStrengths),
         "rationale": assignment.rationale,
         "instructions": assignment.instructions,
         "branchSuggestion": assignment.branchSuggestion
       ]
       if let provider = assignment.assignedProvider {
         value["assignedProvider"] = provider.commandLineValue
+        value["assignedHarness"] = provider.harnessName
       }
-      if let model = assignment.assignedModel {
-        value["assignedModel"] = model
+      if !assignment.matchedCapabilities.isEmpty {
+        value["matchedCapabilities"] = assignment.matchedCapabilities
       }
       return value
     }
@@ -454,7 +446,7 @@ struct AgentHubMCPServer {
     var result: [String: Any] = [
       "originalPrompt": plan.originalPrompt,
       "detectedCLIs": detectedCLIs,
-      "modelProfiles": modelProfiles,
+      "harnessCapabilities": harnessCapabilities,
       "assignments": assignments,
       "notes": plan.notes
     ]
@@ -664,7 +656,7 @@ struct AgentHubMCPServer {
   private func planningToolSchema() -> [String: Any] {
     [
       "name": "agent_hub_planning",
-      "description": "Builds a local-only advisory plan for AgentHub worktree assignments. Returns inferred assignments with provider, model when available, branch suggestion, rationale, and launch instructions. When subtasks are omitted, explicit numbered/bulleted task lists are split while ordinary prose is planned as one task.",
+      "description": "Builds an advisory plan for AgentHub task delegation. AgentHub launches an agent HARNESS (Claude Code or Codex) — it cannot pick or configure a model — so the plan only ever names the harness, never a model. Decomposition is YOUR job: pass the independent subtasks you inferred; when omitted, the whole prompt is treated as a single task (AgentHub does not statically split). Returns each detected harness's REAL capabilities (its installed skills + configured MCP servers) under `harnessCapabilities`. When one harness is installed it is assigned; when more than one is installed each subtask is SUGGESTED the harness whose skills/MCP tools best match it (see each assignment's `matchedCapabilities`) — confirm or override using that real capability data rather than the harness's general reputation. Advisory only.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -675,11 +667,7 @@ struct AgentHubMCPServer {
           "subtasks": [
             "type": "array",
             "items": ["type": "string"],
-            "description": "Optional semantically inferred subtasks. When omitted, AgentHub only splits explicit numbered/bulleted task lists; it does not split ordinary prose by punctuation or conjunctions."
-          ],
-          "allowWebLookup": [
-            "type": "boolean",
-            "description": "When true, AgentHub may perform external web lookup for model capability research. Defaults to false."
+            "description": "The independent subtasks you inferred from the request, one entry per task. When omitted, AgentHub plans the whole prompt as a single task — it never statically splits prose or lists."
           ],
           "repo": [
             "type": "string",

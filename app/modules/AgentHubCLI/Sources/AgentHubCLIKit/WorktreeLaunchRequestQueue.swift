@@ -19,6 +19,15 @@ public enum WorktreeLaunchProvider: String, Codable, CaseIterable, Equatable, Se
   public var commandLineValue: String {
     rawValue.lowercased()
   }
+
+  /// User-facing name of the agent harness AgentHub launches. AgentHub launches
+  /// the harness (not a specific model), so this is what the plan should present.
+  public var harnessName: String {
+    switch self {
+    case .claude: return "Claude Code"
+    case .codex: return "Codex"
+    }
+  }
 }
 
 public struct WorktreeLaunchRequest: Codable, Equatable, Identifiable, Sendable {

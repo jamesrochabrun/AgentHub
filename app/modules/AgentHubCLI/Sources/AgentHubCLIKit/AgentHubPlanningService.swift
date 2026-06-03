@@ -1,7 +1,9 @@
 import Foundation
 
-/// Turns a bundled, multi-part prompt into a concrete delegation plan: discrete subtasks,
-/// the best-suited installed agent for each, and per-agent instructions.
+/// Turns a bundled, multi-part prompt into a delegation plan: discrete subtasks,
+/// a suggested agent harness (Claude Code / Codex) for each grounded in that
+/// harness's real skills + MCP tools, a branch suggestion, and per-subtask launch
+/// instructions.
 public protocol AgentHubPlanning: Sendable {
   func buildPlan(
     prompt: String,
@@ -10,22 +12,24 @@ public protocol AgentHubPlanning: Sendable {
   ) async -> DelegationPlan
 }
 
-/// Default planner. Composes the decomposer, CLI detector, and capability researcher
-/// (all injected as protocols so the orchestration is unit-testable with mocks) and
-/// applies deterministic strength-based matching.
+/// Default planner.
+///
+/// AgentHub launches an agent **harness** (Claude Code or Codex) — it cannot pick
+/// or configure the underlying model — so the plan never names a model, only the
+/// harness. Task decomposition is the calling agent's job (it passes the subtasks
+/// it inferred). Harness selection is suggested by matching each subtask against
+/// the harness's *actual* installed skills and MCP servers (not its reputation);
+/// the calling agent can override using the full capability list in the plan.
 public struct AgentHubPlanningService: AgentHubPlanning {
   private let detector: AgentCLIDetecting
-  private let research: ModelCapabilityResearching
-  private let decomposer: TaskDecomposing
+  private let capabilityDetector: HarnessCapabilityDetecting
 
   public init(
     detector: AgentCLIDetecting = AgentCLIDetector(),
-    research: ModelCapabilityResearching = WebModelCapabilityResearchService(),
-    decomposer: TaskDecomposing = SemanticTaskDecomposer()
+    capabilityDetector: HarnessCapabilityDetecting = HarnessCapabilityDetector()
   ) {
     self.detector = detector
-    self.research = research
-    self.decomposer = decomposer
+    self.capabilityDetector = capabilityDetector
   }
 
   public func buildPlan(
@@ -35,9 +39,9 @@ public struct AgentHubPlanningService: AgentHubPlanning {
   ) async -> DelegationPlan {
     let subtasks = resolveSubtasks(prompt: prompt, providedSubtasks: providedSubtasks)
     let detectedCLIs = await detector.detectInstalledCLIs()
-    let profiles = await researchProfiles(for: detectedCLIs)
-    let profilesByProvider = Dictionary(
-      profiles.map { ($0.provider, $0) },
+    let capabilities = await detectCapabilities(for: detectedCLIs, repositoryPath: repositoryPath)
+    let capabilitiesByProvider = Dictionary(
+      capabilities.map { ($0.provider, $0) },
       uniquingKeysWith: { first, _ in first }
     )
 
@@ -47,7 +51,7 @@ public struct AgentHubPlanningService: AgentHubPlanning {
         for: subtask,
         branchSuggestion: branch,
         detectedCLIs: detectedCLIs,
-        profilesByProvider: profilesByProvider
+        capabilitiesByProvider: capabilitiesByProvider
       )
     }
 
@@ -55,9 +59,9 @@ public struct AgentHubPlanningService: AgentHubPlanning {
       originalPrompt: prompt,
       repositoryPath: repositoryPath,
       detectedCLIs: detectedCLIs,
-      modelProfiles: profiles,
+      harnessCapabilities: capabilities,
       assignments: assignments,
-      notes: makeNotes(detectedCLIs: detectedCLIs, profiles: profiles)
+      notes: makeNotes(detectedCLIs: detectedCLIs, capabilities: capabilities)
     )
   }
 
@@ -73,107 +77,221 @@ public struct AgentHubPlanningService: AgentHubPlanning {
           id: "task-\(index + 1)",
           title: Self.title(from: text),
           detail: text,
-          tags: SemanticTaskDecomposer.tags(for: text)
+          tags: Self.tags(for: text)
         )
       }
     }
-    return decomposer.decompose(prompt: prompt)
+    // Decomposition is the calling agent's job: it infers independent subtasks and
+    // passes them as `subtasks`. With none provided we do NOT statically split —
+    // the whole prompt becomes a single task.
+    let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return [] }
+    return [
+      Subtask(
+        id: "task-1",
+        title: Self.title(from: trimmed),
+        detail: trimmed,
+        tags: Self.tags(for: trimmed)
+      )
+    ]
   }
 
-  // MARK: - Research
+  /// Capability tags implied by `text`, surfaced only as per-subtask "focus area"
+  /// hints; defaults to `.coding` for this developer-oriented tool.
+  static func tags(for text: String) -> [CapabilityTag] {
+    let tags = CapabilityTag.tags(in: text)
+    return tags.isEmpty ? [.coding] : tags
+  }
 
-  private func researchProfiles(for clis: [DetectedAgentCLI]) async -> [ModelCapabilityProfile] {
+  // MARK: - Capability detection
+
+  private func detectCapabilities(
+    for clis: [DetectedAgentCLI],
+    repositoryPath: String?
+  ) async -> [HarnessCapabilities] {
     guard !clis.isEmpty else { return [] }
-    // Capability lookup is local by default; an injected researcher may opt into web lookup.
-    let research = self.research
-    let collected = await withTaskGroup(of: ModelCapabilityProfile.self) { group in
+    let capabilityDetector = self.capabilityDetector
+    let collected = await withTaskGroup(of: HarnessCapabilities.self) { group in
       for cli in clis {
         let provider = cli.provider
-        group.addTask { await research.researchCapabilities(for: provider) }
+        group.addTask {
+          await capabilityDetector.detectCapabilities(for: provider, repositoryPath: repositoryPath)
+        }
       }
-      var results: [ModelCapabilityProfile] = []
-      for await profile in group {
-        results.append(profile)
+      var results: [HarnessCapabilities] = []
+      for await capabilities in group {
+        results.append(capabilities)
       }
       return results
     }
-    // Preserve detection order regardless of which search finished first.
+    // Preserve detection order regardless of which finished first.
     return clis.compactMap { cli in collected.first { $0.provider == cli.provider } }
   }
 
-  // MARK: - Matching
+  // MARK: - Harness assignment
 
   private func makeAssignment(
     for subtask: Subtask,
     branchSuggestion: String,
     detectedCLIs: [DetectedAgentCLI],
-    profilesByProvider: [WorktreeLaunchProvider: ModelCapabilityProfile]
+    capabilitiesByProvider: [WorktreeLaunchProvider: HarnessCapabilities]
   ) -> PlanAssignment {
+    // No harness installed.
     guard !detectedCLIs.isEmpty else {
       return PlanAssignment(
         subtask: subtask,
         assignedProvider: nil,
-        assignedModel: nil,
-        matchedStrengths: [],
-        rationale: "No agent CLI detected; install Claude Code or Codex to delegate this subtask.",
-        instructions: Self.instructions(for: subtask, model: nil, branch: branchSuggestion),
+        rationale: "No agent harness detected; install Claude Code or Codex to delegate this subtask.",
+        instructions: Self.unassignedInstructions(for: subtask, branch: branchSuggestion),
         branchSuggestion: branchSuggestion
       )
     }
 
-    // Score each installed CLI; the first CLI in detection order wins ties so results
-    // are stable.
-    let best = detectedCLIs
-      .map { cli -> (cli: DetectedAgentCLI, score: Int) in
-        let profile = profilesByProvider[cli.provider]
-        let score = subtask.tags.reduce(0) { $0 + (profile?.weight(for: $1) ?? 0) }
-        return (cli, score)
-      }
-      .max { $0.score < $1.score }!
+    // Exactly one harness installed: everything goes to it.
+    if detectedCLIs.count == 1 {
+      let provider = detectedCLIs[0].provider
+      return PlanAssignment(
+        subtask: subtask,
+        assignedProvider: provider,
+        rationale: "Assigned to \(provider.harnessName) — the only installed agent harness.",
+        instructions: Self.instructions(for: subtask, harness: provider.harnessName, branch: branchSuggestion),
+        branchSuggestion: branchSuggestion
+      )
+    }
 
-    let profile = profilesByProvider[best.cli.provider]
-    let matched = subtask.tags.filter { (profile?.weight(for: $0) ?? 0) > 0 }
-    let model = profile?.model ?? best.cli.provider.rawValue
+    // Multiple harnesses: suggest the one whose real skills/MCP tools fit best.
+    let suggestion = Self.suggestHarness(
+      for: subtask,
+      detectedCLIs: detectedCLIs,
+      capabilitiesByProvider: capabilitiesByProvider
+    )
+    guard let provider = suggestion.provider else {
+      // No capability signal either way → leave the choice to the agent.
+      let names = detectedCLIs.map(\.provider.harnessName).joined(separator: " or ")
+      return PlanAssignment(
+        subtask: subtask,
+        assignedProvider: nil,
+        rationale: "No clear capability match — choose \(names) using the harness capabilities listed in the plan.",
+        instructions: Self.deferredInstructions(for: subtask, harnessNames: names, branch: branchSuggestion),
+        branchSuggestion: branchSuggestion
+      )
+    }
 
+    let matchText = suggestion.matched.isEmpty ? "" : " — matches \(suggestion.matched.joined(separator: ", "))"
     return PlanAssignment(
       subtask: subtask,
-      assignedProvider: best.cli.provider,
-      assignedModel: model,
-      matchedStrengths: matched,
-      rationale: Self.rationale(model: model, matched: matched, score: best.score),
-      instructions: Self.instructions(for: subtask, model: model, branch: branchSuggestion),
+      assignedProvider: provider,
+      matchedCapabilities: suggestion.matched,
+      rationale: "Suggested \(provider.harnessName)\(matchText). Override if another harness's skills/tools fit this subtask better.",
+      instructions: Self.instructions(for: subtask, harness: provider.harnessName, branch: branchSuggestion),
       branchSuggestion: branchSuggestion
     )
   }
 
+  /// Suggests the harness whose capability NAMES (skills + MCP servers) best match
+  /// the subtask, with prefix tolerance (so `profile` ↔ `profiler`, `figma` ↔
+  /// `figma-implement-design`). Matching against names — not descriptions — keeps
+  /// it precise; ties break by detection order. Returns `nil` provider when no
+  /// capability clearly matches, so the agent decides from the surfaced data
+  /// rather than the planner guessing wrong.
+  static func suggestHarness(
+    for subtask: Subtask,
+    detectedCLIs: [DetectedAgentCLI],
+    capabilitiesByProvider: [WorktreeLaunchProvider: HarnessCapabilities]
+  ) -> (provider: WorktreeLaunchProvider?, matched: [String]) {
+    let need = signalTokens(
+      from: "\(subtask.title) \(subtask.detail) \(subtask.tags.map(\.displayName).joined(separator: " "))"
+    )
+
+    var best: (provider: WorktreeLaunchProvider, matched: [String])?
+    for cli in detectedCLIs {
+      let matched = (capabilitiesByProvider[cli.provider]?.capabilityNames ?? [])
+        .filter { capabilityMatches(need: need, capabilityName: $0) }
+      if best == nil || matched.count > best!.matched.count {
+        best = (cli.provider, matched)
+      }
+    }
+
+    guard let best, !best.matched.isEmpty else { return (nil, []) }
+    return (best.provider, best.matched)
+  }
+
+  /// A capability matches when any of its name tokens shares a prefix with any of
+  /// the subtask's signal tokens (both ≥4 chars).
+  static func capabilityMatches(need: Set<String>, capabilityName: String) -> Bool {
+    let capabilityTokens = signalTokens(from: capabilityName)
+    for needToken in need {
+      for capabilityToken in capabilityTokens where tokensMatch(needToken, capabilityToken) {
+        return true
+      }
+    }
+    return false
+  }
+
+  static func tokensMatch(_ lhs: String, _ rhs: String) -> Bool {
+    if lhs == rhs { return true }
+    guard lhs.count >= 4, rhs.count >= 4 else { return false }
+    return lhs.hasPrefix(rhs) || rhs.hasPrefix(lhs)
+  }
+
+  /// Significant lowercased terms (≥4 chars, non-generic). Drops generic action
+  /// words that appear in both subtasks and tool names (implement, design, …) so a
+  /// capability is only matched on its distinctive part (`figma`, `xctrace`, …).
+  static func signalTokens(from text: String) -> Set<String> {
+    let words = text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+    return Set(words.filter { $0.count >= 4 && !stopwords.contains($0) })
+  }
+
+  static let stopwords: Set<String> = [
+    "this", "that", "with", "from", "into", "your", "they", "them", "then", "than",
+    "when", "what", "which", "will", "would", "should", "could", "have", "need",
+    "make", "makes", "want", "each", "also", "only", "just", "like", "using", "used",
+    "ensure", "stay", "scoped", "work", "handing", "before", "after", "across",
+    "other", "files", "file", "owned", "parallel", "update", "create", "creating",
+    "review", "areas", "focus", "primary", "project", "projects", "change",
+    "changes", "code", "coding", "swift", "apps", "application", "agent", "agents",
+    "skill", "skills", "feature", "features", "help", "helps", "guide", "provide",
+    "provides", "including", "includes", "where", "both", "branch", "handoff",
+    "build", "builds", "building", "user", "users", "support", "supports", "their",
+    "implement", "implementing", "design", "designing", "designs", "thing", "things",
+    "show", "shows", "adds", "added", "task", "tasks", "subtask", "subtasks",
+    "tool", "tools", "server", "servers", "mode", "manager", "runtime", "primary",
+    "find", "finds", "finding", "found", "identify", "produce", "report",
+  ]
+
+  // MARK: - Text helpers
+
   private func makeNotes(
     detectedCLIs: [DetectedAgentCLI],
-    profiles: [ModelCapabilityProfile]
+    capabilities: [HarnessCapabilities]
   ) -> [String] {
     var notes: [String] = []
-
     switch detectedCLIs.count {
     case 0:
-      notes.append("No agent CLIs (claude, codex) were found on PATH. Subtasks are left unassigned — install Claude Code and/or Codex to enable delegation.")
+      notes.append("No agent harnesses (Claude Code, Codex) were found on PATH. Subtasks are left unassigned — install Claude Code and/or Codex to enable delegation.")
     case 1:
-      let model = profiles.first?.model ?? detectedCLIs[0].provider.rawValue
-      notes.append("Only one agent CLI was detected (\(model)); every subtask is assigned to it.")
+      notes.append("Only one agent harness was detected (\(detectedCLIs[0].provider.harnessName)); every subtask is assigned to it.")
     default:
-      notes.append("\(detectedCLIs.count) agent CLIs detected; subtasks were matched to the model whose strengths best fit each one.")
+      let names = detectedCLIs.map(\.provider.harnessName).joined(separator: ", ")
+      notes.append("\(detectedCLIs.count) agent harnesses detected (\(names)). Each subtask is suggested the harness whose installed skills/MCP tools best fit — confirm or override using the capabilities below.")
     }
 
-    for profile in profiles {
-      let origin = profile.sourcedFromWeb
-        ? "from web search (\(profile.sourceURL ?? "source"))"
-        : "from local curated profile"
-      notes.append("\(profile.model) strengths \(origin): \(profile.strengths.map(\.displayName).joined(separator: ", ")).")
+    for capability in capabilities {
+      let parts = [
+        capability.skills.isEmpty ? nil : "skills: \(capability.skills.map(\.name).joined(separator: ", "))",
+        capability.mcpServers.isEmpty ? nil : "MCP: \(capability.mcpServers.joined(separator: ", "))",
+      ].compactMap { $0 }
+      if parts.isEmpty {
+        notes.append("\(capability.provider.harnessName): no skills or MCP servers detected.")
+      } else {
+        notes.append("\(capability.provider.harnessName) — \(parts.joined(separator: "; ")).")
+      }
     }
 
+    notes.append("AgentHub launches the agent harness only; it cannot configure the model. Present the harness (Claude Code or Codex) for each subtask — never a model.")
     notes.append("This plan is advisory. If the user explicitly approves worktree creation, create one worktree per approved subtask with agenthub_create_worktree_sessions.")
     return notes
   }
-
-  // MARK: - Text helpers
 
   static func title(from text: String) -> String {
     let words = text
@@ -224,19 +342,34 @@ public struct AgentHubPlanningService: AgentHubPlanning {
     return String(lowercased.unicodeScalars.filter { allowed.contains($0) })
   }
 
-  static func rationale(model: String, matched: [CapabilityTag], score: Int) -> String {
-    guard !matched.isEmpty else {
-      return "Assigned to \(model) (no specific strength overlap; best available match)."
-    }
-    let strengths = matched.map(\.displayName).joined(separator: ", ")
-    return "Assigned to \(model) — strong in \(strengths) (match score \(score))."
-  }
-
-  static func instructions(for subtask: Subtask, model: String?, branch: String) -> String {
-    let agent = model.map { "Use \($0). " } ?? "No agent assigned — pick an installed CLI before starting. "
+  static func instructions(for subtask: Subtask, harness: String, branch: String) -> String {
     let focus = subtask.tags.map(\.displayName).joined(separator: ", ")
     return """
-    \(agent)Work only on this subtask: \(subtask.detail)
+    Use \(harness). Work only on this subtask: \(subtask.detail)
+    Branch: \(branch). Stay scoped to this subtask and avoid editing files owned by other parallel subtasks.
+    Primary focus areas: \(focus).
+    When done, ensure the change builds and its tests pass before handing off.
+    """
+  }
+
+  /// Instructions for an assignment deferred to the calling agent: more than one
+  /// harness is installed and nothing matched, so the agent picks itself.
+  static func deferredInstructions(for subtask: Subtask, harnessNames: String, branch: String) -> String {
+    let focus = subtask.tags.map(\.displayName).joined(separator: ", ")
+    return """
+    Choose the best installed agent harness (\(harnessNames)) for this subtask using the harness capabilities listed in the plan.
+    Work only on this subtask: \(subtask.detail)
+    Branch: \(branch). Stay scoped to this subtask and avoid editing files owned by other parallel subtasks.
+    Primary focus areas: \(focus).
+    When done, ensure the change builds and its tests pass before handing off.
+    """
+  }
+
+  static func unassignedInstructions(for subtask: Subtask, branch: String) -> String {
+    let focus = subtask.tags.map(\.displayName).joined(separator: ", ")
+    return """
+    No agent harness is installed — install Claude Code or Codex, then run this subtask.
+    Work only on this subtask: \(subtask.detail)
     Branch: \(branch). Stay scoped to this subtask and avoid editing files owned by other parallel subtasks.
     Primary focus areas: \(focus).
     When done, ensure the change builds and its tests pass before handing off.

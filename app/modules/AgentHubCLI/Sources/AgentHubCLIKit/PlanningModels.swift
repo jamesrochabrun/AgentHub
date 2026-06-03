@@ -56,31 +56,13 @@ public enum CapabilityTag: String, Codable, CaseIterable, Sendable {
     }
   }
 
-  /// Tags implied by `text`, returned in stable `allCases` order.
+  /// Tags implied by `text`, returned in stable `allCases` order. Surfaced as
+  /// per-subtask "focus area" hints.
   public static func tags(in text: String) -> [CapabilityTag] {
     let haystack = text.lowercased()
     return allCases.filter { tag in
       tag.keywords.contains { haystack.contains($0) }
     }
-  }
-
-  /// Tags ranked by how often their keywords appear in `text` (descending),
-  /// ties broken by `allCases` order. Used to derive strengths from a research snippet.
-  public static func rankedTags(in text: String) -> [CapabilityTag] {
-    let haystack = text.lowercased()
-    let scored = allCases.map { tag -> (CapabilityTag, Int) in
-      let count = tag.keywords.reduce(0) { partial, keyword in
-        partial + haystack.components(separatedBy: keyword).count - 1
-      }
-      return (tag, count)
-    }
-    return scored
-      .filter { $0.1 > 0 }
-      .sorted { lhs, rhs in
-        if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
-        return allCases.firstIndex(of: lhs.0)! < allCases.firstIndex(of: rhs.0)!
-      }
-      .map(\.0)
   }
 }
 
@@ -110,45 +92,51 @@ public struct DetectedAgentCLI: Codable, Equatable, Sendable {
   }
 }
 
-/// The researched capability profile of a provider's latest model.
-public struct ModelCapabilityProfile: Codable, Equatable, Sendable {
-  public let provider: WorktreeLaunchProvider
-  public let model: String
-  public let strengths: [CapabilityTag]
-  public let summary: String
-  public let sourceURL: String?
-  public let sourcedFromWeb: Bool
+/// A skill installed for a harness (read from its `skills/<name>/SKILL.md`).
+public struct HarnessSkill: Codable, Equatable, Sendable {
+  public let name: String
+  public let description: String
 
-  public init(
-    provider: WorktreeLaunchProvider,
-    model: String,
-    strengths: [CapabilityTag],
-    summary: String,
-    sourceURL: String?,
-    sourcedFromWeb: Bool
-  ) {
-    self.provider = provider
-    self.model = model
-    self.strengths = strengths
-    self.summary = summary
-    self.sourceURL = sourceURL
-    self.sourcedFromWeb = sourcedFromWeb
-  }
-
-  /// Weight of `tag` for this profile: higher when the strength is ranked earlier,
-  /// zero when the model does not list it as a strength.
-  public func weight(for tag: CapabilityTag) -> Int {
-    guard let index = strengths.firstIndex(of: tag) else { return 0 }
-    return strengths.count - index
+  public init(name: String, description: String) {
+    self.name = name
+    self.description = description
   }
 }
 
-/// One subtask mapped to the best-suited installed agent.
+/// What a harness can actually do right now: its installed skills and configured
+/// MCP servers. Detected from disk so harness assignment is grounded in real
+/// tooling rather than the model/harness's general reputation.
+public struct HarnessCapabilities: Codable, Equatable, Sendable {
+  public let provider: WorktreeLaunchProvider
+  public let skills: [HarnessSkill]
+  public let mcpServers: [String]
+
+  public init(provider: WorktreeLaunchProvider, skills: [HarnessSkill], mcpServers: [String]) {
+    self.provider = provider
+    self.skills = skills
+    self.mcpServers = mcpServers
+  }
+
+  public var isEmpty: Bool { skills.isEmpty && mcpServers.isEmpty }
+
+  /// The identity of every capability (skill names + MCP server names) — what a
+  /// subtask is matched against. Descriptions are surfaced to the agent in the
+  /// plan but deliberately kept OUT of matching, where their generic words
+  /// (code, app, build, …) produce false matches.
+  public var capabilityNames: [String] { skills.map(\.name) + mcpServers }
+}
+
+/// One subtask mapped to an installed agent harness (Claude Code / Codex).
+///
+/// `assignedProvider` is the harness AgentHub will launch — `nil` means the
+/// choice is deferred to the calling agent (more than one harness installed, or
+/// none). There is no model field: AgentHub launches the harness, not a model.
 public struct PlanAssignment: Codable, Equatable, Sendable {
   public let subtask: Subtask
   public let assignedProvider: WorktreeLaunchProvider?
-  public let assignedModel: String?
-  public let matchedStrengths: [CapabilityTag]
+  /// Names of the assigned harness's skills/MCP servers that matched this
+  /// subtask and drove the suggestion (empty when the match was weak).
+  public let matchedCapabilities: [String]
   public let rationale: String
   public let instructions: String
   public let branchSuggestion: String
@@ -156,16 +144,14 @@ public struct PlanAssignment: Codable, Equatable, Sendable {
   public init(
     subtask: Subtask,
     assignedProvider: WorktreeLaunchProvider?,
-    assignedModel: String?,
-    matchedStrengths: [CapabilityTag],
+    matchedCapabilities: [String] = [],
     rationale: String,
     instructions: String,
     branchSuggestion: String
   ) {
     self.subtask = subtask
     self.assignedProvider = assignedProvider
-    self.assignedModel = assignedModel
-    self.matchedStrengths = matchedStrengths
+    self.matchedCapabilities = matchedCapabilities
     self.rationale = rationale
     self.instructions = instructions
     self.branchSuggestion = branchSuggestion
@@ -177,7 +163,9 @@ public struct DelegationPlan: Codable, Equatable, Sendable {
   public let originalPrompt: String
   public let repositoryPath: String?
   public let detectedCLIs: [DetectedAgentCLI]
-  public let modelProfiles: [ModelCapabilityProfile]
+  /// The real capabilities (skills + MCP servers) of each detected harness, so
+  /// the agent can confirm or override the suggested assignment from real data.
+  public let harnessCapabilities: [HarnessCapabilities]
   public let assignments: [PlanAssignment]
   public let notes: [String]
 
@@ -185,14 +173,14 @@ public struct DelegationPlan: Codable, Equatable, Sendable {
     originalPrompt: String,
     repositoryPath: String?,
     detectedCLIs: [DetectedAgentCLI],
-    modelProfiles: [ModelCapabilityProfile],
+    harnessCapabilities: [HarnessCapabilities],
     assignments: [PlanAssignment],
     notes: [String]
   ) {
     self.originalPrompt = originalPrompt
     self.repositoryPath = repositoryPath
     self.detectedCLIs = detectedCLIs
-    self.modelProfiles = modelProfiles
+    self.harnessCapabilities = harnessCapabilities
     self.assignments = assignments
     self.notes = notes
   }

@@ -47,12 +47,29 @@ struct PlanCommand: AsyncParsableCommand {
     }
 
     Swift.print("Delegation plan: \(plan.assignments.count) subtask(s)")
+
+    if !plan.harnessCapabilities.isEmpty {
+      Swift.print("\nHarness capabilities (detected):")
+      for capability in plan.harnessCapabilities {
+        Swift.print("  \(capability.provider.harnessName):")
+        if !capability.skills.isEmpty {
+          Swift.print("    skills: \(capability.skills.map(\.name).joined(separator: ", "))")
+        }
+        if !capability.mcpServers.isEmpty {
+          Swift.print("    MCP:    \(capability.mcpServers.joined(separator: ", "))")
+        }
+      }
+    }
+
     for assignment in plan.assignments {
-      let agent = assignment.assignedModel ?? "unassigned"
+      let agent = assignment.assignedProvider?.harnessName ?? "your choice (Claude Code or Codex)"
       Swift.print("\n[\(assignment.subtask.id)] \(assignment.subtask.title)")
-      Swift.print("  agent:  \(agent)")
-      Swift.print("  branch: \(assignment.branchSuggestion)")
-      Swift.print("  why:    \(assignment.rationale)")
+      Swift.print("  harness: \(agent)")
+      if !assignment.matchedCapabilities.isEmpty {
+        Swift.print("  matched: \(assignment.matchedCapabilities.joined(separator: ", "))")
+      }
+      Swift.print("  branch:  \(assignment.branchSuggestion)")
+      Swift.print("  why:     \(assignment.rationale)")
     }
     if !plan.notes.isEmpty {
       Swift.print("\nNotes:")

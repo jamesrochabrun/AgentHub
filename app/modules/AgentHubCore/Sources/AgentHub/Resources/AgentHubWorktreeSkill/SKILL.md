@@ -18,13 +18,13 @@ Use this workflow only because the user explicitly invoked this skill to plan an
 
 ## Plan And Create Task Sessions
 
-1. Read the user's request and infer independent subtasks semantically. If the request includes explicit independent numbered or bulleted work streams, preserve each list item as a subtask; otherwise do not split only because of punctuation, commas, semicolons, or conjunctions.
-2. Call `agent_hub_planning` before creating any sessions. Pass the original prompt and, when the request clearly contains multiple independent work streams, pass those preserved or inferred subtasks as `subtasks`.
-3. Present the proposed assignments and include task, provider/agent, model when available, branch, rationale, and launch prompt.
-4. Wait for explicit user approval.
+1. Read the user's request and infer the independent subtasks yourself. Preserve explicit numbered or bulleted work streams as separate subtasks; do not split ordinary prose just because of punctuation, commas, semicolons, or conjunctions.
+2. Call `agent_hub_planning`, passing the original prompt and the subtasks you inferred as `subtasks`. AgentHub does not split for you — with no `subtasks` it plans the whole prompt as a single task.
+3. Review the returned assignments and the `harnessCapabilities` block — each harness's **real installed skills and MCP servers**. AgentHub launches a **harness** (Claude Code or Codex), not a model, so present only the harness, never a model name. When multiple harnesses are installed, each subtask comes with a *suggested* harness plus the `matchedCapabilities` that drove it. Confirm or override every suggestion by matching the subtask to the harness whose **actual tools** fit — e.g. a profiling subtask → the harness that has an xctrace/profiler tool; a SwiftUI subtask → the harness with a swiftui skill. Decide from the listed capabilities, never from a harness's general reputation, and cite the matching skill/tool in your rationale.
+4. Present the final assignments (task, chosen harness + why, branch, launch prompt) and wait for explicit user approval.
 5. Call `agenthub_create_worktree_sessions` only for approved assignments. Pass one task per assignment with explicit `provider`, `branch`, and `prompt`.
 
-For a single-task request, still call `agent_hub_planning` with one inferred subtask so the provider and branch are explicit before approval.
+For a single-task request, still call `agent_hub_planning` with one subtask so the agent and branch are explicit before approval.
 
 ## List Or Delete Task Sessions
 
