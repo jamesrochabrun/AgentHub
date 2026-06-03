@@ -852,7 +852,7 @@ public struct MonitoringCardView: View {
       terminalKey: terminalKey ?? session.id,
       sessionId: session.id,
       projectPath: session.projectPath,
-      cliConfiguration: viewModel?.cliConfiguration ?? .claudeDefault,
+      cliConfiguration: liveCLIConfiguration,
       initialPrompt: initialPrompt,
       initialInputText: initialInputText,
       viewModel: viewModel,
@@ -885,7 +885,7 @@ public struct MonitoringCardView: View {
       session: session,
       projectPath: session.projectPath,
       onDismiss: { contentMode = .terminal },
-      cliConfiguration: viewModel?.cliConfiguration,
+      cliConfiguration: liveCLIConfiguration,
       providerKind: providerKind,
       onInlineRequestSubmit: { prompt, sess in
         contentMode = .terminal
@@ -899,6 +899,12 @@ public struct MonitoringCardView: View {
     )
     .frame(maxWidth: .infinity, minHeight: 300, maxHeight: .infinity)
     .id("diffs-\(session.id)")
+  }
+
+  private var liveCLIConfiguration: CLICommandConfiguration {
+    viewModel?.cliConfiguration(for: providerKind)
+      ?? cliConfiguration
+      ?? (providerKind == .claude ? .claudeDefault : .codexDefault)
   }
 
   private var previewContextBadge: some View {

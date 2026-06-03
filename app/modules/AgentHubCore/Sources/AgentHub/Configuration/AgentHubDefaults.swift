@@ -73,6 +73,14 @@ public enum AgentHubDefaults {
   /// Type: Data (JSON-encoded [CLIEnvironmentVariable])
   public static let cliEnvironmentVariables = "\(keyPrefix)cli.environmentVariables"
 
+  /// Extra CLI arguments applied to Claude command invocations
+  /// Type: String (shell-style arguments, default: "")
+  public static let claudeCommandArgs = "\(keyPrefix)cli.claudeCommandArgs"
+
+  /// Extra CLI arguments applied to Codex command invocations
+  /// Type: String (shell-style arguments, default: "")
+  public static let codexCommandArgs = "\(keyPrefix)cli.codexCommandArgs"
+
   /// Selected provider in side panel segmented control
   /// Type: String (default: "Claude")
   public static let selectedSidePanelProvider = "\(keyPrefix)sidepanel.selectedProvider"

@@ -359,19 +359,23 @@ public final class AgentHubProvider {
     case .claude:
       let command = defaults.string(forKey: AgentHubDefaults.claudeCommand)
         ?? configuration.cliCommand
+      let claudeArgString = defaults.string(forKey: AgentHubDefaults.claudeCommandArgs) ?? ""
       cliConfiguration = CLICommandConfiguration(
         command: command,
         additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths),
-        mode: .claude
+        mode: .claude,
+        extraArgs: CLICommandConfiguration.parseArgumentString(claudeArgString)
       )
     case .codex:
       let userCommand = defaults.string(forKey: AgentHubDefaults.codexCommand) ?? configuration.codexCommand
+      let codexArgString = defaults.string(forKey: AgentHubDefaults.codexCommandArgs) ?? ""
       // Store the user's configured command string as-is (e.g. "airchat codex")
       // Executable resolution happens at launch time using executableName
       cliConfiguration = CLICommandConfiguration(
         command: userCommand,
         additionalPaths: CLIPathResolver.codexPaths(additionalPaths: configuration.additionalCLIPaths),
-        mode: .codex
+        mode: .codex,
+        extraArgs: CLICommandConfiguration.parseArgumentString(codexArgString)
       )
     }
 
