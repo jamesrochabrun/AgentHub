@@ -902,10 +902,8 @@ public struct MultiProviderSessionsListView: View {
     )
   }
 
-  /// Groups built from tracked repos first (even empty), then an orphan bucket
-  /// for sessions whose path doesn't belong to any tracked repo.
-  private var groupedSelectedSessions: [SidebarSessionGroup<SelectedSessionItem>] {
-    SidebarSessionOrdering.moduleGroups(
+  private var groupedSelectedSessionSections: [SidebarRepositoryModuleSection<SelectedSessionItem>] {
+    SidebarSessionOrdering.repositoryModuleSections(
       from: selectedSessionItems,
       repositories: Array(orderedTrackedRepos),
       worktreeDisplayMode: worktreeDisplayMode,
@@ -1129,78 +1127,84 @@ public struct MultiProviderSessionsListView: View {
 
       switch sidebarGroupMode {
       case .repo:
-        let groups = groupedSelectedSessions
-        if !groups.isEmpty {
-          ForEach(groups) { group in
-            let isExpanded = !collapsedProjectGroups.contains(group.id)
-            let worktreeModule = worktreeModule(for: group.id)
-            let worktreeSessionCount = worktreeModule.map {
-              focusedSessionCount(inWorktreePath: $0.path)
-            } ?? 0
+        let sections = groupedSelectedSessionSections
+        if !sections.isEmpty {
+          ForEach(sections) { section in
+            ForEach(section.groups) { group in
+              let isExpanded = !collapsedProjectGroups.contains(group.id)
+              let worktreeModule = worktreeModule(for: group.id)
+              let worktreeSessionCount = worktreeModule.map {
+                focusedSessionCount(inWorktreePath: $0.path)
+              } ?? 0
 
-            ProjectGroupHeader(
-              name: group.displayName,
-              isExpanded: isExpanded,
-              canToggle: !group.items.isEmpty,
-              isSelected: selectedModuleLandingPath == group.id && group.items.isEmpty,
-              onToggle: {
-                withAnimation(.easeInOut(duration: 0.25)) {
-                  if isExpanded {
-                    collapsedProjectGroups.insert(group.id)
-                  } else {
-                    collapsedProjectGroups.remove(group.id)
-                  }
-                }
-              },
-              onSelectEmptyModule: {
-                selectEmptyModule(group.id)
-              },
-              repoPath: group.id,
-              onStartSession: {
-                triggerNewSessionFlow(preferredRepositoryPath: group.id)
-              },
-              onOpenInFinder: {
-                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: group.id)
-              },
-              onOpenGitHub: {
-                gitHubSheetItem = GitHubSheetItem(projectPath: group.id)
-              },
-              onArchiveSessions: group.items.isEmpty ? nil : {
-                let items = group.items
-                archiveConfirmation = ArchiveConfirmation(
-                  repoName: group.displayName,
-                  count: items.count
-                ) {
+              ProjectGroupHeader(
+                name: group.displayName,
+                isExpanded: isExpanded,
+                canToggle: !group.items.isEmpty,
+                isSelected: selectedModuleLandingPath == group.id && group.items.isEmpty,
+                onToggle: {
                   withAnimation(.easeInOut(duration: 0.25)) {
-                    for item in items where !item.isPending {
-                      switch item.providerKind {
-                      case .claude: claudeViewModel.stopMonitoring(session: item.session)
-                      case .codex: codexViewModel.stopMonitoring(session: item.session)
+                    if isExpanded {
+                      collapsedProjectGroups.insert(group.id)
+                    } else {
+                      collapsedProjectGroups.remove(group.id)
+                    }
+                  }
+                },
+                onSelectEmptyModule: {
+                  selectEmptyModule(group.id)
+                },
+                repoPath: group.id,
+                onStartSession: {
+                  triggerNewSessionFlow(preferredRepositoryPath: group.id)
+                },
+                onOpenInFinder: {
+                  NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: group.id)
+                },
+                onOpenGitHub: {
+                  gitHubSheetItem = GitHubSheetItem(projectPath: group.id)
+                },
+                onArchiveSessions: group.items.isEmpty ? nil : {
+                  let items = group.items
+                  archiveConfirmation = ArchiveConfirmation(
+                    repoName: group.displayName,
+                    count: items.count
+                  ) {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                      for item in items where !item.isPending {
+                        switch item.providerKind {
+                        case .claude: claudeViewModel.stopMonitoring(session: item.session)
+                        case .codex: codexViewModel.stopMonitoring(session: item.session)
+                        }
                       }
                     }
                   }
+                },
+                removeTitle: worktreeModule == nil ? "Remove" : "Remove from AgentHub",
+                onRemove: removeAction(
+                  for: group,
+                  worktreeModule: worktreeModule,
+                  worktreeSessionCount: worktreeSessionCount
+                ),
+                onDeleteWorktree: worktreeModule.map { worktree in
+                  {
+                    worktreeModuleDeleteConfirmation = WorktreeModuleDeleteConfirmation(
+                      worktree: worktree,
+                      displayName: group.displayName,
+                      sessionCount: worktreeSessionCount,
+                      providerKind: providerKindForWorktreeModule(worktree, items: group.items)
+                    )
+                  }
                 }
-              },
-              removeTitle: worktreeModule == nil ? "Remove" : "Remove from AgentHub",
-              onRemove: removeAction(
-                for: group,
-                worktreeModule: worktreeModule,
-                worktreeSessionCount: worktreeSessionCount
-              ),
-              onDeleteWorktree: worktreeModule.map { worktree in
-                {
-                  worktreeModuleDeleteConfirmation = WorktreeModuleDeleteConfirmation(
-                    worktree: worktree,
-                    displayName: group.displayName,
-                    sessionCount: worktreeSessionCount,
-                    providerKind: providerKindForWorktreeModule(worktree, items: group.items)
-                  )
-                }
-              }
-            )
+              )
 
-            if isExpanded {
-              sessionRows(for: group.items)
+              if isExpanded {
+                sessionRows(for: group.items)
+              }
+            }
+
+            if worktreeDisplayMode == .separateModules {
+              RepositoryModuleSectionDivider()
             }
           }
         }
@@ -2031,6 +2035,17 @@ private struct PendingModuleRow: View {
     .padding(.top, 2)
     .accessibilityElement(children: .combine)
     .accessibilityLabel("Adding \(name)")
+  }
+}
+
+// MARK: - RepositoryModuleSectionDivider
+
+private struct RepositoryModuleSectionDivider: View {
+  var body: some View {
+    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+      .fill(Color.borderSubtle.opacity(0.9))
+      .frame(height: 3)
+      .padding(.vertical, 8)
   }
 }
 

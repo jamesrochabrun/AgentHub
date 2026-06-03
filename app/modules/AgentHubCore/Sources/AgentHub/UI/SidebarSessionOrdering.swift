@@ -43,6 +43,12 @@ struct SidebarSessionGroup<Item>: Identifiable {
   let items: [Item]
 }
 
+struct SidebarRepositoryModuleSection<Item>: Identifiable {
+  let id: String
+  let displayName: String
+  let groups: [SidebarSessionGroup<Item>]
+}
+
 enum SidebarSessionOrdering {
   static func pinnedItems<Item>(
     from items: [Item],
@@ -101,6 +107,57 @@ enum SidebarSessionOrdering {
     }
 
     return groups
+  }
+
+  static func repositoryModuleSections<Item>(
+    from items: [Item],
+    repositories: [SelectedRepository],
+    worktreeDisplayMode: WorktreeDisplayMode,
+    isPinned: (Item) -> Bool,
+    projectPath: (Item) -> String,
+    timestamp: (Item) -> Date,
+    id: (Item) -> String
+  ) -> [SidebarRepositoryModuleSection<Item>] {
+    let groups = moduleGroups(
+      from: items,
+      repositories: repositories,
+      worktreeDisplayMode: worktreeDisplayMode,
+      isPinned: isPinned,
+      projectPath: projectPath,
+      timestamp: timestamp,
+      id: id
+    )
+    let groupsByID = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+    var handledGroupIDs: Set<String> = []
+    var sections: [SidebarRepositoryModuleSection<Item>] = []
+
+    for repository in WorktreeModuleResolver.mergedRepositories(repositories) {
+      let repositoryPath = WorktreeModuleResolver.normalizedDirectoryPath(repository.path)
+      let modulePaths = WorktreeModuleResolver.modulePaths(
+        for: [repository],
+        mode: worktreeDisplayMode
+      )
+      let sectionGroups = modulePaths.compactMap { groupsByID[$0] }
+      guard !sectionGroups.isEmpty else { continue }
+
+      handledGroupIDs.formUnion(sectionGroups.map(\.id))
+      sections.append(SidebarRepositoryModuleSection(
+        id: repositoryPath,
+        displayName: URL(fileURLWithPath: repositoryPath).lastPathComponent,
+        groups: sectionGroups
+      ))
+    }
+
+    let orphanGroups = groups.filter { !handledGroupIDs.contains($0.id) }
+    for group in orphanGroups {
+      sections.append(SidebarRepositoryModuleSection(
+        id: group.id,
+        displayName: group.displayName,
+        groups: [group]
+      ))
+    }
+
+    return sections
   }
 
   static func statusGroups<Item>(
