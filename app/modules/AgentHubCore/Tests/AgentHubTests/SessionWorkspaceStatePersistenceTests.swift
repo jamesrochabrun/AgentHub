@@ -34,7 +34,7 @@ struct SessionWorkspaceStatePersistenceTests {
     let monitoredSessionIdsData = try JSONEncoder().encode(["session-1"])
     let expansionStateData = try JSONEncoder().encode(["repo:/tmp/project": true])
 
-    try dbQueue.write { db in
+    try await dbQueue.write { db in
       try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
       for identifier in SessionMetadataStore.migrationIdentifiers.dropLast() {
         try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [identifier])

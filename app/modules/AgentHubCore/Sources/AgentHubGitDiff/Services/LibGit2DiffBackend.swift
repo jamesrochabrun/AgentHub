@@ -32,6 +32,33 @@ enum LibGit2DiffBackend {
     return try detectBaseBranch(in: repo)
   }
 
+  /// Byte size of the repository's git index (worktree-aware: resolves the
+  /// worktree-specific gitdir, so worktree checkouts report their own index).
+  /// A single `stat()` — negligible cost on small repos.
+  static func indexByteSize(atGitRoot gitRoot: String) -> UInt64? {
+    Self.initialize()
+    guard let repo = try? openRepository(at: gitRoot) else { return nil }
+    defer { git_repository_free(repo) }
+    guard let gitDirPointer = git_repository_path(repo) else { return nil }
+    let gitDir = String(cString: gitDirPointer)
+    let indexPath = (gitDir as NSString).appendingPathComponent("index")
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: indexPath),
+          let size = attributes[.size] as? NSNumber else {
+      return nil
+    }
+    return size.uint64Value
+  }
+
+  /// Heuristic for whether a worktree is "large" enough that the native `git` CLI
+  /// should service the index→workdir scan instead of libgit2.
+  /// libgit2's `git_diff_index_to_workdir` stats every tracked file single-threaded
+  /// and honors neither fsmonitor nor the untracked cache, so on monorepo-scale
+  /// worktrees it is dramatically slower than native git. Index size ≈ tracked-file count.
+  static func isLargeWorktree(atGitRoot gitRoot: String, thresholdBytes: UInt64) -> Bool {
+    guard let size = indexByteSize(atGitRoot: gitRoot) else { return false }
+    return size > thresholdBytes
+  }
+
   static func diffAvailability(at path: String) throws -> DiffAvailabilityStatus {
     Self.initialize()
 

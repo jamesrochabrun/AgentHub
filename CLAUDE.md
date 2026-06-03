@@ -289,6 +289,16 @@ GitHub PR/check monitoring is documented in `GitHubMonitor.md`. Read that file b
 
 The short version: GitHub observation is a shared actor service in `AgentHubGitHub`, injected through `AgentHubProvider.gitHubPRObservationService`. UI surfaces subscribe to target snapshots instead of polling independently. Current-branch rows only render GitHub state when a PR exists; no-PR branches should remain visually quiet. Initial refresh is delayed and bounded so GitHub checks do not affect app launch time.
 
+## Git Diff Loading (performance)
+
+`AgentHubGitDiff` has two backends. **libgit2** (`LibGit2DiffBackend`) is the default and is faster than the `git` CLI on normal repos. **Native git** (`GitDiffService.nativeChangedFiles`) is only used for `.unstaged` and `.staged` listing on *large* worktrees, where libgit2's single-threaded `git_diff_index_to_workdir` (per-file stats, no fsmonitor/untracked-cache) is dramatically slower than native git.
+
+- **Large-worktree gate** — `GitDiffService` routes `.unstaged`/`.staged` listing to native git when `.git/index > GitDiffService.defaultLargeWorktreeIndexByteThreshold` (~4 MB ≈ tens of thousands of tracked files). Threshold is injectable via `init` for tests/tuning (tests force the gate with `largeWorktreeIndexByteThreshold: 0`). The native list path mirrors libgit2 output (status, renames, line counts via `--name-status -z` + `--numstat -z`) — kept green by a parity test.
+- **Never gate `.branch`** — tree↔tree comparison is already fast in libgit2.
+- **Cheap-first ordering** — `GitDiffView` auto-select and `DiffAvailabilityService` probe `branch → staged → unstaged` so the expensive workdir scan runs last; the picker tab order (`DiffMode.allCases`) follows the same cost order. `DiffMode` declaration order is the single source of truth.
+- **Untracked floor** — the `.unstaged` tab on an actively-modified large worktree still costs a few seconds (untracked enumeration). The untracked cache can't persist while an agent writes to the worktree; only fsmonitor would fix it. **Do not** write `core.untrackedCache`/`core.fsmonitor` to the user's repo — measured as a no-op there and it mutates user repo state.
+- **Benchmark** — `swift run --package-path app/modules/AgentHubCore -c release DiffBench [path]` (the `DiffBench` executable target; not shipped in the app).
+
 ## Important Patterns
 
 - File watchers use byte-offset tracking to read only new JSONL lines (never re-read entire files)

@@ -96,6 +96,17 @@ Key invariants:
 - Keep no-PR CLI output non-fatal. GitHub CLI's "no pull requests found for branch ..." response maps to a nil PR, not a row-level error.
 - Changes to polling cadence, target deduplication, no-PR parsing, row visibility, or refresh behavior need focused unit tests in `AgentHubGitHubTests` or matching UI/view-model tests.
 
+## Git Diff Loading (performance)
+
+`AgentHubGitDiff` has two backends: **libgit2** (`LibGit2DiffBackend`, default, faster on normal repos) and **native git** (`GitDiffService.nativeChangedFiles`, used only for `.unstaged`/`.staged` listing on large worktrees where libgit2's single-threaded `git_diff_index_to_workdir` is far slower). Invariants:
+
+- Route `.unstaged`/`.staged` listing to native git only when `.git/index > GitDiffService.defaultLargeWorktreeIndexByteThreshold` (~4 MB). Threshold is injectable via `init`; tests force the gate with `largeWorktreeIndexByteThreshold: 0`. Small repos keep libgit2.
+- **Never gate `.branch`** — libgit2 tree↔tree is already fast.
+- The native list path must match libgit2 output (status, renames, line counts) — covered by the parity test; keep it green.
+- Probe modes cheap-first (`branch → staged → unstaged`) in `GitDiffView` auto-select and `DiffAvailabilityService`; `DiffMode` declaration order drives both `allCases` and the picker tab order.
+- Do **not** write `core.untrackedCache`/`core.fsmonitor` to the user's repo — measured as a no-op on actively-modified worktrees and it mutates user repo state.
+- Benchmark with `swift run --package-path app/modules/AgentHubCore -c release DiffBench [path]` (`DiffBench` target; not shipped).
+
 ## Claude Code Approval Hook Invariants
 
 AgentHub installs Claude Code hooks to surface pending approvals in real time (see `CLAUDE.md` → "Approval Detection"). `PermissionRequest` is the only hook event that represents a real pending approval; `PreToolUse` is only an observed tool/mode signal used to track dynamic permission-mode changes. When modifying `ClaudeHookInstaller`, `ClaudeHookSidecarWatcher`, `SessionFileWatcher`, `ApprovalClaimStore`, or `HookPendingStalenessFilter`, these invariants must hold:

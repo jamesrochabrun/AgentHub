@@ -114,15 +114,28 @@ public actor DiffAvailabilityService: DiffAvailabilityServiceProtocol {
 
   private nonisolated static func defaultEvaluator(projectPath: String) async -> DiffAvailabilityStatus {
     await Task.detached(priority: .utility) {
-      evaluateGitDiffAvailability(projectPath: projectPath)
+      await evaluateGitDiffAvailability(projectPath: projectPath)
     }.value
   }
 
-  private nonisolated static func evaluateGitDiffAvailability(projectPath: String) -> DiffAvailabilityStatus {
-    do {
-      return try LibGit2DiffBackend.diffAvailability(at: projectPath)
-    } catch {
-      return .unavailable
+  private nonisolated static func evaluateGitDiffAvailability(projectPath: String) async -> DiffAvailabilityStatus {
+    // Small worktrees: keep the fast single-open libgit2 availability check unchanged.
+    if !LibGit2DiffBackend.isLargeWorktree(
+      atGitRoot: projectPath,
+      thresholdBytes: GitDiffService.defaultLargeWorktreeIndexByteThreshold
+    ) {
+      return (try? LibGit2DiffBackend.diffAvailability(at: projectPath)) ?? .unavailable
     }
+    // Large worktrees: avoid libgit2's full index→workdir scan. Check cheap tree comparisons
+    // first (branch, then staged), expensive workdir scan last; route through GitDiffService
+    // so unstaged/staged use the native-git large-worktree gate.
+    let service = GitDiffService()
+    for mode in [DiffMode.branch, .staged, .unstaged] {
+      if let state = try? await service.changedFiles(at: projectPath, mode: mode, baseBranch: nil),
+         !state.files.isEmpty {
+        return .available
+      }
+    }
+    return .unavailable
   }
 }
