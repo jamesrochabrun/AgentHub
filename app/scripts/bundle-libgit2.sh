@@ -25,11 +25,12 @@ libgit2="${brew_prefix}/opt/libgit2/lib/libgit2.1.9.dylib"
 libssh2="${brew_prefix}/opt/libssh2/lib/libssh2.1.dylib"
 libssl="${brew_prefix}/opt/openssl@3/lib/libssl.3.dylib"
 libcrypto="${brew_prefix}/opt/openssl@3/lib/libcrypto.3.dylib"
+libllhttp="${brew_prefix}/opt/llhttp/lib/libllhttp.9.4.dylib"
 
-for lib in "${libgit2}" "${libssh2}" "${libssl}" "${libcrypto}"; do
+for lib in "${libgit2}" "${libssh2}" "${libssl}" "${libcrypto}" "${libllhttp}"; do
   if [ ! -f "${lib}" ]; then
     echo "error: required libgit2 runtime dependency missing: ${lib}"
-    echo "Install dependencies with: brew install libgit2 libssh2 openssl@3"
+    echo "Install dependencies with: brew install libgit2 libssh2 openssl@3 llhttp"
     exit 1
   fi
 done
@@ -49,6 +50,7 @@ copy_lib "${libgit2}" "libgit2.1.9.dylib"
 copy_lib "${libssh2}" "libssh2.1.dylib"
 copy_lib "${libssl}" "libssl.3.dylib"
 copy_lib "${libcrypto}" "libcrypto.3.dylib"
+copy_lib "${libllhttp}" "libllhttp.9.4.dylib"
 
 rewrite_dependency() {
   target="$1"
@@ -73,7 +75,9 @@ install_name_tool -id "@rpath/libgit2.1.9.dylib" "${frameworks_dir}/libgit2.1.9.
 install_name_tool -id "@rpath/libssh2.1.dylib" "${frameworks_dir}/libssh2.1.dylib"
 install_name_tool -id "@rpath/libssl.3.dylib" "${frameworks_dir}/libssl.3.dylib"
 install_name_tool -id "@rpath/libcrypto.3.dylib" "${frameworks_dir}/libcrypto.3.dylib"
+install_name_tool -id "@rpath/libllhttp.9.4.dylib" "${frameworks_dir}/libllhttp.9.4.dylib"
 
+rewrite_dependency "${frameworks_dir}/libgit2.1.9.dylib" "libllhttp" "@rpath/libllhttp.9.4.dylib"
 rewrite_dependency "${frameworks_dir}/libgit2.1.9.dylib" "libssh2" "@rpath/libssh2.1.dylib"
 rewrite_dependency "${frameworks_dir}/libssh2.1.dylib" "libssl" "@rpath/libssl.3.dylib"
 rewrite_dependency "${frameworks_dir}/libssh2.1.dylib" "libcrypto" "@rpath/libcrypto.3.dylib"
@@ -96,6 +100,7 @@ if [ "${CODE_SIGNING_ALLOWED:-YES}" != "NO" ]; then
   for lib in \
     "${frameworks_dir}/libcrypto.3.dylib" \
     "${frameworks_dir}/libssl.3.dylib" \
+    "${frameworks_dir}/libllhttp.9.4.dylib" \
     "${frameworks_dir}/libssh2.1.dylib" \
     "${frameworks_dir}/libgit2.1.9.dylib"; do
     codesign --force --sign "${signing_identity}" --timestamp=none "${lib}"
