@@ -456,12 +456,12 @@ public struct GitDiffView: View {
   // MARK: - Data Loading
 
   private func loadInitialChanges() async {
-    await loadChanges(for: diffMode, autoSelectFirstNonEmptyMode: true)
+    await loadChanges(for: diffMode, autoSelectDefaultMode: true)
   }
 
   private func loadChanges(
     for mode: DiffMode,
-    autoSelectFirstNonEmptyMode: Bool = false
+    autoSelectDefaultMode: Bool = false
   ) async {
     let clock = ContinuousClock()
     let totalStart = clock.now
@@ -491,7 +491,7 @@ public struct GitDiffView: View {
 
       let selected = try await loadBestDiffState(
         preferredMode: mode,
-        autoSelectFirstNonEmptyMode: autoSelectFirstNonEmptyMode,
+        autoSelectDefaultMode: autoSelectDefaultMode,
         generation: generation,
         clock: clock
       )
@@ -532,22 +532,22 @@ public struct GitDiffView: View {
 
   private func loadBestDiffState(
     preferredMode: DiffMode,
-    autoSelectFirstNonEmptyMode: Bool,
+    autoSelectDefaultMode: Bool,
     generation: UUID,
     clock: ContinuousClock
   ) async throws -> (mode: DiffMode, state: GitDiffState) {
     let candidateModes: [DiffMode]
-    if autoSelectFirstNonEmptyMode {
-      // Try cheap tree comparisons (branch, then staged) before the expensive index→workdir
-      // scan (unstaged). On large worktrees unstaged can take ~10s; probing it first stalls the
-      // whole view. Branch-first also surfaces the agent's committed work first.
+    if autoSelectDefaultMode {
+      // Always land on Branch when it can be computed — it's the cheapest mode and surfaces the
+      // agent's committed work. Only advance to the next cost-ordered mode (staged, then the
+      // expensive unstaged scan) when a mode fails to load entirely (e.g. no base branch). An
+      // empty Branch still wins: show its empty state rather than jumping to uncommitted edits.
       let costOrdered: [DiffMode] = [.branch, .staged, .unstaged]
       candidateModes = costOrdered + DiffMode.allCases.filter { !costOrdered.contains($0) }
     } else {
       candidateModes = [preferredMode]
     }
 
-    var firstLoaded: (mode: DiffMode, state: GitDiffState)?
     var lastError: Error?
 
     for candidateMode in candidateModes {
@@ -566,23 +566,17 @@ public struct GitDiffView: View {
         )
         AppLogger.git.info("[perf] changedFiles (\(candidateMode.rawValue)): \(clock.now - changedFilesStart)")
 
-        if firstLoaded == nil {
-          firstLoaded = (candidateMode, state)
-        }
-        if !autoSelectFirstNonEmptyMode || !state.files.isEmpty {
-          return (candidateMode, state)
-        }
+        // First mode that loads wins — Branch unless it can't be computed. Emptiness no longer
+        // advances the selection; the user switches tabs from the always-visible header picker.
+        return (candidateMode, state)
       } catch {
         lastError = error
-        if !autoSelectFirstNonEmptyMode {
+        if !autoSelectDefaultMode {
           throw error
         }
       }
     }
 
-    if let firstLoaded {
-      return firstLoaded
-    }
     throw lastError ?? GitDiffError.gitCommandFailed("No diff modes could be loaded")
   }
 
