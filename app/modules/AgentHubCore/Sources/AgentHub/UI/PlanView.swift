@@ -252,6 +252,7 @@ public struct PlanView: View {
         DiffCommentsPanelView(
           commentsState: commentsState,
           providerKind: providerKind,
+          isSendShortcutEnabled: activeLineIndex == nil,
           onSendToCloud: sendFeedbackToTerminal
         )
       }

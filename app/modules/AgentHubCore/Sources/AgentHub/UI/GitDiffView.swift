@@ -123,6 +123,7 @@ public struct GitDiffView: View {
             DiffCommentsPanelView(
               commentsState: commentsState,
               providerKind: providerKind,
+              isSendShortcutEnabled: !inlineEditorState.isShowing,
               onSendToCloud: sendAllCommentsToCloud
             )
           }
@@ -435,7 +436,8 @@ public struct GitDiffView: View {
             commentsState: commentsState,
             cliConfiguration: cliConfiguration,
             providerKind: providerKind,
-            session: session
+            session: session,
+            onInlineRequestSubmit: onInlineRequestSubmit
           )
           .frame(minHeight: 400)
           .id(selectedId)
@@ -877,6 +879,7 @@ private struct GitDiffContentView: View {
   let cliConfiguration: CLICommandConfiguration?
   let providerKind: SessionProviderKind
   let session: CLISession
+  let onInlineRequestSubmit: ((String, CLISession) -> Void)?
 
   @State private var webViewOpacity: Double = 1.0
   @State private var isWebViewReady = false
@@ -1025,6 +1028,7 @@ private struct GitDiffContentView: View {
                   text: message
                 )
               },
+              onSendComment: sendInlineCommentToAgent,
               commentsState: commentsState
             )
           }
@@ -1180,6 +1184,53 @@ private struct GitDiffContentView: View {
       return ""
     }
     return lines[startIndex...endIndex].joined(separator: "\n")
+  }
+
+  private func sendInlineCommentToAgent(message: String, context: DiffLineContext) -> Bool {
+    let prompt = generateInlineCommentPrompt(message: message, context: context)
+
+    if let callback = onInlineRequestSubmit {
+      callback(prompt, session)
+      return true
+    }
+
+    guard let cliConfiguration else { return false }
+
+    if let error = TerminalLauncher.launchTerminalWithSession(
+      session.id,
+      cliConfiguration: cliConfiguration,
+      projectPath: session.projectPath,
+      initialPrompt: prompt
+    ) {
+      inlineEditorState.errorMessage = error.localizedDescription
+      return false
+    }
+
+    return true
+  }
+
+  private func generateInlineCommentPrompt(message: String, context: DiffLineContext) -> String {
+    let sideLabel = context.side == "left" ? "old" : "new"
+    let lineLabel: String
+    if let endLineNumber = context.endLineNumber {
+      lineLabel = "Lines \(context.lineNumber)-\(endLineNumber)"
+    } else {
+      lineLabel = "Line \(context.lineNumber)"
+    }
+
+    return """
+    I have the following review comment on the code changes:
+
+    ## \(context.fileName)
+
+    **\(lineLabel)** (\(sideLabel)):
+    ```
+    \(context.lineContent)
+    ```
+    Comment: \(message)
+
+    Please address this review comment.
+    """
   }
 
 }
