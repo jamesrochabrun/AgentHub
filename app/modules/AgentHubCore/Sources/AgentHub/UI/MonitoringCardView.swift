@@ -968,18 +968,10 @@ private struct MonitoringCardPathRow: View {
 
   var body: some View {
     HStack(spacing: 8) {
-      HStack(spacing: 4) {
-        Image(systemName: "folder")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      projectPathLabel
+        .layoutPriority(1)
 
-        Text(session.projectPath)
-          .font(.primaryCaption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
-      }
-      .layoutPriority(1)
+      projectPathActionsMenu
 
       if let branch = session.branchName {
         Text(branch)
@@ -1000,6 +992,53 @@ private struct MonitoringCardPathRow: View {
       .help("Switch session content")
     }
     .frame(minHeight: 24)
+  }
+
+  private var projectPathLabel: some View {
+    HStack(spacing: 4) {
+      Image(systemName: "folder")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
+      Text(session.projectPath)
+        .font(.primaryCaption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+  }
+
+  private var projectPathActionsMenu: some View {
+    Menu {
+      Section("Open with") {
+        ForEach(ProjectPathOpenTarget.allCases) { target in
+          Button {
+            target.open(path: session.projectPath)
+          } label: {
+            Label(target.label, systemImage: target.systemImage)
+          }
+          .disabled(!target.isInstalled)
+        }
+      }
+
+      Divider()
+
+      Button {
+        ProjectPathOpenTarget.copyPath(session.projectPath)
+      } label: {
+        Label("Copy path", systemImage: "doc.on.doc")
+      }
+    } label: {
+      Image(systemName: "arrow.forward.circle")
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.secondary)
+        .contentShape(Rectangle())
+    }
+    .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
+    .buttonStyle(.plain)
+    .fixedSize()
+    .help("Open project path menu")
   }
 }
 
