@@ -76,8 +76,6 @@ AgentHub includes a built-in file explorer and editor for supported text files. 
 
 File explorer, quick open, and built-in editor
 
-https://github.com/user-attachments/assets/6d263d11-6648-42e7-9335-04aa51a33296
-
 ## Storybook
 
 When AgentHub detects a Storybook configuration in a project, the regular **Preview** button on each session card is replaced by a dedicated **Storybook** button. Clicking it spawns the Storybook dev server (via `npm run storybook`) and opens the web preview pane pinned to the Storybook URL — independently of any other dev server the agent has running.
