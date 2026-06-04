@@ -434,15 +434,11 @@ public struct MultiProviderSessionsListView: View {
           claudeViewModel.showTerminalWithPrompt(for: session, prompt: prompt)
         },
         onStartNewSession: { inputText, provider in
-          let projectPath = item.projectPath
-          let vm = provider == .claude ? claudeViewModel : codexViewModel
-          let repo = vm.selectedRepositories.first(where: { $0.path == projectPath })
-            ?? claudeViewModel.selectedRepositories.first(where: { $0.path == projectPath })
-            ?? codexViewModel.selectedRepositories.first(where: { $0.path == projectPath })
-          if let worktree = repo?.worktrees.first {
-            gitHubSheetItem = nil
-            vm.startNewSessionInHub(worktree, initialInputText: inputText)
-          }
+          launchGitHubReviewSession(
+            projectPath: item.projectPath,
+            inputText: inputText,
+            providerKind: provider
+          )
         }
       )
     }
@@ -1949,6 +1945,37 @@ public struct MultiProviderSessionsListView: View {
         startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
         launchViewModel.selectRepository()
       }
+    }
+  }
+
+  private func launchGitHubReviewSession(
+    projectPath: String,
+    inputText: String,
+    providerKind: SessionProviderKind
+  ) {
+    let viewModel = providerKind == .claude ? claudeViewModel : codexViewModel
+    let target = GitHubReviewSessionLaunchTargetResolver.launchTarget(
+      for: projectPath,
+      repositories: Array(orderedTrackedRepos)
+    )
+
+    gitHubSheetItem = nil
+
+    Task { @MainActor in
+      let worktree: WorktreeBranch
+      if target.worktree.isWorktree, let parentRepositoryPath = target.parentRepositoryPath {
+        worktree = await viewModel.registerCreatedWorktree(
+          name: target.worktree.name,
+          path: target.worktree.path,
+          parentRepositoryPath: parentRepositoryPath
+        )
+      } else {
+        viewModel.addRepository(at: target.worktree.path)
+        worktree = target.worktree
+      }
+
+      viewModel.startNewSessionInHub(worktree, initialPrompt: inputText)
+      viewModel.refresh()
     }
   }
 
