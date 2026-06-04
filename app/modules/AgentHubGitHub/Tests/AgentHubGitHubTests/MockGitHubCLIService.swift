@@ -63,15 +63,27 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
   // MARK: - Pull Requests
 
   var pullRequestsResult: [GitHubPullRequest] = []
+  var pullRequestsResultsByState: [String: [GitHubPullRequest]] = [:]
   var listPullRequestsCalled = false
+  var listPullRequestsCallCount = 0
   var listPullRequestsState: String?
+  var listPullRequestsStates: [String] = []
   var listPullRequestsLimit: Int?
+  var listPullRequestsAuthoredByMe: Bool?
+  var listPullRequestsLabels: [String]?
 
   func listPullRequests(at repoPath: String, state: String, limit: Int, authoredByMe: Bool, labels: [String]) async throws -> [GitHubPullRequest] {
     listPullRequestsCalled = true
+    listPullRequestsCallCount += 1
     listPullRequestsState = state
+    listPullRequestsStates.append(state)
     listPullRequestsLimit = limit
+    listPullRequestsAuthoredByMe = authoredByMe
+    listPullRequestsLabels = labels
     if let error = errorToThrow { throw error }
+    if let result = pullRequestsResultsByState[state] {
+      return result
+    }
     return pullRequestsResult
   }
 
@@ -221,13 +233,21 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
   // MARK: - Issues
 
   var issuesResult: [GitHubIssue] = []
+  var issuesResultsByState: [String: [GitHubIssue]] = [:]
   var listIssuesCalled = false
+  var listIssuesCallCount = 0
   var listIssuesState: String?
+  var listIssuesStates: [String] = []
 
   func listIssues(at repoPath: String, state: String, limit: Int) async throws -> [GitHubIssue] {
     listIssuesCalled = true
+    listIssuesCallCount += 1
     listIssuesState = state
+    listIssuesStates.append(state)
     if let error = errorToThrow { throw error }
+    if let result = issuesResultsByState[state] {
+      return result
+    }
     return issuesResult
   }
 
@@ -299,8 +319,12 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     lastAuthenticatedRepoPath = nil
     getRepoInfoCalled = false
     listPullRequestsCalled = false
+    listPullRequestsCallCount = 0
     listPullRequestsState = nil
+    listPullRequestsStates = []
     listPullRequestsLimit = nil
+    listPullRequestsAuthoredByMe = nil
+    listPullRequestsLabels = nil
     getPullRequestCalled = false
     getPullRequestCallCount = 0
     getPullRequestNumber = nil
@@ -324,7 +348,9 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     checkoutPRCalled = false
     checkoutPRNumber = nil
     listIssuesCalled = false
+    listIssuesCallCount = 0
     listIssuesState = nil
+    listIssuesStates = []
     getIssueCalled = false
     getIssueNumber = nil
     addIssueCommentCalled = false

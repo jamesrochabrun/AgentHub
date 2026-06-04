@@ -64,10 +64,7 @@ public struct GitHubPanelView: View {
         await viewModel.setup(repoPath: projectPath, branchName: branchName)
       }
       if viewModel.setupState == .ready {
-        if viewModel.pullRequests.isEmpty {
-          await viewModel.loadPullRequests()
-        }
-        await viewModel.loadCurrentBranchPR()
+        await viewModel.loadPanelOverview()
       }
     }
     .alert("Error", isPresented: .init(
@@ -159,13 +156,13 @@ public struct GitHubPanelView: View {
         title: { $0.rawValue },
         badge: { tab in
           switch tab {
-          case .pullRequests: return viewModel.pullRequests.isEmpty ? nil : viewModel.pullRequests.count
-          case .issues: return viewModel.issues.isEmpty ? nil : viewModel.issues.count
+          case .pullRequests: return viewModel.pullRequestTabBadgeCount
+          case .issues: return viewModel.issueTabBadgeCount
           }
         },
         onSelect: { tab in
-          if tab == .issues && viewModel.issues.isEmpty {
-            Task { await viewModel.loadIssues() }
+          if tab == .issues {
+            Task { await viewModel.loadIssuesIfNeeded() }
           }
         },
         trailing: {
@@ -173,8 +170,8 @@ public struct GitHubPanelView: View {
             Button {
               Task {
                 switch viewModel.selectedTab {
-                case .pullRequests: await viewModel.loadPullRequests()
-                case .issues: await viewModel.loadIssues()
+                case .pullRequests: await viewModel.reloadPullRequestsAndCounts()
+                case .issues: await viewModel.reloadIssuesAndCounts()
                 }
               }
             } label: {
@@ -266,21 +263,39 @@ public struct GitHubPanelView: View {
         filterMenu
       }
 
-      // Active label chips
-      if !viewModel.selectedLabels.isEmpty {
+      // Active filter chips
+      if viewModel.showOnlyMyPRs || !viewModel.selectedLabels.isEmpty {
         ScrollView(.horizontal, showsIndicators: false) {
           HStack(spacing: 4) {
+            if viewModel.showOnlyMyPRs {
+              HStack(spacing: 3) {
+                Text("Only my pull requests")
+                  .font(GitHubTypography.badge)
+                Button("Show pull requests from all authors", systemImage: "xmark") {
+                  viewModel.showOnlyMyPRs = false
+                  Task { await viewModel.reloadPullRequestsAndCounts() }
+                }
+                .font(.system(size: 8, weight: .bold))
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .help("Show pull requests from all authors")
+              }
+              .padding(.horizontal, 6)
+              .padding(.vertical, 2)
+              .background(accent.opacity(0.12))
+              .clipShape(Capsule())
+            }
+
             ForEach(viewModel.selectedLabels.sorted(), id: \.self) { label in
               HStack(spacing: 3) {
                 Text(label)
                   .font(GitHubTypography.badge)
-                Button {
+                Button("Remove \(label) label filter", systemImage: "xmark") {
                   viewModel.selectedLabels.remove(label)
-                  Task { await viewModel.loadPullRequests() }
-                } label: {
-                  Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                  Task { await viewModel.reloadPullRequestsAndCounts() }
                 }
+                .font(.system(size: 8, weight: .bold))
+                .labelStyle(.iconOnly)
                 .buttonStyle(.plain)
               }
               .padding(.horizontal, 6)
@@ -301,7 +316,7 @@ public struct GitHubPanelView: View {
       Section("Scope") {
         Button {
           viewModel.showOnlyMyPRs.toggle()
-          Task { await viewModel.loadPullRequests() }
+          Task { await viewModel.reloadPullRequestsAndCounts() }
         } label: {
           HStack {
             Text("Only my pull requests")
@@ -319,7 +334,7 @@ public struct GitHubPanelView: View {
               } else {
                 viewModel.selectedLabels.insert(label.name)
               }
-              Task { await viewModel.loadPullRequests() }
+              Task { await viewModel.reloadPullRequestsAndCounts() }
             } label: {
               HStack {
                 Text(label.name)
@@ -333,7 +348,7 @@ public struct GitHubPanelView: View {
             Divider()
             Button("Clear all labels") {
               viewModel.selectedLabels.removeAll()
-              Task { await viewModel.loadPullRequests() }
+              Task { await viewModel.reloadPullRequestsAndCounts() }
             }
           }
         }
@@ -471,7 +486,7 @@ public struct GitHubPanelView: View {
         ForEach(GitHubIssueFilter.allCases) { filter in
           FilterChipWithCount(
             title: filter.rawValue,
-            count: filter == viewModel.issueFilter ? viewModel.issues.count : 0,
+            count: viewModel.issueFilterCount(filter),
             isActive: viewModel.issueFilter == filter,
             accent: accent
           ) {
@@ -673,17 +688,11 @@ struct FilterChipWithCount: View {
   }
 
   private var chipContent: some View {
-    ViewThatFits(in: .horizontal) {
-      HStack(spacing: 5) {
-        titleLabel
-        countBadge
-      }
-
-      VStack(spacing: 2) {
-        titleLabel
-        countBadge
-      }
+    VStack(spacing: 2) {
+      titleLabel
+      countBadge
     }
+    .frame(minHeight: 36)
   }
 
   private var titleLabel: some View {
@@ -707,6 +716,14 @@ struct FilterChipWithCount: View {
           (isActive ? accent : Color.secondary).opacity(colorScheme == .dark ? 0.18 : 0.14)
         )
         .clipShape(Capsule())
+        .fixedSize(horizontal: true, vertical: false)
+    } else {
+      Text("0")
+        .font(GitHubTypography.monoCaption)
+        .lineLimit(1)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 1)
+        .hidden()
         .fixedSize(horizontal: true, vertical: false)
     }
   }
