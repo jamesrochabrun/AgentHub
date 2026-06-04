@@ -27,7 +27,7 @@ public enum GitHubTab: String, CaseIterable, Identifiable, Sendable {
 // MARK: - PR Filter
 
 /// Filter for PR list state
-public enum GitHubPRFilter: String, CaseIterable, Identifiable, Sendable {
+public enum GitHubPRFilter: String, CaseIterable, Hashable, Identifiable, Sendable {
   case open = "Open"
   case draft = "Draft"
   case merged = "Merged"
@@ -49,7 +49,7 @@ public enum GitHubPRFilter: String, CaseIterable, Identifiable, Sendable {
 
 // MARK: - Issue Filter
 
-public enum GitHubIssueFilter: String, CaseIterable, Identifiable, Sendable {
+public enum GitHubIssueFilter: String, CaseIterable, Hashable, Identifiable, Sendable {
   case open = "Open"
   case closed = "Closed"
   case all = "All"
@@ -119,6 +119,7 @@ public final class GitHubViewModel {
   public var pullRequests: [GitHubPullRequest] = []
   public var prFilter: GitHubPRFilter = .open
   public var prLoadingState: GitHubLoadingState = .idle
+  public var prFilterCounts: [GitHubPRFilter: Int] = [:]
 
   /// Selected PR for detail view
   public var selectedPR: GitHubPullRequest?
@@ -137,13 +138,14 @@ public final class GitHubViewModel {
   public var issues: [GitHubIssue] = []
   public var issueFilter: GitHubIssueFilter = .open
   public var issueLoadingState: GitHubLoadingState = .idle
+  public var issueFilterCounts: [GitHubIssueFilter: Int] = [:]
 
   /// Selected issue for detail view
   public var selectedIssue: GitHubIssue?
   public var issueDetailLoadingState: GitHubLoadingState = .idle
 
   /// PR filter: show only my PRs
-  public var showOnlyMyPRs: Bool = false
+  public var showOnlyMyPRs: Bool = true
 
   /// PR filter: selected labels
   public var selectedLabels: Set<String> = []
@@ -185,6 +187,8 @@ public final class GitHubViewModel {
   private var selectedPRObservationTask: Task<Void, Never>?
   private var currentBranchSubscriptionID: UUID?
   private var selectedPRSubscriptionID: UUID?
+  private var prFilterCountsRequestID: UUID?
+  private var issueFilterCountsRequestID: UUID?
 
   // MARK: - Init
 
@@ -247,6 +251,32 @@ public final class GitHubViewModel {
     currentRepoPath == repoPath && currentBranchName == branchName && setupState != .checking
   }
 
+  public func loadPanelOverview() async {
+    guard currentRepoPath != nil else { return }
+
+    async let pullRequestList: Void = loadPullRequestsIfNeeded()
+    async let issueList: Void = loadIssuesIfNeeded()
+    async let currentBranch: Void = loadCurrentBranchPR()
+    async let pullRequestCounts: Void = loadPRFilterCountsIfNeeded()
+    async let issueCounts: Void = loadIssueFilterCountsIfNeeded()
+
+    _ = await (pullRequestList, issueList, currentBranch, pullRequestCounts, issueCounts)
+  }
+
+  public func reloadPullRequestsAndCounts() async {
+    async let pullRequestList: Void = loadPullRequests()
+    async let pullRequestCounts: Void = refreshPRFilterCounts()
+
+    _ = await (pullRequestList, pullRequestCounts)
+  }
+
+  public func reloadIssuesAndCounts() async {
+    async let issueList: Void = loadIssues()
+    async let issueCounts: Void = refreshIssueFilterCounts()
+
+    _ = await (issueList, issueCounts)
+  }
+
   // MARK: - Pull Requests
 
   /// Loads the list of pull requests
@@ -263,11 +293,17 @@ public final class GitHubViewModel {
         labels: Array(selectedLabels)
       )
       pullRequests = applyClientSideFilter(raw, filter: prFilter)
+      prFilterCounts[prFilter] = pullRequests.count
       prLoadingState = .loaded
     } catch {
       prLoadingState = .error(error.localizedDescription)
       GitHubLogger.github.error("Failed to load PRs: \(error.localizedDescription)")
     }
+  }
+
+  public func loadPullRequestsIfNeeded() async {
+    guard pullRequests.isEmpty, prLoadingState != .loading else { return }
+    await loadPullRequests()
   }
 
   /// Refines the raw list returned by `gh` for filters that can't be expressed in the query.
@@ -281,18 +317,57 @@ public final class GitHubViewModel {
     filter: GitHubPRFilter
   ) -> [GitHubPullRequest] {
     switch filter {
-    case .draft:  return prs.filter { $0.isDraft }
-    case .open:   return prs.filter { !$0.isDraft }
+    case .draft:  return prs.filter { $0.stateKind == .open && $0.isDraft }
+    case .open:   return prs.filter { $0.stateKind == .open && !$0.isDraft }
     case .merged: return prs.filter { $0.stateKind == .merged }
     case .closed: return prs.filter { $0.stateKind == .closed }
     case .all:    return prs
     }
   }
 
-  /// Count of loaded PRs that fall into a given filter. Used for the filter chip badges.
-  /// Note: counts reflect the currently loaded set, not the full remote state.
+  /// Count of PRs that fall into a given filter. Used for the filter chip badges.
   public func filterCount(_ filter: GitHubPRFilter) -> Int {
-    applyClientSideFilter(pullRequests, filter: filter).count
+    prFilterCounts[filter] ?? (filter == prFilter ? pullRequests.count : 0)
+  }
+
+  public var pullRequestTabBadgeCount: Int? {
+    let count = filterCount(prFilter)
+    return count > 0 ? count : nil
+  }
+
+  public func loadPRFilterCountsIfNeeded() async {
+    guard prFilterCounts.isEmpty else { return }
+    await refreshPRFilterCounts()
+  }
+
+  public func refreshPRFilterCounts() async {
+    guard let repoPath = currentRepoPath else { return }
+
+    let requestID = UUID()
+    let authoredByMe = showOnlyMyPRs
+    let labels = Array(selectedLabels)
+    prFilterCountsRequestID = requestID
+    prFilterCounts = [:]
+
+    do {
+      let raw = try await service.listPullRequests(
+        at: repoPath,
+        state: GitHubPRFilter.all.ghState,
+        limit: 200,
+        authoredByMe: authoredByMe,
+        labels: labels
+      )
+      guard prFilterCountsRequestID == requestID else { return }
+
+      prFilterCounts = Dictionary(
+        uniqueKeysWithValues: GitHubPRFilter.allCases.map { filter in
+          (filter, applyClientSideFilter(raw, filter: filter).count)
+        }
+      )
+    } catch {
+      guard prFilterCountsRequestID == requestID else { return }
+      GitHubLogger.github.error("Failed to load PR filter counts: \(error.localizedDescription)")
+    }
   }
 
   /// Loads repository labels if not already loaded
@@ -435,10 +510,67 @@ public final class GitHubViewModel {
 
     do {
       issues = try await service.listIssues(at: repoPath, state: issueFilter.ghState, limit: 30)
+      issueFilterCounts[issueFilter] = issues.count
       issueLoadingState = .loaded
     } catch {
       issueLoadingState = .error(error.localizedDescription)
       GitHubLogger.github.error("Failed to load issues: \(error.localizedDescription)")
+    }
+  }
+
+  public func loadIssuesIfNeeded() async {
+    guard issues.isEmpty, issueLoadingState != .loading else { return }
+    await loadIssues()
+  }
+
+  public func issueFilterCount(_ filter: GitHubIssueFilter) -> Int {
+    issueFilterCounts[filter] ?? (filter == issueFilter ? issues.count : 0)
+  }
+
+  public var issueTabBadgeCount: Int? {
+    let count = issueFilterCount(issueFilter)
+    return count > 0 ? count : nil
+  }
+
+  public func loadIssueFilterCountsIfNeeded() async {
+    guard issueFilterCounts.isEmpty else { return }
+    await refreshIssueFilterCounts()
+  }
+
+  public func refreshIssueFilterCounts() async {
+    guard let repoPath = currentRepoPath else { return }
+
+    let requestID = UUID()
+    issueFilterCountsRequestID = requestID
+    issueFilterCounts = [:]
+
+    do {
+      let raw = try await service.listIssues(
+        at: repoPath,
+        state: GitHubIssueFilter.all.ghState,
+        limit: 200
+      )
+      guard issueFilterCountsRequestID == requestID else { return }
+
+      issueFilterCounts = Dictionary(
+        uniqueKeysWithValues: GitHubIssueFilter.allCases.map { filter in
+          (filter, applyClientSideIssueFilter(raw, filter: filter).count)
+        }
+      )
+    } catch {
+      guard issueFilterCountsRequestID == requestID else { return }
+      GitHubLogger.github.error("Failed to load issue filter counts: \(error.localizedDescription)")
+    }
+  }
+
+  private func applyClientSideIssueFilter(
+    _ issues: [GitHubIssue],
+    filter: GitHubIssueFilter
+  ) -> [GitHubIssue] {
+    switch filter {
+    case .open: return issues.filter { $0.stateKind == .open }
+    case .closed: return issues.filter { $0.stateKind == .closed }
+    case .all: return issues
     }
   }
 

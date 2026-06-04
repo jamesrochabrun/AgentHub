@@ -176,6 +176,32 @@ struct GitHubViewModelPRTests {
     #expect(mock.listPullRequestsLimit == 30)
   }
 
+  @Test("loadPanelOverview starts pull request and issue loading")
+  @MainActor
+  func loadPanelOverviewStartsPullRequestAndIssueLoading() async {
+    let mock = MockGitHubCLIService()
+    mock.repoInfoResult = makeRepoInfo()
+    mock.pullRequestsResultsByState = [
+      "open": [makePR(number: 1)],
+      "all": [makePR(number: 1), makePR(number: 2, state: "MERGED")]
+    ]
+    mock.issuesResultsByState = [
+      "open": [makeIssue(number: 1)],
+      "all": [makeIssue(number: 1), makeIssue(number: 2, state: "CLOSED")]
+    ]
+    let vm = GitHubViewModel(service: mock)
+    await vm.setup(repoPath: "/tmp/repo")
+
+    await vm.loadPanelOverview()
+
+    #expect(vm.pullRequests.map(\.number) == [1])
+    #expect(vm.issues.map(\.number) == [1])
+    #expect(mock.listPullRequestsStates.contains("open"))
+    #expect(mock.listPullRequestsStates.contains("all"))
+    #expect(mock.listIssuesStates.contains("open"))
+    #expect(mock.listIssuesStates.contains("all"))
+  }
+
   @Test("loadPullRequests sets error state on failure")
   @MainActor
   func loadPullRequestsError() async {
@@ -547,6 +573,69 @@ struct GitHubViewModelFilterTests {
     await vm.loadPullRequests()
 
     #expect(mock.listPullRequestsState == "all")
+  }
+
+  @Test("PR list defaults to only my pull requests")
+  @MainActor
+  func prListDefaultsToOnlyMyPullRequests() async {
+    let mock = MockGitHubCLIService()
+    mock.repoInfoResult = makeRepoInfo()
+    let vm = GitHubViewModel(service: mock)
+    await vm.setup(repoPath: "/tmp/repo")
+
+    await vm.loadPullRequests()
+
+    #expect(vm.showOnlyMyPRs)
+    #expect(mock.listPullRequestsAuthoredByMe == true)
+  }
+
+  @Test("PR filter counts load from all pull requests")
+  @MainActor
+  func prFilterCountsLoadFromAllPullRequests() async {
+    let mock = MockGitHubCLIService()
+    mock.repoInfoResult = makeRepoInfo()
+    mock.pullRequestsResultsByState = [
+      "all": [
+        makePR(number: 1),
+        makePR(number: 2, isDraft: true),
+        makePR(number: 3, state: "MERGED"),
+        makePR(number: 4, state: "CLOSED")
+      ]
+    ]
+    let vm = GitHubViewModel(service: mock)
+    await vm.setup(repoPath: "/tmp/repo")
+
+    await vm.refreshPRFilterCounts()
+
+    #expect(mock.listPullRequestsState == "all")
+    #expect(mock.listPullRequestsAuthoredByMe == true)
+    #expect(vm.filterCount(.open) == 1)
+    #expect(vm.filterCount(.draft) == 1)
+    #expect(vm.filterCount(.merged) == 1)
+    #expect(vm.filterCount(.closed) == 1)
+    #expect(vm.filterCount(.all) == 4)
+  }
+
+  @Test("Issue filter counts load from all issues")
+  @MainActor
+  func issueFilterCountsLoadFromAllIssues() async {
+    let mock = MockGitHubCLIService()
+    mock.repoInfoResult = makeRepoInfo()
+    mock.issuesResultsByState = [
+      "all": [
+        makeIssue(number: 1),
+        makeIssue(number: 2, state: "CLOSED")
+      ]
+    ]
+    let vm = GitHubViewModel(service: mock)
+    await vm.setup(repoPath: "/tmp/repo")
+
+    await vm.refreshIssueFilterCounts()
+
+    #expect(mock.listIssuesState == "all")
+    #expect(vm.issueFilterCount(.open) == 1)
+    #expect(vm.issueFilterCount(.closed) == 1)
+    #expect(vm.issueFilterCount(.all) == 2)
   }
 
   @Test("Issue filter passes correct state to service")
