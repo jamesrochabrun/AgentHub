@@ -87,6 +87,60 @@ struct FocusedSessionLaunchTargetResolverTests {
   }
 }
 
+@Suite("GitHubReviewSessionLaunchTargetResolver")
+struct GitHubReviewSessionLaunchTargetResolverTests {
+  @Test("Tracked repository resolves to local main repository target")
+  func trackedRepositoryResolvesToMainRepositoryTarget() {
+    let target = GitHubReviewSessionLaunchTargetResolver.launchTarget(
+      for: "/tmp/Repo/",
+      repositories: [repositoryWithWorktree()]
+    )
+
+    #expect(target.worktree.name == "main")
+    #expect(target.worktree.path == "/tmp/Repo")
+    #expect(target.worktree.isWorktree == false)
+    #expect(target.parentRepositoryPath == nil)
+  }
+
+  @Test("Tracked worktree module resolves to worktree target with parent repository")
+  func trackedWorktreeModuleResolvesToWorktreeTarget() {
+    let target = GitHubReviewSessionLaunchTargetResolver.launchTarget(
+      for: "/tmp/Repo-feature",
+      repositories: [repositoryWithWorktree()]
+    )
+
+    #expect(target.worktree.name == "feature")
+    #expect(target.worktree.path == "/tmp/Repo-feature")
+    #expect(target.worktree.isWorktree)
+    #expect(target.parentRepositoryPath == "/tmp/Repo")
+  }
+
+  @Test("Nested worktree path resolves to worktree root")
+  func nestedWorktreePathResolvesToWorktreeRoot() {
+    let target = GitHubReviewSessionLaunchTargetResolver.launchTarget(
+      for: "/tmp/Repo-feature/App",
+      repositories: [repositoryWithWorktree()]
+    )
+
+    #expect(target.worktree.path == "/tmp/Repo-feature")
+    #expect(target.worktree.isWorktree)
+    #expect(target.parentRepositoryPath == "/tmp/Repo")
+  }
+
+  @Test("Untracked project resolves to local directory target")
+  func untrackedProjectResolvesToLocalDirectoryTarget() {
+    let target = GitHubReviewSessionLaunchTargetResolver.launchTarget(
+      for: "/tmp/Other",
+      repositories: [repositoryWithWorktree()]
+    )
+
+    #expect(target.worktree.name == "Other")
+    #expect(target.worktree.path == "/tmp/Other")
+    #expect(target.worktree.isWorktree == false)
+    #expect(target.parentRepositoryPath == nil)
+  }
+}
+
 @Suite("MultiSessionLaunchViewModel preselection")
 @MainActor
 struct MultiSessionLaunchViewModelPreselectionTests {
