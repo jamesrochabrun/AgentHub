@@ -15,10 +15,23 @@ struct DiffCommentsPanelView: View {
 
   @Bindable var commentsState: DiffCommentsState
   let providerKind: SessionProviderKind
+  let isSendShortcutEnabled: Bool
   let onSendToCloud: () -> Void
 
   @State private var isExpanded = false
   @State private var showClearConfirmation = false
+
+  init(
+    commentsState: DiffCommentsState,
+    providerKind: SessionProviderKind,
+    isSendShortcutEnabled: Bool = true,
+    onSendToCloud: @escaping () -> Void
+  ) {
+    self.commentsState = commentsState
+    self.providerKind = providerKind
+    self.isSendShortcutEnabled = isSendShortcutEnabled
+    self.onSendToCloud = onSendToCloud
+  }
 
   // MARK: - Body
 
@@ -114,25 +127,27 @@ struct DiffCommentsPanelView: View {
     .padding(.vertical, 8)
   }
 
+  @ViewBuilder
   private var headerSendButton: some View {
-    Button(action: onSendToCloud) {
-      HStack(spacing: 4) {
-        Image(systemName: "paperplane")
-          .font(.caption)
-        Text("Send \(commentsState.commentCount) to \(providerKind.rawValue)")
-          .font(.caption.bold())
-      }
-      .foregroundColor(.primary)
-      .padding(.horizontal, 10)
-      .padding(.vertical, 4)
-      .background(
-        RoundedRectangle(cornerRadius: 6)
-          .stroke(Color.primary.opacity(0.3), lineWidth: 1)
-      )
-      .contentShape(Rectangle())
+    let button = Button(action: onSendToCloud) {
+      sendButtonLabel
+        .foregroundColor(.primary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(
+          RoundedRectangle(cornerRadius: 6)
+            .stroke(Color.primary.opacity(0.3), lineWidth: 1)
+        )
+        .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .help("Send all comments to \(providerKind.rawValue) (⌘⇧↵)")
+    .help("Send all comments to \(providerKind.rawValue) (⌘ ↵)")
+
+    if isSendShortcutEnabled {
+      button.keyboardShortcut(.return, modifiers: .command)
+    } else {
+      button
+    }
   }
 
   // MARK: - Toolbar
@@ -156,14 +171,16 @@ struct DiffCommentsPanelView: View {
       .buttonStyle(.plain)
       .help("Clear all comments")
 
-      // Send to provider button
-      Button(action: onSendToCloud) {
-        HStack(spacing: 4) {
-          Image(systemName: "paperplane")
-            .font(.caption)
-          Text("Send \(commentsState.commentCount) to \(providerKind.rawValue)")
-            .font(.caption.bold())
-        }
+      sendToolbarButton
+    }
+    .padding(.horizontal, 12)
+    .padding(.bottom, 8)
+  }
+
+  @ViewBuilder
+  private var sendToolbarButton: some View {
+    let button = Button(action: onSendToCloud) {
+      sendButtonLabel
         .foregroundColor(.primary)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
@@ -171,12 +188,29 @@ struct DiffCommentsPanelView: View {
           RoundedRectangle(cornerRadius: 6)
             .stroke(Color.primary.opacity(0.3), lineWidth: 1)
         )
-      }
-      .buttonStyle(.plain)
-      .help("Send all comments to \(providerKind.rawValue) (⌘⇧↵)")
     }
-    .padding(.horizontal, 12)
-    .padding(.bottom, 8)
+    .buttonStyle(.plain)
+    .help("Send all comments to \(providerKind.rawValue) (⌘ ↵)")
+
+    if isSendShortcutEnabled {
+      button.keyboardShortcut(.return, modifiers: .command)
+    } else {
+      button
+    }
+  }
+
+  private var sendButtonLabel: some View {
+    HStack(spacing: 4) {
+      Image(systemName: "paperplane")
+        .font(.caption)
+
+      Text("Send \(commentsState.commentCount) to \(providerKind.rawValue)")
+        .font(.caption.bold())
+
+      Text("⌘ ↵")
+        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+        .foregroundColor(.secondary)
+    }
   }
 }
 

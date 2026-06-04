@@ -10,7 +10,8 @@ import SwiftUI
 /// An overlay that positions the inline editor below clicked diff lines.
 /// Handles tap-outside dismissal and edge positioning.
 ///
-/// Comments are added to the review collection; sending happens from the bottom panel.
+/// Return adds comments to the review collection; Cmd+Return can send a
+/// single comment directly to the agent session.
 struct InlineEditorOverlay: View {
 
   // MARK: - Properties
@@ -21,6 +22,9 @@ struct InlineEditorOverlay: View {
 
   /// Called when user presses Return - adds to comment collection
   let onAddComment: (String, DiffLineContext) -> Void
+
+  /// Called when user presses Cmd+Return - sends feedback directly to the agent session
+  let onSendComment: ((String, DiffLineContext) -> Bool)?
 
   /// Comments state for checking existing comments (optional)
   let commentsState: DiffCommentsState?
@@ -38,12 +42,14 @@ struct InlineEditorOverlay: View {
     containerSize: CGSize,
     providerKind: SessionProviderKind = .claude,
     onAddComment: @escaping (String, DiffLineContext) -> Void,
+    onSendComment: ((String, DiffLineContext) -> Bool)? = nil,
     commentsState: DiffCommentsState? = nil
   ) {
     self.state = state
     self.containerSize = containerSize
     self.providerKind = providerKind
     self.onAddComment = onAddComment
+    self.onSendComment = onSendComment
     self.commentsState = commentsState
   }
 
@@ -105,6 +111,20 @@ struct InlineEditorOverlay: View {
             onAddComment(message, currentContext)
             withAnimation(.easeOut(duration: 0.15)) {
               state.dismiss()
+            }
+          },
+          onSendComment: onSendComment.map { sendComment in
+            { message in
+              let didSend = sendComment(message, currentContext)
+              if didSend {
+                if let comment = existingComment {
+                  commentsState?.removeComment(id: comment.id)
+                }
+                withAnimation(.easeOut(duration: 0.15)) {
+                  state.dismiss()
+                }
+              }
+              return didSend
             }
           },
           onDeleteComment: isEditMode ? {

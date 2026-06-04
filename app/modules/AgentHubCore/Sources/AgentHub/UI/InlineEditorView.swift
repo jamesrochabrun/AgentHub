@@ -11,8 +11,8 @@ import AppKit
 /// A compact floating text editor for asking questions about specific diff lines.
 /// Appears below clicked lines in the diff view.
 ///
-/// Comments are always added to the review collection. The only way to send
-/// feedback to Claude is via the bottom panel's "Send to Claude" button.
+/// Return adds comments to the review collection. Cmd+Return can send a
+/// single comment directly to the agent session when a direct-send handler is available.
 struct InlineEditorView: View {
 
   // MARK: - Properties
@@ -26,6 +26,9 @@ struct InlineEditorView: View {
 
   /// Called when user presses Return - adds to comment collection
   let onAddComment: (String) -> Void
+
+  /// Called when user presses Cmd+Return - sends feedback directly to the agent session
+  let onSendComment: ((String) -> Bool)?
 
   /// Called when user wants to delete an existing comment (optional, edit mode only)
   let onDeleteComment: (() -> Void)?
@@ -62,6 +65,7 @@ struct InlineEditorView: View {
     errorMessage: String?,
     providerKind: SessionProviderKind = .claude,
     onAddComment: @escaping (String) -> Void,
+    onSendComment: ((String) -> Bool)? = nil,
     onDeleteComment: (() -> Void)? = nil,
     onDismiss: @escaping () -> Void,
     initialText: String = "",
@@ -74,6 +78,7 @@ struct InlineEditorView: View {
     self.errorMessage = errorMessage
     self.providerKind = providerKind
     self.onAddComment = onAddComment
+    self.onSendComment = onSendComment
     self.onDeleteComment = onDeleteComment
     self.onDismiss = onDismiss
     self.initialText = initialText
@@ -153,6 +158,10 @@ struct InlineEditorView: View {
 
       // Add comment button with return key hint
       addCommentButton
+
+      if onSendComment != nil {
+        sendCommentButton
+      }
     }
     .padding(8)
   }
@@ -218,32 +227,73 @@ struct InlineEditorView: View {
   // MARK: - Add Comment Button
 
   private var addCommentButton: some View {
-    HStack(spacing: 4) {
-      Button(action: addComment) {
+    Button(action: addComment) {
+      HStack(spacing: 6) {
         Image(systemName: isEditMode ? "checkmark" : "plus")
           .font(.system(size: 14, weight: .semibold))
           .foregroundColor(isTextEmpty ? .secondary : .primary)
-          .frame(width: 32, height: 32)
-          .contentShape(Rectangle())
-      }
-      .buttonStyle(.plain)
-      .frame(width: 32, height: 32)
-      .background(
-        RoundedRectangle(cornerRadius: 8)
-          .fill(Color(NSColor.controlBackgroundColor))
-      )
-      .overlay(
-        RoundedRectangle(cornerRadius: 8)
-          .stroke(isTextEmpty ? Color(NSColor.separatorColor) : Color.brandPrimary(for: providerKind).opacity(0.5), lineWidth: 1)
-      )
-      .contentShape(Rectangle())
-      .disabled(isTextEmpty)
-      .help(isEditMode ? "Update comment (↵)" : "Add to review (↵)")
 
-      Text("⏎")
-        .font(.system(size: 11, weight: .medium, design: .rounded))
-        .foregroundColor(.secondary)
+        returnShortcutHint
+      }
+      .frame(width: 46, height: 32)
+      .contentShape(Rectangle())
     }
+    .buttonStyle(.plain)
+    .frame(width: 46, height: 32)
+    .background(
+      RoundedRectangle(cornerRadius: 8)
+        .fill(Color(NSColor.controlBackgroundColor))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8)
+        .stroke(isTextEmpty ? Color(NSColor.separatorColor) : Color.brandPrimary(for: providerKind).opacity(0.5), lineWidth: 1)
+    )
+    .contentShape(Rectangle())
+    .disabled(isTextEmpty)
+    .help(isEditMode ? "Update comment (↵)" : "Add to review (↵)")
+  }
+
+  private var sendCommentButton: some View {
+    Button(action: sendComment) {
+      HStack(spacing: 6) {
+        Image(systemName: "paperplane")
+          .font(.system(size: 14, weight: .semibold))
+          .foregroundColor(isTextEmpty ? .secondary : .primary)
+
+        commandReturnShortcutHint
+      }
+      .frame(width: 66, height: 32)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .frame(width: 66, height: 32)
+    .background(
+      RoundedRectangle(cornerRadius: 8)
+        .fill(Color(NSColor.controlBackgroundColor))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8)
+        .stroke(isTextEmpty ? Color(NSColor.separatorColor) : Color.brandPrimary(for: providerKind).opacity(0.5), lineWidth: 1)
+    )
+    .contentShape(Rectangle())
+    .disabled(isTextEmpty)
+    .keyboardShortcut(.return, modifiers: .command)
+    .help("Send to \(providerKind.rawValue) (⌘ ↵)")
+  }
+
+  private var returnShortcutHint: some View {
+    Text("↵")
+      .font(.system(size: 11, weight: .medium, design: .rounded))
+      .foregroundColor(.secondary)
+  }
+
+  private var commandReturnShortcutHint: some View {
+    HStack(spacing: 4) {
+      Text("⌘")
+      Text("↵")
+    }
+    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+    .foregroundColor(.secondary)
   }
 
   // MARK: - Delete Button
@@ -290,10 +340,24 @@ struct InlineEditorView: View {
     onAddComment(messageText)
   }
 
+  /// Sends the comment directly to the agent session without adding it to the review collection.
+  private func sendComment() {
+    guard !isTextEmpty else { return }
+    guard let onSendComment else {
+      addComment()
+      return
+    }
+
+    let messageText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if onSendComment(messageText) {
+      text = ""
+    }
+  }
+
   /// Handles keyboard shortcuts for the inline editor.
   ///
   /// - **Return**: Adds comment to review collection
-  /// - **Cmd+Return**: Also adds comment (alias)
+  /// - **Cmd+Return**: Sends feedback directly to the agent session
   /// - **Shift+Return**: Inserts a new line (returns `.ignored` to allow default behavior)
   /// - **Escape**: Dismisses the editor without submitting
   private func handleKeyPress(_ key: KeyPress) -> KeyPress.Result {
@@ -303,7 +367,13 @@ struct InlineEditorView: View {
         // Shift+Enter: insert newline
         return .ignored
       }
-      // Return (or Cmd+Return): add to comment collection
+
+      if key.modifiers.contains(.command) {
+        sendComment()
+        return .handled
+      }
+
+      // Return: add to comment collection
       addComment()
       return .handled
 

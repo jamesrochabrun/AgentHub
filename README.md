@@ -132,8 +132,8 @@ Updates are delivered automatically via [Sparkle](https://sparkle-project.org/) 
 
 | Shortcut | Action |
 |---|---|
-| **Return** | Send inline comment to Claude |
-| **Cmd+Return** | Add comment to review collection |
+| **Return** | Add inline comment to review collection |
+| **Cmd+Return** | Send inline feedback directly to the agent session |
 | **Shift+Return** | Insert newline in editor |
 | **Escape** | Close inline editor or diff view |
 
