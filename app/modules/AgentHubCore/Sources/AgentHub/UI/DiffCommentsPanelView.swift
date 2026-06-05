@@ -36,56 +36,75 @@ struct DiffCommentsPanelView: View {
   // MARK: - Body
 
   var body: some View {
-    VStack(spacing: 0) {
-      // Collapsed header — always visible
-      headerView
+    headerView
+      .background(Color.surfaceElevated)
+      .overlay(alignment: .top) {
+        expandedTray
+      }
+      .overlay(
+        Rectangle()
+          .frame(height: 1)
+          .foregroundColor(Color(NSColor.separatorColor)),
+        alignment: .top
+      )
+      .animation(.easeInOut(duration: 0.2), value: isExpanded)
+      .confirmationDialog(
+        "Clear All Comments",
+        isPresented: $showClearConfirmation,
+        titleVisibility: .visible
+      ) {
+        Button("Clear All", role: .destructive) {
+          commentsState.clearAll()
+        }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        Text("This will remove all \(commentsState.commentCount) pending comments. This action cannot be undone.")
+      }
+  }
 
-      // Expanded content — shown on tap
-      if isExpanded {
+  @ViewBuilder
+  private var expandedTray: some View {
+    if isExpanded {
+      VStack(spacing: 0) {
+        expandedContent
         Divider()
+      }
+      .frame(maxWidth: .infinity)
+      .background(Color.surfaceElevated)
+      .overlay(
+        Rectangle()
+          .frame(height: 1)
+          .foregroundColor(Color(NSColor.separatorColor)),
+        alignment: .top
+      )
+      .alignmentGuide(.top) { dimensions in
+        dimensions[VerticalAlignment.bottom]
+      }
+      .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+  }
 
-        // Comment list
-        ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(commentsState.orderedComments) { comment in
-              DiffCommentRow(
-                comment: comment,
-                onSave: { newText in
-                  commentsState.updateComment(id: comment.id, newText: newText)
-                },
-                onDelete: {
-                  commentsState.removeComment(id: comment.id)
-                }
-              )
-              Divider()
-            }
+  private var expandedContent: some View {
+    VStack(spacing: 0) {
+      ScrollView {
+        LazyVStack(spacing: 0) {
+          ForEach(commentsState.orderedComments) { comment in
+            DiffCommentRow(
+              comment: comment,
+              onSave: { newText in
+                commentsState.updateComment(id: comment.id, newText: newText)
+              },
+              onDelete: {
+                commentsState.removeComment(id: comment.id)
+              }
+            )
+            Divider()
           }
         }
-        .frame(maxHeight: 150)
+      }
+      .frame(maxHeight: 150)
 
-        toolbarView
-          .transition(.move(edge: .bottom).combined(with: .opacity))
-      }
-    }
-    .background(Color.surfaceElevated)
-    .overlay(
-      Rectangle()
-        .frame(height: 1)
-        .foregroundColor(Color(NSColor.separatorColor)),
-      alignment: .top
-    )
-    .animation(.easeInOut(duration: 0.2), value: isExpanded)
-    .confirmationDialog(
-      "Clear All Comments",
-      isPresented: $showClearConfirmation,
-      titleVisibility: .visible
-    ) {
-      Button("Clear All", role: .destructive) {
-        commentsState.clearAll()
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: {
-      Text("This will remove all \(commentsState.commentCount) pending comments. This action cannot be undone.")
+      toolbarView
     }
   }
 
@@ -97,7 +116,7 @@ struct DiffCommentsPanelView: View {
         isExpanded.toggle()
       } label: {
         HStack(spacing: 8) {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+          Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
             .font(.caption2.weight(.semibold))
             .foregroundColor(.secondary)
             .frame(width: 10)
