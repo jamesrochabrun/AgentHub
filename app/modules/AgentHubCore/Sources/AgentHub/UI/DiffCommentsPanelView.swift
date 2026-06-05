@@ -7,8 +7,16 @@
 
 import SwiftUI
 
-/// A collapsible bottom toolbar showing the pending review comment count.
-/// Starts collapsed as a header; tapping expands to reveal clear and send actions.
+/// A floating, collapsible card that surfaces pending review comments over the diff.
+///
+/// It is a single morphing card: a persistent header bar (count + quick "Send"
+/// + a rotating chevron) that grows downward to reveal the comment list and a
+/// clear-all footer. Expansion animates the card's *height* (content is revealed
+/// by the growing rounded clip) rather than scaling, so text never distorts.
+///
+/// The card *floats* above the diff content (it is never inline), so it neither
+/// pushes the diff down nor collides with the surrounding "Create PR" bar —
+/// callers attach it via `.overlay(alignment: .bottomTrailing)`.
 struct DiffCommentsPanelView: View {
 
   // MARK: - Properties
@@ -20,6 +28,11 @@ struct DiffCommentsPanelView: View {
 
   @State private var isExpanded = false
   @State private var showClearConfirmation = false
+  @State private var isSendHovered = false
+
+  /// Spring used for the expand/collapse height morph and the chevron rotation.
+  private let morph = Animation.spring(response: 0.4, dampingFraction: 0.82)
+  private let cardRadius: CGFloat = 16
 
   init(
     commentsState: DiffCommentsState,
@@ -33,48 +46,38 @@ struct DiffCommentsPanelView: View {
     self.onSendToCloud = onSendToCloud
   }
 
+  // MARK: - Derived
+
+  private var accent: Color { Color.brandPrimary(for: providerKind) }
+  private var count: Int { commentsState.commentCount }
+  private var countText: String { "\(count)" }
+  private var commentsWord: String { count == 1 ? "Comment" : "Comments" }
+
   // MARK: - Body
 
   var body: some View {
     VStack(spacing: 0) {
-      // Collapsed header — always visible
-      headerView
+      headerBar
 
-      // Expanded content — shown on tap
       if isExpanded {
-        Divider()
-
-        // Comment list
-        ScrollView {
-          LazyVStack(spacing: 0) {
-            ForEach(commentsState.orderedComments) { comment in
-              DiffCommentRow(
-                comment: comment,
-                onSave: { newText in
-                  commentsState.updateComment(id: comment.id, newText: newText)
-                },
-                onDelete: {
-                  commentsState.removeComment(id: comment.id)
-                }
-              )
-              Divider()
-            }
-          }
-        }
-        .frame(maxHeight: 150)
-
-        toolbarView
-          .transition(.move(edge: .bottom).combined(with: .opacity))
+        hairline
+        commentList
+        hairline
+        footerBar
       }
     }
-    .background(Color.surfaceElevated)
+    .frame(maxWidth: 460)
+    .background(surfaceFill)
+    // Clip so the revealing list/footer are unmasked by the growing card edge.
+    .clipShape(RoundedRectangle(cornerRadius: cardRadius, style: .continuous))
     .overlay(
-      Rectangle()
-        .frame(height: 1)
-        .foregroundColor(Color(NSColor.separatorColor)),
-      alignment: .top
+      RoundedRectangle(cornerRadius: cardRadius, style: .continuous)
+        .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
     )
-    .animation(.easeInOut(duration: 0.2), value: isExpanded)
+    .shadow(color: Color.black.opacity(0.22), radius: 18, x: 0, y: 8)
+    .animation(morph, value: isExpanded)
+    .padding(.trailing, 16)
+    .padding(.bottom, 14)
     .confirmationDialog(
       "Clear All Comments",
       isPresented: $showClearConfirmation,
@@ -85,112 +88,152 @@ struct DiffCommentsPanelView: View {
       }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("This will remove all \(commentsState.commentCount) pending comments. This action cannot be undone.")
+      Text("This will remove all \(count) pending comments. This action cannot be undone.")
     }
   }
 
   // MARK: - Header
 
-  private var headerView: some View {
-    HStack(spacing: 8) {
+  private var headerBar: some View {
+    HStack(spacing: 10) {
       Button {
-        isExpanded.toggle()
+        toggleExpanded()
       } label: {
         HStack(spacing: 8) {
-          Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-            .font(.caption2.weight(.semibold))
-            .foregroundColor(.secondary)
-            .frame(width: 10)
-
-          Image(systemName: "text.bubble.fill")
-            .font(.caption)
-            .foregroundColor(.secondary)
-
-          Text("\(commentsState.commentCount) Comment\(commentsState.commentCount == 1 ? "" : "s")")
-            .font(.caption.bold())
-            .foregroundColor(.primary)
-
-          Spacer(minLength: 0)
+          countBadge
+          Text("\(countText) \(commentsWord)")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.primary)
+          Spacer(minLength: 8)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
+      .help(isExpanded ? "Collapse comments" : "Show comments")
 
-      // Only shown while collapsed — when expanded, the bottom toolbar
-      // already exposes the same action.
-      if !isExpanded {
-        headerSendButton
+      sendButton
+
+      Button {
+        toggleExpanded()
+      } label: {
+        Image(systemName: "chevron.down")
+          .font(.system(size: 11, weight: .bold))
+          .foregroundStyle(.secondary)
+          // Points up when collapsed (expand upward), down when expanded.
+          .rotationEffect(.degrees(isExpanded ? 0 : 180))
+          .frame(width: 24, height: 24)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help(isExpanded ? "Collapse" : "Expand")
+    }
+    .padding(.leading, 14)
+    .padding(.trailing, 10)
+    .padding(.vertical, 9)
+  }
+
+  // MARK: - List
+
+  private var commentList: some View {
+    ScrollView {
+      LazyVStack(spacing: 0) {
+        ForEach(commentsState.orderedComments) { comment in
+          DiffCommentRow(
+            comment: comment,
+            providerKind: providerKind,
+            onSave: { newText in
+              commentsState.updateComment(id: comment.id, newText: newText)
+            },
+            onDelete: {
+              withAnimation(.easeInOut(duration: 0.2)) {
+                commentsState.removeComment(id: comment.id)
+              }
+            }
+          )
+
+          if comment.id != commentsState.orderedComments.last?.id {
+            hairline
+              .padding(.leading, 14)
+          }
+        }
       }
     }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+    .frame(maxHeight: 300)
   }
 
-  @ViewBuilder
-  private var headerSendButton: some View {
-    let button = Button(action: onSendToCloud) {
-      sendButtonLabel
-        .foregroundColor(.primary)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(
-          RoundedRectangle(cornerRadius: 6)
-            .stroke(Color.primary.opacity(0.3), lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .help("Send all comments to \(providerKind.rawValue) (⌘ ↵)")
+  // MARK: - Footer
 
-    if isSendShortcutEnabled {
-      button.keyboardShortcut(.return, modifiers: .command)
-    } else {
-      button
-    }
-  }
-
-  // MARK: - Toolbar
-
-  private var toolbarView: some View {
-    HStack(spacing: 12) {
-      Spacer()
-
-      // Clear all button
+  private var footerBar: some View {
+    HStack(spacing: 10) {
       Button {
         showClearConfirmation = true
       } label: {
-        HStack(spacing: 4) {
+        HStack(spacing: 5) {
           Image(systemName: "trash")
-            .font(.caption)
-          Text("Clear")
-            .font(.caption)
+            .font(.system(size: 11))
+          Text("Clear all")
+            .font(.system(size: 12, weight: .medium))
         }
-        .foregroundColor(.secondary)
+        .foregroundStyle(.secondary)
+        .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .help("Clear all comments")
 
-      sendToolbarButton
+      Spacer(minLength: 0)
+
+      Text("Click a line in the diff to add another")
+        .font(.system(size: 11))
+        .foregroundStyle(.tertiary)
+        .lineLimit(1)
+        .truncationMode(.tail)
     }
-    .padding(.horizontal, 12)
-    .padding(.bottom, 8)
+    .padding(.horizontal, 14)
+    .padding(.vertical, 10)
+  }
+
+  // MARK: - Shared Pieces
+
+  private var countBadge: some View {
+    Text(countText)
+      .font(.system(size: 11, weight: .bold, design: .rounded))
+      .foregroundStyle(.white)
+      .frame(minWidth: 18)
+      .padding(.horizontal, 5)
+      .padding(.vertical, 2)
+      .background(
+        Capsule(style: .continuous)
+          .fill(accent)
+      )
   }
 
   @ViewBuilder
-  private var sendToolbarButton: some View {
+  private var sendButton: some View {
     let button = Button(action: onSendToCloud) {
-      sendButtonLabel
-        .foregroundColor(.primary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-          RoundedRectangle(cornerRadius: 6)
-            .stroke(Color.primary.opacity(0.3), lineWidth: 1)
-        )
+      HStack(spacing: 6) {
+        Image(systemName: "paperplane.fill")
+          .font(.system(size: 11, weight: .semibold))
+
+        Text("Send \(countText) to \(providerKind.rawValue)")
+          .font(.system(size: 12, weight: .semibold))
+
+        Text("⌘↵")
+          .font(.system(size: 10, weight: .semibold, design: .monospaced))
+          .opacity(0.8)
+      }
+      .foregroundStyle(.white)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 6)
+      .background(
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+          .fill(accent)
+          .brightness(isSendHovered ? 0.06 : 0)
+      )
+      .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
     .buttonStyle(.plain)
-    .help("Send all comments to \(providerKind.rawValue) (⌘ ↵)")
+    .onHover { isSendHovered = $0 }
+    .help("Send all comments to \(providerKind.rawValue) (⌘↵)")
 
     if isSendShortcutEnabled {
       button.keyboardShortcut(.return, modifiers: .command)
@@ -199,17 +242,28 @@ struct DiffCommentsPanelView: View {
     }
   }
 
-  private var sendButtonLabel: some View {
-    HStack(spacing: 4) {
-      Image(systemName: "paperplane")
-        .font(.caption)
+  private var hairline: some View {
+    Rectangle()
+      .fill(Color.primary.opacity(0.08))
+      .frame(height: 1)
+  }
 
-      Text("Send \(commentsState.commentCount) to \(providerKind.rawValue)")
-        .font(.caption.bold())
+  private var surfaceFill: some View {
+    ZStack {
+      Color.surfaceElevated
+      LinearGradient(
+        colors: [Color.white.opacity(0.05), Color.clear],
+        startPoint: .top,
+        endPoint: .bottom
+      )
+    }
+  }
 
-      Text("⌘ ↵")
-        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-        .foregroundColor(.secondary)
+  // MARK: - Actions
+
+  private func toggleExpanded() {
+    withAnimation(morph) {
+      isExpanded.toggle()
     }
   }
 }
@@ -221,8 +275,12 @@ struct DiffCommentsPanelView: View {
     @State var commentsState = DiffCommentsState()
 
     var body: some View {
-      VStack {
-        Spacer()
+      ZStack(alignment: .bottomTrailing) {
+        LinearGradient(
+          colors: [Color.gray.opacity(0.3), Color.black.opacity(0.5)],
+          startPoint: .topLeading,
+          endPoint: .bottomTrailing
+        )
 
         DiffCommentsPanelView(
           commentsState: commentsState,
@@ -230,7 +288,7 @@ struct DiffCommentsPanelView: View {
           onSendToCloud: {}
         )
       }
-      .frame(width: 800, height: 400)
+      .frame(width: 800, height: 460)
       .onAppear {
         commentsState.addComment(
           filePath: "/path/to/Example.swift",
