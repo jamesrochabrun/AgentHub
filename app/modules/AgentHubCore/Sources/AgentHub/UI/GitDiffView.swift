@@ -104,21 +104,21 @@ public struct GitDiffView: View {
       } else if diffState.files.isEmpty {
         emptyState
       } else {
-        VStack(spacing: 0) {
-          HStack(spacing: 0) {
-            if showSidebar {
-              // File list sidebar
-              fileListSidebar
-                .frame(width: computedSidebarWidth)
-              Divider()
-            }
-
-            // Diff viewer
-            diffViewer
+        HStack(spacing: 0) {
+          if showSidebar {
+            // File list sidebar
+            fileListSidebar
+              .frame(width: computedSidebarWidth)
+            Divider()
           }
-          .animation(.easeInOut(duration: 0.25), value: showSidebar)
 
-          // Comments panel (shown when there are comments)
+          // Diff viewer
+          diffViewer
+        }
+        .animation(.easeInOut(duration: 0.25), value: showSidebar)
+        // Comments tray floats above the diff so it never pushes the diff down
+        // or collides with the "Create PR" bar that sits below this view.
+        .overlay(alignment: .bottomTrailing) {
           if commentsState.hasComments {
             DiffCommentsPanelView(
               commentsState: commentsState,
@@ -126,8 +126,10 @@ public struct GitDiffView: View {
               isSendShortcutEnabled: !inlineEditorState.isShowing,
               onSendToCloud: sendAllCommentsToCloud
             )
+            .transition(.move(edge: .bottom).combined(with: .opacity))
           }
         }
+        .animation(.spring(response: 0.34, dampingFraction: 0.85), value: commentsState.hasComments)
       }
     }
     .frame(

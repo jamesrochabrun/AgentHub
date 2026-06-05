@@ -238,16 +238,16 @@ public struct PlanView: View {
 
   private func reviewContent(_ text: String) -> some View {
     let lines = text.components(separatedBy: "\n")
-    return VStack(spacing: 0) {
-      ScrollView {
-        LazyVStack(alignment: .leading, spacing: 0) {
-          ForEach(Array(lines.enumerated()), id: \.offset) { idx, line in
-            planLineRow(index: idx, line: line, planFilePath: planState.filePath)
-          }
+    return ScrollView {
+      LazyVStack(alignment: .leading, spacing: 0) {
+        ForEach(Array(lines.enumerated()), id: \.offset) { idx, line in
+          planLineRow(index: idx, line: line, planFilePath: planState.filePath)
         }
-        .padding(DesignTokens.Spacing.md)
       }
-
+      .padding(DesignTokens.Spacing.md)
+    }
+    // Comments tray floats above the review so it never pushes content down.
+    .overlay(alignment: .bottomTrailing) {
       if commentsState.hasComments {
         DiffCommentsPanelView(
           commentsState: commentsState,
@@ -255,8 +255,10 @@ public struct PlanView: View {
           isSendShortcutEnabled: activeLineIndex == nil,
           onSendToCloud: sendFeedbackToTerminal
         )
+        .transition(.move(edge: .bottom).combined(with: .opacity))
       }
     }
+    .animation(.spring(response: 0.34, dampingFraction: 0.85), value: commentsState.hasComments)
   }
 
   // MARK: - Plan Line Row
