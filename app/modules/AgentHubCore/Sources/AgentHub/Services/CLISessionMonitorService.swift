@@ -305,6 +305,60 @@ public actor CLISessionMonitorService {
     return sessions.sorted { $0.lastActivityAt > $1.lastActivityAt }
   }
 
+  public func loadLatestSessions(
+    inWorktreePath worktreePath: String,
+    excludingSessionIds: Set<String>,
+    limit: Int
+  ) async -> WorktreeSessionImportPage {
+    guard limit > 0 else {
+      return WorktreeSessionImportPage(sessions: [], hasMore: false)
+    }
+
+    let claudeDataPath = claudeDataPath
+    let normalizedWorktreePath = WorktreeModuleResolver.normalizedDirectoryPath(worktreePath)
+    let excludedIds = excludingSessionIds
+    let summaries = await Task.detached(priority: .userInitiated) {
+      CLISessionMonitorService.latestHistorySummaries(
+        claudeDataPath: claudeDataPath,
+        worktreePath: normalizedWorktreePath,
+        excludingSessionIds: excludedIds
+      )
+    }.value
+
+    let pageSummaries = Array(summaries.prefix(limit))
+    let summaryBySessionId = Dictionary(uniqueKeysWithValues: pageSummaries)
+    let metadata = await readSessionMetadataBatch(sessionSummaries: summaryBySessionId)
+
+    let sessions = pageSummaries.map { element in
+      let sessionId = element.0
+      let summary = element.1
+      let sessionMetadata = metadata[sessionId]
+      let encodedPath = summary.project.claudeProjectPathEncoded
+      let sessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
+      let fileModifiedAt = fileModificationDate(sessionFilePath)
+      let worktree = worktreeInfo(containing: summary.project)
+
+      return CLISession(
+        id: sessionId,
+        projectPath: summary.project,
+        branchName: sessionMetadata?.branch ?? worktree.branchName,
+        isWorktree: worktree.isWorktree,
+        lastActivityAt: [summary.lastActivityDate, fileModifiedAt].compactMap { $0 }.max() ?? summary.lastActivityDate,
+        messageCount: summary.messageCount,
+        isActive: fileModifiedAt.map { Date().timeIntervalSince($0) < 60 } ?? false,
+        firstMessage: summary.firstDisplay,
+        lastMessage: summary.lastDisplay,
+        slug: sessionMetadata?.slug,
+        sessionFilePath: sessionFilePath
+      )
+    }
+
+    return WorktreeSessionImportPage(
+      sessions: sessions,
+      hasMore: summaries.count > limit
+    )
+  }
+
   // MARK: - Session Scanning
 
   /// Refreshes sessions for all selected repositories
@@ -1029,6 +1083,45 @@ public actor CLISessionMonitorService {
     monitoredPaths.contains { path in
       project == path || project.hasPrefix(path + "/")
     }
+  }
+
+  static func latestHistorySummaries(
+    claudeDataPath: String,
+    worktreePath: String,
+    excludingSessionIds: Set<String>
+  ) -> [(String, HistorySessionSummary)] {
+    let historyPath = claudeDataPath + "/history.jsonl"
+    guard let data = FileManager.default.contents(atPath: historyPath),
+          let content = String(data: data, encoding: .utf8) else {
+      return []
+    }
+
+    let normalizedWorktreePath = WorktreeModuleResolver.normalizedDirectoryPath(worktreePath)
+    let decoder = JSONDecoder()
+    var summaries: [String: HistorySessionSummary] = [:]
+
+    for line in content.components(separatedBy: .newlines) where !line.isEmpty {
+      guard let jsonData = line.data(using: .utf8),
+            let entry = try? decoder.decode(HistoryEntry.self, from: jsonData),
+            !excludingSessionIds.contains(entry.sessionId) else {
+        continue
+      }
+
+      let projectPath = WorktreeModuleResolver.normalizedDirectoryPath(entry.project)
+      guard projectPath == normalizedWorktreePath || projectPath.hasPrefix(normalizedWorktreePath + "/") else {
+        continue
+      }
+
+      mergeHistoryEntry(entry, into: &summaries)
+    }
+
+    return summaries
+      .sorted {
+        if $0.value.lastTimestamp == $1.value.lastTimestamp {
+          return $0.key < $1.key
+        }
+        return $0.value.lastTimestamp > $1.value.lastTimestamp
+      }
   }
 
   static func mergeHistoryEntry(_ entry: HistoryEntry, into summaries: inout [String: HistorySessionSummary]) {
