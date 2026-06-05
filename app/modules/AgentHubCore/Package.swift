@@ -38,7 +38,7 @@ let package = Package(
     .package(path: "../AgentHubGitHub"),
     .package(path: "../Storybook"),
     .package(url: "https://github.com/jamesrochabrun/Canvas", exact: "1.2.1"),
-    .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.2.0"),
+    .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.2.2"),
     .package(url: "https://github.com/jamesrochabrun/SwiftTerm", exact: "1.13.0-agenthub.6"),
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
     .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),
