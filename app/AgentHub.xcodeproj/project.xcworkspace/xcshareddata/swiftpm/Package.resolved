@@ -105,8 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/PierreDiffsSwift",
       "state" : {
-        "revision" : "71dfed9b1fca94b62229dc65f11122473f22ee89",
-        "version" : "1.2.0"
+        "revision" : "7720cc32659559b4a3b830ec9d3ef27258fee2c3",
+        "version" : "1.2.2"
       }
     },
     {
