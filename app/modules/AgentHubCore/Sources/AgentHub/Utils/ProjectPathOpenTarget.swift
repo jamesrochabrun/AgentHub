@@ -31,18 +31,6 @@ enum ProjectPathOpenTarget: String, CaseIterable, Identifiable {
     }
   }
 
-  var systemImage: String {
-    switch self {
-    case .finder: return "face.smiling"
-    case .cursor: return "cursorarrow"
-    case .visualStudioCode: return "chevron.left.forwardslash.chevron.right"
-    case .sublimeText: return "textformat"
-    case .xcode: return "hammer"
-    case .ghostty: return "terminal.fill"
-    case .terminal: return "terminal"
-    }
-  }
-
   var bundleIdentifier: String {
     bundleIdentifiers[0]
   }

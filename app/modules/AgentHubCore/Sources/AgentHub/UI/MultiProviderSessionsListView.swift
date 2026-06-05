@@ -2069,9 +2069,9 @@ private struct PendingModuleRow: View {
 
 private struct RepositoryModuleSectionDivider: View {
   var body: some View {
-    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+    RoundedRectangle(cornerRadius: 0.5, style: .continuous)
       .fill(Color.borderSubtle.opacity(0.9))
-      .frame(height: 3)
+      .frame(height: 1)
       .padding(.vertical, 8)
   }
 }

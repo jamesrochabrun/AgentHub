@@ -1015,7 +1015,7 @@ private struct MonitoringCardPathRow: View {
           Button {
             target.open(path: session.projectPath)
           } label: {
-            Label(target.label, systemImage: target.systemImage)
+            Text(target.label)
           }
           .disabled(!target.isInstalled)
         }
