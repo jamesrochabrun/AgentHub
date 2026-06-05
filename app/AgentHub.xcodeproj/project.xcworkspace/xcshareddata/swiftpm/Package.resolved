@@ -1,5 +1,5 @@
 {
-  "originHash" : "5a43a0a027ff402ac9f13b384378e85dea913837eebe5a20954105491bb2c8cc",
+  "originHash" : "9814d7a4cd33a38053ccfab6bc35edd38884781089729a95f81ce6d70340d440",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -105,8 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/PierreDiffsSwift",
       "state" : {
-        "revision" : "1308e72cb8ea388b122a722dadd7f80fcc96f236",
-        "version" : "1.1.7"
+        "revision" : "71dfed9b1fca94b62229dc65f11122473f22ee89",
+        "version" : "1.2.0"
       }
     },
     {

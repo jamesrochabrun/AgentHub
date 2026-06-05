@@ -930,6 +930,7 @@ private struct GitDiffContentView: View {
               fileName: fileName,
               diffStyle: $diffStyle,
               overflowMode: $overflowMode,
+              renderOptions: .agentHubDiff,
               annotations: commentsState.annotations(for: filePath),
               onLineClickWithPosition: isInlineEditorEnabled ? { position, localPoint in
                 let anchorPoint = CGPoint(x: geometry.size.width / 2, y: localPoint.y)
@@ -1075,16 +1076,9 @@ private struct GitDiffContentView: View {
         .buttonStyle(.plain)
         .help(showSidebar ? "Hide file list" : "Show file list")
 
-        // File name with icon
-        HStack {
-          Image(systemName: "doc.text.fill")
-            .foregroundStyle(.blue)
-          Text(fileName)
-            .font(.headline)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
-        .frame(minWidth: 0, alignment: .leading)
+        // File name + icon intentionally omitted here: PierreDiffView's own
+        // sticky file header (renderOptions.stickyHeader) already shows the
+        // file name, so repeating it in this toolbar is redundant.
 
         if isLimitedContext {
           Label("Limited context", systemImage: "speedometer")
