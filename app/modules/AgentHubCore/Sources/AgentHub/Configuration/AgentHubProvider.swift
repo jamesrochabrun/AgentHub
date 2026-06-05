@@ -246,6 +246,18 @@ public final class AgentHubProvider {
     GitHubPRObservationService(service: gitHubService)
   }()
 
+  // MARK: - Global Session Control Panel
+
+  /// Routes global-panel session selections into the main sessions UI.
+  public private(set) lazy var globalSessionSelectionRouter: GlobalSessionSelectionRouter = {
+    GlobalSessionSelectionRouter()
+  }()
+
+  /// Coordinates the opt-in global hotkey and floating sessions panel.
+  public private(set) lazy var globalSessionControlPanelCoordinator: GlobalSessionControlPanelCoordinator = {
+    GlobalSessionControlPanelCoordinator(provider: self)
+  }()
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes
