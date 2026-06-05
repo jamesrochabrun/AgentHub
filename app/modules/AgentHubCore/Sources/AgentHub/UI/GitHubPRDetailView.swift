@@ -509,7 +509,8 @@ struct GitHubPRDetailView: View {
           newContent: renderedDiff.newContent,
           fileName: (file.filename as NSString).lastPathComponent,
           diffStyle: $diffStyle,
-          overflowMode: $overflowMode
+          overflowMode: $overflowMode,
+          renderOptions: .agentHubDiff
         )
       }
       .background(colorScheme == .dark ? Color(white: 0.06) : Color(white: 0.98))

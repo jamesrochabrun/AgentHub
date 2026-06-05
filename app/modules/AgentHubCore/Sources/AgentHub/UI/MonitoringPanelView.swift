@@ -507,7 +507,8 @@ private struct MonitoringSessionFileSheetView: View {
         newContent: filterJSONLContent(content),
         fileName: fileName,
         diffStyle: $diffStyle,
-        overflowMode: $overflowMode
+        overflowMode: $overflowMode,
+        renderOptions: .agentHubFileViewer
       )
     }
     .frame(minWidth: 900, idealWidth: 1100, maxWidth: .infinity,
