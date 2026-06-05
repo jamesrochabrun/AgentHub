@@ -57,6 +57,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.pushNotificationsEnabled)
   private var pushNotificationsEnabled: Bool = true
 
+  @AppStorage(AgentHubDefaults.globalSessionPanelEnabled)
+  private var globalSessionPanelEnabled: Bool = false
+
   @AppStorage(ClaudeHookInstaller.enabledKey)
   private var claudeApprovalHooksEnabled: Bool = true
 
@@ -203,6 +206,35 @@ public struct SettingsView: View {
           description: "Show a notification banner when tools require approval",
           isOn: $pushNotificationsEnabled
         )
+      }
+
+      Section("Global session control panel") {
+        settingsToggle(
+          title: "Enable global shortcut",
+          description: "Open a floating panel of monitored Claude and Codex sessions from anywhere",
+          isOn: $globalSessionPanelEnabled
+        )
+        .onChange(of: globalSessionPanelEnabled) { _, newValue in
+          agentHub?.globalSessionControlPanelCoordinator.setEnabled(newValue)
+        }
+
+        HStack {
+          Text("Shortcut")
+          Spacer()
+          Text(GlobalHotKey.sessionControlPanelDefault.displayString)
+            .font(.primaryCaption)
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Color.secondary.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        }
+
+        if let error = agentHub?.globalSessionControlPanelCoordinator.registrationErrorMessage {
+          Label(error, systemImage: "exclamationmark.triangle")
+            .font(.caption)
+            .foregroundColor(.orange)
+        }
       }
 
       Section("Claude Code integration") {
