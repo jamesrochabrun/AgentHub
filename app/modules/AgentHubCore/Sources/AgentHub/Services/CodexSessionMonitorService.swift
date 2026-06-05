@@ -224,6 +224,62 @@ public actor CodexSessionMonitorService {
     return sessions.sorted { $0.lastActivityAt > $1.lastActivityAt }
   }
 
+  public func loadLatestSessions(
+    inWorktreePath worktreePath: String,
+    excludingSessionIds: Set<String>,
+    limit: Int
+  ) async -> WorktreeSessionImportPage {
+    guard limit > 0 else {
+      return WorktreeSessionImportPage(sessions: [], hasMore: false)
+    }
+
+    let normalizedWorktreePath = WorktreeModuleResolver.normalizedDirectoryPath(worktreePath)
+    let files = CodexSessionFileScanner.listSessionFiles(codexDataPath: codexDataPath)
+    var sessions: [CLISession] = []
+
+    for path in files {
+      guard let meta = CodexSessionFileScanner.readSessionMeta(from: path),
+            !excludingSessionIds.contains(meta.sessionId) else {
+        continue
+      }
+
+      let projectPath = WorktreeModuleResolver.normalizedDirectoryPath(meta.projectPath)
+      guard projectPath == normalizedWorktreePath || projectPath.hasPrefix(normalizedWorktreePath + "/") else {
+        continue
+      }
+
+      let summary = CodexSessionJSONLParser.parseSessionSummaryFile(at: path)
+      let worktree = worktreeInfo(containing: meta.projectPath)
+      let lastActivity = [summary.lastActivityAt, meta.startedAt, fileModificationDate(path)].compactMap { $0 }.max()
+
+      sessions.append(CLISession(
+        id: meta.sessionId,
+        projectPath: meta.projectPath,
+        branchName: meta.branch ?? worktree.branchName,
+        isWorktree: worktree.isWorktree,
+        lastActivityAt: lastActivity ?? Date(),
+        messageCount: summary.messageCount,
+        isActive: isSessionFileActive(path),
+        firstMessage: summary.firstUserMessage,
+        lastMessage: summary.lastUserMessage,
+        slug: nil,
+        sessionFilePath: path
+      ))
+    }
+
+    sessions.sort {
+      if $0.lastActivityAt == $1.lastActivityAt {
+        return $0.id < $1.id
+      }
+      return $0.lastActivityAt > $1.lastActivityAt
+    }
+
+    return WorktreeSessionImportPage(
+      sessions: Array(sessions.prefix(limit)),
+      hasMore: sessions.count > limit
+    )
+  }
+
   // MARK: - Session Scanning
 
   public func refreshSessions(skipWorktreeRedetection: Bool = false) async {

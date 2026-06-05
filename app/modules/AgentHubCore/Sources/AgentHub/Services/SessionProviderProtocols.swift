@@ -21,6 +21,16 @@ public extension SessionProviderKind {
 
 // MARK: - SessionMonitorServiceProtocol
 
+public struct WorktreeSessionImportPage: Sendable, Equatable {
+  public let sessions: [CLISession]
+  public let hasMore: Bool
+
+  public init(sessions: [CLISession], hasMore: Bool) {
+    self.sessions = sessions
+    self.hasMore = hasMore
+  }
+}
+
 public protocol SessionMonitorServiceProtocol: AnyObject, Sendable {
   var repositoriesPublisher: AnyPublisher<[SelectedRepository], Never> { get }
 
@@ -31,6 +41,11 @@ public protocol SessionMonitorServiceProtocol: AnyObject, Sendable {
   func addRepositories(_ paths: [String]) async
   func restoreRepositoriesSkeleton(_ paths: [String]) async -> [SelectedRepository]
   func loadSessions(ids: Set<String>) async -> [CLISession]
+  func loadLatestSessions(
+    inWorktreePath worktreePath: String,
+    excludingSessionIds: Set<String>,
+    limit: Int
+  ) async -> WorktreeSessionImportPage
   func removeRepository(_ path: String) async
   func setOwnedWorktreePaths(_ paths: Set<String>) async
   func setFocusedSessionIds(_ ids: Set<String>) async
@@ -65,6 +80,32 @@ public extension SessionMonitorServiceProtocol {
       .flatMap { $0.worktrees }
       .flatMap { $0.sessions }
       .filter { ids.contains($0.id) }
+  }
+
+  func loadLatestSessions(
+    inWorktreePath worktreePath: String,
+    excludingSessionIds: Set<String>,
+    limit: Int
+  ) async -> WorktreeSessionImportPage {
+    guard limit > 0 else {
+      return WorktreeSessionImportPage(sessions: [], hasMore: false)
+    }
+
+    let normalizedWorktreePath = WorktreeModuleResolver.normalizedDirectoryPath(worktreePath)
+    let sessions = await getSelectedRepositories()
+      .flatMap(\.worktrees)
+      .flatMap(\.sessions)
+      .filter { session in
+        guard !excludingSessionIds.contains(session.id) else { return false }
+        let projectPath = WorktreeModuleResolver.normalizedDirectoryPath(session.projectPath)
+        return projectPath == normalizedWorktreePath || projectPath.hasPrefix(normalizedWorktreePath + "/")
+      }
+      .sorted { $0.lastActivityAt > $1.lastActivityAt }
+
+    return WorktreeSessionImportPage(
+      sessions: Array(sessions.prefix(limit)),
+      hasMore: sessions.count > limit
+    )
   }
 
   func registerWorktree(_ worktree: WorktreeBranch, parentRepositoryPath: String) async {}

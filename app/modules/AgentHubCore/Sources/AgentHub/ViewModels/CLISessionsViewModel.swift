@@ -2166,11 +2166,28 @@ public final class CLISessionsViewModel {
     path: String,
     parentRepositoryPath: String
   ) async -> WorktreeBranch {
+    return await focusExistingWorktree(
+      WorktreeBranch(
+        name: name,
+        path: path,
+        isWorktree: true,
+        sessions: [],
+        isExpanded: true
+      ),
+      parentRepositoryPath: parentRepositoryPath
+    )
+  }
+
+  @discardableResult
+  public func focusExistingWorktree(
+    _ worktree: WorktreeBranch,
+    parentRepositoryPath: String
+  ) async -> WorktreeBranch {
     let worktree = WorktreeBranch(
-      name: name,
-      path: path,
+      name: worktree.name,
+      path: WorktreeModuleResolver.normalizedDirectoryPath(worktree.path),
       isWorktree: true,
-      sessions: [],
+      sessions: worktree.sessions,
       isExpanded: true
     )
 
@@ -2184,6 +2201,57 @@ public final class CLISessionsViewModel {
     persistSelectedRepositories()
     syncClaudeHookInstalls()
     return worktree
+  }
+
+  public func importMonitoredSessions(_ sessions: [CLISession]) async {
+    let newSessions = sessions.filter { !monitoredSessionIds.contains($0.id) }
+    guard !newSessions.isEmpty else { return }
+
+    var importedWorktreePaths = Set<String>()
+    for session in newSessions {
+      monitoredSessionIds.insert(session.id)
+      monitoredSessionBackup[session.id] = session
+
+      if session.isWorktree {
+        let worktreePath = WorktreeModuleResolver.bestMatch(
+          for: session.projectPath,
+          repositories: selectedRepositories
+        )?.worktree.path ?? session.projectPath
+        importedWorktreePaths.insert(WorktreeModuleResolver.normalizedDirectoryPath(worktreePath))
+      }
+    }
+
+    if !importedWorktreePaths.isEmpty {
+      await setOwnedWorktreePaths(ownedWorktreePaths.union(importedWorktreePaths))
+    }
+    await monitorService.setFocusedSessionIds(monitoredSessionIds)
+    persistMonitoredSessions()
+
+    for session in newSessions {
+      startPolling(session: session)
+    }
+  }
+
+  public func loadLatestSessionsForImport(
+    inWorktreePath worktreePath: String,
+    excludingSessionIds: Set<String>,
+    limit: Int
+  ) async -> WorktreeSessionImportPage {
+    await monitorService.loadLatestSessions(
+      inWorktreePath: worktreePath,
+      excludingSessionIds: excludingSessionIds,
+      limit: limit
+    )
+  }
+
+  public func refreshImportedWorktreeSessions() async {
+    await monitorService.refreshSessions(skipWorktreeRedetection: true)
+    let updatedRepositories = await monitorService.getSelectedRepositories()
+    selectedRepositories = mergePreservingExpandedState(
+      current: selectedRepositories,
+      updated: updatedRepositories
+    )
+    persistSelectedRepositories()
   }
 
   /// Finds the parent repository path for a worktree by searching selectedRepositories.

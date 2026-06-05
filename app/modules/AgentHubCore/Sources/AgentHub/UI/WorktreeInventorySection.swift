@@ -9,6 +9,7 @@ struct WorktreeInventorySection: View {
   @State private var isDeleteConfirmationPresented = false
   @State private var deletionFailure: WorktreeInventoryDeletionError?
   @State private var isFailureAlertPresented = false
+  @State private var importCoordinator = WorktreeSessionImportCoordinator()
 
   init(
     claudeViewModel: CLISessionsViewModel,
@@ -41,6 +42,10 @@ struct WorktreeInventorySection: View {
           ForEach(currentSnapshot.modules) { module in
             WorktreeInventoryModuleView(
               module: module,
+              isImporting: { importCoordinator.isImporting($0) },
+              canShowMore: { importCoordinator.canShowMore($0) },
+              onImport: importWorktree,
+              onShowMore: showMoreSessions,
               isDeleting: { inventoryViewModel.deletingWorktreePath == $0.path },
               onDelete: requestDelete
             )
@@ -91,6 +96,28 @@ struct WorktreeInventorySection: View {
   private func requestDelete(_ worktree: WorktreeSettingsWorktree) {
     pendingDeletion = worktree
     isDeleteConfirmationPresented = true
+  }
+
+  private func importWorktree(_ worktree: WorktreeSettingsWorktree) {
+    Task {
+      await importCoordinator.importInitial(
+        worktree,
+        claudeViewModel: claudeViewModel,
+        codexViewModel: codexViewModel
+      )
+      await reloadInventory()
+    }
+  }
+
+  private func showMoreSessions(_ worktree: WorktreeSettingsWorktree) {
+    Task {
+      await importCoordinator.showMore(
+        worktree,
+        claudeViewModel: claudeViewModel,
+        codexViewModel: codexViewModel
+      )
+      await reloadInventory()
+    }
   }
 
   private func delete(_ worktree: WorktreeSettingsWorktree) {
@@ -220,6 +247,10 @@ private struct WorktreeInventorySummaryView: View {
 
 private struct WorktreeInventoryModuleView: View {
   let module: WorktreeSettingsModule
+  let isImporting: (WorktreeSettingsWorktree) -> Bool
+  let canShowMore: (WorktreeSettingsWorktree) -> Bool
+  let onImport: (WorktreeSettingsWorktree) -> Void
+  let onShowMore: (WorktreeSettingsWorktree) -> Void
   let isDeleting: (WorktreeSettingsWorktree) -> Bool
   let onDelete: (WorktreeSettingsWorktree) -> Void
 
@@ -249,10 +280,14 @@ private struct WorktreeInventoryModuleView: View {
           .foregroundStyle(.secondary)
           .padding(.leading, 24)
       } else {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
           ForEach(module.worktrees) { worktree in
             WorktreeInventoryRow(
               worktree: worktree,
+              isImporting: isImporting(worktree),
+              canShowMore: canShowMore(worktree),
+              onImport: { onImport(worktree) },
+              onShowMore: { onShowMore(worktree) },
               isDeleting: isDeleting(worktree),
               onDelete: { onDelete(worktree) }
             )
@@ -265,76 +300,123 @@ private struct WorktreeInventoryModuleView: View {
 
 private struct WorktreeInventoryRow: View {
   let worktree: WorktreeSettingsWorktree
+  let isImporting: Bool
+  let canShowMore: Bool
+  let onImport: () -> Void
+  let onShowMore: () -> Void
   let isDeleting: Bool
   let onDelete: () -> Void
 
   var body: some View {
-    HStack(alignment: .center, spacing: 10) {
-      Image(systemName: "arrow.triangle.branch")
-        .foregroundStyle(.secondary)
-        .frame(width: 18)
+    VStack(alignment: .leading, spacing: 10) {
+      HStack(alignment: .top, spacing: 10) {
+        Image(systemName: "arrow.triangle.branch")
+          .foregroundStyle(.secondary)
+          .frame(width: 18)
+          .padding(.top, 2)
 
-      VStack(alignment: .leading, spacing: 3) {
-        HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
           Text(worktree.branchName)
             .font(.subheadline.weight(.semibold))
             .lineLimit(1)
 
-          WorktreeInventoryBadge(
-            title: worktree.isFocusedInAgentHub ? "Focused in AgentHub" : "External",
-            systemImage: worktree.isFocusedInAgentHub ? "scope" : "externaldrive",
-            isProminent: worktree.isFocusedInAgentHub,
-            helpText: worktree.isFocusedInAgentHub
-              ? "This worktree is focused in AgentHub, so its sessions can appear in the session list and grouping."
-              : "This worktree belongs to a tracked repository, but AgentHub has not focused it for session grouping."
-          )
-
-          if worktree.isFocusedInAgentHub, !worktree.providerLabel.isEmpty {
-            WorktreeInventoryBadge(
-              title: worktree.providerLabel,
-              systemImage: "terminal",
-              isProminent: false,
-              helpText: "Providers with AgentHub session history for this worktree."
-            )
-          }
+          Text(worktree.path)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
         }
 
-        Text(worktree.path)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
+        Spacer(minLength: 12)
+
+        deleteControl
       }
 
-      Spacer(minLength: 8)
+      HStack(spacing: 8) {
+        WorktreeInventoryBadge(
+          title: worktree.isFocusedInAgentHub ? "In AgentHub" : "External",
+          systemImage: worktree.isFocusedInAgentHub ? "scope" : "externaldrive",
+          isProminent: worktree.isFocusedInAgentHub,
+          helpText: worktree.isFocusedInAgentHub
+            ? "This worktree is focused in AgentHub, so its sessions can appear in the session list and grouping."
+            : "This worktree belongs to a tracked repository, but AgentHub has not focused it for session grouping."
+        )
 
-      if worktree.monitoredSessionCount > 0 {
-        Label("\(worktree.monitoredSessionCount)", systemImage: worktree.activeMonitoredSessionCount > 0 ? "circle.fill" : "circle")
-          .font(.caption)
-          .foregroundStyle(worktree.activeMonitoredSessionCount > 0 ? .green : .secondary)
-          .help("\(worktree.monitoredSessionCount) monitored \(worktree.monitoredSessionCount == 1 ? "session" : "sessions")")
-      }
+        if worktree.isFocusedInAgentHub, !worktree.providerLabel.isEmpty {
+          WorktreeInventoryBadge(
+            title: worktree.providerLabel,
+            systemImage: "terminal",
+            isProminent: false,
+            helpText: "Providers with AgentHub session history for this worktree."
+          )
+        }
 
-      if isDeleting {
-        ProgressView()
-          .scaleEffect(0.7)
-          .frame(width: 28, height: 28)
-      } else {
-        Button("Delete worktree \(worktree.branchName)", systemImage: "trash", action: onDelete)
-          .labelStyle(.iconOnly)
-          .font(.system(size: 13))
-          .frame(width: 28, height: 28)
-          .contentShape(Rectangle())
-          .buttonStyle(.plain)
-          .foregroundStyle(.secondary)
-          .help("Delete worktree")
+        Spacer(minLength: 12)
+
+        sessionImportControl
       }
     }
-    .padding(8)
+    .padding(12)
     .background(
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .fill(Color.primary.opacity(0.04))
     )
+  }
+
+  @ViewBuilder
+  private var sessionImportControl: some View {
+    if worktree.isFocusedInAgentHub {
+      HStack(spacing: 10) {
+        Label(displayedSessionLabel, systemImage: worktree.activeMonitoredSessionCount > 0 ? "circle.fill" : "circle")
+          .font(.caption)
+          .foregroundStyle(worktree.activeMonitoredSessionCount > 0 ? .green : .secondary)
+          .help("\(worktree.monitoredSessionCount) displayed \(worktree.monitoredSessionCount == 1 ? "session" : "sessions")")
+
+        if isImporting {
+          ProgressView()
+            .scaleEffect(0.7)
+            .frame(width: 24, height: 24)
+        } else if canShowMore {
+          Button("Load 3 more", systemImage: "plus.circle", action: onShowMore)
+            .font(.caption)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .help("Load the next 3 sessions")
+        }
+      }
+    } else if isImporting {
+      ProgressView()
+        .scaleEffect(0.7)
+        .frame(width: 28, height: 28)
+    } else {
+      Button("Import", systemImage: "tray.and.arrow.down", action: onImport)
+        .font(.caption)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .help("Import worktree")
+    }
+  }
+
+  @ViewBuilder
+  private var deleteControl: some View {
+    if isDeleting {
+      ProgressView()
+        .scaleEffect(0.7)
+        .frame(width: 28, height: 28)
+    } else {
+      Button("Delete worktree \(worktree.branchName)", systemImage: "trash", action: onDelete)
+        .labelStyle(.iconOnly)
+        .font(.system(size: 13))
+        .frame(width: 28, height: 28)
+        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("Delete worktree")
+    }
+  }
+
+  private var displayedSessionLabel: String {
+    "\(worktree.monitoredSessionCount) \(worktree.monitoredSessionCount == 1 ? "session" : "sessions") displayed"
   }
 }
 
@@ -350,6 +432,8 @@ private struct WorktreeInventoryBadge: View {
     Label(title, systemImage: systemImage)
       .font(.caption)
       .labelStyle(.titleAndIcon)
+      .lineLimit(1)
+      .fixedSize(horizontal: true, vertical: false)
       .foregroundStyle(isProminent ? .primary : .secondary)
       .padding(.horizontal, 6)
       .padding(.vertical, 2)

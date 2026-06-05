@@ -79,6 +79,44 @@ struct CLISessionMonitorServiceHistoryTests {
     #expect(CLISessionMonitorService.matchesMonitoredPath("/repo/subdir", monitoredPaths: ["/repo"]))
     #expect(!CLISessionMonitorService.matchesMonitoredPath("/other", monitoredPaths: ["/repo"]))
   }
+
+  @Test("Loads latest Claude sessions for a worktree import page")
+  func loadsLatestClaudeWorktreeImportPage() async throws {
+    let root = try temporaryDirectory(name: "claude_import")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let parentPath = root.appending(path: "Project").path
+    let worktreePath = root.appending(path: "Project-feature").path
+    try FileManager.default.createDirectory(atPath: worktreePath, withIntermediateDirectories: true)
+
+    let service = CLISessionMonitorService(claudeDataPath: root.path)
+    await service.registerWorktree(
+      WorktreeBranch(name: "feature/import", path: worktreePath, isWorktree: true),
+      parentRepositoryPath: parentPath
+    )
+
+    try writeClaudeHistory(
+      root: root,
+      entries: [
+        ("session-1", worktreePath, 1_000, "oldest"),
+        ("session-2", worktreePath + "/app", 2_000, "nested"),
+        ("session-3", worktreePath, 3_000, "third"),
+        ("session-4", worktreePath, 4_000, "fourth"),
+        ("session-5", worktreePath, 5_000, "excluded"),
+        ("session-out", root.appending(path: "Other").path, 6_000, "outside"),
+      ]
+    )
+
+    let page = await service.loadLatestSessions(
+      inWorktreePath: worktreePath,
+      excludingSessionIds: ["session-5"],
+      limit: 3
+    )
+
+    #expect(page.sessions.map(\.id) == ["session-4", "session-3", "session-2"])
+    #expect(page.sessions.allSatisfy(\.isWorktree))
+    #expect(page.hasMore)
+  }
 }
 
 private func historyEntry(
@@ -92,4 +130,51 @@ private func historyEntry(
   """
   let data = try #require(json.data(using: .utf8))
   return try JSONDecoder().decode(HistoryEntry.self, from: data)
+}
+
+private func writeClaudeHistory(
+  root: URL,
+  entries: [(sessionId: String, project: String, timestamp: Int64, display: String)]
+) throws {
+  let historyLines = entries.map { entry in
+    """
+    {"display":"\(entry.display)","timestamp":\(entry.timestamp),"project":"\(entry.project)","sessionId":"\(entry.sessionId)"}
+    """
+  }
+  try historyLines.joined(separator: "\n").write(
+    to: root.appending(path: "history.jsonl"),
+    atomically: true,
+    encoding: .utf8
+  )
+
+  for entry in entries {
+    let projectDirectory = root
+      .appending(path: "projects")
+      .appending(path: entry.project.claudeProjectPathEncoded)
+    try FileManager.default.createDirectory(at: projectDirectory, withIntermediateDirectories: true)
+    try claudeSessionLine(
+      sessionId: entry.sessionId,
+      cwd: entry.project,
+      message: entry.display
+    )
+    .write(
+      to: projectDirectory.appending(path: "\(entry.sessionId).jsonl"),
+      atomically: true,
+      encoding: .utf8
+    )
+  }
+}
+
+private func claudeSessionLine(sessionId: String, cwd: String, message: String) -> String {
+  """
+  {"sessionId":"\(sessionId)","cwd":"\(cwd)","gitBranch":"feature/import","slug":"\(sessionId)-slug","type":"user","timestamp":"2026-05-05T12:00:00.000Z","message":{"role":"user","content":"\(message)"}}
+
+  """
+}
+
+private func temporaryDirectory(name: String) throws -> URL {
+  let url = FileManager.default.temporaryDirectory
+    .appending(path: "\(name)_\(UUID().uuidString)", directoryHint: .isDirectory)
+  try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+  return url
 }
