@@ -13,15 +13,26 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # Pinned from actions/checkout@v4.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
       - name: Setup Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        # Pinned from maxim-lobanov/setup-xcode@v1.
+        uses: maxim-lobanov/setup-xcode@1242409711ff5721add51979e9e11e23ebb7e5a4
         with:
           xcode-version: latest-stable
 
       - name: Install create-dmg
-        run: brew install create-dmg
+        env:
+          CREATE_DMG_COMMIT: 994a036532d3ac1bb1cd5a425a0d5d796ecbed83
+          CREATE_DMG_SHA256: daf28cd130930cb97c5699f4b04c6814968cff00b181049d13c5f27b64911369
+        run: |
+          curl -fsSL "https://github.com/create-dmg/create-dmg/archive/${CREATE_DMG_COMMIT}.tar.gz" -o "$RUNNER_TEMP/create-dmg.tar.gz"
+          echo "${CREATE_DMG_SHA256}  $RUNNER_TEMP/create-dmg.tar.gz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/create-dmg"
+          tar -xzf "$RUNNER_TEMP/create-dmg.tar.gz" -C "$RUNNER_TEMP/create-dmg" --strip-components=1
+          chmod +x "$RUNNER_TEMP/create-dmg/create-dmg"
+          echo "$RUNNER_TEMP/create-dmg" >> "$GITHUB_PATH"
 
       - name: Import signing certificate
         env:
@@ -150,7 +161,8 @@ jobs:
           cat AgentHub.app.zip.sha256
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        # Pinned from softprops/action-gh-release@v1.
+        uses: softprops/action-gh-release@26994186c0ac3ef5cae75ac16aa32e8153525f77
         with:
           files: |
             build/AgentHub.dmg
