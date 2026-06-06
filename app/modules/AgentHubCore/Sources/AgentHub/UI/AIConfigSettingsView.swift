@@ -21,15 +21,31 @@ public final class AIConfigSettingsViewModel {
   var codexApprovalPolicy: String = ""
   var codexReasoningEffort: String = ""
 
+  /// Dynamically resolved model options surfaced by the pickers.
+  var claudeModels: [AIModelOption] = []
+  var codexModels: [AIModelOption] = []
+
   var codexApprovalPolicyDescription: String {
     Self.codexApprovalPolicyDescription(for: codexApprovalPolicy)
   }
 
   @ObservationIgnored private var aiConfigService: (any AIConfigServiceProtocol)?
+  @ObservationIgnored private let claudeModelCatalog: any ClaudeModelCatalogProviding
+  @ObservationIgnored private let codexModelCatalog: any CodexModelCatalogProviding
   @ObservationIgnored
   private var isLoaded = false
 
-  public init() {}
+  public convenience init() {
+    self.init(claudeModelCatalog: ClaudeModelCatalog(), codexModelCatalog: CodexModelCatalog())
+  }
+
+  init(
+    claudeModelCatalog: any ClaudeModelCatalogProviding,
+    codexModelCatalog: any CodexModelCatalogProviding
+  ) {
+    self.claudeModelCatalog = claudeModelCatalog
+    self.codexModelCatalog = codexModelCatalog
+  }
 
   func load(service: (any AIConfigServiceProtocol)?) async {
     guard !isLoaded, let service else { return }
@@ -72,6 +88,56 @@ public final class AIConfigSettingsViewModel {
     Task { try? await service.saveConfig(record) }
   }
 
+  /// Refreshes the Claude model options (aliases + ids seen in local history).
+  func refreshClaudeModels() async {
+    claudeModels = await claudeModelCatalog.availableModels()
+  }
+
+  /// Refreshes the Codex model options via `codex debug models` / cache.
+  func refreshCodexModels() async {
+    codexModels = await codexModelCatalog.availableModels()
+  }
+
+  // MARK: Codex effort options (model-aware)
+
+  /// Standard fallback when the selected model reports no reasoning levels.
+  static let defaultCodexEfforts: [AIReasoningEffort] = [
+    AIReasoningEffort(effort: "low"),
+    AIReasoningEffort(effort: "medium"),
+    AIReasoningEffort(effort: "high"),
+    AIReasoningEffort(effort: "xhigh"),
+  ]
+
+  private var selectedCodexModel: AIModelOption? {
+    codexModels.first { $0.identifier == codexModel }
+  }
+
+  /// Effort levels offered for the currently selected Codex model. Falls back to
+  /// the standard set when the model is unknown, and always includes any
+  /// already-saved value so the picker can render it.
+  var codexEffortOptions: [AIReasoningEffort] {
+    let modelEfforts = selectedCodexModel?.reasoningEfforts ?? []
+    var efforts = modelEfforts.isEmpty ? Self.defaultCodexEfforts : modelEfforts
+    if !codexReasoningEffort.isEmpty, !efforts.contains(where: { $0.effort == codexReasoningEffort }) {
+      efforts.append(AIReasoningEffort(effort: codexReasoningEffort))
+    }
+    return efforts
+  }
+
+  /// The selected model's default effort, surfaced in the "Default" option.
+  var codexDefaultEffortHint: String? {
+    selectedCodexModel?.defaultReasoningEffort
+  }
+
+  /// Description of the currently selected effort, when the provider supplied one.
+  var codexSelectedEffortDescription: String? {
+    codexEffortOptions.first { $0.effort == codexReasoningEffort }?.description
+  }
+
+  static func codexEffortLabel(_ effort: String) -> String {
+    effort == "xhigh" ? "XHigh" : effort.capitalized
+  }
+
   private static func sanitizedCodexApprovalPolicy(_ value: String) -> String {
     switch value {
     case "untrusted", "on-request", "never", "full-auto":
@@ -104,11 +170,12 @@ struct ClaudeAIConfigView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      settingsTextField(
-        title: "Model",
-        placeholder: "CLI default (e.g. opus, sonnet)",
-        text: $viewModel.claudeModel,
-        onSave: viewModel.saveClaude
+      AIModelPickerRow(
+        selection: $viewModel.claudeModel,
+        options: viewModel.claudeModels,
+        customPlaceholder: "CLI default (e.g. opus, sonnet)",
+        onCommit: viewModel.saveClaude,
+        onRefresh: { Task { await viewModel.refreshClaudeModels() } }
       )
 
       settingsField("Effort") {
@@ -139,6 +206,11 @@ struct ClaudeAIConfigView: View {
     }
     .padding(.vertical, 4)
     .frame(maxWidth: .infinity, alignment: .leading)
+    .task {
+      if viewModel.claudeModels.isEmpty {
+        await viewModel.refreshClaudeModels()
+      }
+    }
   }
 
   private func settingsMultilineEditor(
@@ -164,11 +236,12 @@ struct CodexAIConfigView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      settingsTextField(
-        title: "Model",
-        placeholder: "CLI default (e.g. gpt-5-codex)",
-        text: $viewModel.codexModel,
-        onSave: viewModel.saveCodex
+      AIModelPickerRow(
+        selection: $viewModel.codexModel,
+        options: viewModel.codexModels,
+        customPlaceholder: "CLI default (e.g. gpt-5-codex)",
+        onCommit: viewModel.saveCodex,
+        onRefresh: { Task { await viewModel.refreshCodexModels() } }
       )
 
       settingsField("Approval") {
@@ -192,33 +265,140 @@ struct CodexAIConfigView: View {
 
       settingsField("Effort") {
         Picker("", selection: $viewModel.codexReasoningEffort) {
-          Text("Default").tag("")
-          Text("Low").tag("low")
-          Text("Medium").tag("medium")
-          Text("High").tag("high")
-          Text("XHigh").tag("xhigh")
+          Text(viewModel.codexDefaultEffortHint.map { "Default (\($0))" } ?? "Default").tag("")
+          ForEach(viewModel.codexEffortOptions) { effort in
+            Text(AIConfigSettingsViewModel.codexEffortLabel(effort.effort)).tag(effort.effort)
+          }
         }
         .labelsHidden()
         .onChange(of: viewModel.codexReasoningEffort) { viewModel.saveCodex() }
-        .frame(maxWidth: 180, alignment: .leading)
+        .frame(maxWidth: 220, alignment: .leading)
+
+        if let description = viewModel.codexSelectedEffortDescription {
+          Text(description)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: 420, alignment: .leading)
+        }
       }
     }
     .padding(.vertical, 4)
     .frame(maxWidth: .infinity, alignment: .leading)
+    .task {
+      if viewModel.codexModels.isEmpty {
+        await viewModel.refreshCodexModels()
+      }
+    }
   }
 }
 
-private func settingsTextField(
-  title: String,
-  placeholder: String,
-  text: Binding<String>,
-  onSave: @escaping () -> Void
-) -> some View {
-  settingsField(title) {
-    TextField(placeholder, text: text)
-      .textFieldStyle(.roundedBorder)
-      .onSubmit { onSave() }
-      .onChange(of: text.wrappedValue) { onSave() }
+// MARK: - Model Picker Row
+
+/// A dropdown of dynamically discovered models with a free-text escape hatch so
+/// any exact identifier can still be pinned. An empty selection means "CLI
+/// default" (AgentHub omits `--model`).
+private struct AIModelPickerRow: View {
+  @Binding var selection: String
+  let options: [AIModelOption]
+  let customPlaceholder: String
+  let onCommit: () -> Void
+  let onRefresh: () -> Void
+
+  var body: some View {
+    settingsField("Model") {
+      HStack(spacing: 8) {
+        Menu {
+          Button { select("") } label: {
+            menuLabel(name: "Default", isSelected: selection.isEmpty)
+          }
+          if !options.isEmpty {
+            Divider()
+            ForEach(options) { option in
+              Button { select(option.identifier) } label: {
+                menuLabel(name: option.displayName, isSelected: option.identifier == selection)
+              }
+            }
+          }
+        } label: {
+          menuButtonLabel
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(maxWidth: 280, alignment: .leading)
+
+        Button(action: onRefresh) {
+          Image(systemName: "arrow.clockwise")
+            .frame(width: 14, height: 14)
+        }
+        .buttonStyle(.bordered)
+        .help("Refresh available models")
+      }
+
+      // `.labelsHidden()` keeps the grouped Form from promoting the placeholder
+      // into a wrapping leading label (which pushed the field off to the right).
+      TextField(customPlaceholder, text: $selection)
+        .textFieldStyle(.roundedBorder)
+        .labelsHidden()
+        .onSubmit { onCommit() }
+        .onChange(of: selection) { onCommit() }
+        .frame(maxWidth: 320, alignment: .leading)
+
+      Text(footnote)
+        .font(.caption2)
+        .foregroundColor(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: 420, alignment: .leading)
+    }
+  }
+
+  private func select(_ identifier: String) {
+    guard identifier != selection else { return }
+    selection = identifier
+  }
+
+  private var selectedOption: AIModelOption? {
+    options.first { $0.identifier == selection }
+  }
+
+  private var footnote: String {
+    if let detail = selectedOption?.detail, !detail.isEmpty {
+      return detail
+    }
+    return "Pick a detected model, or type any exact identifier."
+  }
+
+  private var menuButtonLabel: some View {
+    HStack(spacing: 6) {
+      Text(selection.isEmpty ? "Default" : (selectedOption?.displayName ?? selection))
+        .lineLimit(1)
+        .truncationMode(.middle)
+      Spacer(minLength: 4)
+      Image(systemName: "chevron.up.chevron.down")
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 6)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(
+      RoundedRectangle(cornerRadius: 6)
+        .fill(Color(NSColor.controlBackgroundColor))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 6)
+        .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+    )
+    .contentShape(Rectangle())
+  }
+
+  @ViewBuilder
+  private func menuLabel(name: String, isSelected: Bool) -> some View {
+    if isSelected {
+      Label(name, systemImage: "checkmark")
+    } else {
+      Text(name)
+    }
   }
 }
 

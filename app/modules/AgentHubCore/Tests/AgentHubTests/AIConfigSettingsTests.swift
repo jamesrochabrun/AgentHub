@@ -542,6 +542,77 @@ struct AIConfigSettingsViewModelTests {
     viewModel.codexApprovalPolicy = "suggest"
     #expect(viewModel.codexApprovalPolicyDescription.contains("CLI defaults"))
   }
+
+  @Test("Refreshing models populates the picker options from the catalogs")
+  @MainActor
+  func refreshModelsPopulatesOptions() async {
+    let viewModel = AIConfigSettingsViewModel(
+      claudeModelCatalog: StubClaudeCatalog(options: [
+        AIModelOption(identifier: "opus", displayName: "Opus"),
+        AIModelOption(identifier: "claude-opus-4-8", displayName: "claude-opus-4-8"),
+      ]),
+      codexModelCatalog: StubCodexCatalog(options: [
+        AIModelOption(identifier: "gpt-5.5", displayName: "GPT-5.5"),
+      ])
+    )
+
+    await viewModel.refreshClaudeModels()
+    await viewModel.refreshCodexModels()
+
+    #expect(viewModel.claudeModels.map(\.identifier) == ["opus", "claude-opus-4-8"])
+    #expect(viewModel.codexModels.map(\.identifier) == ["gpt-5.5"])
+  }
+
+  @Test("Codex effort options follow the selected model's reasoning levels")
+  @MainActor
+  func codexEffortOptionsFollowSelectedModel() async {
+    let viewModel = AIConfigSettingsViewModel(
+      claudeModelCatalog: StubClaudeCatalog(options: []),
+      codexModelCatalog: StubCodexCatalog(options: [
+        AIModelOption(
+          identifier: "gpt-5.3-codex-spark",
+          displayName: "GPT-5.3-Codex-Spark",
+          reasoningEfforts: [
+            AIReasoningEffort(effort: "low", description: "Fast"),
+            AIReasoningEffort(effort: "high", description: "Deep"),
+          ],
+          defaultReasoningEffort: "high"
+        )
+      ])
+    )
+
+    await viewModel.refreshCodexModels()
+    viewModel.codexModel = "gpt-5.3-codex-spark"
+
+    #expect(viewModel.codexEffortOptions.map(\.effort) == ["low", "high"])
+    #expect(viewModel.codexDefaultEffortHint == "high")
+
+    viewModel.codexReasoningEffort = "high"
+    #expect(viewModel.codexSelectedEffortDescription == "Deep")
+  }
+
+  @Test("Codex effort options fall back to the standard set for unknown models")
+  @MainActor
+  func codexEffortOptionsFallBack() {
+    let viewModel = AIConfigSettingsViewModel(
+      claudeModelCatalog: StubClaudeCatalog(options: []),
+      codexModelCatalog: StubCodexCatalog(options: [])
+    )
+
+    #expect(viewModel.codexEffortOptions.map(\.effort) == ["low", "medium", "high", "xhigh"])
+    #expect(viewModel.codexDefaultEffortHint == nil)
+  }
+}
+
+private struct StubClaudeCatalog: ClaudeModelCatalogProviding {
+  let options: [AIModelOption]
+  func availableModels() async -> [AIModelOption] { options }
+}
+
+private struct StubCodexCatalog: CodexModelCatalogProviding {
+  let options: [AIModelOption]
+  func availableModels() async -> [AIModelOption] { options }
+  func defaultModelIdentifier() async -> String { options.first?.identifier ?? "" }
 }
 
 private actor MockAIConfigService: AIConfigServiceProtocol {
