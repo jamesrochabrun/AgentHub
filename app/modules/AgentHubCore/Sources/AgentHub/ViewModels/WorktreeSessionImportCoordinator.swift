@@ -26,6 +26,7 @@ final class WorktreeSessionImportCoordinator {
   ) async {
     await importNextPage(
       worktree,
+      pageSize: 1,
       shouldFocusWorktree: true,
       claudeViewModel: claudeViewModel,
       codexViewModel: codexViewModel
@@ -39,6 +40,7 @@ final class WorktreeSessionImportCoordinator {
   ) async {
     await importNextPage(
       worktree,
+      pageSize: pageSize,
       shouldFocusWorktree: true,
       claudeViewModel: claudeViewModel,
       codexViewModel: codexViewModel
@@ -47,6 +49,7 @@ final class WorktreeSessionImportCoordinator {
 
   private func importNextPage(
     _ worktree: WorktreeSettingsWorktree,
+    pageSize: Int,
     shouldFocusWorktree: Bool,
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel
