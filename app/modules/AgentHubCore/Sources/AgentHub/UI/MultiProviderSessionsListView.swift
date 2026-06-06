@@ -1016,18 +1016,6 @@ public struct MultiProviderSessionsListView: View {
     }
   }
 
-  private func focusedSessionCount(inWorktreePath worktreePath: String) -> Int {
-    selectedSessionItems.filter { item in
-      !item.isPending && isProjectPath(item.session.projectPath, containedIn: worktreePath)
-    }.count
-  }
-
-  private func isProjectPath(_ path: String, containedIn root: String) -> Bool {
-    let path = WorktreeModuleResolver.normalizedDirectoryPath(path)
-    let root = WorktreeModuleResolver.normalizedDirectoryPath(root)
-    return path == root || path.hasPrefix(root + "/")
-  }
-
   private func removeWorktreeModuleFocus(_ worktree: WorktreeBranch) {
     let path = WorktreeModuleResolver.normalizedDirectoryPath(worktree.path)
     if selectedModuleLandingPath == path {
@@ -1129,9 +1117,9 @@ public struct MultiProviderSessionsListView: View {
             ForEach(section.groups) { group in
               let isExpanded = !collapsedProjectGroups.contains(group.id)
               let worktreeModule = worktreeModule(for: group.id)
-              let worktreeSessionCount = worktreeModule.map {
-                focusedSessionCount(inWorktreePath: $0.path)
-              } ?? 0
+              let worktreeSessionCount = worktreeModule == nil
+                ? 0
+                : group.items.filter { !$0.isPending }.count
 
               ProjectGroupHeader(
                 name: group.displayName,

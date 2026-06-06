@@ -116,12 +116,20 @@ enum WorktreeSettingsInventoryBuilder {
         from: discoveredWorktree,
         fallbackPath: worktreePath
       )
-      let monitoredSessions = providerMatches.flatMap { providerKind, _ in
+      let monitoredSessions = providerMatches.flatMap { providerKind, providerWorktree in
         switch providerKind {
         case .claude:
-          return sessions(in: worktreePath, from: claudeMonitoredSessions)
+          return sessions(
+            in: worktreePath,
+            from: claudeMonitoredSessions,
+            attachedTo: providerWorktree
+          )
         case .codex:
-          return sessions(in: worktreePath, from: codexMonitoredSessions)
+          return sessions(
+            in: worktreePath,
+            from: codexMonitoredSessions,
+            attachedTo: providerWorktree
+          )
         }
       }
       let historicalSessionCount = Set(providerMatches.flatMap { $0.1.sessions.map(\.id) }).count
@@ -144,11 +152,20 @@ enum WorktreeSettingsInventoryBuilder {
     }
   }
 
-  private static func sessions(in worktreePath: String, from sessions: [CLISession]) -> [CLISession] {
-    sessions.filter { session in
+  private static func sessions(
+    in worktreePath: String,
+    from sessions: [CLISession],
+    attachedTo worktree: WorktreeBranch?
+  ) -> [CLISession] {
+    let pathMatchedSessions = sessions.filter { session in
       let projectPath = normalized(session.projectPath)
       return projectPath == worktreePath || projectPath.hasPrefix(worktreePath + "/")
     }
+    guard let worktree else { return [] }
+
+    let attachedSessionIds = Set(worktree.sessions.map(\.id))
+    guard !attachedSessionIds.isEmpty else { return [] }
+    return pathMatchedSessions.filter { attachedSessionIds.contains($0.id) }
   }
 
   private static func appendPath(_ path: String, to paths: inout [String], seen: inout Set<String>) {

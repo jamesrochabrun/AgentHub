@@ -157,6 +157,36 @@ struct WorktreeSettingsInventoryTests {
     #expect(worktree.providerKinds == [.claude])
     #expect(worktree.isFocusedInAgentHub)
   }
+
+  @Test("Snapshot counts only sessions attached to the focused worktree row")
+  func snapshotIgnoresStalePathMatchedBackups() throws {
+    let displayedSession = session("displayed-session", path: "/tmp/AgentHub-feature")
+    let staleSession = session("stale-session", path: "/tmp/AgentHub-feature")
+    let nestedStaleSession = session("nested-stale-session", path: "/tmp/AgentHub-feature/app")
+    let repository = SelectedRepository(
+      path: "/tmp/AgentHub",
+      worktrees: [
+        WorktreeBranch(name: "main", path: "/tmp/AgentHub", isWorktree: false),
+        WorktreeBranch(
+          name: "feature/focused",
+          path: "/tmp/AgentHub-feature",
+          isWorktree: true,
+          sessions: [displayedSession]
+        ),
+      ]
+    )
+
+    let snapshot = WorktreeSettingsInventoryBuilder.snapshot(
+      claudeRepositories: [repository],
+      codexRepositories: [],
+      claudeMonitoredSessions: [displayedSession, staleSession, nestedStaleSession],
+      codexMonitoredSessions: []
+    )
+
+    let worktree = try #require(snapshot.modules.first?.worktrees.first)
+    #expect(worktree.monitoredSessionCount == 1)
+    #expect(worktree.historicalSessionCount == 1)
+  }
 }
 
 @Suite("Worktree settings deletion helpers")
@@ -208,6 +238,42 @@ struct WorktreeSettingsDeletionHelperTests {
     #expect(viewModel.worktreeDeletionError?.worktree.path == worktreePath)
     #expect(viewModel.monitoredSessionIds == Set(["session-1"]))
   }
+
+  @Test("Delete worktree for nested session removes the worktree root")
+  func deleteWorktreeForNestedSessionRemovesWorktreeRoot() async throws {
+    let remover = RecordingWorktreeRemovalService()
+    let repoPath = try temporaryDirectory(name: "delete-nested-repo")
+    let worktreePath = try temporaryDirectory(name: "delete-nested-worktree")
+    let nestedSession = session("nested-session", path: worktreePath + "/app")
+    let rootSession = session("root-session", path: worktreePath)
+    let repository = SelectedRepository(
+      path: repoPath,
+      worktrees: [
+        WorktreeBranch(name: "main", path: repoPath, isWorktree: false),
+        WorktreeBranch(
+          name: "feature",
+          path: worktreePath,
+          isWorktree: true,
+          sessions: [nestedSession, rootSession]
+        ),
+      ]
+    )
+    let monitor = WorktreeDeletionMonitorService(repositories: [repository])
+    let viewModel = makeDeletionViewModel(remover: remover, monitor: monitor)
+    await waitForDeletionViewModel {
+      !viewModel.selectedRepositories.isEmpty
+    }
+    viewModel.startMonitoring(session: nestedSession)
+    viewModel.startMonitoring(session: rootSession)
+
+    let succeeded = await viewModel.deleteWorktreeForSession(nestedSession)
+
+    #expect(succeeded)
+    #expect(viewModel.monitoredSessionIds.isEmpty)
+    #expect(await remover.relativeRemovals() == [
+      WorktreeRelativeRemoval(path: worktreePath, parentRepoPath: repoPath, force: false)
+    ])
+  }
 }
 
 private func session(_ id: String, path: String, isActive: Bool = false) -> CLISession {
@@ -223,10 +289,11 @@ private func session(_ id: String, path: String, isActive: Bool = false) -> CLIS
 
 @MainActor
 private func makeDeletionViewModel(
-  remover: RecordingWorktreeRemovalService = RecordingWorktreeRemovalService()
+  remover: RecordingWorktreeRemovalService = RecordingWorktreeRemovalService(),
+  monitor: WorktreeDeletionMonitorService = WorktreeDeletionMonitorService()
 ) -> CLISessionsViewModel {
   CLISessionsViewModel(
-    monitorService: WorktreeDeletionMonitorService(),
+    monitorService: monitor,
     fileWatcher: WorktreeDeletionFileWatcher(),
     searchService: nil,
     cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
@@ -237,7 +304,13 @@ private func makeDeletionViewModel(
 }
 
 private final class WorktreeDeletionMonitorService: SessionMonitorServiceProtocol, @unchecked Sendable {
-  private let subject = PassthroughSubject<[SelectedRepository], Never>()
+  private let subject: CurrentValueSubject<[SelectedRepository], Never>
+  private var repositories: [SelectedRepository]
+
+  init(repositories: [SelectedRepository] = []) {
+    self.repositories = repositories
+    self.subject = CurrentValueSubject(repositories)
+  }
 
   var repositoriesPublisher: AnyPublisher<[SelectedRepository], Never> {
     subject.eraseToAnyPublisher()
@@ -245,8 +318,13 @@ private final class WorktreeDeletionMonitorService: SessionMonitorServiceProtoco
 
   func addRepository(_ path: String) async -> SelectedRepository? { nil }
   func removeRepository(_ path: String) async {}
-  func getSelectedRepositories() async -> [SelectedRepository] { [] }
-  func setSelectedRepositories(_ repositories: [SelectedRepository]) async {}
+  func getSelectedRepositories() async -> [SelectedRepository] { repositories }
+
+  func setSelectedRepositories(_ repositories: [SelectedRepository]) async {
+    self.repositories = repositories
+    subject.send(repositories)
+  }
+
   func refreshSessions(skipWorktreeRedetection: Bool) async {}
 }
 
@@ -267,6 +345,7 @@ private final class WorktreeDeletionFileWatcher: SessionFileWatcherProtocol, @un
 private actor RecordingWorktreeRemovalService: GitWorktreeRemovalServiceProtocol {
   private let error: Error?
   private var paths: [String] = []
+  private var relativeRemovalRecords: [WorktreeRelativeRemoval] = []
 
   init(error: Error? = nil) {
     self.error = error
@@ -280,6 +359,11 @@ private actor RecordingWorktreeRemovalService: GitWorktreeRemovalServiceProtocol
   func removeWorktree(at worktreePath: String, relativeTo parentRepoPath: String, force: Bool) async throws {
     if let error { throw error }
     paths.append(worktreePath)
+    relativeRemovalRecords.append(WorktreeRelativeRemoval(
+      path: worktreePath,
+      parentRepoPath: parentRepoPath,
+      force: force
+    ))
   }
 
   nonisolated func checkIfOrphaned(at worktreePath: String) -> (isOrphaned: Bool, parentRepoPath: String?)? {
@@ -294,6 +378,16 @@ private actor RecordingWorktreeRemovalService: GitWorktreeRemovalServiceProtocol
   func removedWorktreePaths() -> [String] {
     paths
   }
+
+  func relativeRemovals() -> [WorktreeRelativeRemoval] {
+    relativeRemovalRecords
+  }
+}
+
+private struct WorktreeRelativeRemoval: Equatable, Sendable {
+  let path: String
+  let parentRepoPath: String
+  let force: Bool
 }
 
 private enum TestDeletionError: Error {
@@ -306,4 +400,14 @@ private func temporaryDirectory(name: String) throws -> String {
     .appendingPathComponent("\(name)-\(UUID().uuidString)")
   try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
   return url.path
+}
+
+@MainActor
+private func waitForDeletionViewModel(
+  condition: @escaping @MainActor () -> Bool
+) async {
+  for _ in 0..<20 {
+    if condition() { return }
+    await Task.yield()
+  }
 }

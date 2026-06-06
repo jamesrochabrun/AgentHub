@@ -347,6 +347,26 @@ struct WorktreeRemovalTests {
     #expect(!listAfter.contains("test-branch"))
   }
 
+  @Test("Force removes dirty worktree from disk")
+  func forceRemovesDirtyWorktreeFromDisk() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let worktreePath = try fixture.addSiblingWorktree(branch: "dirty-branch")
+    try "untracked".write(
+      toFile: (worktreePath as NSString).appendingPathComponent("untracked.txt"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    let service = WorktreeManagementService()
+    try await service.removeWorktree(at: worktreePath, relativeTo: fixture.repoPath, force: true)
+
+    #expect(!FileManager.default.fileExists(atPath: worktreePath))
+    let listAfter = try fixture.runGit("worktree", "list")
+    #expect(!listAfter.contains("dirty-branch"))
+  }
+
   @Test("Cancels in-flight worktree creation and cleans generated artifacts")
   func cancelsWorktreeCreationAndCleansUp() async throws {
     let fixture = try GitRepoFixture.create()

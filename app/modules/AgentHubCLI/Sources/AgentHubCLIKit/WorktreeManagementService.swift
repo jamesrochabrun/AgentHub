@@ -482,9 +482,15 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     force: Bool = false,
     deleteAssociatedBranch: Bool = false
   ) async throws {
+    let mainRepoPath = try await findMainRepositoryRoot(at: parentRepoPath)
     guard FileManager.default.fileExists(atPath: worktreePath) else {
-      try await runGitCommand(["worktree", "prune"], at: parentRepoPath)
+      try await pruneStaleWorktreeMetadata(for: worktreePath, parentRepoPath: mainRepoPath)
       return
+    }
+
+    let registeredInfo = try await registeredWorktree(at: worktreePath, relativeTo: mainRepoPath)
+    if let registeredInfo, !registeredInfo.isWorktree {
+      throw WorktreeManagementError.gitCommandFailed("Refusing to delete the main worktree: \(worktreePath)")
     }
 
     let branchToDelete: String?
@@ -502,10 +508,31 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     // Removing a worktree deletes its files, which can be slow on a large tree —
     // use the longer worktree timeout so a healthy removal isn't cut short, while
     // still bounding a genuine git hang (the old sync path waited forever).
-    try await runGitCommand(args, at: parentRepoPath, timeout: Self.gitWorktreeTimeout)
+    do {
+      try await runGitCommand(args, at: mainRepoPath, timeout: Self.gitWorktreeTimeout)
+    } catch {
+      guard force, registeredInfo?.isWorktree == true else {
+        throw error
+      }
+      try await forceRemoveRegisteredWorktreeDirectory(worktreePath, parentRepoPath: mainRepoPath)
+    }
+
+    if FileManager.default.fileExists(atPath: worktreePath) {
+      guard force, registeredInfo?.isWorktree == true else {
+        throw WorktreeManagementError.gitCommandFailed(
+          "Git reported success but the worktree directory still exists: \(worktreePath)"
+        )
+      }
+      try await forceRemoveRegisteredWorktreeDirectory(worktreePath, parentRepoPath: mainRepoPath)
+    }
+
+    if let stillRegistered = try await registeredWorktree(at: worktreePath, relativeTo: mainRepoPath),
+       stillRegistered.isWorktree {
+      try await pruneStaleWorktreeMetadata(for: worktreePath, parentRepoPath: mainRepoPath)
+    }
 
     if let branchToDelete, !branchToDelete.isEmpty {
-      try await runGitCommand(["branch", force ? "-D" : "-d", branchToDelete], at: parentRepoPath)
+      try await runGitCommand(["branch", force ? "-D" : "-d", branchToDelete], at: mainRepoPath)
     }
   }
 
@@ -618,6 +645,35 @@ private extension WorktreeManagementService {
       .standardizedFileURL
       .resolvingSymlinksInPath()
       .path
+  }
+
+  func registeredWorktree(at worktreePath: String, relativeTo parentRepoPath: String) async throws -> WorktreeInfo? {
+    let normalizedTargetPath = normalizedExistingPath(worktreePath)
+    return try await listWorktrees(at: parentRepoPath).first { worktree in
+      normalizedExistingPath(worktree.path) == normalizedTargetPath
+    }
+  }
+
+  func pruneStaleWorktreeMetadata(for worktreePath: String, parentRepoPath: String) async throws {
+    try await runGitCommand(["worktree", "prune", "--expire", "now"], at: parentRepoPath)
+    if let stillRegistered = try await registeredWorktree(at: worktreePath, relativeTo: parentRepoPath),
+       stillRegistered.isWorktree {
+      throw WorktreeManagementError.gitCommandFailed(
+        "Worktree metadata still exists after prune: \(worktreePath)"
+      )
+    }
+  }
+
+  func forceRemoveRegisteredWorktreeDirectory(_ worktreePath: String, parentRepoPath: String) async throws {
+    if FileManager.default.fileExists(atPath: worktreePath) {
+      try FileManager.default.removeItem(atPath: worktreePath)
+    }
+    try await pruneStaleWorktreeMetadata(for: worktreePath, parentRepoPath: parentRepoPath)
+    if FileManager.default.fileExists(atPath: worktreePath) {
+      throw WorktreeManagementError.gitCommandFailed(
+        "Worktree directory still exists after force delete: \(worktreePath)"
+      )
+    }
   }
 
   func copyUntrackedFiles(

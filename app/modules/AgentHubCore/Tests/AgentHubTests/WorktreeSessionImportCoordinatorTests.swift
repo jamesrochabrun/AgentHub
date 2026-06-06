@@ -7,8 +7,8 @@ import Testing
 @Suite("Worktree session import coordinator")
 @MainActor
 struct WorktreeSessionImportCoordinatorTests {
-  @Test("Imports newest three sessions total across providers")
-  func importsNewestThreeTotalAcrossProviders() async throws {
+  @Test("Initial import brings only the newest session across providers")
+  func initialImportBringsNewestSessionAcrossProviders() async throws {
     let worktree = settingsWorktree()
     let claudeMonitor = ImportMonitorService(sessions: [
       importSession("claude-1", path: worktree.path, timestamp: 100),
@@ -29,8 +29,8 @@ struct WorktreeSessionImportCoordinatorTests {
       codexViewModel: codexViewModel
     )
 
-    #expect(claudeViewModel.monitoredSessionIds == Set(["claude-1", "claude-2"]))
-    #expect(codexViewModel.monitoredSessionIds == Set(["codex-1"]))
+    #expect(claudeViewModel.monitoredSessionIds == Set(["claude-1"]))
+    #expect(codexViewModel.monitoredSessionIds.isEmpty)
     #expect(coordinator.canShowMore(worktree))
   }
 
@@ -60,14 +60,21 @@ struct WorktreeSessionImportCoordinatorTests {
       claudeViewModel: claudeViewModel,
       codexViewModel: codexViewModel
     )
+    await coordinator.showMore(
+      worktree,
+      claudeViewModel: claudeViewModel,
+      codexViewModel: codexViewModel
+    )
 
     #expect(await claudeMonitor.loadExclusionRequests() == [
       Set<String>(),
+      Set(["claude-1"]),
       Set(["claude-1", "claude-2"]),
     ])
     #expect(await codexMonitor.loadExclusionRequests() == [
       Set<String>(),
-      Set(["codex-1"]),
+      Set<String>(),
+      Set(["codex-1", "codex-2"]),
     ])
     #expect(claudeViewModel.monitoredSessionIds == Set(["claude-1", "claude-2", "claude-3"]))
     #expect(codexViewModel.monitoredSessionIds == Set(["codex-1", "codex-2"]))
