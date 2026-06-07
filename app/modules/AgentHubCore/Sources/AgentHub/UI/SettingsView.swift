@@ -58,7 +58,7 @@ public struct SettingsView: View {
   private var pushNotificationsEnabled: Bool = true
 
   @AppStorage(AgentHubDefaults.globalSessionPanelEnabled)
-  private var globalSessionPanelEnabled: Bool = false
+  private var globalSessionPanelEnabled: Bool = true
 
   @AppStorage(ClaudeHookInstaller.enabledKey)
   private var claudeApprovalHooksEnabled: Bool = true

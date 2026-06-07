@@ -317,6 +317,9 @@ public final class AgentHubProvider {
 
     // Persist developer-provided commands to UserDefaults
     let defaults = UserDefaults.standard
+    defaults.register(defaults: [
+      AgentHubDefaults.globalSessionPanelEnabled: true
+    ])
 
     // Claude command: if developer provided non-default, lock it
     if configuration.cliCommand != "claude" {

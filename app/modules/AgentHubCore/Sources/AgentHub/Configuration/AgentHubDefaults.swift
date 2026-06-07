@@ -144,7 +144,7 @@ public enum AgentHubDefaults {
   public static let selectedSessionsPanelSizeMode = "\(keyPrefix)ui.selectedSessionsPanelSizeMode"
 
   /// Whether the global session control panel hotkey is enabled
-  /// Type: Bool (default: false)
+  /// Type: Bool (default: true)
   public static let globalSessionPanelEnabled = "\(keyPrefix)globalSessionPanel.enabled"
 
   /// Last frame for the global session control panel

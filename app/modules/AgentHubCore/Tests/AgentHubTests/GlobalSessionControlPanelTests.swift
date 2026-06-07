@@ -52,6 +52,11 @@ private final class MockGlobalSessionControlPanelPresenter: GlobalSessionControl
 @Suite("Global session control panel")
 @MainActor
 struct GlobalSessionControlPanelTests {
+  @Test("Default shortcut is Command Option B")
+  func defaultShortcutMatchesSessionPanelBinding() {
+    #expect(GlobalHotKey.sessionControlPanelDefault.displayString == "⌘⌥B")
+  }
+
   @Test("Coordinator registers only when enabled and unregisters when disabled")
   func coordinatorHonorsEnabledPreference() {
     let defaults = makeDefaults()
@@ -73,6 +78,25 @@ struct GlobalSessionControlPanelTests {
     coordinator.setEnabled(false)
     #expect(registrar.registeredHotKeys.isEmpty)
     #expect(registrar.unregisterCallCount >= 1)
+  }
+
+  @Test("Coordinator honors registered default enabled preference")
+  func coordinatorHonorsRegisteredDefaultEnabledPreference() {
+    let defaults = makeDefaults()
+    defaults.register(defaults: [
+      AgentHubDefaults.globalSessionPanelEnabled: true
+    ])
+    let registrar = MockGlobalHotKeyRegistrar()
+    let presenter = MockGlobalSessionControlPanelPresenter()
+    let coordinator = GlobalSessionControlPanelCoordinator(
+      registrar: registrar,
+      presenter: presenter,
+      defaults: defaults
+    )
+
+    coordinator.start()
+
+    #expect(registrar.registeredHotKeys == [.sessionControlPanelDefault])
   }
 
   @Test("Coordinator hotkey callback toggles the presenter")

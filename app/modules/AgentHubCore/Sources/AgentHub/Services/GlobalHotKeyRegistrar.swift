@@ -25,12 +25,12 @@ public struct GlobalHotKey: Equatable, Sendable {
   public static var sessionControlPanelDefault: GlobalHotKey {
     #if canImport(Carbon)
     GlobalHotKey(
-      keyCode: UInt32(kVK_ANSI_P),
+      keyCode: UInt32(kVK_ANSI_B),
       modifiers: UInt32(cmdKey | optionKey),
-      displayString: "⌘⌥P"
+      displayString: "⌘⌥B"
     )
     #else
-    GlobalHotKey(keyCode: 0, modifiers: 0, displayString: "⌘⌥P")
+    GlobalHotKey(keyCode: 0, modifiers: 0, displayString: "⌘⌥B")
     #endif
   }
 }
