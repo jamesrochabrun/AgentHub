@@ -17,6 +17,8 @@ public struct GlobalSessionControlPanelView: View {
   let onSelectSession: () -> Void
 
   @State private var gitHubStates: [String: GlobalSessionControlPanelGitHubState] = [:]
+  @State private var selectedItemID: String?
+  @FocusState private var isPanelFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
 
@@ -44,29 +46,7 @@ public struct GlobalSessionControlPanelView: View {
       if items.isEmpty {
         emptyState
       } else {
-        ScrollView(showsIndicators: true) {
-          LazyVStack(spacing: 4) {
-            ForEach(items) { item in
-              GlobalSessionControlPanelRow(
-                item: item,
-                onSelect: {
-                  selectionRouter.select(
-                    providerKind: item.providerKind,
-                    sessionId: item.session.id,
-                    projectPath: item.session.projectPath,
-                    itemId: item.id
-                  )
-                  onSelectSession()
-                },
-                onGitHubStateChange: { state in
-                  updateGitHubState(state, for: item.id)
-                }
-              )
-            }
-          }
-          .padding(.horizontal, 8)
-          .padding(.vertical, 8)
-        }
+        sessionList
       }
     }
     .background(panelBackground)
@@ -75,7 +55,51 @@ public struct GlobalSessionControlPanelView: View {
       RoundedRectangle(cornerRadius: 14, style: .continuous)
         .stroke(Color.secondary.opacity(colorScheme == .dark ? 0.22 : 0.16), lineWidth: 1)
     )
-    .shadow(color: .black.opacity(colorScheme == .dark ? 0.35 : 0.16), radius: 18, y: 10)
+    .focusable()
+    .focusEffectDisabled()
+    .focused($isPanelFocused)
+    .onKeyPress(.downArrow) { moveSelection(.down) }
+    .onKeyPress(.upArrow) { moveSelection(.up) }
+    .onKeyPress(.return) { activateSelectedItem() }
+    .onKeyPress(.escape) {
+      onClose()
+      return .handled
+    }
+    .onAppear {
+      revalidateSelection()
+      isPanelFocused = true
+    }
+    .onChange(of: items.map(\.id)) { _, _ in
+      revalidateSelection()
+    }
+  }
+
+  private var sessionList: some View {
+    ScrollViewReader { proxy in
+      ScrollView(showsIndicators: true) {
+        LazyVStack(spacing: 4) {
+          ForEach(items) { item in
+            GlobalSessionControlPanelRow(
+              item: item,
+              isSelected: item.id == selectedItemID,
+              onSelect: { activate(item) },
+              onGitHubStateChange: { state in
+                updateGitHubState(state, for: item.id)
+              }
+            )
+            .id(item.id)
+          }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+      }
+      .onChange(of: selectedItemID) { _, newValue in
+        guard let newValue else { return }
+        withAnimation(.easeInOut(duration: 0.15)) {
+          proxy.scrollTo(newValue)
+        }
+      }
+    }
   }
 
   private var items: [GlobalSessionControlPanelItem] {
@@ -170,12 +194,51 @@ public struct GlobalSessionControlPanelView: View {
       gitHubStates.removeValue(forKey: itemID)
     }
   }
+
+  private func moveSelection(_ direction: GlobalSessionListNavigationDirection) -> KeyPress.Result {
+    let itemIDs = items.map(\.id)
+    guard !itemIDs.isEmpty else { return .ignored }
+    selectedItemID = GlobalSessionPanelNavigator.nextSelection(
+      currentID: selectedItemID,
+      direction: direction,
+      itemIDs: itemIDs
+    )
+    return .handled
+  }
+
+  private func activateSelectedItem() -> KeyPress.Result {
+    guard
+      let selectedItemID,
+      let item = items.first(where: { $0.id == selectedItemID })
+    else { return .ignored }
+    activate(item)
+    return .handled
+  }
+
+  private func activate(_ item: GlobalSessionControlPanelItem) {
+    selectedItemID = item.id
+    selectionRouter.select(
+      providerKind: item.providerKind,
+      sessionId: item.session.id,
+      projectPath: item.session.projectPath,
+      itemId: item.id
+    )
+    onSelectSession()
+  }
+
+  private func revalidateSelection() {
+    selectedItemID = GlobalSessionPanelNavigator.validatedSelection(
+      currentID: selectedItemID,
+      itemIDs: items.map(\.id)
+    )
+  }
 }
 
 // MARK: - GlobalSessionControlPanelRow
 
 private struct GlobalSessionControlPanelRow: View {
   let item: GlobalSessionControlPanelItem
+  let isSelected: Bool
   let onSelect: () -> Void
   let onGitHubStateChange: (GlobalSessionControlPanelGitHubState?) -> Void
 
@@ -223,7 +286,7 @@ private struct GlobalSessionControlPanelRow: View {
 
         Image(systemName: "arrow.up.forward")
           .font(.system(size: 10, weight: .semibold))
-          .foregroundStyle(.secondary.opacity(isHovered ? 0.9 : 0.45))
+          .foregroundStyle(.secondary.opacity(isHovered || isSelected ? 0.9 : 0.45))
           .padding(.top, 3)
       }
       .padding(.horizontal, 9)
@@ -338,17 +401,28 @@ private struct GlobalSessionControlPanelRow: View {
       .fill(rowBackgroundColor)
       .overlay(
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-          .stroke(Color.secondary.opacity(isHovered ? 0.24 : 0.12), lineWidth: 1)
+          .stroke(rowBorderColor, lineWidth: isSelected ? 1.5 : 1)
       )
   }
 
   private var rowBackgroundColor: Color {
+    if isSelected {
+      return Color.brandPrimary(for: item.providerKind)
+        .opacity(colorScheme == .dark ? 0.26 : 0.30)
+    }
     if isHovered {
       return Color.brandPrimary(for: item.providerKind)
         .opacity(colorScheme == .dark ? 0.16 : 0.22)
     }
     return Color.surfaceOverlay
       .opacity(colorScheme == .dark ? 0.55 : 0.65)
+  }
+
+  private var rowBorderColor: Color {
+    if isSelected {
+      return Color.brandPrimary(for: item.providerKind).opacity(0.7)
+    }
+    return Color.secondary.opacity(isHovered ? 0.24 : 0.12)
   }
 
   private var projectText: String {

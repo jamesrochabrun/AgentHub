@@ -191,6 +191,38 @@ struct GlobalSessionControlPanelTests {
     ])
   }
 
+  @Test("Keyboard navigation moves selection and clamps at the list edges")
+  func keyboardNavigationClampsAtEdges() {
+    let ids = ["a", "b", "c"]
+
+    // No current selection: down lands on the first row, up lands on the last.
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: nil, direction: .down, itemIDs: ids) == "a")
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: nil, direction: .up, itemIDs: ids) == "c")
+
+    // Moving down advances one row at a time.
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: "a", direction: .down, itemIDs: ids) == "b")
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: "b", direction: .down, itemIDs: ids) == "c")
+
+    // Down clamps at the bottom, up clamps at the top.
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: "c", direction: .down, itemIDs: ids) == "c")
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: "b", direction: .up, itemIDs: ids) == "a")
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: "a", direction: .up, itemIDs: ids) == "a")
+
+    // A stale selection falls back to an edge instead of returning nothing.
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: "z", direction: .down, itemIDs: ids) == "a")
+
+    // An empty list never yields a selection.
+    #expect(GlobalSessionPanelNavigator.nextSelection(currentID: "a", direction: .down, itemIDs: []) == nil)
+  }
+
+  @Test("Selection validation keeps valid rows and recovers from removals")
+  func validatedSelectionRecoversFromRemovals() {
+    #expect(GlobalSessionPanelNavigator.validatedSelection(currentID: "b", itemIDs: ["a", "b", "c"]) == "b")
+    #expect(GlobalSessionPanelNavigator.validatedSelection(currentID: "x", itemIDs: ["a", "b", "c"]) == "a")
+    #expect(GlobalSessionPanelNavigator.validatedSelection(currentID: nil, itemIDs: ["a", "b"]) == "a")
+    #expect(GlobalSessionPanelNavigator.validatedSelection(currentID: "a", itemIDs: []) == nil)
+  }
+
   private func item(
     id: String,
     seconds: TimeInterval,

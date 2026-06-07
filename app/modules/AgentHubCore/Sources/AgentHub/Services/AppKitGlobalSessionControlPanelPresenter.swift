@@ -55,6 +55,9 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
   private var panel: GlobalSessionPanelWindow?
   private var windowDelegate: GlobalSessionPanelWindowDelegate?
   private let panelSize = CGSize(width: 560, height: 420)
+  // Must match the corner radius used by GlobalSessionControlPanelView so the
+  // AppKit layer mask and the SwiftUI clip line up.
+  private let panelCornerRadius: CGFloat = 14
   #endif
 
   public init(
@@ -70,7 +73,9 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
     guard let provider else { return }
 
     if let panel {
+      NSApp.activate(ignoringOtherApps: true)
       panel.orderFrontRegardless()
+      panel.makeKey()
       return
     }
 
@@ -88,6 +93,12 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
     hostingView.sizingOptions = []
     hostingView.frame = NSRect(origin: .zero, size: panelSize)
     hostingView.autoresizingMask = [.width, .height]
+    // Clip the content layer to the rounded shape so the borderless window's
+    // shadow follows the rounded corners instead of the rectangular bounds.
+    hostingView.wantsLayer = true
+    hostingView.layer?.cornerRadius = panelCornerRadius
+    hostingView.layer?.cornerCurve = .continuous
+    hostingView.layer?.masksToBounds = true
 
     let newPanel = GlobalSessionPanelWindow(
       contentRect: restoredOrDefaultFrame(size: panelSize),
@@ -120,7 +131,10 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
 
     panel = newPanel
     windowDelegate = delegate
+    NSApp.activate(ignoringOtherApps: true)
     newPanel.orderFrontRegardless()
+    newPanel.makeKey()
+    newPanel.invalidateShadow()
     #endif
   }
 
