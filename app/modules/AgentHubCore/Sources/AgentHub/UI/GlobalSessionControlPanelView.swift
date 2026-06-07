@@ -244,6 +244,7 @@ private struct GlobalSessionControlPanelRow: View {
 
   @State private var isHovered = false
   @State private var gitHubViewModel = SessionGitHubQuickAccessViewModel()
+  @State private var resolvedRootPath: String?
   @Environment(\.agentHub) private var agentHub
   @Environment(\.colorScheme) private var colorScheme
 
@@ -280,6 +281,7 @@ private struct GlobalSessionControlPanelRow: View {
           topLine
           detailLine
           gitHubLine
+          pathLines
         }
 
         Spacer(minLength: 8)
@@ -304,6 +306,9 @@ private struct GlobalSessionControlPanelRow: View {
     .task(id: gitHubObservationTaskID) {
       await observeGitHubIfAvailable()
       publishGitHubState()
+    }
+    .task(id: item.session.projectPath) {
+      await resolveRootPath()
     }
     .onDisappear {
       gitHubViewModel.stopPolling()
@@ -387,6 +392,47 @@ private struct GlobalSessionControlPanelRow: View {
       }
       .transition(.opacity)
     }
+  }
+
+  private var pathLines: some View {
+    VStack(alignment: .leading, spacing: 3) {
+      if item.session.isWorktree {
+        pathRow(icon: "arrow.triangle.branch", label: "Worktree", path: item.session.projectPath)
+      }
+      pathRow(icon: "house", label: "Root", path: rootPath)
+    }
+  }
+
+  private func pathRow(icon: String, label: String, path: String) -> some View {
+    HStack(spacing: 5) {
+      Image(systemName: icon)
+        .font(.system(size: 9, weight: .semibold))
+        .foregroundStyle(.secondary.opacity(0.7))
+        .frame(width: 12, height: 12)
+
+      Text(displayPath(path))
+        .font(.secondaryCaption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+    }
+    .help("\(label): \(path)")
+  }
+
+  private var rootPath: String {
+    resolvedRootPath ?? item.session.projectPath
+  }
+
+  private func displayPath(_ path: String) -> String {
+    (path as NSString).abbreviatingWithTildeInPath
+  }
+
+  private func resolveRootPath() async {
+    let path = item.session.projectPath
+    let resolved = await Task.detached(priority: .utility) {
+      GitWorktreeDetector.mainRepoPath(forWorktreeAt: path)
+    }.value
+    resolvedRootPath = resolved
   }
 
   private var statusIndicator: some View {
