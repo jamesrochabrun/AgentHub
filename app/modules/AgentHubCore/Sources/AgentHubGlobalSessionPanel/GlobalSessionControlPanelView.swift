@@ -3,6 +3,7 @@
 //  AgentHub
 //
 
+import Foundation
 import SwiftUI
 import AgentHubCore
 import AgentHubGitHub
@@ -57,39 +58,54 @@ public struct GlobalSessionControlPanelView: View {
   let selectionRouter: GlobalSessionSelectionRouter
   let onClose: () -> Void
   let onSelectSession: () -> Void
+  let onDisplayModeChange: (GlobalSessionControlPanelDisplayMode) -> Void
+  private let defaults: UserDefaults
+  private let displayModeToggleRelay: GlobalSessionPanelDisplayModeToggleRelay?
 
   @State private var gitHubStates: [String: GlobalSessionControlPanelGitHubState] = [:]
   @State private var selectedItemID: String?
+  @State private var displayMode: GlobalSessionControlPanelDisplayMode
   @State private var deletionConfirmation: GlobalSessionCleanupDeletionConfirmation?
   @State private var deletionResult: GlobalSessionCleanupDeletionResult?
   @State private var isDeletingSuggestedWorktrees = false
   @FocusState private var isPanelFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
     selectionRouter: GlobalSessionSelectionRouter,
+    displayModeToggleRelay: GlobalSessionPanelDisplayModeToggleRelay? = nil,
+    defaults: UserDefaults = .standard,
     onClose: @escaping () -> Void = {},
-    onSelectSession: @escaping () -> Void = {}
+    onSelectSession: @escaping () -> Void = {},
+    onDisplayModeChange: @escaping (GlobalSessionControlPanelDisplayMode) -> Void = { _ in }
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self.selectionRouter = selectionRouter
+    self.displayModeToggleRelay = displayModeToggleRelay
+    self.defaults = defaults
     self.onClose = onClose
     self.onSelectSession = onSelectSession
+    self.onDisplayModeChange = onDisplayModeChange
+    _displayMode = State(initialValue: GlobalSessionControlPanelDisplayMode.load(from: defaults))
   }
 
   public var body: some View {
-    VStack(spacing: 0) {
-      header
-
-      Divider()
-        .opacity(0.5)
-
-      panelContent
+    ZStack(alignment: .top) {
+      switch displayMode {
+      case .regular:
+        regularPanelContent
+          .transition(.opacity)
+      case .compact:
+        compactPanelContent
+          .transition(.opacity)
+      }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .background(panelBackground)
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     .overlay(
@@ -112,14 +128,94 @@ public struct GlobalSessionControlPanelView: View {
       revalidateSelection()
       isPanelFocused = true
     }
-    .onChange(of: items.map(\.id)) { _, _ in
+    .onChange(of: selectionItemIDs) { _, _ in
       revalidateSelection()
+    }
+    .onChange(of: displayMode) { _, _ in
+      revalidateSelection()
+    }
+    .onChange(of: displayModeToggleRelay?.toggleRequestCount) { _, _ in
+      toggleDisplayMode()
+    }
+  }
+
+  // The window snaps to its new size in the AppKit presenter (no per-frame
+  // relayout, no alpha blink); here we only cross-fade the content between
+  // layouts so the swap reads as a clean dissolve rather than a flash.
+  private var displayModeCrossfadeAnimation: Animation {
+    reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.18)
+  }
+
+  private var regularPanelContent: some View {
+    VStack(spacing: 0) {
+      header
+
+      Divider()
+        .opacity(0.5)
+
+      panelContent
     }
   }
 
   private var panelContent: some View {
     primarySessionsContent
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var compactPanelContent: some View {
+    VStack(spacing: 0) {
+      compactFeaturedContent
+
+      ZStack {
+        Button(action: expandPanel) {
+          Label("Expand Sessions", systemImage: "chevron.down")
+            .labelStyle(.iconOnly)
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(.secondary)
+            .frame(width: 30, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Expand")
+
+        HStack {
+          Spacer()
+
+          Button(action: onClose) {
+            Label("Close", systemImage: "xmark")
+              .labelStyle(.iconOnly)
+              .font(.system(size: 10, weight: .bold))
+              .foregroundStyle(.secondary)
+              .frame(width: 22, height: 20)
+              .contentShape(Rectangle())
+          }
+          .buttonStyle(.plain)
+          .help("Close")
+        }
+      }
+      .padding(.horizontal, 10)
+      .padding(.bottom, 6)
+    }
+    .padding(.top, 8)
+  }
+
+  @ViewBuilder
+  private var compactFeaturedContent: some View {
+    if let compactFeaturedItem {
+      GlobalSessionControlPanelRow(
+        item: compactFeaturedItem,
+        isSelected: compactFeaturedItem.id == selectedItemID,
+        showsPathLines: false,
+        onSelect: { activate(compactFeaturedItem) },
+        onGitHubStateChange: { state in
+          updateGitHubState(state, for: compactFeaturedItem.id)
+        }
+      )
+      .padding(.horizontal, 8)
+      .padding(.bottom, 4)
+    } else {
+      compactEmptyState
+    }
   }
 
   @ViewBuilder
@@ -164,6 +260,7 @@ public struct GlobalSessionControlPanelView: View {
         .padding(.vertical, 8)
       }
       .onChange(of: selectedItemID) { _, newValue in
+        guard displayMode == .regular else { return }
         guard let newValue else { return }
         withAnimation(.easeInOut(duration: 0.15)) {
           proxy.scrollTo(newValue)
@@ -182,6 +279,23 @@ public struct GlobalSessionControlPanelView: View {
       codexCustomNames: codexViewModel.sessionCustomNames,
       gitHubStates: gitHubStates
     )
+  }
+
+  private var compactFeaturedItem: GlobalSessionControlPanelItem? {
+    GlobalSessionControlPanelCompactItemSelector.featuredItem(from: items)
+  }
+
+  private var selectionItems: [GlobalSessionControlPanelItem] {
+    switch displayMode {
+    case .regular:
+      return items
+    case .compact:
+      return compactFeaturedItem.map { [$0] } ?? []
+    }
+  }
+
+  private var selectionItemIDs: [String] {
+    selectionItems.map(\.id)
   }
 
   private var cleanupSuggestions: [GlobalSessionCleanupSuggestion] {
@@ -227,11 +341,24 @@ public struct GlobalSessionControlPanelView: View {
         .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
 
-      Button(action: onClose) {
-        Image(systemName: "xmark")
+      Button(action: compactPanel) {
+        Label("Compact Sessions", systemImage: "chevron.up")
+          .labelStyle(.iconOnly)
           .font(.system(size: 11, weight: .bold))
           .foregroundStyle(.secondary)
           .frame(width: 22, height: 22)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("Compact")
+
+      Button(action: onClose) {
+        Label("Close", systemImage: "xmark")
+          .labelStyle(.iconOnly)
+          .font(.system(size: 11, weight: .bold))
+          .foregroundStyle(.secondary)
+          .frame(width: 22, height: 22)
+          .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .help("Close")
@@ -239,6 +366,30 @@ public struct GlobalSessionControlPanelView: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
     .contentShape(Rectangle())
+  }
+
+  private var compactEmptyState: some View {
+    HStack(spacing: 10) {
+      Image(systemName: "terminal")
+        .font(.system(size: 15, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .frame(width: 18, height: 18)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text("No monitored sessions")
+          .font(.secondaryDefault)
+          .foregroundStyle(.primary)
+
+        Text("Start or select sessions in AgentHub.")
+          .font(.secondaryCaption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+
+      Spacer(minLength: 8)
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 12)
   }
 
   private var emptyState: some View {
@@ -269,13 +420,36 @@ public struct GlobalSessionControlPanelView: View {
     }
   }
 
+  private func compactPanel() {
+    setDisplayMode(.compact)
+  }
+
+  private func expandPanel() {
+    setDisplayMode(.regular)
+  }
+
+  private func setDisplayMode(_ mode: GlobalSessionControlPanelDisplayMode) {
+    guard displayMode != mode else { return }
+    mode.persist(to: defaults)
+
+    // Snap the window to its new size immediately (the presenter resizes without
+    // animating the frame), then cross-fade the content for a clean dissolve.
+    onDisplayModeChange(mode)
+    withAnimation(displayModeCrossfadeAnimation) {
+      displayMode = mode
+    }
+  }
+
+  private func toggleDisplayMode() {
+    setDisplayMode(displayMode == .regular ? .compact : .regular)
+  }
+
   private func moveSelection(_ direction: GlobalSessionListNavigationDirection) -> KeyPress.Result {
-    let itemIDs = items.map(\.id)
-    guard !itemIDs.isEmpty else { return .ignored }
+    guard !selectionItemIDs.isEmpty else { return .ignored }
     selectedItemID = GlobalSessionPanelNavigator.nextSelection(
       currentID: selectedItemID,
       direction: direction,
-      itemIDs: itemIDs
+      itemIDs: selectionItemIDs
     )
     return .handled
   }
@@ -283,7 +457,7 @@ public struct GlobalSessionControlPanelView: View {
   private func activateSelectedItem() -> KeyPress.Result {
     guard
       let selectedItemID,
-      let item = items.first(where: { $0.id == selectedItemID })
+      let item = selectionItems.first(where: { $0.id == selectedItemID })
     else { return .ignored }
     activate(item)
     return .handled
@@ -303,7 +477,7 @@ public struct GlobalSessionControlPanelView: View {
   private func revalidateSelection() {
     selectedItemID = GlobalSessionPanelNavigator.validatedSelection(
       currentID: selectedItemID,
-      itemIDs: items.map(\.id)
+      itemIDs: selectionItemIDs
     )
   }
 
@@ -479,6 +653,7 @@ private struct GlobalSessionCleanupBanner: View {
 private struct GlobalSessionControlPanelRow: View {
   let item: GlobalSessionControlPanelItem
   let isSelected: Bool
+  var showsPathLines = true
   let onSelect: () -> Void
   let onGitHubStateChange: (GlobalSessionControlPanelGitHubState?) -> Void
 
@@ -524,7 +699,9 @@ private struct GlobalSessionControlPanelRow: View {
           topLine
           detailLine
           gitHubLine
-          pathLines
+          if showsPathLines {
+            pathLines
+          }
         }
 
         Spacer(minLength: 8)

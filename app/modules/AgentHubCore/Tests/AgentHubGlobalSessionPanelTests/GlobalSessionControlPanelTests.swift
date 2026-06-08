@@ -58,6 +58,29 @@ struct GlobalSessionControlPanelTests {
     #expect(GlobalHotKey.sessionControlPanelDefault.displayString == "⌘⌥B")
   }
 
+  @Test("Display mode defaults to regular and persists compact")
+  func displayModeDefaultsAndPersists() {
+    let defaults = makeDefaults()
+
+    #expect(GlobalSessionControlPanelDisplayMode.load(from: defaults) == .regular)
+
+    GlobalSessionControlPanelDisplayMode.compact.persist(to: defaults)
+
+    #expect(defaults.integer(forKey: AgentHubDefaults.globalSessionPanelDisplayMode) == 1)
+    #expect(GlobalSessionControlPanelDisplayMode.load(from: defaults) == .compact)
+
+    defaults.set(99, forKey: AgentHubDefaults.globalSessionPanelDisplayMode)
+
+    #expect(GlobalSessionControlPanelDisplayMode.load(from: defaults) == .regular)
+
+    let registeredDefaults = makeDefaults()
+    registeredDefaults.register(defaults: [
+      AgentHubDefaults.globalSessionPanelDisplayMode: 1
+    ])
+
+    #expect(GlobalSessionControlPanelDisplayMode.load(from: registeredDefaults) == .compact)
+  }
+
   @Test("Coordinator registers only when enabled and unregisters when disabled")
   func coordinatorHonorsEnabledPreference() {
     let defaults = makeDefaults()
@@ -216,6 +239,32 @@ struct GlobalSessionControlPanelTests {
     ])
   }
 
+  @Test("Compact selector uses most recent active row")
+  func compactSelectorUsesMostRecentActiveRow() {
+    let items = [
+      panelItem(id: "idle-newer", seconds: 90, status: .idle),
+      panelItem(id: "active-older", seconds: 20, status: .idle, isActive: true),
+      panelItem(id: "pending", seconds: 30, status: nil, isPending: true),
+      panelItem(id: "ready-newest-active-state", seconds: 40, status: .waitingForUser),
+    ]
+
+    let featured = GlobalSessionControlPanelCompactItemSelector.featuredItem(from: items)
+
+    #expect(featured?.id == "ready-newest-active-state")
+  }
+
+  @Test("Compact selector falls back to most recent idle row")
+  func compactSelectorFallsBackToMostRecentIdleRow() {
+    let items = [
+      panelItem(id: "idle-old", seconds: 10, status: .idle),
+      panelItem(id: "idle-new", seconds: 60, status: .idle),
+    ]
+
+    let featured = GlobalSessionControlPanelCompactItemSelector.featuredItem(from: items)
+
+    #expect(featured?.id == "idle-new")
+  }
+
   @Test("Keyboard navigation moves selection and clamps at the list edges")
   func keyboardNavigationClampsAtEdges() {
     let ids = ["a", "b", "c"]
@@ -362,6 +411,33 @@ struct GlobalSessionControlPanelTests {
     ciStatus: CIStatus? = nil
   ) -> (id: String, seconds: TimeInterval, status: SessionStatus?, ciStatus: CIStatus?) {
     (id, seconds, status, ciStatus)
+  }
+
+  private func panelItem(
+    id: String,
+    seconds: TimeInterval,
+    status: SessionStatus?,
+    isActive: Bool = false,
+    isPending: Bool = false,
+    providerKind: SessionProviderKind = .claude
+  ) -> GlobalSessionControlPanelItem {
+    let timestamp = Date(timeIntervalSince1970: 1_000 + seconds)
+    return GlobalSessionControlPanelItem(
+      id: id,
+      session: CLISession(
+        id: id,
+        projectPath: "/tmp/repo",
+        branchName: "feature",
+        lastActivityAt: timestamp,
+        isActive: isActive
+      ),
+      providerKind: providerKind,
+      timestamp: timestamp,
+      isPending: isPending,
+      status: status,
+      linkedPullRequestNumber: nil,
+      customName: nil
+    )
   }
 
   private func cleanupItem(

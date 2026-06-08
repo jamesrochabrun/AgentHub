@@ -151,6 +151,14 @@ public enum AgentHubDefaults {
   /// Type: String (NSStringFromRect, default: unset)
   public static let globalSessionPanelFrame = "\(keyPrefix)globalSessionPanel.frame"
 
+  /// Last compact frame for the global session control panel
+  /// Type: String (NSStringFromRect, default: unset)
+  public static let globalSessionPanelCompactFrame = "\(keyPrefix)globalSessionPanel.compactFrame"
+
+  /// Display mode for the global session control panel
+  /// Type: Int (default: 0 = regular, 1 = compact)
+  public static let globalSessionPanelDisplayMode = "\(keyPrefix)globalSessionPanel.displayMode"
+
   // MARK: - Feature Flags
 
   /// Whether smart mode (AI-powered orchestration planning) is enabled
