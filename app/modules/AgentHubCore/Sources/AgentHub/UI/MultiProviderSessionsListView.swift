@@ -171,6 +171,7 @@ public struct MultiProviderSessionsListView: View {
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
+  @Environment(\.agentHub) private var agentHub
   @Environment(\.openSettings) private var openSettings
   @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -256,6 +257,10 @@ public struct MultiProviderSessionsListView: View {
       }
       ensurePrimarySelection()
       scheduleInitialGitHubStateRefreshIfNeeded()
+      consumeGlobalSessionSelectionIfNeeded()
+    }
+    .onChange(of: agentHub?.globalSessionSelectionRouter.selectionRequest?.id) { _, _ in
+      consumeGlobalSessionSelectionIfNeeded()
     }
     .onChange(of: claudeViewModel.resolvedPendingSessions) { _, newResolutions in
       handleResolvedSessions(newResolutions, provider: .claude, viewModel: claudeViewModel)
@@ -1732,6 +1737,23 @@ public struct MultiProviderSessionsListView: View {
       return
     }
     primarySessionId = items.first?.id
+  }
+
+  private func consumeGlobalSessionSelectionIfNeeded() {
+    guard let router = agentHub?.globalSessionSelectionRouter,
+          let request = router.selectionRequest else {
+      return
+    }
+
+    guard selectedSessionItems.contains(where: { $0.id == request.itemId }) else {
+      return
+    }
+
+    selectedModuleLandingPath = nil
+    selectedProviderRaw = request.providerKind.rawValue
+    primarySessionId = request.itemId
+    scrollToSessionId = request.itemId
+    router.markConsumed(request)
   }
 
   private func selectEmptyModule(_ path: String) {

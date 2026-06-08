@@ -47,6 +47,7 @@ public final class AgentHubProvider {
   /// of `AgentHubCore` get the default factory which falls back to the regular
   /// SwiftTerm surface when `.ghostty` is selected.
   public let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
+  private let globalSessionControlPanelPresenterFactory: GlobalSessionControlPanelPresenterFactory
   private let metadataStoreOverride: SessionMetadataStore?
   private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
   private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
@@ -169,6 +170,11 @@ public final class AgentHubProvider {
     ClaudeWorktreeBranchNamingService(programmaticService: programmaticClaudeService)
   }()
 
+  /// Claude-backed local audit of AgentHub's current session/worktree state.
+  public private(set) lazy var sessionInvestigationService: any SessionInvestigationServiceProtocol = {
+    ClaudeSessionInvestigationService(programmaticService: programmaticClaudeService)
+  }()
+
   /// Reformats Canvas inline-toolbar edits so the persisted file matches the
   /// project's existing code style. Runs Haiku via `claude -p` after the
   /// debounced direct write so the UX stays snappy.
@@ -246,6 +252,24 @@ public final class AgentHubProvider {
     GitHubPRObservationService(service: gitHubService)
   }()
 
+  // MARK: - Global Session Control Panel
+
+  /// Routes global-panel session selections into the main sessions UI.
+  public private(set) lazy var globalSessionSelectionRouter: GlobalSessionSelectionRouter = {
+    GlobalSessionSelectionRouter()
+  }()
+
+  /// Coordinates the opt-in global hotkey and floating sessions panel.
+  public private(set) lazy var globalSessionControlPanelCoordinator: GlobalSessionControlPanelCoordinator = {
+    GlobalSessionControlPanelCoordinator(provider: self)
+  }()
+
+  public func makeGlobalSessionControlPanelPresenter(
+    defaults: UserDefaults = .standard
+  ) -> any GlobalSessionControlPanelPresenting {
+    globalSessionControlPanelPresenterFactory(self, defaults)
+  }
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes
@@ -287,6 +311,9 @@ public final class AgentHubProvider {
   public init(
     configuration: AgentHubConfiguration = .default,
     terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
+    globalSessionControlPanelPresenterFactory: @escaping GlobalSessionControlPanelPresenterFactory = { _, _ in
+      NoOpGlobalSessionControlPanelPresenter()
+    },
     metadataStore: SessionMetadataStore? = nil,
     worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
     worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil
@@ -294,6 +321,7 @@ public final class AgentHubProvider {
     self.configuration = configuration
     self.terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
+    self.globalSessionControlPanelPresenterFactory = globalSessionControlPanelPresenterFactory
     self.metadataStoreOverride = metadataStore
     self.worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
     self.worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
@@ -305,6 +333,9 @@ public final class AgentHubProvider {
 
     // Persist developer-provided commands to UserDefaults
     let defaults = UserDefaults.standard
+    defaults.register(defaults: [
+      AgentHubDefaults.globalSessionPanelEnabled: true
+    ])
 
     // Claude command: if developer provided non-default, lock it
     if configuration.cliCommand != "claude" {

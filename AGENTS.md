@@ -79,6 +79,25 @@ protocol SessionSearchServiceProtocol {
 - If an agent-provided localhost preview fails to load, fall back to static HTML in this order: root `index.html`, then other discovered HTML files
 - Changes to web preview precedence or fallback behavior must include unit tests
 
+## Global Session Panel
+
+The floating global Sessions panel lives in the reusable `AgentHubGlobalSessionPanel` Swift module (`app/modules/AgentHubCore/Sources/AgentHubGlobalSessionPanel`). Keep panel UI, AppKit presenter code, keyboard navigation, sorting, and cleanup-suggestion logic in that module.
+
+- `AgentHubCore` owns shared contracts only: hotkey registration, `GlobalSessionControlPanelCoordinator`, `GlobalSessionControlPanelPresenting`, and `GlobalSessionSelectionRouter`.
+- The app target injects the concrete `AppKitGlobalSessionControlPanelPresenter` through `AgentHubProvider`'s presenter factory.
+- Do not move panel SwiftUI/AppKit implementation back into `AgentHubCore`; avoid Core importing `AgentHubGlobalSessionPanel`, which would create a module cycle.
+- Changes to panel ordering, navigation, or cleanup suggestions belong in `AgentHubGlobalSessionPanelTests`.
+
+## MCP UI
+
+AgentHub has MCP UI support wired through the reusable `AgentHubMCPUI` Swift module (`app/modules/AgentHubCore/Sources/AgentHubMCPUI`). Use this module for MCP app resources and previews instead of creating feature-local WKWebView wrappers or duplicate MIME/resource models.
+
+- MCP UI resources use `AgentHubMCPUIResource` with the app MIME profile `text/html;profile=mcp-app`.
+- Render in-app MCP UI HTML with `AgentHubMCPUIResourceView` / `AgentHubMCPUIWebView`.
+- Put feature-specific resource builders in the owning feature/module, but have them emit `AgentHubMCPUIResource`.
+- Escape generated HTML text with `AgentHubMCPUIHTML.escape(_:)`.
+- Keep MCP UI resources local-only and deterministic unless the feature explicitly owns an agent/model call.
+
 ### Storybook Mode
 
 Storybook-enabled projects swap the Preview button for a Storybook button (never both). `WebPreviewMode { .app, .storybook }` routes the preview pane; the storybook server runs at compound key `"{sessionId}:storybook"` in `DevServerManager` so it coexists with the primary app server. Read **Storybook** in `README.md` before editing this area.

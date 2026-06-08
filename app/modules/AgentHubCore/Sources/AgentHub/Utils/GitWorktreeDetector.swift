@@ -147,6 +147,22 @@ public class GitWorktreeDetector {
   }
 
   /// Parses the .git file in a worktree to extract the main repository path
+  /// Cheaply resolves the main repository path for a worktree by reading its
+  /// `.git` file (no `git` process is spawned). Returns `nil` when
+  /// `directoryPath` is a regular repository (its `.git` is a directory) or the
+  /// file cannot be parsed.
+  public static func mainRepoPath(forWorktreeAt directoryPath: String) -> String? {
+    let gitPath = (directoryPath as NSString).appendingPathComponent(".git")
+    var isDirectory: ObjCBool = false
+    guard
+      FileManager.default.fileExists(atPath: gitPath, isDirectory: &isDirectory),
+      !isDirectory.boolValue
+    else {
+      return nil
+    }
+    return parseWorktreeGitFile(at: gitPath)
+  }
+
   private static func parseWorktreeGitFile(at gitFilePath: String) -> String? {
     guard let contents = try? String(contentsOfFile: gitFilePath, encoding: .utf8) else {
       return nil

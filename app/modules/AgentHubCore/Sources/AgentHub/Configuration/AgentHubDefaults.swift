@@ -143,6 +143,14 @@ public enum AgentHubDefaults {
   /// Type: Int (default: 1 = small)
   public static let selectedSessionsPanelSizeMode = "\(keyPrefix)ui.selectedSessionsPanelSizeMode"
 
+  /// Whether the global session control panel hotkey is enabled
+  /// Type: Bool (default: true)
+  public static let globalSessionPanelEnabled = "\(keyPrefix)globalSessionPanel.enabled"
+
+  /// Last frame for the global session control panel
+  /// Type: String (NSStringFromRect, default: unset)
+  public static let globalSessionPanelFrame = "\(keyPrefix)globalSessionPanel.frame"
+
   // MARK: - Feature Flags
 
   /// Whether smart mode (AI-powered orchestration planning) is enabled

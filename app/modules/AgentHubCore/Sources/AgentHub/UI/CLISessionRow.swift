@@ -212,7 +212,7 @@ public struct CLISessionRow: View {
 // MARK: - Date Extension for Time Ago Display
 
 extension Date {
-  func timeAgoDisplay() -> String {
+  public func timeAgoDisplay() -> String {
     let formatter = RelativeDateTimeFormatter()
     formatter.unitsStyle = .abbreviated
     return formatter.localizedString(for: self, relativeTo: Date())
