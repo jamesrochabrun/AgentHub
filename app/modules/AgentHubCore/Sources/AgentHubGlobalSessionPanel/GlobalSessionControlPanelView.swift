@@ -176,40 +176,14 @@ public struct GlobalSessionControlPanelView: View {
   }
 
   private var compactPanelContent: some View {
-    VStack(spacing: 0) {
+    // Even 8pt inset on all sides (matching the regular list) with a small,
+    // balanced gap to the control bar — keeps the featured row's vertical
+    // padding symmetric instead of jammed against the top.
+    VStack(spacing: 6) {
       compactFeaturedContent
-
-      ZStack {
-        Button(action: expandPanel) {
-          Label("Expand Sessions", systemImage: "chevron.down")
-            .labelStyle(.iconOnly)
-            .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(.secondary)
-            .frame(width: 30, height: 20)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help("Expand")
-
-        HStack {
-          Spacer()
-
-          Button(action: onClose) {
-            Label("Close", systemImage: "xmark")
-              .labelStyle(.iconOnly)
-              .font(.system(size: 10, weight: .bold))
-              .foregroundStyle(.secondary)
-              .frame(width: 22, height: 20)
-              .contentShape(Rectangle())
-          }
-          .buttonStyle(.plain)
-          .help("Close")
-        }
-      }
-      .padding(.horizontal, 10)
-      .padding(.bottom, 6)
+      compactControlBar
     }
-    .padding(.top, 8)
+    .padding(8)
   }
 
   @ViewBuilder
@@ -220,15 +194,44 @@ public struct GlobalSessionControlPanelView: View {
       GlobalSessionControlPanelRow(
         item: compactFeaturedItem,
         isSelected: compactFeaturedItem.id == selectedItemID,
+        isCleanupCandidate: cleanupCandidateIDs.contains(compactFeaturedItem.id),
         onSelect: { activate(compactFeaturedItem) },
         onGitHubStateChange: { state in
           updateGitHubState(state, for: compactFeaturedItem.id)
         }
       )
-      .padding(.horizontal, 8)
-      .padding(.bottom, 4)
     } else {
       compactEmptyState
+    }
+  }
+
+  private var compactControlBar: some View {
+    ZStack {
+      Button(action: expandPanel) {
+        Label("Expand Sessions", systemImage: "chevron.down")
+          .labelStyle(.iconOnly)
+          .font(.system(size: 12, weight: .bold))
+          .foregroundStyle(.secondary)
+          .frame(width: 30, height: 20)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("Expand")
+
+      HStack {
+        Spacer()
+
+        Button(action: onClose) {
+          Label("Close", systemImage: "xmark")
+            .labelStyle(.iconOnly)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.secondary)
+            .frame(width: 22, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Close")
+      }
     }
   }
 
@@ -242,16 +245,18 @@ public struct GlobalSessionControlPanelView: View {
   }
 
   private var sessionList: some View {
-    ScrollViewReader { proxy in
+    let suggestions = cleanupSuggestions
+    let candidateIDs = Set(suggestions.flatMap(\.sessionIDs))
+    return ScrollViewReader { proxy in
       ScrollView(showsIndicators: true) {
         LazyVStack(spacing: 4) {
-          if !cleanupSuggestions.isEmpty {
+          if !suggestions.isEmpty {
             GlobalSessionCleanupBanner(
-              suggestions: cleanupSuggestions,
+              suggestions: suggestions,
               isDeleting: isDeletingSuggestedWorktrees,
               onDelete: {
                 deletionConfirmation = GlobalSessionCleanupDeletionConfirmation(
-                  suggestions: cleanupSuggestions
+                  suggestions: suggestions
                 )
               }
             )
@@ -262,6 +267,7 @@ public struct GlobalSessionControlPanelView: View {
             GlobalSessionControlPanelRow(
               item: item,
               isSelected: item.id == selectedItemID,
+              isCleanupCandidate: candidateIDs.contains(item.id),
               onSelect: { activate(item) },
               onGitHubStateChange: { state in
                 updateGitHubState(state, for: item.id)
@@ -314,6 +320,12 @@ public struct GlobalSessionControlPanelView: View {
 
   private var cleanupSuggestions: [GlobalSessionCleanupSuggestion] {
     GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: items)
+  }
+
+  // Item IDs whose worktree is a safe-to-delete cleanup candidate (merged PR and
+  // quiet state). Used to flag individual rows, consistent with the banner.
+  private var cleanupCandidateIDs: Set<String> {
+    Set(cleanupSuggestions.flatMap(\.sessionIDs))
   }
 
   private var panelBackground: some View {
@@ -668,6 +680,7 @@ private struct GlobalSessionControlPanelRow: View {
   let item: GlobalSessionControlPanelItem
   let isSelected: Bool
   var showsPathLines = true
+  var isCleanupCandidate = false
   let onSelect: () -> Void
   let onGitHubStateChange: (GlobalSessionControlPanelGitHubState?) -> Void
 
@@ -725,8 +738,8 @@ private struct GlobalSessionControlPanelRow: View {
           .foregroundStyle(.secondary.opacity(isHovered || isSelected ? 0.9 : 0.45))
           .padding(.top, 3)
       }
-      .padding(.horizontal, 9)
-      .padding(.vertical, 8)
+      .padding(.horizontal, 11)
+      .padding(.vertical, 11)
       .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
       .background(rowBackground)
       .contentShape(Rectangle())
@@ -771,6 +784,10 @@ private struct GlobalSessionControlPanelRow: View {
         .foregroundStyle(Color.brandPrimary(for: item.providerKind))
         .fixedSize(horizontal: true, vertical: false)
 
+      if isCleanupCandidate {
+        cleanupBadge
+      }
+
       Spacer(minLength: 4)
 
       Text(item.timestamp.timeAgoDisplay())
@@ -779,6 +796,17 @@ private struct GlobalSessionControlPanelRow: View {
         .monospacedDigit()
         .fixedSize(horizontal: true, vertical: false)
     }
+  }
+
+  private var cleanupBadge: some View {
+    Text("Cleanup")
+      .font(.system(size: 9, weight: .bold))
+      .foregroundStyle(.white)
+      .padding(.horizontal, 5)
+      .padding(.vertical, 1)
+      .background(.orange, in: Capsule())
+      .fixedSize()
+      .help("This worktree's PR is merged — safe to clean up")
   }
 
   private var detailLine: some View {
@@ -814,6 +842,12 @@ private struct GlobalSessionControlPanelRow: View {
           .font(.secondaryCaption)
           .foregroundStyle(.secondary)
 
+        if pullRequest.stateKind == .merged {
+          prStateBadge("Merged", color: .purple)
+        } else if pullRequest.stateKind == .closed {
+          prStateBadge("Closed", color: .red)
+        }
+
         Text("·")
           .font(.secondaryCaption)
           .foregroundStyle(.secondary.opacity(0.7))
@@ -826,6 +860,16 @@ private struct GlobalSessionControlPanelRow: View {
       }
       .transition(.opacity)
     }
+  }
+
+  private func prStateBadge(_ title: String, color: Color) -> some View {
+    Text(title)
+      .font(.system(size: 9, weight: .bold))
+      .foregroundStyle(.white)
+      .padding(.horizontal, 5)
+      .padding(.vertical, 1)
+      .background(color, in: Capsule())
+      .fixedSize()
   }
 
   private var pathLines: some View {
@@ -959,7 +1003,9 @@ private struct GlobalSessionControlPanelRow: View {
     case .pending:
       return summary.pending == 1 ? "1 check pending" : "\(summary.pending) checks pending"
     case .none:
-      return "CI unavailable"
+      // `.none` means the commit's check rollup is empty — i.e. no CI checks
+      // exist for it, not that the status failed to load.
+      return summary.total > 0 ? "Checks skipped" : "No checks"
     }
   }
 
