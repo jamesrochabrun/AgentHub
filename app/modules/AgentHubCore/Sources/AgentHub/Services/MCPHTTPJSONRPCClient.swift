@@ -35,6 +35,8 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
       self.mode = .legacySSE(endpoint: endpoint)
     case .stdio:
       throw MCPAppDiscoveryError.unsupportedTransport("stdio")
+    case .unsupportedAuthentication(let reason):
+      throw MCPAppDiscoveryError.unsupportedAuthentication(reason)
     case .unsupported(let transport):
       throw MCPAppDiscoveryError.unsupportedTransport(transport)
     }
@@ -112,7 +114,7 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     endpoint: URL,
     allowsLegacySSEFallback: Bool
   ) async throws -> AgentHubMCPUIJSONValue {
-    let (data, response) = try await session.data(for: postRequest(to: endpoint, body: envelope))
+    let (data, response) = try await data(for: postRequest(to: endpoint, body: envelope))
     let httpResponse = try validateHTTPResponse(
       response,
       data: data,
@@ -133,7 +135,7 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     endpoint: URL,
     allowsLegacySSEFallback: Bool
   ) async throws {
-    let (data, response) = try await session.data(for: postRequest(to: endpoint, body: envelope))
+    let (data, response) = try await data(for: postRequest(to: endpoint, body: envelope))
     let httpResponse = try validateHTTPResponse(
       response,
       data: data,
@@ -156,7 +158,7 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     getRequest.httpMethod = "GET"
     getRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
-    let (bytes, response) = try await session.bytes(for: getRequest)
+    let (bytes, response) = try await bytes(for: getRequest)
     _ = try validateHTTPResponse(response, data: Data())
 
     var parser = MCPSSEEventParser()
@@ -190,7 +192,7 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     getRequest.httpMethod = "GET"
     getRequest.setValue("text/event-stream", forHTTPHeaderField: "Accept")
 
-    let (bytes, response) = try await session.bytes(for: getRequest)
+    let (bytes, response) = try await bytes(for: getRequest)
     _ = try validateHTTPResponse(response, data: Data())
 
     var parser = MCPSSEEventParser()
@@ -209,7 +211,7 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     endpoint: URL,
     method: String
   ) async throws {
-    let (data, response) = try await session.data(for: postRequest(to: endpoint, body: envelope))
+    let (data, response) = try await data(for: postRequest(to: endpoint, body: envelope))
     _ = try validateHTTPResponse(response, data: data)
   }
 
@@ -291,8 +293,47 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
       return httpResponse
     }
 
+    if httpResponse.statusCode == 401 {
+      if let challenge = httpResponse.value(forHTTPHeaderField: "WWW-Authenticate"),
+         !challenge.isEmpty {
+        throw MCPAppDiscoveryError.unsupportedAuthentication(
+          "MCP server requires \(challenge) authentication. AgentHub currently supports unauthenticated HTTP/SSE MCP servers only."
+        )
+      }
+      throw MCPAppDiscoveryError.authenticationRequired(
+        "MCP server returned 401 Unauthorized. AgentHub currently supports unauthenticated HTTP/SSE MCP servers only."
+      )
+    }
+
+    if httpResponse.statusCode == 403 {
+      throw MCPAppDiscoveryError.authenticationRequired(
+        "MCP server returned 403 Forbidden. AgentHub currently supports unauthenticated HTTP/SSE MCP servers only."
+      )
+    }
+
     let body = String(data: data, encoding: .utf8) ?? HTTPURLResponse.localizedString(forStatusCode: httpResponse.statusCode)
     throw MCPAppDiscoveryError.httpRequestFailed(httpResponse.statusCode, body)
+  }
+
+  private func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+    do {
+      return try await session.data(for: request)
+    } catch let error as URLError {
+      throw remoteServerUnreachableError(error: error, url: request.url)
+    }
+  }
+
+  private func bytes(for request: URLRequest) async throws -> (URLSession.AsyncBytes, URLResponse) {
+    do {
+      return try await session.bytes(for: request)
+    } catch let error as URLError {
+      throw remoteServerUnreachableError(error: error, url: request.url)
+    }
+  }
+
+  private func remoteServerUnreachableError(error: URLError, url: URL?) -> MCPAppDiscoveryError {
+    let target = url?.absoluteString ?? "remote MCP server"
+    return .remoteServerUnreachable("Could not reach \(target): \(error.localizedDescription)")
   }
 
   private func shouldFallbackToLegacySSE(_ response: HTTPURLResponse) -> Bool {

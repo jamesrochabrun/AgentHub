@@ -76,6 +76,29 @@ AgentHub includes a built-in file explorer and editor for supported text files. 
 
 File explorer, quick open, and built-in editor
 
+## MCP Apps
+
+AgentHub can discover MCP app resources from configured Claude and Codex MCP servers and render `text/html;profile=mcp-app` resources inside a local, non-persistent WKWebView. Inline `ui://` resources detected in session JSONL are preview-only unless they match a configured live MCP server.
+
+Supported MCP config shapes:
+
+- Claude `~/.claude.json`: top-level or per-project `mcpServers`, including stdio servers with `command`, `args`, `env`, and `cwd`/`workingDirectory`.
+- Codex `~/.codex/config.toml`: `[mcp_servers.<name>]` tables with `command`, `args`, `cwd`, `env = { ... }`, and `[mcp_servers.<name>.env]`.
+- Remote MCP servers: unauthenticated HTTP/streamable HTTP or legacy SSE using `url`, `serverUrl`, `serverURL`, `server_url`, `endpoint`, or `uri`, with `type`/`transport`/`transportType` values such as `http`, `streamable-http`, or `sse`.
+
+Current limitations:
+
+- Authenticated remote MCP servers are reported as unsupported for this release. AgentHub does not persist MCP secrets in UserDefaults and does not mutate repo config to add credentials.
+- MCP app HTML must ask for panel-local consent before tool calls, resource reads/lists, or external links. Consent lasts only for the current MCP panel instance.
+- CSP metadata is enforced by the reusable `AgentHubMCPUI` renderer; session/server routing and consent decisions stay in AgentHubCore.
+
+Validation:
+
+- Use the MCP button on a session row to open discovered apps or discovery errors.
+- Test with a fake stdio MCP server exposing a `ui://` resource, a fake HTTP/SSE MCP server, and JSONL-detected inline resources.
+- Exercise tool calls, resource reads, external links, CSP blocking, refresh, and app teardown.
+- The known-good app build path is `xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHub build`. Full SwiftPM tests are still blocked by the existing CodeEditSymbols `Bundle.module` package issue.
+
 ## Storybook
 
 When AgentHub detects a Storybook configuration in a project, the regular **Preview** button on each session card is replaced by a dedicated **Storybook** button. Clicking it spawns the Storybook dev server (via `npm run storybook`) and opens the web preview pane pinned to the Storybook URL — independently of any other dev server the agent has running.

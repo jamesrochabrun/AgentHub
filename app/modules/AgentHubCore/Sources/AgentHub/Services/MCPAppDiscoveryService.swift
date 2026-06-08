@@ -7,11 +7,11 @@ import AgentHubMCPUI
 import Foundation
 
 public protocol MCPAppDiscoveryServiceProtocol: Sendable {
-  func discoverResources(
+  func discoverResourceSnapshot(
     provider: SessionProviderKind,
     projectPath: String,
     forceRefresh: Bool
-  ) async -> [MCPAppResource]
+  ) async -> MCPAppDiscoverySnapshot
 
   func callTool(
     provider: SessionProviderKind,
@@ -33,6 +33,112 @@ public protocol MCPAppDiscoveryServiceProtocol: Sendable {
     projectPath: String,
     serverName: String
   ) async throws -> AgentHubMCPUIJSONValue
+
+  func shutdown() async
+}
+
+public extension MCPAppDiscoveryServiceProtocol {
+  func discoverResources(
+    provider: SessionProviderKind,
+    projectPath: String,
+    forceRefresh: Bool
+  ) async -> [MCPAppResource] {
+    await discoverResourceSnapshot(
+      provider: provider,
+      projectPath: projectPath,
+      forceRefresh: forceRefresh
+    ).resources
+  }
+
+  func shutdown() async {}
+}
+
+private struct MCPAppServerClientKey: Sendable, Hashable {
+  let serverKey: MCPAppServerCacheKey
+  let transportIdentity: String
+
+  init(config: MCPServerConfiguration) {
+    self.serverKey = config.serverKey
+    self.transportIdentity = config.transportIdentity
+  }
+}
+
+private actor PooledMCPJSONRPCClient {
+  private let configName: String
+  private let client: any MCPJSONRPCClientProtocol
+  private var isInitialized = false
+  private var isInvalidated = false
+  private var operationInProgress = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private var lastUsed = Date()
+
+  init(configName: String, client: any MCPJSONRPCClientProtocol) {
+    self.configName = configName
+    self.client = client
+  }
+
+  func run<T: Sendable>(
+    operation: @Sendable (any MCPJSONRPCClientProtocol) async throws -> T
+  ) async throws -> T {
+    await waitForTurn()
+    do {
+      guard !isInvalidated else {
+        throw MCPAppDiscoveryError.processClosed(configName)
+      }
+
+      if !isInitialized {
+        try client.start()
+        _ = try await client.request(
+          method: "initialize",
+          params: MCPJSONRPCMessage.initializeParams
+        )
+        try await client.notify(method: "notifications/initialized", params: nil)
+        isInitialized = true
+      }
+
+      lastUsed = Date()
+      let value = try await operation(client)
+      lastUsed = Date()
+      finishTurn()
+      return value
+    } catch {
+      isInvalidated = true
+      isInitialized = false
+      client.close()
+      finishTurn()
+      throw error
+    }
+  }
+
+  func invalidate() {
+    isInvalidated = true
+    isInitialized = false
+    client.close()
+  }
+
+  func isIdleExpired(now: Date, idleTimeoutSeconds: TimeInterval) -> Bool {
+    guard !operationInProgress, !isInvalidated else { return false }
+    return now.timeIntervalSince(lastUsed) >= idleTimeoutSeconds
+  }
+
+  private func waitForTurn() async {
+    if !operationInProgress {
+      operationInProgress = true
+      return
+    }
+
+    await withCheckedContinuation { continuation in
+      waiters.append(continuation)
+    }
+  }
+
+  private func finishTurn() {
+    if waiters.isEmpty {
+      operationInProgress = false
+    } else {
+      waiters.removeFirst().resume()
+    }
+  }
 }
 
 public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
@@ -41,50 +147,60 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
   private let resolver: any MCPServerConfigurationResolverProtocol
   private let clientFactory: any MCPJSONRPCClientFactoryProtocol
   private let requestTimeoutSeconds: TimeInterval
-  private var resourceCache: [MCPAppServerCacheKey: [MCPAppResource]] = [:]
+  private let idleTimeoutSeconds: TimeInterval
+  private var resourceCache: [MCPAppServerClientKey: [MCPAppResource]] = [:]
+  private var clientPool: [MCPAppServerClientKey: PooledMCPJSONRPCClient] = [:]
 
   public init(
     resolver: any MCPServerConfigurationResolverProtocol = DefaultMCPServerConfigurationResolver(),
     clientFactory: any MCPJSONRPCClientFactoryProtocol = DefaultMCPJSONRPCClientFactory(),
-    requestTimeoutSeconds: TimeInterval = 6.0
+    requestTimeoutSeconds: TimeInterval = 6.0,
+    idleTimeoutSeconds: TimeInterval = 120.0
   ) {
     self.resolver = resolver
     self.clientFactory = clientFactory
     self.requestTimeoutSeconds = requestTimeoutSeconds
+    self.idleTimeoutSeconds = idleTimeoutSeconds
   }
 
-  public func discoverResources(
+  public func discoverResourceSnapshot(
     provider: SessionProviderKind,
     projectPath: String,
     forceRefresh: Bool = false
-  ) async -> [MCPAppResource] {
+  ) async -> MCPAppDiscoverySnapshot {
     let normalizedProjectPath = Self.normalize(projectPath)
+    await cleanupIdleClients()
+
+    if forceRefresh {
+      await invalidateClients(provider: provider, projectPath: normalizedProjectPath)
+    }
+
     let configs = await resolver.serverConfigurations(provider: provider, projectPath: normalizedProjectPath)
     var discovered: [MCPAppResource] = []
+    var statuses: [MCPAppServerDiscoveryStatus] = []
 
     for config in configs {
-      let serverKey = MCPAppServerCacheKey(
-        provider: provider,
-        projectPath: normalizedProjectPath,
-        serverName: config.name
-      )
+      let clientKey = MCPAppServerClientKey(config: config)
 
-      if !forceRefresh, let cached = resourceCache[serverKey] {
+      if !forceRefresh, let cached = resourceCache[clientKey] {
         discovered.append(contentsOf: cached)
+        statuses.append(discoveryStatus(for: config, resourceCount: cached.count))
         continue
       }
 
       do {
         let resources = try await discoverResources(from: config)
-        resourceCache[serverKey] = resources
+        resourceCache[clientKey] = resources
         discovered.append(contentsOf: resources)
+        statuses.append(discoveryStatus(for: config, resourceCount: resources.count))
       } catch {
         AppLogger.session.debug("MCP app discovery failed for \(config.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        resourceCache[serverKey] = []
+        resourceCache.removeValue(forKey: clientKey)
+        statuses.append(discoveryStatus(for: config, error: error))
       }
     }
 
-    return discovered
+    return MCPAppDiscoverySnapshot(resources: discovered, serverStatuses: statuses)
   }
 
   public func callTool(
@@ -160,8 +276,8 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
 
   private func discoverResources(from config: MCPServerConfiguration) async throws -> [MCPAppResource] {
     try await withInitializedClient(config: config) { client in
-      let tools = try? await client.request(method: "tools/list", params: .object([:]))
-      let listed = try? await client.request(method: "resources/list", params: .object([:]))
+      let tools = try await optionalDiscoveryRequest(client: client, method: "tools/list")
+      let listed = try await optionalDiscoveryRequest(client: client, method: "resources/list")
 
       let toolDescriptors = descriptors(fromToolsResult: tools, serverName: config.name)
       let listedDescriptors = descriptors(fromResourcesListResult: listed, serverName: config.name)
@@ -189,28 +305,151 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
     }
   }
 
+  nonisolated private func optionalDiscoveryRequest(
+    client: any MCPJSONRPCClientProtocol,
+    method: String
+  ) async throws -> AgentHubMCPUIJSONValue? {
+    do {
+      return try await client.request(method: method, params: .object([:]))
+    } catch let error as MCPAppDiscoveryError {
+      guard case .remoteError(let message) = error,
+            Self.isUnsupportedCapabilityMessage(message) else {
+        throw error
+      }
+      return nil
+    }
+  }
+
+  nonisolated private static func isUnsupportedCapabilityMessage(_ message: String) -> Bool {
+    let lowered = message.lowercased()
+    return lowered.contains("method not found")
+      || lowered.contains("not found")
+      || lowered.contains("unsupported method")
+      || lowered.contains("unknown method")
+  }
+
   private func withInitializedClient<T: Sendable>(
     config: MCPServerConfiguration,
-    operation: (any MCPJSONRPCClientProtocol) async throws -> T
+    operation: @Sendable (any MCPJSONRPCClientProtocol) async throws -> T
   ) async throws -> T {
-    let client = try clientFactory.makeClient(config: config, requestTimeoutSeconds: requestTimeoutSeconds)
+    await cleanupIdleClients()
+    let clientKey = MCPAppServerClientKey(config: config)
+    let pooledClient = try pooledClient(for: clientKey, config: config)
+
     do {
-      try client.start()
-      _ = try await client.request(
-        method: "initialize",
-        params: MCPJSONRPCMessage.initializeParams
-      )
-      try await client.notify(method: "notifications/initialized", params: nil)
-      let value = try await operation(client)
-      client.close()
-      return value
+      return try await pooledClient.run(operation: operation)
     } catch {
-      client.close()
+      clientPool.removeValue(forKey: clientKey)
+      resourceCache.removeValue(forKey: clientKey)
+      await pooledClient.invalidate()
       throw error
     }
   }
 
-  private func descriptors(
+  public func shutdown() async {
+    let clients = Array(clientPool.values)
+    clientPool.removeAll()
+    resourceCache.removeAll()
+    for client in clients {
+      await client.invalidate()
+    }
+  }
+
+  private func pooledClient(
+    for clientKey: MCPAppServerClientKey,
+    config: MCPServerConfiguration
+  ) throws -> PooledMCPJSONRPCClient {
+    if let client = clientPool[clientKey] {
+      return client
+    }
+
+    let client = try clientFactory.makeClient(config: config, requestTimeoutSeconds: requestTimeoutSeconds)
+    let pooledClient = PooledMCPJSONRPCClient(configName: config.name, client: client)
+    clientPool[clientKey] = pooledClient
+    return pooledClient
+  }
+
+  private func cleanupIdleClients() async {
+    guard idleTimeoutSeconds > 0 else { return }
+    let now = Date()
+    var expiredKeys: [MCPAppServerClientKey] = []
+    for (key, client) in clientPool {
+      if await client.isIdleExpired(now: now, idleTimeoutSeconds: idleTimeoutSeconds) {
+        expiredKeys.append(key)
+      }
+    }
+
+    for key in expiredKeys {
+      if let client = clientPool.removeValue(forKey: key) {
+        await client.invalidate()
+      }
+    }
+  }
+
+  private func invalidateClients(provider: SessionProviderKind, projectPath: String) async {
+    let matchingKeys = clientPool.keys.filter {
+      $0.serverKey.provider == provider && $0.serverKey.projectPath == projectPath
+    }
+    let matchingResourceKeys = resourceCache.keys.filter {
+      $0.serverKey.provider == provider && $0.serverKey.projectPath == projectPath
+    }
+
+    for key in matchingKeys {
+      if let client = clientPool.removeValue(forKey: key) {
+        await client.invalidate()
+      }
+      resourceCache.removeValue(forKey: key)
+    }
+    for key in matchingResourceKeys {
+      resourceCache.removeValue(forKey: key)
+    }
+  }
+
+  private func discoveryStatus(
+    for config: MCPServerConfiguration,
+    resourceCount: Int
+  ) -> MCPAppServerDiscoveryStatus {
+    MCPAppServerDiscoveryStatus(
+      key: config.serverKey,
+      transportDescription: config.transportDescription,
+      state: resourceCount == 0 ? .noResources : .available(resourceCount: resourceCount)
+    )
+  }
+
+  private func discoveryStatus(
+    for config: MCPServerConfiguration,
+    error: Error
+  ) -> MCPAppServerDiscoveryStatus {
+    MCPAppServerDiscoveryStatus(
+      key: config.serverKey,
+      transportDescription: config.transportDescription,
+      state: discoveryState(from: error)
+    )
+  }
+
+  private func discoveryState(from error: Error) -> MCPAppServerDiscoveryState {
+    if let error = error as? MCPAppDiscoveryError {
+      switch error {
+      case .unsupportedTransport:
+        return .unsupportedTransport(error.localizedDescription)
+      case .authenticationRequired, .unsupportedAuthentication:
+        return .authenticationRequired(error.localizedDescription)
+      case .remoteServerUnreachable:
+        return .unreachable(error.localizedDescription)
+      case .serverNotFound,
+           .processLaunchFailed,
+           .processClosed,
+           .requestTimedOut,
+           .invalidResponse,
+           .remoteError,
+           .httpRequestFailed:
+        return .failure(error.localizedDescription)
+      }
+    }
+    return .failure(error.localizedDescription)
+  }
+
+  nonisolated private func descriptors(
     fromToolsResult result: AgentHubMCPUIJSONValue?,
     serverName: String
   ) -> [MCPAppResourceDescriptor] {
@@ -220,7 +459,7 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
     }
   }
 
-  private func descriptors(
+  nonisolated private func descriptors(
     fromResourcesListResult result: AgentHubMCPUIJSONValue?,
     serverName: String
   ) -> [MCPAppResourceDescriptor] {
@@ -230,7 +469,7 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
     }
   }
 
-  private func readMCPUIResource(
+  nonisolated private func readMCPUIResource(
     uri: String,
     client: any MCPJSONRPCClientProtocol,
     descriptor: MCPAppResourceDescriptor
@@ -262,7 +501,7 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
     return nil
   }
 
-  private func deduplicatedDescriptors(_ descriptors: [MCPAppResourceDescriptor]) -> [MCPAppResourceDescriptor] {
+  nonisolated private func deduplicatedDescriptors(_ descriptors: [MCPAppResourceDescriptor]) -> [MCPAppResourceDescriptor] {
     var seen = Set<String>()
     var result: [MCPAppResourceDescriptor] = []
     for descriptor in descriptors {
@@ -276,12 +515,12 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
 public actor NoOpMCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
   public init() {}
 
-  public func discoverResources(
+  public func discoverResourceSnapshot(
     provider: SessionProviderKind,
     projectPath: String,
     forceRefresh: Bool
-  ) async -> [MCPAppResource] {
-    []
+  ) async -> MCPAppDiscoverySnapshot {
+    MCPAppDiscoverySnapshot(resources: [], serverStatuses: [])
   }
 
   public func callTool(
@@ -315,6 +554,9 @@ public actor NoOpMCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
 public enum MCPAppDiscoveryError: LocalizedError, Sendable {
   case serverNotFound(String)
   case unsupportedTransport(String)
+  case authenticationRequired(String)
+  case unsupportedAuthentication(String)
+  case remoteServerUnreachable(String)
   case processLaunchFailed(String)
   case processClosed(String)
   case requestTimedOut(String)
@@ -326,8 +568,14 @@ public enum MCPAppDiscoveryError: LocalizedError, Sendable {
     switch self {
     case .serverNotFound(let server):
       return "MCP server '\(server)' was not found."
-    case .unsupportedTransport(let server):
-      return "MCP server '\(server)' does not use stdio transport."
+    case .unsupportedTransport(let transport):
+      return "MCP transport '\(transport)' is not supported."
+    case .authenticationRequired(let message):
+      return message
+    case .unsupportedAuthentication(let message):
+      return message
+    case .remoteServerUnreachable(let message):
+      return message
     case .processLaunchFailed(let message):
       return "Failed to launch MCP server: \(message)"
     case .processClosed(let server):

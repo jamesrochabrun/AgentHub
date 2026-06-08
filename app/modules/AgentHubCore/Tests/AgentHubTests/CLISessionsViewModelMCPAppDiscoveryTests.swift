@@ -35,19 +35,32 @@ private final class MCPAppViewModelFileWatcher: SessionFileWatcherProtocol, @unc
 
 private actor MockMCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
   private let resources: [MCPAppResource]
+  private let statuses: [MCPAppServerDiscoveryStatus]
   private var discoverCount = 0
 
-  init(resources: [MCPAppResource]) {
+  init(resources: [MCPAppResource], statuses: [MCPAppServerDiscoveryStatus] = []) {
     self.resources = resources
+    self.statuses = statuses
   }
 
-  func discoverResources(
+  func discoverResourceSnapshot(
     provider: SessionProviderKind,
     projectPath: String,
     forceRefresh: Bool
-  ) async -> [MCPAppResource] {
+  ) async -> MCPAppDiscoverySnapshot {
     discoverCount += 1
-    return resources.filter { $0.provider == provider && $0.projectPath == projectPath }
+    let matchingResources = resources.filter { $0.provider == provider && $0.projectPath == projectPath }
+    if !statuses.isEmpty {
+      return MCPAppDiscoverySnapshot(resources: matchingResources, serverStatuses: statuses)
+    }
+    let generatedStatuses = Dictionary(grouping: matchingResources, by: \.serverName).map { serverName, resources in
+      MCPAppServerDiscoveryStatus(
+        key: MCPAppServerCacheKey(provider: provider, projectPath: projectPath, serverName: serverName),
+        transportDescription: "fake",
+        state: .available(resourceCount: resources.count)
+      )
+    }
+    return MCPAppDiscoverySnapshot(resources: matchingResources, serverStatuses: generatedStatuses)
   }
 
   func callTool(
@@ -164,5 +177,33 @@ struct CLISessionsViewModelMCPAppDiscoveryTests {
       "ui://charts/dashboard",
       "ui://inline/form"
     ])
+  }
+
+  @Test("Caches MCP discovery statuses for panel states")
+  @MainActor
+  func cachesDiscoveryStatusesForPanelStates() async {
+    let projectPath = "/tmp/agenthub-mcp-project"
+    let status = MCPAppServerDiscoveryStatus(
+      key: MCPAppServerCacheKey(provider: .claude, projectPath: projectPath, serverName: "remote"),
+      transportDescription: "HTTP https://mcp.example.com/mcp",
+      state: .authenticationRequired("MCP server returned 401 Unauthorized.")
+    )
+    let discoveryService = MockMCPAppDiscoveryService(resources: [], statuses: [status])
+    let viewModel = CLISessionsViewModel(
+      monitorService: MCPAppViewModelMonitorService(),
+      fileWatcher: MCPAppViewModelFileWatcher(),
+      searchService: nil,
+      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
+      providerKind: .claude,
+      mcpAppDiscoveryService: discoveryService,
+      approvalNotificationService: NoOpApprovalNotificationService()
+    )
+    let session = CLISession(id: "session-1", projectPath: projectPath)
+
+    await viewModel.ensureMCPAppResources(for: session)
+
+    #expect(viewModel.mcpAppResources(for: session, state: nil).isEmpty)
+    #expect(viewModel.mcpAppDiscoveryStatuses(for: session) == [status])
+    #expect(!viewModel.isMCPAppDiscoveryLoading(for: session))
   }
 }

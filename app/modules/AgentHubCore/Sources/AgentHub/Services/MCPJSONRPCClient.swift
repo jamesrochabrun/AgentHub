@@ -35,6 +35,8 @@ public struct DefaultMCPJSONRPCClientFactory: MCPJSONRPCClientFactoryProtocol {
       return MCPStdioJSONRPCClient(config: config, requestTimeoutSeconds: requestTimeoutSeconds)
     case .streamableHTTP, .sse:
       return try MCPHTTPJSONRPCClient(config: config, requestTimeoutSeconds: requestTimeoutSeconds)
+    case .unsupportedAuthentication(let reason):
+      throw MCPAppDiscoveryError.unsupportedAuthentication(reason)
     case .unsupported(let transport):
       throw MCPAppDiscoveryError.unsupportedTransport(transport)
     }

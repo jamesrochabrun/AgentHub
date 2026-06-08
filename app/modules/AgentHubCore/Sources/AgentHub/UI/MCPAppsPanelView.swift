@@ -10,14 +10,23 @@ import SwiftUI
 struct MCPAppsPanelView: View {
   let session: CLISession
   let resources: [MCPAppResource]
+  let discoveryStatuses: [MCPAppServerDiscoveryStatus]
+  let isDiscovering: Bool
   let viewModel: CLISessionsViewModel?
+  let onRefresh: () -> Void
   let onDismiss: () -> Void
 
   @State private var selectedResourceID: String?
+  @State private var consentController = MCPAppConsentController()
+  @State private var operationNotice: MCPAppPanelNotice?
 
   private var selectedResource: MCPAppResource? {
     let selectedID = selectedResourceID ?? resources.first?.id
     return resources.first { $0.id == selectedID } ?? resources.first
+  }
+
+  private var errorStatuses: [MCPAppServerDiscoveryStatus] {
+    discoveryStatuses.filter(\.state.isError)
   }
 
   var body: some View {
@@ -26,34 +35,81 @@ struct MCPAppsPanelView: View {
 
       Divider()
 
-      if resources.isEmpty {
-        ContentUnavailableView(
-          "No MCP Apps",
-          systemImage: "square.stack.3d.up",
-          description: Text("No app resources are available for this session.")
-        )
-        .frame(width: 820, height: 520)
-      } else {
-        HStack(spacing: 0) {
-          resourceList
-            .frame(width: 220)
+      content
+    }
+    .frame(minWidth: 820, minHeight: 520)
+    .onAppear {
+      selectedResourceID = selectedResourceID ?? resources.first?.id
+    }
+    .onChange(of: resources.map(\.id)) { _, ids in
+      guard let selectedResourceID, ids.contains(selectedResourceID) else {
+        self.selectedResourceID = ids.first
+        return
+      }
+    }
+    .confirmationDialog(
+      "Allow MCP App Action?",
+      isPresented: Binding(
+        get: { consentController.pendingRequest != nil },
+        set: { isPresented in
+          if !isPresented {
+            consentController.denyPendingRequest()
+          }
+        }
+      ),
+      titleVisibility: .visible
+    ) {
+      Button("Allow for This Panel") {
+        consentController.approvePendingRequest()
+      }
+      .keyboardShortcut(.return, modifiers: [])
 
-          Divider()
+      Button("Deny", role: .cancel) {
+        consentController.denyPendingRequest()
+      }
+      .keyboardShortcut(.escape, modifiers: [])
+    } message: {
+      Text(consentController.pendingRequest?.message ?? "")
+    }
+  }
+
+  @ViewBuilder
+  private var content: some View {
+    if resources.isEmpty {
+      MCPAppDiscoveryStateView(
+        statuses: discoveryStatuses,
+        isDiscovering: isDiscovering,
+        onRefresh: onRefresh
+      )
+    } else {
+      HStack(spacing: 0) {
+        resourceList
+          .frame(width: 220)
+
+        Divider()
+
+        VStack(spacing: 0) {
+          if let operationNotice {
+            MCPAppNoticeBanner(notice: operationNotice) {
+              self.operationNotice = nil
+            }
+          } else if !errorStatuses.isEmpty {
+            MCPAppDiscoveryStatusStrip(statuses: errorStatuses)
+          }
 
           if let selectedResource {
             MCPAppResourceHostView(
               resource: selectedResource,
               viewModel: viewModel,
+              consentController: consentController,
+              onOperationNotice: { operationNotice = $0 },
               onTeardown: onDismiss
             )
             .id(selectedResource.id)
           }
         }
-        .frame(width: 980, height: 640)
       }
-    }
-    .onAppear {
-      selectedResourceID = selectedResourceID ?? resources.first?.id
+      .frame(width: 980, height: 640)
     }
   }
 
@@ -61,6 +117,7 @@ struct MCPAppsPanelView: View {
     HStack(spacing: 10) {
       Image(systemName: "square.stack.3d.up")
         .foregroundStyle(Color.brandPrimary)
+        .accessibilityHidden(true)
 
       VStack(alignment: .leading, spacing: 2) {
         Text("MCP Apps")
@@ -71,6 +128,11 @@ struct MCPAppsPanelView: View {
       }
 
       Spacer()
+
+      Button("Refresh", systemImage: "arrow.clockwise", action: onRefresh)
+        .keyboardShortcut("r", modifiers: .command)
+        .help("Refresh MCP app discovery")
+        .accessibilityLabel("Refresh MCP apps")
 
       Button("Close", action: onDismiss)
         .keyboardShortcut(.cancelAction)
@@ -90,6 +152,192 @@ struct MCPAppsPanelView: View {
       }
     }
     .listStyle(.sidebar)
+    .accessibilityLabel("MCP app resources")
+  }
+}
+
+private struct MCPAppDiscoveryStateView: View {
+  let statuses: [MCPAppServerDiscoveryStatus]
+  let isDiscovering: Bool
+  let onRefresh: () -> Void
+
+  private var title: String {
+    if isDiscovering { return "Loading MCP Apps" }
+    if statuses.isEmpty { return "No MCP Apps" }
+    if statuses.contains(where: { $0.state.isError }) { return "MCP Discovery Needs Attention" }
+    return "No MCP Apps"
+  }
+
+  private var systemImage: String {
+    if isDiscovering { return "arrow.triangle.2.circlepath" }
+    if statuses.contains(where: { $0.state.isError }) { return "exclamationmark.triangle" }
+    return "square.stack.3d.up"
+  }
+
+  var body: some View {
+    VStack(spacing: 18) {
+      if isDiscovering {
+        ProgressView()
+          .controlSize(.regular)
+      }
+
+      ContentUnavailableView(
+        title,
+        systemImage: systemImage,
+        description: Text(description)
+      )
+
+      if !statuses.isEmpty {
+        VStack(spacing: 8) {
+          ForEach(statuses) { status in
+            MCPAppServerStatusRow(status: status)
+          }
+        }
+        .frame(maxWidth: 600)
+      }
+
+      Button("Refresh", systemImage: "arrow.clockwise", action: onRefresh)
+        .keyboardShortcut("r", modifiers: .command)
+        .accessibilityLabel("Refresh MCP apps")
+    }
+    .padding(28)
+    .frame(width: 820, height: 520)
+  }
+
+  private var description: String {
+    if isDiscovering {
+      return "Discovering app resources from configured MCP servers."
+    }
+    if statuses.isEmpty {
+      return "No configured MCP server exposed an app resource for this session."
+    }
+    if statuses.contains(where: { $0.state.isError }) {
+      return "One or more MCP servers could not be used for app discovery."
+    }
+    return "Configured MCP servers did not expose app resources."
+  }
+}
+
+private struct MCPAppDiscoveryStatusStrip: View {
+  let statuses: [MCPAppServerDiscoveryStatus]
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 8) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .foregroundStyle(.orange)
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text("Some MCP servers could not be discovered.")
+          .font(.caption.weight(.semibold))
+        Text(statuses.map { "\($0.key.serverName): \($0.state.displayTitle)" }.joined(separator: "  "))
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(2)
+      }
+
+      Spacer()
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .background(Color.orange.opacity(0.10))
+  }
+}
+
+private struct MCPAppNoticeBanner: View {
+  let notice: MCPAppPanelNotice
+  let onDismiss: () -> Void
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 8) {
+      Image(systemName: notice.systemImage)
+        .foregroundStyle(notice.tint)
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(notice.title)
+          .font(.caption.weight(.semibold))
+        Text(notice.message)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(3)
+      }
+
+      Spacer()
+
+      Button("Dismiss", systemImage: "xmark", action: onDismiss)
+        .labelStyle(.iconOnly)
+        .buttonStyle(.plain)
+        .help("Dismiss")
+        .accessibilityLabel("Dismiss MCP app notice")
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .background(notice.tint.opacity(0.10))
+  }
+}
+
+private struct MCPAppServerStatusRow: View {
+  let status: MCPAppServerDiscoveryStatus
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: iconName)
+        .foregroundStyle(tint)
+        .frame(width: 18)
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: 3) {
+        HStack(spacing: 6) {
+          Text(status.key.serverName)
+            .font(.system(size: 12, weight: .semibold))
+          Text(status.transportDescription)
+            .font(.system(size: 10, design: .monospaced))
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+        }
+
+        Text(status.state.displayTitle)
+          .font(.caption.weight(.medium))
+        Text(status.state.displayMessage)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
+      Spacer()
+    }
+    .padding(10)
+    .background(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(Color.secondary.opacity(0.08))
+    )
+    .accessibilityElement(children: .combine)
+  }
+
+  private var iconName: String {
+    switch status.state {
+    case .loading:
+      return "arrow.triangle.2.circlepath"
+    case .available:
+      return "checkmark.circle.fill"
+    case .noResources:
+      return "minus.circle"
+    case .unsupportedTransport, .authenticationRequired, .unreachable, .failure:
+      return "exclamationmark.triangle.fill"
+    }
+  }
+
+  private var tint: Color {
+    switch status.state {
+    case .available:
+      return .green
+    case .unsupportedTransport, .authenticationRequired, .unreachable, .failure:
+      return .orange
+    case .loading, .noResources:
+      return .secondary
+    }
   }
 }
 
@@ -114,12 +362,16 @@ private struct MCPAppResourceRow: View {
         .truncationMode(.middle)
     }
     .padding(.vertical, 4)
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel(resource.title ?? resource.resource.metadata.title ?? resource.resource.uri)
   }
 }
 
 private struct MCPAppResourceHostView: View {
   let resource: MCPAppResource
   let viewModel: CLISessionsViewModel?
+  let consentController: MCPAppConsentController
+  let onOperationNotice: (MCPAppPanelNotice) -> Void
   let onTeardown: () -> Void
 
   @State private var requestedHeight: CGFloat = 460
@@ -144,32 +396,180 @@ private struct MCPAppResourceHostView: View {
     bridgeHandler = MCPAppHostBridgeHandler(
       resource: resource,
       viewModel: viewModel,
-      onSizeChange: { width, height in
+      consentController: consentController,
+      onSizeChange: { _, height in
         if let height {
           requestedHeight = min(max(CGFloat(height), 240), 900)
         }
       },
+      onOperationNotice: onOperationNotice,
       onTeardown: onTeardown
     )
   }
 }
 
 @MainActor
-private final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
+@Observable
+final class MCPAppConsentController {
+  var pendingRequest: MCPAppConsentRequest?
+
+  private var grants: Set<MCPAppConsentGrant> = []
+  private var pendingContinuation: CheckedContinuation<Bool, Never>?
+
+  func require(_ action: MCPAppConsentAction, resource: MCPAppResource) async throws {
+    let grant = MCPAppConsentGrant(resourceID: resource.id, scope: action.grantScope)
+    guard !grants.contains(grant) else { return }
+    guard pendingRequest == nil, pendingContinuation == nil else {
+      throw AgentHubMCPUIBridgeError.permissionDenied("Another MCP app permission request is pending.")
+    }
+
+    let request = MCPAppConsentRequest(resource: resource, action: action)
+    let allowed = await withCheckedContinuation { continuation in
+      pendingRequest = request
+      pendingContinuation = continuation
+    }
+
+    if allowed {
+      grants.insert(grant)
+      return
+    }
+
+    throw AgentHubMCPUIBridgeError.permissionDenied(action.denialMessage)
+  }
+
+  func approvePendingRequest() {
+    pendingContinuation?.resume(returning: true)
+    pendingContinuation = nil
+    pendingRequest = nil
+  }
+
+  func denyPendingRequest() {
+    pendingContinuation?.resume(returning: false)
+    pendingContinuation = nil
+    pendingRequest = nil
+  }
+}
+
+struct MCPAppConsentRequest: Identifiable, Equatable {
+  let id = UUID()
+  let resourceTitle: String
+  let serverName: String
+  let action: MCPAppConsentAction
+
+  init(resource: MCPAppResource, action: MCPAppConsentAction) {
+    self.resourceTitle = resource.title ?? resource.resource.metadata.title ?? resource.resource.uri
+    self.serverName = resource.serverName
+    self.action = action
+  }
+
+  var message: String {
+    "\(resourceTitle) from \(serverName) wants to \(action.promptDescription)."
+  }
+}
+
+enum MCPAppConsentAction: Equatable, Hashable {
+  case callTool(String)
+  case readResource(String)
+  case listResources
+  case openLink(URL)
+
+  var grantScope: String {
+    switch self {
+    case .callTool(let name):
+      return "tool:\(name)"
+    case .readResource(let uri):
+      return "resource:\(uri)"
+    case .listResources:
+      return "resources:list"
+    case .openLink(let url):
+      return "link:\(url.absoluteString)"
+    }
+  }
+
+  var promptDescription: String {
+    switch self {
+    case .callTool(let name):
+      return "call the tool '\(name)'"
+    case .readResource(let uri):
+      return "read the resource \(uri)"
+    case .listResources:
+      return "list resources from its MCP server"
+    case .openLink(let url):
+      return "open \(url.absoluteString)"
+    }
+  }
+
+  var denialMessage: String {
+    switch self {
+    case .callTool(let name):
+      return "MCP app tool call '\(name)' was denied."
+    case .readResource(let uri):
+      return "MCP app resource read '\(uri)' was denied."
+    case .listResources:
+      return "MCP app resource listing was denied."
+    case .openLink(let url):
+      return "MCP app external link '\(url.absoluteString)' was denied."
+    }
+  }
+}
+
+private struct MCPAppConsentGrant: Hashable {
+  let resourceID: String
+  let scope: String
+}
+
+struct MCPAppPanelNotice: Identifiable, Equatable {
+  enum Kind: Equatable {
+    case error
+    case denied
+  }
+
+  let id = UUID()
+  let kind: Kind
+  let title: String
+  let message: String
+
+  var systemImage: String {
+    switch kind {
+    case .error:
+      return "exclamationmark.triangle.fill"
+    case .denied:
+      return "hand.raised.fill"
+    }
+  }
+
+  var tint: Color {
+    switch kind {
+    case .error:
+      return .orange
+    case .denied:
+      return .red
+    }
+  }
+}
+
+@MainActor
+final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
   private let resource: MCPAppResource
   private weak var viewModel: CLISessionsViewModel?
+  private let consentController: MCPAppConsentController
   private let onSizeChange: (Double?, Double?) -> Void
+  private let onOperationNotice: (MCPAppPanelNotice) -> Void
   private let onTeardown: () -> Void
 
   init(
     resource: MCPAppResource,
     viewModel: CLISessionsViewModel?,
+    consentController: MCPAppConsentController,
     onSizeChange: @escaping (Double?, Double?) -> Void,
+    onOperationNotice: @escaping (MCPAppPanelNotice) -> Void,
     onTeardown: @escaping () -> Void
   ) {
     self.resource = resource
     self.viewModel = viewModel
+    self.consentController = consentController
     self.onSizeChange = onSizeChange
+    self.onOperationNotice = onOperationNotice
     self.onTeardown = onTeardown
   }
 
@@ -201,48 +601,72 @@ private final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
     name: String,
     arguments: AgentHubMCPUIJSONValue?
   ) async throws -> AgentHubMCPUIJSONValue {
-    guard resource.source == .liveDiscovery else {
-      throw AgentHubMCPUIBridgeError.permissionDenied("Inline MCP app resources cannot call tools without a resolved server.")
+    do {
+      guard resource.source == .liveDiscovery else {
+        throw AgentHubMCPUIBridgeError.permissionDenied("Inline MCP app resources cannot call tools without a resolved server.")
+      }
+      if let allowed = resource.resource.metadata.permissions.allowedToolNames,
+         !allowed.contains(name) {
+        throw AgentHubMCPUIBridgeError.permissionDenied("MCP app is not allowed to call tool '\(name)'.")
+      }
+      try await consentController.require(.callTool(name), resource: resource)
+      guard let viewModel else {
+        throw AgentHubMCPUIBridgeError.invalidRequest("AgentHub session view model is unavailable.")
+      }
+      return try await viewModel.callMCPAppTool(resource: resource, name: name, arguments: arguments)
+    } catch {
+      report(error: error, deniedTitle: "Tool Call Denied", failureTitle: "Tool Call Failed")
+      throw error
     }
-    if let allowed = resource.resource.metadata.permissions.allowedToolNames,
-       !allowed.contains(name) {
-      throw AgentHubMCPUIBridgeError.permissionDenied("MCP app is not allowed to call tool '\(name)'.")
-    }
-    guard let viewModel else {
-      throw AgentHubMCPUIBridgeError.invalidRequest("AgentHub session view model is unavailable.")
-    }
-    return try await viewModel.callMCPAppTool(resource: resource, name: name, arguments: arguments)
   }
 
   func readResource(uri: String) async throws -> AgentHubMCPUIJSONValue {
-    if uri == resource.resource.uri {
-      return .object([
-        "contents": .array([resourceContentValue(resource.resource)])
-      ])
+    do {
+      try await consentController.require(.readResource(uri), resource: resource)
+      if uri == resource.resource.uri {
+        return .object([
+          "contents": .array([resourceContentValue(resource.resource)])
+        ])
+      }
+      guard resource.source == .liveDiscovery, let viewModel else {
+        throw AgentHubMCPUIBridgeError.permissionDenied("MCP app cannot read resources without a resolved server.")
+      }
+      return try await viewModel.readMCPAppResource(resource: resource, uri: uri)
+    } catch {
+      report(error: error, deniedTitle: "Resource Read Denied", failureTitle: "Resource Read Failed")
+      throw error
     }
-    guard resource.source == .liveDiscovery, let viewModel else {
-      throw AgentHubMCPUIBridgeError.permissionDenied("MCP app cannot read resources without a resolved server.")
-    }
-    return try await viewModel.readMCPAppResource(resource: resource, uri: uri)
   }
 
   func listResources() async throws -> AgentHubMCPUIJSONValue {
-    guard resource.source == .liveDiscovery, let viewModel else {
-      return .object([
-        "resources": .array([resourceListValue(resource.resource)])
-      ])
+    do {
+      try await consentController.require(.listResources, resource: resource)
+      guard resource.source == .liveDiscovery, let viewModel else {
+        return .object([
+          "resources": .array([resourceListValue(resource.resource)])
+        ])
+      }
+      return try await viewModel.listMCPAppResources(resource: resource)
+    } catch {
+      report(error: error, deniedTitle: "Resource List Denied", failureTitle: "Resource List Failed")
+      throw error
     }
-    return try await viewModel.listMCPAppResources(resource: resource)
   }
 
   func openLink(url: URL) async throws {
-    guard resource.resource.metadata.permissions.allowOpenLinks else {
-      throw AgentHubMCPUIBridgeError.permissionDenied("MCP app is not allowed to open external links.")
+    do {
+      guard resource.resource.metadata.permissions.allowOpenLinks else {
+        throw AgentHubMCPUIBridgeError.permissionDenied("MCP app is not allowed to open external links.")
+      }
+      guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+        throw AgentHubMCPUIBridgeError.permissionDenied("MCP app may only open http or https links.")
+      }
+      try await consentController.require(.openLink(url), resource: resource)
+      NSWorkspace.shared.open(url)
+    } catch {
+      report(error: error, deniedTitle: "Link Open Denied", failureTitle: "Link Open Failed")
+      throw error
     }
-    guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-      throw AgentHubMCPUIBridgeError.permissionDenied("MCP app may only open http or https links.")
-    }
-    NSWorkspace.shared.open(url)
   }
 
   func appDidRequestSize(width: Double?, height: Double?) {
@@ -256,6 +680,20 @@ private final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
   func appDidSendMessage(_ params: AgentHubMCPUIJSONValue?) {}
   func appDidUpdateModelContext(_ params: AgentHubMCPUIJSONValue?) {}
   func appDidLogMessage(_ params: AgentHubMCPUIJSONValue?) {}
+
+  private func report(error: Error, deniedTitle: String, failureTitle: String) {
+    let isDenied: Bool
+    if case .permissionDenied(_) = error as? AgentHubMCPUIBridgeError {
+      isDenied = true
+    } else {
+      isDenied = false
+    }
+    onOperationNotice(MCPAppPanelNotice(
+      kind: isDenied ? .denied : .error,
+      title: isDenied ? deniedTitle : failureTitle,
+      message: error.localizedDescription
+    ))
+  }
 
   private func resourceContentValue(_ resource: AgentHubMCPUIResource) -> AgentHubMCPUIJSONValue {
     .object([

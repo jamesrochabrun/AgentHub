@@ -132,6 +132,117 @@ struct MCPAppDiscoveryServiceTests {
       "resources/list",
       "resources/read"
     ])
+    #expect(client.startCallCount() == 1)
+    #expect(client.closeCallCount() == 0)
+  }
+
+  @Test("Reuses initialized clients across discovery and tool calls")
+  func reusesInitializedClientsAcrossDiscoveryAndToolCalls() async throws {
+    let endpoint = try #require(URL(string: "http://localhost:9100/mcp"))
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let client = FakeMCPJSONRPCClient()
+    let service = MCPAppDiscoveryService(
+      resolver: StaticMCPServerConfigurationResolver(configs: [
+        MCPServerConfiguration(
+          provider: .claude,
+          projectPath: directory.path,
+          name: "remote",
+          transport: .streamableHTTP(endpoint, legacySSEFallback: true)
+        )
+      ]),
+      clientFactory: StaticMCPJSONRPCClientFactory(client: client),
+      requestTimeoutSeconds: 2
+    )
+
+    _ = await service.discoverResources(
+      provider: .claude,
+      projectPath: directory.path,
+      forceRefresh: true
+    )
+    let result = try await service.callTool(
+      provider: .claude,
+      projectPath: directory.path,
+      serverName: "remote",
+      name: "echo",
+      arguments: .object([:])
+    )
+
+    #expect(result["structuredContent"]?["ok"] == .bool(true))
+    #expect(await client.requestedMethods() == [
+      "initialize",
+      "tools/list",
+      "resources/list",
+      "resources/read",
+      "tools/call"
+    ])
+    #expect(client.startCallCount() == 1)
+    #expect(client.closeCallCount() == 0)
+  }
+
+  @Test("Force refresh invalidates pooled MCP clients")
+  func forceRefreshInvalidatesPooledClients() async throws {
+    let endpoint = try #require(URL(string: "http://localhost:9200/mcp"))
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let factory = RecordingMCPJSONRPCClientFactory()
+    let service = MCPAppDiscoveryService(
+      resolver: StaticMCPServerConfigurationResolver(configs: [
+        MCPServerConfiguration(
+          provider: .codex,
+          projectPath: directory.path,
+          name: "remote",
+          transport: .streamableHTTP(endpoint, legacySSEFallback: true)
+        )
+      ]),
+      clientFactory: factory,
+      requestTimeoutSeconds: 2
+    )
+
+    _ = await service.discoverResources(provider: .codex, projectPath: directory.path, forceRefresh: true)
+    let first = try #require(factory.clients.first)
+    _ = await service.discoverResources(provider: .codex, projectPath: directory.path, forceRefresh: true)
+
+    #expect(factory.clients.count == 2)
+    #expect(first.closeCallCount() >= 1)
+  }
+
+  @Test("Idle timeout closes pooled MCP clients before reuse")
+  func idleTimeoutClosesPooledClientsBeforeReuse() async throws {
+    let endpoint = try #require(URL(string: "http://localhost:9300/mcp"))
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let factory = RecordingMCPJSONRPCClientFactory()
+    let service = MCPAppDiscoveryService(
+      resolver: StaticMCPServerConfigurationResolver(configs: [
+        MCPServerConfiguration(
+          provider: .claude,
+          projectPath: directory.path,
+          name: "remote",
+          transport: .streamableHTTP(endpoint, legacySSEFallback: true)
+        )
+      ]),
+      clientFactory: factory,
+      requestTimeoutSeconds: 2,
+      idleTimeoutSeconds: 0.001
+    )
+
+    _ = await service.discoverResources(provider: .claude, projectPath: directory.path, forceRefresh: true)
+    let first = try #require(factory.clients.first)
+    try await Task.sleep(for: .milliseconds(10))
+    _ = try await service.callTool(
+      provider: .claude,
+      projectPath: directory.path,
+      serverName: "remote",
+      name: "echo",
+      arguments: .object([:])
+    )
+
+    #expect(factory.clients.count == 2)
+    #expect(first.closeCallCount() >= 1)
   }
 
   @Test("Resolver maps URL configs to HTTP and SSE transports")
@@ -177,6 +288,104 @@ struct MCPAppDiscoveryServiceTests {
       #expect(legacy.command == nil)
     } else {
       Issue.record("Expected legacy config to use SSE transport")
+    }
+  }
+
+  @Test("Resolver parses stdio args env cwd and HTTP variants")
+  func resolverParsesStdioArgsEnvCWDAndHTTPVariants() async throws {
+    let directory = try temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+
+    let claudeConfig = directory.appending(path: "claude.json")
+    try """
+    {
+      "mcpServers": {
+        "stdio": {
+          "command": "node",
+          "args": ["server.js", "--flag"],
+          "env": { "API_BASE": "http://localhost:3000" },
+          "cwd": "/tmp/mcp-stdio"
+        },
+        "streamable": {
+          "transportType": "streamable-http",
+          "endpoint": "https://mcp.example.com/mcp"
+        },
+        "autodetected": {
+          "serverURL": "https://mcp.example.com/auto"
+        },
+        "authenticated": {
+          "type": "http",
+          "url": "https://mcp.example.com/private",
+          "headers": { "Authorization": "Bearer secret" }
+        }
+      }
+    }
+    """.write(to: claudeConfig, atomically: true, encoding: .utf8)
+
+    let codexConfig = directory.appending(path: "config.toml")
+    try """
+    [mcp_servers.codex_stdio]
+    command = "python"
+    args = ["server.py", "--debug"]
+    cwd = "/tmp/codex-mcp"
+    env = { API_BASE = "http://localhost:3001" }
+
+    [mcp_servers.codex_stdio.env]
+    EXTRA = "1"
+
+    [mcp_servers.codex_remote]
+    type = "sse"
+    uri = "https://mcp.example.com/events"
+    """.write(to: codexConfig, atomically: true, encoding: .utf8)
+
+    let resolver = DefaultMCPServerConfigurationResolver(
+      claudeConfigPath: claudeConfig.path,
+      codexConfigPath: codexConfig.path
+    )
+
+    let claudeConfigs = await resolver.serverConfigurations(provider: .claude, projectPath: directory.path)
+    let stdio = try #require(claudeConfigs.first { $0.name == "stdio" })
+    #expect(stdio.transport == .stdio)
+    #expect(stdio.command == "node")
+    #expect(stdio.args == ["server.js", "--flag"])
+    #expect(stdio.env["API_BASE"] == "http://localhost:3000")
+    #expect(stdio.cwd == "/tmp/mcp-stdio")
+
+    let streamable = try #require(claudeConfigs.first { $0.name == "streamable" })
+    if case .streamableHTTP(let endpoint, let legacySSEFallback) = streamable.transport {
+      #expect(endpoint.absoluteString == "https://mcp.example.com/mcp")
+      #expect(legacySSEFallback)
+    } else {
+      Issue.record("Expected streamable HTTP transport")
+    }
+
+    let autodetected = try #require(claudeConfigs.first { $0.name == "autodetected" })
+    if case .streamableHTTP(let endpoint, _) = autodetected.transport {
+      #expect(endpoint.absoluteString == "https://mcp.example.com/auto")
+    } else {
+      Issue.record("Expected URL-only config to use streamable HTTP")
+    }
+
+    let authenticated = try #require(claudeConfigs.first { $0.name == "authenticated" })
+    if case .unsupportedAuthentication(let message) = authenticated.transport {
+      #expect(message.contains("Authenticated remote MCP servers"))
+    } else {
+      Issue.record("Expected authenticated HTTP config to be rejected")
+    }
+
+    let codexConfigs = await resolver.serverConfigurations(provider: .codex, projectPath: directory.path)
+    let codexStdio = try #require(codexConfigs.first { $0.name == "codex_stdio" })
+    #expect(codexStdio.command == "python")
+    #expect(codexStdio.args == ["server.py", "--debug"])
+    #expect(codexStdio.cwd == "/tmp/codex-mcp")
+    #expect(codexStdio.env["API_BASE"] == "http://localhost:3001")
+    #expect(codexStdio.env["EXTRA"] == "1")
+
+    let codexRemote = try #require(codexConfigs.first { $0.name == "codex_remote" })
+    if case .sse(let endpoint) = codexRemote.transport {
+      #expect(endpoint.absoluteString == "https://mcp.example.com/events")
+    } else {
+      Issue.record("Expected Codex remote config to use SSE")
     }
   }
 
@@ -268,6 +477,128 @@ struct MCPAppDiscoveryServiceTests {
     let result = try await client.request(method: "tools/list", params: .object([:]))
     #expect(result["streamed"] == .bool(true))
   }
+
+  @Test("HTTP client falls back to legacy SSE")
+  func httpClientFallsBackToLegacySSE() async throws {
+    let endpoint = try #require(URL(string: "https://mcp.test/\(UUID().uuidString)/mcp"))
+    let postEndpoint = try #require(URL(string: "https://mcp.test/\(UUID().uuidString)/messages"))
+    MockURLProtocol.reset()
+    MockURLProtocol.setHandler(for: endpoint.absoluteString) { request in
+      if request.httpMethod == "POST" {
+        guard let response = HTTPURLResponse(
+          url: endpoint,
+          statusCode: 404,
+          httpVersion: nil,
+          headerFields: ["Content-Type": "text/plain"]
+        ) else {
+          throw URLError(.badServerResponse)
+        }
+        return (response, Data())
+      }
+
+      let payload = try JSONEncoder().encode(AgentHubMCPUIJSONValue.object([
+        "jsonrpc": .string("2.0"),
+        "id": .number(1),
+        "result": .object(["legacy": .bool(true)])
+      ]))
+      let text = """
+      event: endpoint
+      data: \(postEndpoint.absoluteString)
+
+      event: message
+      data: \(String(data: payload, encoding: .utf8) ?? "{}")
+
+      """
+      guard let response = HTTPURLResponse(
+        url: endpoint,
+        statusCode: 200,
+        httpVersion: nil,
+        headerFields: ["Content-Type": "text/event-stream"]
+      ) else {
+        throw URLError(.badServerResponse)
+      }
+      return (response, Data(text.utf8))
+    }
+    MockURLProtocol.setHandler(for: postEndpoint.absoluteString) { _ in
+      guard let response = HTTPURLResponse(
+        url: postEndpoint,
+        statusCode: 202,
+        httpVersion: nil,
+        headerFields: [:]
+      ) else {
+        throw URLError(.badServerResponse)
+      }
+      return (response, Data())
+    }
+
+    let client = try MCPHTTPJSONRPCClient(
+      config: MCPServerConfiguration(
+        provider: .claude,
+        projectPath: "/project",
+        name: "remote",
+        transport: .streamableHTTP(endpoint, legacySSEFallback: true)
+      ),
+      requestTimeoutSeconds: 2,
+      session: mockURLSession()
+    )
+
+    let result = try await client.request(method: "tools/list", params: .object([:]))
+    #expect(result["legacy"] == .bool(true))
+    #expect(MockURLProtocol.requests(for: endpoint.absoluteString).map { $0.httpMethod ?? "" } == ["POST", "GET"])
+    #expect(MockURLProtocol.requests(for: postEndpoint.absoluteString).count == 1)
+  }
+
+  @Test("HTTP client reports unsupported authentication")
+  func httpClientReportsUnsupportedAuthentication() async throws {
+    let endpoint = try #require(URL(string: "https://mcp.test/\(UUID().uuidString)/mcp"))
+    MockURLProtocol.reset()
+    MockURLProtocol.setHandler(for: endpoint.absoluteString) { _ in
+      guard let response = HTTPURLResponse(
+        url: endpoint,
+        statusCode: 401,
+        httpVersion: nil,
+        headerFields: ["WWW-Authenticate": "Bearer"]
+      ) else {
+        throw URLError(.badServerResponse)
+      }
+      return (response, Data())
+    }
+
+    let client = try MCPHTTPJSONRPCClient(
+      config: MCPServerConfiguration(
+        provider: .claude,
+        projectPath: "/project",
+        name: "remote",
+        transport: .streamableHTTP(endpoint, legacySSEFallback: true)
+      ),
+      requestTimeoutSeconds: 2,
+      session: mockURLSession()
+    )
+
+    await #expect(throws: MCPAppDiscoveryError.self) {
+      _ = try await client.request(method: "initialize", params: .object([:]))
+    }
+  }
+
+  @Test("HTTP client reports unreachable remote servers")
+  func httpClientReportsUnreachableRemoteServers() async throws {
+    let endpoint = try #require(URL(string: "https://mcp.test/\(UUID().uuidString)/mcp"))
+    MockURLProtocol.reset()
+    let client = try MCPHTTPJSONRPCClient(
+      config: MCPServerConfiguration(
+        provider: .claude,
+        projectPath: "/project",
+        name: "remote",
+        transport: .streamableHTTP(endpoint, legacySSEFallback: true)
+      ),
+      requestTimeoutSeconds: 2,
+      session: mockURLSession()
+    )
+
+    await #expect(throws: MCPAppDiscoveryError.self) {
+      _ = try await client.request(method: "initialize", params: .object([:]))
+    }
+  }
 }
 
 private struct StaticMCPServerConfigurationResolver: MCPServerConfigurationResolverProtocol {
@@ -292,10 +623,61 @@ private struct StaticMCPJSONRPCClientFactory: MCPJSONRPCClientFactoryProtocol {
   }
 }
 
+private final class RecordingMCPJSONRPCClientFactory: MCPJSONRPCClientFactoryProtocol, @unchecked Sendable {
+  private let lock = NSLock()
+  private(set) var clients: [FakeMCPJSONRPCClient] = []
+
+  func makeClient(
+    config: MCPServerConfiguration,
+    requestTimeoutSeconds: TimeInterval
+  ) throws -> any MCPJSONRPCClientProtocol {
+    let client = FakeMCPJSONRPCClient()
+    lock.lock()
+    clients.append(client)
+    lock.unlock()
+    return client
+  }
+}
+
+private final class FakeMCPClientRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var starts = 0
+  private var closes = 0
+
+  func recordStart() {
+    lock.lock()
+    starts += 1
+    lock.unlock()
+  }
+
+  func recordClose() {
+    lock.lock()
+    closes += 1
+    lock.unlock()
+  }
+
+  func startCallCount() -> Int {
+    lock.lock()
+    let value = starts
+    lock.unlock()
+    return value
+  }
+
+  func closeCallCount() -> Int {
+    lock.lock()
+    let value = closes
+    lock.unlock()
+    return value
+  }
+}
+
 private actor FakeMCPJSONRPCClient: MCPJSONRPCClientProtocol {
+  private let recorder = FakeMCPClientRecorder()
   private var methods: [String] = []
 
-  nonisolated func start() throws {}
+  nonisolated func start() throws {
+    recorder.recordStart()
+  }
 
   func request(
     method: String,
@@ -305,6 +687,11 @@ private actor FakeMCPJSONRPCClient: MCPJSONRPCClientProtocol {
     switch method {
     case "initialize":
       return .object(["protocolVersion": .string("2025-06-18"), "capabilities": .object([:])])
+    case "tools/call":
+      return .object([
+        "content": .array([.object(["type": .string("text"), "text": .string("called")])]),
+        "structuredContent": .object(["ok": .bool(true)])
+      ])
     case "tools/list":
       return .object([
         "tools": .array([
@@ -338,10 +725,20 @@ private actor FakeMCPJSONRPCClient: MCPJSONRPCClientProtocol {
 
   func notify(method: String, params: AgentHubMCPUIJSONValue?) async throws {}
 
-  nonisolated func close() {}
+  nonisolated func close() {
+    recorder.recordClose()
+  }
 
   func requestedMethods() -> [String] {
     methods
+  }
+
+  nonisolated func startCallCount() -> Int {
+    recorder.startCallCount()
+  }
+
+  nonisolated func closeCallCount() -> Int {
+    recorder.closeCallCount()
   }
 }
 

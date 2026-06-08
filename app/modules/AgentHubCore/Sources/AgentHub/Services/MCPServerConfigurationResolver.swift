@@ -15,6 +15,7 @@ public enum MCPServerTransport: Sendable, Equatable {
   case stdio
   case streamableHTTP(URL, legacySSEFallback: Bool)
   case sse(URL)
+  case unsupportedAuthentication(String)
   case unsupported(String)
 }
 
@@ -46,6 +47,46 @@ public struct MCPServerConfiguration: Sendable, Equatable {
     self.env = env
     self.cwd = cwd
     self.transport = transport
+  }
+
+  public var serverKey: MCPAppServerCacheKey {
+    MCPAppServerCacheKey(provider: provider, projectPath: projectPath, serverName: name)
+  }
+
+  public var transportIdentity: String {
+    switch transport {
+    case .stdio:
+      return [
+        "stdio",
+        command ?? "",
+        args.joined(separator: "\u{1F}"),
+        env.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\u{1F}"),
+        cwd ?? projectPath
+      ].joined(separator: "\u{1E}")
+    case .streamableHTTP(let endpoint, let legacySSEFallback):
+      return "streamable-http|\(endpoint.absoluteString)|fallback=\(legacySSEFallback)"
+    case .sse(let endpoint):
+      return "sse|\(endpoint.absoluteString)"
+    case .unsupportedAuthentication(let reason):
+      return "unsupported-auth|\(reason)"
+    case .unsupported(let transport):
+      return "unsupported|\(transport)"
+    }
+  }
+
+  public var transportDescription: String {
+    switch transport {
+    case .stdio:
+      return "stdio \((command?.isEmpty == false ? command : nil) ?? name)"
+    case .streamableHTTP(let endpoint, _):
+      return "HTTP \(endpoint.absoluteString)"
+    case .sse(let endpoint):
+      return "SSE \(endpoint.absoluteString)"
+    case .unsupportedAuthentication:
+      return "HTTP auth"
+    case .unsupported(let transport):
+      return transport
+    }
   }
 }
 
@@ -201,12 +242,17 @@ public actor DefaultMCPServerConfigurationResolver: MCPServerConfigurationResolv
 
   private func transport(from dictionary: [String: Any]) -> MCPServerTransport {
     let endpoint = url(from: dictionary)
+    if endpoint != nil, hasUnsupportedAuthentication(in: dictionary) {
+      return .unsupportedAuthentication("Authenticated remote MCP servers are not supported in this release.")
+    }
     let explicit = (dictionary["transport"] as? String)
+      ?? (dictionary["transportType"] as? String)
+      ?? (dictionary["transport_type"] as? String)
       ?? (dictionary["type"] as? String)
     if let explicit {
       let lowered = explicit.lowercased().replacingOccurrences(of: "-", with: "_")
       if lowered == "stdio" { return .stdio }
-      if ["http", "streamable_http"].contains(lowered) {
+      if ["http", "streamable_http", "streamablehttp"].contains(lowered) {
         guard let endpoint else { return .unsupported(lowered) }
         return .streamableHTTP(endpoint, legacySSEFallback: true)
       }
@@ -225,9 +271,25 @@ public actor DefaultMCPServerConfigurationResolver: MCPServerConfigurationResolv
   private func url(from dictionary: [String: Any]) -> URL? {
     let rawValue = (dictionary["url"] as? String)
       ?? (dictionary["serverUrl"] as? String)
+      ?? (dictionary["serverURL"] as? String)
       ?? (dictionary["server_url"] as? String)
+      ?? (dictionary["endpoint"] as? String)
+      ?? (dictionary["uri"] as? String)
     guard let rawValue, let url = URL(string: rawValue) else { return nil }
     return url
+  }
+
+  private func hasUnsupportedAuthentication(in dictionary: [String: Any]) -> Bool {
+    let authKeys: Set<String> = [
+      "auth",
+      "authorization",
+      "bearerToken",
+      "bearer_token",
+      "headers",
+      "oauth",
+      "token"
+    ]
+    return dictionary.keys.contains { authKeys.contains($0) }
   }
 
   private func parseCodexMCPTable(_ table: String) -> (name: String, isEnv: Bool)? {

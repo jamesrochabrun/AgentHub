@@ -193,6 +193,32 @@ public struct MonitoringCardView: View {
     viewModel?.mcpAppResources(for: session, state: state) ?? []
   }
 
+  private var mcpAppDiscoveryStatuses: [MCPAppServerDiscoveryStatus] {
+    viewModel?.mcpAppDiscoveryStatuses(for: session) ?? []
+  }
+
+  private var isMCPAppDiscoveryLoading: Bool {
+    viewModel?.isMCPAppDiscoveryLoading(for: session) ?? false
+  }
+
+  private var shouldShowMCPAppsButton: Bool {
+    !mcpAppResources.isEmpty || isMCPAppDiscoveryLoading || !mcpAppDiscoveryStatuses.isEmpty
+  }
+
+  private var mcpAppButtonAccessibilityLabel: String {
+    if isMCPAppDiscoveryLoading {
+      return "MCP apps loading"
+    }
+    if !mcpAppResources.isEmpty {
+      let count = mcpAppResources.count
+      return count == 1 ? "Open 1 MCP app" : "Open \(count) MCP apps"
+    }
+    if mcpAppDiscoveryStatuses.contains(where: { $0.state.isError }) {
+      return "Open MCP app discovery errors"
+    }
+    return "Open MCP app status"
+  }
+
   private var linkedPullRequestNumber: Int? {
     GitHubPullRequestURLReference.latestNumber(in: resourceLinks.map(\.url))
   }
@@ -355,7 +381,14 @@ public struct MonitoringCardView: View {
       MCPAppsPanelView(
         session: session,
         resources: mcpAppResources,
+        discoveryStatuses: mcpAppDiscoveryStatuses,
+        isDiscovering: isMCPAppDiscoveryLoading,
         viewModel: viewModel,
+        onRefresh: {
+          Task {
+            await viewModel?.ensureMCPAppResources(for: session, forceRefresh: true)
+          }
+        },
         onDismiss: { showingMCPAppsPanel = false }
       )
     }
@@ -701,7 +734,7 @@ public struct MonitoringCardView: View {
         // detected, otherwise a single Preview button.
         webPreviewControls
 
-        if !mcpAppResources.isEmpty {
+        if shouldShowMCPAppsButton {
           Button(action: {
             showingMCPAppsPanel = true
           }) {
@@ -709,13 +742,24 @@ public struct MonitoringCardView: View {
               Image(systemName: "square.stack.3d.up")
                 .font(.caption2)
               Text("MCP")
-              Text("\(mcpAppResources.count)")
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.secondary)
+              if isMCPAppDiscoveryLoading {
+                ProgressView()
+                  .controlSize(.mini)
+                  .frame(width: 12, height: 12)
+              } else if !mcpAppResources.isEmpty {
+                Text("\(mcpAppResources.count)")
+                  .font(.system(.caption2, design: .monospaced))
+                  .foregroundStyle(.secondary)
+              } else if mcpAppDiscoveryStatuses.contains(where: { $0.state.isError }) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                  .font(.caption2)
+                  .foregroundStyle(.orange)
+              }
             }
           }
           .buttonStyle(.agentHubOutlined)
           .help("Open MCP app resources")
+          .accessibilityLabel(mcpAppButtonAccessibilityLabel)
         }
 
         // Mermaid diagram button (only visible when mermaid content is detected)

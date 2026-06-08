@@ -474,6 +474,16 @@ public final class AgentHubProvider {
     }
   }
 
+  public func shutdownMCPAppDiscoveryService() {
+    let service = mcpAppDiscoveryService
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached(priority: .utility) {
+      await service.shutdown()
+      semaphore.signal()
+    }
+    _ = semaphore.wait(timeout: .now() + 2.0)
+  }
+
   public func startWorktreeLaunchRequestMonitoring() {
     startWorktreeLaunchQueueMonitoring()
     startWorktreeDeletionQueueMonitoring()

@@ -76,6 +76,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     provider.terminateAllTerminals()
     // Stop all dev servers spawned for web preview
     DevServerManager.shared.stopAllServers()
+    // Close pooled MCP clients, including stdio subprocesses and HTTP sessions.
+    provider.shutdownMCPAppDiscoveryService()
     // Remove every approval hook we installed and clear claims so external
     // Claude Code sessions after quit run vanilla.
     provider.flushClaudeHooksOnTerminate()

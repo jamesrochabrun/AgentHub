@@ -19,6 +19,10 @@ import AppKit
 private struct MCPAppDiscoveryProjectKey: Hashable {
   let provider: SessionProviderKind
   let projectPath: String
+
+  var id: String {
+    "\(provider.rawValue)|\(projectPath)"
+  }
 }
 
 // MARK: - CLISessionsViewModel
@@ -245,6 +249,21 @@ public final class CLISessionsViewModel {
     }
   }
 
+  public func mcpAppDiscoveryStatuses(for session: CLISession) -> [MCPAppServerDiscoveryStatus] {
+    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
+    return mcpAppDiscoveryStatusesByServer.values
+      .filter { status in
+        status.key.provider == providerKind && status.key.projectPath == normalizedProjectPath
+      }
+      .sorted { $0.key.serverName < $1.key.serverName }
+  }
+
+  public func isMCPAppDiscoveryLoading(for session: CLISession) -> Bool {
+    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
+    let projectKey = MCPAppDiscoveryProjectKey(provider: providerKind, projectPath: normalizedProjectPath)
+    return mcpAppDiscoveryLoadingProjectIDs.contains(projectKey.id)
+  }
+
   public func ensureMCPAppResources(
     for session: CLISession,
     forceRefresh: Bool = false
@@ -260,16 +279,21 @@ public final class CLISessionsViewModel {
     }
 
     mcpAppDiscoveryInFlight.insert(projectKey)
-    let resources = await mcpAppDiscoveryService.discoverResources(
+    mcpAppDiscoveryLoadingProjectIDs.insert(projectKey.id)
+    let snapshot = await mcpAppDiscoveryService.discoverResourceSnapshot(
       provider: providerKind,
       projectPath: normalizedProjectPath,
       forceRefresh: forceRefresh
     )
+    let resources = snapshot.resources
 
     if forceRefresh {
       mcpAppResourcesByServer = mcpAppResourcesByServer.filter { entry in
         entry.key.provider != providerKind || entry.key.projectPath != normalizedProjectPath
       }
+    }
+    mcpAppDiscoveryStatusesByServer = mcpAppDiscoveryStatusesByServer.filter { entry in
+      entry.key.provider != providerKind || entry.key.projectPath != normalizedProjectPath
     }
 
     let grouped = Dictionary(grouping: resources) { resource in
@@ -282,9 +306,13 @@ public final class CLISessionsViewModel {
     for (key, values) in grouped {
       mcpAppResourcesByServer[key] = values
     }
+    for status in snapshot.serverStatuses {
+      mcpAppDiscoveryStatusesByServer[status.key] = status
+    }
 
     mcpAppDiscoveryCompleted.insert(projectKey)
     mcpAppDiscoveryInFlight.remove(projectKey)
+    mcpAppDiscoveryLoadingProjectIDs.remove(projectKey.id)
   }
 
   public func callMCPAppTool(
@@ -1466,6 +1494,12 @@ public final class CLISessionsViewModel {
 
   /// MCP App resources discovered live from configured MCP servers, keyed per provider/project/server.
   public private(set) var mcpAppResourcesByServer: [MCPAppServerCacheKey: [MCPAppResource]] = [:]
+
+  /// MCP App discovery states keyed per provider/project/server.
+  public private(set) var mcpAppDiscoveryStatusesByServer: [MCPAppServerCacheKey: MCPAppServerDiscoveryStatus] = [:]
+
+  /// Project-level MCP discovery operations currently running.
+  public private(set) var mcpAppDiscoveryLoadingProjectIDs: Set<String> = []
 
   /// Combine cancellables for monitoring subscriptions (keyed by session ID)
   private var monitoringCancellables: [String: AnyCancellable] = [:]
