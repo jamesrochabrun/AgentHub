@@ -59,6 +59,7 @@ public struct GlobalSessionControlPanelView: View {
   let onClose: () -> Void
   let onSelectSession: () -> Void
   let onDisplayModeChange: (GlobalSessionControlPanelDisplayMode) -> Void
+  let onCompactContentHeightChange: (CGFloat) -> Void
   private let defaults: UserDefaults
   private let displayModeToggleRelay: GlobalSessionPanelDisplayModeToggleRelay?
 
@@ -81,7 +82,8 @@ public struct GlobalSessionControlPanelView: View {
     defaults: UserDefaults = .standard,
     onClose: @escaping () -> Void = {},
     onSelectSession: @escaping () -> Void = {},
-    onDisplayModeChange: @escaping (GlobalSessionControlPanelDisplayMode) -> Void = { _ in }
+    onDisplayModeChange: @escaping (GlobalSessionControlPanelDisplayMode) -> Void = { _ in },
+    onCompactContentHeightChange: @escaping (CGFloat) -> Void = { _ in }
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
@@ -91,6 +93,7 @@ public struct GlobalSessionControlPanelView: View {
     self.onClose = onClose
     self.onSelectSession = onSelectSession
     self.onDisplayModeChange = onDisplayModeChange
+    self.onCompactContentHeightChange = onCompactContentHeightChange
     _displayMode = State(initialValue: GlobalSessionControlPanelDisplayMode.load(from: defaults))
   }
 
@@ -102,6 +105,16 @@ public struct GlobalSessionControlPanelView: View {
           .transition(.opacity)
       case .compact:
         compactPanelContent
+          .background(
+            GeometryReader { proxy in
+              // Report the compact layout's intrinsic height so the AppKit
+              // window can hug it instead of using a fixed (too-tall) size.
+              Color.clear
+                .onChange(of: proxy.size.height, initial: true) { _, height in
+                  onCompactContentHeightChange(height)
+                }
+            }
+          )
           .transition(.opacity)
       }
     }
@@ -202,10 +215,11 @@ public struct GlobalSessionControlPanelView: View {
   @ViewBuilder
   private var compactFeaturedContent: some View {
     if let compactFeaturedItem {
+      // Show the full row content (including the worktree/root path lines) so the
+      // featured session in compact mode matches a regular-mode row exactly.
       GlobalSessionControlPanelRow(
         item: compactFeaturedItem,
         isSelected: compactFeaturedItem.id == selectedItemID,
-        showsPathLines: false,
         onSelect: { activate(compactFeaturedItem) },
         onGitHubStateChange: { state in
           updateGitHubState(state, for: compactFeaturedItem.id)

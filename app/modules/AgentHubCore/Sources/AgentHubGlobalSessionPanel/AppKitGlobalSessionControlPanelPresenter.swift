@@ -83,10 +83,15 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
   private var pendingFramePersistenceTask: Task<Void, Never>?
   private let displayModeToggleRelay = GlobalSessionPanelDisplayModeToggleRelay()
   private var displayMode: GlobalSessionControlPanelDisplayMode = .defaultValue
+  private var compactContentHeight: CGFloat?
   private let defaultRegularPanelSize = CGSize(width: 560, height: 420)
   private let minimumRegularPanelSize = CGSize(width: 420, height: 300)
-  private let defaultCompactPanelSize = CGSize(width: 560, height: 118)
-  private let minimumCompactPanelSize = CGSize(width: 420, height: 108)
+  // The compact panel hugs its content: the SwiftUI view reports its measured
+  // height and the window resizes to fit. `defaultCompactPanelSize.height` is
+  // only a fallback used until the first measurement arrives; the minimum height
+  // is a low safety floor so a measured height is never clamped up.
+  private let defaultCompactPanelSize = CGSize(width: 560, height: 154)
+  private let minimumCompactPanelSize = CGSize(width: 420, height: 80)
   private let framePersistenceDelay: Duration = .milliseconds(200)
   // Must match the corner radius used by GlobalSessionControlPanelView so the
   // AppKit layer mask and the SwiftUI clip line up.
@@ -124,6 +129,9 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
       onSelectSession: { [weak self] in self?.activateMainWindow() },
       onDisplayModeChange: { [weak self] mode in
         self?.handleDisplayModeChange(mode)
+      },
+      onCompactContentHeightChange: { [weak self] height in
+        self?.updateCompactContentHeight(height)
       }
     )
     .agentHub(provider)
@@ -284,7 +292,7 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
     case .compact:
       return restoredCompactFrame() ?? resizedFrame(
         from: restoredOrDefaultRegularFrame(),
-        height: defaultCompactPanelSize.height,
+        height: compactTargetHeight,
         minimumSize: minimumCompactPanelSize
       )
     }
@@ -308,10 +316,30 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
     case .compact:
       return resizedFrame(
         from: currentFrame,
-        height: defaultCompactPanelSize.height,
+        height: compactTargetHeight,
         minimumSize: minimumCompactPanelSize
       )
     }
+  }
+
+  private var compactTargetHeight: CGFloat {
+    compactContentHeight ?? defaultCompactPanelSize.height
+  }
+
+  // The SwiftUI view reports the measured height of the compact layout; resize
+  // the window to hug it (keeping width + top edge) so the panel is never taller
+  // than its content. Content height is independent of window size, so this
+  // can't feed back into a resize loop.
+  private func updateCompactContentHeight(_ height: CGFloat) {
+    guard height > 20 else { return }
+    let rounded = height.rounded()
+    guard compactContentHeight != rounded else { return }
+    compactContentHeight = rounded
+
+    guard displayMode == .compact, let panel else { return }
+    let target = resizedFrame(from: panel.frame, height: rounded, minimumSize: minimumCompactPanelSize)
+    guard abs(panel.frame.height - target.height) > 0.5 else { return }
+    applyPanelFrame(panel, to: target)
   }
 
   private func restoredOrDefaultRegularFrame() -> NSRect {
