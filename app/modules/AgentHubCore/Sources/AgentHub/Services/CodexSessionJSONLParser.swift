@@ -12,6 +12,7 @@ public struct CodexSessionJSONLParser {
 
   private static let maxRecentActivities = 100
   private static let maxDetectedResourceLinks = 50
+  private static let maxDetectedMCPAppResources = 50
 
   // MARK: - Lightweight Parse Result for Global Stats
 
@@ -56,6 +57,7 @@ public struct CodexSessionJSONLParser {
     public var currentStatus: SessionStatus = .idle
     public var hasMermaidContent: Bool = false
     public var detectedResourceLinks: [ResourceLink] = []
+    public var detectedMCPAppResources: [MCPAppResourceDescriptor] = []
     public var detectedLocalhostURL: URL?
 
     public init() {}
@@ -266,6 +268,7 @@ public struct CodexSessionJSONLParser {
       if let message = payload["message"] as? String, !message.isEmpty {
         if message.contains("```mermaid") { result.hasMermaidContent = true }
         appendResourceLinks(extractResourceLinks(from: message, timestamp: timestamp), to: &result)
+        appendMCPAppResources(MCPAppResourceExtractor.extract(from: message), to: &result)
         if let localhostURL = extractLocalhostURLFromText(message) {
           result.detectedLocalhostURL = localhostURL
         }
@@ -298,6 +301,7 @@ public struct CodexSessionJSONLParser {
 
     case "mcp_tool_call_end":
       appendResourceLinks(extractResourceLinks(fromJSONValue: payload, timestamp: timestamp), to: &result)
+      appendMCPAppResources(MCPAppResourceExtractor.extract(from: payload), to: &result)
 
     default:
       break
@@ -328,6 +332,7 @@ public struct CodexSessionJSONLParser {
           result.detectedLocalhostURL = localhostURL
         }
         appendResourceLinks(extractResourceLinks(fromJSONValue: payload, timestamp: timestamp), to: &result)
+        appendMCPAppResources(MCPAppResourceExtractor.extract(from: payload), to: &result)
       }
 
     case "custom_tool_call":
@@ -400,6 +405,23 @@ public struct CodexSessionJSONLParser {
 
     if result.detectedResourceLinks.count > maxDetectedResourceLinks {
       result.detectedResourceLinks.removeFirst(result.detectedResourceLinks.count - maxDetectedResourceLinks)
+    }
+  }
+
+  private static func appendMCPAppResources(
+    _ descriptors: [MCPAppResourceDescriptor],
+    to result: inout ParseResult
+  ) {
+    for descriptor in descriptors where !result.detectedMCPAppResources.contains(where: {
+      $0.serverName == descriptor.serverName && $0.uri == descriptor.uri
+    }) {
+      result.detectedMCPAppResources.append(descriptor)
+    }
+
+    if result.detectedMCPAppResources.count > maxDetectedMCPAppResources {
+      result.detectedMCPAppResources.removeFirst(
+        result.detectedMCPAppResources.count - maxDetectedMCPAppResources
+      )
     }
   }
 

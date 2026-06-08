@@ -568,6 +568,7 @@ public actor SessionFileWatcher {
       recentActivities: result.recentActivities,
       hasMermaidContent: result.hasMermaidContent,
       detectedResourceLinks: result.detectedResourceLinks,
+      detectedMCPAppResources: result.detectedMCPAppResources,
       detectedLocalhostURL: result.detectedLocalhostURL
     )
   }

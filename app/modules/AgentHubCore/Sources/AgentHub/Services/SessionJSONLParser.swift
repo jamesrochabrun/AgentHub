@@ -16,6 +16,7 @@ public struct SessionJSONLParser {
   private static let maxRecentActivities = 100
   private static let maxDetailedCodeChangeActivities = 5
   private static let maxDetectedResourceLinks = 50
+  private static let maxDetectedMCPAppResources = 50
 
   // MARK: - Entry Types
 
@@ -90,6 +91,7 @@ public struct SessionJSONLParser {
     public var gitBranch: String?
     public var hasMermaidContent: Bool = false
     public var detectedResourceLinks: [ResourceLink] = []
+    public var detectedMCPAppResources: [MCPAppResourceDescriptor] = []
     public var detectedLocalhostURL: URL?
 
     public init() {}
@@ -263,12 +265,20 @@ public struct SessionJSONLParser {
           )
 
           appendResourceLinks(extractResourceLinks(from: block.input, timestamp: timestamp), to: &result)
+          appendMCPAppResources(
+            extractMCPAppResources(
+              from: block.input,
+              serverName: MCPAppResourceExtractor.serverName(fromToolName: name)
+            ),
+            to: &result
+          )
         }
 
       case "tool_result":
         if let toolUseId = block.toolUseId {
           // Find tool name before removing from pending
           let toolName = result.pendingToolUses[toolUseId]?.toolName ?? "unknown"
+          let serverName = MCPAppResourceExtractor.serverName(fromToolName: toolName)
 
           // Remove from pending - tool completed
           result.pendingToolUses.removeValue(forKey: toolUseId)
@@ -287,6 +297,10 @@ public struct SessionJSONLParser {
             result.detectedLocalhostURL = localhostURL
           }
           appendResourceLinks(extractResourceLinks(from: block.content, timestamp: timestamp), to: &result)
+          appendMCPAppResources(
+            extractMCPAppResources(from: block.content, serverName: serverName),
+            to: &result
+          )
         }
 
       case "thinking":
@@ -303,6 +317,7 @@ public struct SessionJSONLParser {
             result.hasMermaidContent = true
           }
           appendResourceLinks(extractResourceLinks(from: text, timestamp: timestamp), to: &result)
+          appendMCPAppResources(MCPAppResourceExtractor.extract(from: text), to: &result)
           // Extract localhost URLs from assistant text (e.g. "Your app is running at http://localhost:5173")
           if let localhostURL = extractLocalhostURLFromText(text) {
             AppLogger.devServer.info("[SessionJSONLParser] Detected localhost URL from assistant text: \(localhostURL.absoluteString)")
@@ -545,9 +560,34 @@ public struct SessionJSONLParser {
     }
   }
 
+  private static func appendMCPAppResources(
+    _ descriptors: [MCPAppResourceDescriptor],
+    to result: inout ParseResult
+  ) {
+    for descriptor in descriptors where !result.detectedMCPAppResources.contains(where: {
+      $0.serverName == descriptor.serverName && $0.uri == descriptor.uri
+    }) {
+      result.detectedMCPAppResources.append(descriptor)
+    }
+
+    if result.detectedMCPAppResources.count > maxDetectedMCPAppResources {
+      result.detectedMCPAppResources.removeFirst(
+        result.detectedMCPAppResources.count - maxDetectedMCPAppResources
+      )
+    }
+  }
+
   private static func extractResourceLinks(from content: AnyCodable?, timestamp: Date?) -> [ResourceLink] {
     guard let content else { return [] }
     return extractResourceLinks(fromJSONValue: content.value, timestamp: timestamp)
+  }
+
+  private static func extractMCPAppResources(
+    from content: AnyCodable?,
+    serverName: String?
+  ) -> [MCPAppResourceDescriptor] {
+    guard let content else { return [] }
+    return MCPAppResourceExtractor.extract(from: content.value, serverName: serverName)
   }
 
   private static func extractResourceLinks(fromJSONValue value: Any, timestamp: Date?) -> [ResourceLink] {
