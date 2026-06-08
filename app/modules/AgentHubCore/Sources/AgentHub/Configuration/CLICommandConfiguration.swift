@@ -46,12 +46,12 @@ public struct CLICommandConfiguration: Codable, Sendable {
     extraArgs = try container.decodeIfPresent([String].self, forKey: .extraArgs) ?? []
   }
 
-  /// The executable name (first word of command). e.g. "airchat" from "airchat codex"
+  /// The executable name (first word of command). e.g. "agenthub" from "agenthub codex"
   public var executableName: String {
     commandParts.first ?? command
   }
 
-  /// Subcommand arguments (remaining words after executable). e.g. ["codex"] from "airchat codex"
+  /// Subcommand arguments (remaining words after executable). e.g. ["codex"] from "agenthub codex"
   public var subcommandArgs: [String] {
     Array(commandParts.dropFirst())
   }
@@ -243,7 +243,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
 
   private func normalizedPrefixArguments() -> [String] {
     var prefix = subcommandArgs
-    guard isAirChatExecutable else { return prefix }
+    guard isAgentHubExecutable else { return prefix }
 
     let providerSubcommand: String
     switch mode {
@@ -260,7 +260,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
   }
 
   private func assembleArguments(prefix: [String], providerArgs: [String], trailingArgs: [String]) -> [String] {
-    guard isAirChatExecutable else {
+    guard isAgentHubExecutable else {
       return prefix + providerArgs + extraArgs + trailingArgs
     }
 
@@ -272,8 +272,8 @@ public struct CLICommandConfiguration: Codable, Sendable {
     return prefix + extraArgs + ["--"] + directProviderArgs
   }
 
-  private var isAirChatExecutable: Bool {
-    URL(fileURLWithPath: executableName).lastPathComponent == "airchat"
+  private var isAgentHubExecutable: Bool {
+    URL(fileURLWithPath: executableName).lastPathComponent == "agenthub"
   }
 
   private func claudeMCPConfig(agentHubCLIPath: String) -> String {

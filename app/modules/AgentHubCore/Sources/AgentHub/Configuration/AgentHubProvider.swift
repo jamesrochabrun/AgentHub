@@ -401,7 +401,7 @@ public final class AgentHubProvider {
     case .codex:
       let userCommand = defaults.string(forKey: AgentHubDefaults.codexCommand) ?? configuration.codexCommand
       let codexArgString = defaults.string(forKey: AgentHubDefaults.codexCommandArgs) ?? ""
-      // Store the user's configured command string as-is (e.g. "airchat codex")
+      // Store the user's configured command string as-is (e.g. "agenthub codex")
       // Executable resolution happens at launch time using executableName
       cliConfiguration = CLICommandConfiguration(
         command: userCommand,

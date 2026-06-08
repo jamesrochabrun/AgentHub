@@ -26,10 +26,10 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(args == ["--name", "", "--label", ""])
   }
 
-  @Test("AirChat Claude wrapper passes wrapper args before Claude direct args")
-  func airChatClaudeWrapperUsesDirectArgumentSeparator() {
+  @Test("AgentHub Claude wrapper passes wrapper args before Claude direct args")
+  func agentHubClaudeWrapperUsesDirectArgumentSeparator() {
     let config = CLICommandConfiguration(
-      command: "airchat",
+      command: "agenthub",
       mode: .claude,
       extraArgs: ["--api-mode", "enterprise"]
     )
@@ -44,7 +44,7 @@ struct CLICommandConfigurationArgumentHandlingTests {
 
     guard let separatorIndex = args.firstIndex(of: "--"),
           let mcpConfigIndex = args.firstIndex(of: "--mcp-config") else {
-      Issue.record("Expected AirChat direct-argument separator and Claude MCP flag")
+      Issue.record("Expected AgentHub direct-argument separator and Claude MCP flag")
       return
     }
 
@@ -52,10 +52,10 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(args.last == "Start work")
   }
 
-  @Test("AirChat Claude command does not duplicate explicit provider subcommand")
-  func airChatClaudeWrapperDoesNotDuplicateExplicitSubcommand() {
+  @Test("AgentHub Claude command does not duplicate explicit provider subcommand")
+  func agentHubClaudeWrapperDoesNotDuplicateExplicitSubcommand() {
     let config = CLICommandConfiguration(
-      command: "airchat claude",
+      command: "agenthub claude",
       mode: .claude,
       extraArgs: ["--api-mode", "enterprise"]
     )
@@ -71,10 +71,10 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(args.prefix(4).contains("--api-mode"))
   }
 
-  @Test("AirChat Codex wrapper passes Codex config overrides after separator")
-  func airChatCodexWrapperUsesDirectArgumentSeparator() {
+  @Test("AgentHub Codex wrapper passes Codex config overrides after separator")
+  func agentHubCodexWrapperUsesDirectArgumentSeparator() {
     let config = CLICommandConfiguration(
-      command: "airchat codex",
+      command: "agenthub codex",
       mode: .codex,
       extraArgs: ["--no-banner"]
     )
@@ -90,7 +90,7 @@ struct CLICommandConfigurationArgumentHandlingTests {
 
     guard let separatorIndex = args.firstIndex(of: "--"),
           let configIndex = args.firstIndex(of: "-c") else {
-      Issue.record("Expected AirChat direct-argument separator and Codex config flag")
+      Issue.record("Expected AgentHub direct-argument separator and Codex config flag")
       return
     }
 
@@ -118,7 +118,7 @@ struct CLICommandConfigurationArgumentHandlingTests {
   func decodesLegacyConfigurationWithoutExtraArgs() throws {
     let data = Data("""
     {
-      "command": "airchat claude",
+      "command": "agenthub claude",
       "additionalPaths": [],
       "mode": "claude"
     }
