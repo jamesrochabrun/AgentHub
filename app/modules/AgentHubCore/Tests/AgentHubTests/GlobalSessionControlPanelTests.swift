@@ -247,6 +247,113 @@ struct GlobalSessionControlPanelTests {
     #expect(GlobalSessionPanelNavigator.validatedSelection(currentID: "a", itemIDs: []) == nil)
   }
 
+  @Test("Cleanup suggestions include quiet merged worktrees")
+  func cleanupSuggestionsIncludeQuietMergedWorktrees() {
+    let worktreePath = "/tmp/agenthub-cleanup/feature-merged"
+    let items = [
+      cleanupItem(
+        id: "merged",
+        path: worktreePath,
+        providerKind: .claude,
+        status: .idle,
+        linkedPullRequestNumber: 12,
+        gitHubState: gitHubState(number: 12, state: .merged)
+      ),
+      cleanupItem(
+        id: "no-pr-sibling",
+        path: worktreePath,
+        providerKind: .codex,
+        status: .waitingForUser,
+        gitHubState: nil
+      ),
+    ]
+
+    let suggestions = GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: items)
+
+    #expect(suggestions.count == 1)
+    #expect(suggestions.first?.worktreePath == worktreePath)
+    #expect(suggestions.first?.worktreeName == "feature-merged")
+    #expect(suggestions.first?.sessionIDs == ["merged", "no-pr-sibling"])
+    #expect(suggestions.first?.providerKinds == [.claude, .codex])
+    #expect(suggestions.first?.mergedPullRequestNumbers == [12])
+  }
+
+  @Test("Cleanup suggestions require merged PR evidence")
+  func cleanupSuggestionsRequireMergedPullRequestEvidence() {
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "no-github", gitHubState: nil)
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "open", gitHubState: gitHubState(state: .open))
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "closed", gitHubState: gitHubState(state: .closed))
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "unknown", gitHubState: gitHubState(state: .unknown("UNKNOWN")))
+    ]).isEmpty)
+  }
+
+  @Test("Cleanup suggestions block unsafe worktree state")
+  func cleanupSuggestionsBlockUnsafeWorktreeState() {
+    let worktreePath = "/tmp/agenthub-cleanup/feature-blocked"
+    let safeMerged = cleanupItem(
+      id: "merged",
+      path: worktreePath,
+      gitHubState: gitHubState(number: 88, state: .merged)
+    )
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "active", path: worktreePath, isActive: true, gitHubState: gitHubState(state: .merged))
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      safeMerged,
+      cleanupItem(id: "pending", path: worktreePath, isPending: true, status: nil, gitHubState: nil),
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "thinking", path: worktreePath, status: .thinking, gitHubState: gitHubState(state: .merged))
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(
+        id: "approval",
+        path: worktreePath,
+        status: .awaitingApproval(tool: "Bash"),
+        gitHubState: gitHubState(state: .merged)
+      )
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "ci-pending", path: worktreePath, gitHubState: gitHubState(state: .merged, ciStatus: .pending))
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "ci-failure", path: worktreePath, gitHubState: gitHubState(state: .merged, ciStatus: .failure))
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      safeMerged,
+      cleanupItem(id: "open-pr", path: worktreePath, gitHubState: gitHubState(number: 89, state: .open)),
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(
+        id: "conflicting",
+        path: worktreePath,
+        gitHubState: gitHubState(state: .merged, mergeability: .conflicting)
+      )
+    ]).isEmpty)
+
+    #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [
+      cleanupItem(id: "main-repo", isWorktree: false, gitHubState: gitHubState(state: .merged))
+    ]).isEmpty)
+  }
+
   private func item(
     id: String,
     seconds: TimeInterval,
@@ -254,6 +361,52 @@ struct GlobalSessionControlPanelTests {
     ciStatus: CIStatus? = nil
   ) -> (id: String, seconds: TimeInterval, status: SessionStatus?, ciStatus: CIStatus?) {
     (id, seconds, status, ciStatus)
+  }
+
+  private func cleanupItem(
+    id: String,
+    path: String = "/tmp/agenthub-cleanup/feature",
+    providerKind: SessionProviderKind = .claude,
+    isWorktree: Bool = true,
+    isActive: Bool = false,
+    isPending: Bool = false,
+    status: SessionStatus? = .idle,
+    linkedPullRequestNumber: Int? = nil,
+    gitHubState: GlobalSessionControlPanelGitHubState? = nil
+  ) -> GlobalSessionControlPanelItem {
+    GlobalSessionControlPanelItem(
+      id: id,
+      session: CLISession(
+        id: id,
+        projectPath: path,
+        branchName: "feature",
+        isWorktree: isWorktree,
+        lastActivityAt: Date(timeIntervalSince1970: 1_000),
+        isActive: isActive
+      ),
+      providerKind: providerKind,
+      timestamp: Date(timeIntervalSince1970: 1_000),
+      isPending: isPending,
+      status: status,
+      linkedPullRequestNumber: linkedPullRequestNumber,
+      customName: nil,
+      gitHubState: gitHubState
+    )
+  }
+
+  private func gitHubState(
+    number: Int = 12,
+    state: GitHubPullRequestState,
+    ciStatus: CIStatus = .success,
+    mergeability: GitHubMergeability? = nil
+  ) -> GlobalSessionControlPanelGitHubState {
+    GlobalSessionControlPanelGitHubState(
+      hasPullRequest: true,
+      ciStatus: ciStatus,
+      pullRequestNumber: number,
+      pullRequestState: state,
+      pullRequestMergeability: mergeability
+    )
   }
 
   private func makeDefaults() -> UserDefaults {

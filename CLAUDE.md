@@ -18,6 +18,7 @@ app/
   AgentHub/                    # App target (entry point, AppDelegate, ContentView)
   modules/
     AgentHubCore/              # Swift Package — all core logic lives here
+      Sources/AgentHubMCPUI/   # Reusable MCP UI resource model and WKWebView renderer
       Sources/AgentHub/
         Configuration/         # AgentHubProvider, AgentHubConfiguration, environment keys
         Design/                # Theme system (ThemeManager, ThemeFileWatcher, YAML themes)
@@ -196,6 +197,16 @@ In Single layout, a side panel can show: `GitDiffView` (split-pane diff), `PlanV
 - If monitor state is still catching up, recover the latest localhost URL from the session JSONL file before choosing a static preview
 - If that external localhost preview fails to load, fall back to static HTML: root `index.html` first, then other discovered HTML files
 - Changes to this behavior require unit tests
+
+### MCP UI
+
+AgentHub has reusable MCP UI support in `AgentHubMCPUI` (`app/modules/AgentHubCore/Sources/AgentHubMCPUI`). It is ready for app features that need to render MCP app resources.
+
+- Use `AgentHubMCPUIResource` for MCP app resources. The default MIME profile is `text/html;profile=mcp-app`.
+- Use `AgentHubMCPUIResourceView` or `AgentHubMCPUIWebView` to preview MCP UI HTML in-app.
+- Feature-specific builders should live with the feature and emit `AgentHubMCPUIResource`; do not recreate local resource structs or WKWebView wrappers.
+- Escape generated HTML with `AgentHubMCPUIHTML.escape(_:)`.
+- Keep MCP UI resource generation local and deterministic unless that feature explicitly owns a model/tool call.
 
 ### Storybook Mode
 

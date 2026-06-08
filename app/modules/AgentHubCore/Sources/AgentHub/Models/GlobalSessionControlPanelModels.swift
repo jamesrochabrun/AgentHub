@@ -10,15 +10,24 @@ import Foundation
 
 public struct GlobalSessionControlPanelGitHubState: Equatable, Sendable {
   public let hasPullRequest: Bool
+  public let pullRequestNumber: Int?
+  public let pullRequestState: GitHubPullRequestState?
+  public let pullRequestMergeability: GitHubMergeability?
   public let ciStatus: CIStatus
   public let isRefreshing: Bool
 
   public init(
     hasPullRequest: Bool,
     ciStatus: CIStatus,
-    isRefreshing: Bool = false
+    isRefreshing: Bool = false,
+    pullRequestNumber: Int? = nil,
+    pullRequestState: GitHubPullRequestState? = nil,
+    pullRequestMergeability: GitHubMergeability? = nil
   ) {
     self.hasPullRequest = hasPullRequest
+    self.pullRequestNumber = pullRequestNumber
+    self.pullRequestState = pullRequestState
+    self.pullRequestMergeability = pullRequestMergeability
     self.ciStatus = ciStatus
     self.isRefreshing = isRefreshing
   }
@@ -215,5 +224,120 @@ public enum GlobalSessionControlPanelSnapshotBuilder {
 
   private static func latestPullRequestNumber(in links: [ResourceLink]) -> Int? {
     GitHubPullRequestURLReference.latestNumber(in: links.map(\.url))
+  }
+}
+
+// MARK: - GlobalSessionCleanupSuggestion
+
+public struct GlobalSessionCleanupSuggestion: Identifiable, Equatable, Sendable {
+  public let worktreePath: String
+  public let worktreeName: String
+  public let sessionIDs: [String]
+  public let providerKinds: [SessionProviderKind]
+  public let mergedPullRequestNumbers: [Int]
+
+  public var id: String { worktreePath }
+
+  public init(
+    worktreePath: String,
+    worktreeName: String,
+    sessionIDs: [String],
+    providerKinds: [SessionProviderKind],
+    mergedPullRequestNumbers: [Int]
+  ) {
+    self.worktreePath = worktreePath
+    self.worktreeName = worktreeName
+    self.sessionIDs = sessionIDs
+    self.providerKinds = providerKinds
+    self.mergedPullRequestNumbers = mergedPullRequestNumbers
+  }
+}
+
+// MARK: - GlobalSessionCleanupSuggestionBuilder
+
+public enum GlobalSessionCleanupSuggestionBuilder {
+  public static func makeSuggestions(items: [GlobalSessionControlPanelItem]) -> [GlobalSessionCleanupSuggestion] {
+    let worktreeItems = items.filter { $0.session.isWorktree }
+    let grouped = Dictionary(grouping: worktreeItems) { item in
+      WorktreeModuleResolver.normalizedDirectoryPath(item.session.projectPath)
+    }
+
+    return grouped.compactMap { path, items in
+      suggestion(for: path, items: items)
+    }
+    .sorted { lhs, rhs in
+      let nameComparison = lhs.worktreeName.localizedCaseInsensitiveCompare(rhs.worktreeName)
+      if nameComparison != .orderedSame {
+        return nameComparison == .orderedAscending
+      }
+      return lhs.worktreePath.localizedCaseInsensitiveCompare(rhs.worktreePath) == .orderedAscending
+    }
+  }
+
+  private static func suggestion(
+    for worktreePath: String,
+    items: [GlobalSessionControlPanelItem]
+  ) -> GlobalSessionCleanupSuggestion? {
+    guard !items.isEmpty else { return nil }
+    guard !items.contains(where: \.isPending) else { return nil }
+    guard !items.contains(where: { $0.session.isActive }) else { return nil }
+    guard !items.contains(where: hasUnsafeStatus) else { return nil }
+    guard !items.contains(where: hasBlockingGitHubState) else { return nil }
+
+    let mergedPullRequestNumbers: [Int] = sortedUnique(
+      items.compactMap { item in
+        guard item.gitHubState?.pullRequestState == .merged else { return nil }
+        return item.gitHubState?.pullRequestNumber ?? item.linkedPullRequestNumber
+      }
+    )
+    guard !mergedPullRequestNumbers.isEmpty else { return nil }
+
+    return GlobalSessionCleanupSuggestion(
+      worktreePath: worktreePath,
+      worktreeName: URL(fileURLWithPath: worktreePath).lastPathComponent,
+      sessionIDs: sortedUnique(items.filter { !$0.isPending }.map(\.session.id)),
+      providerKinds: sortedUnique(items.map(\.providerKind)),
+      mergedPullRequestNumbers: mergedPullRequestNumbers
+    )
+  }
+
+  private static func hasUnsafeStatus(_ item: GlobalSessionControlPanelItem) -> Bool {
+    guard let status = item.status else { return false }
+    switch status {
+    case .thinking, .executingTool, .awaitingApproval:
+      return true
+    case .waitingForUser, .idle:
+      return false
+    }
+  }
+
+  private static func hasBlockingGitHubState(_ item: GlobalSessionControlPanelItem) -> Bool {
+    guard let state = item.gitHubState else { return false }
+    if state.ciStatus == .failure || state.ciStatus == .pending {
+      return true
+    }
+    if state.pullRequestMergeability == .conflicting {
+      return true
+    }
+    guard state.hasPullRequest else { return false }
+    guard let pullRequestState = state.pullRequestState else { return true }
+    switch pullRequestState {
+    case .merged:
+      return false
+    case .open, .closed, .unknown:
+      return true
+    }
+  }
+
+  private static func sortedUnique<T: Hashable & Comparable>(_ values: [T]) -> [T] {
+    Array(Set(values)).sorted()
+  }
+
+  private static func sortedUnique(_ values: [SessionProviderKind]) -> [SessionProviderKind] {
+    values.reduce(into: []) { result, value in
+      guard !result.contains(value) else { return }
+      result.append(value)
+    }
+    .sorted { $0.rawValue < $1.rawValue }
   }
 }

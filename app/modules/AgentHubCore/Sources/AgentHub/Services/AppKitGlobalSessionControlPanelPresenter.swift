@@ -22,11 +22,17 @@ private final class GlobalSessionPanelWindow: NSPanel {
 
 private final class GlobalSessionPanelWindowDelegate: NSObject, NSWindowDelegate {
   var onMove: ((NSRect) -> Void)?
+  var onResize: ((NSRect) -> Void)?
   var onClose: (() -> Void)?
 
   func windowDidMove(_ notification: Notification) {
     guard let window = notification.object as? NSWindow else { return }
     onMove?(window.frame)
+  }
+
+  func windowDidResize(_ notification: Notification) {
+    guard let window = notification.object as? NSWindow else { return }
+    onResize?(window.frame)
   }
 
   func windowWillClose(_ notification: Notification) {
@@ -54,7 +60,10 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
   #if canImport(AppKit)
   private var panel: GlobalSessionPanelWindow?
   private var windowDelegate: GlobalSessionPanelWindowDelegate?
-  private let panelSize = CGSize(width: 560, height: 420)
+  private var pendingFramePersistenceTask: Task<Void, Never>?
+  private let defaultCollapsedPanelSize = CGSize(width: 560, height: 420)
+  private let minimumCollapsedPanelSize = CGSize(width: 420, height: 300)
+  private let framePersistenceDelay: Duration = .milliseconds(200)
   // Must match the corner radius used by GlobalSessionControlPanelView so the
   // AppKit layer mask and the SwiftUI clip line up.
   private let panelCornerRadius: CGFloat = 14
@@ -87,11 +96,11 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
       onSelectSession: { [weak self] in self?.activateMainWindow() }
     )
     .agentHub(provider)
-    .frame(width: panelSize.width, height: panelSize.height)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
 
     let hostingView = NSHostingView(rootView: content)
     hostingView.sizingOptions = []
-    hostingView.frame = NSRect(origin: .zero, size: panelSize)
+    hostingView.frame = NSRect(origin: .zero, size: defaultCollapsedPanelSize)
     hostingView.autoresizingMask = [.width, .height]
     // Clip the content layer to the rounded shape so the borderless window's
     // shadow follows the rounded corners instead of the rectangular bounds.
@@ -101,8 +110,11 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
     hostingView.layer?.masksToBounds = true
 
     let newPanel = GlobalSessionPanelWindow(
-      contentRect: restoredOrDefaultFrame(size: panelSize),
-      styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+      contentRect: restoredOrDefaultFrame(
+        defaultSize: defaultCollapsedPanelSize,
+        minimumSize: minimumCollapsedPanelSize
+      ),
+      styleMask: [.borderless, .nonactivatingPanel, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
@@ -114,16 +126,20 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
     newPanel.backgroundColor = .clear
     newPanel.isOpaque = false
     newPanel.hasShadow = true
-    newPanel.contentMinSize = panelSize
-    newPanel.contentMaxSize = panelSize
+    newPanel.contentMinSize = minimumCollapsedPanelSize
     newPanel.contentView = hostingView
 
     let delegate = GlobalSessionPanelWindowDelegate()
     delegate.onMove = { [weak self] frame in
-      self?.persist(frame: frame)
+      self?.scheduleFramePersistence(frame)
+    }
+    delegate.onResize = { [weak self] frame in
+      self?.handleResize(frame: frame)
     }
     delegate.onClose = { [weak self, weak newPanel] in
       newPanel?.delegate = nil
+      self?.pendingFramePersistenceTask?.cancel()
+      self?.pendingFramePersistenceTask = nil
       self?.panel = nil
       self?.windowDelegate = nil
     }
@@ -141,6 +157,9 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
   public func hide() {
     #if canImport(AppKit)
     guard let panel else { return }
+    pendingFramePersistenceTask?.cancel()
+    pendingFramePersistenceTask = nil
+    persist(frame: panel.frame)
     panel.delegate = nil
     self.panel = nil
     windowDelegate = nil
@@ -163,32 +182,51 @@ public final class AppKitGlobalSessionControlPanelPresenter: GlobalSessionContro
     mainWindow?.makeKeyAndOrderFront(nil)
   }
 
+  private func handleResize(frame: NSRect) {
+    scheduleFramePersistence(frame)
+  }
+
+  private func scheduleFramePersistence(_ frame: NSRect) {
+    pendingFramePersistenceTask?.cancel()
+    pendingFramePersistenceTask = Task { [weak self] in
+      guard let self else { return }
+      do {
+        try await Task.sleep(for: framePersistenceDelay)
+      } catch {
+        return
+      }
+      guard !Task.isCancelled else { return }
+      persist(frame: frame)
+      pendingFramePersistenceTask = nil
+    }
+  }
+
   private func persist(frame: NSRect) {
     defaults.set(NSStringFromRect(frame), forKey: AgentHubDefaults.globalSessionPanelFrame)
   }
 
-  private func restoredOrDefaultFrame(size: CGSize) -> NSRect {
+  private func restoredOrDefaultFrame(defaultSize: CGSize, minimumSize: CGSize) -> NSRect {
     if let stored = defaults.string(forKey: AgentHubDefaults.globalSessionPanelFrame) {
       let frame = NSRectFromString(stored)
       if !frame.isEmpty {
-        return clamped(frame: frame, size: size)
+        return clamped(frame: frame, minimumSize: minimumSize)
       }
     }
 
     let visible = activeVisibleFrame()
     let origin = CGPoint(
-      x: visible.midX - size.width / 2,
-      y: visible.maxY - size.height - 12
+      x: visible.midX - defaultSize.width / 2,
+      y: visible.maxY - defaultSize.height - 12
     )
-    return clamped(frame: NSRect(origin: origin, size: size), size: size)
+    return clamped(frame: NSRect(origin: origin, size: defaultSize), minimumSize: minimumSize)
   }
 
-  private func clamped(frame: NSRect, size: CGSize) -> NSRect {
+  private func clamped(frame: NSRect, minimumSize: CGSize) -> NSRect {
     let visible = NSScreen.screens
       .first { $0.visibleFrame.intersects(frame) }?
       .visibleFrame ?? activeVisibleFrame()
-    let width = min(size.width, visible.width)
-    let height = min(size.height, visible.height)
+    let width = min(max(frame.width, minimumSize.width), visible.width)
+    let height = min(max(frame.height, minimumSize.height), visible.height)
     let x = min(max(frame.origin.x, visible.minX), visible.maxX - width)
     let y = min(max(frame.origin.y, visible.minY), visible.maxY - height)
     return NSRect(x: x, y: y, width: width, height: height)

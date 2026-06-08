@@ -8,6 +8,47 @@ import SwiftUI
 
 // MARK: - GlobalSessionControlPanelView
 
+private struct GlobalSessionCleanupDeletionConfirmation: Identifiable {
+  let id = UUID()
+  let suggestions: [GlobalSessionCleanupSuggestion]
+
+  var message: String {
+    suggestions.map { suggestion in
+      let pullRequestText = suggestion.mergedPullRequestNumbers
+        .map { "#\($0)" }
+        .joined(separator: ", ")
+      return "- \(suggestion.worktreeName) (merged PR \(pullRequestText))\n  \(suggestion.worktreePath)"
+    }
+    .joined(separator: "\n")
+  }
+}
+
+private struct GlobalSessionCleanupDeletionFailure: Identifiable, Equatable {
+  let id = UUID()
+  let suggestion: GlobalSessionCleanupSuggestion
+  let message: String
+}
+
+private struct GlobalSessionCleanupDeletionResult: Identifiable {
+  let id = UUID()
+  let deleted: [GlobalSessionCleanupSuggestion]
+  let failures: [GlobalSessionCleanupDeletionFailure]
+
+  var title: String {
+    failures.isEmpty ? "Deleted Suggested Worktrees" : "Deleted Some Worktrees"
+  }
+
+  var message: String {
+    var lines: [String] = []
+    lines.append("\(deleted.count) deleted.")
+    if !failures.isEmpty {
+      lines.append("\(failures.count) failed:")
+      lines.append(contentsOf: failures.map { "- \($0.suggestion.worktreeName): \($0.message)" })
+    }
+    return lines.joined(separator: "\n")
+  }
+}
+
 public struct GlobalSessionControlPanelView: View {
   @Bindable var claudeViewModel: CLISessionsViewModel
   @Bindable var codexViewModel: CLISessionsViewModel
@@ -18,6 +59,9 @@ public struct GlobalSessionControlPanelView: View {
 
   @State private var gitHubStates: [String: GlobalSessionControlPanelGitHubState] = [:]
   @State private var selectedItemID: String?
+  @State private var deletionConfirmation: GlobalSessionCleanupDeletionConfirmation?
+  @State private var deletionResult: GlobalSessionCleanupDeletionResult?
+  @State private var isDeletingSuggestedWorktrees = false
   @FocusState private var isPanelFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -43,11 +87,7 @@ public struct GlobalSessionControlPanelView: View {
       Divider()
         .opacity(0.5)
 
-      if items.isEmpty {
-        emptyState
-      } else {
-        sessionList
-      }
+      panelContent
     }
     .background(panelBackground)
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -65,6 +105,8 @@ public struct GlobalSessionControlPanelView: View {
       onClose()
       return .handled
     }
+    .alert(item: $deletionConfirmation, content: deletionConfirmationAlert)
+    .alert(item: $deletionResult, content: deletionResultAlert)
     .onAppear {
       revalidateSelection()
       isPanelFocused = true
@@ -74,10 +116,37 @@ public struct GlobalSessionControlPanelView: View {
     }
   }
 
+  private var panelContent: some View {
+    primarySessionsContent
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  @ViewBuilder
+  private var primarySessionsContent: some View {
+    if items.isEmpty {
+      emptyState
+    } else {
+      sessionList
+    }
+  }
+
   private var sessionList: some View {
     ScrollViewReader { proxy in
       ScrollView(showsIndicators: true) {
         LazyVStack(spacing: 4) {
+          if !cleanupSuggestions.isEmpty {
+            GlobalSessionCleanupBanner(
+              suggestions: cleanupSuggestions,
+              isDeleting: isDeletingSuggestedWorktrees,
+              onDelete: {
+                deletionConfirmation = GlobalSessionCleanupDeletionConfirmation(
+                  suggestions: cleanupSuggestions
+                )
+              }
+            )
+            .padding(.bottom, 4)
+          }
+
           ForEach(items) { item in
             GlobalSessionControlPanelRow(
               item: item,
@@ -112,6 +181,10 @@ public struct GlobalSessionControlPanelView: View {
       codexCustomNames: codexViewModel.sessionCustomNames,
       gitHubStates: gitHubStates
     )
+  }
+
+  private var cleanupSuggestions: [GlobalSessionCleanupSuggestion] {
+    GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: items)
   }
 
   private var panelBackground: some View {
@@ -232,9 +305,175 @@ public struct GlobalSessionControlPanelView: View {
       itemIDs: items.map(\.id)
     )
   }
+
+  private func deletionConfirmationAlert(_ confirmation: GlobalSessionCleanupDeletionConfirmation) -> Alert {
+    Alert(
+      title: Text("Delete Suggested Worktrees?"),
+      message: Text(confirmation.message),
+      primaryButton: .destructive(Text("Delete Worktrees")) {
+        Task {
+          await deleteSuggestedWorktrees(confirmation.suggestions)
+        }
+      },
+      secondaryButton: .cancel()
+    )
+  }
+
+  private func deletionResultAlert(_ result: GlobalSessionCleanupDeletionResult) -> Alert {
+    Alert(
+      title: Text(result.title),
+      message: Text(result.message),
+      dismissButton: .default(Text("OK"))
+    )
+  }
+
+  private func deleteSuggestedWorktrees(_ suggestions: [GlobalSessionCleanupSuggestion]) async {
+    guard !isDeletingSuggestedWorktrees else { return }
+    isDeletingSuggestedWorktrees = true
+
+    var deleted: [GlobalSessionCleanupSuggestion] = []
+    var failures: [GlobalSessionCleanupDeletionFailure] = []
+
+    for suggestion in suggestions {
+      let viewModel = deletionViewModel(for: suggestion)
+      let worktree = matchingWorktree(at: suggestion.worktreePath)
+        ?? WorktreeBranch(
+          name: suggestion.worktreeName,
+          path: suggestion.worktreePath,
+          isWorktree: true
+        )
+      let succeeded = await viewModel.deleteWorktree(worktree, force: false)
+
+      if succeeded {
+        deleted.append(suggestion)
+        removeFromSidebars(worktreePath: suggestion.worktreePath)
+      } else {
+        failures.append(GlobalSessionCleanupDeletionFailure(
+          suggestion: suggestion,
+          message: viewModel.worktreeDeletionError?.message
+            ?? "The worktree could not be deleted."
+        ))
+        viewModel.clearWorktreeDeletionError()
+      }
+    }
+
+    claudeViewModel.refresh()
+    codexViewModel.refresh()
+    isDeletingSuggestedWorktrees = false
+    deletionResult = GlobalSessionCleanupDeletionResult(deleted: deleted, failures: failures)
+  }
+
+  private func deletionViewModel(for suggestion: GlobalSessionCleanupSuggestion) -> CLISessionsViewModel {
+    if containsWorktree(at: suggestion.worktreePath, in: claudeViewModel) {
+      return claudeViewModel
+    }
+    if containsWorktree(at: suggestion.worktreePath, in: codexViewModel) {
+      return codexViewModel
+    }
+    if suggestion.providerKinds.contains(.codex), !suggestion.providerKinds.contains(.claude) {
+      return codexViewModel
+    }
+    return claudeViewModel
+  }
+
+  private func matchingWorktree(at path: String) -> WorktreeBranch? {
+    for viewModel in [claudeViewModel, codexViewModel] {
+      for repository in viewModel.selectedRepositories {
+        if let worktree = repository.worktrees.first(where: {
+          WorktreeModuleResolver.normalizedDirectoryPath($0.path) == path
+        }) {
+          return worktree
+        }
+      }
+    }
+    return nil
+  }
+
+  private func containsWorktree(at path: String, in viewModel: CLISessionsViewModel) -> Bool {
+    viewModel.selectedRepositories.contains { repository in
+      repository.worktrees.contains {
+        WorktreeModuleResolver.normalizedDirectoryPath($0.path) == path
+      }
+    }
+  }
+
+  private func removeFromSidebars(worktreePath: String) {
+    for viewModel in [claudeViewModel, codexViewModel] {
+      viewModel.archiveMonitoredSessions(inWorktreePath: worktreePath)
+      viewModel.forgetOwnedWorktreePath(worktreePath)
+    }
+  }
 }
 
 // MARK: - GlobalSessionControlPanelRow
+
+private struct GlobalSessionCleanupBanner: View {
+  let suggestions: [GlobalSessionCleanupSuggestion]
+  let isDeleting: Bool
+  let onDelete: () -> Void
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    HStack(spacing: 10) {
+      Image(systemName: "flag.fill")
+        .font(.system(size: 13, weight: .semibold))
+        .foregroundStyle(.orange)
+        .frame(width: 18, height: 18)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(title)
+          .font(.secondaryDefault)
+          .foregroundStyle(.primary)
+          .lineLimit(1)
+
+        Text(summary)
+          .font(.secondaryCaption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+
+      Spacer(minLength: 8)
+
+      Button(action: onDelete) {
+        Label(isDeleting ? "Deleting" : "Delete Suggested", systemImage: "trash")
+          .font(.secondarySmall)
+          .foregroundStyle(.white)
+          .padding(.horizontal, 9)
+          .padding(.vertical, 5)
+          .background(Color.red.opacity(isDeleting ? 0.55 : 0.86))
+          .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+      }
+      .buttonStyle(.plain)
+      .disabled(isDeleting)
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .fill(Color.orange.opacity(colorScheme == .dark ? 0.16 : 0.12))
+    )
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .stroke(Color.orange.opacity(colorScheme == .dark ? 0.28 : 0.22), lineWidth: 1)
+    )
+  }
+
+  private var title: String {
+    let noun = suggestions.count == 1 ? "worktree" : "worktrees"
+    return "\(suggestions.count) merged \(noun) can be deleted"
+  }
+
+  private var summary: String {
+    let names = suggestions.prefix(2).map(\.worktreeName)
+    let remaining = suggestions.count - names.count
+    if remaining > 0 {
+      return names.joined(separator: ", ") + " +\(remaining) more"
+    }
+    return names.joined(separator: ", ")
+  }
+}
 
 private struct GlobalSessionControlPanelRow: View {
   let item: GlobalSessionControlPanelItem
@@ -258,10 +497,13 @@ private struct GlobalSessionControlPanelRow: View {
   }
 
   private var gitHubSignature: String {
-    let prNumber = gitHubViewModel.currentBranchPR?.number ?? 0
+    let pullRequest = gitHubViewModel.currentBranchPR
+    let prNumber = pullRequest?.number ?? 0
     let summary = gitHubViewModel.ciSummary
     return [
       "\(prNumber)",
+      pullRequest?.state ?? "",
+      pullRequest?.mergeable ?? "",
       "\(summary.overallStatus.rawValue)",
       "\(summary.passed)",
       "\(summary.failed)",
@@ -549,7 +791,7 @@ private struct GlobalSessionControlPanelRow: View {
   }
 
   private func publishGitHubState() {
-    guard gitHubViewModel.currentBranchPR != nil else {
+    guard let pullRequest = gitHubViewModel.currentBranchPR else {
       onGitHubStateChange(nil)
       return
     }
@@ -557,7 +799,10 @@ private struct GlobalSessionControlPanelRow: View {
     onGitHubStateChange(GlobalSessionControlPanelGitHubState(
       hasPullRequest: true,
       ciStatus: gitHubViewModel.ciSummary.overallStatus,
-      isRefreshing: gitHubViewModel.observationState.isRefreshing
+      isRefreshing: gitHubViewModel.observationState.isRefreshing,
+      pullRequestNumber: pullRequest.number,
+      pullRequestState: pullRequest.stateKind,
+      pullRequestMergeability: pullRequest.mergeabilityKind
     ))
   }
 }

@@ -28,6 +28,10 @@ let package = Package(
       name: "AgentHubSessionGraph",
       targets: ["AgentHubSessionGraph"]
     ),
+    .library(
+      name: "AgentHubMCPUI",
+      targets: ["AgentHubMCPUI"]
+    ),
     .executable(
       name: "DiffBench",
       targets: ["DiffBench"]
@@ -90,6 +94,13 @@ let package = Package(
         .swiftLanguageMode(.v5)
       ]
     ),
+    .target(
+      name: "AgentHubMCPUI",
+      path: "Sources/AgentHubMCPUI",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
     // Developer benchmark tool (not shipped in the app). Depends only on AgentHubGitDiff so it
     // builds without the heavy UI graph: `swift build --product DiffBench`. See CLAUDE.md.
     .executableTarget(
@@ -105,6 +116,7 @@ let package = Package(
         "AgentHubGitDiff",
         "AgentHubFileSearch",
         "AgentHubSessionGraph",
+        "AgentHubMCPUI",
         .product(name: "AgentHubCLIKit", package: "AgentHubCLI"),
         .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
         .product(name: "Storybook", package: "Storybook"),
@@ -149,6 +161,14 @@ let package = Package(
       name: "AgentHubSessionGraphTests",
       dependencies: ["AgentHubSessionGraph"],
       path: "Tests/AgentHubSessionGraphTests",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .testTarget(
+      name: "AgentHubMCPUITests",
+      dependencies: ["AgentHubMCPUI"],
+      path: "Tests/AgentHubMCPUITests",
       swiftSettings: [
         .swiftLanguageMode(.v5)
       ]

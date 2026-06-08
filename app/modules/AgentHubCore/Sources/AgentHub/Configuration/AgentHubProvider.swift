@@ -169,6 +169,11 @@ public final class AgentHubProvider {
     ClaudeWorktreeBranchNamingService(programmaticService: programmaticClaudeService)
   }()
 
+  /// Claude-backed local audit of AgentHub's current session/worktree state.
+  public private(set) lazy var sessionInvestigationService: any SessionInvestigationServiceProtocol = {
+    ClaudeSessionInvestigationService(programmaticService: programmaticClaudeService)
+  }()
+
   /// Reformats Canvas inline-toolbar edits so the persisted file matches the
   /// project's existing code style. Runs Haiku via `claude -p` after the
   /// debounced direct write so the UX stays snappy.
