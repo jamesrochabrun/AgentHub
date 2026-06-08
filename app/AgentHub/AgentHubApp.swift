@@ -7,6 +7,7 @@
 
 import SwiftUI
 import AgentHubCore
+import AgentHubGlobalSessionPanel
 import Ghostty
 import UserNotifications
 import CoreText
@@ -22,7 +23,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
   let provider = AgentHubProvider(
     terminalSurfaceFactory: DefaultEmbeddedTerminalSurfaceFactory(
       ghosttyProvider: { AgentHubGhosttyTerminalSurface() }
-    )
+    ),
+    globalSessionControlPanelPresenterFactory: { provider, defaults in
+      AppKitGlobalSessionControlPanelPresenter(provider: provider, defaults: defaults)
+    }
   )
 
   /// Update controller for Sparkle auto-updates

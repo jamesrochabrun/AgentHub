@@ -5,6 +5,11 @@
 
 import Foundation
 
+public typealias GlobalSessionControlPanelPresenterFactory = @MainActor (
+  _ provider: AgentHubProvider,
+  _ defaults: UserDefaults
+) -> any GlobalSessionControlPanelPresenting
+
 // MARK: - GlobalSessionControlPanelPresenting
 
 @MainActor
@@ -19,6 +24,18 @@ public extension GlobalSessionControlPanelPresenting {
   func toggle() {
     isVisible ? hide() : show()
   }
+}
+
+// MARK: - NoOpGlobalSessionControlPanelPresenter
+
+@MainActor
+public final class NoOpGlobalSessionControlPanelPresenter: GlobalSessionControlPanelPresenting {
+  public var isVisible: Bool { false }
+
+  public init() {}
+
+  public func show() {}
+  public func hide() {}
 }
 
 // MARK: - GlobalSessionControlPanelCoordinator
@@ -56,7 +73,7 @@ public final class GlobalSessionControlPanelCoordinator {
   ) {
     self.init(
       registrar: CarbonGlobalHotKeyRegistrar(),
-      presenter: AppKitGlobalSessionControlPanelPresenter(provider: provider, defaults: defaults),
+      presenter: provider.makeGlobalSessionControlPanelPresenter(defaults: defaults),
       defaults: defaults
     )
   }

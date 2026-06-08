@@ -47,6 +47,7 @@ public final class AgentHubProvider {
   /// of `AgentHubCore` get the default factory which falls back to the regular
   /// SwiftTerm surface when `.ghostty` is selected.
   public let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
+  private let globalSessionControlPanelPresenterFactory: GlobalSessionControlPanelPresenterFactory
   private let metadataStoreOverride: SessionMetadataStore?
   private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
   private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
@@ -263,6 +264,12 @@ public final class AgentHubProvider {
     GlobalSessionControlPanelCoordinator(provider: self)
   }()
 
+  public func makeGlobalSessionControlPanelPresenter(
+    defaults: UserDefaults = .standard
+  ) -> any GlobalSessionControlPanelPresenting {
+    globalSessionControlPanelPresenterFactory(self, defaults)
+  }
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes
@@ -304,6 +311,9 @@ public final class AgentHubProvider {
   public init(
     configuration: AgentHubConfiguration = .default,
     terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory = DefaultEmbeddedTerminalSurfaceFactory(),
+    globalSessionControlPanelPresenterFactory: @escaping GlobalSessionControlPanelPresenterFactory = { _, _ in
+      NoOpGlobalSessionControlPanelPresenter()
+    },
     metadataStore: SessionMetadataStore? = nil,
     worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
     worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil
@@ -311,6 +321,7 @@ public final class AgentHubProvider {
     self.configuration = configuration
     self.terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
+    self.globalSessionControlPanelPresenterFactory = globalSessionControlPanelPresenterFactory
     self.metadataStoreOverride = metadataStore
     self.worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
     self.worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor

@@ -32,6 +32,10 @@ let package = Package(
       name: "AgentHubMCPUI",
       targets: ["AgentHubMCPUI"]
     ),
+    .library(
+      name: "AgentHubGlobalSessionPanel",
+      targets: ["AgentHubGlobalSessionPanel"]
+    ),
     .executable(
       name: "DiffBench",
       targets: ["DiffBench"]
@@ -97,6 +101,17 @@ let package = Package(
     .target(
       name: "AgentHubMCPUI",
       path: "Sources/AgentHubMCPUI",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .target(
+      name: "AgentHubGlobalSessionPanel",
+      dependencies: [
+        "AgentHubCore",
+        .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
+      ],
+      path: "Sources/AgentHubGlobalSessionPanel",
       swiftSettings: [
         .swiftLanguageMode(.v5)
       ]
@@ -169,6 +184,18 @@ let package = Package(
       name: "AgentHubMCPUITests",
       dependencies: ["AgentHubMCPUI"],
       path: "Tests/AgentHubMCPUITests",
+      swiftSettings: [
+        .swiftLanguageMode(.v5)
+      ]
+    ),
+    .testTarget(
+      name: "AgentHubGlobalSessionPanelTests",
+      dependencies: [
+        "AgentHubCore",
+        "AgentHubGlobalSessionPanel",
+        .product(name: "AgentHubGitHub", package: "AgentHubGitHub"),
+      ],
+      path: "Tests/AgentHubGlobalSessionPanelTests",
       swiftSettings: [
         .swiftLanguageMode(.v5)
       ]

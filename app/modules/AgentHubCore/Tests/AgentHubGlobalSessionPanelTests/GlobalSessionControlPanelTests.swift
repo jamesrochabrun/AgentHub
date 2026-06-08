@@ -1,8 +1,9 @@
-import AgentHubGitHub
 import Foundation
 import Testing
+import AgentHubGitHub
 
 @testable import AgentHubCore
+@testable import AgentHubGlobalSessionPanel
 
 @MainActor
 private final class MockGlobalHotKeyRegistrar: GlobalHotKeyRegistrarProtocol {

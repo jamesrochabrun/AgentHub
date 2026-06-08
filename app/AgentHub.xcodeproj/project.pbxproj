@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		7B03D9422F14D66700C36AA3 /* AgentHubCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03D9412F14D66700C36AA3 /* AgentHubCore */; };
+		7B03DB102F30000000C36AA3 /* AgentHubGlobalSessionPanel in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03DB0F2F30000000C36AA3 /* AgentHubGlobalSessionPanel */; };
 		7B03D9502F18A00000C36AA3 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03D94F2F18A00000C36AA3 /* Sparkle */; };
 		7B03DA022F18A10000C36AA3 /* Ghostty in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03DA012F18A10000C36AA3 /* Ghostty */; };
 /* End PBXBuildFile section */
@@ -59,6 +60,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7B03D9422F14D66700C36AA3 /* AgentHubCore in Frameworks */,
+				7B03DB102F30000000C36AA3 /* AgentHubGlobalSessionPanel in Frameworks */,
 				7B03DA022F18A10000C36AA3 /* Ghostty in Frameworks */,
 				7B03D9502F18A00000C36AA3 /* Sparkle in Frameworks */,
 			);
@@ -124,6 +126,7 @@
 			name = AgentHub;
 			packageProductDependencies = (
 				7B03D9412F14D66700C36AA3 /* AgentHubCore */,
+				7B03DB0F2F30000000C36AA3 /* AgentHubGlobalSessionPanel */,
 				7B03DA012F18A10000C36AA3 /* Ghostty */,
 				7B03D94F2F18A00000C36AA3 /* Sparkle */,
 			);
@@ -662,6 +665,11 @@
 		7B03D9412F14D66700C36AA3 /* AgentHubCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = AgentHubCore;
+		};
+		7B03DB0F2F30000000C36AA3 /* AgentHubGlobalSessionPanel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference "modules/AgentHubCore" */;
+			productName = AgentHubGlobalSessionPanel;
 		};
 		7B03D94F2F18A00000C36AA3 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;

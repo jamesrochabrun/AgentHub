@@ -1,9 +1,10 @@
 //
 //  AppKitGlobalSessionControlPanelPresenter.swift
-//  AgentHub
+//  AgentHubGlobalSessionPanel
 //
 
 import SwiftUI
+import AgentHubCore
 
 #if canImport(AppKit)
 import AppKit

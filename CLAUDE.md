@@ -19,6 +19,7 @@ app/
   modules/
     AgentHubCore/              # Swift Package — all core logic lives here
       Sources/AgentHubMCPUI/   # Reusable MCP UI resource model and WKWebView renderer
+      Sources/AgentHubGlobalSessionPanel/ # Floating global Sessions panel UI/presenter
       Sources/AgentHub/
         Configuration/         # AgentHubProvider, AgentHubConfiguration, environment keys
         Design/                # Theme system (ThemeManager, ThemeFileWatcher, YAML themes)
@@ -197,6 +198,16 @@ In Single layout, a side panel can show: `GitDiffView` (split-pane diff), `PlanV
 - If monitor state is still catching up, recover the latest localhost URL from the session JSONL file before choosing a static preview
 - If that external localhost preview fails to load, fall back to static HTML: root `index.html` first, then other discovered HTML files
 - Changes to this behavior require unit tests
+
+### Global Session Panel
+
+The floating global Sessions panel is modularized in `AgentHubGlobalSessionPanel` (`app/modules/AgentHubCore/Sources/AgentHubGlobalSessionPanel`).
+
+- Keep panel SwiftUI, AppKit presenter, row sorting, keyboard navigation, and cleanup-suggestion logic in `AgentHubGlobalSessionPanel`.
+- `AgentHubCore` owns only shared contracts and routing: `GlobalSessionControlPanelCoordinator`, `GlobalSessionControlPanelPresenting`, hotkey registration, and `GlobalSessionSelectionRouter`.
+- `AgentHubProvider` accepts a presenter factory. The app target injects `AppKitGlobalSessionControlPanelPresenter` from the panel module.
+- Do not make `AgentHubCore` import `AgentHubGlobalSessionPanel`; that creates a dependency cycle.
+- Put panel behavior tests in `AgentHubGlobalSessionPanelTests`.
 
 ### MCP UI
 

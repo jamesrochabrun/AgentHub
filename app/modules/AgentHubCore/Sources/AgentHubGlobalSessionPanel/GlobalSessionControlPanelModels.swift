@@ -3,8 +3,9 @@
 //  AgentHub
 //
 
-import AgentHubGitHub
 import Foundation
+import AgentHubCore
+import AgentHubGitHub
 
 // MARK: - GlobalSessionControlPanelGitHubState
 

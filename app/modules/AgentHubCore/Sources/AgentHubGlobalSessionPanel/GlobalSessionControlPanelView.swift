@@ -3,8 +3,9 @@
 //  AgentHub
 //
 
-import AgentHubGitHub
 import SwiftUI
+import AgentHubCore
+import AgentHubGitHub
 
 // MARK: - GlobalSessionControlPanelView
 
