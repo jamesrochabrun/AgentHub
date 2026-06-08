@@ -3,6 +3,7 @@
 //  AgentHub
 //
 
+import Foundation
 import SwiftUI
 import AgentHubCore
 import AgentHubGitHub
@@ -57,39 +58,67 @@ public struct GlobalSessionControlPanelView: View {
   let selectionRouter: GlobalSessionSelectionRouter
   let onClose: () -> Void
   let onSelectSession: () -> Void
+  let onDisplayModeChange: (GlobalSessionControlPanelDisplayMode) -> Void
+  let onCompactContentHeightChange: (CGFloat) -> Void
+  private let defaults: UserDefaults
+  private let displayModeToggleRelay: GlobalSessionPanelDisplayModeToggleRelay?
 
   @State private var gitHubStates: [String: GlobalSessionControlPanelGitHubState] = [:]
   @State private var selectedItemID: String?
+  @State private var displayMode: GlobalSessionControlPanelDisplayMode
   @State private var deletionConfirmation: GlobalSessionCleanupDeletionConfirmation?
   @State private var deletionResult: GlobalSessionCleanupDeletionResult?
   @State private var isDeletingSuggestedWorktrees = false
   @FocusState private var isPanelFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   public init(
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
     selectionRouter: GlobalSessionSelectionRouter,
+    displayModeToggleRelay: GlobalSessionPanelDisplayModeToggleRelay? = nil,
+    defaults: UserDefaults = .standard,
     onClose: @escaping () -> Void = {},
-    onSelectSession: @escaping () -> Void = {}
+    onSelectSession: @escaping () -> Void = {},
+    onDisplayModeChange: @escaping (GlobalSessionControlPanelDisplayMode) -> Void = { _ in },
+    onCompactContentHeightChange: @escaping (CGFloat) -> Void = { _ in }
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self.selectionRouter = selectionRouter
+    self.displayModeToggleRelay = displayModeToggleRelay
+    self.defaults = defaults
     self.onClose = onClose
     self.onSelectSession = onSelectSession
+    self.onDisplayModeChange = onDisplayModeChange
+    self.onCompactContentHeightChange = onCompactContentHeightChange
+    _displayMode = State(initialValue: GlobalSessionControlPanelDisplayMode.load(from: defaults))
   }
 
   public var body: some View {
-    VStack(spacing: 0) {
-      header
-
-      Divider()
-        .opacity(0.5)
-
-      panelContent
+    ZStack(alignment: .top) {
+      switch displayMode {
+      case .regular:
+        regularPanelContent
+          .transition(.opacity)
+      case .compact:
+        compactPanelContent
+          .background(
+            GeometryReader { proxy in
+              // Report the compact layout's intrinsic height so the AppKit
+              // window can hug it instead of using a fixed (too-tall) size.
+              Color.clear
+                .onChange(of: proxy.size.height, initial: true) { _, height in
+                  onCompactContentHeightChange(height)
+                }
+            }
+          )
+          .transition(.opacity)
+      }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     .background(panelBackground)
     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     .overlay(
@@ -112,14 +141,98 @@ public struct GlobalSessionControlPanelView: View {
       revalidateSelection()
       isPanelFocused = true
     }
-    .onChange(of: items.map(\.id)) { _, _ in
+    .onChange(of: selectionItemIDs) { _, _ in
       revalidateSelection()
+    }
+    .onChange(of: displayMode) { _, _ in
+      revalidateSelection()
+    }
+    .onChange(of: displayModeToggleRelay?.toggleRequestCount) { _, _ in
+      toggleDisplayMode()
+    }
+  }
+
+  // The window snaps to its new size in the AppKit presenter (no per-frame
+  // relayout, no alpha blink); here we only cross-fade the content between
+  // layouts so the swap reads as a clean dissolve rather than a flash.
+  private var displayModeCrossfadeAnimation: Animation {
+    reduceMotion ? .linear(duration: 0.01) : .easeInOut(duration: 0.18)
+  }
+
+  private var regularPanelContent: some View {
+    VStack(spacing: 0) {
+      header
+
+      Divider()
+        .opacity(0.5)
+
+      panelContent
     }
   }
 
   private var panelContent: some View {
     primarySessionsContent
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var compactPanelContent: some View {
+    // Even 8pt inset on all sides (matching the regular list) with a small,
+    // balanced gap to the control bar — keeps the featured row's vertical
+    // padding symmetric instead of jammed against the top.
+    VStack(spacing: 6) {
+      compactFeaturedContent
+      compactControlBar
+    }
+    .padding(8)
+  }
+
+  @ViewBuilder
+  private var compactFeaturedContent: some View {
+    if let compactFeaturedItem {
+      // Show the full row content (including the worktree/root path lines) so the
+      // featured session in compact mode matches a regular-mode row exactly.
+      GlobalSessionControlPanelRow(
+        item: compactFeaturedItem,
+        isSelected: compactFeaturedItem.id == selectedItemID,
+        isCleanupCandidate: cleanupCandidateIDs.contains(compactFeaturedItem.id),
+        onSelect: { activate(compactFeaturedItem) },
+        onGitHubStateChange: { state in
+          updateGitHubState(state, for: compactFeaturedItem.id)
+        }
+      )
+    } else {
+      compactEmptyState
+    }
+  }
+
+  private var compactControlBar: some View {
+    ZStack {
+      Button(action: expandPanel) {
+        Label("Expand Sessions", systemImage: "chevron.down")
+          .labelStyle(.iconOnly)
+          .font(.system(size: 12, weight: .bold))
+          .foregroundStyle(.secondary)
+          .frame(width: 30, height: 20)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("Expand")
+
+      HStack {
+        Spacer()
+
+        Button(action: onClose) {
+          Label("Close", systemImage: "xmark")
+            .labelStyle(.iconOnly)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(.secondary)
+            .frame(width: 22, height: 20)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Close")
+      }
+    }
   }
 
   @ViewBuilder
@@ -132,16 +245,18 @@ public struct GlobalSessionControlPanelView: View {
   }
 
   private var sessionList: some View {
-    ScrollViewReader { proxy in
+    let suggestions = cleanupSuggestions
+    let candidateIDs = Set(suggestions.flatMap(\.sessionIDs))
+    return ScrollViewReader { proxy in
       ScrollView(showsIndicators: true) {
         LazyVStack(spacing: 4) {
-          if !cleanupSuggestions.isEmpty {
+          if !suggestions.isEmpty {
             GlobalSessionCleanupBanner(
-              suggestions: cleanupSuggestions,
+              suggestions: suggestions,
               isDeleting: isDeletingSuggestedWorktrees,
               onDelete: {
                 deletionConfirmation = GlobalSessionCleanupDeletionConfirmation(
-                  suggestions: cleanupSuggestions
+                  suggestions: suggestions
                 )
               }
             )
@@ -152,6 +267,7 @@ public struct GlobalSessionControlPanelView: View {
             GlobalSessionControlPanelRow(
               item: item,
               isSelected: item.id == selectedItemID,
+              isCleanupCandidate: candidateIDs.contains(item.id),
               onSelect: { activate(item) },
               onGitHubStateChange: { state in
                 updateGitHubState(state, for: item.id)
@@ -164,6 +280,7 @@ public struct GlobalSessionControlPanelView: View {
         .padding(.vertical, 8)
       }
       .onChange(of: selectedItemID) { _, newValue in
+        guard displayMode == .regular else { return }
         guard let newValue else { return }
         withAnimation(.easeInOut(duration: 0.15)) {
           proxy.scrollTo(newValue)
@@ -184,8 +301,31 @@ public struct GlobalSessionControlPanelView: View {
     )
   }
 
+  private var compactFeaturedItem: GlobalSessionControlPanelItem? {
+    GlobalSessionControlPanelCompactItemSelector.featuredItem(from: items)
+  }
+
+  private var selectionItems: [GlobalSessionControlPanelItem] {
+    switch displayMode {
+    case .regular:
+      return items
+    case .compact:
+      return compactFeaturedItem.map { [$0] } ?? []
+    }
+  }
+
+  private var selectionItemIDs: [String] {
+    selectionItems.map(\.id)
+  }
+
   private var cleanupSuggestions: [GlobalSessionCleanupSuggestion] {
     GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: items)
+  }
+
+  // Item IDs whose worktree is a safe-to-delete cleanup candidate (merged PR and
+  // quiet state). Used to flag individual rows, consistent with the banner.
+  private var cleanupCandidateIDs: Set<String> {
+    Set(cleanupSuggestions.flatMap(\.sessionIDs))
   }
 
   private var panelBackground: some View {
@@ -227,11 +367,24 @@ public struct GlobalSessionControlPanelView: View {
         .background(Color.secondary.opacity(0.12))
         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
 
-      Button(action: onClose) {
-        Image(systemName: "xmark")
+      Button(action: compactPanel) {
+        Label("Compact Sessions", systemImage: "chevron.up")
+          .labelStyle(.iconOnly)
           .font(.system(size: 11, weight: .bold))
           .foregroundStyle(.secondary)
           .frame(width: 22, height: 22)
+          .contentShape(Rectangle())
+      }
+      .buttonStyle(.plain)
+      .help("Compact")
+
+      Button(action: onClose) {
+        Label("Close", systemImage: "xmark")
+          .labelStyle(.iconOnly)
+          .font(.system(size: 11, weight: .bold))
+          .foregroundStyle(.secondary)
+          .frame(width: 22, height: 22)
+          .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
       .help("Close")
@@ -239,6 +392,30 @@ public struct GlobalSessionControlPanelView: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
     .contentShape(Rectangle())
+  }
+
+  private var compactEmptyState: some View {
+    HStack(spacing: 10) {
+      Image(systemName: "terminal")
+        .font(.system(size: 15, weight: .semibold))
+        .foregroundStyle(.secondary)
+        .frame(width: 18, height: 18)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text("No monitored sessions")
+          .font(.secondaryDefault)
+          .foregroundStyle(.primary)
+
+        Text("Start or select sessions in AgentHub.")
+          .font(.secondaryCaption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+
+      Spacer(minLength: 8)
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 12)
   }
 
   private var emptyState: some View {
@@ -269,13 +446,36 @@ public struct GlobalSessionControlPanelView: View {
     }
   }
 
+  private func compactPanel() {
+    setDisplayMode(.compact)
+  }
+
+  private func expandPanel() {
+    setDisplayMode(.regular)
+  }
+
+  private func setDisplayMode(_ mode: GlobalSessionControlPanelDisplayMode) {
+    guard displayMode != mode else { return }
+    mode.persist(to: defaults)
+
+    // Snap the window to its new size immediately (the presenter resizes without
+    // animating the frame), then cross-fade the content for a clean dissolve.
+    onDisplayModeChange(mode)
+    withAnimation(displayModeCrossfadeAnimation) {
+      displayMode = mode
+    }
+  }
+
+  private func toggleDisplayMode() {
+    setDisplayMode(displayMode == .regular ? .compact : .regular)
+  }
+
   private func moveSelection(_ direction: GlobalSessionListNavigationDirection) -> KeyPress.Result {
-    let itemIDs = items.map(\.id)
-    guard !itemIDs.isEmpty else { return .ignored }
+    guard !selectionItemIDs.isEmpty else { return .ignored }
     selectedItemID = GlobalSessionPanelNavigator.nextSelection(
       currentID: selectedItemID,
       direction: direction,
-      itemIDs: itemIDs
+      itemIDs: selectionItemIDs
     )
     return .handled
   }
@@ -283,7 +483,7 @@ public struct GlobalSessionControlPanelView: View {
   private func activateSelectedItem() -> KeyPress.Result {
     guard
       let selectedItemID,
-      let item = items.first(where: { $0.id == selectedItemID })
+      let item = selectionItems.first(where: { $0.id == selectedItemID })
     else { return .ignored }
     activate(item)
     return .handled
@@ -303,7 +503,7 @@ public struct GlobalSessionControlPanelView: View {
   private func revalidateSelection() {
     selectedItemID = GlobalSessionPanelNavigator.validatedSelection(
       currentID: selectedItemID,
-      itemIDs: items.map(\.id)
+      itemIDs: selectionItemIDs
     )
   }
 
@@ -479,6 +679,8 @@ private struct GlobalSessionCleanupBanner: View {
 private struct GlobalSessionControlPanelRow: View {
   let item: GlobalSessionControlPanelItem
   let isSelected: Bool
+  var showsPathLines = true
+  var isCleanupCandidate = false
   let onSelect: () -> Void
   let onGitHubStateChange: (GlobalSessionControlPanelGitHubState?) -> Void
 
@@ -524,7 +726,9 @@ private struct GlobalSessionControlPanelRow: View {
           topLine
           detailLine
           gitHubLine
-          pathLines
+          if showsPathLines {
+            pathLines
+          }
         }
 
         Spacer(minLength: 8)
@@ -534,8 +738,8 @@ private struct GlobalSessionControlPanelRow: View {
           .foregroundStyle(.secondary.opacity(isHovered || isSelected ? 0.9 : 0.45))
           .padding(.top, 3)
       }
-      .padding(.horizontal, 9)
-      .padding(.vertical, 8)
+      .padding(.horizontal, 11)
+      .padding(.vertical, 11)
       .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
       .background(rowBackground)
       .contentShape(Rectangle())
@@ -580,6 +784,10 @@ private struct GlobalSessionControlPanelRow: View {
         .foregroundStyle(Color.brandPrimary(for: item.providerKind))
         .fixedSize(horizontal: true, vertical: false)
 
+      if isCleanupCandidate {
+        cleanupBadge
+      }
+
       Spacer(minLength: 4)
 
       Text(item.timestamp.timeAgoDisplay())
@@ -588,6 +796,17 @@ private struct GlobalSessionControlPanelRow: View {
         .monospacedDigit()
         .fixedSize(horizontal: true, vertical: false)
     }
+  }
+
+  private var cleanupBadge: some View {
+    Text("Cleanup")
+      .font(.system(size: 9, weight: .bold))
+      .foregroundStyle(.white)
+      .padding(.horizontal, 5)
+      .padding(.vertical, 1)
+      .background(.orange, in: Capsule())
+      .fixedSize()
+      .help("This worktree's PR is merged — safe to clean up")
   }
 
   private var detailLine: some View {
@@ -623,6 +842,12 @@ private struct GlobalSessionControlPanelRow: View {
           .font(.secondaryCaption)
           .foregroundStyle(.secondary)
 
+        if pullRequest.stateKind == .merged {
+          prStateBadge("Merged", color: .purple)
+        } else if pullRequest.stateKind == .closed {
+          prStateBadge("Closed", color: .red)
+        }
+
         Text("·")
           .font(.secondaryCaption)
           .foregroundStyle(.secondary.opacity(0.7))
@@ -635,6 +860,16 @@ private struct GlobalSessionControlPanelRow: View {
       }
       .transition(.opacity)
     }
+  }
+
+  private func prStateBadge(_ title: String, color: Color) -> some View {
+    Text(title)
+      .font(.system(size: 9, weight: .bold))
+      .foregroundStyle(.white)
+      .padding(.horizontal, 5)
+      .padding(.vertical, 1)
+      .background(color, in: Capsule())
+      .fixedSize()
   }
 
   private var pathLines: some View {
@@ -768,7 +1003,9 @@ private struct GlobalSessionControlPanelRow: View {
     case .pending:
       return summary.pending == 1 ? "1 check pending" : "\(summary.pending) checks pending"
     case .none:
-      return "CI unavailable"
+      // `.none` means the commit's check rollup is empty — i.e. no CI checks
+      // exist for it, not that the status failed to load.
+      return summary.total > 0 ? "Checks skipped" : "No checks"
     }
   }
 
