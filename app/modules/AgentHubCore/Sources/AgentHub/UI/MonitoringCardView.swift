@@ -56,6 +56,7 @@ public struct MonitoringCardView: View {
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
+  @State private var showingMCPAppsPanel = false
   @AppStorage(AgentHubDefaults.diffDisplayMode)
   private var diffDisplayModeRawValue: String = DiffDisplayMode.inline.rawValue
   @Environment(\.agentHub) private var agentHub
@@ -188,6 +189,10 @@ public struct MonitoringCardView: View {
     state?.detectedResourceLinks ?? []
   }
 
+  private var mcpAppResources: [MCPAppResource] {
+    viewModel?.mcpAppResources(for: session, state: state) ?? []
+  }
+
   private var linkedPullRequestNumber: Int? {
     GitHubPullRequestURLReference.latestNumber(in: resourceLinks.map(\.url))
   }
@@ -280,6 +285,9 @@ public struct MonitoringCardView: View {
     .task(id: session.projectPath) {
       await viewModel?.ensureLocalDiffSummary(for: session.projectPath, forceRefresh: true)
     }
+    .task(id: session.projectPath) {
+      await viewModel?.ensureMCPAppResources(for: session)
+    }
     .task(id: gitHubObservationTaskID) {
       if linkedPullRequestNumber == nil {
         try? await Task.sleep(for: .seconds(2))
@@ -306,6 +314,7 @@ public struct MonitoringCardView: View {
         await loadWebPreviewCandidateIfNeeded()
         await viewModel?.ensureDiffAvailability(for: session.projectPath, forceRefresh: true)
         await viewModel?.ensureLocalDiffSummary(for: session.projectPath, forceRefresh: true)
+        await viewModel?.ensureMCPAppResources(for: session)
       }
     }
     .onChange(of: state?.detectedLocalhostURL) { _, newValue in
@@ -340,6 +349,14 @@ public struct MonitoringCardView: View {
           viewModel?.setCustomName(name, for: session)
         },
         onDismiss: { showingNameSheet = false }
+      )
+    }
+    .sheet(isPresented: $showingMCPAppsPanel) {
+      MCPAppsPanelView(
+        session: session,
+        resources: mcpAppResources,
+        viewModel: viewModel,
+        onDismiss: { showingMCPAppsPanel = false }
       )
     }
     .fileImporter(
@@ -683,6 +700,23 @@ public struct MonitoringCardView: View {
         // Web preview controls — segmented App | Storybook when Storybook is
         // detected, otherwise a single Preview button.
         webPreviewControls
+
+        if !mcpAppResources.isEmpty {
+          Button(action: {
+            showingMCPAppsPanel = true
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "square.stack.3d.up")
+                .font(.caption2)
+              Text("MCP")
+              Text("\(mcpAppResources.count)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("Open MCP app resources")
+        }
 
         // Mermaid diagram button (only visible when mermaid content is detected)
         if state?.hasMermaidContent == true {

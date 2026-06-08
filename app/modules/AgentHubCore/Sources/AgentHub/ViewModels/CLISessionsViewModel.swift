@@ -6,6 +6,7 @@
 //
 
 import AgentHubGitDiff
+import AgentHubMCPUI
 import Foundation
 import Combine
 import Canvas
@@ -14,6 +15,11 @@ import CoreGraphics
 #if canImport(AppKit)
 import AppKit
 #endif
+
+private struct MCPAppDiscoveryProjectKey: Hashable {
+  let provider: SessionProviderKind
+  let projectPath: String
+}
 
 // MARK: - CLISessionsViewModel
 
@@ -36,6 +42,7 @@ public final class CLISessionsViewModel {
   private let sessionRelationshipStore: (any SessionRelationshipStoreProtocol)?
   private let fileWatcher: any SessionFileWatcherProtocol
   private let webPreviewCandidateService: any WebPreviewCandidateServiceProtocol
+  private let mcpAppDiscoveryService: any MCPAppDiscoveryServiceProtocol
   private let projectCapabilityService: any ProjectCapabilityServiceProtocol
   private let diffAvailabilityService: any DiffAvailabilityServiceProtocol
   private let localDiffSummaryService: any LocalDiffSummaryServiceProtocol
@@ -58,6 +65,8 @@ public final class CLISessionsViewModel {
   @ObservationIgnored private var pendingResolvedAccessoryRelationships: [String: [SessionRelationshipRecord]] = [:]
   @ObservationIgnored private var scheduledTerminalFocusKeys: Set<String> = []
   @ObservationIgnored private var scheduledAuxiliaryShellFocusKeys: Set<String> = []
+  @ObservationIgnored private var mcpAppDiscoveryInFlight: Set<MCPAppDiscoveryProjectKey> = []
+  @ObservationIgnored private var mcpAppDiscoveryCompleted: Set<MCPAppDiscoveryProjectKey> = []
   weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
@@ -181,6 +190,137 @@ public final class CLISessionsViewModel {
 
   public func localDiffSummary(for projectPath: String) -> LocalDiffSummary? {
     localDiffSummaries[LocalDiffSummaryService.normalize(projectPath)]
+  }
+
+  public func mcpAppResources(
+    for session: CLISession,
+    state: SessionMonitorState?
+  ) -> [MCPAppResource] {
+    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
+    var resourcesByID: [String: MCPAppResource] = [:]
+
+    for (key, resources) in mcpAppResourcesByServer
+      where key.provider == providerKind && key.projectPath == normalizedProjectPath {
+      for resource in resources {
+        resourcesByID[resource.id] = resource
+      }
+    }
+
+    for descriptor in state?.detectedMCPAppResources ?? [] {
+      let serverName = descriptor.serverName ?? "inline"
+
+      if descriptor.text == nil,
+         let discovered = resourcesByID.values.first(where: {
+           $0.resource.uri == descriptor.uri
+             && (descriptor.serverName == nil || $0.serverName == descriptor.serverName)
+         }) {
+        resourcesByID[discovered.id] = discovered
+        continue
+      }
+
+      guard let text = descriptor.text else { continue }
+      let metadata = descriptor.metadata
+      let resource = AgentHubMCPUIResource(
+        uri: descriptor.uri,
+        mimeType: descriptor.mimeType,
+        text: text,
+        metadata: metadata
+      )
+      let inlineResource = MCPAppResource(
+        provider: providerKind,
+        projectPath: normalizedProjectPath,
+        serverName: serverName,
+        title: descriptor.title ?? metadata.title,
+        source: .inlineJSONL,
+        resource: resource
+      )
+      resourcesByID[inlineResource.id] = inlineResource
+    }
+
+    return resourcesByID.values.sorted {
+      if $0.serverName != $1.serverName {
+        return $0.serverName < $1.serverName
+      }
+      return ($0.title ?? $0.resource.uri) < ($1.title ?? $1.resource.uri)
+    }
+  }
+
+  public func ensureMCPAppResources(
+    for session: CLISession,
+    forceRefresh: Bool = false
+  ) async {
+    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
+    let projectKey = MCPAppDiscoveryProjectKey(provider: providerKind, projectPath: normalizedProjectPath)
+
+    if !forceRefresh {
+      guard !mcpAppDiscoveryCompleted.contains(projectKey),
+            !mcpAppDiscoveryInFlight.contains(projectKey) else {
+        return
+      }
+    }
+
+    mcpAppDiscoveryInFlight.insert(projectKey)
+    let resources = await mcpAppDiscoveryService.discoverResources(
+      provider: providerKind,
+      projectPath: normalizedProjectPath,
+      forceRefresh: forceRefresh
+    )
+
+    if forceRefresh {
+      mcpAppResourcesByServer = mcpAppResourcesByServer.filter { entry in
+        entry.key.provider != providerKind || entry.key.projectPath != normalizedProjectPath
+      }
+    }
+
+    let grouped = Dictionary(grouping: resources) { resource in
+      MCPAppServerCacheKey(
+        provider: providerKind,
+        projectPath: normalizedProjectPath,
+        serverName: resource.serverName
+      )
+    }
+    for (key, values) in grouped {
+      mcpAppResourcesByServer[key] = values
+    }
+
+    mcpAppDiscoveryCompleted.insert(projectKey)
+    mcpAppDiscoveryInFlight.remove(projectKey)
+  }
+
+  public func callMCPAppTool(
+    resource: MCPAppResource,
+    name: String,
+    arguments: AgentHubMCPUIJSONValue?
+  ) async throws -> AgentHubMCPUIJSONValue {
+    try await mcpAppDiscoveryService.callTool(
+      provider: resource.provider,
+      projectPath: resource.projectPath,
+      serverName: resource.serverName,
+      name: name,
+      arguments: arguments
+    )
+  }
+
+  public func readMCPAppResource(
+    resource: MCPAppResource,
+    uri: String
+  ) async throws -> AgentHubMCPUIJSONValue {
+    try await mcpAppDiscoveryService.readResource(
+      provider: resource.provider,
+      projectPath: resource.projectPath,
+      serverName: resource.serverName,
+      uri: uri
+    )
+  }
+
+  public func listMCPAppResources(
+    resource: MCPAppResource
+  ) async throws -> AgentHubMCPUIJSONValue {
+    try await mcpAppDiscoveryService.listResources(
+      provider: resource.provider,
+      projectPath: resource.projectPath,
+      serverName: resource.serverName
+    )
   }
 
   public func ensureProjectCapabilities(
@@ -1324,6 +1464,9 @@ public final class CLISessionsViewModel {
   /// Cached project-level local/branch diff summaries keyed by normalized project path.
   public private(set) var localDiffSummaries: [String: LocalDiffSummary] = [:]
 
+  /// MCP App resources discovered live from configured MCP servers, keyed per provider/project/server.
+  public private(set) var mcpAppResourcesByServer: [MCPAppServerCacheKey: [MCPAppResource]] = [:]
+
   /// Combine cancellables for monitoring subscriptions (keyed by session ID)
   private var monitoringCancellables: [String: AnyCancellable] = [:]
 
@@ -1363,6 +1506,7 @@ public final class CLISessionsViewModel {
     metadataStore: SessionMetadataStore? = nil,
     sessionRelationshipStore: (any SessionRelationshipStoreProtocol)? = nil,
     webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared,
+    mcpAppDiscoveryService: any MCPAppDiscoveryServiceProtocol = MCPAppDiscoveryService.shared,
     projectCapabilityService: any ProjectCapabilityServiceProtocol = ProjectCapabilityService.shared,
     diffAvailabilityService: any DiffAvailabilityServiceProtocol = DiffAvailabilityService.shared,
     localDiffSummaryService: any LocalDiffSummaryServiceProtocol = LocalDiffSummaryService.shared,
@@ -1384,6 +1528,7 @@ public final class CLISessionsViewModel {
     self.sessionRelationshipStore = sessionRelationshipStore ?? metadataStore
     self.fileWatcher = fileWatcher
     self.webPreviewCandidateService = webPreviewCandidateService
+    self.mcpAppDiscoveryService = mcpAppDiscoveryService
     self.projectCapabilityService = projectCapabilityService
     self.diffAvailabilityService = diffAvailabilityService
     self.localDiffSummaryService = localDiffSummaryService
