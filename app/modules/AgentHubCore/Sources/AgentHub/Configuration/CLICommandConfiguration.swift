@@ -243,24 +243,16 @@ public struct CLICommandConfiguration: Codable, Sendable {
 
   private func normalizedPrefixArguments() -> [String] {
     var prefix = subcommandArgs
-    guard isAgentHubExecutable else { return prefix }
-
-    let providerSubcommand: String
-    switch mode {
-    case .claude:
-      providerSubcommand = "claude"
-    case .codex:
-      providerSubcommand = "codex"
-    }
+    guard isWrapperExecutable else { return prefix }
 
     if !prefix.contains("claude"), !prefix.contains("codex") {
-      prefix.append(providerSubcommand)
+      prefix.append(nativeProviderExecutableName)
     }
     return prefix
   }
 
   private func assembleArguments(prefix: [String], providerArgs: [String], trailingArgs: [String]) -> [String] {
-    guard isAgentHubExecutable else {
+    guard isWrapperExecutable else {
       return prefix + providerArgs + extraArgs + trailingArgs
     }
 
@@ -272,8 +264,20 @@ public struct CLICommandConfiguration: Codable, Sendable {
     return prefix + extraArgs + ["--"] + directProviderArgs
   }
 
-  private var isAgentHubExecutable: Bool {
-    URL(fileURLWithPath: executableName).lastPathComponent == "agenthub"
+  /// The provider's own CLI executable name (the binary invoked when no wrapper is used).
+  private var nativeProviderExecutableName: String {
+    switch mode {
+    case .claude: return "claude"
+    case .codex: return "codex"
+    }
+  }
+
+  /// True when the configured command is a wrapper around the provider CLI rather than the
+  /// provider CLI itself. Wrappers receive an injected provider subcommand and pass provider
+  /// arguments after a `--` separator. Detected structurally (the executable isn't the native
+  /// provider binary) so any wrapper works without hardcoding a specific tool name.
+  private var isWrapperExecutable: Bool {
+    URL(fileURLWithPath: executableName).lastPathComponent != nativeProviderExecutableName
   }
 
   private func claudeMCPConfig(agentHubCLIPath: String) -> String {

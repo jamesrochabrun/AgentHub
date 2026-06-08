@@ -98,6 +98,41 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(args.last == "Start work")
   }
 
+  @Test("Any non-native wrapper executable gets the direct-argument separator")
+  func arbitraryWrapperUsesDirectArgumentSeparator() {
+    let config = CLICommandConfiguration(
+      command: "my-cli-wrapper",
+      mode: .claude,
+      extraArgs: ["--api-mode", "enterprise"]
+    )
+
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: "Start work"
+    )
+
+    // Wrapper detection is structural (executable != native provider CLI), not a hardcoded name.
+    #expect(Array(args.prefix(4)) == ["claude", "--api-mode", "enterprise", "--"])
+    #expect(args.last == "Start work")
+  }
+
+  @Test("Full-path native provider CLI is not treated as a wrapper")
+  func fullPathNativeCLIIsNotWrapper() {
+    let config = CLICommandConfiguration(
+      command: "/usr/local/bin/claude",
+      mode: .claude,
+      extraArgs: ["--debug"]
+    )
+
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: "Start work"
+    )
+
+    #expect(!args.contains("--"))
+    #expect(Array(args.suffix(2)) == ["--debug", "Start work"])
+  }
+
   @Test("Direct CLI keeps extra args before prompt")
   func directCLIKeepsExtraArgsBeforePrompt() {
     let config = CLICommandConfiguration(
