@@ -162,13 +162,6 @@ public extension AgentHubMCPUIJSONValue {
   }
 }
 
-/// Optional invocation on a render item — present for host-rendered apps (the
-/// agent's tool call data to push), nil for resources embedded directly in the JSONL.
-public extension MCPAppRenderItem {
-  init(resource: MCPAppResource) {
-    self.init(resource: resource, invocation: nil)
-  }
-}
 
 public struct MCPAppResourceCacheKey: Sendable, Hashable {
   public let provider: SessionProviderKind
@@ -211,99 +204,5 @@ public struct MCPAppServerCacheKey: Sendable, Hashable {
     self.provider = provider
     self.projectPath = projectPath
     self.serverName = serverName
-  }
-}
-
-public enum MCPAppServerDiscoveryState: Sendable, Equatable, Hashable {
-  case loading
-  case available(resourceCount: Int)
-  case noResources
-  case unsupportedTransport(String)
-  case authenticationRequired(String)
-  case unreachable(String)
-  case failure(String)
-
-  public var displayTitle: String {
-    switch self {
-    case .loading:
-      return "Loading"
-    case .available(let resourceCount):
-      return resourceCount == 1 ? "1 app available" : "\(resourceCount) apps available"
-    case .noResources:
-      return "No MCP apps"
-    case .unsupportedTransport:
-      return "Unsupported transport"
-    case .authenticationRequired:
-      return "Authentication required"
-    case .unreachable:
-      return "Server unreachable"
-    case .failure:
-      return "Discovery failed"
-    }
-  }
-
-  public var displayMessage: String {
-    switch self {
-    case .loading:
-      return "Discovering app resources from this MCP server."
-    case .available(let resourceCount):
-      return resourceCount == 1
-        ? "This server exposed one app resource."
-        : "This server exposed \(resourceCount) app resources."
-    case .noResources:
-      return "This server did not expose any MCP app resources."
-    case .unsupportedTransport(let message),
-         .authenticationRequired(let message),
-         .unreachable(let message),
-         .failure(let message):
-      return message
-    }
-  }
-
-  public var isError: Bool {
-    switch self {
-    case .unsupportedTransport, .authenticationRequired, .unreachable, .failure:
-      return true
-    case .loading, .available, .noResources:
-      return false
-    }
-  }
-}
-
-public struct MCPAppServerDiscoveryStatus: Identifiable, Sendable, Equatable, Hashable {
-  public let key: MCPAppServerCacheKey
-  public let transportDescription: String
-  public let state: MCPAppServerDiscoveryState
-
-  public init(
-    key: MCPAppServerCacheKey,
-    transportDescription: String,
-    state: MCPAppServerDiscoveryState
-  ) {
-    self.key = key
-    self.transportDescription = transportDescription
-    self.state = state
-  }
-
-  public var id: String {
-    [
-      key.provider.rawValue,
-      key.projectPath,
-      key.serverName,
-      transportDescription
-    ].joined(separator: "|")
-  }
-}
-
-public struct MCPAppDiscoverySnapshot: Sendable, Equatable {
-  public let resources: [MCPAppResource]
-  public let serverStatuses: [MCPAppServerDiscoveryStatus]
-
-  public init(
-    resources: [MCPAppResource],
-    serverStatuses: [MCPAppServerDiscoveryStatus]
-  ) {
-    self.resources = resources
-    self.serverStatuses = serverStatuses
   }
 }
