@@ -33,35 +33,17 @@ private final class MCPAppViewModelFileWatcher: SessionFileWatcherProtocol, @unc
   func setApprovalTimeout(_ seconds: Int) async {}
 }
 
-private actor MockMCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
-  private let resources: [MCPAppResource]
-  private let statuses: [MCPAppServerDiscoveryStatus]
-  private var discoverCount = 0
-
-  init(resources: [MCPAppResource], statuses: [MCPAppServerDiscoveryStatus] = []) {
-    self.resources = resources
-    self.statuses = statuses
+/// On-demand gateway mock. Discovery (snapshot) is gone; this only records the
+/// lazy callbacks a rendered MCP app makes back to its server.
+private actor RecordingMCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
+  struct ToolCall: Equatable {
+    let provider: SessionProviderKind
+    let projectPath: String
+    let serverName: String
+    let name: String
   }
 
-  func discoverResourceSnapshot(
-    provider: SessionProviderKind,
-    projectPath: String,
-    forceRefresh: Bool
-  ) async -> MCPAppDiscoverySnapshot {
-    discoverCount += 1
-    let matchingResources = resources.filter { $0.provider == provider && $0.projectPath == projectPath }
-    if !statuses.isEmpty {
-      return MCPAppDiscoverySnapshot(resources: matchingResources, serverStatuses: statuses)
-    }
-    let generatedStatuses = Dictionary(grouping: matchingResources, by: \.serverName).map { serverName, resources in
-      MCPAppServerDiscoveryStatus(
-        key: MCPAppServerCacheKey(provider: provider, projectPath: projectPath, serverName: serverName),
-        transportDescription: "fake",
-        state: .available(resourceCount: resources.count)
-      )
-    }
-    return MCPAppDiscoverySnapshot(resources: matchingResources, serverStatuses: generatedStatuses)
-  }
+  private(set) var toolCalls: [ToolCall] = []
 
   func callTool(
     provider: SessionProviderKind,
@@ -70,16 +52,8 @@ private actor MockMCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
     name: String,
     arguments: AgentHubMCPUIJSONValue?
   ) async throws -> AgentHubMCPUIJSONValue {
-    .object(["ok": .bool(true)])
-  }
-
-  func readResource(
-    provider: SessionProviderKind,
-    projectPath: String,
-    serverName: String,
-    uri: String
-  ) async throws -> AgentHubMCPUIJSONValue {
-    .object([:])
+    toolCalls.append(ToolCall(provider: provider, projectPath: projectPath, serverName: serverName, name: name))
+    return .object(["ok": .bool(true)])
   }
 
   func listResources(
@@ -90,120 +64,263 @@ private actor MockMCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
     .object([:])
   }
 
-  func discoveryCallCount() -> Int {
-    discoverCount
+  func listTools(
+    provider: SessionProviderKind,
+    projectPath: String,
+    serverName: String
+  ) async throws -> AgentHubMCPUIJSONValue {
+    // Mirrors the real excalidraw server: create_view declares a `ui://` app.
+    .object([
+      "tools": .array([
+        .object([
+          "name": .string("create_view"),
+          "title": .string("Draw Diagram"),
+          "_meta": .object([
+            "ui": .object(["resourceUri": .string("ui://excalidraw/mcp-app.html")])
+          ])
+        ]),
+        .object(["name": .string("read_me")])
+      ])
+    ])
+  }
+
+  func readResource(
+    provider: SessionProviderKind,
+    projectPath: String,
+    serverName: String,
+    uri: String
+  ) async throws -> AgentHubMCPUIJSONValue {
+    .object([
+      "contents": .array([
+        .object([
+          "uri": .string(uri),
+          "mimeType": .string(AgentHubMCPUIResource.htmlAppMimeType),
+          "text": .string("<main>shell</main>")
+        ])
+      ])
+    ])
+  }
+
+  func recordedToolCalls() -> [ToolCall] {
+    toolCalls
   }
 }
 
-@Suite("CLISessionsViewModel MCP app discovery")
+@Suite("CLISessionsViewModel MCP app resources")
 struct CLISessionsViewModelMCPAppDiscoveryTests {
-  @Test("Caches live-discovered MCP app resources for session UI")
   @MainActor
-  func cachesLiveDiscoveredResourcesForSessionUI() async {
-    let projectPath = "/tmp/agenthub-mcp-project"
-    let liveResource = MCPAppResource(
-      provider: .claude,
-      projectPath: projectPath,
-      serverName: "charts",
-      title: "Dashboard",
-      source: .liveDiscovery,
-      resource: AgentHubMCPUIResource(
-        uri: "ui://charts/dashboard",
-        text: "<main>Dashboard</main>"
-      )
-    )
-    let discoveryService = MockMCPAppDiscoveryService(resources: [liveResource])
-    let viewModel = CLISessionsViewModel(
+  private func makeViewModel(
+    provider: SessionProviderKind,
+    service: any MCPAppDiscoveryServiceProtocol
+  ) -> CLISessionsViewModel {
+    CLISessionsViewModel(
       monitorService: MCPAppViewModelMonitorService(),
       fileWatcher: MCPAppViewModelFileWatcher(),
       searchService: nil,
-      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
-      providerKind: .claude,
-      mcpAppDiscoveryService: discoveryService,
+      cliConfiguration: CLICommandConfiguration(
+        command: provider == .codex ? "codex" : "claude",
+        mode: provider == .codex ? .codex : .claude
+      ),
+      providerKind: provider,
+      mcpAppDiscoveryService: service,
       approvalNotificationService: NoOpApprovalNotificationService()
     )
+  }
+
+  @MainActor
+  private func waitForPendingRequest(_ controller: MCPAppConsentController) async {
+    for _ in 0..<50 {
+      if controller.pendingRequest != nil { return }
+      await Task.yield()
+    }
+  }
+
+  @Test("Builds inline MCP app resources from agent tool results")
+  @MainActor
+  func buildsInlineResourcesFromState() async {
+    let projectPath = "/tmp/agenthub-mcp-project"
+    let viewModel = makeViewModel(provider: .claude, service: RecordingMCPAppDiscoveryService())
     let session = CLISession(id: "session-1", projectPath: projectPath)
 
     #expect(viewModel.mcpAppResources(for: session, state: nil).isEmpty)
 
-    await viewModel.ensureMCPAppResources(for: session)
-
-    let resources = viewModel.mcpAppResources(for: session, state: nil)
-    #expect(resources.map(\.resource.uri) == ["ui://charts/dashboard"])
-    #expect(resources.first?.serverName == "charts")
-
-    await viewModel.ensureMCPAppResources(for: session)
-    #expect(await discoveryService.discoveryCallCount() == 1)
-  }
-
-  @Test("Merges live-discovered resources with inline JSONL resources")
-  @MainActor
-  func mergesLiveAndInlineResources() async {
-    let projectPath = "/tmp/agenthub-mcp-project"
-    let liveResource = MCPAppResource(
-      provider: .codex,
-      projectPath: projectPath,
-      serverName: "charts",
-      title: "Dashboard",
-      source: .liveDiscovery,
-      resource: AgentHubMCPUIResource(
-        uri: "ui://charts/dashboard",
-        text: "<main>Dashboard</main>"
-      )
-    )
-    let discoveryService = MockMCPAppDiscoveryService(resources: [liveResource])
-    let viewModel = CLISessionsViewModel(
-      monitorService: MCPAppViewModelMonitorService(),
-      fileWatcher: MCPAppViewModelFileWatcher(),
-      searchService: nil,
-      cliConfiguration: CLICommandConfiguration(command: "codex", mode: .codex),
-      providerKind: .codex,
-      mcpAppDiscoveryService: discoveryService,
-      approvalNotificationService: NoOpApprovalNotificationService()
-    )
-    let session = CLISession(id: "session-1", projectPath: projectPath)
-    await viewModel.ensureMCPAppResources(for: session)
-
     let state = SessionMonitorState(detectedMCPAppResources: [
       MCPAppResourceDescriptor(
-        uri: "ui://inline/form",
-        title: "Inline Form",
-        text: "<main>Inline</main>"
+        serverName: "docs",
+        uri: "ui://docs/app",
+        title: "Docs",
+        text: "<main>Docs</main>"
+      ),
+      MCPAppResourceDescriptor(
+        serverName: "charts",
+        uri: "ui://charts/app",
+        text: "<main>Charts</main>"
       )
     ])
 
     let resources = viewModel.mcpAppResources(for: session, state: state)
-    #expect(resources.map(\.resource.uri).sorted() == [
-      "ui://charts/dashboard",
-      "ui://inline/form"
+    #expect(resources.map(\.resource.uri).sorted() == ["ui://charts/app", "ui://docs/app"])
+
+    let docs = resources.first { $0.resource.uri == "ui://docs/app" }
+    #expect(docs?.serverName == "docs")
+    #expect(docs?.source == .inlineJSONL)
+    #expect(docs?.title == "Docs")
+  }
+
+  @Test("Drops detected descriptors without inline HTML")
+  @MainActor
+  func dropsDescriptorsWithoutText() async {
+    let projectPath = "/tmp/agenthub-mcp-project"
+    let viewModel = makeViewModel(provider: .claude, service: RecordingMCPAppDiscoveryService())
+    let session = CLISession(id: "session-1", projectPath: projectPath)
+
+    let state = SessionMonitorState(detectedMCPAppResources: [
+      MCPAppResourceDescriptor(serverName: "docs", uri: "ui://docs/app", text: nil)
+    ])
+
+    #expect(viewModel.mcpAppResources(for: session, state: state).isEmpty)
+  }
+
+  @Test("Routes inline MCP app tool calls to the on-demand server gateway")
+  @MainActor
+  func routesInlineToolCallsToServer() async throws {
+    let service = RecordingMCPAppDiscoveryService()
+    let viewModel = makeViewModel(provider: .claude, service: service)
+    let resource = MCPAppResource(
+      provider: .claude,
+      projectPath: "/tmp/agenthub-mcp-project",
+      serverName: "docs",
+      source: .inlineJSONL,
+      resource: AgentHubMCPUIResource(uri: "ui://docs/app", text: "<main/>")
+    )
+
+    let result = try await viewModel.callMCPAppTool(resource: resource, name: "render", arguments: .object([:]))
+
+    #expect(result["ok"] == .bool(true))
+    #expect(await service.recordedToolCalls() == [
+      .init(provider: .claude, projectPath: "/tmp/agenthub-mcp-project", serverName: "docs", name: "render")
     ])
   }
 
-  @Test("Caches MCP discovery statuses for panel states")
+  @Test("Inline bridge advertises tool calls and routes them once approved")
   @MainActor
-  func cachesDiscoveryStatusesForPanelStates() async {
-    let projectPath = "/tmp/agenthub-mcp-project"
-    let status = MCPAppServerDiscoveryStatus(
-      key: MCPAppServerCacheKey(provider: .claude, projectPath: projectPath, serverName: "remote"),
-      transportDescription: "HTTP https://mcp.example.com/mcp",
-      state: .authenticationRequired("MCP server returned 401 Unauthorized.")
+  func inlineBridgeAdvertisesAndRoutesToolCalls() async throws {
+    let service = RecordingMCPAppDiscoveryService()
+    let viewModel = makeViewModel(provider: .claude, service: service)
+    let controller = MCPAppConsentController(autoDenyTimeout: .seconds(5))
+    let resource = MCPAppResource(
+      provider: .claude,
+      projectPath: "/tmp/agenthub-mcp-project",
+      serverName: "docs",
+      source: .inlineJSONL,
+      resource: AgentHubMCPUIResource(
+        uri: "ui://docs/app",
+        text: "<main/>",
+        metadata: AgentHubMCPUIResourceMetadata(
+          permissions: AgentHubMCPUIPermissions(allowedToolNames: ["render"])
+        )
+      )
     )
-    let discoveryService = MockMCPAppDiscoveryService(resources: [], statuses: [status])
-    let viewModel = CLISessionsViewModel(
-      monitorService: MCPAppViewModelMonitorService(),
-      fileWatcher: MCPAppViewModelFileWatcher(),
-      searchService: nil,
-      cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
-      providerKind: .claude,
-      mcpAppDiscoveryService: discoveryService,
-      approvalNotificationService: NoOpApprovalNotificationService()
+    let handler = MCPAppHostBridgeHandler(
+      resource: resource,
+      viewModel: viewModel,
+      consentController: controller,
+      onSizeChange: { _, _ in },
+      onOperationNotice: { _ in },
+      onTeardown: {}
     )
-    let session = CLISession(id: "session-1", projectPath: projectPath)
 
-    await viewModel.ensureMCPAppResources(for: session)
+    let initialize = try await handler.initialize(params: .object([:]))
+    #expect(initialize["capabilities"]?["tools"]?["call"] == .bool(true))
 
-    #expect(viewModel.mcpAppResources(for: session, state: nil).isEmpty)
-    #expect(viewModel.mcpAppDiscoveryStatuses(for: session) == [status])
-    #expect(!viewModel.isMCPAppDiscoveryLoading(for: session))
+    let callTask = Task { @MainActor in
+      try await handler.callTool(name: "render", arguments: .object([:]))
+    }
+    await waitForPendingRequest(controller)
+    controller.approvePendingRequest()
+    let result = try await callTask.value
+
+    #expect(result["ok"] == .bool(true))
+    #expect(await service.recordedToolCalls().map(\.name) == ["render"])
+  }
+
+  @Test("Display items include resources embedded directly in the JSONL")
+  @MainActor
+  func displayItemsIncludeEmbeddedResources() {
+    let viewModel = makeViewModel(provider: .claude, service: RecordingMCPAppDiscoveryService())
+    let session = CLISession(id: "session-1", projectPath: "/tmp/agenthub-mcp-project")
+
+    #expect(viewModel.mcpAppDisplayItems(for: session, state: nil).isEmpty)
+
+    let state = SessionMonitorState(detectedMCPAppResources: [
+      MCPAppResourceDescriptor(serverName: "docs", uri: "ui://docs/app", title: "Docs", text: "<main/>")
+    ])
+    let items = viewModel.mcpAppDisplayItems(for: session, state: state)
+    #expect(items.count == 1)
+    #expect(items.first?.invocation == nil)
+    #expect(items.first?.resource.resource.uri == "ui://docs/app")
+  }
+
+  @Test("Resolves an app-bearing tool call into a render item with the fetched shell")
+  @MainActor
+  func resolvesAppBearingInvocationIntoRenderItem() async {
+    let viewModel = makeViewModel(provider: .claude, service: RecordingMCPAppDiscoveryService())
+    let session = CLISession(id: "session-1", projectPath: "/tmp/agenthub-mcp-project")
+    let state = SessionMonitorState(detectedMCPAppInvocations: [
+      MCPAppInvocation(
+        id: "tu-1",
+        serverName: "excalidraw",
+        toolName: "create_view",
+        arguments: .object(["elements": .array([])]),
+        result: .string("{\"checkpointId\":\"abc123\"}")
+      )
+    ])
+
+    // Before resolution there is nothing to render (shell not fetched yet).
+    #expect(viewModel.mcpAppRenderItems(for: session, state: state).isEmpty)
+
+    await viewModel.ensureMCPAppRenderItems(for: session, state: state)
+
+    let items = viewModel.mcpAppRenderItems(for: session, state: state)
+    #expect(items.count == 1)
+    let item = items.first
+    #expect(item?.resource.resource.uri == "ui://excalidraw/mcp-app.html")
+    #expect(item?.resource.resource.text == "<main>shell</main>")
+    #expect(item?.resource.title == "Draw Diagram")
+    #expect(item?.invocation?.id == "tu-1")
+  }
+
+  @Test("Derives a diagram title from the drawing's first text element")
+  @MainActor
+  func derivesTitleFromDiagramContent() {
+    let stringElements = MCPAppInvocation(
+      id: "t1",
+      serverName: "excalidraw",
+      toolName: "create_view",
+      arguments: .object([
+        "elements": .string("[{\"type\":\"cameraUpdate\"},{\"type\":\"text\",\"text\":\"Login Flow\"}]")
+      ])
+    )
+    #expect(CLISessionsViewModel.deriveMCPAppTitle(from: stringElements) == "Login Flow")
+
+    let arrayElements = MCPAppInvocation(
+      id: "t2",
+      serverName: "excalidraw",
+      toolName: "create_view",
+      arguments: .object([
+        "elements": .array([
+          .object(["type": .string("rectangle"), "label": .object(["text": .string("Start")])])
+        ])
+      ])
+    )
+    #expect(CLISessionsViewModel.deriveMCPAppTitle(from: arrayElements) == "Start")
+
+    let noText = MCPAppInvocation(
+      id: "t3",
+      serverName: "excalidraw",
+      toolName: "create_view",
+      arguments: .object(["elements": .array([.object(["type": .string("rectangle")])])])
+    )
+    #expect(CLISessionsViewModel.deriveMCPAppTitle(from: noText) == nil)
   }
 }

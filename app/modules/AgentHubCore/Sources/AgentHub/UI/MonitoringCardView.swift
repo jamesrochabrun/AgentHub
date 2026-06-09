@@ -40,6 +40,7 @@ public struct MonitoringCardView: View {
   let onShowMermaid: ((CLISession) -> Void)?
   let onShowGitHub: ((CLISession, String) -> Void)?
   let onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)?
+  let onShowMCPApp: ((CLISession, String) -> Void)?
   let onFork: ((CLISession, SessionProviderKind) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
@@ -56,8 +57,6 @@ public struct MonitoringCardView: View {
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
-  @State private var showingMCPAppsPanel = false
-  @State private var autoOpenedMCPAppResourceIDs: Set<String> = []
   @AppStorage(AgentHubDefaults.diffDisplayMode)
   private var diffDisplayModeRawValue: String = DiffDisplayMode.inline.rawValue
   @Environment(\.agentHub) private var agentHub
@@ -92,6 +91,7 @@ public struct MonitoringCardView: View {
     onShowMermaid: ((CLISession) -> Void)? = nil,
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)? = nil,
+    onShowMCPApp: ((CLISession, String) -> Void)? = nil,
     onFork: ((CLISession, SessionProviderKind) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
@@ -128,6 +128,7 @@ public struct MonitoringCardView: View {
     self.onShowMermaid = onShowMermaid
     self.onShowGitHub = onShowGitHub
     self.onShowPendingChanges = onShowPendingChanges
+    self.onShowMCPApp = onShowMCPApp
     self.onFork = onFork
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
@@ -190,34 +191,28 @@ public struct MonitoringCardView: View {
     state?.detectedResourceLinks ?? []
   }
 
-  private var mcpAppResources: [MCPAppResource] {
-    viewModel?.mcpAppResources(for: session, state: state) ?? []
+  /// MCP apps to surface for this session: resources embedded in the JSONL plus
+  /// host-rendered apps resolved from app-bearing tool calls (see the ViewModel).
+  private var mcpAppDisplayItems: [MCPAppRenderItem] {
+    viewModel?.mcpAppDisplayItems(for: session, state: state) ?? []
   }
 
-  private var mcpAppDiscoveryStatuses: [MCPAppServerDiscoveryStatus] {
-    viewModel?.mcpAppDiscoveryStatuses(for: session) ?? []
-  }
-
-  private var isMCPAppDiscoveryLoading: Bool {
-    viewModel?.isMCPAppDiscoveryLoading(for: session) ?? false
+  private var mcpAppResourceCount: Int {
+    mcpAppDisplayItems.count
   }
 
   private var shouldShowMCPAppsButton: Bool {
-    !mcpAppResources.isEmpty || isMCPAppDiscoveryLoading || !mcpAppDiscoveryStatuses.isEmpty
+    !mcpAppDisplayItems.isEmpty
+  }
+
+  /// Key that changes when the set of detected MCP tool invocations changes, so
+  /// host-app resolution re-runs only when the agent makes a new app-bearing call.
+  private var mcpAppInvocationResolutionKey: String {
+    (state?.detectedMCPAppInvocations ?? []).map(\.id).joined(separator: ",")
   }
 
   private var mcpAppButtonAccessibilityLabel: String {
-    if isMCPAppDiscoveryLoading {
-      return "MCP apps loading"
-    }
-    if !mcpAppResources.isEmpty {
-      let count = mcpAppResources.count
-      return count == 1 ? "Open 1 MCP app" : "Open \(count) MCP apps"
-    }
-    if mcpAppDiscoveryStatuses.contains(where: { $0.state.isError }) {
-      return "Open MCP app discovery errors"
-    }
-    return "Open MCP app status"
+    mcpAppResourceCount == 1 ? "Open 1 MCP app" : "Open \(mcpAppResourceCount) MCP apps"
   }
 
   private var linkedPullRequestNumber: Int? {
@@ -312,8 +307,8 @@ public struct MonitoringCardView: View {
     .task(id: session.projectPath) {
       await viewModel?.ensureLocalDiffSummary(for: session.projectPath, forceRefresh: true)
     }
-    .task(id: session.projectPath) {
-      await viewModel?.ensureMCPAppResources(for: session)
+    .task(id: mcpAppInvocationResolutionKey) {
+      await viewModel?.ensureMCPAppRenderItems(for: session, state: state)
     }
     .task(id: gitHubObservationTaskID) {
       if linkedPullRequestNumber == nil {
@@ -341,7 +336,6 @@ public struct MonitoringCardView: View {
         await loadWebPreviewCandidateIfNeeded()
         await viewModel?.ensureDiffAvailability(for: session.projectPath, forceRefresh: true)
         await viewModel?.ensureLocalDiffSummary(for: session.projectPath, forceRefresh: true)
-        await viewModel?.ensureMCPAppResources(for: session)
       }
     }
     .onChange(of: state?.detectedLocalhostURL) { _, newValue in
@@ -349,9 +343,6 @@ public struct MonitoringCardView: View {
       Task {
         await loadWebPreviewCandidateIfNeeded()
       }
-    }
-    .onChange(of: detectedMCPAppResourceIDs) { _, ids in
-      autoOpenMCPAppsPanelForAgentResources(ids)
     }
     .onDrop(
       of: [.agentHubGitHubContextItem, .fileURL, .png, .tiff, .image, .pdf],
@@ -381,21 +372,6 @@ public struct MonitoringCardView: View {
         onDismiss: { showingNameSheet = false }
       )
     }
-    .sheet(isPresented: $showingMCPAppsPanel) {
-      MCPAppsPanelView(
-        session: session,
-        resources: mcpAppResources,
-        discoveryStatuses: mcpAppDiscoveryStatuses,
-        isDiscovering: isMCPAppDiscoveryLoading,
-        viewModel: viewModel,
-        onRefresh: {
-          Task {
-            await viewModel?.ensureMCPAppResources(for: session, forceRefresh: true)
-          }
-        },
-        onDismiss: { showingMCPAppsPanel = false }
-      )
-    }
     .fileImporter(
       isPresented: $showingFilePicker,
       allowedContentTypes: [.image, .pdf, .plainText, .data],
@@ -413,28 +389,6 @@ public struct MonitoringCardView: View {
     default:
       return false
     }
-  }
-
-  private var detectedMCPAppResourceIDs: [String] {
-    (state?.detectedMCPAppResources ?? [])
-      .map(Self.mcpAppResourceAutoOpenID)
-      .sorted()
-  }
-
-  private static func mcpAppResourceAutoOpenID(_ descriptor: MCPAppResourceDescriptor) -> String {
-    "\(descriptor.serverName ?? "inline")|\(descriptor.uri)"
-  }
-
-  private func autoOpenMCPAppsPanelForAgentResources(_ ids: [String]) {
-    let idSet = Set(ids)
-    let newIDs = idSet.subtracting(autoOpenedMCPAppResourceIDs)
-    guard !newIDs.isEmpty else { return }
-
-    autoOpenedMCPAppResourceIDs.formUnion(newIDs)
-    AppLogger.mcp.info(
-      "[MCPAppUX] auto-open panel session=\(session.id, privacy: .public) newResources=\(newIDs.count, privacy: .public)"
-    )
-    showingMCPAppsPanel = true
   }
 
   // MARK: - Drag and Drop
@@ -762,24 +716,16 @@ public struct MonitoringCardView: View {
 
         if shouldShowMCPAppsButton {
           Button(action: {
-            showingMCPAppsPanel = true
+            onShowMCPApp?(session, session.projectPath)
           }) {
             HStack(spacing: 4) {
               Image(systemName: "square.stack.3d.up")
                 .font(.caption2)
               Text("MCP")
-              if isMCPAppDiscoveryLoading {
-                ProgressView()
-                  .controlSize(.mini)
-                  .frame(width: 12, height: 12)
-              } else if !mcpAppResources.isEmpty {
-                Text("\(mcpAppResources.count)")
+              if mcpAppResourceCount > 0 {
+                Text("\(mcpAppResourceCount)")
                   .font(.system(.caption2, design: .monospaced))
                   .foregroundStyle(.secondary)
-              } else if mcpAppDiscoveryStatuses.contains(where: { $0.state.isError }) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                  .font(.caption2)
-                  .foregroundStyle(.orange)
               }
             }
           }

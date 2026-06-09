@@ -6,6 +6,7 @@
 //
 
 import AgentHubGitHub
+import AgentHubMCPUI
 import Foundation
 
 // MARK: - SessionJSONLParser
@@ -17,6 +18,7 @@ public struct SessionJSONLParser {
   private static let maxDetailedCodeChangeActivities = 5
   private static let maxDetectedResourceLinks = 50
   private static let maxDetectedMCPAppResources = 50
+  private static let maxDetectedMCPAppInvocations = 12
 
   // MARK: - Entry Types
 
@@ -92,6 +94,11 @@ public struct SessionJSONLParser {
     public var hasMermaidContent: Bool = false
     public var detectedResourceLinks: [ResourceLink] = []
     public var detectedMCPAppResources: [MCPAppResourceDescriptor] = []
+    /// Completed MCP tool invocations (input + result) for app-capable servers.
+    /// The ViewModel resolves which are app-bearing (via tools/list) and renders them.
+    public var detectedMCPAppInvocations: [MCPAppInvocation] = []
+    /// In-flight MCP tool calls keyed by tool_use id, finalized when the result arrives.
+    public var pendingMCPInvocations: [String: MCPAppInvocation] = [:]
     public var detectedLocalhostURL: URL?
 
     public init() {}
@@ -272,6 +279,17 @@ public struct SessionJSONLParser {
             ),
             to: &result
           )
+
+          // Capture the in-flight MCP tool call so we can render its app once
+          // the result arrives (see `detectedMCPAppInvocations`).
+          if let server = MCPAppResourceExtractor.serverName(fromToolName: name) {
+            result.pendingMCPInvocations[id] = MCPAppInvocation(
+              id: id,
+              serverName: server,
+              toolName: Self.mcpToolShortName(fromToolName: name),
+              arguments: block.input.map { AgentHubMCPUIJSONValue(any: $0.value) }
+            )
+          }
         }
 
       case "tool_result":
@@ -301,6 +319,18 @@ public struct SessionJSONLParser {
             extractMCPAppResources(from: block.content, serverName: serverName),
             to: &result
           )
+
+          // Finalize a captured MCP tool call with its result.
+          if let pending = result.pendingMCPInvocations.removeValue(forKey: toolUseId) {
+            let finalized = MCPAppInvocation(
+              id: pending.id,
+              serverName: pending.serverName,
+              toolName: pending.toolName,
+              arguments: pending.arguments,
+              result: block.content.map { AgentHubMCPUIJSONValue(any: $0.value) }
+            )
+            appendMCPAppInvocation(finalized, to: &result)
+          }
         }
 
       case "thinking":
@@ -573,6 +603,27 @@ public struct SessionJSONLParser {
     if result.detectedMCPAppResources.count > maxDetectedMCPAppResources {
       result.detectedMCPAppResources.removeFirst(
         result.detectedMCPAppResources.count - maxDetectedMCPAppResources
+      )
+    }
+  }
+
+  /// Extracts the server's tool name from a fully-qualified `mcp__<server>__<tool>`
+  /// name (tool names may contain single underscores, so split on the `__` delimiter).
+  static func mcpToolShortName(fromToolName name: String) -> String {
+    let parts = name.components(separatedBy: "__")
+    guard parts.count >= 3, parts[0] == "mcp" else { return name }
+    return parts[2...].joined(separator: "__")
+  }
+
+  private static func appendMCPAppInvocation(
+    _ invocation: MCPAppInvocation,
+    to result: inout ParseResult
+  ) {
+    result.detectedMCPAppInvocations.removeAll { $0.id == invocation.id }
+    result.detectedMCPAppInvocations.append(invocation)
+    if result.detectedMCPAppInvocations.count > maxDetectedMCPAppInvocations {
+      result.detectedMCPAppInvocations.removeFirst(
+        result.detectedMCPAppInvocations.count - maxDetectedMCPAppInvocations
       )
     }
   }

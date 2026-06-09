@@ -6,54 +6,6 @@ import Testing
 
 @Suite("MCP App discovery service", .serialized)
 struct MCPAppDiscoveryServiceTests {
-  @Test("Discovers MCP app resources from a fake stdio server")
-  func discoversResourcesFromFakeStdioServer() async throws {
-    let directory = try temporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: directory) }
-
-    let script = directory.appending(path: "fake-mcp.sh")
-    try """
-    #!/bin/sh
-    IFS= read -r line
-    printf '%s\\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{}}}'
-    IFS= read -r line
-    IFS= read -r line
-    printf '%s\\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"show_dashboard","_meta":{"ui":{"resourceUri":"ui://fake/dashboard","title":"Dashboard","csp":{"connect_domains":["https://api.example.com"],"resource_domains":["https://cdn.example.com"]}}}}]}}'
-    IFS= read -r line
-    printf '%s\\n' '{"jsonrpc":"2.0","id":3,"result":{"resources":[]}}'
-    IFS= read -r line
-    printf '%s\\n' '{"jsonrpc":"2.0","id":4,"result":{"contents":[{"uri":"ui://fake/dashboard","mimeType":"text/html;profile=mcp-app","text":"<main>Dashboard</main>"}]}}'
-    """.write(to: script, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
-
-    let service = MCPAppDiscoveryService(
-      resolver: StaticMCPServerConfigurationResolver(configs: [
-        MCPServerConfiguration(
-          provider: .claude,
-          projectPath: directory.path,
-          name: "fake",
-          command: "/bin/sh",
-          args: [script.path],
-          cwd: directory.path
-        )
-      ]),
-      requestTimeoutSeconds: 2
-    )
-
-    let resources = await service.discoverResources(
-      provider: .claude,
-      projectPath: directory.path,
-      forceRefresh: true
-    )
-
-    let resource = try #require(resources.first)
-    #expect(resource.serverName == "fake")
-    #expect(resource.resource.uri == "ui://fake/dashboard")
-    #expect(resource.title == "Dashboard")
-    #expect(resource.resource.text == "<main>Dashboard</main>")
-    #expect(resource.resource.metadata.csp.connectDomains == ["https://api.example.com"])
-  }
-
   @Test("Routes tool calls to the selected MCP server")
   func routesToolCallsToSelectedServer() async throws {
     let directory = try temporaryDirectory()
@@ -96,48 +48,8 @@ struct MCPAppDiscoveryServiceTests {
     #expect(result["content"]?.arrayValue?.first?["text"] == .string("called"))
   }
 
-  @Test("Discovers resources through injected HTTP transport client")
-  func discoversResourcesThroughHTTPTransportClient() async throws {
-    let endpoint = try #require(URL(string: "http://localhost:9000/mcp"))
-    let directory = try temporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: directory) }
-
-    let client = FakeMCPJSONRPCClient()
-    let service = MCPAppDiscoveryService(
-      resolver: StaticMCPServerConfigurationResolver(configs: [
-        MCPServerConfiguration(
-          provider: .codex,
-          projectPath: directory.path,
-          name: "remote",
-          transport: .streamableHTTP(endpoint, legacySSEFallback: true)
-        )
-      ]),
-      clientFactory: StaticMCPJSONRPCClientFactory(client: client),
-      requestTimeoutSeconds: 2
-    )
-
-    let resources = await service.discoverResources(
-      provider: .codex,
-      projectPath: directory.path,
-      forceRefresh: true
-    )
-
-    let resource = try #require(resources.first)
-    #expect(resource.serverName == "remote")
-    #expect(resource.resource.uri == "ui://remote/dashboard")
-    #expect(resource.resource.text == "<main>Remote</main>")
-    #expect(await client.requestedMethods() == [
-      "initialize",
-      "tools/list",
-      "resources/list",
-      "resources/read"
-    ])
-    #expect(client.startCallCount() == 1)
-    #expect(client.closeCallCount() == 0)
-  }
-
-  @Test("Reuses initialized clients across discovery and tool calls")
-  func reusesInitializedClientsAcrossDiscoveryAndToolCalls() async throws {
+  @Test("Reuses initialized clients across tool calls")
+  func reusesInitializedClientsAcrossToolCalls() async throws {
     let endpoint = try #require(URL(string: "http://localhost:9100/mcp"))
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }
@@ -156,10 +68,12 @@ struct MCPAppDiscoveryServiceTests {
       requestTimeoutSeconds: 2
     )
 
-    _ = await service.discoverResources(
+    _ = try await service.callTool(
       provider: .claude,
       projectPath: directory.path,
-      forceRefresh: true
+      serverName: "remote",
+      name: "echo",
+      arguments: .object([:])
     )
     let result = try await service.callTool(
       provider: .claude,
@@ -169,44 +83,15 @@ struct MCPAppDiscoveryServiceTests {
       arguments: .object([:])
     )
 
+    // The pool initializes once and reuses the same client for both calls.
     #expect(result["structuredContent"]?["ok"] == .bool(true))
     #expect(await client.requestedMethods() == [
       "initialize",
-      "tools/list",
-      "resources/list",
-      "resources/read",
+      "tools/call",
       "tools/call"
     ])
     #expect(client.startCallCount() == 1)
     #expect(client.closeCallCount() == 0)
-  }
-
-  @Test("Force refresh invalidates pooled MCP clients")
-  func forceRefreshInvalidatesPooledClients() async throws {
-    let endpoint = try #require(URL(string: "http://localhost:9200/mcp"))
-    let directory = try temporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: directory) }
-
-    let factory = RecordingMCPJSONRPCClientFactory()
-    let service = MCPAppDiscoveryService(
-      resolver: StaticMCPServerConfigurationResolver(configs: [
-        MCPServerConfiguration(
-          provider: .codex,
-          projectPath: directory.path,
-          name: "remote",
-          transport: .streamableHTTP(endpoint, legacySSEFallback: true)
-        )
-      ]),
-      clientFactory: factory,
-      requestTimeoutSeconds: 2
-    )
-
-    _ = await service.discoverResources(provider: .codex, projectPath: directory.path, forceRefresh: true)
-    let first = try #require(factory.clients.first)
-    _ = await service.discoverResources(provider: .codex, projectPath: directory.path, forceRefresh: true)
-
-    #expect(factory.clients.count == 2)
-    #expect(first.closeCallCount() >= 1)
   }
 
   @Test("Idle timeout closes pooled MCP clients before reuse")
@@ -230,7 +115,13 @@ struct MCPAppDiscoveryServiceTests {
       idleTimeoutSeconds: 0.001
     )
 
-    _ = await service.discoverResources(provider: .claude, projectPath: directory.path, forceRefresh: true)
+    _ = try await service.callTool(
+      provider: .claude,
+      projectPath: directory.path,
+      serverName: "remote",
+      name: "echo",
+      arguments: .object([:])
+    )
     let first = try #require(factory.clients.first)
     try await Task.sleep(for: .milliseconds(10))
     _ = try await service.callTool(

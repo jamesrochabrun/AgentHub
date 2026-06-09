@@ -16,15 +16,6 @@ import CoreGraphics
 import AppKit
 #endif
 
-private struct MCPAppDiscoveryProjectKey: Hashable {
-  let provider: SessionProviderKind
-  let projectPath: String
-
-  var id: String {
-    "\(provider.rawValue)|\(projectPath)"
-  }
-}
-
 // MARK: - CLISessionsViewModel
 
 /// ViewModel for managing and displaying CLI sessions with repository-based filtering
@@ -69,8 +60,6 @@ public final class CLISessionsViewModel {
   @ObservationIgnored private var pendingResolvedAccessoryRelationships: [String: [SessionRelationshipRecord]] = [:]
   @ObservationIgnored private var scheduledTerminalFocusKeys: Set<String> = []
   @ObservationIgnored private var scheduledAuxiliaryShellFocusKeys: Set<String> = []
-  @ObservationIgnored private var mcpAppDiscoveryInFlight: Set<MCPAppDiscoveryProjectKey> = []
-  @ObservationIgnored private var mcpAppDiscoveryCompleted: Set<MCPAppDiscoveryProjectKey> = []
   weak var agentHubProvider: AgentHubProvider?
 
   // MARK: - State
@@ -196,6 +185,13 @@ public final class CLISessionsViewModel {
     localDiffSummaries[LocalDiffSummaryService.normalize(projectPath)]
   }
 
+  /// Builds the MCP app resources for a session from the agent's tool results.
+  ///
+  /// MCP apps are surfaced by the agent as embedded `ui://` resources in
+  /// tool_result blocks (parsed into `SessionMonitorState.detectedMCPAppResources`).
+  /// AgentHub does not proactively discover/launch MCP servers; it renders what
+  /// the agent produced and only contacts a server lazily when a rendered app
+  /// calls back (see `callMCPAppTool`).
   public func mcpAppResources(
     for session: CLISession,
     state: SessionMonitorState?
@@ -203,26 +199,9 @@ public final class CLISessionsViewModel {
     let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
     var resourcesByID: [String: MCPAppResource] = [:]
 
-    for (key, resources) in mcpAppResourcesByServer
-      where key.provider == providerKind && key.projectPath == normalizedProjectPath {
-      for resource in resources {
-        resourcesByID[resource.id] = resource
-      }
-    }
-
     for descriptor in state?.detectedMCPAppResources ?? [] {
-      let serverName = descriptor.serverName ?? "inline"
-
-      if descriptor.text == nil,
-         let discovered = resourcesByID.values.first(where: {
-           $0.resource.uri == descriptor.uri
-             && (descriptor.serverName == nil || $0.serverName == descriptor.serverName)
-         }) {
-        resourcesByID[discovered.id] = discovered
-        continue
-      }
-
       guard let text = descriptor.text else { continue }
+      let serverName = descriptor.serverName ?? "inline"
       let metadata = descriptor.metadata
       let resource = AgentHubMCPUIResource(
         uri: descriptor.uri,
@@ -247,72 +226,6 @@ public final class CLISessionsViewModel {
       }
       return ($0.title ?? $0.resource.uri) < ($1.title ?? $1.resource.uri)
     }
-  }
-
-  public func mcpAppDiscoveryStatuses(for session: CLISession) -> [MCPAppServerDiscoveryStatus] {
-    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
-    return mcpAppDiscoveryStatusesByServer.values
-      .filter { status in
-        status.key.provider == providerKind && status.key.projectPath == normalizedProjectPath
-      }
-      .sorted { $0.key.serverName < $1.key.serverName }
-  }
-
-  public func isMCPAppDiscoveryLoading(for session: CLISession) -> Bool {
-    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
-    let projectKey = MCPAppDiscoveryProjectKey(provider: providerKind, projectPath: normalizedProjectPath)
-    return mcpAppDiscoveryLoadingProjectIDs.contains(projectKey.id)
-  }
-
-  public func ensureMCPAppResources(
-    for session: CLISession,
-    forceRefresh: Bool = false
-  ) async {
-    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
-    let projectKey = MCPAppDiscoveryProjectKey(provider: providerKind, projectPath: normalizedProjectPath)
-
-    if !forceRefresh {
-      guard !mcpAppDiscoveryCompleted.contains(projectKey),
-            !mcpAppDiscoveryInFlight.contains(projectKey) else {
-        return
-      }
-    }
-
-    mcpAppDiscoveryInFlight.insert(projectKey)
-    mcpAppDiscoveryLoadingProjectIDs.insert(projectKey.id)
-    let snapshot = await mcpAppDiscoveryService.discoverResourceSnapshot(
-      provider: providerKind,
-      projectPath: normalizedProjectPath,
-      forceRefresh: forceRefresh
-    )
-    let resources = snapshot.resources
-
-    if forceRefresh {
-      mcpAppResourcesByServer = mcpAppResourcesByServer.filter { entry in
-        entry.key.provider != providerKind || entry.key.projectPath != normalizedProjectPath
-      }
-    }
-    mcpAppDiscoveryStatusesByServer = mcpAppDiscoveryStatusesByServer.filter { entry in
-      entry.key.provider != providerKind || entry.key.projectPath != normalizedProjectPath
-    }
-
-    let grouped = Dictionary(grouping: resources) { resource in
-      MCPAppServerCacheKey(
-        provider: providerKind,
-        projectPath: normalizedProjectPath,
-        serverName: resource.serverName
-      )
-    }
-    for (key, values) in grouped {
-      mcpAppResourcesByServer[key] = values
-    }
-    for status in snapshot.serverStatuses {
-      mcpAppDiscoveryStatusesByServer[status.key] = status
-    }
-
-    mcpAppDiscoveryCompleted.insert(projectKey)
-    mcpAppDiscoveryInFlight.remove(projectKey)
-    mcpAppDiscoveryLoadingProjectIDs.remove(projectKey.id)
   }
 
   public func callMCPAppTool(
@@ -349,6 +262,213 @@ public final class CLISessionsViewModel {
       projectPath: resource.projectPath,
       serverName: resource.serverName
     )
+  }
+
+  // MARK: - MCP App host rendering (agent-driven)
+
+  struct MCPAppToolTemplate: Sendable, Equatable {
+    let resourceUri: String
+    let title: String?
+  }
+
+  /// Per-server map: server tool name -> the MCP app it renders into (`_meta.ui.resourceUri`).
+  private var mcpAppToolTemplatesByServer: [MCPAppServerCacheKey: [String: MCPAppToolTemplate]] = [:]
+  /// Servers whose `tools/list` has been resolved (avoid re-fetching).
+  private var mcpAppResolvedServerKeys: Set<MCPAppServerCacheKey> = []
+  /// Fetched app shells keyed by "serverName|projectPath|resourceUri".
+  private var mcpAppShellsByKey: [String: AgentHubMCPUIResource] = [:]
+
+  private func mcpAppShellCacheKey(serverName: String, projectPath: String, uri: String) -> String {
+    [providerKind.rawValue, projectPath, serverName, uri].joined(separator: "|")
+  }
+
+  /// Lazily resolves the app shells for the MCP tool invocations the agent made.
+  ///
+  /// For each server actually used, fetches `tools/list` once to learn which tools
+  /// declare a `ui://` app, then reads each needed app shell once. Scoped to used
+  /// servers and triggered by real tool calls — never a proactive sweep.
+  public func ensureMCPAppRenderItems(
+    for session: CLISession,
+    state: SessionMonitorState?
+  ) async {
+    let invocations = state?.detectedMCPAppInvocations ?? []
+    guard !invocations.isEmpty else { return }
+    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
+
+    // Resolve tool->app templates for each distinct server (once).
+    for serverName in Set(invocations.map(\.serverName)) {
+      let serverKey = MCPAppServerCacheKey(
+        provider: providerKind,
+        projectPath: normalizedProjectPath,
+        serverName: serverName
+      )
+      guard !mcpAppResolvedServerKeys.contains(serverKey) else { continue }
+      do {
+        let toolsResult = try await mcpAppDiscoveryService.listTools(
+          provider: providerKind,
+          projectPath: normalizedProjectPath,
+          serverName: serverName
+        )
+        mcpAppToolTemplatesByServer[serverKey] = Self.parseMCPAppToolTemplates(from: toolsResult)
+        mcpAppResolvedServerKeys.insert(serverKey)
+      } catch {
+        AppLogger.mcp.error(
+          "[MCPAppHost] tools/list failed server=\(serverName, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
+        // Leave unresolved so a later activity retries against this reachable server.
+      }
+    }
+
+    // Fetch each app shell needed by an app-bearing invocation (once).
+    for invocation in invocations {
+      let serverKey = MCPAppServerCacheKey(
+        provider: providerKind,
+        projectPath: normalizedProjectPath,
+        serverName: invocation.serverName
+      )
+      guard let template = mcpAppToolTemplatesByServer[serverKey]?[invocation.toolName] else { continue }
+      let shellKey = mcpAppShellCacheKey(
+        serverName: invocation.serverName,
+        projectPath: normalizedProjectPath,
+        uri: template.resourceUri
+      )
+      guard mcpAppShellsByKey[shellKey] == nil else { continue }
+      do {
+        let readResult = try await mcpAppDiscoveryService.readResource(
+          provider: providerKind,
+          projectPath: normalizedProjectPath,
+          serverName: invocation.serverName,
+          uri: template.resourceUri
+        )
+        if let shell = Self.parseMCPAppShellResource(from: readResult, uri: template.resourceUri) {
+          mcpAppShellsByKey[shellKey] = shell
+        }
+      } catch {
+        AppLogger.mcp.error(
+          "[MCPAppHost] shell read failed uri=\(template.resourceUri, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
+      }
+    }
+  }
+
+  /// Renderable host apps for a session: the resolved app shell paired with the
+  /// agent invocation whose input/result seed it. Empty until resolution completes.
+  public func mcpAppRenderItems(
+    for session: CLISession,
+    state: SessionMonitorState?
+  ) -> [MCPAppRenderItem] {
+    let invocations = state?.detectedMCPAppInvocations ?? []
+    guard !invocations.isEmpty else { return [] }
+    let normalizedProjectPath = MCPAppDiscoveryService.normalize(session.projectPath)
+
+    return invocations.compactMap { invocation in
+      let serverKey = MCPAppServerCacheKey(
+        provider: providerKind,
+        projectPath: normalizedProjectPath,
+        serverName: invocation.serverName
+      )
+      guard let template = mcpAppToolTemplatesByServer[serverKey]?[invocation.toolName] else { return nil }
+      let shellKey = mcpAppShellCacheKey(
+        serverName: invocation.serverName,
+        projectPath: normalizedProjectPath,
+        uri: template.resourceUri
+      )
+      guard let shell = mcpAppShellsByKey[shellKey] else { return nil }
+      let title = Self.deriveMCPAppTitle(from: invocation)
+        ?? template.title
+        ?? shell.metadata.title
+        ?? invocation.toolName
+      let resource = MCPAppResource(
+        provider: providerKind,
+        projectPath: normalizedProjectPath,
+        serverName: invocation.serverName,
+        title: title,
+        source: .liveDiscovery,
+        resource: shell
+      )
+      return MCPAppRenderItem(resource: resource, invocation: invocation)
+    }
+  }
+
+  /// All MCP apps to show for a session: resources embedded directly in the JSONL
+  /// (rendered as-is) plus host-rendered apps resolved from app-bearing tool calls.
+  public func mcpAppDisplayItems(
+    for session: CLISession,
+    state: SessionMonitorState?
+  ) -> [MCPAppRenderItem] {
+    let embedded = mcpAppResources(for: session, state: state)
+      .map { MCPAppRenderItem(resource: $0, invocation: nil) }
+    return embedded + mcpAppRenderItems(for: session, state: state)
+  }
+
+  /// Derives a human label for an app invocation from its drawing content (the
+  /// first text element, then any shape label), so successive `create_view` calls
+  /// read as e.g. "Login Flow" instead of the generic tool title "Draw Diagram".
+  static func deriveMCPAppTitle(from invocation: MCPAppInvocation) -> String? {
+    guard let elementsValue = invocation.arguments?["elements"] else { return nil }
+    let elements: [AgentHubMCPUIJSONValue]
+    switch elementsValue {
+    case .array(let array):
+      elements = array
+    case .string(let json):
+      guard let data = json.data(using: .utf8),
+            let parsed = try? JSONDecoder().decode([AgentHubMCPUIJSONValue].self, from: data) else {
+        return nil
+      }
+      elements = parsed
+    default:
+      return nil
+    }
+
+    func cleaned(_ text: String?) -> String? {
+      guard let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+        return nil
+      }
+      return String(trimmed.prefix(48))
+    }
+
+    if let text = elements.lazy.compactMap({ element -> String? in
+      element["type"]?.stringValue == "text" ? cleaned(element["text"]?.stringValue) : nil
+    }).first {
+      return text
+    }
+    return elements.lazy.compactMap { cleaned($0["label"]?["text"]?.stringValue) }.first
+  }
+
+  static func parseMCPAppToolTemplates(from toolsResult: AgentHubMCPUIJSONValue) -> [String: MCPAppToolTemplate] {
+    guard let tools = toolsResult["tools"]?.arrayValue else { return [:] }
+    var templates: [String: MCPAppToolTemplate] = [:]
+    for tool in tools {
+      guard let name = tool["name"]?.stringValue else { continue }
+      let meta = tool["_meta"]
+      let uri = meta?["ui"]?["resourceUri"]?.stringValue
+        ?? meta?["ui/resourceUri"]?.stringValue
+      guard let uri else { continue }
+      templates[name] = MCPAppToolTemplate(resourceUri: uri, title: tool["title"]?.stringValue)
+    }
+    return templates
+  }
+
+  static func parseMCPAppShellResource(
+    from readResult: AgentHubMCPUIJSONValue,
+    uri: String
+  ) -> AgentHubMCPUIResource? {
+    guard let contents = readResult["contents"]?.arrayValue else { return nil }
+    for content in contents {
+      guard let text = content["text"]?.stringValue else { continue }
+      let contentURI = content["uri"]?.stringValue ?? uri
+      let mimeType = content["mimeType"]?.stringValue
+        ?? content["mime_type"]?.stringValue
+        ?? AgentHubMCPUIResource.htmlAppMimeType
+      let metadata = MCPAppResourceExtractor.metadata(from: content.anyValue)
+      return AgentHubMCPUIResource(
+        uri: contentURI,
+        mimeType: mimeType,
+        text: text,
+        metadata: metadata
+      )
+    }
+    return nil
   }
 
   public func ensureProjectCapabilities(
@@ -1491,15 +1611,6 @@ public final class CLISessionsViewModel {
 
   /// Cached project-level local/branch diff summaries keyed by normalized project path.
   public private(set) var localDiffSummaries: [String: LocalDiffSummary] = [:]
-
-  /// MCP App resources discovered live from configured MCP servers, keyed per provider/project/server.
-  public private(set) var mcpAppResourcesByServer: [MCPAppServerCacheKey: [MCPAppResource]] = [:]
-
-  /// MCP App discovery states keyed per provider/project/server.
-  public private(set) var mcpAppDiscoveryStatusesByServer: [MCPAppServerCacheKey: MCPAppServerDiscoveryStatus] = [:]
-
-  /// Project-level MCP discovery operations currently running.
-  public private(set) var mcpAppDiscoveryLoadingProjectIDs: Set<String> = []
 
   /// Combine cancellables for monitoring subscriptions (keyed by session ID)
   private var monitoringCancellables: [String: AnyCancellable] = [:]

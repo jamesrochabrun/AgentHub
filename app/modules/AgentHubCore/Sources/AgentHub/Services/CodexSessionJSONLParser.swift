@@ -6,6 +6,7 @@
 //
 
 import AgentHubGitHub
+import AgentHubMCPUI
 import Foundation
 
 public struct CodexSessionJSONLParser {
@@ -13,6 +14,7 @@ public struct CodexSessionJSONLParser {
   private static let maxRecentActivities = 100
   private static let maxDetectedResourceLinks = 50
   private static let maxDetectedMCPAppResources = 50
+  private static let maxDetectedMCPAppInvocations = 12
 
   // MARK: - Lightweight Parse Result for Global Stats
 
@@ -58,6 +60,7 @@ public struct CodexSessionJSONLParser {
     public var hasMermaidContent: Bool = false
     public var detectedResourceLinks: [ResourceLink] = []
     public var detectedMCPAppResources: [MCPAppResourceDescriptor] = []
+    public var detectedMCPAppInvocations: [MCPAppInvocation] = []
     public var detectedLocalhostURL: URL?
 
     public init() {}
@@ -302,9 +305,62 @@ public struct CodexSessionJSONLParser {
     case "mcp_tool_call_end":
       appendResourceLinks(extractResourceLinks(fromJSONValue: payload, timestamp: timestamp), to: &result)
       appendMCPAppResources(MCPAppResourceExtractor.extract(from: payload), to: &result)
+      captureMCPAppInvocation(from: payload, into: &result)
 
     default:
       break
+    }
+  }
+
+  /// Codex reports an MCP tool call as a single `mcp_tool_call_end` event carrying
+  /// `invocation.{server,tool,arguments}` and `result` (`Ok`/`Err`-wrapped). Unlike
+  /// Claude, no tool_use/tool_result correlation is needed — it's all in one event.
+  private static func captureMCPAppInvocation(
+    from payload: [String: Any],
+    into result: inout ParseResult
+  ) {
+    guard let invocation = payload["invocation"] as? [String: Any],
+          let server = invocation["server"] as? String,
+          let tool = invocation["tool"] as? String else {
+      return
+    }
+    let callId = (payload["call_id"] as? String) ?? "\(server)|\(tool)"
+    let arguments = invocation["arguments"].map { AgentHubMCPUIJSONValue(any: $0) }
+
+    // Unwrap Codex's Ok/Err result envelope into the raw MCP result object.
+    var resultValue: AgentHubMCPUIJSONValue?
+    if let resultDict = payload["result"] as? [String: Any] {
+      if let ok = resultDict["Ok"] {
+        resultValue = AgentHubMCPUIJSONValue(any: ok)
+      } else if let err = resultDict["Err"] {
+        resultValue = AgentHubMCPUIJSONValue(any: err)
+      } else {
+        resultValue = AgentHubMCPUIJSONValue(any: resultDict)
+      }
+    }
+
+    appendMCPAppInvocation(
+      MCPAppInvocation(
+        id: callId,
+        serverName: server,
+        toolName: tool,
+        arguments: arguments,
+        result: resultValue
+      ),
+      into: &result
+    )
+  }
+
+  private static func appendMCPAppInvocation(
+    _ invocation: MCPAppInvocation,
+    into result: inout ParseResult
+  ) {
+    result.detectedMCPAppInvocations.removeAll { $0.id == invocation.id }
+    result.detectedMCPAppInvocations.append(invocation)
+    if result.detectedMCPAppInvocations.count > maxDetectedMCPAppInvocations {
+      result.detectedMCPAppInvocations.removeFirst(
+        result.detectedMCPAppInvocations.count - maxDetectedMCPAppInvocations
+      )
     }
   }
 

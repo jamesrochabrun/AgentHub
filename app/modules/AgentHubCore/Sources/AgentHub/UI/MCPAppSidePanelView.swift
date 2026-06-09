@@ -1,32 +1,45 @@
 //
-//  MCPAppsPanelView.swift
+//  MCPAppSidePanelView.swift
 //  AgentHub
+//
+//  Embedded side panel that renders MCP app resources surfaced by the agent as
+//  tool results (parsed from the session JSONL into
+//  `SessionMonitorState.detectedMCPAppResources`). Unlike the removed modal
+//  discovery panel, this never spawns MCP servers on its own; it renders the
+//  resource the agent produced and routes any in-app callbacks lazily to that
+//  one server through the on-demand client gateway.
 //
 
 import AgentHubMCPUI
 import AppKit
 import SwiftUI
 
-struct MCPAppsPanelView: View {
+// MARK: - MCPAppSidePanelView
+
+/// Side panel host for agent-produced MCP app resources. Reads the live list of
+/// detected resources from the session's monitor state so a newly produced
+/// resource refreshes an open panel.
+struct MCPAppSidePanelView: View {
   let session: CLISession
-  let resources: [MCPAppResource]
-  let discoveryStatuses: [MCPAppServerDiscoveryStatus]
-  let isDiscovering: Bool
   let viewModel: CLISessionsViewModel?
-  let onRefresh: () -> Void
+  let monitorState: SessionMonitorState?
   let onDismiss: () -> Void
 
-  @State private var selectedResourceID: String?
+  @State private var selectedItemID: String?
   @State private var consentController = MCPAppConsentController()
   @State private var operationNotice: MCPAppPanelNotice?
 
-  private var selectedResource: MCPAppResource? {
-    let selectedID = selectedResourceID ?? resources.first?.id
-    return resources.first { $0.id == selectedID } ?? resources.first
+  private var items: [MCPAppRenderItem] {
+    viewModel?.mcpAppDisplayItems(for: session, state: monitorState) ?? []
   }
 
-  private var errorStatuses: [MCPAppServerDiscoveryStatus] {
-    discoveryStatuses.filter(\.state.isError)
+  private var itemIDs: [String] {
+    items.map(\.id)
+  }
+
+  private var selectedItem: MCPAppRenderItem? {
+    let selectedID = selectedItemID ?? items.first?.id
+    return items.first { $0.id == selectedID } ?? items.first
   }
 
   var body: some View {
@@ -35,24 +48,39 @@ struct MCPAppsPanelView: View {
 
       Divider()
 
-      content
+      if let operationNotice {
+        MCPAppNoticeBanner(notice: operationNotice) {
+          self.operationNotice = nil
+        }
+      }
+
+      if let selectedItem {
+        MCPAppResourceHostView(
+          resource: selectedItem.resource,
+          invocation: selectedItem.invocation,
+          viewModel: viewModel,
+          consentController: consentController,
+          onOperationNotice: { operationNotice = $0 },
+          onTeardown: onDismiss
+        )
+        .id(selectedItem.id)
+      } else {
+        emptyState
+      }
     }
     .frame(
-      minWidth: 980,
-      idealWidth: 1120,
-      maxWidth: .infinity,
-      minHeight: 640,
-      idealHeight: 760,
-      maxHeight: .infinity
+      minWidth: 300, idealWidth: .infinity, maxWidth: .infinity,
+      minHeight: 300, idealHeight: .infinity, maxHeight: .infinity
     )
     .onAppear {
-      selectedResourceID = selectedResourceID ?? resources.first?.id
+      selectedItemID = selectedItemID ?? items.first?.id
     }
-    .onChange(of: resources.map(\.id)) { _, ids in
-      guard let selectedResourceID, ids.contains(selectedResourceID) else {
-        self.selectedResourceID = ids.first
-        return
-      }
+    .onChange(of: itemIDs) { previousIDs, currentIDs in
+      reconcileSelection(previousIDs: previousIDs, currentIDs: currentIDs)
+    }
+    .onKeyPress(.escape) {
+      onDismiss()
+      return .handled
     }
     .confirmationDialog(
       "Allow MCP App Action?",
@@ -66,7 +94,7 @@ struct MCPAppsPanelView: View {
       ),
       titleVisibility: .visible
     ) {
-      Button("Allow for This Panel") {
+      Button("Allow for This Session") {
         consentController.approvePendingRequest()
       }
       .keyboardShortcut(.return, modifiers: [])
@@ -80,46 +108,7 @@ struct MCPAppsPanelView: View {
     }
   }
 
-  @ViewBuilder
-  private var content: some View {
-    if resources.isEmpty {
-      MCPAppDiscoveryStateView(
-        statuses: discoveryStatuses,
-        isDiscovering: isDiscovering,
-        onRefresh: onRefresh
-      )
-    } else {
-      HStack(spacing: 0) {
-        resourceList
-          .frame(width: 260)
-
-        Divider()
-
-        VStack(spacing: 0) {
-          if let operationNotice {
-            MCPAppNoticeBanner(notice: operationNotice) {
-              self.operationNotice = nil
-            }
-          } else if !errorStatuses.isEmpty {
-            MCPAppDiscoveryStatusStrip(statuses: errorStatuses)
-          }
-
-          if let selectedResource {
-            MCPAppResourceHostView(
-              resource: selectedResource,
-              viewModel: viewModel,
-              consentController: consentController,
-              onOperationNotice: { operationNotice = $0 },
-              onTeardown: onDismiss
-            )
-            .id(selectedResource.id)
-          }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-      }
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-  }
+  // MARK: - Header
 
   private var header: some View {
     HStack(spacing: 10) {
@@ -127,273 +116,73 @@ struct MCPAppsPanelView: View {
         .foregroundStyle(Color.brandPrimary)
         .accessibilityHidden(true)
 
-      VStack(alignment: .leading, spacing: 2) {
-        Text("MCP Apps")
-          .font(.headline)
-        Text(session.displayName)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
+      Text("MCP Apps")
+        .font(.headline)
+
+      Spacer(minLength: 12)
+
+      if items.count > 1 {
+        Picker("MCP App", selection: Binding(
+          get: { selectedItemID ?? items.first?.id },
+          set: { selectedItemID = $0 }
+        )) {
+          ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            Text(pickerLabel(for: item, at: index))
+              .tag(Optional(item.id))
+          }
+        }
+        .labelsHidden()
+        .frame(maxWidth: 220)
+        .accessibilityLabel("Select MCP app")
       }
-      .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-
-      Spacer()
-
-      Button("Refresh", systemImage: "arrow.clockwise", action: onRefresh)
-        .keyboardShortcut("r", modifiers: .command)
-        .help("Refresh MCP app discovery")
-        .accessibilityLabel("Refresh MCP apps")
 
       Button("Close", action: onDismiss)
         .keyboardShortcut(.cancelAction)
     }
-    .padding(.horizontal, 16)
-    .padding(.vertical, 12)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
   }
 
-  private var resourceList: some View {
-    List(selection: Binding(
-      get: { selectedResourceID },
-      set: { selectedResourceID = $0 }
-    )) {
-      ForEach(resources) { resource in
-        MCPAppResourceRow(resource: resource)
-          .tag(Optional(resource.id))
-      }
-    }
-    .listStyle(.sidebar)
-    .accessibilityLabel("MCP app resources")
-  }
-}
-
-private struct MCPAppDiscoveryStateView: View {
-  let statuses: [MCPAppServerDiscoveryStatus]
-  let isDiscovering: Bool
-  let onRefresh: () -> Void
-
-  private var title: String {
-    if isDiscovering { return "Loading MCP Apps" }
-    if statuses.isEmpty { return "No MCP Apps" }
-    if statuses.contains(where: { $0.state.isError }) { return "MCP Discovery Needs Attention" }
-    return "No MCP Apps"
-  }
-
-  private var systemImage: String {
-    if isDiscovering { return "arrow.triangle.2.circlepath" }
-    if statuses.contains(where: { $0.state.isError }) { return "exclamationmark.triangle" }
-    return "square.stack.3d.up"
-  }
-
-  var body: some View {
-    VStack(spacing: 18) {
-      if isDiscovering {
-        ProgressView()
-          .controlSize(.regular)
-      }
-
-      ContentUnavailableView(
-        title,
-        systemImage: systemImage,
-        description: Text(description)
-      )
-
-      if !statuses.isEmpty {
-        VStack(spacing: 8) {
-          ForEach(statuses) { status in
-            MCPAppServerStatusRow(status: status)
-          }
-        }
-        .frame(maxWidth: 600)
-      }
-
-      Button("Refresh", systemImage: "arrow.clockwise", action: onRefresh)
-        .keyboardShortcut("r", modifiers: .command)
-        .accessibilityLabel("Refresh MCP apps")
-    }
-    .padding(28)
+  private var emptyState: some View {
+    ContentUnavailableView(
+      "No MCP Apps",
+      systemImage: "square.stack.3d.up",
+      description: Text("This session has not produced an MCP app resource yet.")
+    )
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
-  private var description: String {
-    if isDiscovering {
-      return "Discovering app resources from configured MCP servers."
+  /// Picker label for an item; appends an ordinal when several items share a title
+  /// (e.g. successive edits of the same diagram) so they remain distinguishable.
+  private func pickerLabel(for item: MCPAppRenderItem, at index: Int) -> String {
+    let base = item.resource.title ?? item.resource.resource.metadata.title ?? item.resource.serverName
+    let sharesTitle = items.filter { $0.resource.title == item.resource.title }.count > 1
+    return sharesTitle ? "\(base) \(index + 1)" : base
+  }
+
+  /// Keeps the selection valid as resources arrive/leave. Prefers a freshly
+  /// produced resource so the open panel follows the agent's latest output.
+  private func reconcileSelection(previousIDs: [String], currentIDs: [String]) {
+    let added = Set(currentIDs).subtracting(previousIDs)
+    if let newest = currentIDs.last(where: { added.contains($0) }) {
+      selectedItemID = newest
+      return
     }
-    if statuses.isEmpty {
-      return "No configured MCP server exposed an app resource for this session."
+    if let selectedItemID, currentIDs.contains(selectedItemID) {
+      return
     }
-    if statuses.contains(where: { $0.state.isError }) {
-      return "One or more MCP servers could not be used for app discovery."
-    }
-    return "Configured MCP servers did not expose app resources."
+    selectedItemID = currentIDs.first
   }
 }
 
-private struct MCPAppDiscoveryStatusStrip: View {
-  let statuses: [MCPAppServerDiscoveryStatus]
+// MARK: - MCPAppResourceHostView
 
-  var body: some View {
-    HStack(alignment: .top, spacing: 8) {
-      Image(systemName: "exclamationmark.triangle.fill")
-        .foregroundStyle(.orange)
-        .accessibilityHidden(true)
-
-      VStack(alignment: .leading, spacing: 2) {
-        Text("Some MCP servers could not be discovered.")
-          .font(.caption.weight(.semibold))
-        Text(summary)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(2)
-          .fixedSize(horizontal: false, vertical: true)
-      }
-      .layoutPriority(1)
-      .frame(maxWidth: .infinity, alignment: .leading)
-
-      Spacer()
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .background(Color.orange.opacity(0.10))
-  }
-
-  private var summary: String {
-    let visibleStatuses = Array(statuses.prefix(4))
-    let visible = visibleStatuses
-      .map { "\($0.key.serverName): \($0.state.displayTitle)" }
-      .joined(separator: "  •  ")
-    let hiddenCount = statuses.count - visibleStatuses.count
-    guard hiddenCount > 0 else { return visible }
-    return "\(visible)  •  +\(hiddenCount) more"
-  }
-}
-
-private struct MCPAppNoticeBanner: View {
-  let notice: MCPAppPanelNotice
-  let onDismiss: () -> Void
-
-  var body: some View {
-    HStack(alignment: .top, spacing: 8) {
-      Image(systemName: notice.systemImage)
-        .foregroundStyle(notice.tint)
-        .accessibilityHidden(true)
-
-      VStack(alignment: .leading, spacing: 2) {
-        Text(notice.title)
-          .font(.caption.weight(.semibold))
-        Text(notice.message)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .lineLimit(3)
-      }
-
-      Spacer()
-
-      Button("Dismiss", systemImage: "xmark", action: onDismiss)
-        .labelStyle(.iconOnly)
-        .buttonStyle(.plain)
-        .help("Dismiss")
-        .accessibilityLabel("Dismiss MCP app notice")
-    }
-    .padding(.horizontal, 12)
-    .padding(.vertical, 8)
-    .background(notice.tint.opacity(0.10))
-  }
-}
-
-private struct MCPAppServerStatusRow: View {
-  let status: MCPAppServerDiscoveryStatus
-
-  var body: some View {
-    HStack(alignment: .top, spacing: 10) {
-      Image(systemName: iconName)
-        .foregroundStyle(tint)
-        .frame(width: 18)
-        .accessibilityHidden(true)
-
-      VStack(alignment: .leading, spacing: 3) {
-        HStack(spacing: 6) {
-          Text(status.key.serverName)
-            .font(.system(size: 12, weight: .semibold))
-          Text(status.transportDescription)
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-        }
-
-        Text(status.state.displayTitle)
-          .font(.caption.weight(.medium))
-        Text(status.state.displayMessage)
-          .font(.caption2)
-          .foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-      }
-
-      Spacer()
-    }
-    .padding(10)
-    .background(
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .fill(Color.secondary.opacity(0.08))
-    )
-    .accessibilityElement(children: .combine)
-  }
-
-  private var iconName: String {
-    switch status.state {
-    case .loading:
-      return "arrow.triangle.2.circlepath"
-    case .available:
-      return "checkmark.circle.fill"
-    case .noResources:
-      return "minus.circle"
-    case .unsupportedTransport, .authenticationRequired, .unreachable, .failure:
-      return "exclamationmark.triangle.fill"
-    }
-  }
-
-  private var tint: Color {
-    switch status.state {
-    case .available:
-      return .green
-    case .unsupportedTransport, .authenticationRequired, .unreachable, .failure:
-      return .orange
-    case .loading, .noResources:
-      return .secondary
-    }
-  }
-}
-
-private struct MCPAppResourceRow: View {
-  let resource: MCPAppResource
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 4) {
-      Text(resource.title ?? resource.resource.metadata.title ?? resource.resource.uri)
-        .font(.system(size: 12, weight: .medium))
-        .lineLimit(1)
-        .truncationMode(.tail)
-
-      Text(resource.serverName)
-        .font(.caption2)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-
-      Text(resource.resource.uri)
-        .font(.system(size: 10, design: .monospaced))
-        .foregroundStyle(.tertiary)
-        .lineLimit(1)
-        .truncationMode(.middle)
-    }
-    .padding(.vertical, 4)
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(resource.title ?? resource.resource.metadata.title ?? resource.resource.uri)
-  }
-}
-
+/// Renders a single MCP app resource in a WKWebView and bridges its JSON-RPC
+/// messages to the host. Resolves any in-flight consent when the resource
+/// changes or the panel disappears so a bridge call never hangs.
 private struct MCPAppResourceHostView: View {
   let resource: MCPAppResource
+  let invocation: MCPAppInvocation?
   let viewModel: CLISessionsViewModel?
   let consentController: MCPAppConsentController
   let onOperationNotice: (MCPAppPanelNotice) -> Void
@@ -416,7 +205,11 @@ private struct MCPAppResourceHostView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .onAppear(perform: installBridgeHandler)
     .onChange(of: resource.id) { _, _ in
+      consentController.cancelPending()
       installBridgeHandler()
+    }
+    .onDisappear {
+      consentController.cancelPending()
     }
   }
 
@@ -459,6 +252,7 @@ private struct MCPAppResourceHostView: View {
   private func installBridgeHandler() {
     bridgeHandler = MCPAppHostBridgeHandler(
       resource: resource,
+      invocation: invocation,
       viewModel: viewModel,
       consentController: consentController,
       onSizeChange: { _, _ in },
@@ -468,13 +262,21 @@ private struct MCPAppResourceHostView: View {
   }
 }
 
+// MARK: - MCPAppConsentController
+
 @MainActor
 @Observable
 final class MCPAppConsentController {
   var pendingRequest: MCPAppConsentRequest?
 
-  private var grants: Set<MCPAppConsentGrant> = []
-  private var pendingContinuation: CheckedContinuation<Bool, Never>?
+  @ObservationIgnored private var grants: Set<MCPAppConsentGrant> = []
+  @ObservationIgnored private var pendingContinuation: CheckedContinuation<Bool, Never>?
+  @ObservationIgnored private var pendingTimeoutTask: Task<Void, Never>?
+  @ObservationIgnored private let autoDenyTimeout: Duration
+
+  init(autoDenyTimeout: Duration = .seconds(45)) {
+    self.autoDenyTimeout = autoDenyTimeout
+  }
 
   func require(_ action: MCPAppConsentAction, resource: MCPAppResource) async throws {
     let grant = MCPAppConsentGrant(resourceID: resource.id, scope: action.grantScope)
@@ -487,6 +289,7 @@ final class MCPAppConsentController {
     let allowed = await withCheckedContinuation { continuation in
       pendingRequest = request
       pendingContinuation = continuation
+      startAutoDenyTimer()
     }
 
     if allowed {
@@ -498,15 +301,40 @@ final class MCPAppConsentController {
   }
 
   func approvePendingRequest() {
-    pendingContinuation?.resume(returning: true)
-    pendingContinuation = nil
-    pendingRequest = nil
+    resolvePending(with: true)
   }
 
   func denyPendingRequest() {
-    pendingContinuation?.resume(returning: false)
+    resolvePending(with: false)
+  }
+
+  /// Resolves any in-flight consent request as denied. Call when the hosting
+  /// view disappears or switches resources so the awaiting bridge call returns
+  /// instead of hanging forever.
+  func cancelPending() {
+    resolvePending(with: false)
+  }
+
+  private func startAutoDenyTimer() {
+    pendingTimeoutTask?.cancel()
+    let timeout = autoDenyTimeout
+    pendingTimeoutTask = Task { @MainActor [weak self] in
+      try? await Task.sleep(for: timeout)
+      guard !Task.isCancelled else { return }
+      self?.resolvePending(with: false)
+    }
+  }
+
+  /// Resumes the pending continuation exactly once. Nils the continuation
+  /// before resuming so racing callers (user action, timeout, cancel) can't
+  /// double-resume.
+  private func resolvePending(with allowed: Bool) {
+    pendingTimeoutTask?.cancel()
+    pendingTimeoutTask = nil
+    guard let continuation = pendingContinuation else { return }
     pendingContinuation = nil
     pendingRequest = nil
+    continuation.resume(returning: allowed)
   }
 }
 
@@ -578,6 +406,8 @@ private struct MCPAppConsentGrant: Hashable {
   let scope: String
 }
 
+// MARK: - MCPAppPanelNotice
+
 struct MCPAppPanelNotice: Identifiable, Equatable {
   enum Kind: Equatable {
     case error
@@ -608,9 +438,46 @@ struct MCPAppPanelNotice: Identifiable, Equatable {
   }
 }
 
+private struct MCPAppNoticeBanner: View {
+  let notice: MCPAppPanelNotice
+  let onDismiss: () -> Void
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 8) {
+      Image(systemName: notice.systemImage)
+        .foregroundStyle(notice.tint)
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(notice.title)
+          .font(.caption.weight(.semibold))
+        Text(notice.message)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(3)
+      }
+
+      Spacer()
+
+      Button("Dismiss", systemImage: "xmark", action: onDismiss)
+        .labelStyle(.iconOnly)
+        .buttonStyle(.plain)
+        .help("Dismiss")
+        .accessibilityLabel("Dismiss MCP app notice")
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .background(notice.tint.opacity(0.10))
+  }
+}
+
+// MARK: - MCPAppHostBridgeHandler
+
 @MainActor
 final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
   private let resource: MCPAppResource
+  /// The agent tool call that produced this app, pushed to the app on init so it renders.
+  private let invocation: MCPAppInvocation?
   private weak var viewModel: CLISessionsViewModel?
   private let consentController: MCPAppConsentController
   private let onSizeChange: (Double?, Double?) -> Void
@@ -619,6 +486,7 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
 
   init(
     resource: MCPAppResource,
+    invocation: MCPAppInvocation? = nil,
     viewModel: CLISessionsViewModel?,
     consentController: MCPAppConsentController,
     onSizeChange: @escaping (Double?, Double?) -> Void,
@@ -626,11 +494,93 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
     onTeardown: @escaping () -> Void
   ) {
     self.resource = resource
+    self.invocation = invocation
     self.viewModel = viewModel
     self.consentController = consentController
     self.onSizeChange = onSizeChange
     self.onOperationNotice = onOperationNotice
     self.onTeardown = onTeardown
+  }
+
+  func appReadyNotifications() -> [AgentHubMCPUIOutgoingNotification] {
+    guard let invocation else { return [] }
+    return [
+      AgentHubMCPUIOutgoingNotification(
+        method: "ui/notifications/tool-input",
+        params: .object(["arguments": invocation.arguments ?? .object([:])])
+      ),
+      AgentHubMCPUIOutgoingNotification(
+        method: "ui/notifications/tool-result",
+        params: Self.toolResultParams(from: invocation.result)
+      )
+    ]
+  }
+
+  /// Shapes a captured tool result into the MCP Apps `tool-result` payload the app
+  /// expects (`{ content, structuredContent }`). Claude Code stores the result as a
+  /// JSON string, so we parse it into `structuredContent` (e.g. `{checkpointId}`).
+  static func toolResultParams(from result: AgentHubMCPUIJSONValue?) -> AgentHubMCPUIJSONValue {
+    guard let result else {
+      return .object(["content": .array([]), "structuredContent": .object([:])])
+    }
+    switch result {
+    case .string(let text):
+      let structured = parseJSONObject(text) ?? .object([:])
+      return .object([
+        "content": .array([.object(["type": .string("text"), "text": .string(text)])]),
+        "structuredContent": structured
+      ])
+    case .object(let object):
+      // Already a full MCP result with structuredContent — pass through.
+      if object["structuredContent"] != nil {
+        return result
+      }
+      // Has content blocks (e.g. Codex's Ok-wrapped result) but no structuredContent —
+      // derive structuredContent by parsing the first JSON text block.
+      if let content = object["content"] {
+        var structured: AgentHubMCPUIJSONValue = .object([:])
+        if case .array(let blocks) = content {
+          for block in blocks {
+            if let text = block["text"]?.stringValue, let parsed = parseJSONObject(text) {
+              structured = parsed
+              break
+            }
+          }
+        }
+        return .object(["content": content, "structuredContent": structured])
+      }
+      // A bare structured object — treat it as structuredContent.
+      return .object(["content": .array([]), "structuredContent": result])
+    case .array(let blocks):
+      var structured: AgentHubMCPUIJSONValue = .object([:])
+      for block in blocks {
+        if let text = block["text"]?.stringValue, let parsed = parseJSONObject(text) {
+          structured = parsed
+          break
+        }
+      }
+      return .object(["content": result, "structuredContent": structured])
+    default:
+      return .object(["content": .array([]), "structuredContent": .object([:])])
+    }
+  }
+
+  private static func parseJSONObject(_ text: String) -> AgentHubMCPUIJSONValue? {
+    guard let data = text.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data),
+          object is [String: Any] else {
+      return nil
+    }
+    return AgentHubMCPUIJSONValue(any: object)
+  }
+
+  /// Whether this resource can route in-app callbacks to a real MCP server.
+  /// Inline resources surfaced from JSONL carry the server name derived from the
+  /// `mcp__<server>__<tool>` tool name, so they resolve lazily through the
+  /// on-demand client gateway. Resources without a resolvable server render
+  /// static HTML and fast-fail any callbacks (no timeout, no hang).
+  private var canResolveServer: Bool {
+    viewModel != nil && !resource.serverName.isEmpty && resource.serverName != "inline"
   }
 
   func initialize(params: AgentHubMCPUIJSONValue?) async throws -> AgentHubMCPUIJSONValue {
@@ -652,7 +602,7 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
       "hostContext": hostContext,
       "host": hostInfo,
       "capabilities": .object([
-        "tools": .object(["call": .bool(resource.source == .liveDiscovery)]),
+        "tools": .object(["call": .bool(canResolveServer)]),
         "resources": .object(["read": .bool(true), "list": .bool(true)]),
         "openLinks": .object(["enabled": .bool(resource.resource.metadata.permissions.allowOpenLinks)]),
         "logging": .object([:]),
@@ -670,8 +620,8 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
       AppLogger.mcp.info(
         "[MCPAppHost] tool call requested server=\(self.resource.serverName, privacy: .public) tool=\(name, privacy: .public) source=\(self.resource.source.rawValue, privacy: .public)"
       )
-      guard resource.source == .liveDiscovery else {
-        throw AgentHubMCPUIBridgeError.permissionDenied("Inline MCP app resources cannot call tools without a resolved server.")
+      guard canResolveServer else {
+        throw AgentHubMCPUIBridgeError.permissionDenied("This MCP app has no resolvable MCP server to call tools on.")
       }
       if let allowed = resource.resource.metadata.permissions.allowedToolNames,
          !allowed.contains(name) {
@@ -709,8 +659,8 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
           "contents": .array([resourceContentValue(resource.resource)])
         ])
       }
-      guard resource.source == .liveDiscovery, let viewModel else {
-        throw AgentHubMCPUIBridgeError.permissionDenied("MCP app cannot read resources without a resolved server.")
+      guard canResolveServer, let viewModel else {
+        throw AgentHubMCPUIBridgeError.permissionDenied("MCP app cannot read resources without a resolvable server.")
       }
       let result = try await viewModel.readMCPAppResource(resource: resource, uri: uri)
       AppLogger.mcp.info(
@@ -732,7 +682,7 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
         "[MCPAppHost] resources list requested server=\(self.resource.serverName, privacy: .public) source=\(self.resource.source.rawValue, privacy: .public)"
       )
       try await consentController.require(.listResources, resource: resource)
-      guard resource.source == .liveDiscovery, let viewModel else {
+      guard canResolveServer, let viewModel else {
         AppLogger.mcp.info(
           "[MCPAppHost] resources list served from panel resource server=\(self.resource.serverName, privacy: .public)"
         )

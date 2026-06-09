@@ -54,6 +54,18 @@ public struct AgentHubMCPUIResourceView: View {
 }
 
 @MainActor
+/// A one-way host→app notification the bridge pushes after the app initializes
+/// (e.g. `ui/notifications/tool-input`, `ui/notifications/tool-result`).
+public struct AgentHubMCPUIOutgoingNotification: Sendable, Equatable {
+  public let method: String
+  public let params: AgentHubMCPUIJSONValue?
+
+  public init(method: String, params: AgentHubMCPUIJSONValue?) {
+    self.method = method
+    self.params = params
+  }
+}
+
 public protocol AgentHubMCPUIBridgeHandler: AnyObject {
   func initialize(params: AgentHubMCPUIJSONValue?) async throws -> AgentHubMCPUIJSONValue
   func callTool(name: String, arguments: AgentHubMCPUIJSONValue?) async throws -> AgentHubMCPUIJSONValue
@@ -65,6 +77,9 @@ public protocol AgentHubMCPUIBridgeHandler: AnyObject {
   func appDidSendMessage(_ params: AgentHubMCPUIJSONValue?)
   func appDidUpdateModelContext(_ params: AgentHubMCPUIJSONValue?)
   func appDidLogMessage(_ params: AgentHubMCPUIJSONValue?)
+  /// Notifications to push to the app once it signals `ui/notifications/initialized`.
+  /// Used to deliver the originating tool call's input/result so the app can render.
+  func appReadyNotifications() -> [AgentHubMCPUIOutgoingNotification]
 }
 
 public extension AgentHubMCPUIBridgeHandler {
@@ -124,6 +139,7 @@ public extension AgentHubMCPUIBridgeHandler {
   func appDidSendMessage(_ params: AgentHubMCPUIJSONValue?) {}
   func appDidUpdateModelContext(_ params: AgentHubMCPUIJSONValue?) {}
   func appDidLogMessage(_ params: AgentHubMCPUIJSONValue?) {}
+  func appReadyNotifications() -> [AgentHubMCPUIOutgoingNotification] { [] }
 }
 
 public enum AgentHubMCPUIBridgeError: LocalizedError {
@@ -185,6 +201,7 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     )
     webView.loadHTMLString(Self.hardenedHTML(for: resource), baseURL: Self.baseURL(for: resource))
     context.coordinator.loadedResource = resource
+    context.coordinator.didDeliverReadyNotifications = false
     return webView
   }
 
@@ -196,6 +213,7 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     )
     webView.loadHTMLString(Self.hardenedHTML(for: resource), baseURL: Self.baseURL(for: resource))
     context.coordinator.loadedResource = resource
+    context.coordinator.didDeliverReadyNotifications = false
   }
 
   public static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -274,9 +292,31 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     weak var webView: WKWebView?
     weak var bridgeHandler: (any AgentHubMCPUIBridgeHandler)?
     var loadedResource: AgentHubMCPUIResource?
+    /// Guards the one-time delivery of `appReadyNotifications` per loaded resource.
+    /// Reset whenever a new resource is loaded.
+    var didDeliverReadyNotifications = false
 
     init(bridgeHandler: (any AgentHubMCPUIBridgeHandler)?) {
       self.bridgeHandler = bridgeHandler
+    }
+
+    /// Pushes the app's initial tool-input/tool-result once. The MCP Apps SDK
+    /// drops notifications that arrive before the app registers its handlers, and
+    /// the app registers them in a mount effect that runs *after* it sends
+    /// `ui/notifications/initialized`. So we deliver on the first
+    /// `ui/notifications/size-changed` (which only fires once the app has mounted),
+    /// and also opportunistically on `initialized` for apps that register synchronously.
+    func deliverReadyNotificationsIfNeeded() {
+      guard !didDeliverReadyNotifications else { return }
+      let notifications = bridgeHandler?.appReadyNotifications() ?? []
+      guard !notifications.isEmpty else { return }
+      didDeliverReadyNotifications = true
+      for notification in notifications {
+        mcpUILogger.info(
+          "[MCPUIBridge] host->app ready-notification method=\(notification.method, privacy: .public) resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+        )
+        sendNotification(method: notification.method, params: notification.params)
+      }
     }
 
     public func userContentController(
@@ -536,8 +576,19 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
         )
         return nil
       case "ui/notifications/initialized":
+        // `initialized` is sent before the app registers its notification handlers
+        // (those run in a later mount effect), so delivering now would be dropped.
+        // Schedule a fallback for apps that never emit size-changed; the guard in
+        // `deliverReadyNotificationsIfNeeded` ensures we still deliver only once.
+        Task { @MainActor [weak self] in
+          try? await Task.sleep(for: .milliseconds(500))
+          self?.deliverReadyNotificationsIfNeeded()
+        }
         return nil
       case "ui/notifications/size-changed", "ui/size-changed":
+        // First size report means the app has mounted and registered its handlers —
+        // the reliable moment to deliver the originating tool input/result.
+        deliverReadyNotificationsIfNeeded()
         let object = params?.objectValue
         bridgeHandler?.appDidRequestSize(
           width: object?["width"]?.numberValue,
