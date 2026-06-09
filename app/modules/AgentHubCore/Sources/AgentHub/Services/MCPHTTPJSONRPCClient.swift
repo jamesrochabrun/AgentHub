@@ -114,10 +114,10 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     endpoint: URL,
     allowsLegacySSEFallback: Bool
   ) async throws -> AgentHubMCPUIJSONValue {
-    let (data, response) = try await data(for: postRequest(to: endpoint, body: envelope))
-    let httpResponse = try validateHTTPResponse(
+    let (bytes, response) = try await bytes(for: postRequest(to: endpoint, body: envelope))
+    let httpResponse = try await validateStreamableHTTPResponse(
       response,
-      data: data,
+      bytes: bytes,
       allowsLegacySSEFallback: allowsLegacySSEFallback
     )
     storeSessionID(from: httpResponse)
@@ -126,6 +126,11 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
       throw Fallback.legacySSE
     }
 
+    if contentType(from: httpResponse).contains("text/event-stream") {
+      return try await resultFromSSEBytes(bytes, expectedID: id, method: method)
+    }
+
+    let data = try await data(from: bytes)
     return try result(from: data, response: httpResponse, expectedID: id, method: method)
   }
 
@@ -135,16 +140,20 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     endpoint: URL,
     allowsLegacySSEFallback: Bool
   ) async throws {
-    let (data, response) = try await data(for: postRequest(to: endpoint, body: envelope))
-    let httpResponse = try validateHTTPResponse(
+    let (bytes, response) = try await bytes(for: postRequest(to: endpoint, body: envelope))
+    let httpResponse = try await validateStreamableHTTPResponse(
       response,
-      data: data,
+      bytes: bytes,
       allowsLegacySSEFallback: allowsLegacySSEFallback
     )
     storeSessionID(from: httpResponse)
 
     if allowsLegacySSEFallback, shouldFallbackToLegacySSE(httpResponse) {
       throw Fallback.legacySSE
+    }
+
+    if !contentType(from: httpResponse).contains("text/event-stream") {
+      _ = try await data(from: bytes)
     }
   }
 
@@ -293,6 +302,54 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     throw MCPAppDiscoveryError.invalidResponse("SSE response for \(method) did not include request id \(id).")
   }
 
+  private func resultFromSSEBytes(
+    _ bytes: URLSession.AsyncBytes,
+    expectedID id: Int,
+    method: String
+  ) async throws -> AgentHubMCPUIJSONValue {
+    var parser = MCPSSEEventParser()
+    for try await line in bytes.lines {
+      guard let event = parser.append(line: line),
+            event.event == nil || event.event == "message",
+            let decoded = decodeSSEJSON(event.data),
+            let result = try MCPJSONRPCMessage.result(from: decoded, expectedID: id, method: method) else {
+        continue
+      }
+      return result
+    }
+
+    if let event = parser.finish(),
+       event.event == nil || event.event == "message",
+       let decoded = decodeSSEJSON(event.data),
+       let result = try MCPJSONRPCMessage.result(from: decoded, expectedID: id, method: method) {
+      return result
+    }
+
+    throw MCPAppDiscoveryError.invalidResponse("SSE response for \(method) did not include request id \(id).")
+  }
+
+  private func validateStreamableHTTPResponse(
+    _ response: URLResponse,
+    bytes: URLSession.AsyncBytes,
+    allowsLegacySSEFallback: Bool
+  ) async throws -> HTTPURLResponse {
+    guard let httpResponse = response as? HTTPURLResponse else {
+      throw MCPAppDiscoveryError.invalidResponse("HTTP transport returned a non-HTTP response.")
+    }
+
+    if (200...299).contains(httpResponse.statusCode)
+      || (allowsLegacySSEFallback && shouldFallbackToLegacySSE(httpResponse)) {
+      return httpResponse
+    }
+
+    let data = try await data(from: bytes)
+    return try validateHTTPResponse(
+      httpResponse,
+      data: data,
+      allowsLegacySSEFallback: allowsLegacySSEFallback
+    )
+  }
+
   private func validateHTTPResponse(
     _ response: URLResponse,
     data: Data,
@@ -343,6 +400,14 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     } catch let error as URLError {
       throw remoteServerUnreachableError(error: error, url: request.url)
     }
+  }
+
+  private func data(from bytes: URLSession.AsyncBytes) async throws -> Data {
+    var buffer: [UInt8] = []
+    for try await byte in bytes {
+      buffer.append(byte)
+    }
+    return Data(buffer)
   }
 
   private func remoteServerUnreachableError(error: URLError, url: URL?) -> MCPAppDiscoveryError {

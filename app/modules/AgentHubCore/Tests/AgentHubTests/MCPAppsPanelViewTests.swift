@@ -66,6 +66,36 @@ struct MCPAppsPanelViewTests {
     #expect(notices.first?.title == "Tool Call Denied")
   }
 
+  @Test("Bridge initialize includes MCP app SDK host fields")
+  @MainActor
+  func bridgeInitializeIncludesMCPAppSDKHostFields() async throws {
+    let handler = MCPAppHostBridgeHandler(
+      resource: panelTestResource(source: .liveDiscovery),
+      viewModel: nil,
+      consentController: MCPAppConsentController(),
+      onSizeChange: { _, _ in },
+      onOperationNotice: { _ in },
+      onTeardown: {}
+    )
+
+    let result = try await handler.initialize(params: .object([
+      "protocolVersion": .string("2025-11-21")
+    ]))
+
+    #expect(result["protocolVersion"] == .string("2025-11-21"))
+    #expect(result["hostInfo"]?["name"] == .string("AgentHub"))
+    #expect(result["hostCapabilities"]?["serverTools"] != nil)
+    #expect(result["hostCapabilities"]?["serverResources"] != nil)
+    #expect(result["hostCapabilities"]?["openLinks"] != nil)
+    #expect(result["hostCapabilities"]?["sandbox"]?["permissions"]?["camera"] == nil)
+    #expect(result["hostCapabilities"]?["sandbox"]?["csp"]?["connectDomains"] == .array([]))
+    #expect(result["hostCapabilities"]?["sandbox"]?["csp"]?["connect_domains"] == nil)
+    #expect(result["hostContext"]?["displayMode"] == .string("inline"))
+    #expect(result["hostContext"]?["availableDisplayModes"]?.arrayValue?.contains(.string("fullscreen")) == true)
+    #expect(result["host"]?["name"] == .string("AgentHub"))
+    #expect(result["context"]?["resourceUri"] == .string("ui://fake/app"))
+  }
+
   @MainActor
   private func waitForPendingRequest(_ controller: MCPAppConsentController) async {
     for _ in 0..<10 {

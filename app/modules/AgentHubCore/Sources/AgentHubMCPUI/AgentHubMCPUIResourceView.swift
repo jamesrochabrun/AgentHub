@@ -66,19 +66,45 @@ public protocol AgentHubMCPUIBridgeHandler: AnyObject {
 
 public extension AgentHubMCPUIBridgeHandler {
   func initialize(params: AgentHubMCPUIJSONValue?) async throws -> AgentHubMCPUIJSONValue {
-    .object([
-      "protocolVersion": .string("2026-01-26"),
-      "host": .object([
-        "name": .string("AgentHub"),
-        "version": .string("1.0.0")
+    let protocolVersion = params?["protocolVersion"]?.stringValue ?? "2025-11-21"
+    let hostInfo: AgentHubMCPUIJSONValue = .object([
+      "name": .string("AgentHub"),
+      "version": .string("1.0.0")
+    ])
+    let hostCapabilities: AgentHubMCPUIJSONValue = .object([
+      "serverTools": .object([:]),
+      "serverResources": .object([:]),
+      "openLinks": .object([:]),
+      "logging": .object([:]),
+      "updateModelContext": .object([
+        "text": .object([:]),
+        "structuredContent": .object([:])
       ]),
+      "message": .object([
+        "text": .object([:])
+      ])
+    ])
+    let hostContext: AgentHubMCPUIJSONValue = .object([
+      "displayMode": .string("inline"),
+      "availableDisplayModes": .array([.string("inline"), .string("fullscreen")]),
+      "platform": .string("desktop"),
+      "userAgent": .string("AgentHub/1.0.0")
+    ])
+
+    return .object([
+      "protocolVersion": .string(protocolVersion),
+      "hostInfo": hostInfo,
+      "hostCapabilities": hostCapabilities,
+      "hostContext": hostContext,
+      "host": hostInfo,
       "capabilities": .object([
         "tools": .object(["call": .bool(true)]),
         "resources": .object(["read": .bool(true), "list": .bool(true)]),
         "openLinks": .object([:]),
         "logging": .object([:]),
         "display": .object(["sizeChanges": .bool(true)])
-      ])
+      ]),
+      "context": hostContext
     ])
   }
 
@@ -373,6 +399,8 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
       switch method {
       case "initialize", "ui/initialize":
         return try await bridgeHandler?.initialize(params: params)
+      case "ping":
+        return .object([:])
       case "tools/call":
         guard let object = params?.objectValue,
               let name = object["name"]?.stringValue else {
@@ -395,6 +423,10 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
         }
         try await bridgeHandler?.openLink(url: url)
         return .object([:])
+      case "ui/request-display-mode":
+        let requestedMode = params?["mode"]?.stringValue ?? "inline"
+        let supportedMode = requestedMode == "fullscreen" ? "fullscreen" : "inline"
+        return .object(["mode": .string(supportedMode)])
       case "ui/message":
         bridgeHandler?.appDidSendMessage(params)
         return .object([:])
@@ -403,6 +435,8 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
         return .object([:])
       case "notifications/message", "ui/notifications/message":
         bridgeHandler?.appDidLogMessage(params)
+        return nil
+      case "ui/notifications/initialized":
         return nil
       case "ui/notifications/size-changed", "ui/size-changed":
         let object = params?.objectValue

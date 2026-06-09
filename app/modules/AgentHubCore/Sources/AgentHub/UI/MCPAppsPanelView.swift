@@ -634,12 +634,20 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
   }
 
   func initialize(params: AgentHubMCPUIJSONValue?) async throws -> AgentHubMCPUIJSONValue {
-    .object([
-      "protocolVersion": .string("2026-01-26"),
-      "host": .object([
-        "name": .string("AgentHub"),
-        "version": .string("1.0.0")
-      ]),
+    let protocolVersion = params?["protocolVersion"]?.stringValue ?? "2025-11-21"
+    let hostInfo: AgentHubMCPUIJSONValue = .object([
+      "name": .string("AgentHub"),
+      "version": .string("1.0.0")
+    ])
+    let hostCapabilities = hostCapabilitiesValue()
+    let hostContext = hostContextValue()
+
+    return .object([
+      "protocolVersion": .string(protocolVersion),
+      "hostInfo": hostInfo,
+      "hostCapabilities": hostCapabilities,
+      "hostContext": hostContext,
+      "host": hostInfo,
       "capabilities": .object([
         "tools": .object(["call": .bool(resource.source == .liveDiscovery)]),
         "resources": .object(["read": .bool(true), "list": .bool(true)]),
@@ -647,13 +655,7 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
         "logging": .object([:]),
         "display": .object(["sizeChanges": .bool(true)])
       ]),
-      "context": .object([
-        "provider": .string(resource.provider.rawValue),
-        "projectPath": .string(resource.projectPath),
-        "serverName": .string(resource.serverName),
-        "resourceUri": .string(resource.resource.uri),
-        "theme": .string(NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light")
-      ])
+      "context": hostContext
     ])
   }
 
@@ -741,6 +743,58 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
   func appDidUpdateModelContext(_ params: AgentHubMCPUIJSONValue?) {}
   func appDidLogMessage(_ params: AgentHubMCPUIJSONValue?) {}
 
+  private func hostCapabilitiesValue() -> AgentHubMCPUIJSONValue {
+    var capabilities: [String: AgentHubMCPUIJSONValue] = [
+      "serverTools": .object(["listChanged": .bool(false)]),
+      "serverResources": .object(["listChanged": .bool(false)]),
+      "logging": .object([:]),
+      "sandbox": .object([
+        "permissions": sandboxPermissionsValue(resource.resource.metadata.permissions),
+        "csp": sdkCSPValue(resource.resource.metadata.csp)
+      ]),
+      "updateModelContext": .object([
+        "text": .object([:]),
+        "structuredContent": .object([:])
+      ]),
+      "message": .object([
+        "text": .object([:])
+      ])
+    ]
+    if resource.resource.metadata.permissions.allowOpenLinks {
+      capabilities["openLinks"] = .object([:])
+    }
+    return .object(capabilities)
+  }
+
+  private func sandboxPermissionsValue(_ permissions: AgentHubMCPUIPermissions) -> AgentHubMCPUIJSONValue {
+    var values: [String: AgentHubMCPUIJSONValue] = [:]
+    if permissions.allowCamera {
+      values["camera"] = .object([:])
+    }
+    if permissions.allowMicrophone {
+      values["microphone"] = .object([:])
+    }
+    if permissions.allowGeolocation {
+      values["geolocation"] = .object([:])
+    }
+    return .object(values)
+  }
+
+  private func hostContextValue() -> AgentHubMCPUIJSONValue {
+    let isDark = NSApp?.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    return .object([
+      "provider": .string(resource.provider.rawValue),
+      "projectPath": .string(resource.projectPath),
+      "serverName": .string(resource.serverName),
+      "resourceUri": .string(resource.resource.uri),
+      "theme": .string(isDark ? "dark" : "light"),
+      "displayMode": .string("inline"),
+      "availableDisplayModes": .array([.string("inline"), .string("fullscreen")]),
+      "platform": .string("desktop"),
+      "userAgent": .string("AgentHub/1.0.0")
+    ])
+  }
+
   private func report(error: Error, deniedTitle: String, failureTitle: String) {
     let isDenied: Bool
     if case .permissionDenied(_) = error as? AgentHubMCPUIBridgeError {
@@ -782,11 +836,22 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
           "openLinks": .bool(metadata.permissions.allowOpenLinks),
           "tools": .array((metadata.permissions.allowedToolNames ?? []).map { .string($0) })
         ]),
-        "csp": .object([
-          "connect_domains": .array(metadata.csp.connectDomains.map { .string($0) }),
-          "resource_domains": .array(metadata.csp.resourceDomains.map { .string($0) })
-        ])
+        "csp": metadataCSPValue(metadata.csp)
       ])
+    ])
+  }
+
+  private func metadataCSPValue(_ csp: AgentHubMCPUICSP) -> AgentHubMCPUIJSONValue {
+    .object([
+      "connect_domains": .array(csp.connectDomains.map { .string($0) }),
+      "resource_domains": .array(csp.resourceDomains.map { .string($0) })
+    ])
+  }
+
+  private func sdkCSPValue(_ csp: AgentHubMCPUICSP) -> AgentHubMCPUIJSONValue {
+    .object([
+      "connectDomains": .array(csp.connectDomains.map { .string($0) }),
+      "resourceDomains": .array(csp.resourceDomains.map { .string($0) })
     ])
   }
 }
