@@ -345,45 +345,6 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
 
 }
 
-public actor NoOpMCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
-  public init() {}
-
-  public func callTool(
-    provider: SessionProviderKind,
-    projectPath: String,
-    serverName: String,
-    name: String,
-    arguments: AgentHubMCPUIJSONValue?
-  ) async throws -> AgentHubMCPUIJSONValue {
-    throw MCPAppDiscoveryError.serverNotFound(serverName)
-  }
-
-  public func readResource(
-    provider: SessionProviderKind,
-    projectPath: String,
-    serverName: String,
-    uri: String
-  ) async throws -> AgentHubMCPUIJSONValue {
-    throw MCPAppDiscoveryError.serverNotFound(serverName)
-  }
-
-  public func listResources(
-    provider: SessionProviderKind,
-    projectPath: String,
-    serverName: String
-  ) async throws -> AgentHubMCPUIJSONValue {
-    throw MCPAppDiscoveryError.serverNotFound(serverName)
-  }
-
-  public func listTools(
-    provider: SessionProviderKind,
-    projectPath: String,
-    serverName: String
-  ) async throws -> AgentHubMCPUIJSONValue {
-    throw MCPAppDiscoveryError.serverNotFound(serverName)
-  }
-}
-
 public enum MCPAppDiscoveryError: LocalizedError, Sendable {
   case serverNotFound(String)
   case unsupportedTransport(String)
