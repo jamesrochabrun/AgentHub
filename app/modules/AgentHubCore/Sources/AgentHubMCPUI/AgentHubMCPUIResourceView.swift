@@ -530,6 +530,11 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
       case "notifications/message", "ui/notifications/message":
         bridgeHandler?.appDidLogMessage(params)
         return nil
+      case "notifications/cancelled":
+        mcpUILogger.info(
+          "[MCPUIBridge] cancellation notification params=\(Self.valueDescription(params), privacy: .public) resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+        )
+        return nil
       case "ui/notifications/initialized":
         return nil
       case "ui/notifications/size-changed", "ui/size-changed":
@@ -607,7 +612,16 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
       guard let id else { return "notification" }
       if let string = id.stringValue { return string }
       if let number = id.numberValue { return String(number) }
-      return "unknown"
+      return valueDescription(id)
+    }
+
+    private static func valueDescription(_ value: AgentHubMCPUIJSONValue?) -> String {
+      guard let value else { return "nil" }
+      guard let data = try? JSONEncoder().encode(value),
+            let text = String(data: data, encoding: .utf8) else {
+        return String(describing: value.jsonObject)
+      }
+      return text
     }
   }
 }
