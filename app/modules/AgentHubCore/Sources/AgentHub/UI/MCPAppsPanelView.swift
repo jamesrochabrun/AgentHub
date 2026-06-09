@@ -635,6 +635,9 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
 
   func initialize(params: AgentHubMCPUIJSONValue?) async throws -> AgentHubMCPUIJSONValue {
     let protocolVersion = params?["protocolVersion"]?.stringValue ?? "2025-11-21"
+    AppLogger.mcp.info(
+      "[MCPAppHost] initialize resource=\(self.resource.resource.uri, privacy: .public) server=\(self.resource.serverName, privacy: .public) source=\(self.resource.source.rawValue, privacy: .public) protocol=\(protocolVersion, privacy: .public)"
+    )
     let hostInfo: AgentHubMCPUIJSONValue = .object([
       "name": .string("AgentHub"),
       "version": .string("1.0.0")
@@ -664,6 +667,9 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
     arguments: AgentHubMCPUIJSONValue?
   ) async throws -> AgentHubMCPUIJSONValue {
     do {
+      AppLogger.mcp.info(
+        "[MCPAppHost] tool call requested server=\(self.resource.serverName, privacy: .public) tool=\(name, privacy: .public) source=\(self.resource.source.rawValue, privacy: .public)"
+      )
       guard resource.source == .liveDiscovery else {
         throw AgentHubMCPUIBridgeError.permissionDenied("Inline MCP app resources cannot call tools without a resolved server.")
       }
@@ -675,8 +681,15 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
       guard let viewModel else {
         throw AgentHubMCPUIBridgeError.invalidRequest("AgentHub session view model is unavailable.")
       }
-      return try await viewModel.callMCPAppTool(resource: resource, name: name, arguments: arguments)
+      let result = try await viewModel.callMCPAppTool(resource: resource, name: name, arguments: arguments)
+      AppLogger.mcp.info(
+        "[MCPAppHost] tool call done server=\(self.resource.serverName, privacy: .public) tool=\(name, privacy: .public)"
+      )
+      return result
     } catch {
+      AppLogger.mcp.error(
+        "[MCPAppHost] tool call failed server=\(self.resource.serverName, privacy: .public) tool=\(name, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
       report(error: error, deniedTitle: "Tool Call Denied", failureTitle: "Tool Call Failed")
       throw error
     }
@@ -684,8 +697,14 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
 
   func readResource(uri: String) async throws -> AgentHubMCPUIJSONValue {
     do {
+      AppLogger.mcp.info(
+        "[MCPAppHost] resource read requested server=\(self.resource.serverName, privacy: .public) uri=\(uri, privacy: .public) source=\(self.resource.source.rawValue, privacy: .public)"
+      )
       try await consentController.require(.readResource(uri), resource: resource)
       if uri == resource.resource.uri {
+        AppLogger.mcp.info(
+          "[MCPAppHost] resource read served from panel resource uri=\(uri, privacy: .public)"
+        )
         return .object([
           "contents": .array([resourceContentValue(resource.resource)])
         ])
@@ -693,8 +712,15 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
       guard resource.source == .liveDiscovery, let viewModel else {
         throw AgentHubMCPUIBridgeError.permissionDenied("MCP app cannot read resources without a resolved server.")
       }
-      return try await viewModel.readMCPAppResource(resource: resource, uri: uri)
+      let result = try await viewModel.readMCPAppResource(resource: resource, uri: uri)
+      AppLogger.mcp.info(
+        "[MCPAppHost] resource read done server=\(self.resource.serverName, privacy: .public) uri=\(uri, privacy: .public)"
+      )
+      return result
     } catch {
+      AppLogger.mcp.error(
+        "[MCPAppHost] resource read failed server=\(self.resource.serverName, privacy: .public) uri=\(uri, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
       report(error: error, deniedTitle: "Resource Read Denied", failureTitle: "Resource Read Failed")
       throw error
     }
@@ -702,14 +728,27 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
 
   func listResources() async throws -> AgentHubMCPUIJSONValue {
     do {
+      AppLogger.mcp.info(
+        "[MCPAppHost] resources list requested server=\(self.resource.serverName, privacy: .public) source=\(self.resource.source.rawValue, privacy: .public)"
+      )
       try await consentController.require(.listResources, resource: resource)
       guard resource.source == .liveDiscovery, let viewModel else {
+        AppLogger.mcp.info(
+          "[MCPAppHost] resources list served from panel resource server=\(self.resource.serverName, privacy: .public)"
+        )
         return .object([
           "resources": .array([resourceListValue(resource.resource)])
         ])
       }
-      return try await viewModel.listMCPAppResources(resource: resource)
+      let result = try await viewModel.listMCPAppResources(resource: resource)
+      AppLogger.mcp.info(
+        "[MCPAppHost] resources list done server=\(self.resource.serverName, privacy: .public)"
+      )
+      return result
     } catch {
+      AppLogger.mcp.error(
+        "[MCPAppHost] resources list failed server=\(self.resource.serverName, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
       report(error: error, deniedTitle: "Resource List Denied", failureTitle: "Resource List Failed")
       throw error
     }
@@ -717,6 +756,9 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
 
   func openLink(url: URL) async throws {
     do {
+      AppLogger.mcp.info(
+        "[MCPAppHost] open link requested url=\(self.redactedURLDescription(url), privacy: .public) resource=\(self.resource.resource.uri, privacy: .public)"
+      )
       guard resource.resource.metadata.permissions.allowOpenLinks else {
         throw AgentHubMCPUIBridgeError.permissionDenied("MCP app is not allowed to open external links.")
       }
@@ -725,23 +767,49 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
       }
       try await consentController.require(.openLink(url), resource: resource)
       NSWorkspace.shared.open(url)
+      AppLogger.mcp.info(
+        "[MCPAppHost] open link done url=\(self.redactedURLDescription(url), privacy: .public)"
+      )
     } catch {
+      AppLogger.mcp.error(
+        "[MCPAppHost] open link failed url=\(self.redactedURLDescription(url), privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
       report(error: error, deniedTitle: "Link Open Denied", failureTitle: "Link Open Failed")
       throw error
     }
   }
 
   func appDidRequestSize(width: Double?, height: Double?) {
+    AppLogger.mcp.debug(
+      "[MCPAppHost] size requested resource=\(self.resource.resource.uri, privacy: .public) width=\(width ?? -1, privacy: .public) height=\(height ?? -1, privacy: .public)"
+    )
     onSizeChange(width, height)
   }
 
   func appDidRequestTeardown() {
+    AppLogger.mcp.info(
+      "[MCPAppHost] teardown requested resource=\(self.resource.resource.uri, privacy: .public)"
+    )
     onTeardown()
   }
 
-  func appDidSendMessage(_ params: AgentHubMCPUIJSONValue?) {}
-  func appDidUpdateModelContext(_ params: AgentHubMCPUIJSONValue?) {}
-  func appDidLogMessage(_ params: AgentHubMCPUIJSONValue?) {}
+  func appDidSendMessage(_ params: AgentHubMCPUIJSONValue?) {
+    AppLogger.mcp.info(
+      "[MCPAppHost] app message resource=\(self.resource.resource.uri, privacy: .public)"
+    )
+  }
+
+  func appDidUpdateModelContext(_ params: AgentHubMCPUIJSONValue?) {
+    AppLogger.mcp.info(
+      "[MCPAppHost] model context update resource=\(self.resource.resource.uri, privacy: .public)"
+    )
+  }
+
+  func appDidLogMessage(_ params: AgentHubMCPUIJSONValue?) {
+    AppLogger.mcp.info(
+      "[MCPAppHost] app log notification resource=\(self.resource.resource.uri, privacy: .public)"
+    )
+  }
 
   private func hostCapabilitiesValue() -> AgentHubMCPUIJSONValue {
     var capabilities: [String: AgentHubMCPUIJSONValue] = [
@@ -802,6 +870,9 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
     } else {
       isDenied = false
     }
+    AppLogger.mcp.error(
+      "[MCPAppHost] notice title=\(isDenied ? deniedTitle : failureTitle, privacy: .public) message=\(error.localizedDescription, privacy: .public)"
+    )
     onOperationNotice(MCPAppPanelNotice(
       kind: isDenied ? .denied : .error,
       title: isDenied ? deniedTitle : failureTitle,
@@ -853,5 +924,12 @@ final class MCPAppHostBridgeHandler: AgentHubMCPUIBridgeHandler {
       "connectDomains": .array(csp.connectDomains.map { .string($0) }),
       "resourceDomains": .array(csp.resourceDomains.map { .string($0) })
     ])
+  }
+
+  private func redactedURLDescription(_ url: URL) -> String {
+    var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    components?.query = nil
+    components?.fragment = nil
+    return components?.string ?? "\(url.scheme ?? "unknown")://\(url.host ?? "unknown")"
   }
 }

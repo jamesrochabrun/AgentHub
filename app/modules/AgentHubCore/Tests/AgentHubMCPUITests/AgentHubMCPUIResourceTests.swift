@@ -41,4 +41,15 @@ struct AgentHubMCPUIResourceTests {
     #expect(decoded == value)
     #expect(decoded["params"]?["enabled"] == .bool(true))
   }
+
+  @Test("Bridge bootstrap captures parent postMessage fallback")
+  @MainActor
+  func bridgeBootstrapCapturesParentPostMessageFallback() {
+    let script = AgentHubMCPUIWebView.Coordinator.bridgeBootstrapScript().source
+
+    #expect(script.contains("window.postMessage = function"))
+    #expect(script.contains("window.addEventListener('message'"))
+    #expect(script.contains("forwardToNative(event.data)"))
+    #expect(script.contains("event.origin === hostOrigin"))
+  }
 }

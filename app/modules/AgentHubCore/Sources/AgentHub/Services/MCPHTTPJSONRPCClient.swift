@@ -52,19 +52,35 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
   ) async throws -> AgentHubMCPUIJSONValue {
     let id = nextRequestID()
     let envelope = MCPJSONRPCMessage.requestEnvelope(id: id, method: method, params: params)
+    let started = Date()
+    AppLogger.mcp.debug(
+      "[MCPHTTP] request start id=\(id, privacy: .public) method=\(method, privacy: .public) endpoint=\(self.endpointDescription, privacy: .public)"
+    )
 
-    return try await withTimeout(method: method) {
-      switch self.mode {
-      case .streamableHTTP(let endpoint, let legacySSEFallback):
-        do {
-          return try await self.performStreamableHTTPMessage(
-            envelope,
-            expectedID: id,
-            method: method,
-            endpoint: endpoint,
-            allowsLegacySSEFallback: legacySSEFallback
-          )
-        } catch Fallback.legacySSE where legacySSEFallback {
+    do {
+      let result = try await withTimeout(method: method) {
+        switch self.mode {
+        case .streamableHTTP(let endpoint, let legacySSEFallback):
+          do {
+            return try await self.performStreamableHTTPMessage(
+              envelope,
+              expectedID: id,
+              method: method,
+              endpoint: endpoint,
+              allowsLegacySSEFallback: legacySSEFallback
+            )
+          } catch Fallback.legacySSE where legacySSEFallback {
+            AppLogger.mcp.info(
+              "[MCPHTTP] legacy SSE fallback id=\(id, privacy: .public) method=\(method, privacy: .public) endpoint=\(self.redactedEndpointDescription(endpoint), privacy: .public)"
+            )
+            return try await self.performLegacySSEMessage(
+              envelope,
+              expectedID: id,
+              method: method,
+              sseEndpoint: endpoint
+            )
+          }
+        case .legacySSE(let endpoint):
           return try await self.performLegacySSEMessage(
             envelope,
             expectedID: id,
@@ -72,36 +88,59 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
             sseEndpoint: endpoint
           )
         }
-      case .legacySSE(let endpoint):
-        return try await self.performLegacySSEMessage(
-          envelope,
-          expectedID: id,
-          method: method,
-          sseEndpoint: endpoint
-        )
       }
+      let elapsed = Date().timeIntervalSince(started)
+      AppLogger.mcp.debug(
+        "[MCPHTTP] request done id=\(id, privacy: .public) method=\(method, privacy: .public) elapsed=\(elapsed, privacy: .public)"
+      )
+      return result
+    } catch {
+      let elapsed = Date().timeIntervalSince(started)
+      AppLogger.mcp.error(
+        "[MCPHTTP] request failed id=\(id, privacy: .public) method=\(method, privacy: .public) elapsed=\(elapsed, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+      throw error
     }
   }
 
   public func notify(method: String, params: AgentHubMCPUIJSONValue?) async throws {
     let envelope = MCPJSONRPCMessage.notificationEnvelope(method: method, params: params)
+    let started = Date()
+    AppLogger.mcp.debug(
+      "[MCPHTTP] notify start method=\(method, privacy: .public) endpoint=\(self.endpointDescription, privacy: .public)"
+    )
 
-    try await withTimeout(method: method) {
-      switch self.mode {
-      case .streamableHTTP(let endpoint, let legacySSEFallback):
-        do {
-          try await self.performStreamableHTTPNotification(
-            envelope,
-            method: method,
-            endpoint: endpoint,
-            allowsLegacySSEFallback: legacySSEFallback
-          )
-        } catch Fallback.legacySSE where legacySSEFallback {
+    do {
+      try await withTimeout(method: method) {
+        switch self.mode {
+        case .streamableHTTP(let endpoint, let legacySSEFallback):
+          do {
+            try await self.performStreamableHTTPNotification(
+              envelope,
+              method: method,
+              endpoint: endpoint,
+              allowsLegacySSEFallback: legacySSEFallback
+            )
+          } catch Fallback.legacySSE where legacySSEFallback {
+            AppLogger.mcp.info(
+              "[MCPHTTP] legacy SSE fallback notification method=\(method, privacy: .public) endpoint=\(self.redactedEndpointDescription(endpoint), privacy: .public)"
+            )
+            try await self.performLegacySSENotification(envelope, method: method, sseEndpoint: endpoint)
+          }
+        case .legacySSE(let endpoint):
           try await self.performLegacySSENotification(envelope, method: method, sseEndpoint: endpoint)
         }
-      case .legacySSE(let endpoint):
-        try await self.performLegacySSENotification(envelope, method: method, sseEndpoint: endpoint)
       }
+      let elapsed = Date().timeIntervalSince(started)
+      AppLogger.mcp.debug(
+        "[MCPHTTP] notify done method=\(method, privacy: .public) elapsed=\(elapsed, privacy: .public)"
+      )
+    } catch {
+      let elapsed = Date().timeIntervalSince(started)
+      AppLogger.mcp.error(
+        "[MCPHTTP] notify failed method=\(method, privacy: .public) elapsed=\(elapsed, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+      throw error
     }
   }
 
@@ -119,6 +158,9 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
       response,
       bytes: bytes,
       allowsLegacySSEFallback: allowsLegacySSEFallback
+    )
+    AppLogger.mcp.debug(
+      "[MCPHTTP] streamable response method=\(method, privacy: .public) status=\(httpResponse.statusCode, privacy: .public) contentType=\(self.contentType(from: httpResponse), privacy: .public) sessionID=\(httpResponse.value(forHTTPHeaderField: "Mcp-Session-Id") == nil ? "absent" : "present", privacy: .public)"
     )
     storeSessionID(from: httpResponse)
 
@@ -145,6 +187,9 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
       response,
       bytes: bytes,
       allowsLegacySSEFallback: allowsLegacySSEFallback
+    )
+    AppLogger.mcp.debug(
+      "[MCPHTTP] streamable notification response method=\(method, privacy: .public) status=\(httpResponse.statusCode, privacy: .public) contentType=\(self.contentType(from: httpResponse), privacy: .public) sessionID=\(httpResponse.value(forHTTPHeaderField: "Mcp-Session-Id") == nil ? "absent" : "present", privacy: .public)"
     )
     storeSessionID(from: httpResponse)
 
@@ -289,6 +334,9 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
             let result = try MCPJSONRPCMessage.result(from: decoded, expectedID: id, method: method) else {
         continue
       }
+      AppLogger.mcp.debug(
+        "[MCPHTTP] SSE result matched method=\(method, privacy: .public) id=\(id, privacy: .public)"
+      )
       return result
     }
 
@@ -296,6 +344,9 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
        event.event == nil || event.event == "message",
        let decoded = decodeSSEJSON(event.data),
        let result = try MCPJSONRPCMessage.result(from: decoded, expectedID: id, method: method) {
+      AppLogger.mcp.debug(
+        "[MCPHTTP] SSE result matched method=\(method, privacy: .public) id=\(id, privacy: .public)"
+      )
       return result
     }
 
@@ -443,6 +494,20 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     response.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
   }
 
+  private var endpointDescription: String {
+    switch mode {
+    case .streamableHTTP(let endpoint, _), .legacySSE(let endpoint):
+      return redactedEndpointDescription(endpoint)
+    }
+  }
+
+  private func redactedEndpointDescription(_ url: URL) -> String {
+    var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+    components?.query = nil
+    components?.fragment = nil
+    return components?.string ?? "\(url.scheme ?? "unknown")://\(url.host ?? "unknown")"
+  }
+
   private func storeSessionID(from response: HTTPURLResponse) {
     guard let sessionID = response.value(forHTTPHeaderField: "Mcp-Session-Id"), !sessionID.isEmpty else {
       return
@@ -477,6 +542,9 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
       }
       group.addTask {
         try await Task.sleep(for: .seconds(self.requestTimeoutSeconds))
+        AppLogger.mcp.error(
+          "[MCPHTTP] timeout method=\(method, privacy: .public) seconds=\(self.requestTimeoutSeconds, privacy: .public)"
+        )
         throw MCPAppDiscoveryError.requestTimedOut(method)
       }
 

@@ -57,6 +57,7 @@ public struct MonitoringCardView: View {
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
   @State private var showingMCPAppsPanel = false
+  @State private var autoOpenedMCPAppResourceIDs: Set<String> = []
   @AppStorage(AgentHubDefaults.diffDisplayMode)
   private var diffDisplayModeRawValue: String = DiffDisplayMode.inline.rawValue
   @Environment(\.agentHub) private var agentHub
@@ -349,6 +350,9 @@ public struct MonitoringCardView: View {
         await loadWebPreviewCandidateIfNeeded()
       }
     }
+    .onChange(of: detectedMCPAppResourceIDs) { _, ids in
+      autoOpenMCPAppsPanelForAgentResources(ids)
+    }
     .onDrop(
       of: [.agentHubGitHubContextItem, .fileURL, .png, .tiff, .image, .pdf],
       isTargeted: $isDragging
@@ -409,6 +413,28 @@ public struct MonitoringCardView: View {
     default:
       return false
     }
+  }
+
+  private var detectedMCPAppResourceIDs: [String] {
+    (state?.detectedMCPAppResources ?? [])
+      .map(Self.mcpAppResourceAutoOpenID)
+      .sorted()
+  }
+
+  private static func mcpAppResourceAutoOpenID(_ descriptor: MCPAppResourceDescriptor) -> String {
+    "\(descriptor.serverName ?? "inline")|\(descriptor.uri)"
+  }
+
+  private func autoOpenMCPAppsPanelForAgentResources(_ ids: [String]) {
+    let idSet = Set(ids)
+    let newIDs = idSet.subtracting(autoOpenedMCPAppResourceIDs)
+    guard !newIDs.isEmpty else { return }
+
+    autoOpenedMCPAppResourceIDs.formUnion(newIDs)
+    AppLogger.mcp.info(
+      "[MCPAppUX] auto-open panel session=\(session.id, privacy: .public) newResources=\(newIDs.count, privacy: .public)"
+    )
+    showingMCPAppsPanel = true
   }
 
   // MARK: - Drag and Drop

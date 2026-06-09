@@ -65,6 +65,7 @@ private struct MCPAppServerClientKey: Sendable, Hashable {
 
 private actor PooledMCPJSONRPCClient {
   private let configName: String
+  private let transportDescription: String
   private let client: any MCPJSONRPCClientProtocol
   private var isInitialized = false
   private var isInvalidated = false
@@ -72,21 +73,31 @@ private actor PooledMCPJSONRPCClient {
   private var waiters: [CheckedContinuation<Void, Never>] = []
   private var lastUsed = Date()
 
-  init(configName: String, client: any MCPJSONRPCClientProtocol) {
+  init(
+    configName: String,
+    transportDescription: String,
+    client: any MCPJSONRPCClientProtocol
+  ) {
     self.configName = configName
+    self.transportDescription = transportDescription
     self.client = client
   }
 
   func run<T: Sendable>(
+    label: String,
     operation: @Sendable (any MCPJSONRPCClientProtocol) async throws -> T
   ) async throws -> T {
     await waitForTurn()
+    let started = Date()
     do {
       guard !isInvalidated else {
         throw MCPAppDiscoveryError.processClosed(configName)
       }
 
       if !isInitialized {
+        AppLogger.mcp.info(
+          "[MCPPool] initialize start server=\(self.configName, privacy: .public) transport=\(self.transportDescription, privacy: .public)"
+        )
         try client.start()
         _ = try await client.request(
           method: "initialize",
@@ -94,18 +105,32 @@ private actor PooledMCPJSONRPCClient {
         )
         try await client.notify(method: "notifications/initialized", params: nil)
         isInitialized = true
+        AppLogger.mcp.info(
+          "[MCPPool] initialize done server=\(self.configName, privacy: .public)"
+        )
       }
 
+      AppLogger.mcp.debug(
+        "[MCPPool] operation start server=\(self.configName, privacy: .public) label=\(label, privacy: .public)"
+      )
       lastUsed = Date()
       let value = try await operation(client)
       lastUsed = Date()
       finishTurn()
+      let elapsed = Date().timeIntervalSince(started)
+      AppLogger.mcp.debug(
+        "[MCPPool] operation done server=\(self.configName, privacy: .public) label=\(label, privacy: .public) elapsed=\(elapsed, privacy: .public)"
+      )
       return value
     } catch {
       isInvalidated = true
       isInitialized = false
       client.close()
       finishTurn()
+      let elapsed = Date().timeIntervalSince(started)
+      AppLogger.mcp.error(
+        "[MCPPool] operation failed server=\(self.configName, privacy: .public) label=\(label, privacy: .public) elapsed=\(elapsed, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
       throw error
     }
   }
@@ -114,6 +139,9 @@ private actor PooledMCPJSONRPCClient {
     isInvalidated = true
     isInitialized = false
     client.close()
+    AppLogger.mcp.debug(
+      "[MCPPool] invalidated server=\(self.configName, privacy: .public)"
+    )
   }
 
   func isIdleExpired(now: Date, idleTimeoutSeconds: TimeInterval) -> Bool {
@@ -170,12 +198,18 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
   ) async -> MCPAppDiscoverySnapshot {
     let normalizedProjectPath = Self.normalize(projectPath)
     await cleanupIdleClients()
+    AppLogger.mcp.info(
+      "[MCPDiscovery] snapshot start provider=\(provider.rawValue, privacy: .public) project=\(normalizedProjectPath, privacy: .public) forceRefresh=\(forceRefresh, privacy: .public)"
+    )
 
     if forceRefresh {
       await invalidateClients(provider: provider, projectPath: normalizedProjectPath)
     }
 
     let configs = await resolver.serverConfigurations(provider: provider, projectPath: normalizedProjectPath)
+    AppLogger.mcp.info(
+      "[MCPDiscovery] configs provider=\(provider.rawValue, privacy: .public) project=\(normalizedProjectPath, privacy: .public) count=\(configs.count, privacy: .public)"
+    )
     var discovered: [MCPAppResource] = []
     var statuses: [MCPAppServerDiscoveryStatus] = []
 
@@ -183,23 +217,37 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
       let clientKey = MCPAppServerClientKey(config: config)
 
       if !forceRefresh, let cached = resourceCache[clientKey] {
+        AppLogger.mcp.debug(
+          "[MCPDiscovery] cache hit server=\(config.name, privacy: .public) resources=\(cached.count, privacy: .public)"
+        )
         discovered.append(contentsOf: cached)
         statuses.append(discoveryStatus(for: config, resourceCount: cached.count))
         continue
       }
 
       do {
+        AppLogger.mcp.info(
+          "[MCPDiscovery] discover server=\(config.name, privacy: .public) transport=\(config.transportDescription, privacy: .public)"
+        )
         let resources = try await discoverResources(from: config)
         resourceCache[clientKey] = resources
         discovered.append(contentsOf: resources)
         statuses.append(discoveryStatus(for: config, resourceCount: resources.count))
+        AppLogger.mcp.info(
+          "[MCPDiscovery] discover done server=\(config.name, privacy: .public) resources=\(resources.count, privacy: .public)"
+        )
       } catch {
-        AppLogger.session.debug("MCP app discovery failed for \(config.name, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        AppLogger.mcp.error(
+          "[MCPDiscovery] discover failed server=\(config.name, privacy: .public) transport=\(config.transportDescription, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
         resourceCache.removeValue(forKey: clientKey)
         statuses.append(discoveryStatus(for: config, error: error))
       }
     }
 
+    AppLogger.mcp.info(
+      "[MCPDiscovery] snapshot done provider=\(provider.rawValue, privacy: .public) project=\(normalizedProjectPath, privacy: .public) resources=\(discovered.count, privacy: .public) statuses=\(statuses.count, privacy: .public)"
+    )
     return MCPAppDiscoverySnapshot(resources: discovered, serverStatuses: statuses)
   }
 
@@ -215,7 +263,10 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
       projectPath: projectPath,
       serverName: serverName
     )
-    return try await withInitializedClient(config: config) { client in
+    AppLogger.mcp.info(
+      "[MCPDiscovery] tool call start server=\(serverName, privacy: .public) tool=\(name, privacy: .public)"
+    )
+    return try await withInitializedClient(config: config, label: "tools/call:\(name)") { client in
       try await client.request(
         method: "tools/call",
         params: .object([
@@ -237,7 +288,10 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
       projectPath: projectPath,
       serverName: serverName
     )
-    return try await withInitializedClient(config: config) { client in
+    AppLogger.mcp.info(
+      "[MCPDiscovery] resource read start server=\(serverName, privacy: .public) uri=\(uri, privacy: .public)"
+    )
+    return try await withInitializedClient(config: config, label: "resources/read") { client in
       try await client.request(method: "resources/read", params: .object(["uri": .string(uri)]))
     }
   }
@@ -252,7 +306,10 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
       projectPath: projectPath,
       serverName: serverName
     )
-    return try await withInitializedClient(config: config) { client in
+    AppLogger.mcp.info(
+      "[MCPDiscovery] resource list start server=\(serverName, privacy: .public)"
+    )
+    return try await withInitializedClient(config: config, label: "resources/list") { client in
       try await client.request(method: "resources/list", params: .object([:]))
     }
   }
@@ -275,16 +332,22 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
   }
 
   private func discoverResources(from config: MCPServerConfiguration) async throws -> [MCPAppResource] {
-    try await withInitializedClient(config: config) { client in
+    try await withInitializedClient(config: config, label: "discover") { client in
       let tools = try await optionalDiscoveryRequest(client: client, method: "tools/list")
       let listed = try await optionalDiscoveryRequest(client: client, method: "resources/list")
 
       let toolDescriptors = descriptors(fromToolsResult: tools, serverName: config.name)
       let listedDescriptors = descriptors(fromResourcesListResult: listed, serverName: config.name)
       let descriptors = deduplicatedDescriptors(toolDescriptors + listedDescriptors)
+      AppLogger.mcp.info(
+        "[MCPDiscovery] descriptors server=\(config.name, privacy: .public) tools=\(toolDescriptors.count, privacy: .public) resources=\(listedDescriptors.count, privacy: .public) deduped=\(descriptors.count, privacy: .public)"
+      )
 
       var resources: [MCPAppResource] = []
       for descriptor in descriptors {
+        AppLogger.mcp.debug(
+          "[MCPDiscovery] read app resource server=\(config.name, privacy: .public) uri=\(descriptor.uri, privacy: .public)"
+        )
         guard let resource = try? await readMCPUIResource(
           uri: descriptor.uri,
           client: client,
@@ -330,6 +393,7 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
 
   private func withInitializedClient<T: Sendable>(
     config: MCPServerConfiguration,
+    label: String,
     operation: @Sendable (any MCPJSONRPCClientProtocol) async throws -> T
   ) async throws -> T {
     await cleanupIdleClients()
@@ -337,7 +401,7 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
     let pooledClient = try pooledClient(for: clientKey, config: config)
 
     do {
-      return try await pooledClient.run(operation: operation)
+      return try await pooledClient.run(label: label, operation: operation)
     } catch {
       clientPool.removeValue(forKey: clientKey)
       resourceCache.removeValue(forKey: clientKey)
@@ -364,8 +428,15 @@ public actor MCPAppDiscoveryService: MCPAppDiscoveryServiceProtocol {
     }
 
     let client = try clientFactory.makeClient(config: config, requestTimeoutSeconds: requestTimeoutSeconds)
-    let pooledClient = PooledMCPJSONRPCClient(configName: config.name, client: client)
+    let pooledClient = PooledMCPJSONRPCClient(
+      configName: config.name,
+      transportDescription: config.transportDescription,
+      client: client
+    )
     clientPool[clientKey] = pooledClient
+    AppLogger.mcp.debug(
+      "[MCPPool] created server=\(config.name, privacy: .public) transport=\(config.transportDescription, privacy: .public)"
+    )
     return pooledClient
   }
 

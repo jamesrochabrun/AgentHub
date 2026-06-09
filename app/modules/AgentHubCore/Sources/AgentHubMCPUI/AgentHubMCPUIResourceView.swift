@@ -5,6 +5,9 @@
 
 import SwiftUI
 import WebKit
+import os
+
+private let mcpUILogger = Logger(subsystem: "com.agenthub", category: "MCPUI")
 
 public struct AgentHubMCPUIResourceView: View {
   private let resource: AgentHubMCPUIResource
@@ -177,6 +180,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     webView.navigationDelegate = context.coordinator
     webView.uiDelegate = context.coordinator
     context.coordinator.webView = webView
+    mcpUILogger.info(
+      "[MCPUIBridge] load resource uri=\(resource.uri, privacy: .public) mime=\(resource.mimeType, privacy: .public)"
+    )
     webView.loadHTMLString(Self.hardenedHTML(for: resource), baseURL: Self.baseURL(for: resource))
     context.coordinator.loadedResource = resource
     return webView
@@ -185,6 +191,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
   public func updateNSView(_ webView: WKWebView, context: Context) {
     context.coordinator.bridgeHandler = bridgeHandler
     guard context.coordinator.loadedResource != resource else { return }
+    mcpUILogger.info(
+      "[MCPUIBridge] reload resource uri=\(resource.uri, privacy: .public) mime=\(resource.mimeType, privacy: .public)"
+    )
     webView.loadHTMLString(Self.hardenedHTML(for: resource), baseURL: Self.baseURL(for: resource))
     context.coordinator.loadedResource = resource
   }
@@ -193,6 +202,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     coordinator.sendNotification(method: "ui/resource-teardown", params: .object([
       "uri": .string(coordinator.loadedResource?.uri ?? "")
     ]))
+    mcpUILogger.info(
+      "[MCPUIBridge] dismantle resource uri=\(coordinator.loadedResource?.uri ?? "unknown", privacy: .public)"
+    )
     webView.configuration.userContentController.removeScriptMessageHandler(
       forName: Coordinator.scriptMessageHandlerName
     )
@@ -282,9 +294,14 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
       }
 
       guard let envelope = AgentHubMCPUIJSONValue.fromJSONObject(body).objectValue else {
+        mcpUILogger.error("[MCPUIBridge] invalid native message body")
         sendError(id: nil, code: -32600, message: "Invalid JSON-RPC message")
         return
       }
+
+      mcpUILogger.debug(
+        "[MCPUIBridge] app->host raw method=\(envelope["method"]?.stringValue ?? "response", privacy: .public) id=\(Self.idDescription(envelope["id"]), privacy: .public) resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+      )
 
       Task { @MainActor in
         await handleMessage(envelope)
@@ -302,6 +319,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
       }
 
       if let url = navigationAction.request.url, isExternalHTTPURL(url) {
+        mcpUILogger.info(
+          "[MCPUIBridge] external navigation requested url=\(Self.redactedURLDescription(url), privacy: .public)"
+        )
         Task { @MainActor in
           try? await bridgeHandler?.openLink(url: url)
         }
@@ -316,11 +336,46 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
       windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
       if let url = navigationAction.request.url, isExternalHTTPURL(url) {
+        mcpUILogger.info(
+          "[MCPUIBridge] new-window navigation requested url=\(Self.redactedURLDescription(url), privacy: .public)"
+        )
         Task { @MainActor in
           try? await bridgeHandler?.openLink(url: url)
         }
       }
       return nil
+    }
+
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+      mcpUILogger.info(
+        "[MCPUIBridge] navigation finished resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+      )
+    }
+
+    public func webView(
+      _ webView: WKWebView,
+      didFail navigation: WKNavigation!,
+      withError error: Error
+    ) {
+      mcpUILogger.error(
+        "[MCPUIBridge] navigation failed resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+    }
+
+    public func webView(
+      _ webView: WKWebView,
+      didFailProvisionalNavigation navigation: WKNavigation!,
+      withError error: Error
+    ) {
+      mcpUILogger.error(
+        "[MCPUIBridge] provisional navigation failed resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+      )
+    }
+
+    public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+      mcpUILogger.error(
+        "[MCPUIBridge] web content process terminated resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+      )
     }
 
     func sendNotification(method: String, params: AgentHubMCPUIJSONValue?) {
@@ -329,6 +384,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
         "method": .string(method),
         "params": params ?? .null
       ])
+      mcpUILogger.debug(
+        "[MCPUIBridge] host->app notification method=\(method, privacy: .public) resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+      )
       sendToApp(message)
     }
 
@@ -339,25 +397,47 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
         window.__agentHubMCPBridgeInstalled = true;
         const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.\(scriptMessageHandlerName);
         const originalPostMessage = window.postMessage ? window.postMessage.bind(window) : null;
+        const hostOrigin = 'agenthub://host';
+
+        function parseJSONRPC(message) {
+          if (!message) return null;
+          if (typeof message === 'string') {
+            try { message = JSON.parse(message); } catch (error) { return null; }
+          }
+          if (typeof message !== 'object' || message.jsonrpc !== '2.0') return null;
+          if (!message.method) return null;
+          return message;
+        }
+
+        function forwardToNative(message) {
+          const rpc = parseJSONRPC(message);
+          if (!rpc || !native) return false;
+          native.postMessage(JSON.stringify(rpc));
+          return true;
+        }
 
         window.__agentHubMCPReceive = function(message) {
           const event = new MessageEvent('message', {
             data: message,
-            origin: 'agenthub://host',
+            origin: hostOrigin,
             source: window
           });
           window.dispatchEvent(event);
         };
 
         window.postMessage = function(message, targetOrigin) {
-          if (native) {
-            native.postMessage(JSON.stringify(message));
+          if (forwardToNative(message)) {
             return;
           }
           if (originalPostMessage) {
             return originalPostMessage(message, targetOrigin);
           }
         };
+
+        window.addEventListener('message', function(event) {
+          if (event.origin === hostOrigin) return;
+          forwardToNative(event.data);
+        }, true);
       })();
       """
       return WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -365,17 +445,23 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
 
     private func handleMessage(_ envelope: [String: AgentHubMCPUIJSONValue]) async {
       guard envelope["jsonrpc"]?.stringValue == "2.0" else {
+        mcpUILogger.error("[MCPUIBridge] invalid JSON-RPC version")
         sendError(id: envelope["id"], code: -32600, message: "Invalid JSON-RPC version")
         return
       }
 
       guard let method = envelope["method"]?.stringValue else {
+        mcpUILogger.error("[MCPUIBridge] missing method")
         sendError(id: envelope["id"], code: -32600, message: "Missing method")
         return
       }
 
       let id = envelope["id"]
       let params = envelope["params"]
+      let started = Date()
+      mcpUILogger.info(
+        "[MCPUIBridge] handle start method=\(method, privacy: .public) id=\(Self.idDescription(id), privacy: .public) resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+      )
 
       do {
         if let result = try await handle(method: method, params: params) {
@@ -385,7 +471,15 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
         } else if let id {
           sendResult(id: id, result: .object([:]))
         }
+        let elapsed = Date().timeIntervalSince(started)
+        mcpUILogger.info(
+          "[MCPUIBridge] handle done method=\(method, privacy: .public) id=\(Self.idDescription(id), privacy: .public) elapsed=\(elapsed, privacy: .public)"
+        )
       } catch {
+        let elapsed = Date().timeIntervalSince(started)
+        mcpUILogger.error(
+          "[MCPUIBridge] handle failed method=\(method, privacy: .public) id=\(Self.idDescription(id), privacy: .public) elapsed=\(elapsed, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+        )
         if let id {
           sendError(id: id, code: -32000, message: error.localizedDescription)
         }
@@ -454,6 +548,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     }
 
     private func sendResult(id: AgentHubMCPUIJSONValue, result: AgentHubMCPUIJSONValue) {
+      mcpUILogger.debug(
+        "[MCPUIBridge] host->app result id=\(Self.idDescription(id), privacy: .public) resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+      )
       sendToApp(.object([
         "jsonrpc": .string("2.0"),
         "id": id,
@@ -462,6 +559,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     }
 
     private func sendError(id: AgentHubMCPUIJSONValue?, code: Int, message: String) {
+      mcpUILogger.error(
+        "[MCPUIBridge] host->app error id=\(Self.idDescription(id), privacy: .public) code=\(code, privacy: .public) message=\(message, privacy: .public) resource=\(self.loadedResource?.uri ?? "unknown", privacy: .public)"
+      )
       var envelope: [String: AgentHubMCPUIJSONValue] = [
         "jsonrpc": .string("2.0"),
         "error": .object([
@@ -479,14 +579,35 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
       guard let webView else { return }
       guard let data = try? JSONEncoder().encode(message),
             let json = String(data: data, encoding: .utf8) else {
+        mcpUILogger.error("[MCPUIBridge] failed to encode host message")
         return
       }
-      webView.evaluateJavaScript("window.__agentHubMCPReceive && window.__agentHubMCPReceive(\(json));")
+      webView.evaluateJavaScript("window.__agentHubMCPReceive && window.__agentHubMCPReceive(\(json));") { _, error in
+        if let error {
+          mcpUILogger.error(
+            "[MCPUIBridge] failed to deliver host message error=\(error.localizedDescription, privacy: .public)"
+          )
+        }
+      }
     }
 
     private func isExternalHTTPURL(_ url: URL) -> Bool {
       guard let scheme = url.scheme?.lowercased() else { return false }
       return scheme == "http" || scheme == "https"
+    }
+
+    private static func redactedURLDescription(_ url: URL) -> String {
+      var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+      components?.query = nil
+      components?.fragment = nil
+      return components?.string ?? "\(url.scheme ?? "unknown")://\(url.host ?? "unknown")"
+    }
+
+    private static func idDescription(_ id: AgentHubMCPUIJSONValue?) -> String {
+      guard let id else { return "notification" }
+      if let string = id.stringValue { return string }
+      if let number = id.numberValue { return String(number) }
+      return "unknown"
     }
   }
 }
