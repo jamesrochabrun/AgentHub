@@ -55,13 +55,13 @@ public enum AgentHubMCPUIJSONValue: Codable, Sendable, Equatable, Hashable {
     switch value {
     case is NSNull:
       return .null
-    case let bool as Bool:
-      return .bool(bool)
     case let number as NSNumber:
       if CFGetTypeID(number) == CFBooleanGetTypeID() {
         return .bool(number.boolValue)
       }
       return .number(number.doubleValue)
+    case let bool as Bool:
+      return .bool(bool)
     case let string as String:
       return .string(string)
     case let array as [Any]:

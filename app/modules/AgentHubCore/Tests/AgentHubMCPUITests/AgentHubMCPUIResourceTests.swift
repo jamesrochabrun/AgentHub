@@ -42,6 +42,17 @@ struct AgentHubMCPUIResourceTests {
     #expect(decoded["params"]?["enabled"] == .bool(true))
   }
 
+  @Test("JSONSerialization numbers are not bridged as booleans")
+  func jsonSerializationNumbersAreNotBridgedAsBooleans() throws {
+    let data = #"{"jsonrpc":"2.0","id":0,"params":{"enabled":false,"count":1}}"#.data(using: .utf8)!
+    let object = try JSONSerialization.jsonObject(with: data)
+    let value = AgentHubMCPUIJSONValue.fromJSONObject(object)
+
+    #expect(value["id"] == .number(0))
+    #expect(value["params"]?["enabled"] == .bool(false))
+    #expect(value["params"]?["count"] == .number(1))
+  }
+
   @Test("Bridge bootstrap captures parent postMessage fallback")
   @MainActor
   func bridgeBootstrapCapturesParentPostMessageFallback() {
