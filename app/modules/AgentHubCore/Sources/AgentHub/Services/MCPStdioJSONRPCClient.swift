@@ -109,13 +109,12 @@ public final class MCPStdioJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked S
     guard process.isRunning else { return }
     process.terminate()
 
-    let semaphore = DispatchSemaphore(value: 0)
-    DispatchQueue.global(qos: .utility).async {
-      self.process.waitUntilExit()
-      semaphore.signal()
-    }
-    if semaphore.wait(timeout: .now() + 0.5) == .timedOut, process.isRunning {
-      kill(process.processIdentifier, SIGKILL)
+    let process = process
+    let processID = process.processIdentifier
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+      if process.isRunning {
+        kill(processID, SIGKILL)
+      }
     }
   }
 
