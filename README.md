@@ -78,7 +78,7 @@ File explorer, quick open, and built-in editor
 
 ## MCP Apps
 
-AgentHub can discover MCP app resources from configured Claude and Codex MCP servers and render `text/html;profile=mcp-app` resources inside a local, non-persistent WKWebView. Inline `ui://` resources detected in session JSONL are preview-only unless they match a configured live MCP server.
+When an agent in a monitored **Claude or Codex** session produces an MCP app UI — e.g. an excalidraw diagram from `mcp__excalidraw__create_view` — AgentHub renders it in a dedicated side panel. An MCP app is treated as the *output of a tool call*: a session-card **MCP** button appears once the agent makes such a call, and opening it shows the live app seeded with that call's data. There is no proactive server discovery; AgentHub contacts an MCP server only lazily, scoped to a server the agent actually used, to fetch the app shell and serve in-app callbacks (which prompt for consent).
 
 Supported MCP config shapes:
 
@@ -86,18 +86,14 @@ Supported MCP config shapes:
 - Codex `~/.codex/config.toml`: `[mcp_servers.<name>]` tables with `command`, `args`, `cwd`, `env = { ... }`, and `[mcp_servers.<name>.env]`.
 - Remote MCP servers: unauthenticated HTTP/streamable HTTP or legacy SSE using `url`, `serverUrl`, `serverURL`, `server_url`, `endpoint`, or `uri`, with `type`/`transport`/`transportType` values such as `http`, `streamable-http`, or `sse`.
 
-Current limitations:
+Notes & current limitations:
 
-- Authenticated remote MCP servers are reported as unsupported for this release. AgentHub does not persist MCP secrets in UserDefaults and does not mutate repo config to add credentials.
-- MCP app HTML must ask for panel-local consent before tool calls, resource reads/lists, or external links. Consent lasts only for the current MCP panel instance.
-- CSP metadata is enforced by the reusable `AgentHubMCPUI` renderer; session/server routing and consent decisions stay in AgentHubCore.
+- Authenticated remote MCP servers are unsupported for this release. AgentHub does not persist MCP secrets and does not mutate repo config to add credentials.
+- In-app tool calls, resource reads, and external links require consent; consent lasts only for the current panel instance.
+- CSP is enforced by the reusable `AgentHubMCPUI` renderer; session/server routing stays in AgentHubCore.
+- Codex host rendering requires the MCP server to be in `~/.codex/config.toml` (capture works regardless).
 
-Validation:
-
-- Use the MCP button on a session row to open discovered apps or discovery errors.
-- Test with a fake stdio MCP server exposing a `ui://` resource, a fake HTTP/SSE MCP server, and JSONL-detected inline resources.
-- Exercise tool calls, resource reads, external links, CSP blocking, refresh, and app teardown.
-- The known-good app build path is `xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHub build`. Full SwiftPM tests are still blocked by the existing CodeEditSymbols `Bundle.module` package issue.
+See **[`MCPApps.md`](MCPApps.md)** for the architecture, data flow, key files, invariants, current state, and the tracked list of remaining work. The known-good build path is `xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHub build`.
 
 ## Storybook
 
