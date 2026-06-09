@@ -53,7 +53,7 @@ let package = Package(
     .package(url: "https://github.com/appstefan/HighlightSwift", from: "1.1.0"),
     .package(url: "https://github.com/jpsim/Yams", from: "5.0.0"),
     .package(url: "https://github.com/lukilabs/beautiful-mermaid-swift", from: "0.1.0"),
-    .package(url: "https://github.com/CodeEditApp/CodeEditSourceEditor", exact: "0.15.2"),
+    .package(path: "../CodeEditSourceEditor"),
     .package(url: "https://github.com/CodeEditApp/CodeEditLanguages", exact: "0.1.20"),
   ],
   targets: [

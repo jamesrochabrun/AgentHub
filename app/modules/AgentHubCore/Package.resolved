@@ -1,5 +1,5 @@
 {
-  "originHash" : "9ba6f93bfaf3ff545d8c09a707a4bd0be9400a120911bb737ec9b078b996fe53",
+  "originHash" : "9fa82c441080cdd2403aec838d5bafa179d9389298845382ec6514ebc729e708",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -26,24 +26,6 @@
       "state" : {
         "revision" : "331d5dbc5fc8513be5848fce8a2a312908f36a11",
         "version" : "0.1.20"
-      }
-    },
-    {
-      "identity" : "codeeditsourceeditor",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/CodeEditApp/CodeEditSourceEditor",
-      "state" : {
-        "revision" : "424453d2232c9912933a3b5a1f3d3df669404ed0",
-        "version" : "0.15.2"
-      }
-    },
-    {
-      "identity" : "codeeditsymbols",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/CodeEditApp/CodeEditSymbols.git",
-      "state" : {
-        "revision" : "ae69712b08571c4469c2ed5cd38ad9f19439793e",
-        "version" : "0.2.3"
       }
     },
     {
