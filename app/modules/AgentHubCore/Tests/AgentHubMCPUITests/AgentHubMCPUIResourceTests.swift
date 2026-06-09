@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import AgentHubMCPUI
@@ -21,5 +22,45 @@ struct AgentHubMCPUIResourceTests {
     let escaped = AgentHubMCPUIHTML.escape("<script data-x=\"1\">'&'</script>")
 
     #expect(escaped == "&lt;script data-x=&quot;1&quot;&gt;&#39;&amp;&#39;&lt;/script&gt;")
+  }
+
+  @Test("JSON values round-trip through Codable")
+  func jsonValuesRoundTripThroughCodable() throws {
+    let value = AgentHubMCPUIJSONValue.object([
+      "method": .string("tools/call"),
+      "params": .object([
+        "enabled": .bool(true),
+        "count": .number(2),
+        "items": .array([.string("a"), .null])
+      ])
+    ])
+
+    let data = try JSONEncoder().encode(value)
+    let decoded = try JSONDecoder().decode(AgentHubMCPUIJSONValue.self, from: data)
+
+    #expect(decoded == value)
+    #expect(decoded["params"]?["enabled"] == .bool(true))
+  }
+
+  @Test("JSONSerialization numbers are not bridged as booleans")
+  func jsonSerializationNumbersAreNotBridgedAsBooleans() throws {
+    let data = #"{"jsonrpc":"2.0","id":0,"params":{"enabled":false,"count":1}}"#.data(using: .utf8)!
+    let object = try JSONSerialization.jsonObject(with: data)
+    let value = AgentHubMCPUIJSONValue.fromJSONObject(object)
+
+    #expect(value["id"] == .number(0))
+    #expect(value["params"]?["enabled"] == .bool(false))
+    #expect(value["params"]?["count"] == .number(1))
+  }
+
+  @Test("Bridge bootstrap captures parent postMessage fallback")
+  @MainActor
+  func bridgeBootstrapCapturesParentPostMessageFallback() {
+    let script = AgentHubMCPUIWebView.Coordinator.bridgeBootstrapScript().source
+
+    #expect(script.contains("window.postMessage = function"))
+    #expect(script.contains("window.addEventListener('message'"))
+    #expect(script.contains("forwardToNative(event.data)"))
+    #expect(script.contains("event.origin === hostOrigin"))
   }
 }

@@ -42,6 +42,13 @@ public struct SessionMonitorState: Equatable, Sendable {
   // Resource links detected in session responses
   public var detectedResourceLinks: [ResourceLink]
 
+  // MCP app resources detected inline in session JSONL output
+  public var detectedMCPAppResources: [MCPAppResourceDescriptor]
+
+  // MCP app tool invocations (input + result) for app-capable servers; the
+  // ViewModel resolves which are app-bearing and renders them in the side panel.
+  public var detectedMCPAppInvocations: [MCPAppInvocation]
+
   // Localhost URL detected from agent's dev server output
   public var detectedLocalhostURL: URL?
 
@@ -62,6 +69,8 @@ public struct SessionMonitorState: Equatable, Sendable {
     recentActivities: [ActivityEntry] = [],
     hasMermaidContent: Bool = false,
     detectedResourceLinks: [ResourceLink] = [],
+    detectedMCPAppResources: [MCPAppResourceDescriptor] = [],
+    detectedMCPAppInvocations: [MCPAppInvocation] = [],
     detectedLocalhostURL: URL? = nil
   ) {
     self.status = status
@@ -80,6 +89,8 @@ public struct SessionMonitorState: Equatable, Sendable {
     self.recentActivities = recentActivities
     self.hasMermaidContent = hasMermaidContent
     self.detectedResourceLinks = detectedResourceLinks
+    self.detectedMCPAppResources = detectedMCPAppResources
+    self.detectedMCPAppInvocations = detectedMCPAppInvocations
     self.detectedLocalhostURL = detectedLocalhostURL
   }
 

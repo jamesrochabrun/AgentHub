@@ -6,6 +6,7 @@
 //
 
 import AgentHubGitHub
+import AgentHubMCPUI
 import Foundation
 
 // MARK: - SessionJSONLParser
@@ -16,6 +17,8 @@ public struct SessionJSONLParser {
   private static let maxRecentActivities = 100
   private static let maxDetailedCodeChangeActivities = 5
   private static let maxDetectedResourceLinks = 50
+  private static let maxDetectedMCPAppResources = 50
+  private static let maxDetectedMCPAppInvocations = 12
 
   // MARK: - Entry Types
 
@@ -90,6 +93,12 @@ public struct SessionJSONLParser {
     public var gitBranch: String?
     public var hasMermaidContent: Bool = false
     public var detectedResourceLinks: [ResourceLink] = []
+    public var detectedMCPAppResources: [MCPAppResourceDescriptor] = []
+    /// Completed MCP tool invocations (input + result) for app-capable servers.
+    /// The ViewModel resolves which are app-bearing (via tools/list) and renders them.
+    public var detectedMCPAppInvocations: [MCPAppInvocation] = []
+    /// In-flight MCP tool calls keyed by tool_use id, finalized when the result arrives.
+    public var pendingMCPInvocations: [String: MCPAppInvocation] = [:]
     public var detectedLocalhostURL: URL?
 
     public init() {}
@@ -263,12 +272,31 @@ public struct SessionJSONLParser {
           )
 
           appendResourceLinks(extractResourceLinks(from: block.input, timestamp: timestamp), to: &result)
+          appendMCPAppResources(
+            extractMCPAppResources(
+              from: block.input,
+              serverName: MCPAppResourceExtractor.serverName(fromToolName: name)
+            ),
+            to: &result
+          )
+
+          // Capture the in-flight MCP tool call so we can render its app once
+          // the result arrives (see `detectedMCPAppInvocations`).
+          if let server = MCPAppResourceExtractor.serverName(fromToolName: name) {
+            result.pendingMCPInvocations[id] = MCPAppInvocation(
+              id: id,
+              serverName: server,
+              toolName: Self.mcpToolShortName(fromToolName: name),
+              arguments: block.input.map { AgentHubMCPUIJSONValue(any: $0.value) }
+            )
+          }
         }
 
       case "tool_result":
         if let toolUseId = block.toolUseId {
           // Find tool name before removing from pending
           let toolName = result.pendingToolUses[toolUseId]?.toolName ?? "unknown"
+          let serverName = MCPAppResourceExtractor.serverName(fromToolName: toolName)
 
           // Remove from pending - tool completed
           result.pendingToolUses.removeValue(forKey: toolUseId)
@@ -287,6 +315,22 @@ public struct SessionJSONLParser {
             result.detectedLocalhostURL = localhostURL
           }
           appendResourceLinks(extractResourceLinks(from: block.content, timestamp: timestamp), to: &result)
+          appendMCPAppResources(
+            extractMCPAppResources(from: block.content, serverName: serverName),
+            to: &result
+          )
+
+          // Finalize a captured MCP tool call with its result.
+          if let pending = result.pendingMCPInvocations.removeValue(forKey: toolUseId) {
+            let finalized = MCPAppInvocation(
+              id: pending.id,
+              serverName: pending.serverName,
+              toolName: pending.toolName,
+              arguments: pending.arguments,
+              result: block.content.map { AgentHubMCPUIJSONValue(any: $0.value) }
+            )
+            appendMCPAppInvocation(finalized, to: &result)
+          }
         }
 
       case "thinking":
@@ -303,6 +347,7 @@ public struct SessionJSONLParser {
             result.hasMermaidContent = true
           }
           appendResourceLinks(extractResourceLinks(from: text, timestamp: timestamp), to: &result)
+          appendMCPAppResources(MCPAppResourceExtractor.extract(from: text), to: &result)
           // Extract localhost URLs from assistant text (e.g. "Your app is running at http://localhost:5173")
           if let localhostURL = extractLocalhostURLFromText(text) {
             AppLogger.devServer.info("[SessionJSONLParser] Detected localhost URL from assistant text: \(localhostURL.absoluteString)")
@@ -545,9 +590,55 @@ public struct SessionJSONLParser {
     }
   }
 
+  private static func appendMCPAppResources(
+    _ descriptors: [MCPAppResourceDescriptor],
+    to result: inout ParseResult
+  ) {
+    for descriptor in descriptors where !result.detectedMCPAppResources.contains(where: {
+      $0.serverName == descriptor.serverName && $0.uri == descriptor.uri
+    }) {
+      result.detectedMCPAppResources.append(descriptor)
+    }
+
+    if result.detectedMCPAppResources.count > maxDetectedMCPAppResources {
+      result.detectedMCPAppResources.removeFirst(
+        result.detectedMCPAppResources.count - maxDetectedMCPAppResources
+      )
+    }
+  }
+
+  /// Extracts the server's tool name from a fully-qualified `mcp__<server>__<tool>`
+  /// name (tool names may contain single underscores, so split on the `__` delimiter).
+  static func mcpToolShortName(fromToolName name: String) -> String {
+    let parts = name.components(separatedBy: "__")
+    guard parts.count >= 3, parts[0] == "mcp" else { return name }
+    return parts[2...].joined(separator: "__")
+  }
+
+  private static func appendMCPAppInvocation(
+    _ invocation: MCPAppInvocation,
+    to result: inout ParseResult
+  ) {
+    result.detectedMCPAppInvocations.removeAll { $0.id == invocation.id }
+    result.detectedMCPAppInvocations.append(invocation)
+    if result.detectedMCPAppInvocations.count > maxDetectedMCPAppInvocations {
+      result.detectedMCPAppInvocations.removeFirst(
+        result.detectedMCPAppInvocations.count - maxDetectedMCPAppInvocations
+      )
+    }
+  }
+
   private static func extractResourceLinks(from content: AnyCodable?, timestamp: Date?) -> [ResourceLink] {
     guard let content else { return [] }
     return extractResourceLinks(fromJSONValue: content.value, timestamp: timestamp)
+  }
+
+  private static func extractMCPAppResources(
+    from content: AnyCodable?,
+    serverName: String?
+  ) -> [MCPAppResourceDescriptor] {
+    guard let content else { return [] }
+    return MCPAppResourceExtractor.extract(from: content.value, serverName: serverName)
   }
 
   private static func extractResourceLinks(fromJSONValue value: Any, timestamp: Date?) -> [ResourceLink] {

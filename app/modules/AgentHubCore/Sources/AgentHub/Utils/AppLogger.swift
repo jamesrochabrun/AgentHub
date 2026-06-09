@@ -50,4 +50,7 @@ public enum AppLogger {
 
   /// GitHub CLI operations (PRs, issues, reviews, checks)
   public static let github = Logger(subsystem: subsystem, category: "GitHub")
+
+  /// MCP app discovery, transports, and hosted MCP UI bridge traffic
+  public static let mcp = Logger(subsystem: subsystem, category: "MCP")
 }

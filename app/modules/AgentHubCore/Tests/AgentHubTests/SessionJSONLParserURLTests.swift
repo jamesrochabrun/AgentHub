@@ -141,4 +141,35 @@ struct SessionJSONLParserURLTests {
     #expect(result.detectedResourceLinks[0].url == "https://example.com")
   }
 
+  @Test("Detects inline MCP app resource from tool metadata")
+  func detectsInlineMCPAppResourceFromToolMetadata() {
+    let line = """
+      {"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"mcp__charts__show_dashboard","input":{"_meta":{"ui":{"resourceUri":"ui://charts/dashboard","title":"Dashboard"}}}}]}}
+      """
+    var result = SessionJSONLParser.ParseResult()
+    SessionJSONLParser.parseNewLines([line], into: &result)
+
+    let descriptor = result.detectedMCPAppResources.first
+    #expect(descriptor?.serverName == "charts")
+    #expect(descriptor?.uri == "ui://charts/dashboard")
+    #expect(descriptor?.title == "Dashboard")
+  }
+
+  @Test("Detects inline MCP app resource HTML from tool result")
+  func detectsInlineMCPAppResourceHTMLFromToolResult() {
+    let assistantLine = """
+      {"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"mcp__charts__show_dashboard","input":{}}]}}
+      """
+    let userLine = """
+      {"type":"user","timestamp":"2026-01-01T00:00:01Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"resource","resource":{"uri":"ui://charts/dashboard","mimeType":"text/html;profile=mcp-app","text":"<main>Chart</main>"}}]}]}}
+      """
+    var result = SessionJSONLParser.ParseResult()
+    SessionJSONLParser.parseNewLines([assistantLine, userLine], into: &result)
+
+    let descriptor = result.detectedMCPAppResources.first
+    #expect(descriptor?.serverName == "charts")
+    #expect(descriptor?.uri == "ui://charts/dashboard")
+    #expect(descriptor?.text == "<main>Chart</main>")
+  }
+
 }

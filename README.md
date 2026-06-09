@@ -76,6 +76,25 @@ AgentHub includes a built-in file explorer and editor for supported text files. 
 
 File explorer, quick open, and built-in editor
 
+## MCP Apps
+
+When an agent in a monitored **Claude or Codex** session produces an MCP app UI — e.g. an excalidraw diagram from `mcp__excalidraw__create_view` — AgentHub renders it in a dedicated side panel. An MCP app is treated as the *output of a tool call*: a session-card **MCP** button appears once the agent makes such a call, and opening it shows the live app seeded with that call's data. There is no proactive server discovery; AgentHub contacts an MCP server only lazily, scoped to a server the agent actually used, to fetch the app shell and serve in-app callbacks (which prompt for consent).
+
+Supported MCP config shapes:
+
+- Claude `~/.claude.json`: top-level or per-project `mcpServers`, including stdio servers with `command`, `args`, `env`, and `cwd`/`workingDirectory`.
+- Codex `~/.codex/config.toml`: `[mcp_servers.<name>]` tables with `command`, `args`, `cwd`, `env = { ... }`, and `[mcp_servers.<name>.env]`.
+- Remote MCP servers: unauthenticated HTTP/streamable HTTP or legacy SSE using `url`, `serverUrl`, `serverURL`, `server_url`, `endpoint`, or `uri`, with `type`/`transport`/`transportType` values such as `http`, `streamable-http`, or `sse`.
+
+Notes & current limitations:
+
+- Authenticated remote MCP servers are unsupported for this release. AgentHub does not persist MCP secrets and does not mutate repo config to add credentials.
+- In-app tool calls, resource reads, and external links require consent; consent lasts only for the current panel instance.
+- CSP is enforced by the reusable `AgentHubMCPUI` renderer; session/server routing stays in AgentHubCore.
+- Codex host rendering requires the MCP server to be in `~/.codex/config.toml` (capture works regardless).
+
+See **[`MCPApps.md`](MCPApps.md)** for the architecture, data flow, key files, invariants, current state, and the tracked list of remaining work. The known-good build path is `xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHub build`.
+
 ## Storybook
 
 When AgentHub detects a Storybook configuration in a project, the regular **Preview** button on each session card is replaced by a dedicated **Storybook** button. Clicking it spawns the Storybook dev server (via `npm run storybook`) and opens the web preview pane pinned to the Storybook URL — independently of any other dev server the agent has running.

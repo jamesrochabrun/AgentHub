@@ -133,6 +133,11 @@ public final class AgentHubProvider {
     WebPreviewCandidateService.shared
   }()
 
+  /// Discovers and routes MCP App UI resources exposed by configured MCP servers.
+  public private(set) lazy var mcpAppDiscoveryService: any MCPAppDiscoveryServiceProtocol = {
+    MCPAppDiscoveryService.shared
+  }()
+
   /// Cached project-level detector for inline diff tab visibility.
   lazy var diffAvailabilityService: any DiffAvailabilityServiceProtocol = {
     DiffAvailabilityService.shared
@@ -445,6 +450,7 @@ public final class AgentHubProvider {
       providerKind: providerKind,
       metadataStore: metadataStore,
       webPreviewCandidateService: webPreviewCandidateService,
+      mcpAppDiscoveryService: mcpAppDiscoveryService,
       diffAvailabilityService: diffAvailabilityService,
       approvalClaimStore: claimStore,
       hookInstaller: installer,
@@ -466,6 +472,16 @@ public final class AgentHubProvider {
     Task(priority: .utility) {
       await TerminalProcessRegistry.shared.cleanupRegisteredProcesses()
     }
+  }
+
+  public func shutdownMCPAppDiscoveryService() {
+    let service = mcpAppDiscoveryService
+    let semaphore = DispatchSemaphore(value: 0)
+    Task.detached(priority: .utility) {
+      await service.shutdown()
+      semaphore.signal()
+    }
+    _ = semaphore.wait(timeout: .now() + 2.0)
   }
 
   public func startWorktreeLaunchRequestMonitoring() {

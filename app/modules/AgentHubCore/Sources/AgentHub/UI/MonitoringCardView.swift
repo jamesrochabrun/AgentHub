@@ -40,6 +40,7 @@ public struct MonitoringCardView: View {
   let onShowMermaid: ((CLISession) -> Void)?
   let onShowGitHub: ((CLISession, String) -> Void)?
   let onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)?
+  let onShowMCPApp: ((CLISession, String) -> Void)?
   let onFork: ((CLISession, SessionProviderKind) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
@@ -90,6 +91,7 @@ public struct MonitoringCardView: View {
     onShowMermaid: ((CLISession) -> Void)? = nil,
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)? = nil,
+    onShowMCPApp: ((CLISession, String) -> Void)? = nil,
     onFork: ((CLISession, SessionProviderKind) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
@@ -126,6 +128,7 @@ public struct MonitoringCardView: View {
     self.onShowMermaid = onShowMermaid
     self.onShowGitHub = onShowGitHub
     self.onShowPendingChanges = onShowPendingChanges
+    self.onShowMCPApp = onShowMCPApp
     self.onFork = onFork
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
@@ -186,6 +189,30 @@ public struct MonitoringCardView: View {
 
   private var resourceLinks: [ResourceLink] {
     state?.detectedResourceLinks ?? []
+  }
+
+  /// MCP apps to surface for this session: resources embedded in the JSONL plus
+  /// host-rendered apps resolved from app-bearing tool calls (see the ViewModel).
+  private var mcpAppDisplayItems: [MCPAppRenderItem] {
+    viewModel?.mcpAppDisplayItems(for: session, state: state) ?? []
+  }
+
+  private var mcpAppResourceCount: Int {
+    mcpAppDisplayItems.count
+  }
+
+  private var shouldShowMCPAppsButton: Bool {
+    !mcpAppDisplayItems.isEmpty
+  }
+
+  /// Key that changes when the set of detected MCP tool invocations changes, so
+  /// host-app resolution re-runs only when the agent makes a new app-bearing call.
+  private var mcpAppInvocationResolutionKey: String {
+    (state?.detectedMCPAppInvocations ?? []).map(\.id).joined(separator: ",")
+  }
+
+  private var mcpAppButtonAccessibilityLabel: String {
+    mcpAppResourceCount == 1 ? "Open 1 MCP app" : "Open \(mcpAppResourceCount) MCP apps"
   }
 
   private var linkedPullRequestNumber: Int? {
@@ -279,6 +306,9 @@ public struct MonitoringCardView: View {
     }
     .task(id: session.projectPath) {
       await viewModel?.ensureLocalDiffSummary(for: session.projectPath, forceRefresh: true)
+    }
+    .task(id: mcpAppInvocationResolutionKey) {
+      await viewModel?.ensureMCPAppRenderItems(for: session, state: state)
     }
     .task(id: gitHubObservationTaskID) {
       if linkedPullRequestNumber == nil {
@@ -683,6 +713,26 @@ public struct MonitoringCardView: View {
         // Web preview controls — segmented App | Storybook when Storybook is
         // detected, otherwise a single Preview button.
         webPreviewControls
+
+        if shouldShowMCPAppsButton {
+          Button(action: {
+            onShowMCPApp?(session, session.projectPath)
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "square.stack.3d.up")
+                .font(.caption2)
+              Text("MCP")
+              if mcpAppResourceCount > 0 {
+                Text("\(mcpAppResourceCount)")
+                  .font(.system(.caption2, design: .monospaced))
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("Open MCP app resources")
+          .accessibilityLabel(mcpAppButtonAccessibilityLabel)
+        }
 
         // Mermaid diagram button (only visible when mermaid content is detected)
         if state?.hasMermaidContent == true {

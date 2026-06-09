@@ -280,6 +280,8 @@ public actor CodexSessionFileWatcher {
       recentActivities: result.recentActivities,
       hasMermaidContent: result.hasMermaidContent,
       detectedResourceLinks: result.detectedResourceLinks,
+      detectedMCPAppResources: result.detectedMCPAppResources,
+      detectedMCPAppInvocations: result.detectedMCPAppInvocations,
       detectedLocalhostURL: result.detectedLocalhostURL
     )
   }

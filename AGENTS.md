@@ -90,13 +90,16 @@ The floating global Sessions panel lives in the reusable `AgentHubGlobalSessionP
 
 ## MCP UI
 
-AgentHub has MCP UI support wired through the reusable `AgentHubMCPUI` Swift module (`app/modules/AgentHubCore/Sources/AgentHubMCPUI`). Use this module for MCP app resources and previews instead of creating feature-local WKWebView wrappers or duplicate MIME/resource models.
+AgentHub has MCP UI support wired through the reusable `AgentHubMCPUI` Swift module (`app/modules/AgentHubCore/Sources/AgentHubMCPUI`). Use this module for MCP app resources and rendering instead of creating feature-local WKWebView wrappers or duplicate MIME/resource models.
 
 - MCP UI resources use `AgentHubMCPUIResource` with the app MIME profile `text/html;profile=mcp-app`.
 - Render in-app MCP UI HTML with `AgentHubMCPUIResourceView` / `AgentHubMCPUIWebView`.
 - Put feature-specific resource builders in the owning feature/module, but have them emit `AgentHubMCPUIResource`.
 - Escape generated HTML text with `AgentHubMCPUIHTML.escape(_:)`.
-- Keep MCP UI resources local-only and deterministic unless the feature explicitly owns an agent/model call.
+
+### MCP Apps (agent-driven rendering)
+
+AgentHub renders MCP app UIs an agent produces during a Claude or Codex session in a dedicated side panel, driven by the agent's tool calls (no proactive server discovery). Read **`MCPApps.md`** before editing MCP app detection (`detectedMCPAppInvocations`/`detectedMCPAppResources` in the parsers), resolution (`CLISessionsViewModel.ensureMCPAppRenderItems`), rendering (`MCPAppSidePanelView`), the on-demand gateway (`MCPAppDiscoveryService`), or the bridge push in `AgentHubMCPUIResourceView`. `MCPApps.md` documents the current state and remaining gaps.
 
 ### Storybook Mode
 

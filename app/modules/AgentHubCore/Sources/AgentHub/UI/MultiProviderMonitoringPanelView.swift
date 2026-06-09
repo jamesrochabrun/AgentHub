@@ -20,6 +20,7 @@ private enum SidePanelContent: Equatable {
   case mermaid(sessionId: String, session: CLISession)
   case gitHub(sessionId: String, session: CLISession, projectPath: String)
   case edits(sessionId: String, session: CLISession)
+  case mcpApp(sessionId: String, session: CLISession, projectPath: String)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -35,6 +36,8 @@ private enum SidePanelContent: Equatable {
       return id1 == id2 && p1 == p2
     case (.edits(let id1, _), .edits(let id2, _)):
       return id1 == id2
+    case (.mcpApp(let id1, _, let p1), .mcpApp(let id2, _, let p2)):
+      return id1 == id2 && p1 == p2
     default: return false
     }
   }
@@ -560,6 +563,12 @@ public struct MultiProviderMonitoringPanelView: View {
                 forItemID: item.id
               )
             },
+            onShowMCPApp: { session, projectPath in
+              toggleSidePanel(
+                .mcpApp(sessionId: session.id, session: session, projectPath: projectPath),
+                forItemID: item.id
+              )
+            },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
             onRequestShowEditor: { setContentMode(.editor, for: item) },
             isPrimarySession: true,
@@ -639,6 +648,12 @@ public struct MultiProviderMonitoringPanelView: View {
             onShowPendingChanges: { session, _ in
               toggleSidePanel(
                 .edits(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
+            },
+            onShowMCPApp: { session, projectPath in
+              toggleSidePanel(
+                .mcpApp(sessionId: session.id, session: session, projectPath: projectPath),
                 forItemID: item.id
               )
             },
@@ -986,6 +1001,13 @@ public struct MultiProviderMonitoringPanelView: View {
           onDismiss: closeEmbeddedSidePanel
         )
       }
+    case .mcpApp(let sessionId, let session, _):
+      MCPAppSidePanelView(
+        session: session,
+        viewModel: viewModel,
+        monitorState: viewModel.monitorStates[sessionId],
+        onDismiss: closeEmbeddedSidePanel
+      )
     }
   }
 

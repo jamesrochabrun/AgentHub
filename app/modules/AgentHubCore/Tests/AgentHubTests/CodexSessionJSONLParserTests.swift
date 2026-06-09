@@ -129,6 +129,40 @@ struct CodexSessionJSONLParserTests {
       "https://github.com/jamesrochabrun/AgentHub/pull/322"
     ])
   }
+
+  @Test("Detects MCP app resources from MCP tool result")
+  func detectsMCPAppResourcesFromMCPToolResult() {
+    let line = jsonLine([
+      "type": "event_msg",
+      "timestamp": "2026-01-01T00:00:01.000Z",
+      "payload": [
+        "type": "mcp_tool_call_end",
+        "server": "charts",
+        "result": [
+          "Ok": [
+            "content": [
+              [
+                "type": "resource",
+                "resource": [
+                  "uri": "ui://charts/dashboard",
+                  "mimeType": "text/html;profile=mcp-app",
+                  "text": "<main>Chart</main>"
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+    ])
+
+    var result = CodexSessionJSONLParser.ParseResult()
+    CodexSessionJSONLParser.parseNewLines([line], into: &result)
+
+    let descriptor = result.detectedMCPAppResources.first
+    #expect(descriptor?.serverName == "charts")
+    #expect(descriptor?.uri == "ui://charts/dashboard")
+    #expect(descriptor?.text == "<main>Chart</main>")
+  }
 }
 
 private func jsonLine(_ object: [String: Any]) -> String {

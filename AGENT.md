@@ -80,6 +80,7 @@ Concrete implementations: `CLISessionMonitorService` / `CodexSessionMonitorServi
 ## Code Style
 
 - Read `AccessorySessions.md` before editing accessory terminal panes, sub-session launch/detection, terminal workspace linked-session restore, or `session_relationships`.
+- Read `MCPApps.md` before editing MCP app detection, resolution, rendering, the on-demand MCP gateway, or the `AgentHubMCPUI` bridge push.
 - **Indentation:** 2 spaces (not tabs)
 - Use `@Observable` macro — never `ObservableObject`
 - Use `async/await` and actors — never completion handlers
