@@ -144,7 +144,7 @@ enum MCPAppResourceExtractor {
     descriptors.append(MCPAppResourceDescriptor(
       serverName: serverName,
       uri: uri,
-      title: string(in: titleSource, keys: ["title", "name"]) ?? resourceMetadata.title,
+      title: resourceMetadata.title ?? string(in: titleSource, keys: ["title", "name"]),
       metadata: resourceMetadata
     ))
   }

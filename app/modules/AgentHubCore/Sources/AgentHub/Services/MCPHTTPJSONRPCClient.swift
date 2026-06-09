@@ -180,6 +180,14 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
       }
     }
 
+    if let event = parser.finish(),
+       didPost,
+       event.event == nil || event.event == "message",
+       let decoded = decodeSSEJSON(event.data),
+       let result = try MCPJSONRPCMessage.result(from: decoded, expectedID: id, method: method) {
+      return result
+    }
+
     throw MCPAppDiscoveryError.processClosed(method)
   }
 
@@ -198,6 +206,12 @@ public final class MCPHTTPJSONRPCClient: MCPJSONRPCClientProtocol, @unchecked Se
     var parser = MCPSSEEventParser()
     for try await line in bytes.lines {
       guard let event = parser.append(line: line), event.event == "endpoint" else { continue }
+      let postEndpoint = try resolveLegacyPostEndpoint(event.data, relativeTo: sseEndpoint)
+      try await postLegacySSEMessage(envelope, endpoint: postEndpoint, method: method)
+      return
+    }
+
+    if let event = parser.finish(), event.event == "endpoint" {
       let postEndpoint = try resolveLegacyPostEndpoint(event.data, relativeTo: sseEndpoint)
       try await postLegacySSEMessage(envelope, endpoint: postEndpoint, method: method)
       return
@@ -448,6 +462,11 @@ private struct MCPSSEEventParser {
 
     switch field {
     case "event":
+      if event != nil || !dataLines.isEmpty || id != nil {
+        let pending = finish()
+        event = value
+        return pending
+      }
       event = value
     case "data":
       dataLines.append(value)
