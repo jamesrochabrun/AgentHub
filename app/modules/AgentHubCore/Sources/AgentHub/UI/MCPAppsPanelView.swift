@@ -37,7 +37,14 @@ struct MCPAppsPanelView: View {
 
       content
     }
-    .frame(minWidth: 820, minHeight: 520)
+    .frame(
+      minWidth: 980,
+      idealWidth: 1120,
+      maxWidth: .infinity,
+      minHeight: 640,
+      idealHeight: 760,
+      maxHeight: .infinity
+    )
     .onAppear {
       selectedResourceID = selectedResourceID ?? resources.first?.id
     }
@@ -84,7 +91,7 @@ struct MCPAppsPanelView: View {
     } else {
       HStack(spacing: 0) {
         resourceList
-          .frame(width: 220)
+          .frame(width: 260)
 
         Divider()
 
@@ -108,8 +115,9 @@ struct MCPAppsPanelView: View {
             .id(selectedResource.id)
           }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-      .frame(width: 980, height: 640)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
   }
 
@@ -125,7 +133,10 @@ struct MCPAppsPanelView: View {
         Text(session.displayName)
           .font(.caption)
           .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
       }
+      .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
 
       Spacer()
 
@@ -201,7 +212,7 @@ private struct MCPAppDiscoveryStateView: View {
         .accessibilityLabel("Refresh MCP apps")
     }
     .padding(28)
-    .frame(width: 820, height: 520)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
   private var description: String {
@@ -230,17 +241,30 @@ private struct MCPAppDiscoveryStatusStrip: View {
       VStack(alignment: .leading, spacing: 2) {
         Text("Some MCP servers could not be discovered.")
           .font(.caption.weight(.semibold))
-        Text(statuses.map { "\($0.key.serverName): \($0.state.displayTitle)" }.joined(separator: "  "))
+        Text(summary)
           .font(.caption2)
           .foregroundStyle(.secondary)
           .lineLimit(2)
+          .fixedSize(horizontal: false, vertical: true)
       }
+      .layoutPriority(1)
+      .frame(maxWidth: .infinity, alignment: .leading)
 
       Spacer()
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .background(Color.orange.opacity(0.10))
+  }
+
+  private var summary: String {
+    let visibleStatuses = Array(statuses.prefix(4))
+    let visible = visibleStatuses
+      .map { "\($0.key.serverName): \($0.state.displayTitle)" }
+      .joined(separator: "  •  ")
+    let hiddenCount = statuses.count - visibleStatuses.count
+    guard hiddenCount > 0 else { return visible }
+    return "\(visible)  •  +\(hiddenCount) more"
   }
 }
 
@@ -349,6 +373,7 @@ private struct MCPAppResourceRow: View {
       Text(resource.title ?? resource.resource.metadata.title ?? resource.resource.uri)
         .font(.system(size: 12, weight: .medium))
         .lineLimit(1)
+        .truncationMode(.tail)
 
       Text(resource.serverName)
         .font(.caption2)
@@ -374,22 +399,61 @@ private struct MCPAppResourceHostView: View {
   let onOperationNotice: (MCPAppPanelNotice) -> Void
   let onTeardown: () -> Void
 
-  @State private var requestedHeight: CGFloat = 460
   @State private var bridgeHandler: MCPAppHostBridgeHandler?
 
   var body: some View {
-    ScrollView {
-      AgentHubMCPUIResourceView(
+    VStack(spacing: 0) {
+      resourceToolbar
+
+      Divider()
+
+      AgentHubMCPUIWebView(
         resource: resource.resource,
         bridgeHandler: bridgeHandler
       )
-      .frame(minHeight: requestedHeight)
-      .padding(16)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .onAppear(perform: installBridgeHandler)
     .onChange(of: resource.id) { _, _ in
       installBridgeHandler()
     }
+  }
+
+  private var resourceToolbar: some View {
+    HStack(spacing: 10) {
+      VStack(alignment: .leading, spacing: 2) {
+        Text(resource.title ?? resource.resource.metadata.title ?? resource.resource.uri)
+          .font(.subheadline.weight(.semibold))
+          .lineLimit(1)
+          .truncationMode(.tail)
+
+        Text(resource.resource.uri)
+          .font(.system(size: 11, weight: .medium, design: .monospaced))
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+      .layoutPriority(1)
+
+      Spacer(minLength: 12)
+
+      Text(resource.resource.mimeType)
+        .font(.system(size: 10, weight: .medium))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.middle)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(
+          Capsule()
+            .fill(Color.secondary.opacity(0.12))
+        )
+        .accessibilityLabel("MIME type \(resource.resource.mimeType)")
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private func installBridgeHandler() {
@@ -397,11 +461,7 @@ private struct MCPAppResourceHostView: View {
       resource: resource,
       viewModel: viewModel,
       consentController: consentController,
-      onSizeChange: { _, height in
-        if let height {
-          requestedHeight = min(max(CGFloat(height), 240), 900)
-        }
-      },
+      onSizeChange: { _, _ in },
       onOperationNotice: onOperationNotice,
       onTeardown: onTeardown
     )
