@@ -41,6 +41,7 @@ public struct MonitoringCardView: View {
   let onShowGitHub: ((CLISession, String) -> Void)?
   let onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)?
   let onShowMCPApp: ((CLISession, String) -> Void)?
+  let onShowSimulatorPreview: ((CLISession, String) -> Void)?
   let onFork: ((CLISession, SessionProviderKind) -> Void)?
   let onPromptConsumed: (() -> Void)?
   let onTerminalInteraction: (() -> Void)?
@@ -92,6 +93,7 @@ public struct MonitoringCardView: View {
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)? = nil,
     onShowMCPApp: ((CLISession, String) -> Void)? = nil,
+    onShowSimulatorPreview: ((CLISession, String) -> Void)? = nil,
     onFork: ((CLISession, SessionProviderKind) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
     onTerminalInteraction: (() -> Void)? = nil,
@@ -129,6 +131,7 @@ public struct MonitoringCardView: View {
     self.onShowGitHub = onShowGitHub
     self.onShowPendingChanges = onShowPendingChanges
     self.onShowMCPApp = onShowMCPApp
+    self.onShowSimulatorPreview = onShowSimulatorPreview
     self.onFork = onFork
     self.onPromptConsumed = onPromptConsumed
     self.onTerminalInteraction = onTerminalInteraction
@@ -749,15 +752,26 @@ public struct MonitoringCardView: View {
           .help("View Mermaid diagrams")
         }
 
-        // Simulator button (only visible for Xcode projects)
+        // Simulator button (only visible for Xcode projects) — opens the live
+        // simulator preview side panel, which also hosts device management.
+        // The legacy panel doesn't wire the side-panel callback, so it falls
+        // back to the old management sheet.
         if isXcodeProject {
           Button(action: {
-            simulatorSheetSession = session
+            if onShowSimulatorPreview != nil {
+              onShowSimulatorPreview?(session, session.projectPath)
+            } else {
+              simulatorSheetSession = session
+            }
           }) {
-            simulatorButtonLabel
+            HStack(spacing: 4) {
+              Image(systemName: "iphone.gen3")
+                .font(.caption2)
+              Text("Simulator")
+            }
           }
           .buttonStyle(.agentHubOutlined)
-          .help("Manage iOS Simulators")
+          .help("Show a live, interactive simulator in the side panel")
         }
 
         // GitHub button
@@ -784,45 +798,6 @@ public struct MonitoringCardView: View {
       .fixedSize()
       .layoutPriority(2)
 
-    }
-  }
-
-  // MARK: - Simulator Button
-
-  @ViewBuilder
-  private var simulatorButtonLabel: some View {
-    let service = SimulatorService.shared
-    if let udid = service.preferredSimulatorUDIDs[session.projectPath],
-       let device = service.device(for: udid) {
-      let simState = service.state(for: udid, projectPath: session.projectPath)
-      HStack(spacing: 4) {
-        Circle()
-          .fill(simulatorStatusColor(for: simState, device: device))
-          .frame(width: 6, height: 6)
-        Text(device.name)
-          .lineLimit(1)
-      }
-    } else {
-      HStack(spacing: 4) {
-        Image(systemName: "iphone")
-          .font(.caption2)
-        Text("Simulator")
-      }
-    }
-  }
-
-  private func simulatorStatusColor(for state: SimulatorState, device: SimulatorDevice) -> Color {
-    switch state {
-    case .idle:
-      return device.isBooted ? .green : .gray.opacity(0.5)
-    case .booting, .building, .installing, .launching:
-      return .yellow
-    case .booted:
-      return .green
-    case .shuttingDown:
-      return .orange
-    case .failed:
-      return .red
     }
   }
 
