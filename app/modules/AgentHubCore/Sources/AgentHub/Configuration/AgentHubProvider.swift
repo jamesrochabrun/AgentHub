@@ -8,6 +8,7 @@
 import AgentHubGitHub
 import AgentHubGitDiff
 import AgentHubCLIKit
+import SimulatorPreview
 import Foundation
 import os
 import ClaudeCodeClient
@@ -141,6 +142,13 @@ public final class AgentHubProvider {
   /// Cached project-level detector for inline diff tab visibility.
   lazy var diffAvailabilityService: any DiffAvailabilityServiceProtocol = {
     DiffAvailabilityService.shared
+  }()
+
+  /// Live in-app iOS Simulator capture/streaming. All capture stays in-process;
+  /// no network, no Screen Recording/Accessibility permissions. See the
+  /// `SimulatorPreview` module README for the privacy contract.
+  public private(set) lazy var simulatorStreamService: any SimulatorStreamServiceProtocol = {
+    SimulatorStreamService.shared
   }()
 
   /// Session metadata store for user-provided session names

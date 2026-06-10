@@ -21,6 +21,7 @@ private enum SidePanelContent: Equatable {
   case gitHub(sessionId: String, session: CLISession, projectPath: String)
   case edits(sessionId: String, session: CLISession)
   case mcpApp(sessionId: String, session: CLISession, projectPath: String)
+  case simulator(sessionId: String, session: CLISession, projectPath: String)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -37,6 +38,8 @@ private enum SidePanelContent: Equatable {
     case (.edits(let id1, _), .edits(let id2, _)):
       return id1 == id2
     case (.mcpApp(let id1, _, let p1), .mcpApp(let id2, _, let p2)):
+      return id1 == id2 && p1 == p2
+    case (.simulator(let id1, _, let p1), .simulator(let id2, _, let p2)):
       return id1 == id2 && p1 == p2
     default: return false
     }
@@ -569,6 +572,12 @@ public struct MultiProviderMonitoringPanelView: View {
                 forItemID: item.id
               )
             },
+            onShowSimulatorPreview: { session, projectPath in
+              toggleSidePanel(
+                .simulator(sessionId: session.id, session: session, projectPath: projectPath),
+                forItemID: item.id
+              )
+            },
             onTerminalInteraction: { setPrimarySessionIfNeeded(item.id) },
             onRequestShowEditor: { setContentMode(.editor, for: item) },
             isPrimarySession: true,
@@ -654,6 +663,12 @@ public struct MultiProviderMonitoringPanelView: View {
             onShowMCPApp: { session, projectPath in
               toggleSidePanel(
                 .mcpApp(sessionId: session.id, session: session, projectPath: projectPath),
+                forItemID: item.id
+              )
+            },
+            onShowSimulatorPreview: { session, projectPath in
+              toggleSidePanel(
+                .simulator(sessionId: session.id, session: session, projectPath: projectPath),
                 forItemID: item.id
               )
             },
@@ -1007,6 +1022,17 @@ public struct MultiProviderMonitoringPanelView: View {
         viewModel: viewModel,
         monitorState: viewModel.monitorStates[sessionId],
         onDismiss: closeEmbeddedSidePanel
+      )
+    case .simulator(_, let session, let projectPath):
+      SimulatorPreviewSidePanelView(
+        session: session,
+        projectPath: projectPath,
+        onDismiss: closeEmbeddedSidePanel,
+        onSendToSession: { prompt, sess in
+          if !viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) {
+            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          }
+        }
       )
     }
   }

@@ -1,5 +1,5 @@
 {
-  "originHash" : "9ba6f93bfaf3ff545d8c09a707a4bd0be9400a120911bb737ec9b078b996fe53",
+  "originHash" : "23cfc6e2ffab19695dbc058eb5b7dce2ae1d326f6b22977d9653bf5c5824c479",
   "pins" : [
     {
       "identity" : "beautiful-mermaid-swift",
@@ -105,8 +105,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ChimeHQ/Rearrange",
       "state" : {
-        "revision" : "f1d74e1642956f0300756ad8d1d64e9034857bc3",
-        "version" : "2.0.0"
+        "revision" : "4de8be41dba304192e87dc0a11e0aa39e72aa2e8",
+        "version" : "2.1.1"
       }
     },
     {
@@ -132,8 +132,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-collections.git",
       "state" : {
-        "revision" : "6675bc0ff86e61436e615df6fc5174e043e57924",
-        "version" : "1.4.1"
+        "revision" : "a0cb0954ecb21e4e31b0070e6ed5674e8556685a",
+        "version" : "1.6.0"
       }
     },
     {
@@ -186,8 +186,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ChimeHQ/TextStory",
       "state" : {
-        "revision" : "91df6fc9bd817f9712331a4a3e826f7bdc823e1d",
-        "version" : "0.9.1"
+        "revision" : "a52db1a2eca74d37c8c19bf3165416941632ed45",
+        "version" : "0.9.2"
       }
     },
     {

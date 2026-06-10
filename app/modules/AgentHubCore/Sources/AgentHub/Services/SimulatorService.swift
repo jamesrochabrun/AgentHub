@@ -170,6 +170,15 @@ public final class SimulatorService {
     return nil
   }
 
+  /// Whether the device is currently booted, consulting live boot state first
+  /// (updated by boot/build flows) and falling back to the last device-list
+  /// snapshot. Use this for UI gating rather than `SimulatorDevice.isBooted`,
+  /// which only reflects the most recent `listDevices()`.
+  public func isBooted(udid: String) -> Bool {
+    if deviceStates[udid] == .booted { return true }
+    return device(for: udid)?.isBooted == true
+  }
+
   /// Returns the combined state for a device in a given session's context.
   /// Build state (building/failed) is per-session; boot state (booted/booting/shuttingDown) is global.
   public func state(for udid: String, projectPath: String) -> SimulatorState {
@@ -216,7 +225,15 @@ public final class SimulatorService {
   }
 
   /// Boots a simulator device by UDID, then opens Simulator.app.
+  ///
+  /// Idempotent: if the device is already booted (`simctl boot` returns 149,
+  /// "current state: Booted"), that's treated as success rather than a failure.
   public func bootDevice(udid: String) async {
+    // Already booted (or a boot is already in flight) — nothing to do.
+    if isBooted(udid: udid) {
+      deviceStates[udid] = .booted
+      return
+    }
     deviceStates[udid] = .booting
     AppLogger.simulator.info("Booting device \(udid)")
 
@@ -224,7 +241,8 @@ public final class SimulatorService {
       SimulatorService.runSimctl(arguments: ["boot", udid])
     }.value
 
-    if exitCode == 0 {
+    // 149 = "Unable to boot device in current state: Booted" — already up.
+    if exitCode == 0 || exitCode == 149 {
       deviceStates[udid] = .booted
       AppLogger.simulator.info("Device booted: \(udid)")
       await listDevices()
