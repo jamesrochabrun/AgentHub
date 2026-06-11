@@ -32,11 +32,12 @@ struct SimulatorPreviewSpotlightView: View {
   /// True while an injection or fallback rebuild is in flight — rendering
   /// pauses so it can't race the code swap.
   var isReloadInFlight = false
-  /// Fast path: relaunches the already-built app with the preview host
-  /// inserted (~1s, no rebuild).
-  var onEnablePreviews: (() -> Void)?
-  /// Full path: rebuild + relaunch through the panel.
-  var onBuildAndRun: (() -> Void)?
+  /// Launches the app with preview support. The owner chooses the fast
+  /// relaunch or full build path based on device/app state.
+  var onLaunchPreviews: (() -> Void)?
+  /// True after AgentHub has launched the app with the preview host inserted.
+  /// A transient connection failure then means "still starting", not "not armed".
+  var isPreviewHostExpected = false
   /// Device the armed app runs on, when this panel launched it.
   var connectedDeviceName: String?
 
@@ -50,12 +51,20 @@ struct SimulatorPreviewSpotlightView: View {
   /// file switches and new changes until minimized.
   @State private var expandedSelection: SimulatorPreviewSelection?
 
+  private var manifestLoadID: String {
+    "\(reloadGeneration)|\(isPreviewHostExpected)"
+  }
+
   var body: some View {
     Group {
       if let loadErrorMessage {
         unavailableState(message: loadErrorMessage)
       } else if previewTypes.isEmpty && isLoading {
-        loadingState
+        if isPreviewHostExpected {
+          startingState
+        } else {
+          loadingState
+        }
       } else if candidates.isEmpty {
         waitingState
       } else {
@@ -63,7 +72,7 @@ struct SimulatorPreviewSpotlightView: View {
       }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .task(id: reloadGeneration) { await loadManifest() }
+    .task(id: manifestLoadID) { await loadManifest() }
   }
 
   // MARK: - Candidates
@@ -167,6 +176,15 @@ struct SimulatorPreviewSpotlightView: View {
     }
   }
 
+  private var startingState: some View {
+    VStack(spacing: 8) {
+      ProgressView()
+      Text("Starting previews…")
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+  }
+
   private var waitingState: some View {
     ContentUnavailableView {
       Label("Waiting for a Change", systemImage: "clock.arrow.circlepath")
@@ -178,27 +196,25 @@ struct SimulatorPreviewSpotlightView: View {
 
   private func unavailableState(message: String) -> some View {
     ContentUnavailableView {
-      Label("Previews Not Armed", systemImage: "bolt.slash")
+      Label("Previews Not Running", systemImage: "bolt.slash")
     } description: {
       VStack(spacing: 4) {
         Text(
-          "Previews render inside the app's process, so the app must be "
-          + "launched with the preview host inserted. Enable Previews "
-          + "relaunches the current build in about a second.")
-        Text(message)
-          .font(.caption2)
-          .foregroundStyle(.tertiary)
+          "Launch the app with preview support enabled to render SwiftUI previews here.")
+        if !message.isEmpty {
+          Text(message)
+            .font(.caption2)
+            .foregroundStyle(.tertiary)
+        }
       }
     } actions: {
-      if let onEnablePreviews {
-        Button("Enable Previews (relaunches the app)") { onEnablePreviews() }
+      if let onLaunchPreviews {
+        Button("Launch Previews") { onLaunchPreviews() }
           .buttonStyle(.borderedProminent)
-      }
-      if let onBuildAndRun {
-        Button("Build & Run") { onBuildAndRun() }
-      }
-      Button("Retry") {
-        Task { await loadManifest() }
+      } else {
+        Button("Retry") {
+          Task { await loadManifest() }
+        }
       }
     }
   }
@@ -208,14 +224,35 @@ struct SimulatorPreviewSpotlightView: View {
   /// Metadata only — no rendering happens until a preview is shown.
   private func loadManifest() async {
     isLoading = true
+    loadErrorMessage = nil
     defer { isLoading = false }
-    do {
-      previewTypes = try await client.listPreviews()
-      loadErrorMessage = nil
-    } catch {
-      previewTypes = []
-      loadErrorMessage = error.localizedDescription
+
+    let maxAttempts = isPreviewHostExpected ? 16 : 1
+    for attempt in 1...maxAttempts {
+      do {
+        previewTypes = try await client.listPreviews()
+        loadErrorMessage = nil
+        return
+      } catch PreviewHostClientError.serverUnreachable where isPreviewHostExpected && attempt < maxAttempts {
+        try? await Task.sleep(for: .milliseconds(500))
+      } catch {
+        previewTypes = []
+        loadErrorMessage = userFacingLoadErrorMessage(for: error)
+        return
+      }
     }
+
+    previewTypes = []
+    loadErrorMessage = "Preview support did not respond after launch."
+  }
+
+  private func userFacingLoadErrorMessage(for error: Error) -> String {
+    if (error as? PreviewHostClientError) == .serverUnreachable {
+      return isPreviewHostExpected
+        ? "Preview support did not respond after launch."
+        : ""
+    }
+    return error.localizedDescription
   }
 }
 

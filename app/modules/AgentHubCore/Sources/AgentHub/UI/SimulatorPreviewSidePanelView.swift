@@ -27,7 +27,7 @@ import SwiftUI
 /// Which surface the panel shows for a booted device: the live device
 /// mirror, or the app's SwiftUI previews. Both stay hot — they re-render on
 /// the same hot-reload signal.
-enum SimulatorPanelDisplayMode: String {
+enum SimulatorPanelDisplayMode: String, Hashable {
   case live
   case previews
 }
@@ -189,45 +189,40 @@ struct SimulatorPreviewSidePanelView: View {
   // MARK: - Header
 
   private var header: some View {
-    HStack(spacing: 10) {
-      Image(systemName: "iphone.gen3")
-        .foregroundStyle(Color.brandPrimary)
-        .accessibilityHidden(true)
-
-      Text("Simulator")
-        .font(.headline)
-
-      if !streamService.availability.isInteractive {
-        Text("View-only")
-          .font(.caption2.weight(.medium))
-          .padding(.horizontal, 6)
-          .padding(.vertical, 2)
-          .background(Capsule().fill(Color.secondary.opacity(0.15)))
-          .help("Live touch injection is unavailable on this machine; showing a screenshot stream.")
-      }
-
-      Spacer(minLength: 12)
-
+    HStack(spacing: 12) {
       if activeUDID != nil {
         displayModePicker
       }
+
+      if !streamService.availability.isInteractive {
+        viewOnlyBadge
+      }
+
       HotReloadStatusPillView(
         phase: hotReload.monitor.phase,
         warning: hotReload.monitor.lastWarning
       )
 
+      Spacer(minLength: 8)
+
       devicePicker
-      buildAndRunButton
-      stopButton
       // Manage sheet temporarily hidden — it can drift out of sync with the
       // device picker. The code (`manageButton` + `.sheet`) is kept for when
       // it's reconciled and re-enabled.
 
-      Button("Close", action: onDismiss)
-        .keyboardShortcut(.cancelAction)
+      closeButton
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
+  }
+
+  private var viewOnlyBadge: some View {
+    Text("View-only")
+      .font(.caption.weight(.medium))
+      .padding(.horizontal, 7)
+      .padding(.vertical, 3)
+      .background(Capsule().fill(Color.secondary.opacity(0.15)))
+      .help("Live touch injection is unavailable on this machine; showing a screenshot stream.")
   }
 
   /// Live mirror ↔ Previews. Both surfaces are hot: the mirror updates in
@@ -239,6 +234,8 @@ struct SimulatorPreviewSidePanelView: View {
     }
     .pickerStyle(.segmented)
     .labelsHidden()
+    .tint(Color.brandPrimary)
+    .accentColor(Color.brandPrimary)
     .fixedSize()
     .accessibilityLabel("Panel display mode")
   }
@@ -246,67 +243,93 @@ struct SimulatorPreviewSidePanelView: View {
   @ViewBuilder
   private var devicePicker: some View {
     if !availableDevices.isEmpty {
-      Picker("Device", selection: Binding(
-        get: { activeUDID },
-        set: { newValue in
-          selectedUDID = newValue
-          if let newValue { simulatorService.setPreferredSimulator(udid: newValue, for: projectPath) }
-        }
-      )) {
-        // Placeholder so the picker never renders blank when nothing is
-        // selected yet (e.g. no booted/preferred device on first open).
-        if activeUDID == nil {
-          Text("Select Simulator")
-            .tag(Optional<String>.none)
-        }
+      Menu {
         ForEach(availableDevices) { device in
-          Text(device.isBooted ? "\(device.name) ●" : device.name)
-            .tag(Optional(device.udid))
+          Button {
+            selectDevice(udid: device.udid)
+          } label: {
+            HStack {
+              Text(device.name)
+              if device.isBooted {
+                Text("Running")
+              }
+              if activeUDID == device.udid {
+                Image(systemName: "checkmark")
+              }
+            }
+          }
         }
+      } label: {
+        HStack(spacing: 6) {
+          Text(activeDevice?.name ?? "Select Simulator")
+            .font(.caption.weight(.medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+
+          Image(systemName: "chevron.up.chevron.down")
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+        .overlay(Capsule().stroke(Color.secondary.opacity(0.16), lineWidth: 1))
       }
-      .labelsHidden()
-      .frame(maxWidth: 200)
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize(horizontal: true, vertical: false)
+      .layoutPriority(2)
       .accessibilityLabel("Select simulator")
     }
   }
 
-  @ViewBuilder
-  private var buildAndRunButton: some View {
+  private var closeButton: some View {
+    Button(action: onDismiss) {
+      Image(systemName: "xmark")
+        .font(.caption.weight(.semibold))
+        .frame(width: 28, height: 28)
+        .background(Circle().fill(Color.secondary.opacity(0.12)))
+        .contentShape(Circle())
+    }
+    .buttonStyle(.plain)
+    .keyboardShortcut(.cancelAction)
+    .help("Close simulator preview")
+    .accessibilityLabel("Close simulator preview")
+  }
+
+  private var isBuildAndRunInProgress: Bool {
     switch activeState {
-    case .building, .installing, .launching, .booting:
-      ProgressView()
-        .controlSize(.small)
-        .frame(width: 22, height: 22)
-    default:
-      Button(action: buildAndRun) {
-        Image(systemName: "play.fill")
-          .font(.caption)
-      }
-      .buttonStyle(.borderless)
-      .disabled(activeUDID == nil)
-      .help("Build & run this project on the selected simulator")
-      .accessibilityLabel("Build and run")
+    case .building, .installing, .launching, .booting: return true
+    default: return false
     }
   }
 
-  /// Shuts down the active simulator. Shown beside Build & Run; a spinner
-  /// replaces it while the device is shutting down.
-  @ViewBuilder
-  private var stopButton: some View {
-    switch activeState {
-    case .shuttingDown:
-      ProgressView()
-        .controlSize(.small)
-        .frame(width: 22, height: 22)
-    default:
-      Button(action: stopSimulator) {
-        Image(systemName: "stop.fill")
-          .font(.caption)
-      }
-      .buttonStyle(.borderless)
-      .disabled(!(activeDevice?.isBooted ?? false))
-      .help("Shut down the simulator")
-      .accessibilityLabel("Shut down simulator")
+  private var isShutdownInProgress: Bool {
+    if case .shuttingDown = activeState { return true }
+    return false
+  }
+
+  private var floatingRunControls: some View {
+    VStack(spacing: 8) {
+      SimulatorFloatingActionButton(
+        systemImage: "play.fill",
+        tint: Color.brandPrimary,
+        isDisabled: activeUDID == nil || isBuildAndRunInProgress,
+        isWorking: isBuildAndRunInProgress,
+        help: "Build & run this project on the selected simulator",
+        accessibilityLabel: "Build and run",
+        action: buildAndRun
+      )
+
+      SimulatorFloatingActionButton(
+        systemImage: "stop.fill",
+        tint: .red,
+        isDisabled: !isActiveDeviceBooted || isShutdownInProgress,
+        isWorking: isShutdownInProgress,
+        help: "Shut down the simulator",
+        accessibilityLabel: "Shut down simulator",
+        action: stopSimulator
+      )
     }
   }
 
@@ -326,6 +349,17 @@ struct SimulatorPreviewSidePanelView: View {
 
   @ViewBuilder
   private var content: some View {
+    contentBody
+      .overlay(alignment: .topTrailing) {
+        if activeUDID != nil {
+          floatingRunControls
+            .padding(14)
+        }
+      }
+  }
+
+  @ViewBuilder
+  private var contentBody: some View {
     if let activeUDID, isShowingLiveStream {
       // Both surfaces stay mounted so flipping tabs doesn't tear down and
       // re-attach the live stream (a visible reconnect).
@@ -361,8 +395,8 @@ struct SimulatorPreviewSidePanelView: View {
         ($0 as NSString).lastPathComponent
       },
       isReloadInFlight: isReloadInFlight,
-      onEnablePreviews: enablePreviews,
-      onBuildAndRun: buildAndRun,
+      onLaunchPreviews: launchPreviews,
+      isPreviewHostExpected: hotReload.activePlan?.configuration.enablePreviews == true,
       connectedDeviceName: hotReload.activePlan != nil
         ? activeDevice?.name : nil
     )
@@ -457,14 +491,6 @@ struct SimulatorPreviewSidePanelView: View {
       } else {
         Text(activeDevice.map { "\($0.name) is not running" } ?? "Select a simulator")
           .font(.subheadline)
-        if activeUDID != nil {
-          // One action: Build & Run boots the device implicitly, then
-          // builds, installs, and launches the app armed.
-          Button(action: buildAndRun) {
-            Label("Build & Run", systemImage: "play.fill")
-          }
-          .buttonStyle(.borderedProminent)
-        }
       }
 
       if case .failed(let message) = activeState {
@@ -493,6 +519,11 @@ struct SimulatorPreviewSidePanelView: View {
     guard !hasLoadedDevices else { return }
     await simulatorService.listDevices()
     hasLoadedDevices = true
+  }
+
+  private func selectDevice(udid: String) {
+    selectedUDID = udid
+    simulatorService.setPreferredSimulator(udid: udid, for: projectPath)
   }
 
   private func buildAndRun() {
@@ -551,6 +582,14 @@ struct SimulatorPreviewSidePanelView: View {
   /// the support dylibs inserted (~1s, no rebuild). The host can only exist
   /// in launches AgentHub armed, so an app started any other way needs this
   /// one-time relaunch.
+  private func launchPreviews() {
+    if isActiveDeviceBooted {
+      enablePreviews()
+    } else {
+      buildAndRun()
+    }
+  }
+
   private func enablePreviews() {
     guard let activeUDID, isActiveDeviceBooted else { return }
     Task {
@@ -645,5 +684,57 @@ struct SimulatorPreviewSidePanelView: View {
       annotationModel.clearAnnotations()
       annotationModel.exitAnnotating()
     }
+  }
+}
+
+private struct SimulatorFloatingActionButton: View {
+  let systemImage: String
+  let tint: Color
+  let isDisabled: Bool
+  let isWorking: Bool
+  let help: String
+  let accessibilityLabel: String
+  let action: () -> Void
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  private var foregroundColor: Color {
+    isDisabled ? .secondary : tint
+  }
+
+  private var borderColor: Color {
+    colorScheme == .dark ? .white.opacity(0.12) : .black.opacity(0.08)
+  }
+
+  var body: some View {
+    Group {
+      if isWorking {
+        ProgressView()
+          .controlSize(.small)
+          .frame(width: 38, height: 38)
+          .background(buttonBackground)
+      } else {
+        Button(action: action) {
+          Image(systemName: systemImage)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(foregroundColor)
+            .frame(width: 38, height: 38)
+            .background(buttonBackground)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+      }
+    }
+    .opacity(isDisabled && !isWorking ? 0.46 : 1)
+    .overlay(Circle().stroke(borderColor, lineWidth: 1))
+    .clipShape(Circle())
+    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.28 : 0.16), radius: 9, y: 4)
+    .help(help)
+    .accessibilityLabel(accessibilityLabel)
+  }
+
+  private var buttonBackground: some View {
+    Circle().fill(.thinMaterial)
   }
 }

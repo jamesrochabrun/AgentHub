@@ -113,10 +113,11 @@ fall back to an aspect-ratio heuristic (edge-to-edge iPhone ≈13.5% of width,
 radius — only a chrome-artwork id — hence the curated table. A floating dark
 pill (`SimulatorDeviceToolbarView`) hovers above the device with the device
 name + OS version and the device-level actions (Home, Annotate toggle, element
-refresh); the panel header keeps only panel-level controls (device picker,
-build & run, manage, close). The chrome sizes the
-content to the framebuffer's exact aspect, so input/annotation mapping inside it
-needs no letterbox handling. A header Home button injects `.home` for ~16:9
+refresh); the panel header keeps only panel-level controls (mode switch,
+hot-reload status, device picker, close). Build/run and shutdown live as
+floating circular actions at the preview stage's top-right corner. The chrome
+sizes the content to the framebuffer's exact aspect, so input/annotation mapping
+inside it needs no letterbox handling. The toolbar Home button injects `.home` for ~16:9
 devices and `.swipeHome` for edge-to-edge ones.
 
 This complements the **existing** `SimulatorService` + `SimulatorPickerView`
@@ -264,8 +265,10 @@ Build & Run (boot is always implicit in play; there is no boot-only button),
 a running-but-unarmed app gets the ~1s relaunch via
 `SimulatorService.relaunchWithHotReload` (no rebuild; armed derived data
 preferred, plain as fallback). The unavailable state keeps manual
-"Enable Previews" / "Build & Run" buttons for the cases auto-arm skips
-(nothing to show yet, prior build failure). Both panel surfaces stay mounted
+"Launch Previews" recovery for the cases auto-arm skips (nothing to show yet,
+prior build failure), while the parent chooses the fast relaunch or full build
+path. After an armed launch, transient host connection failures render as a
+bounded "Starting previews…" state instead of a stale "not running" error. Both panel surfaces stay mounted
 across Live ↔ Previews switches so the stream never visibly reconnects.
 Discovery fetches metadata only (a runtime symbol scan; fine at monorepo
 scale), and visible renders are capped so the live app's main thread is not
