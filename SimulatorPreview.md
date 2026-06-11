@@ -3,6 +3,9 @@
 Read this before editing the live simulator preview: the `SimulatorPreview`
 module, `SimulatorPreviewSidePanelView`, the `.simulator` side-panel case, the
 `onShowSimulatorPreview` card callback, or `AgentHubProvider.simulatorStreamService`.
+The **hot reload + Previews tab** layer has its own section below — read it
+before touching anything named `HotReload*`, `PreviewHost*`, or
+`SimulatorHotReloadController`.
 
 ## What it is
 
@@ -174,6 +177,133 @@ swift run SimulatorPreviewProbe <udid> /tmp/f.png   # live private-path check
 
 App build: `xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHub build`.
 
+## Hot reload + Previews tab
+
+The panel header has a **Live | Previews** toggle (booted devices only) and a
+**● Hot reload** status pill. Save a Swift file in the project and the running
+app hot-swaps it in place (~sub-second, state preserved) while the Previews
+tab re-renders on the same signal. Changes injection can't represent (new
+file, deleted file, stored-property layout change, compile failure) quietly
+fall back to an incremental rebuild — the pill shows "Rebuilding…", never a
+silent lie.
+
+### How it works
+
+Two support dylibs are inserted into the user's app at launch
+(`SIMCTL_CHILD_DYLD_INSERT_LIBRARIES`, which `simctl launch` forwards):
+
+- **`AgentHubInjection`** — embeds [InjectionLite] (pinned, see
+  `HotReloadHostPackage.injectionLiteVersion`), linked `-all_load` so its
+  `+load` boot survives. It self-watches `INJECTION_DIRECTORIES` (the project
+  + `~/Library`, which covers AgentHub's custom derived-data path), replays
+  the per-file swift-frontend command from the build log, and dlopens the
+  recompiled dylib. Requires `OTHER_LDFLAGS=-Xlinker -interposable` and
+  `EMIT_FRONTEND_COMMAND_LINES=YES`, which `SimulatorService` adds to
+  hot-reload builds.
+- **`AgentHubPreviewHost`** — our generated preview host built on
+  [SnapshotPreviews]'s `SnapshotPreviewsCore` (pinned, see
+  `HotReloadHostPackage.snapshotPreviewsVersion`) + FlyingFox, gated on
+  `AGENTHUB_PREVIEW_HOST=1`. It serves the same HTTP contract as the stock
+  `Snapshotting` dylib (`GET /file` manifest, `GET /display/{type}/{id}`
+  render) on loopback port 38824 — note FlyingFox binds the **IPv6** loopback
+  (`[::1]`), which the client targets first — but renders with the windowless
+  `SwiftUIRenderingStrategy`. **Never insert the stock `Snapshotting` dylib
+  next to the live mirror:** its `UIKitRenderingStrategy` covers the running
+  app with a full-screen system-background window the moment it activates
+  (the "blank simulator" failure), and its `+load` force-enables AX
+  automation. The simulator shares the host's loopback and filesystem, so
+  AgentHub reads the manifest and rendered PNGs directly.
+
+Both dylibs link a C constructor that line-buffers stdout: `simctl launch
+--stdout=<file>` redirects to a file, which libc fully buffers — without it
+the injection engine's log lines (our reload-confirmation signal) sit
+unflushed for kilobytes.
+
+Injection-armed builds use a **separate derived-data path** (`…-hotreload`
+suffix in `SimulatorService`). The engine replays per-file swift-frontend
+commands from the freshest `.xcactivitylog` it can find; those commands only
+exist for files actually compiled with `EMIT_FRONTEND_COMMAND_LINES`, and an
+incremental build over a plain cache recompiles nothing (observed failure:
+the engine then latched onto a *different project's* newer log). The first
+armed build is therefore a full compile, once; after that it's incremental.
+
+Both are built once on first use by `HotReloadArtifactStore` (actor): it
+materializes a generated wrapper package (`HotReloadHostPackage`, exact-pinned
+upstream deps) under `~/Library/Application Support/AgentHub/HotReloadHost/`
+and runs `xcodebuild -destination "generic/platform=iOS Simulator"` on it. The
+first build resolves from the network and takes a minute or two — the pill
+reports "preparing" and that run launches plain; the next Build & Run arms.
+Artifacts are cached until `HotReloadHostPackage.fingerprint` changes.
+`DYLD_FRAMEWORK_PATH` covers the dependent dynamic `PreviewsSupport.framework`.
+
+Hot-reload launches use `simctl launch --terminate-running-process
+--stdout=<log>` — never `--console-pty` (simctl forwards signals, so a console
+process would kill the user's app when AgentHub stops it). The log is tailed
+host-side (`HotReloadConsoleTail`, kqueue + byte offsets) and
+`HotReloadConsoleParser` turns InjectionLite's `🔥` lines into events:
+`✅ Hot reload complete` → injected, `❌ Compilation failed` / `⚠️ Could not
+locate command` / type-size-changed → rebuild fallback.
+
+Pipeline: `HotReloadSourceWatcher` (host-side FSEvents; existence-snapshot
+classifier so atomic-save renames aren't mistaken for structural changes) and
+the console events feed `HotReloadMonitor` (the pill's state machine; its
+`reloadGeneration` re-renders the visible previews, and its
+`changedSourceFiles` selects it). Both features are **always armed** for
+panel launches — there are no per-feature toggles; the pill is a pure status
+light.
+
+The Previews tab (`SimulatorPreviewSpotlightView`) is deliberately bounded:
+it shows the open Swift file first, then recent changed files, deduplicated
+and capped. One matching preview renders as a large spotlight; several matches
+render as a small grid, and the user can expand any preview so it stays pinned
+until minimized. The tab is **self-healing and self-starting**: previews live
+inside the app's process (they follow the armed process, not the device picker).
+Switching to the tab — or opening a Swift file while on it — auto-runs the
+play flow when there's something to show: a cold device gets a full
+Build & Run (boot is always implicit in play; there is no boot-only button),
+a running-but-unarmed app gets the ~1s relaunch via
+`SimulatorService.relaunchWithHotReload` (no rebuild; armed derived data
+preferred, plain as fallback). The unavailable state keeps manual
+"Enable Previews" / "Build & Run" buttons for the cases auto-arm skips
+(nothing to show yet, prior build failure). Both panel surfaces stay mounted
+across Live ↔ Previews switches so the stream never visibly reconnects.
+Discovery fetches metadata only (a runtime symbol scan; fine at monorepo
+scale), and visible renders are capped so the live app's main thread is not
+overloaded. Rendering also pauses while a reload/rebuild is in flight so it
+can't race the code swap. File↔preview matching: `#Preview`
+registries match exactly via the fileID in their manifest display name;
+`PreviewProvider` types match by the `Foo_Previews` ↔ `Foo.swift` convention
+(`matchesSource(fileNames:)`, unit-tested). `SimulatorHotReloadController`
+(AgentHubCore) glues monitor + watcher + tail + `PreviewHostHTTPClient` and
+triggers the fallback rebuild through `SimulatorService.buildAndRunOnSimulator
+(udid:projectPath:hotReload:)`.
+
+For SwiftUI body re-rendering after injection the user's app should add the
+[Inject](https://github.com/krzysztofzablocki/Inject) package (or InjectionLite
+conventions like `@objc func injected()`); without it, injected code is live
+but views may not visibly refresh until state changes. This is the documented
+per-project opt-in.
+
+[InjectionLite]: https://github.com/johnno1962/InjectionLite
+[SnapshotPreviews]: https://github.com/getsentry/SnapshotPreviews
+
+### Invariants (do not regress)
+
+- The pill is honest: `.reloaded` only on engine confirmation, `.rebuilding`
+  on every fallback, `.unavailable(reason)` when machinery couldn't arm.
+- Pins are exact; `HotReloadConsoleParser` and the launch-env contract are
+  written against the pinned versions — bump them together
+  (`HotReloadHostPackage`) and re-verify the parser strings.
+- Nothing is ever written into the user's repo: build-setting overrides are
+  command-line-only, support artifacts live in Application Support.
+- Loopback only (the generated host listens on port 38824; the client tries
+  `[::1]` first, then `127.0.0.1`); one preview host can run at a time — a
+  second session's Previews tab shows the unreachable state rather than
+  fighting over the port.
+- Everything testable is pure and tested in `SimulatorPreviewTests`
+  (`swift test` in the module: env contract, parser, classifier, locator,
+  monitor transitions, manifest/render decoding, tail).
+
 ## Known gaps / future work
 
 - Element data comes from the accessibility tree: role, label, identifier,
@@ -188,7 +318,13 @@ App build: `xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -sc
   0x20000, to the device's `PurpleWorkspacePort` via `-[SimDevice lookup:error:]`),
   but shipping it also requires counter-rotated rendering plus input/annotation
   coordinate remapping — the framebuffer stays portrait while content rotates.
-- No SwiftUI Preview gallery / hot reload (Codex's `SnapshotPreviews` +
-  dlopen-dylib-swap path). That's a separate, larger layer and intentionally out of
-  scope for v1.
 - Scroll-wheel → drag and trackpad gestures are not mapped.
+- Hot reload: the Previews tab renders the *current* in-process previews —
+  newly added `#Preview`s appear only after the structural-change rebuild.
+  Injection success is engine-confirmed, but SwiftUI visual refresh depends
+  on the app adopting Inject/`injected()` (see above). Per-device preview
+  hosts (port-per-session) and a zero-opt-in SwiftUI refresh are future work.
+- Hot reload does not yet detect simulator app crashes, so the pill can stay
+  stale until the next panel action. The `...-hotreload` derived-data path is
+  a separate build cache, and console logs under Application Support do not
+  have a cleanup policy yet.

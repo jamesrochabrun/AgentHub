@@ -24,11 +24,22 @@ import AppKit
 import SimulatorPreview
 import SwiftUI
 
+/// Which surface the panel shows for a booted device: the live device
+/// mirror, or the app's SwiftUI previews. Both stay hot — they re-render on
+/// the same hot-reload signal.
+enum SimulatorPanelDisplayMode: String {
+  case live
+  case previews
+}
+
 struct SimulatorPreviewSidePanelView: View {
   let session: CLISession
   let projectPath: String
   let onDismiss: () -> Void
   var onSendToSession: ((String, CLISession) -> Void)? = nil
+  /// File open in the session's editor pane — its previews join the
+  /// spotlight alongside changed files.
+  var openEditorFilePath: String? = nil
 
   @Environment(\.agentHub) private var agentHub
 
@@ -37,6 +48,8 @@ struct SimulatorPreviewSidePanelView: View {
   @State private var hasLoadedDevices = false
   @State private var annotationModel = SimulatorAnnotationModel()
   @State private var showingManageSheet = false
+  @State private var displayMode: SimulatorPanelDisplayMode = .live
+  @State private var hotReload = SimulatorHotReloadController()
 
   private var streamService: any SimulatorStreamServiceProtocol {
     agentHub?.simulatorStreamService ?? SimulatorStreamService.shared
@@ -80,6 +93,17 @@ struct SimulatorPreviewSidePanelView: View {
     isActiveDeviceBooted
   }
 
+  /// True while an injection or fallback rebuild is mid-flight — preview
+  /// cards pause rendering so they don't race the code swap.
+  private var isReloadInFlight: Bool {
+    switch hotReload.monitor.phase {
+    case .reloading, .rebuilding:
+      return true
+    default:
+      return false
+    }
+  }
+
   /// True while a boot or build/install/launch is in flight for the active
   /// device — used to show progress instead of a (double-boot-prone) button.
   private var isActiveDevicePreparing: Bool {
@@ -109,9 +133,28 @@ struct SimulatorPreviewSidePanelView: View {
       minWidth: 320, idealWidth: .infinity, maxWidth: .infinity,
       minHeight: 320, idealHeight: .infinity, maxHeight: .infinity
     )
-    .task { await loadDevicesIfNeeded() }
+    .task {
+      await loadDevicesIfNeeded()
+      hotReload.warmUp()
+      hotReload.startTracking(projectPath: projectPath)
+    }
+    .onDisappear {
+      hotReload.stopTracking()
+      hotReload.sessionDidStop()
+    }
     .onChange(of: activeUDID) { _, _ in
       annotationModel.reset()
+      hotReload.sessionDidStop()
+      if displayMode == .previews { autoArmPreviewsIfNeeded() }
+    }
+    .onChange(of: displayMode) { _, mode in
+      if mode == .previews { autoArmPreviewsIfNeeded() }
+    }
+    .onChange(of: openEditorFilePath) { _, _ in
+      if displayMode == .previews { autoArmPreviewsIfNeeded() }
+    }
+    .onChange(of: hotReload.changedSourceFiles) { _, _ in
+      if displayMode == .previews { autoArmPreviewsIfNeeded() }
     }
     .onChange(of: annotationModel.isAnnotating) { _, isOn in
       if isOn {
@@ -165,6 +208,14 @@ struct SimulatorPreviewSidePanelView: View {
 
       Spacer(minLength: 12)
 
+      if activeUDID != nil {
+        displayModePicker
+      }
+      HotReloadStatusPillView(
+        phase: hotReload.monitor.phase,
+        warning: hotReload.monitor.lastWarning
+      )
+
       devicePicker
       buildAndRunButton
       stopButton
@@ -177,6 +228,19 @@ struct SimulatorPreviewSidePanelView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
+  }
+
+  /// Live mirror ↔ Previews. Both surfaces are hot: the mirror updates in
+  /// place on injection, and previews re-render on the same reload signal.
+  private var displayModePicker: some View {
+    Picker("View", selection: $displayMode) {
+      Text("Live").tag(SimulatorPanelDisplayMode.live)
+      Text("Previews").tag(SimulatorPanelDisplayMode.previews)
+    }
+    .pickerStyle(.segmented)
+    .labelsHidden()
+    .fixedSize()
+    .accessibilityLabel("Panel display mode")
   }
 
   @ViewBuilder
@@ -221,6 +285,7 @@ struct SimulatorPreviewSidePanelView: View {
       .buttonStyle(.borderless)
       .disabled(activeUDID == nil)
       .help("Build & run this project on the selected simulator")
+      .accessibilityLabel("Build and run")
     }
   }
 
@@ -241,6 +306,7 @@ struct SimulatorPreviewSidePanelView: View {
       .buttonStyle(.borderless)
       .disabled(!(activeDevice?.isBooted ?? false))
       .help("Shut down the simulator")
+      .accessibilityLabel("Shut down simulator")
     }
   }
 
@@ -261,7 +327,22 @@ struct SimulatorPreviewSidePanelView: View {
   @ViewBuilder
   private var content: some View {
     if let activeUDID, isShowingLiveStream {
-      streamContent(udid: activeUDID)
+      // Both surfaces stay mounted so flipping tabs doesn't tear down and
+      // re-attach the live stream (a visible reconnect).
+      ZStack {
+        streamContent(udid: activeUDID)
+          .opacity(displayMode == .live ? 1 : 0)
+          .allowsHitTesting(displayMode == .live)
+
+        if displayMode == .previews {
+          spotlightView
+            .background(Color(nsColor: .windowBackgroundColor))
+        }
+      }
+    } else if displayMode == .previews, activeUDID != nil {
+      // Cold start straight into Previews: the spotlight's states guide the
+      // bootstrap, and the tab switch auto-runs the app when a file is open.
+      spotlightView
     } else if simulatorService.isLoadingDevices && !hasLoadedDevices {
       loadingState
     } else if availableDevices.isEmpty {
@@ -269,6 +350,22 @@ struct SimulatorPreviewSidePanelView: View {
     } else {
       notBootedState
     }
+  }
+
+  private var spotlightView: some View {
+    SimulatorPreviewSpotlightView(
+      client: hotReload.previewClient,
+      reloadGeneration: hotReload.monitor.reloadGeneration + hotReload.previewHostGeneration,
+      changedFiles: hotReload.changedSourceFiles,
+      openFileName: openEditorFilePath.map {
+        ($0 as NSString).lastPathComponent
+      },
+      isReloadInFlight: isReloadInFlight,
+      onEnablePreviews: enablePreviews,
+      onBuildAndRun: buildAndRun,
+      connectedDeviceName: hotReload.activePlan != nil
+        ? activeDevice?.name : nil
+    )
   }
 
   private func streamContent(udid: String) -> some View {
@@ -358,13 +455,13 @@ struct SimulatorPreviewSidePanelView: View {
         ProgressView()
           .controlSize(.small)
       } else {
-        Text(activeDevice.map { "\($0.name) is not booted" } ?? "Select a simulator")
+        Text(activeDevice.map { "\($0.name) is not running" } ?? "Select a simulator")
           .font(.subheadline)
-        if let activeUDID {
-          Button {
-            Task { await simulatorService.bootDevice(udid: activeUDID) }
-          } label: {
-            Label("Boot & Preview", systemImage: "power")
+        if activeUDID != nil {
+          // One action: Build & Run boots the device implicitly, then
+          // builds, installs, and launches the app armed.
+          Button(action: buildAndRun) {
+            Label("Build & Run", systemImage: "play.fill")
           }
           .buttonStyle(.borderedProminent)
         }
@@ -408,13 +505,72 @@ struct SimulatorPreviewSidePanelView: View {
       if !simulatorService.isBooted(udid: activeUDID) {
         await simulatorService.bootDevice(udid: activeUDID)
       }
-      await simulatorService.buildAndRunOnSimulator(udid: activeUDID, projectPath: projectPath)
+      // Arms hot reload + the preview host when the support dylibs are
+      // cached (first use builds them in the background and this launch
+      // proceeds plain — the pill reports it honestly).
+      let plan = await hotReload.preparePlan(
+        udid: activeUDID,
+        projectPath: projectPath,
+        enableInjection: true,
+        enablePreviews: true
+      )
+      let success = await simulatorService.buildAndRunOnSimulator(
+        udid: activeUDID, projectPath: projectPath, hotReload: plan)
+      if success, let plan {
+        hotReload.sessionDidLaunch(
+          udid: activeUDID, projectPath: projectPath, plan: plan)
+      }
     }
   }
 
   private func stopSimulator() {
     guard let activeUDID else { return }
+    hotReload.sessionDidStop()
     Task { await simulatorService.shutdownDevice(udid: activeUDID) }
+  }
+
+  /// Bootstraps the Previews tab without a manual play press: when there's
+  /// something to show (a Swift file open or changed files) and the app
+  /// isn't armed, hit the play flow programmatically — full Build & Run on
+  /// a cold device, the ~1s relaunch when the app is already running.
+  private func autoArmPreviewsIfNeeded() {
+    guard activeUDID != nil, !isActiveDevicePreparing else { return }
+    let hasSomethingToShow =
+      openEditorFilePath?.hasSuffix(".swift") == true
+      || !hotReload.changedSourceFiles.isEmpty
+    guard hasSomethingToShow else { return }
+
+    if !isActiveDeviceBooted {
+      buildAndRun()
+    } else if hotReload.activePlan == nil {
+      enablePreviews()
+    }
+  }
+
+  /// Self-heal for the Previews tab: relaunches the already-built app with
+  /// the support dylibs inserted (~1s, no rebuild). The host can only exist
+  /// in launches AgentHub armed, so an app started any other way needs this
+  /// one-time relaunch.
+  private func enablePreviews() {
+    guard let activeUDID, isActiveDeviceBooted else { return }
+    Task {
+      let plan = await hotReload.preparePlan(
+        udid: activeUDID,
+        projectPath: projectPath,
+        enableInjection: true,
+        enablePreviews: true
+      )
+      guard let plan else { return } // support build in progress — pill reports it
+      let success = await simulatorService.relaunchWithHotReload(
+        udid: activeUDID, projectPath: projectPath, hotReload: plan)
+      if success {
+        hotReload.sessionDidLaunch(
+          udid: activeUDID, projectPath: projectPath, plan: plan)
+      } else {
+        // No resolvable built app — the full pipeline is the only path.
+        buildAndRun()
+      }
+    }
   }
 
   /// Home-button devices (~16:9 screens) take a button press; edge-to-edge

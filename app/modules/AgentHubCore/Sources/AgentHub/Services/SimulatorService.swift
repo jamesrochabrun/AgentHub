@@ -9,6 +9,7 @@
 
 import CryptoKit
 import Foundation
+import SimulatorPreview
 
 // MARK: - Private Build Helpers
 
@@ -49,6 +50,16 @@ private struct BuildSetup: Sendable {
   let scheme: String
   let xcodebuild: String
   let derivedDataPath: String
+
+  func withDerivedDataPath(_ path: String) -> BuildSetup {
+    BuildSetup(
+      targetPath: targetPath,
+      isWorkspace: isWorkspace,
+      scheme: scheme,
+      xcodebuild: xcodebuild,
+      derivedDataPath: path
+    )
+  }
 }
 
 struct BuiltAppInfo: Sendable {
@@ -351,7 +362,18 @@ public final class SimulatorService {
   }
 
   /// Builds for an iOS simulator, installs, and launches the app.
-  public func buildAndRunOnSimulator(udid: String, projectPath: String) async {
+  ///
+  /// When `hotReload` is provided (and effective), the build gets the
+  /// injection engine's required settings (`-interposable`,
+  /// `EMIT_FRONTEND_COMMAND_LINES`) and the launch inserts the support
+  /// dylibs with stdout redirected to the plan's console log. Returns
+  /// whether the full build–install–launch pipeline succeeded.
+  @discardableResult
+  public func buildAndRunOnSimulator(
+    udid: String,
+    projectPath: String,
+    hotReload: HotReloadLaunchPlan? = nil
+  ) async -> Bool {
     let key = sessionKey(projectPath: projectPath, udid: udid)
     sessionBuildStates[key] = .building
     AppLogger.simulator.info("Building for simulator \(udid)")
@@ -359,20 +381,38 @@ public final class SimulatorService {
     // Phase 1: detect workspace/scheme off main actor
     let detectResult = await buildSetup(for: projectPath)
 
-    guard case .success(let setup) = detectResult else {
+    guard case .success(var setup) = detectResult else {
       if case .failure(let e) = detectResult {
         sessionBuildStates[key] = .failed(error: e.localizedDescription)
         AppLogger.simulator.error("Simulator build setup failed: \(e.localizedDescription)")
       }
-      return
+      return false
+    }
+
+    // Injection-armed builds get their own derived data: the engine replays
+    // per-file compile commands from the build log, which only exist for
+    // files actually compiled with the hot-reload settings. A separate path
+    // forces that full compile once (and keeps plain builds' cache intact);
+    // it also guarantees the freshest .xcactivitylog is ours, so the engine
+    // can't latch onto another project's log.
+    if let hotReload, !hotReload.configuration.xcodebuildSettingOverrides.isEmpty {
+      setup = setup.withDerivedDataPath(setup.derivedDataPath + "-hotreload")
     }
 
     // Phase 2: configure process on main actor and store for cancellation
     let process = Process()
     process.executableURL = URL(fileURLWithPath: setup.xcodebuild)
-    var buildArgs = [
-      "build",
-      "-quiet",
+    let isInjectionArmed =
+      hotReload.map { !$0.configuration.xcodebuildSettingOverrides.isEmpty } ?? false
+    var buildArgs = ["build"]
+    if !isInjectionArmed {
+      // Armed builds need the full transcript: EMIT_FRONTEND_COMMAND_LINES
+      // puts the per-file swift-frontend commands on stdout, and the
+      // synthetic activity log is built from them (Xcode 26 CLI builds
+      // persist only empty logs).
+      buildArgs.append("-quiet")
+    }
+    buildArgs += [
       "-scheme", setup.scheme,
       "-destination", "generic/platform=iOS Simulator",
       "-derivedDataPath", setup.derivedDataPath
@@ -381,6 +421,9 @@ public final class SimulatorService {
       buildArgs += ["-workspace", setup.targetPath]
     } else {
       buildArgs += ["-project", setup.targetPath]
+    }
+    if let hotReload {
+      buildArgs += hotReload.configuration.xcodebuildSettingOverrides
     }
     process.arguments = buildArgs
     let outputPipe = Pipe()
@@ -393,7 +436,8 @@ public final class SimulatorService {
 
     // Phase 3: execute off main actor; store the task so cancelSimulatorBuild can cancel it
     let phase3Task = Task.detached {
-      await SimulatorService.executeSimulatorBuild(ref: ref, udid: udid, sessionKey: key, setup: setup)
+      await SimulatorService.executeSimulatorBuild(
+        ref: ref, udid: udid, sessionKey: key, setup: setup, hotReload: hotReload)
     }
     simulatorRunTasks[key] = phase3Task
     let result = await phase3Task.value
@@ -404,17 +448,78 @@ public final class SimulatorService {
     // Guard against a cancel() call that already removed the key from sessionBuildStates.
     // We can't check for .building here because installAndLaunch mutates the state to
     // .installing / .launching while Phase 3 is still in flight.
-    guard sessionBuildStates[key] != nil else { return }
+    guard sessionBuildStates[key] != nil else { return false }
 
     switch result {
     case .success:
       sessionBuildStates.removeValue(forKey: key)
       deviceStates[udid] = .booted
       AppLogger.simulator.info("Simulator build+run succeeded for \(udid)")
+      return true
     case .failure(let error):
       sessionBuildStates[key] = .failed(error: error.localizedDescription)
       AppLogger.simulator.error("Simulator build failed: \(error.localizedDescription)")
+      return false
     }
+  }
+
+  /// Relaunches the project's already-installed app with the hot-reload
+  /// dylibs inserted — no rebuild, ~1s. Used by the Previews tab to
+  /// self-heal when the running app was launched without the preview host
+  /// (dylibs can only be inserted at launch). Returns false when no built
+  /// app can be resolved (a full Build & Run is needed) or launch fails.
+  public func relaunchWithHotReload(
+    udid: String,
+    projectPath: String,
+    hotReload: HotReloadLaunchPlan
+  ) async -> Bool {
+    let key = sessionKey(projectPath: projectPath, udid: udid)
+    guard case .success(let setup) = await buildSetup(for: projectPath) else {
+      return false
+    }
+    sessionBuildStates[key] = .launching
+    let success = await Task.detached {
+      SimulatorService.launchExistingApp(
+        udid: udid, setup: setup, hotReload: hotReload)
+    }.value
+    sessionBuildStates.removeValue(forKey: key)
+    if success {
+      deviceStates[udid] = .booted
+      AppLogger.simulator.info("Relaunched app with hot reload for \(udid)")
+    }
+    return success
+  }
+
+  /// Finds the most recent built app (armed derived data first, then plain)
+  /// and relaunches it by bundle identifier with the plan's environment.
+  private nonisolated static func launchExistingApp(
+    udid: String,
+    setup: BuildSetup,
+    hotReload: HotReloadLaunchPlan
+  ) -> Bool {
+    var bundle: String?
+    for derivedDataPath in [setup.derivedDataPath + "-hotreload", setup.derivedDataPath] {
+      if let app = resolveBuiltApp(
+        derivedDataPath: derivedDataPath,
+        scheme: setup.scheme,
+        platform: .iOSSimulator,
+        requiresBundleIdentifier: true
+      ), let identifier = app.bundleIdentifier {
+        bundle = identifier
+        break
+      }
+    }
+    guard let bundle else { return false }
+
+    var launchArguments = ["launch"]
+    var launchEnvironment: [String: String]?
+    if hotReload.configuration.isEffective {
+      launchArguments += hotReload.configuration.launchArguments(
+        consoleStdoutPath: hotReload.consoleStdoutPath)
+      launchEnvironment = hotReload.configuration.simctlChildEnvironment()
+    }
+    launchArguments += [udid, bundle]
+    return runSimctl(arguments: launchArguments, environment: launchEnvironment) == 0
   }
 
   /// Terminates an in-flight simulator build and clears this session's build state.
@@ -482,7 +587,12 @@ public final class SimulatorService {
   }
 
   /// Runs `xcrun simctl <arguments>` and returns the exit code.
-  private nonisolated static func runSimctl(arguments: [String]) -> Int32 {
+  /// `environment` entries are merged over the inherited environment
+  /// (simctl forwards `SIMCTL_CHILD_`-prefixed variables to launched apps).
+  private nonisolated static func runSimctl(
+    arguments: [String],
+    environment: [String: String]? = nil
+  ) -> Int32 {
     guard let xcrun = findExecutable(named: "xcrun") else {
       AppLogger.simulator.error("xcrun not found in PATH")
       return -1
@@ -490,6 +600,10 @@ public final class SimulatorService {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: xcrun)
     process.arguments = ["simctl"] + arguments
+    if let environment, !environment.isEmpty {
+      process.environment = ProcessInfo.processInfo.environment
+        .merging(environment) { _, override in override }
+    }
     process.standardOutput = Pipe()
     process.standardError = Pipe()
     do {
@@ -632,7 +746,8 @@ public final class SimulatorService {
     ref: ProcessRef,
     udid: String,
     sessionKey: String,
-    setup: BuildSetup
+    setup: BuildSetup,
+    hotReload: HotReloadLaunchPlan? = nil
   ) async -> Result<Void, Error> {
     let totalStart = phaseTimestamp()
     let bootTask = Task.detached(priority: .utility) {
@@ -674,6 +789,24 @@ public final class SimulatorService {
       "xcodebuild finished for scheme \(setup.scheme, privacy: .public) in \(formattedElapsed(since: buildStart), privacy: .public)s"
     )
 
+    // Persist the per-file compile commands where the injection engine looks
+    // for them, before the app launches (its log discovery replays recent
+    // file events at boot).
+    if let hotReload, !hotReload.configuration.xcodebuildSettingOverrides.isEmpty {
+      do {
+        if let logURL = try HotReloadBuildLogSynthesizer.writeSyntheticLog(
+          buildOutput: stdoutChunks.combinedData(),
+          derivedDataPath: setup.derivedDataPath
+        ) {
+          AppLogger.simulator.info(
+            "Wrote synthetic build log \(logURL.lastPathComponent, privacy: .public)")
+        }
+      } catch {
+        AppLogger.simulator.error(
+          "Synthetic build log failed: \(error.localizedDescription, privacy: .public)")
+      }
+    }
+
     let bootExitCode = await bootTask.value
     if bootExitCode != 0 {
       AppLogger.simulator.info(
@@ -693,7 +826,8 @@ public final class SimulatorService {
     let result = await installAndLaunch(
       udid: udid,
       sessionKey: sessionKey,
-      setup: setup
+      setup: setup,
+      hotReload: hotReload
     )
 
     if case .success = result {
@@ -709,7 +843,8 @@ public final class SimulatorService {
   private nonisolated static func installAndLaunch(
     udid: String,
     sessionKey: String,
-    setup: BuildSetup
+    setup: BuildSetup,
+    hotReload: HotReloadLaunchPlan? = nil
   ) async -> Result<Void, Error> {
     guard findExecutable(named: "xcrun") != nil else {
       return .failure(NSError(domain: "SimulatorService", code: -8,
@@ -750,9 +885,20 @@ public final class SimulatorService {
       SimulatorService.shared.sessionBuildStates[sessionKey] = .launching
     }
 
-    // Launch
+    // Launch — hot-reload launches insert the support dylibs (passed to the
+    // app via simctl's SIMCTL_CHILD_ environment forwarding), terminate any
+    // running copy, and redirect stdout to the tailed console log.
     let launchStart = phaseTimestamp()
-    let launchCode = runSimctl(arguments: ["launch", udid, bundle])
+    var launchArguments = ["launch"]
+    var launchEnvironment: [String: String]?
+    if let hotReload, hotReload.configuration.isEffective {
+      launchArguments += hotReload.configuration.launchArguments(
+        consoleStdoutPath: hotReload.consoleStdoutPath)
+      launchEnvironment = hotReload.configuration.simctlChildEnvironment()
+    }
+    launchArguments += [udid, bundle]
+    let launchCode = runSimctl(
+      arguments: launchArguments, environment: launchEnvironment)
     guard launchCode == 0 else {
       return .failure(NSError(domain: "SimulatorService", code: Int(launchCode),
         userInfo: [NSLocalizedDescriptionKey: "simctl launch failed (exit \(launchCode))"]))

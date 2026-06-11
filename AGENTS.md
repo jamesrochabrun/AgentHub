@@ -105,6 +105,12 @@ AgentHub renders MCP app UIs an agent produces during a Claude or Codex session 
 
 Storybook-enabled projects swap the Preview button for a Storybook button (never both). `WebPreviewMode { .app, .storybook }` routes the preview pane; the storybook server runs at compound key `"{sessionId}:storybook"` in `DevServerManager` so it coexists with the primary app server. Read **Storybook** in `README.md` before editing this area.
 
+## Simulator Preview
+
+Read `SimulatorPreview.md` before editing the live simulator preview module, `SimulatorPreviewSidePanelView`, the `.simulator` side-panel route, `onShowSimulatorPreview` callbacks, `AgentHubProvider.simulatorStreamService`, anything named `HotReload*`, `PreviewHost*`, or `SimulatorHotReloadController`.
+
+The panel mirrors and controls an iOS Simulator in-app, supports element-aware annotation pins, and can arm hot reload plus the Previews tab by inserting generated support dylibs at launch. Preserve the documented invariants: no host Screen Recording/Accessibility prompts, no network exposure beyond loopback preview-host access, no writes into the user's repo, truthful hot-reload pill states, `simctl launch --stdout` instead of `--console-pty`, and never inserting SnapshotPreviews' stock `Snapshotting` dylib beside the live mirror.
+
 ## GitHub PR/CI Observation
 
 Read `GitHubMonitor.md` before editing GitHub PR/check observation, session-row GitHub state, GitHub panel refresh behavior, or related tests.
