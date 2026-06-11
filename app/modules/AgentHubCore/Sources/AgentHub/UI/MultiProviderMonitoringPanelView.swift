@@ -1023,7 +1023,7 @@ public struct MultiProviderMonitoringPanelView: View {
         monitorState: viewModel.monitorStates[sessionId],
         onDismiss: closeEmbeddedSidePanel
       )
-    case .simulator(_, let session, let projectPath):
+    case .simulator(let sessionId, let session, let projectPath):
       SimulatorPreviewSidePanelView(
         session: session,
         projectPath: projectPath,
@@ -1032,8 +1032,10 @@ public struct MultiProviderMonitoringPanelView: View {
           if !viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) {
             viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
           }
-        }
+        },
+        openEditorFilePath: editorStates[payload.itemID]?.selectedFilePath
       )
+      .id("\(sessionId)|\(projectPath)")
     }
   }
 

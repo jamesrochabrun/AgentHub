@@ -1,0 +1,293 @@
+//
+//  SimulatorHotReloadController.swift
+//  AgentHub
+//
+//  Glue between the simulator panel and the hot-reload machinery in the
+//  SimulatorPreview module. Owns one launch's worth of state: the pill's
+//  HotReloadMonitor, the host-side source watcher, the console tail that
+//  feeds injection-engine events, and the preview-host client used by the
+//  Previews tab.
+//
+//  Launch flow: `preparePlan` arms a launch from cached support artifacts
+//  (kicking a background build of them on first use — the pill reports
+//  "preparing" honestly instead of blocking Build & Run for minutes), the
+//  panel passes the plan to `SimulatorService.buildAndRunOnSimulator`, and
+//  `sessionDidLaunch` starts the watchers. Structural changes and failed
+//  injections trigger `rebuildExecutor` — an incremental rebuild + relaunch
+//  with the same plan.
+//
+
+import CryptoKit
+import Foundation
+import SimulatorPreview
+
+@MainActor
+@Observable
+public final class SimulatorHotReloadController {
+
+  /// State machine behind the pill; the Previews tab also re-renders on its
+  /// `reloadGeneration`.
+  public let monitor = HotReloadMonitor()
+
+  /// Client for the Previews tab (talks to the inserted preview-host dylib).
+  public let previewClient: any PreviewHostClientProtocol
+
+  /// Bumped every time a launch inserts the preview host. The Previews tab
+  /// uses this to retry manifest loading after auto-arm/relaunch, even if no
+  /// source file has hot-reloaded yet.
+  public private(set) var previewHostGeneration = 0
+
+  /// The plan used for the current/last launch — nil before the first
+  /// hot-reload launch.
+  public private(set) var activePlan: HotReloadLaunchPlan?
+
+  /// Source file names edited in this project, most recent first — tracked
+  /// for the panel's lifetime (independent of arming, which can happen
+  /// later) and seeded from `git status` so files the agent edited before
+  /// the panel opened count too. Drives the previews spotlight.
+  public private(set) var changedSourceFiles: [String] = []
+
+  /// Runs the fallback incremental rebuild + relaunch. Injected so tests
+  /// don't shell out; defaults to `SimulatorService`.
+  public var rebuildExecutor:
+    (_ udid: String, _ projectPath: String, _ plan: HotReloadLaunchPlan) async -> Bool
+
+  private let artifactStore: any HotReloadArtifactProviding
+  private let sourceWatcher: any HotReloadSourceWatching
+  private let consoleTail: any HotReloadConsoleTailing
+  private let consoleParser = HotReloadConsoleParser()
+  private let seedChangedFiles: @Sendable (String) async -> [String]
+  private var activeContext: (udid: String, projectPath: String)?
+  private var preparationTask: Task<Void, Never>?
+  private var isRebuilding = false
+  private var isTracking = false
+
+  public init(
+    artifactStore: any HotReloadArtifactProviding = HotReloadArtifactStore(),
+    sourceWatcher: any HotReloadSourceWatching = HotReloadSourceWatcher(),
+    consoleTail: any HotReloadConsoleTailing = HotReloadConsoleTail(),
+    previewClient: any PreviewHostClientProtocol = PreviewHostHTTPClient(),
+    seedChangedFiles: @escaping @Sendable (String) async -> [String] = {
+      await GitChangedSwiftFiles.changedFiles(inProjectAt: $0)
+    },
+    rebuildExecutor: (
+      (String, String, HotReloadLaunchPlan) async -> Bool
+    )? = nil
+  ) {
+    self.artifactStore = artifactStore
+    self.sourceWatcher = sourceWatcher
+    self.consoleTail = consoleTail
+    self.previewClient = previewClient
+    self.seedChangedFiles = seedChangedFiles
+    self.rebuildExecutor = rebuildExecutor ?? { udid, projectPath, plan in
+      await SimulatorService.shared.buildAndRunOnSimulator(
+        udid: udid, projectPath: projectPath, hotReload: plan)
+    }
+  }
+
+  // MARK: - Change tracking (panel lifetime)
+
+  /// Starts watching the project's sources and seeds the changed-files list
+  /// from git. Call when the panel opens — tracking is what lets the
+  /// spotlight show a preview the moment the host becomes reachable, even
+  /// for edits made before any launch was armed.
+  public func startTracking(projectPath: String) {
+    guard !isTracking else { return }
+    isTracking = true
+
+    sourceWatcher.start(projectPath: projectPath) { [weak self] changes in
+      guard let self else { return }
+      for change in changes {
+        self.noteChangedSource((change.path as NSString).lastPathComponent)
+      }
+      self.monitor.handle(sourceChanges: changes)
+    }
+
+    Task { [weak self, seedChangedFiles] in
+      let seeded = await seedChangedFiles(projectPath)
+      guard let self else { return }
+      for fileName in seeded where !self.changedSourceFiles.contains(fileName) {
+        // Seeds are older than anything observed live — append, not insert.
+        self.changedSourceFiles.append(fileName)
+      }
+    }
+  }
+
+  /// Stops the watcher. Call when the panel closes.
+  public func stopTracking() {
+    sourceWatcher.stop()
+    isTracking = false
+  }
+
+  /// Most-recent-first, deduplicated, bounded.
+  private func noteChangedSource(_ fileName: String) {
+    guard fileName.hasSuffix(".swift") else { return }
+    changedSourceFiles.removeAll { $0 == fileName }
+    changedSourceFiles.insert(fileName, at: 0)
+    if changedSourceFiles.count > 30 {
+      changedSourceFiles.removeLast(changedSourceFiles.count - 30)
+    }
+  }
+
+  // MARK: - Launch lifecycle
+
+  /// Builds the support dylibs in the background so they're cached by the
+  /// time the user hits Build & Run. Call when the panel opens.
+  public func warmUp() {
+    guard preparationTask == nil else { return }
+    preparationTask = Task { [artifactStore] in
+      _ = try? await artifactStore.prepareArtifacts(progress: nil)
+    }
+  }
+
+  /// Returns the launch plan for Build & Run, or nil when neither feature is
+  /// enabled or the support artifacts aren't ready yet. Never blocks on the
+  /// first-run support build — it reports `.preparing` and lets the launch
+  /// proceed without hot reload; the next run arms it.
+  public func preparePlan(
+    udid: String,
+    projectPath: String,
+    enableInjection: Bool,
+    enablePreviews: Bool
+  ) async -> HotReloadLaunchPlan? {
+    guard enableInjection || enablePreviews else {
+      monitor.markDisabled()
+      return nil
+    }
+
+    guard let artifacts = await artifactStore.cachedArtifacts() else {
+      monitor.markPreparing(
+        detail: "Building hot-reload support libraries — arms on the next run")
+      preparationTask = nil
+      warmUp()
+      Task { [weak self] in
+        await self?.preparationTask?.value
+        guard let self, case .preparing = self.monitor.phase else { return }
+        if await self.artifactStore.cachedArtifacts() != nil {
+          self.monitor.markUnavailable(
+            reason: "Hot reload is ready — Build & Run again to arm it")
+        } else {
+          self.monitor.markUnavailable(
+            reason: "Hot-reload support build failed; see logs")
+        }
+      }
+      return nil
+    }
+
+    let configuration = HotReloadLaunchConfiguration(
+      projectPath: projectPath,
+      artifacts: artifacts,
+      enableInjection: enableInjection,
+      enablePreviews: enablePreviews
+    )
+    guard configuration.isEffective else {
+      monitor.markUnavailable(reason: "Hot-reload support libraries unavailable")
+      return nil
+    }
+    let wantsConsole = enableInjection && artifacts.injectionDylibPath != nil
+    var consolePath: String?
+    if wantsConsole {
+      consolePath = Self.consoleLogPath(projectPath: projectPath, udid: udid)
+      // Drop the previous launch's log so the tail can't replay stale
+      // injection events into the fresh monitor.
+      if let consolePath {
+        try? FileManager.default.removeItem(atPath: consolePath)
+      }
+    }
+    return HotReloadLaunchPlan(
+      configuration: configuration,
+      consoleStdoutPath: consolePath
+    )
+  }
+
+  /// Arms the monitor + console tail after a successful hot-reload launch.
+  /// (Source-change tracking runs independently — see `startTracking`.)
+  public func sessionDidLaunch(
+    udid: String, projectPath: String, plan: HotReloadLaunchPlan
+  ) {
+    consoleTail.stop()
+    monitor.onRequestRebuild = nil
+    activePlan = plan
+    activeContext = (udid, projectPath)
+    if plan.configuration.enablePreviews,
+       plan.configuration.artifacts.previewHostDylibPath != nil {
+      previewHostGeneration += 1
+    }
+
+    guard plan.configuration.enableInjection,
+          plan.configuration.artifacts.injectionDylibPath != nil
+    else {
+      // Previews-only launch: the pill stays off, the tab works.
+      monitor.markDisabled()
+      return
+    }
+
+    monitor.arm()
+    monitor.onRequestRebuild = { [weak self] reason in
+      self?.performRebuild(reason: reason)
+    }
+    if let consolePath = plan.consoleStdoutPath {
+      consoleTail.start(path: consolePath, onLine: makeConsoleLineHandler())
+    }
+  }
+
+  /// Stops the armed launch's console + monitor (device shut down, device
+  /// switched). Change tracking keeps running for the panel's lifetime.
+  public func sessionDidStop() {
+    consoleTail.stop()
+    monitor.onRequestRebuild = nil
+    activePlan = nil
+    activeContext = nil
+    monitor.markDisabled()
+  }
+
+  /// Console lines feed the pill's state machine, and recompile events also
+  /// count as changed files (covers saves the host-side watcher misses).
+  private func makeConsoleLineHandler() -> (String) -> Void {
+    { [weak self] line in
+      guard let self, let event = self.consoleParser.parse(line: line) else { return }
+      if case .recompiling(let fileName) = event {
+        self.noteChangedSource(fileName)
+      }
+      self.monitor.handle(engineEvent: event)
+    }
+  }
+
+  // MARK: - Internals
+
+  private func performRebuild(reason: String) {
+    guard let context = activeContext, let plan = activePlan, !isRebuilding
+    else { return }
+    isRebuilding = true
+    monitor.markRebuildStarted(reason: reason)
+    Task { [weak self] in
+      guard let self else { return }
+      let success = await self.rebuildExecutor(
+        context.udid, context.projectPath, plan)
+      self.isRebuilding = false
+      if success, let consolePath = plan.consoleStdoutPath {
+        // The relaunch truncated the console log; restart the tail so its
+        // byte offset starts over from the new launch's first line.
+        self.consoleTail.start(
+          path: consolePath, onLine: self.makeConsoleLineHandler())
+      }
+      self.monitor.markRebuildFinished(
+        success: success,
+        message: success ? nil : "Rebuild failed — see the build error in the panel"
+      )
+    }
+  }
+
+  /// Console logs live next to the support artifacts, keyed by project+device.
+  static func consoleLogPath(projectPath: String, udid: String) -> String {
+    let digest = SHA256.hash(data: Data("\(projectPath)|\(udid)".utf8))
+      .prefix(8)
+      .map { String(format: "%02x", $0) }
+      .joined()
+    let directory = HotReloadArtifactStore.defaultRootDirectory
+      .appendingPathComponent("console", isDirectory: true)
+    try? FileManager.default.createDirectory(
+      at: directory, withIntermediateDirectories: true)
+    return directory.appendingPathComponent("\(digest).log").path
+  }
+}

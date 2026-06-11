@@ -31,6 +31,7 @@ rom session rows, and send GitHub context back into a session
 - **Web preview batch updates** — Inspect elements or crop regions in the live web preview, queue multiple requested updates with structured context, and attach the batch to your next terminal message — no copy-paste needed
 - **Storybook support** — Auto-detects Storybook-enabled projects (`.storybook/` config, `storybook` npm script, or `@storybook/*` devDependencies) and replaces the Preview button with a one-click Storybook launcher; the dev server is started under a compound key so it can run alongside your primary app server
 - **iOS Simulator run destination** — Build, install, and launch your app on any booted iOS Simulator directly from a session card; cancel at any phase (Building / Installing / Launching) via a stop button; boot-readiness check times out after 90 seconds to prevent hangs
+- **Live iOS Simulator preview** — Mirror and control a booted simulator inside AgentHub, annotate simulated UI elements, hot-reload saved Swift files, and render matching SwiftUI previews from the same running app process
 - **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting; switch to Review mode to annotate individual lines and send batch feedback directly to Claude's interactive plan prompt
 - **Global search** — Search across all session files with ranked results
 - **Usage stats** — Track token counts, costs, and daily activity per provider (menu bar or popover)
@@ -115,6 +116,24 @@ Detection lives in the standalone `Storybook` Swift module (`app/modules/Storybo
 - If your `storybook` npm script already pins a port (e.g. `storybook dev -p 6006`), AgentHub honors that port instead of trying to override it — npm appends extra args after the script's, and Storybook only respects the first `-p`, so passing our own would desync the bind port from the tracked port.
 - If port 6006 is in use and Storybook prompts to use an alternate port, AgentHub auto-accepts; the actual port is captured from Storybook's `Local: http://localhost:N/` ready banner.
 - The web preview pane in Storybook mode resolves URLs from the storybook server slot only; it does not follow the agent's app-server URL changes, so the Storybook view stays pinned even if the agent restarts the primary dev server.
+
+## iOS Simulator Preview
+
+For Xcode projects, the **Simulator** action opens an in-app side panel instead of sending you out to Simulator.app. The panel can boot a selected iOS Simulator, build and run the session's app, mirror the live framebuffer, and forward mouse/keyboard input back to the device.
+
+The **Annotate** tool pauses touch forwarding, reads the simulated app's accessibility tree, and lets you pin feedback to real UI elements. Sending annotations writes one temporary pin-stamped screenshot and a structured prompt to the active agent session; frames are not streamed over the network or persisted while viewing.
+
+### Hot Reload And Previews
+
+Build & Run from the Simulator panel arms hot reload and the Previews tab when AgentHub's support libraries are available. Saved Swift files are injected into the running app, preserving process state when InjectionLite can reload them; structural changes, compile failures, or unsupported edits fall back to an incremental rebuild. The hot-reload pill reports the actual state: preparing, armed, reloading, rebuilt, failed, or unavailable.
+
+The Previews tab renders SwiftUI previews inside the same running simulator app through a generated preview-host library. Opening or saving a Swift file while the tab is visible can auto-arm previews: a cold device runs the full Build & Run flow, while an already-running unarmed app is relaunched with the preview host inserted.
+
+First use builds the hot-reload and preview-host support package under `~/Library/Application Support/AgentHub/HotReloadHost/`. That build can take a minute or two while Swift Package dependencies resolve; AgentHub launches the app normally during preparation, then arms hot reload on the next Build & Run.
+
+For visible SwiftUI body refresh after injection, the target app should opt in with the [`Inject`](https://github.com/krzysztofzablocki/Inject) package or InjectionLite's `injected()` convention. Without that opt-in, code may be injected successfully but some views will not redraw until app state changes.
+
+Current limitations: one fixed preview-host loopback port means one armed preview session at a time, app crashes can leave the status pill stale until the next action, the hot-reload derived-data path uses a separate build cache, and console logs under Application Support do not yet have a cleanup policy.
 
 ## Requirements
 
