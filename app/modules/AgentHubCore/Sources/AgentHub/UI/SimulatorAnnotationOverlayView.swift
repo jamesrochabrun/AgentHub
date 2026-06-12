@@ -77,13 +77,21 @@ final class SimulatorAnnotationModel {
 /// `SimulatorScreenshotCapture`.
 let simulatorAnnotationPinColor = Color(red: 0.0, green: 0.48, blue: 1.0)
 /// Element-frame tint for the inspection overlay.
-private let elementFrameColor = Color(red: 0.2, green: 0.78, blue: 0.55)
+private let elementFrameColor = Color(nsColor: .systemBlue)
 
 struct SimulatorAnnotationOverlayView: View {
   let model: SimulatorAnnotationModel
 
+  @Environment(\.colorScheme) private var colorScheme
+
   @State private var draftText = ""
   @FocusState private var isInputFocused: Bool
+
+  private var annotationSurfaceStyle: AnyShapeStyle {
+    colorScheme == .light
+      ? AnyShapeStyle(.thinMaterial)
+      : AnyShapeStyle(.regularMaterial)
+  }
 
   var body: some View {
     GeometryReader { geometry in
@@ -182,7 +190,7 @@ struct SimulatorAnnotationOverlayView: View {
       .truncationMode(.middle)
       .padding(.horizontal, 8)
       .padding(.vertical, 4)
-      .background(Capsule().fill(.regularMaterial))
+      .background(Capsule().fill(annotationSurfaceStyle))
       .overlay(Capsule().stroke(elementFrameColor.opacity(0.5), lineWidth: 1))
       .frame(maxWidth: chipWidth)
       .position(x: x, y: y)
@@ -216,7 +224,7 @@ struct SimulatorAnnotationOverlayView: View {
     .foregroundStyle(.secondary)
     .padding(.horizontal, 10)
     .padding(.vertical, 5)
-    .background(Capsule().fill(.regularMaterial))
+    .background(Capsule().fill(annotationSurfaceStyle))
     .position(x: viewSize.width / 2, y: 24)
     .allowsHitTesting(false)
   }
@@ -228,16 +236,32 @@ struct SimulatorAnnotationOverlayView: View {
   }
 
   private func inputBubble(near pinPoint: CGPoint, viewSize: CGSize) -> some View {
-    let bubbleWidth = min(300, max(200, viewSize.width - 24))
-    let x = min(max(pinPoint.x, bubbleWidth / 2 + 12), viewSize.width - bubbleWidth / 2 - 12)
-    let below = pinPoint.y + 50
-    let y = below + 30 > viewSize.height ? max(pinPoint.y - 50, 28) : below
+    let margin: CGFloat = 8
+    let availableWidth = max(1, viewSize.width - margin * 2)
+    let bubbleWidth = min(300, availableWidth)
+    let halfWidth = bubbleWidth / 2
+    let x = min(
+      max(pinPoint.x, margin + halfWidth),
+      viewSize.width - margin - halfWidth
+    )
+    let estimatedBubbleHeight: CGFloat = model.pendingTarget == nil ? 46 : 64
+    let halfHeight = estimatedBubbleHeight / 2
+    let belowY = pinPoint.y + 50
+    let aboveY = pinPoint.y - 50
+    let y: CGFloat
+    if belowY + halfHeight <= viewSize.height - margin {
+      y = belowY
+    } else if aboveY - halfHeight >= margin {
+      y = aboveY
+    } else {
+      y = min(max(belowY, margin + halfHeight), viewSize.height - margin - halfHeight)
+    }
 
     return VStack(alignment: .leading, spacing: 4) {
       if let target = model.pendingTarget {
         Text(target.summary)
           .font(.caption2.weight(.semibold))
-          .foregroundStyle(elementFrameColor)
+          .foregroundStyle(.primary)
           .lineLimit(1)
       }
 
@@ -252,7 +276,7 @@ struct SimulatorAnnotationOverlayView: View {
         Button(action: commitDraft) {
           Image(systemName: "arrow.up.circle.fill")
             .font(.title3)
-            .foregroundStyle(trimmedDraft.isEmpty ? Color.secondary : simulatorAnnotationPinColor)
+            .foregroundStyle(trimmedDraft.isEmpty ? Color.secondary : Color.white)
         }
         .buttonStyle(.plain)
         .disabled(trimmedDraft.isEmpty)
@@ -262,7 +286,7 @@ struct SimulatorAnnotationOverlayView: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .frame(width: bubbleWidth)
-    .background(RoundedRectangle(cornerRadius: 18).fill(.regularMaterial))
+    .background(RoundedRectangle(cornerRadius: 18).fill(annotationSurfaceStyle))
     .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color(NSColor.separatorColor), lineWidth: 1))
     .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
     .position(x: x, y: y)
