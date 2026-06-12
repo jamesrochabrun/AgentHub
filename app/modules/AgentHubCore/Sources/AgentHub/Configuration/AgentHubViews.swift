@@ -59,10 +59,22 @@ public struct AgentHubSessionsView: View {
       worktreeSuccessSoundService: provider.worktreeSuccessSoundService
     )
       .frame(minWidth: 1200, minHeight: 750)
+      .toolbar {
+        ToolbarItem(placement: .navigation) {
+          Button(action: toggleSidebarVisibility) {
+            Label("Toggle Sidebar", systemImage: "sidebar.left")
+          }
+          .help(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
+        }
+      }
       .modifier(RemoveTitleToolbarModifier())
       .task {
         provider.startWorktreeLaunchRequestMonitoring()
       }
+  }
+
+  private func toggleSidebarVisibility() {
+    columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly
   }
 
   private var missingProviderView: some View {
