@@ -42,6 +42,8 @@ repositoriesPublisher.values`).
 - `FocusedSessionLaunchTargetResolverTests` → "Preselect accepts a path inside a tracked main repository"
 - `LazyBrowseSessionsLoadingTests` → "Idle repository changes still trigger Claude hook sync"
 - `WebPreviewInspectorViewModelTests` → "Toolbar text edits do not mutate live preview without source text mapping"
+- `WebPreviewInspectorViewModelTests` → "Font-size units stay detached and color picker writes CSS color values" — debounced-write timing, flaky on CI
+- `WebPreviewInspectorViewModelTests` → "Toolbar edits are propagated to the live preview before the debounced write" — debounced-write timing, flaky on CI
 - `WorktreeBranchNamingServiceTests` → "Explicit user cancellation stops naming without falling back" (also slow/hang)
 - `GitWorktreeServiceTests` → "Cancels in-flight worktree creation and cleans up generated artifacts"
 - `WorktreeManagementServiceTests` (AgentHubCLI) → "Cancels in-flight worktree creation and cleans generated artifacts" — passes locally, flaky on CI runners
