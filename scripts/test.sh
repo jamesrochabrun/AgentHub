@@ -47,6 +47,12 @@ run_packages() {
 run_core() {
   echo ""
   echo "▶ xcodebuild test: AgentHubCore (scheme AgentHubCore-Tests)"
+  # Optional .xcresult bundle (CI sets this to upload on failure).
+  local result_bundle_args=()
+  if [ -n "${AGENTHUB_TEST_RESULT_BUNDLE:-}" ]; then
+    rm -rf "$AGENTHUB_TEST_RESULT_BUNDLE"
+    result_bundle_args=(-resultBundlePath "$AGENTHUB_TEST_RESULT_BUNDLE")
+  fi
   # Per-test timeouts keep a single hanging test from blocking the whole gate
   # forever (the suite has a few service tests that can block headlessly).
   if ( cd "$MODULES/AgentHubCore" && \
@@ -56,6 +62,7 @@ run_core() {
          -test-timeouts-enabled YES \
          -default-test-execution-time-allowance 60 \
          -maximum-test-execution-time-allowance 120 \
+         "${result_bundle_args[@]+"${result_bundle_args[@]}"}" \
          -skipPackagePluginValidation ); then
     echo "✓ AgentHubCore"
   else

@@ -113,6 +113,15 @@ final class MockSessionMonitorService: SessionMonitorServiceProtocol { ... }
 - Use `async` test methods for testing actor-based services
 - Prefer deterministic tests — inject controlled data rather than relying on file system state
 
+### Running Tests (headless)
+
+- **Run the suite and report real pass/fail** after writing or touching tests — do not stop at "it compiles."
+  - Full gate: `./scripts/test.sh` (fast `swift test` packages, then the `AgentHubCore` xcodebuild suite). Subsets: `./scripts/test.sh core` / `./scripts/test.sh packages`. This is the same gate CI runs (`.github/workflows/test.yml`).
+  - The `AgentHubCore` tests run via the shared `AgentHubCore-Tests` scheme, driven **from the package dir** (`cd app/modules/AgentHubCore`), with per-test timeouts. `swift test` on `AgentHubCore` does **not** work (CodeEditSymbols xcassets); use the script / xcodebuild.
+- **`build-for-testing -scheme AgentHub` (the app scheme) is a false signal** — it compiles/runs zero package tests. "It builds" is not evidence a test passes.
+- swift-testing runs `@Test`s in parallel **off the main thread**; any suite touching AppKit must be `@MainActor`.
+- Some tests are quarantined headless (`.disabled("headless-quarantine: …")`) — see `TestQuarantine.md` for the open follow-ups; don't re-enable without fixing the documented root cause.
+
 ### Database Migration Rules
 
 - Read `AccessorySessions.md` before editing accessory terminal panes, sub-session launch/detection, terminal workspace linked-session restore, or `session_relationships`.
