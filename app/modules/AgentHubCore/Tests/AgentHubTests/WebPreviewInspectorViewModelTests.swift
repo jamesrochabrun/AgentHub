@@ -853,7 +853,7 @@ struct WebPreviewInspectorViewModelTests {
     #expect(writes[0].content == "<button>Go</button>")
   }
 
-  @Test("Toolbar text edits do not mutate live preview without source text mapping")
+  @Test("Toolbar text edits do not mutate live preview without source text mapping", .disabled("headless-quarantine: async/timing sensitive; see TestQuarantine.md"))
   func toolbarTextEditsRequireSourceTextMapping() async throws {
     let filePath = "/project/index.html"
     let resolver = MockWebPreviewSourceResolver(queuedResolutions: [

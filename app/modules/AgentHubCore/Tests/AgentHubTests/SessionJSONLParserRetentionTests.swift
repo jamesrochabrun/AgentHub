@@ -21,13 +21,16 @@ struct SessionJSONLParserRetentionTests {
 
     let compactedInputs = result.recentActivities.prefix(2).compactMap(\.toolInput)
     #expect(compactedInputs.count == 2)
-    #expect(compactedInputs.allSatisfy { $0.newString == nil })
-    #expect(compactedInputs.allSatisfy { $0.toolType == .write })
+    let allCompactedNewStringNil = compactedInputs.allSatisfy { $0.newString == nil }
+    #expect(allCompactedNewStringNil)
+    let allCompactedAreWrites = compactedInputs.allSatisfy { $0.toolType == .write }
+    #expect(allCompactedAreWrites)
     #expect(compactedInputs.map(\.filePath) == ["/tmp/File1.swift", "/tmp/File2.swift"])
 
     let retainedInputs = result.recentActivities.suffix(5).compactMap(\.toolInput)
     #expect(retainedInputs.count == 5)
-    #expect(retainedInputs.allSatisfy { $0.newString != nil })
+    let allRetainedHaveNewString = retainedInputs.allSatisfy { $0.newString != nil }
+    #expect(allRetainedHaveNewString)
     #expect(result.pendingToolUses["write-1"]?.codeChangeInput?.newString == "struct File1 {}")
   }
 

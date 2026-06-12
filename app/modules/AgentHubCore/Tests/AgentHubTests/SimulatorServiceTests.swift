@@ -78,7 +78,8 @@ struct ParseDeviceListTests {
     let data = sampleJSON.data(using: .utf8)!
     let runtimes = try SimulatorService.parseDeviceList(from: data)
     // watchOS runtime must be excluded
-    #expect(runtimes.allSatisfy { $0.identifier.contains("iOS") })
+    let allRuntimesAreIOS = runtimes.allSatisfy { $0.identifier.contains("iOS") }
+    #expect(allRuntimesAreIOS)
     #expect(runtimes.count == 2)
   }
 

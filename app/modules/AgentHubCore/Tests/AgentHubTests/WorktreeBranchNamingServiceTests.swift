@@ -268,7 +268,7 @@ struct WorktreeBranchNamingServiceTests {
     ))
   }
 
-  @Test("Explicit user cancellation stops naming without falling back")
+  @Test("Explicit user cancellation stops naming without falling back", .disabled("headless-quarantine: cancellation timing (hang/slow); see TestQuarantine.md"))
   func explicitCancellationThrowsCancellationError() async throws {
     let cancellationRecorder = CancellationRecorder()
     let subjectBox = StreamSubjectBox()

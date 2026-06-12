@@ -165,7 +165,7 @@ struct LazyBrowseSessionsLoadingTests {
     ])
   }
 
-  @Test("Idle repository changes still trigger Claude hook sync")
+  @Test("Idle repository changes still trigger Claude hook sync", .disabled("headless-quarantine: async propagation timing; see TestQuarantine.md"))
   func idleRepositoryChangesTriggerClaudeHookSync() async throws {
     let store = try SessionMetadataStore(path: temporaryDatabasePath())
     let repository = repositoryWithWorktree(

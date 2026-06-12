@@ -34,7 +34,8 @@ struct CodexWorktreeSessionImportTests {
     )
 
     #expect(page.sessions.map(\.id) == ["session-4", "session-3", "session-2"])
-    #expect(page.sessions.allSatisfy(\.isWorktree))
+    let allFromWorktree = page.sessions.allSatisfy(\.isWorktree)
+    #expect(allFromWorktree)
     #expect(page.hasMore)
   }
 }

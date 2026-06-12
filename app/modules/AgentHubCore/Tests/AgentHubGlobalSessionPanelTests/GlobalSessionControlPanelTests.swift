@@ -84,6 +84,12 @@ struct GlobalSessionControlPanelTests {
   @Test("Coordinator registers only when enabled and unregisters when disabled")
   func coordinatorHonorsEnabledPreference() {
     let defaults = makeDefaults()
+    // AgentHubProvider registers `globalSessionPanelEnabled: true` into the
+    // process-wide NSRegistrationDomain, which is shared across every
+    // UserDefaults instance — including this isolated suite. Pin the
+    // "disabled" precondition explicitly so this test stays deterministic
+    // regardless of whether a provider was created by an earlier test.
+    defaults.set(false, forKey: AgentHubDefaults.globalSessionPanelEnabled)
     let registrar = MockGlobalHotKeyRegistrar()
     let presenter = MockGlobalSessionControlPanelPresenter()
     let coordinator = GlobalSessionControlPanelCoordinator(

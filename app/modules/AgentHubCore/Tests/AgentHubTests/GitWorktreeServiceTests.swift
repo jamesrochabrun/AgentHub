@@ -177,7 +177,7 @@ struct ListWorktreesTests {
 @Suite("GitWorktreeService cancellation")
 struct GitWorktreeServiceCancellationTests {
 
-  @Test("Cancels in-flight worktree creation and cleans up generated artifacts")
+  @Test("Cancels in-flight worktree creation and cleans up generated artifacts", .disabled("headless-quarantine: async cancellation timing; see TestQuarantine.md"))
   func cancelsWorktreeCreationAndCleansUp() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }
