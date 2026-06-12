@@ -40,19 +40,23 @@ public actor LocalDiffSummaryService: LocalDiffSummaryServiceProtocol {
 
   private let evaluator: Evaluator
   private let minimumRefreshInterval: TimeInterval
+  private let adaptiveThrottleMultiplier: Double
   private var cache: [String: LocalDiffSummary] = [:]
   private var cacheGeneration: [String: Int] = [:]
   private var inFlightTasks: [String: InFlightEvaluation] = [:]
   private var lastEvaluationStartedAt: [String: Date] = [:]
+  private var lastEvaluationDuration: [String: TimeInterval] = [:]
 
   init(
     evaluator: Evaluator? = nil,
-    minimumRefreshInterval: TimeInterval = 1.0
+    minimumRefreshInterval: TimeInterval = 1.0,
+    adaptiveThrottleMultiplier: Double = 3.0
   ) {
     self.evaluator = evaluator ?? { projectPath in
       await Self.defaultEvaluator(projectPath: projectPath)
     }
     self.minimumRefreshInterval = minimumRefreshInterval
+    self.adaptiveThrottleMultiplier = adaptiveThrottleMultiplier
   }
 
   public func cachedSummary(for projectPath: String) async -> LocalDiffSummary? {
@@ -73,7 +77,8 @@ public actor LocalDiffSummaryService: LocalDiffSummaryServiceProtocol {
     let task = Task(priority: .utility) {
       await evaluator(normalizedProjectPath)
     }
-    lastEvaluationStartedAt[normalizedProjectPath] = Date.now
+    let evaluationStartedAt = Date.now
+    lastEvaluationStartedAt[normalizedProjectPath] = evaluationStartedAt
     let inFlightEvaluation = InFlightEvaluation(
       id: UUID(),
       generation: cacheGeneration[normalizedProjectPath] ?? 0,
@@ -84,6 +89,7 @@ public actor LocalDiffSummaryService: LocalDiffSummaryServiceProtocol {
     let summary = await task.value
     if inFlightTasks[normalizedProjectPath]?.id == inFlightEvaluation.id {
       inFlightTasks.removeValue(forKey: normalizedProjectPath)
+      lastEvaluationDuration[normalizedProjectPath] = Date.now.timeIntervalSince(evaluationStartedAt)
       if (cacheGeneration[normalizedProjectPath] ?? 0) == inFlightEvaluation.generation {
         cache[normalizedProjectPath] = summary
       }
@@ -99,12 +105,23 @@ public actor LocalDiffSummaryService: LocalDiffSummaryServiceProtocol {
     }
 
     if let lastEvaluationStartedAt = lastEvaluationStartedAt[normalizedProjectPath],
-       Date.now.timeIntervalSince(lastEvaluationStartedAt) < minimumRefreshInterval {
+       Date.now.timeIntervalSince(lastEvaluationStartedAt) < effectiveRefreshInterval(for: normalizedProjectPath) {
       return
     }
 
     cacheGeneration[normalizedProjectPath, default: 0] += 1
     cache.removeValue(forKey: normalizedProjectPath)
+  }
+
+  /// Slow repos self-throttle: a worktree whose evaluation costs N seconds may
+  /// only re-evaluate every `multiplier × N` seconds, so activity-driven
+  /// invalidations can't queue back-to-back full-worktree scans. Fast repos
+  /// stay on the minimum floor and keep live summaries.
+  private func effectiveRefreshInterval(for normalizedProjectPath: String) -> TimeInterval {
+    guard let duration = lastEvaluationDuration[normalizedProjectPath] else {
+      return minimumRefreshInterval
+    }
+    return max(minimumRefreshInterval, adaptiveThrottleMultiplier * duration)
   }
 
   public nonisolated static func normalize(_ projectPath: String) -> String {

@@ -334,6 +334,100 @@ struct DiffAvailabilityServiceTests {
     #expect(statuses == [.available, .available])
     #expect(evaluationCount == 1)
   }
+
+  @Test("Adaptive throttle blocks invalidate inside the multiplied-duration window")
+  func adaptiveThrottleBlocksInvalidateWithinWindow() async {
+    let evaluator = DiffAvailabilityEvaluatorSpy(
+      queuedStatuses: [.available, .unavailable],
+      delay: .milliseconds(200)
+    )
+    let service = DiffAvailabilityService(
+      evaluator: { projectPath in
+        await evaluator.evaluate(projectPath: projectPath)
+      },
+      minimumRefreshInterval: 0,
+      adaptiveThrottleMultiplier: 3
+    )
+
+    let first = await service.availability(for: "/tmp/project")
+    await service.invalidate(projectPath: "/tmp/project")
+    let second = await service.availability(for: "/tmp/project")
+    let evaluationCount = await evaluator.evaluationCount
+
+    #expect(first == .available)
+    #expect(second == .available)
+    #expect(evaluationCount == 1)
+  }
+
+  @Test("Invalidate succeeds after the adaptive window elapses")
+  func invalidateSucceedsAfterAdaptiveWindow() async {
+    let evaluator = DiffAvailabilityEvaluatorSpy(
+      queuedStatuses: [.available, .unavailable],
+      delay: .milliseconds(100)
+    )
+    let service = DiffAvailabilityService(
+      evaluator: { projectPath in
+        await evaluator.evaluate(projectPath: projectPath)
+      },
+      minimumRefreshInterval: 0,
+      adaptiveThrottleMultiplier: 3
+    )
+
+    let first = await service.availability(for: "/tmp/project")
+    try? await Task.sleep(for: .milliseconds(700))
+    await service.invalidate(projectPath: "/tmp/project")
+    let second = await service.availability(for: "/tmp/project")
+    let evaluationCount = await evaluator.evaluationCount
+
+    #expect(first == .available)
+    #expect(second == .unavailable)
+    #expect(evaluationCount == 2)
+  }
+
+  @Test("Fast evaluator keeps the minimum floor")
+  func fastEvaluatorKeepsMinimumFloor() async {
+    let evaluator = DiffAvailabilityEvaluatorSpy(
+      queuedStatuses: [.available, .unavailable]
+    )
+    let service = DiffAvailabilityService(
+      evaluator: { projectPath in
+        await evaluator.evaluate(projectPath: projectPath)
+      },
+      minimumRefreshInterval: 0.1,
+      adaptiveThrottleMultiplier: 3
+    )
+
+    let first = await service.availability(for: "/tmp/project")
+    await service.invalidate(projectPath: "/tmp/project")
+    let blocked = await service.availability(for: "/tmp/project")
+
+    try? await Task.sleep(for: .milliseconds(300))
+    await service.invalidate(projectPath: "/tmp/project")
+    let second = await service.availability(for: "/tmp/project")
+    let evaluationCount = await evaluator.evaluationCount
+
+    #expect(first == .available)
+    #expect(blocked == .available)
+    #expect(second == .unavailable)
+    #expect(evaluationCount == 2)
+  }
+
+  @Test("First invalidate before any evaluation is not blocked")
+  func firstInvalidateBeforeAnyEvaluationIsNotBlocked() async {
+    let evaluator = DiffAvailabilityEvaluatorSpy(
+      queuedStatuses: [.available]
+    )
+    let service = DiffAvailabilityService(evaluator: { projectPath in
+      await evaluator.evaluate(projectPath: projectPath)
+    })
+
+    await service.invalidate(projectPath: "/tmp/project")
+    let status = await service.availability(for: "/tmp/project")
+    let evaluationCount = await evaluator.evaluationCount
+
+    #expect(status == .available)
+    #expect(evaluationCount == 1)
+  }
 }
 
 @Suite("CLISessionsViewModel Diff Availability")

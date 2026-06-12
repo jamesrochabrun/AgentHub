@@ -4,11 +4,32 @@ import Foundation
 /// One device's live capture session. Picks the CoreSimulator backend when the
 /// private frameworks are present, otherwise falls back to screenshot polling.
 final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
+
+  /// Backend/HID factories, injectable so lifecycle tests run without the
+  /// private CoreSimulator frameworks.
+  struct Dependencies {
+    var makeCapture: (_ developerDir: String) -> FrameCaptureBackend
+    var makePoller: (_ udid: String) -> FrameCaptureBackend
+    var makeHID: (_ developerDir: String) -> HIDInjector?
+
+    static let live = Dependencies(
+      makeCapture: { FramebufferCapture(developerDir: $0) },
+      makePoller: { ScreenshotPoller(udid: $0) },
+      makeHID: { HIDInjector(developerDir: $0) }
+    )
+  }
+
   let udid: String
   let backendKind: SimulatorStreamBackendKind
   var supportsInteraction: Bool { backendKind == .coreSimulator && hid?.isReady == true }
 
-  var onFrame: ((SimulatorStreamFrame) -> Void)?
+  /// Setting nil pauses capture — the framebuffer tap and the screenshot
+  /// poller both burn CPU with nobody watching. Setting a consumer on a
+  /// started session resumes it. HID and the last streaming state survive a
+  /// pause so re-show paints and accepts input immediately.
+  var onFrame: ((SimulatorStreamFrame) -> Void)? {
+    didSet { onFrameConsumerChanged() }
+  }
   var onStateChange: ((SimulatorStreamSessionState) -> Void)?
 
   var state: SimulatorStreamSessionState {
@@ -19,8 +40,8 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
 
   private let developerDir: String
   private let availability: SimulatorStreamAvailability
-  private var capture: FramebufferCapture?
-  private var poller: ScreenshotPoller?
+  private let dependencies: Dependencies
+  private var backend: FrameCaptureBackend?
   private var hid: HIDInjector?
 
   private var lastWidth = 0
@@ -29,11 +50,17 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
   private var currentState: SimulatorStreamSessionState = .idle
   private let lock = NSLock()
 
-  init(udid: String, availability: SimulatorStreamAvailability, developerDir: String) {
+  init(
+    udid: String,
+    availability: SimulatorStreamAvailability,
+    developerDir: String,
+    dependencies: Dependencies = .live
+  ) {
     self.udid = udid
     self.availability = availability
     self.developerDir = developerDir
     self.backendKind = availability.backend
+    self.dependencies = dependencies
   }
 
   func start() {
@@ -43,12 +70,7 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
     lock.unlock()
 
     transition(to: .starting)
-    switch backendKind {
-    case .coreSimulator:
-      startCoreSimulator()
-    case .screenshotPolling:
-      startScreenshotPolling()
-    }
+    startBackend()
   }
 
   func stop() {
@@ -58,10 +80,8 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
     lock.unlock()
     guard wasStarted else { return }
 
-    capture?.stop()
-    capture = nil
-    poller?.stop()
-    poller = nil
+    backend?.stop()
+    backend = nil
     hid?.teardown()
     hid = nil
     transition(to: .stopped)
@@ -74,37 +94,81 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
     onStateChange?(newState)
   }
 
+  // MARK: - Pause/resume
+
+  private func onFrameConsumerChanged() {
+    lock.lock()
+    let isStarted = started
+    let hasConsumer = onFrame != nil
+    lock.unlock()
+    guard isStarted else { return }
+
+    if hasConsumer {
+      resumeCaptureIfNeeded()
+    } else {
+      pauseCapture()
+    }
+  }
+
+  private func pauseCapture() {
+    backend?.stop()
+    backend = nil
+    // HID stays alive (instant input on re-show) and currentState keeps the
+    // last .streaming dimensions so late observers can still read them.
+  }
+
+  private func resumeCaptureIfNeeded() {
+    guard backend == nil else { return }
+    startBackend()
+  }
+
   // MARK: - Backends
 
-  private func startCoreSimulator() {
-    let capture = FramebufferCapture(developerDir: developerDir)
-    self.capture = capture
+  private func startBackend() {
+    switch backendKind {
+    case .coreSimulator:
+      startCoreSimulator()
+    case .screenshotPolling:
+      startScreenshotPolling()
+    }
+  }
 
+  private func startCoreSimulator() {
+    setupHIDIfNeeded()
+
+    let capture = dependencies.makeCapture(developerDir)
+    backend = capture
+    do {
+      try capture.start(deviceUDID: udid) { [weak self] pb, w, h in
+        self?.emit(pixelBuffer: pb, width: w, height: h)
+      }
+    } catch {
+      backend = nil
+      // Fall back to view-only polling if the private path failed at runtime.
+      startScreenshotPolling()
+    }
+  }
+
+  private func setupHIDIfNeeded() {
+    guard hid == nil, let hid = dependencies.makeHID(developerDir) else { return }
     // HID is best-effort: capture can still run view-only if injection fails.
-    let hid = HIDInjector(developerDir: developerDir)
     do {
       try hid.setup(deviceUDID: udid)
       self.hid = hid
     } catch {
       self.hid = nil
     }
-
-    do {
-      try capture.start(deviceUDID: udid) { [weak self] pb, w, h in
-        self?.emit(pixelBuffer: pb, width: w, height: h)
-      }
-    } catch {
-      self.capture = nil
-      // Fall back to view-only polling if the private path failed at runtime.
-      startScreenshotPolling()
-    }
   }
 
   private func startScreenshotPolling() {
-    let poller = ScreenshotPoller(udid: udid)
-    self.poller = poller
-    poller.start { [weak self] pb, w, h in
-      self?.emit(pixelBuffer: pb, width: w, height: h)
+    let poller = dependencies.makePoller(udid)
+    backend = poller
+    do {
+      try poller.start(deviceUDID: udid) { [weak self] pb, w, h in
+        self?.emit(pixelBuffer: pb, width: w, height: h)
+      }
+    } catch {
+      backend = nil
     }
   }
 

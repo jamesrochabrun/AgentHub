@@ -13,6 +13,13 @@ import ObjectiveC
 /// IO port and wraps the live IOSurface in a CVPixelBuffer (zero-copy). A 5fps
 /// idle floor re-emits the current frame so a late-attaching renderer paints
 /// even while the simulator is idle.
+///
+/// The framebuffer descriptors are ROCKit remote proxies — every call on them
+/// is an XPC round-trip into CoreSimulator. The hot path therefore never
+/// touches a descriptor: the best descriptor's IOSurface is resolved once at
+/// wiring time (`resolveActiveSurface`) and re-resolved only on the
+/// surfaces-changed callback or via the staleness backstop; `captureFrame`
+/// dedupes on `IOSurfaceGetSeed` (cheap, in-process) before any other work.
 final class FramebufferCapture {
   private let developerDir: String
   private var onFrame: ((CVPixelBuffer, Int, Int) -> Void)?
@@ -24,9 +31,19 @@ final class FramebufferCapture {
   private let captureQueue = DispatchQueue(label: "com.agenthub.simpreview.capture", qos: .userInteractive)
   private var idleTimer: DispatchSourceTimer?
   private var lastCaptureTimeMs: UInt64 = 0
-  private var lastSeeds: [ObjectIdentifier: UInt32] = [:]
   private var rewireTickCount: Int = 0
   private static let idleIntervalMs: UInt64 = 200
+
+  /// The live framebuffer surface, resolved from the best descriptor at wiring
+  /// time. Retaining it is what makes the per-frame seed check XPC-free.
+  private var activeSurface: IOSurface?
+  private var lastSeed: UInt32?
+  private var lastSeedChangeTimeMs: UInt64 = 0
+  private var lastFrameCallbackTimeMs: UInt64 = 0
+  private var lastBackstopRewireTimeMs: UInt64 = 0
+  /// Frames arriving while the cached surface's seed stays frozen this long
+  /// means the surface was reallocated behind our back — rewire.
+  private static let staleSurfaceThresholdMs: UInt64 = 3_000
 
   private var descriptors: [NSObject] = []
   private var callbackUUIDs: [ObjectIdentifier: NSUUID] = [:]
@@ -56,7 +73,10 @@ final class FramebufferCapture {
     }
     self.ioClient = io
 
-    try wireUpFramebuffer()
+    // All capture state is owned by captureQueue (frame callbacks land there).
+    try captureQueue.sync {
+      try wireUpFramebuffer()
+    }
     startIdleTimer()
   }
 
@@ -64,15 +84,21 @@ final class FramebufferCapture {
     idleTimer?.cancel()
     idleTimer = nil
 
-    let unregSel = NSSelectorFromString("unregisterScreenCallbacksWithUUID:")
-    for desc in descriptors {
-      if let uuid = callbackUUIDs[ObjectIdentifier(desc)], desc.responds(to: unregSel) {
-        desc.perform(unregSel, with: uuid)
+    captureQueue.sync {
+      let unregSel = NSSelectorFromString("unregisterScreenCallbacksWithUUID:")
+      for desc in descriptors {
+        if let uuid = callbackUUIDs[ObjectIdentifier(desc)], desc.responds(to: unregSel) {
+          desc.perform(unregSel, with: uuid)
+        }
       }
+      callbackUUIDs.removeAll()
+      descriptors.removeAll()
+      activeSurface = nil
+      lastSeed = nil
+      lastSeedChangeTimeMs = 0
+      lastFrameCallbackTimeMs = 0
+      lastBackstopRewireTimeMs = 0
     }
-    callbackUUIDs.removeAll()
-    descriptors.removeAll()
-    lastSeeds.removeAll()
     ioClient = nil
     onFrame = nil
   }
@@ -94,20 +120,32 @@ final class FramebufferCapture {
       }
     }
     callbackUUIDs.removeAll()
-    lastSeeds.removeAll()
     descriptors = candidates
 
     for desc in candidates {
       try registerFrameCallbacks(desc: desc)
     }
 
-    if let best = pickBestDescriptor(),
-       let surfObj = best.perform(NSSelectorFromString("framebufferSurface"))?.takeUnretainedValue() {
-      let surf = unsafeBitCast(surfObj, to: IOSurface.self)
-      capturedWidth = IOSurfaceGetWidth(surf)
-      capturedHeight = IOSurfaceGetHeight(surf)
-    }
+    resolveActiveSurface()
     captureFrame()
+  }
+
+  /// Resolves the best descriptor's IOSurface and caches it for the hot path.
+  /// Resetting `lastSeed` forces the next `captureFrame` to emit even if the
+  /// new surface's seed counter happens to equal the old one.
+  private func resolveActiveSurface() {
+    guard let best = pickBestDescriptor(),
+      let surfObj = best.perform(NSSelectorFromString("framebufferSurface"))?.takeUnretainedValue()
+    else {
+      activeSurface = nil
+      lastSeed = nil
+      return
+    }
+    let surface = unsafeBitCast(surfObj, to: IOSurface.self)
+    activeSurface = surface
+    lastSeed = nil
+    capturedWidth = IOSurfaceGetWidth(surface)
+    capturedHeight = IOSurfaceGetHeight(surface)
   }
 
   private func findFramebufferDescriptors(io: NSObject) throws -> [NSObject] {
@@ -169,10 +207,20 @@ final class FramebufferCapture {
     callbackUUIDs[ObjectIdentifier(desc)] = uuid
 
     let frameCallback: @convention(block) () -> Void = { [weak self] in
-      self?.captureQueue.async { self?.captureFrame() }
+      self?.captureQueue.async {
+        guard let self else { return }
+        self.lastFrameCallbackTimeMs = DispatchTime.now().uptimeNanoseconds / 1_000_000
+        self.captureFrame()
+      }
     }
     let surfacesCallback: @convention(block) () -> Void = { [weak self] in
-      self?.captureQueue.async { self?.captureFrame() }
+      self?.captureQueue.async {
+        guard let self else { return }
+        // The backing surface may have been reallocated — re-resolve before
+        // capturing or the seed dedupe would freeze on the dead surface.
+        self.resolveActiveSurface()
+        self.captureFrame()
+      }
     }
     let propsCallback: @convention(block) () -> Void = {}
 
@@ -199,25 +247,36 @@ final class FramebufferCapture {
           try? self.wireUpFramebuffer()
         }
       }
+      // Staleness backstop: frame callbacks are arriving but the cached
+      // surface's seed is frozen — a surfaces-changed event was missed
+      // (rotation, scale change) and we're watching a dead surface. Rewire,
+      // rate-limited so contentless callbacks can't trigger an XPC storm.
+      let framesArriving = self.lastFrameCallbackTimeMs > 0
+        && (nowMs &- self.lastFrameCallbackTimeMs) < 1_000
+      let seedStale = (nowMs &- self.lastSeedChangeTimeMs) >= Self.staleSurfaceThresholdMs
+      let backstopCooledDown = (nowMs &- self.lastBackstopRewireTimeMs) >= Self.staleSurfaceThresholdMs
+      if self.frameCount > 0, framesArriving, seedStale, backstopCooledDown {
+        self.lastBackstopRewireTimeMs = nowMs
+        try? self.wireUpFramebuffer()
+      }
     }
     timer.resume()
     self.idleTimer = timer
   }
 
   private func captureFrame() {
-    guard let desc = pickBestDescriptor() else { return }
-    let surfSel = NSSelectorFromString("framebufferSurface")
-    guard let surfObj = desc.perform(surfSel)?.takeUnretainedValue() else { return }
-    let surface = unsafeBitCast(surfObj, to: IOSurface.self)
+    guard let surface = activeSurface else { return }
 
-    let key = ObjectIdentifier(desc)
     let seed = IOSurfaceGetSeed(surface)
     let nowMs = DispatchTime.now().uptimeNanoseconds / 1_000_000
     let sinceLastMs = nowMs &- lastCaptureTimeMs
-    let seedChanged = lastSeeds[key] != seed
+    let seedChanged = lastSeed != seed
     let idleRefreshDue = frameCount > 0 && sinceLastMs >= Self.idleIntervalMs
     if frameCount > 0, !seedChanged, !idleRefreshDue { return }
-    lastSeeds[key] = seed
+    if seedChanged {
+      lastSeedChangeTimeMs = nowMs
+    }
+    lastSeed = seed
 
     let w = IOSurfaceGetWidth(surface)
     let h = IOSurfaceGetHeight(surface)
