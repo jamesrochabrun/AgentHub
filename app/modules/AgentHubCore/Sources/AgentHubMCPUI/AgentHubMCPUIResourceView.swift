@@ -157,24 +157,44 @@ public enum AgentHubMCPUIBridgeError: LocalizedError {
   }
 }
 
+/// How much network/resource reach an MCP app's WKWebView is granted.
+///
+/// SECURITY: an MCP app's declared CSP domains come from the same untrusted tool
+/// output as its HTML body, so they are NOT trusted by default. The web view
+/// loads `.lockedDown` until the user explicitly opts in for that one app.
+public enum MCPAppNetworkTrust: Sendable, Equatable {
+  /// Default. No remote network or resources, regardless of declared domains.
+  case lockedDown
+  /// User explicitly approved this app's declared domains. Widens every remote
+  /// directive — including `script-src`, since real apps load their runtime as ES
+  /// modules from a CDN — but only to the validated http(s) hosts that were
+  /// declared. (`'unsafe-eval'` is still never granted.)
+  case allowDeclaredDomains
+}
+
 public struct AgentHubMCPUIWebView: NSViewRepresentable {
   private let resource: AgentHubMCPUIResource
   private let bridgeHandler: (any AgentHubMCPUIBridgeHandler)?
+  private let networkTrust: MCPAppNetworkTrust
 
   public init(
     html: String,
-    bridgeHandler: (any AgentHubMCPUIBridgeHandler)? = nil
+    bridgeHandler: (any AgentHubMCPUIBridgeHandler)? = nil,
+    networkTrust: MCPAppNetworkTrust = .lockedDown
   ) {
     self.resource = AgentHubMCPUIResource(uri: "ui://agenthub/inline", text: html)
     self.bridgeHandler = bridgeHandler
+    self.networkTrust = networkTrust
   }
 
   public init(
     resource: AgentHubMCPUIResource,
-    bridgeHandler: (any AgentHubMCPUIBridgeHandler)? = nil
+    bridgeHandler: (any AgentHubMCPUIBridgeHandler)? = nil,
+    networkTrust: MCPAppNetworkTrust = .lockedDown
   ) {
     self.resource = resource
     self.bridgeHandler = bridgeHandler
+    self.networkTrust = networkTrust
   }
 
   public func makeCoordinator() -> Coordinator {
@@ -199,20 +219,32 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     mcpUILogger.info(
       "[MCPUIBridge] load resource uri=\(resource.uri, privacy: .public) mime=\(resource.mimeType, privacy: .public)"
     )
-    webView.loadHTMLString(Self.hardenedHTML(for: resource), baseURL: Self.baseURL(for: resource))
+    webView.loadHTMLString(
+      Self.hardenedHTML(for: resource, trust: networkTrust),
+      baseURL: Self.baseURL(for: resource)
+    )
     context.coordinator.loadedResource = resource
+    context.coordinator.loadedTrust = networkTrust
     context.coordinator.didDeliverReadyNotifications = false
     return webView
   }
 
   public func updateNSView(_ webView: WKWebView, context: Context) {
     context.coordinator.bridgeHandler = bridgeHandler
-    guard context.coordinator.loadedResource != resource else { return }
+    // Reload when the resource changes or the user's network trust decision does
+    // (e.g. they tapped "Allow" on the consent banner). The non-persistent data
+    // store means the post-consent reload starts from a clean slate.
+    guard context.coordinator.loadedResource != resource
+       || context.coordinator.loadedTrust != networkTrust else { return }
     mcpUILogger.info(
-      "[MCPUIBridge] reload resource uri=\(resource.uri, privacy: .public) mime=\(resource.mimeType, privacy: .public)"
+      "[MCPUIBridge] reload resource uri=\(resource.uri, privacy: .public) mime=\(resource.mimeType, privacy: .public) trust=\(String(describing: networkTrust), privacy: .public)"
     )
-    webView.loadHTMLString(Self.hardenedHTML(for: resource), baseURL: Self.baseURL(for: resource))
+    webView.loadHTMLString(
+      Self.hardenedHTML(for: resource, trust: networkTrust),
+      baseURL: Self.baseURL(for: resource)
+    )
     context.coordinator.loadedResource = resource
+    context.coordinator.loadedTrust = networkTrust
     context.coordinator.didDeliverReadyNotifications = false
   }
 
@@ -234,8 +266,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     URL(string: "agenthub-mcp-app://local/")!
   }
 
-  private static func hardenedHTML(for resource: AgentHubMCPUIResource) -> String {
-    let csp = cspContent(for: resource.metadata.csp)
+  // internal (NOT private) so AgentHubMCPUITests can exercise the CSP directly.
+  static func hardenedHTML(for resource: AgentHubMCPUIResource, trust: MCPAppNetworkTrust) -> String {
+    let csp = cspContent(for: resource.metadata.csp, trust: trust)
     let meta = #"<meta http-equiv="Content-Security-Policy" content="\#(AgentHubMCPUIHTML.escape(csp))">"#
     if let headRange = resource.text.range(of: "<head", options: [.caseInsensitive]),
        let close = resource.text[headRange.lowerBound...].firstIndex(of: ">") {
@@ -252,24 +285,56 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     """
   }
 
-  private static func cspContent(for csp: AgentHubMCPUICSP) -> String {
-    let connect = domainSources(csp.connectDomains)
-    let resources = domainSources(csp.resourceDomains)
+  // internal (NOT private) so AgentHubMCPUITests can call it directly.
+  static func cspContent(
+    for csp: AgentHubMCPUICSP,
+    trust: MCPAppNetworkTrust
+  ) -> String {
+    // SECURITY: csp.connectDomains / resourceDomains come from the same untrusted
+    // tool output as the HTML body, so the web view is DEFAULT-DENY: under
+    // `.lockedDown` no remote script, network, or resource loads at all. Every
+    // remote directive — including script-src (real apps load their runtime as ES
+    // modules from a CDN like esm.sh, which script-src governs) — widens ONLY
+    // under `.allowDeclaredDomains`, i.e. after the user explicitly approved this
+    // app's named domains via the consent banner, and only to validated http(s)
+    // hosts (`domainSources`). 'unsafe-inline' is always present because the HTML
+    // body is the app and runs regardless; the meaningful controls are the
+    // sandbox (non-persistent store, no file/host access, gated navigation) and
+    // this per-app consent gate on all egress. Do not widen any directive in the
+    // `.lockedDown` branch.
+    let resources: String
+    let connect: String
+    switch trust {
+    case .lockedDown:
+      resources = ""
+      connect = "'none'"
+    case .allowDeclaredDomains:
+      resources = domainSources(csp.resourceDomains)
+      let c = domainSources(csp.connectDomains)
+      connect = c.isEmpty ? "'none'" : c
+    }
+
+    func join(_ parts: String...) -> String {
+      parts.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     return [
       "default-src 'none'",
       "base-uri 'none'",
       "form-action 'none'",
       "frame-ancestors 'none'",
-      "script-src 'unsafe-inline' \(resources)",
-      "style-src 'unsafe-inline' \(resources)",
-      "img-src data: blob: \(resources)",
-      "font-src data: \(resources)",
+      join("script-src 'unsafe-inline'", resources),      // remote scripts (ES modules) only after consent
+      join("style-src 'unsafe-inline'", resources),
+      join("img-src data: blob:", resources),
+      join("font-src data:", resources),
       "connect-src \(connect)",
-      "media-src \(resources)"
+      "media-src \(resources.isEmpty ? "'none'" : resources)"
     ].joined(separator: "; ")
   }
 
-  private static func domainSources(_ domains: [String]) -> String {
+  // internal (NOT private): the only gate on what a consented app can reach, so
+  // it must be testable.
+  static func domainSources(_ domains: [String]) -> String {
     let sanitized = domains.compactMap { domain -> String? in
       let trimmed = domain.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !trimmed.isEmpty else { return nil }
@@ -292,6 +357,9 @@ public struct AgentHubMCPUIWebView: NSViewRepresentable {
     weak var webView: WKWebView?
     weak var bridgeHandler: (any AgentHubMCPUIBridgeHandler)?
     var loadedResource: AgentHubMCPUIResource?
+    /// The network trust the currently-loaded HTML was hardened with. A change
+    /// (consent granted) triggers a reload with a re-widened CSP.
+    var loadedTrust: MCPAppNetworkTrust = .lockedDown
     /// Guards the one-time delivery of `appReadyNotifications` per loaded resource.
     /// Reset whenever a new resource is loaded.
     var didDeliverReadyNotifications = false

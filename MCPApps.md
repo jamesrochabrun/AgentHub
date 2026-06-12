@@ -70,6 +70,7 @@ Codex:   event_msg mcp_tool_call_end { invocation{server,tool,arguments}, result
 - **Resolution keys off the standard `_meta.ui.resourceUri`** (and the `ui/resourceUri` alias) — server/tool-agnostic. No app names hardcoded.
 - **The SDK drops notifications sent before its handlers register.** The app registers `ontoolinput` in a mount effect that runs *after* it sends `ui/notifications/initialized`, so deliver `tool-input`/`tool-result` on the first `ui/notifications/size-changed` (mounted), with a delayed fallback. Delivery is once-per-loaded-resource (`didDeliverReadyNotifications`).
 - **Consent must never hang.** `MCPAppConsentController` auto-denies after a timeout and is cancelled (`cancelPending`) on panel dismiss / resource switch; resolution is guarded against double-resume.
+- **CSP allowlists are derived from untrusted output → default-deny + consent.** An app's declared `_meta.ui.csp` / `openai/widgetCSP` domains arrive in the same tool output as its HTML, so the WKWebView loads `.lockedDown` by default (`MCPAppNetworkTrust` in `AgentHubMCPUIResourceView`): no remote script/connect/resource loads at all. Every remote directive — **including `script-src`** (real apps load their runtime as ES modules from a CDN, e.g. excalidraw imports React from `esm.sh`, and `script-src` governs module imports) — widens **only** after one explicit per-resource user opt-in (the network-consent banner in `MCPAppResourceHostView`), and only to validated http(s) hosts (`domainSources`). `'unsafe-inline'` is always present because the HTML body *is* the app; the real controls are the sandbox (non-persistent store, no file/host access, gated navigation) + this per-app consent gate on all egress. Consent resets on resource switch. Do not widen any directive in the locked-down branch.
 - **Codex MCP host rendering needs the server in `~/.codex/config.toml`.** Capture works regardless, but shell resolution uses the Codex provider's config.
 - Changes here need unit tests (capture, resolution, bridge push, tool-result shaping, consent).
 
@@ -85,12 +86,12 @@ Codex:   event_msg mcp_tool_call_end { invocation{server,tool,arguments}, result
 
 - [ ] **No failure feedback.** When `tools/list`/shell-read fails (server unreachable or not in config), the button silently never appears — only a `[MCPAppHost]` log line. Surface "couldn't load this MCP app" in the panel.
 - [ ] **OpenAI Apps SDK apps not supported.** They use `_meta["openai/outputTemplate"]` + `window.openai.*` instead of `_meta.ui.resourceUri` + `ui/notifications/*`. Add the metadata-key alias (small) and the data API (larger).
-- [ ] **Consent doesn't persist across panel reopens.** Grants are per-`MCPAppConsentController` instance; reopening re-prompts on the first callback. Consider persisting "allow for this app".
+- [ ] **Tool-call consent doesn't persist across panel reopens.** `MCPAppConsentController` grants (callTool/readResource/openLink) are per-instance; reopening re-prompts on the first callback. (Network-access consent *does* persist per app launch — `CLISessionsViewModel.grantMCPAppNetwork`, keyed by server + declared host set; not yet across restarts.) Consider unifying both onto a launch-/disk-scoped "allow for this app".
 - [ ] **`restoreCheckpoint` default.** The newest invocation can be a restore that needs a `read_checkpoint` callback (→ consent) before anything draws. Consider defaulting selection to a full-elements invocation.
 - [ ] **Auto-open deferred.** Panel is button-only; doesn't pop when a new app is produced. Route through `MonitoringAutoOpenSidePanelPolicy` if wanted.
 - [ ] **Title derivation is excalidraw-shaped** (`elements`/`text`); other apps fall back to the generic tool title.
 - [ ] **No streaming.** We push the final `tool-input` once, not `ui/notifications/tool-input-partial` (no progressive draw — cosmetic).
-- [ ] **CSP tuning.** The shell's `_meta` CSP is parsed and enforced by `AgentHubMCPUI`; verify it allows what real apps need (fonts/assets) and widen handling if blocked.
+- [x] **CSP hardening.** The shell's `_meta` CSP is untrusted, so the web view is default-deny (`.lockedDown`); `script-src` is never widened, and connect/resource domains widen only after an explicit per-resource consent banner. See the CSP invariant above. Tests: `MCPAppCSPHardeningTests` (CSP directives) and `MCPAppSidePanelViewTests` (banner host parsing/visibility).
 - [ ] **No automated test for the bridge timing fix** (deliver-on-size-changed is WKWebView-level; validated by reasoning + live run).
 
 ## Verification

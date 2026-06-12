@@ -282,6 +282,31 @@ public final class CLISessionsViewModel {
     [providerKind.rawValue, projectPath, serverName, uri].joined(separator: "|")
   }
 
+  /// MCP apps whose declared network domains the user approved during this app
+  /// launch. Keyed by app identity (provider + server + sorted declared host set)
+  /// so a new app, or one whose declared domains changed, still prompts. In-memory
+  /// only — approval is re-confirmed after a relaunch (no standing on-disk grant).
+  private var grantedMCPAppNetworkKeys: Set<String> = []
+
+  private func mcpAppNetworkGrantKey(serverName: String, hosts: [String]) -> String {
+    ([providerKind.rawValue, serverName] + hosts.sorted()).joined(separator: "|")
+  }
+
+  /// Whether the user already approved this MCP app's declared network hosts this
+  /// launch, so reopening the panel (or switching back to it) skips the consent
+  /// banner. Empty host sets are never "granted" — there is nothing to allow.
+  public func isMCPAppNetworkGranted(serverName: String, hosts: [String]) -> Bool {
+    guard !hosts.isEmpty else { return false }
+    return grantedMCPAppNetworkKeys.contains(mcpAppNetworkGrantKey(serverName: serverName, hosts: hosts))
+  }
+
+  /// Records the user's approval of this MCP app's declared network hosts for the
+  /// current app launch.
+  public func grantMCPAppNetwork(serverName: String, hosts: [String]) {
+    guard !hosts.isEmpty else { return }
+    grantedMCPAppNetworkKeys.insert(mcpAppNetworkGrantKey(serverName: serverName, hosts: hosts))
+  }
+
   /// Lazily resolves the app shells for the MCP tool invocations the agent made.
   ///
   /// For each server actually used, fetches `tools/list` once to learn which tools

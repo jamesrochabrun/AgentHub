@@ -135,6 +135,25 @@ struct CLISessionsViewModelMCPAppDiscoveryTests {
     }
   }
 
+  @Test("Network grants persist per app for the launch and ignore host order")
+  @MainActor
+  func networkGrantPersistsPerApp() {
+    let viewModel = makeViewModel(provider: .claude, service: RecordingMCPAppDiscoveryService())
+
+    // Nothing granted up front; an empty host set is never grantable.
+    #expect(!viewModel.isMCPAppNetworkGranted(serverName: "excalidraw", hosts: ["esm.sh"]))
+    viewModel.grantMCPAppNetwork(serverName: "excalidraw", hosts: [])
+    #expect(!viewModel.isMCPAppNetworkGranted(serverName: "excalidraw", hosts: []))
+
+    viewModel.grantMCPAppNetwork(serverName: "excalidraw", hosts: ["esm.sh", "cdn.example.com"])
+
+    // Same app + same host set (any order) is remembered.
+    #expect(viewModel.isMCPAppNetworkGranted(serverName: "excalidraw", hosts: ["cdn.example.com", "esm.sh"]))
+    // A different server, or a changed host set, still prompts.
+    #expect(!viewModel.isMCPAppNetworkGranted(serverName: "other", hosts: ["esm.sh", "cdn.example.com"]))
+    #expect(!viewModel.isMCPAppNetworkGranted(serverName: "excalidraw", hosts: ["esm.sh"]))
+  }
+
   @Test("Builds inline MCP app resources from agent tool results")
   @MainActor
   func buildsInlineResourcesFromState() async {
