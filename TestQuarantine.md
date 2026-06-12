@@ -44,6 +44,7 @@ repositoriesPublisher.values`).
 - `WebPreviewInspectorViewModelTests` → "Toolbar text edits do not mutate live preview without source text mapping"
 - `WorktreeBranchNamingServiceTests` → "Explicit user cancellation stops naming without falling back" (also slow/hang)
 - `GitWorktreeServiceTests` → "Cancels in-flight worktree creation and cleans up generated artifacts"
+- `WorktreeManagementServiceTests` (AgentHubCLI) → "Cancels in-flight worktree creation and cleans generated artifacts" — passes locally, flaky on CI runners
 - `DiffAvailabilityServiceTests` → "Fast evaluator keeps the minimum floor" (#379 throttle)
 - `GitDiffServiceTests` → "fast evaluator keeps the minimum floor" (#379 throttle)
 - `GitDiffServiceTests` → "invalidate succeeds after the adaptive window elapses" (#379 throttle)

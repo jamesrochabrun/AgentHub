@@ -23,6 +23,11 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      # The CLibgit2 shim (AgentHubGitDiff) requires libgit2 headers + lib,
+      # resolved via Homebrew (pkgConfig "libgit2"). Not preinstalled on runners.
+      - name: Install libgit2
+        run: brew install libgit2
+
       # Best-effort cache of resolved/compiled SPM artifacts. Keyed on the
       # resolved dependency graph; safe to miss (just slower). The first run
       # compiles all of AgentHubCore and will be slow.
