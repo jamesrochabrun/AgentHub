@@ -205,6 +205,28 @@ struct MCPAppSidePanelViewTests {
     #expect(result["context"]?["resourceUri"] == .string("ui://fake/app"))
   }
 
+  @Test("declaredHosts returns validated, deduped http(s) hosts in declaration order")
+  func declaredHostsValidatesAndDedupes() {
+    let csp = AgentHubMCPUICSP(
+      connectDomains: ["https://api.example.com", "javascript:alert(1)", "https://api.example.com"],
+      resourceDomains: ["https://cdn.example.com", "file:///x", "'self'"]
+    )
+
+    #expect(MCPAppNetworkConsent.declaredHosts(for: csp) == ["api.example.com", "cdn.example.com"])
+  }
+
+  @Test("declaredHosts is empty when the app declares no network domains")
+  func declaredHostsEmptyByDefault() {
+    #expect(MCPAppNetworkConsent.declaredHosts(for: AgentHubMCPUICSP()).isEmpty)
+  }
+
+  @Test("Consent banner shows only with declared hosts and no prior consent")
+  func bannerVisibilityPredicate() {
+    #expect(MCPAppNetworkConsent.shouldPrompt(hosts: ["example.com"], consented: false))
+    #expect(!MCPAppNetworkConsent.shouldPrompt(hosts: ["example.com"], consented: true))
+    #expect(!MCPAppNetworkConsent.shouldPrompt(hosts: [], consented: false))
+  }
+
   @MainActor
   private func waitForPendingRequest(_ controller: MCPAppConsentController) async {
     for _ in 0..<50 {

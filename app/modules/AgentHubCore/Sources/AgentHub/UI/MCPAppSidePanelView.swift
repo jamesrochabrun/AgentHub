@@ -175,6 +175,41 @@ struct MCPAppSidePanelView: View {
   }
 }
 
+// MARK: - MCPAppNetworkConsent
+
+/// Pure logic for the MCP app network-consent banner. An app's declared CSP
+/// domains are untrusted tool output; the web view stays `.lockedDown` until the
+/// user explicitly opts in for that one app. These helpers decide what to show
+/// and when, and are unit-tested independently of the view.
+enum MCPAppNetworkConsent {
+  /// Distinct https/http hosts declared in the (untrusted) CSP metadata, in
+  /// declaration order. Used to name the domains in the banner — we never render
+  /// the raw declared strings, only validated, parsed hosts.
+  static func declaredHosts(for csp: AgentHubMCPUICSP) -> [String] {
+    var seen = Set<String>()
+    var hosts: [String] = []
+    for domain in csp.connectDomains + csp.resourceDomains {
+      guard let url = URL(string: domain),
+            let scheme = url.scheme?.lowercased(),
+            scheme == "https" || scheme == "http",
+            let host = url.host, !host.isEmpty else {
+        continue
+      }
+      if seen.insert(host).inserted {
+        hosts.append(host)
+      }
+    }
+    return hosts
+  }
+
+  /// Show the consent banner whenever the app declares network hosts and the user
+  /// has not yet granted them. (Declining closes the panel rather than leaving the
+  /// banner dismissed, so there is no "dismissed but still open" state.)
+  static func shouldPrompt(hosts: [String], consented: Bool) -> Bool {
+    !hosts.isEmpty && !consented
+  }
+}
+
 // MARK: - MCPAppResourceHostView
 
 /// Renders a single MCP app resource in a WKWebView and bridges its JSON-RPC
@@ -189,6 +224,28 @@ private struct MCPAppResourceHostView: View {
   let onTeardown: () -> Void
 
   @State private var bridgeHandler: MCPAppHostBridgeHandler?
+  /// User opted this app's declared domains in during the current panel open.
+  @State private var networkConsented = false
+
+  private var declaredHosts: [String] {
+    MCPAppNetworkConsent.declaredHosts(for: resource.resource.metadata.csp)
+  }
+
+  private var appDisplayName: String {
+    resource.title ?? resource.resource.metadata.title ?? resource.serverName
+  }
+
+  /// Granted if approved this open (`networkConsented`) or earlier this launch
+  /// (persisted on the view model), so reopening an already-approved app renders
+  /// with widened CSP immediately — no reload, no banner.
+  private var isNetworkGranted: Bool {
+    networkConsented
+      || (viewModel?.isMCPAppNetworkGranted(serverName: resource.serverName, hosts: declaredHosts) ?? false)
+  }
+
+  private var showsNetworkConsentBanner: Bool {
+    MCPAppNetworkConsent.shouldPrompt(hosts: declaredHosts, consented: isNetworkGranted)
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -196,21 +253,54 @@ private struct MCPAppResourceHostView: View {
 
       Divider()
 
+      if showsNetworkConsentBanner {
+        MCPAppNetworkConsentBanner(
+          appName: appDisplayName,
+          hosts: declaredHosts,
+          onAllow: allowNetwork,
+          onDecline: declineNetwork
+        )
+      }
+
       AgentHubMCPUIWebView(
         resource: resource.resource,
-        bridgeHandler: bridgeHandler
+        bridgeHandler: bridgeHandler,
+        networkTrust: isNetworkGranted ? .allowDeclaredDomains : .lockedDown
       )
       .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .onAppear(perform: installBridgeHandler)
     .onChange(of: resource.id) { _, _ in
-      consentController.cancelPending()
-      installBridgeHandler()
+      handleResourceChange()
     }
     .onDisappear {
       consentController.cancelPending()
     }
+  }
+
+  private func allowNetwork() {
+    // Persist for this launch so reopening the panel doesn't re-prompt, and flip
+    // the local state for an immediate widen on this open.
+    viewModel?.grantMCPAppNetwork(serverName: resource.serverName, hosts: declaredHosts)
+    networkConsented = true
+  }
+
+  /// Declining network closes the panel: an app that declares hosts generally
+  /// needs them to render (e.g. it loads its runtime from a CDN), so leaving a
+  /// locked-down — often blank — panel open would be useless. Reopening later
+  /// asks again (the grant was never given).
+  private func declineNetwork() {
+    onTeardown()
+  }
+
+  /// Switching to a different app drops this-open state; `isNetworkGranted` then
+  /// re-derives from any persisted grant for the new app. In-flight consent is
+  /// cancelled so a bridge call never hangs across the switch.
+  private func handleResourceChange() {
+    consentController.cancelPending()
+    networkConsented = false
+    installBridgeHandler()
   }
 
   private var resourceToolbar: some View {
@@ -468,6 +558,111 @@ private struct MCPAppNoticeBanner: View {
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
     .background(notice.tint.opacity(0.10))
+  }
+}
+
+// MARK: - MCPAppNetworkConsentBanner
+
+/// Prominent one-time consent card shown above an MCP app that declares network
+/// hosts. The app's declared domains are untrusted, so the web view stays locked
+/// down until the user taps Allow here. Because it is seen at most once per app
+/// per launch, it presents the decision deliberately: which app, exactly which
+/// hosts, and that the grant is remembered for the session.
+private struct MCPAppNetworkConsentBanner: View {
+  let appName: String
+  let hosts: [String]
+  let onAllow: () -> Void
+  let onDecline: () -> Void
+
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var appeared = false
+
+  private static let visibleHostCap = 4
+
+  private var visibleHosts: [String] { Array(hosts.prefix(Self.visibleHostCap)) }
+  private var overflowCount: Int { max(0, hosts.count - Self.visibleHostCap) }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      HStack(alignment: .top, spacing: 12) {
+        Image(systemName: "network.badge.shield.half.filled")
+          .font(.title3)
+          .foregroundStyle(Color.brandPrimary)
+          .frame(width: 36, height: 36)
+          .background(Color.brandPrimary.opacity(0.12), in: .rect(cornerRadius: 9))
+          .accessibilityHidden(true)
+
+        VStack(alignment: .leading, spacing: 1) {
+          Text("Allow network access?")
+            .font(.headline)
+          Text(appName)
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+        .accessibilityElement(children: .combine)
+
+        Spacer(minLength: 0)
+      }
+
+      VStack(alignment: .leading, spacing: 6) {
+        Text("Connects to")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        ForEach(visibleHosts, id: \.self) { host in
+          Label {
+            Text(host)
+              .font(.callout.monospaced())
+              .lineLimit(1)
+              .truncationMode(.middle)
+          } icon: {
+            Image(systemName: "globe")
+              .foregroundStyle(.secondary)
+          }
+        }
+
+        if overflowCount > 0 {
+          Text("+\(overflowCount) more")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("Connects to \(hosts.joined(separator: ", "))")
+
+      Text("Blocked until you allow · kept for this session")
+        .font(.caption)
+        .foregroundStyle(.tertiary)
+
+      HStack(spacing: 8) {
+        Spacer(minLength: 0)
+        Button("Not Now", action: onDecline)
+        Button("Allow", action: onAllow)
+          .buttonStyle(.borderedProminent)
+      }
+    }
+    .padding(14)
+    .background(.regularMaterial, in: .rect(cornerRadius: 12))
+    .overlay {
+      RoundedRectangle(cornerRadius: 12)
+        .strokeBorder(Color.brandPrimary.opacity(0.25), lineWidth: 1)
+    }
+    .shadow(color: .black.opacity(0.10), radius: 6, y: 2)
+    .padding(.horizontal, 12)
+    .padding(.vertical, 10)
+    // Gentle reveal for a deliberate, one-time prompt; instant under Reduce Motion.
+    .opacity(appeared ? 1 : 0)
+    .offset(y: appeared ? 0 : -6)
+    .onAppear {
+      guard !appeared else { return }
+      if reduceMotion {
+        appeared = true
+      } else {
+        withAnimation(.smooth(duration: 0.28)) { appeared = true }
+      }
+    }
   }
 }
 
