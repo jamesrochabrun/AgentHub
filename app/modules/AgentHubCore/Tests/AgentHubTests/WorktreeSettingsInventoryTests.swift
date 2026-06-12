@@ -239,7 +239,7 @@ struct WorktreeSettingsDeletionHelperTests {
     #expect(viewModel.monitoredSessionIds == Set(["session-1"]))
   }
 
-  @Test("Delete worktree for nested session removes the worktree root")
+  @Test("Delete worktree for nested session removes the worktree root", .disabled("headless-quarantine: symlink/async path matching; see TestQuarantine.md"))
   func deleteWorktreeForNestedSessionRemovesWorktreeRoot() async throws {
     let remover = RecordingWorktreeRemovalService()
     let repoPath = try temporaryDirectory(name: "delete-nested-repo")

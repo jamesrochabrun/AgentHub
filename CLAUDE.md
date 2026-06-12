@@ -113,6 +113,30 @@ final class MockSessionMonitorService: SessionMonitorServiceProtocol { ... }
 - Use `async` test methods for testing actor-based services
 - Prefer deterministic tests — inject controlled data rather than relying on file system state
 
+### Running Tests (headless)
+
+**MANDATORY for agents: whenever you change app code under any `Sources/`, run the _targeted_
+tests for the affected area before finishing the task, and report real pass/fail.** Do not stop
+at "it compiles" — "it builds" is not evidence a test passes. Do not run the whole suite for
+every edit; target the code you touched. Run the full suite only before opening/finishing a PR.
+
+- **Targeted run (use this on code changes).** Map source → test (`Services/GitDiffService.swift`
+  → `GitDiffServiceTests`) and run only that:
+  - Core (`AgentHubCore`): `cd app/modules/AgentHubCore && xcodebuild test -scheme AgentHubCore-Tests -destination 'platform=macOS' -test-timeouts-enabled YES -skipPackagePluginValidation -only-testing:AgentHubTests/<SuiteType>` (repeat `-only-testing:` per suite; `<SuiteType>` is the test `struct` name, not the `@Suite("…")` display string).
+  - A sub-module (`AgentHubGitHub`, `Storybook`, `SimulatorPreview`, `AgentHubCLI`): `cd app/modules/<Module> && swift test --filter <TestName>`.
+- **Full gate (before a PR, or `/test`): `./scripts/test.sh`** — fast `swift test` packages, then the
+  whole `AgentHubCore` xcodebuild suite. Subsets: `./scripts/test.sh core` / `packages`. This is the
+  exact gate CI runs (`.github/workflows/test.yml`). There is intentionally **no** git pre-commit/
+  pre-push hook — running tests is the agent's responsibility per the rule above.
+- The `AgentHubCore` tests run via the shared `AgentHubCore-Tests` scheme, driven **from the package
+  dir** (`cd app/modules/AgentHubCore`), with per-test timeouts. `swift test` on `AgentHubCore` does
+  **not** work (CodeEditSymbols xcassets); use the script / xcodebuild. The app scheme
+  (`build-for-testing -scheme AgentHub`) is a **false signal** — it compiles/runs zero package tests.
+- swift-testing runs `@Test`s in parallel **off the main thread**; any suite touching AppKit must be `@MainActor`.
+- Some tests are quarantined headless (`.disabled("headless-quarantine: …")`) — see `TestQuarantine.md`
+  / issue #380 for the open follow-ups; treat skips as known-broken, not passing, and don't re-enable
+  without fixing the documented root cause.
+
 ### Database Migration Rules
 
 - Read `AccessorySessions.md` before editing accessory terminal panes, sub-session launch/detection, terminal workspace linked-session restore, or `session_relationships`.

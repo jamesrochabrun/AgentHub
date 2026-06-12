@@ -1,0 +1,52 @@
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # Best-effort cache of resolved/compiled SPM artifacts. Keyed on the
+      # resolved dependency graph; safe to miss (just slower). The first run
+      # compiles all of AgentHubCore and will be slow.
+      - name: Cache build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData
+            ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Run tests
+        env:
+          # Emit an .xcresult bundle so failures can be downloaded for inspection.
+          AGENTHUB_TEST_RESULT_BUNDLE: ${{ github.workspace }}/build/AgentHubCore.xcresult
+        run: bash scripts/test.sh
+
+      - name: Upload xcresult on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: AgentHubCore-xcresult
+          path: build/AgentHubCore.xcresult
+          if-no-files-found: ignore
+          retention-days: 7

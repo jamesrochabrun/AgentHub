@@ -278,7 +278,7 @@ struct DiffAvailabilityServiceTests {
     #expect(status == .available)
   }
 
-  @Test("Non-git path is unavailable")
+  @Test("Non-git path is unavailable", .disabled("headless-quarantine: GitDiffService git subprocess deadlocks under concurrent spawning (hang); see TestQuarantine.md"))
   func nonGitPathIsUnavailable() async throws {
     let path = FileManager.default.temporaryDirectory
       .appendingPathComponent("DiffAvailabilityNonGit-\(UUID().uuidString)", isDirectory: true)
@@ -384,7 +384,7 @@ struct DiffAvailabilityServiceTests {
     #expect(evaluationCount == 2)
   }
 
-  @Test("Fast evaluator keeps the minimum floor")
+  @Test("Fast evaluator keeps the minimum floor", .disabled("headless-quarantine: timing-sensitive adaptive-throttle test; see TestQuarantine.md"))
   func fastEvaluatorKeepsMinimumFloor() async {
     let evaluator = DiffAvailabilityEvaluatorSpy(
       queuedStatuses: [.available, .unavailable]

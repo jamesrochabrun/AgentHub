@@ -72,6 +72,25 @@ protocol SessionSearchServiceProtocol {
 - Prefer deterministic tests — inject controlled data, don't depend on filesystem state
 - Cover critical paths: session discovery, JSONL parsing, state transitions, file watcher lifecycle
 
+### Running tests (headless)
+
+**MANDATORY: whenever you change app code under any `Sources/`, run the _targeted_ tests for the
+affected area before finishing, and report real pass/fail.** "It builds" is not evidence a test
+passes. Don't run the whole suite for every edit — target what you touched; run the full suite only
+before a PR. There is intentionally **no** git pre-commit/pre-push hook; running tests is the agent's
+responsibility.
+
+- **Targeted (on code changes):** map source → test (`Services/GitDiffService.swift` →
+  `GitDiffServiceTests`) and run only that:
+  - Core: `cd app/modules/AgentHubCore && xcodebuild test -scheme AgentHubCore-Tests -destination 'platform=macOS' -test-timeouts-enabled YES -skipPackagePluginValidation -only-testing:AgentHubTests/<SuiteType>` (`<SuiteType>` = the test `struct` name).
+  - Sub-module (`AgentHubGitHub`, `Storybook`, `SimulatorPreview`, `AgentHubCLI`): `cd app/modules/<Module> && swift test --filter <TestName>`.
+- **Full gate (before a PR, or `/test`):** `./scripts/test.sh` — the same gate CI runs
+  (`.github/workflows/test.yml`). `swift test` on `AgentHubCore` does **not** work (CodeEditSymbols
+  xcassets); use the script / the `AgentHubCore-Tests` scheme from the package dir.
+- swift-testing runs `@Test`s in parallel **off the main thread** — AppKit-touching suites must be `@MainActor`.
+- Quarantined tests (`.disabled("headless-quarantine: …")`) are known-broken, not passing — see
+  `TestQuarantine.md` / issue #380; don't re-enable without fixing the root cause.
+
 ## Web Preview Behavior
 
 - Prefer agent-provided localhost URLs for web preview when available

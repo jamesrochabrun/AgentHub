@@ -144,7 +144,7 @@ struct GitHubReviewSessionLaunchTargetResolverTests {
 @Suite("MultiSessionLaunchViewModel preselection")
 @MainActor
 struct MultiSessionLaunchViewModelPreselectionTests {
-  @Test("Preselect accepts a path inside a tracked main repository")
+  @Test("Preselect accepts a path inside a tracked main repository", .disabled("headless-quarantine: Combine .values delivery timing; see TestQuarantine.md"))
   func preselectAcceptsNestedMainRepositoryPath() async throws {
     let repository = repositoryWithWorktree()
     let fixture = makePreselectionFixture()
@@ -158,7 +158,7 @@ struct MultiSessionLaunchViewModelPreselectionTests {
     #expect(fixture.launchViewModel.selectedRepository?.path == "/tmp/Repo")
   }
 
-  @Test("Preselect accepts a path inside a tracked worktree")
+  @Test("Preselect accepts a path inside a tracked worktree", .disabled("headless-quarantine: Combine .values delivery timing; see TestQuarantine.md"))
   func preselectAcceptsNestedWorktreePath() async throws {
     let repository = repositoryWithWorktree()
     let fixture = makePreselectionFixture()

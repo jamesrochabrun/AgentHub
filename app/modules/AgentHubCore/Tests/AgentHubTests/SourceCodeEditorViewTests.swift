@@ -21,6 +21,10 @@ private func brightness(of color: NSColor) -> CGFloat {
   (color.usingColorSpace(.sRGB) ?? color).brightnessComponent
 }
 
+// Instantiates AppKit views (NSView/NSScrollView/NSWindow); swift-testing runs
+// suites off the main thread by default, and AppKit hard-asserts on off-main
+// window creation. Pin to the main actor — matching NSSplitViewAutosaveDisablerTests.
+@MainActor
 @Suite("SourceCodeEditorView")
 struct SourceCodeEditorViewTests {
   @Test("Find panel repair brings CodeEdit find panel to the hit-test front")
