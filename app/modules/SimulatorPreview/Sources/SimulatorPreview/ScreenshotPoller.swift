@@ -20,7 +20,7 @@ final class ScreenshotPoller {
     self.intervalMs = intervalMs
   }
 
-  func start(onFrame: @escaping (CVPixelBuffer, Int, Int) -> Void) {
+  func start(deviceUDID _: String, onFrame: @escaping (CVPixelBuffer, Int, Int) -> Void) {
     self.onFrame = onFrame
     let timer = DispatchSource.makeTimerSource(queue: queue)
     timer.schedule(deadline: .now(), repeating: .milliseconds(intervalMs))

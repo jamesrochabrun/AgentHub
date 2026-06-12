@@ -242,6 +242,33 @@ struct GitDiffServiceTests {
   }
 }
 
+private actor LocalDiffSummaryEvaluatorSpy {
+  private var queuedSummaries: [LocalDiffSummary]
+  private(set) var evaluationCount = 0
+  private let delay: Duration?
+
+  init(
+    queuedSummaries: [LocalDiffSummary],
+    delay: Duration? = nil
+  ) {
+    self.queuedSummaries = queuedSummaries
+    self.delay = delay
+  }
+
+  func evaluate(projectPath _: String) async -> LocalDiffSummary {
+    evaluationCount += 1
+    if let delay {
+      try? await Task.sleep(for: delay)
+    }
+
+    guard !queuedSummaries.isEmpty else {
+      return .empty
+    }
+
+    return queuedSummaries.removeFirst()
+  }
+}
+
 @Suite("LocalDiffSummaryService")
 struct LocalDiffSummaryServiceTests {
 
@@ -277,5 +304,124 @@ struct LocalDiffSummaryServiceTests {
     let summary = await service.summary(for: directory.path)
 
     #expect(summary == .empty)
+  }
+
+  @Test("adaptive throttle blocks invalidate inside the multiplied-duration window")
+  func adaptiveThrottleBlocksInvalidateWithinWindow() async {
+    let evaluator = LocalDiffSummaryEvaluatorSpy(
+      queuedSummaries: [
+        LocalDiffSummary(fileCount: 1, additions: 1, deletions: 0),
+        LocalDiffSummary(fileCount: 2, additions: 2, deletions: 0),
+      ],
+      delay: .milliseconds(200)
+    )
+    let service = LocalDiffSummaryService(
+      evaluator: { projectPath in
+        await evaluator.evaluate(projectPath: projectPath)
+      },
+      minimumRefreshInterval: 0,
+      adaptiveThrottleMultiplier: 3
+    )
+
+    let first = await service.summary(for: "/tmp/project")
+    await service.invalidate(projectPath: "/tmp/project")
+    let second = await service.summary(for: "/tmp/project")
+    let evaluationCount = await evaluator.evaluationCount
+
+    #expect(first.fileCount == 1)
+    #expect(second.fileCount == 1)
+    #expect(evaluationCount == 1)
+  }
+
+  @Test("invalidate succeeds after the adaptive window elapses")
+  func invalidateSucceedsAfterAdaptiveWindow() async {
+    let evaluator = LocalDiffSummaryEvaluatorSpy(
+      queuedSummaries: [
+        LocalDiffSummary(fileCount: 1, additions: 1, deletions: 0),
+        LocalDiffSummary(fileCount: 2, additions: 2, deletions: 0),
+      ],
+      delay: .milliseconds(100)
+    )
+    let service = LocalDiffSummaryService(
+      evaluator: { projectPath in
+        await evaluator.evaluate(projectPath: projectPath)
+      },
+      minimumRefreshInterval: 0,
+      adaptiveThrottleMultiplier: 3
+    )
+
+    let first = await service.summary(for: "/tmp/project")
+    try? await Task.sleep(for: .milliseconds(700))
+    await service.invalidate(projectPath: "/tmp/project")
+    let second = await service.summary(for: "/tmp/project")
+    let evaluationCount = await evaluator.evaluationCount
+
+    #expect(first.fileCount == 1)
+    #expect(second.fileCount == 2)
+    #expect(evaluationCount == 2)
+  }
+
+  @Test("fast evaluator keeps the minimum floor")
+  func fastEvaluatorKeepsMinimumFloor() async {
+    let evaluator = LocalDiffSummaryEvaluatorSpy(
+      queuedSummaries: [
+        LocalDiffSummary(fileCount: 1, additions: 1, deletions: 0),
+        LocalDiffSummary(fileCount: 2, additions: 2, deletions: 0),
+      ]
+    )
+    let service = LocalDiffSummaryService(
+      evaluator: { projectPath in
+        await evaluator.evaluate(projectPath: projectPath)
+      },
+      minimumRefreshInterval: 0.1,
+      adaptiveThrottleMultiplier: 3
+    )
+
+    let first = await service.summary(for: "/tmp/project")
+    await service.invalidate(projectPath: "/tmp/project")
+    let blocked = await service.summary(for: "/tmp/project")
+
+    try? await Task.sleep(for: .milliseconds(300))
+    await service.invalidate(projectPath: "/tmp/project")
+    let second = await service.summary(for: "/tmp/project")
+    let evaluationCount = await evaluator.evaluationCount
+
+    #expect(first.fileCount == 1)
+    #expect(blocked.fileCount == 1)
+    #expect(second.fileCount == 2)
+    #expect(evaluationCount == 2)
+  }
+
+  @Test("concurrent awaiters share one evaluation and keep throttle state intact")
+  func concurrentAwaitersRecordOneDuration() async {
+    let evaluator = LocalDiffSummaryEvaluatorSpy(
+      queuedSummaries: [
+        LocalDiffSummary(fileCount: 1, additions: 1, deletions: 0),
+        LocalDiffSummary(fileCount: 2, additions: 2, deletions: 0),
+      ],
+      delay: .milliseconds(200)
+    )
+    let service = LocalDiffSummaryService(
+      evaluator: { projectPath in
+        await evaluator.evaluate(projectPath: projectPath)
+      },
+      minimumRefreshInterval: 0,
+      adaptiveThrottleMultiplier: 3
+    )
+
+    async let first = service.summary(for: "/tmp/project")
+    async let second = service.summary(for: "/tmp/project")
+    let summaries = await [first, second]
+    let sharedCount = await evaluator.evaluationCount
+
+    try? await Task.sleep(for: .milliseconds(900))
+    await service.invalidate(projectPath: "/tmp/project")
+    let refreshed = await service.summary(for: "/tmp/project")
+    let finalCount = await evaluator.evaluationCount
+
+    #expect(summaries.map(\.fileCount) == [1, 1])
+    #expect(sharedCount == 1)
+    #expect(refreshed.fileCount == 2)
+    #expect(finalCount == 2)
   }
 }
