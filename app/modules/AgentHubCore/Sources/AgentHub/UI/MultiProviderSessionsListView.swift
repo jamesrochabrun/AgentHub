@@ -166,8 +166,7 @@ public struct MultiProviderSessionsListView: View {
   @AppStorage(AgentHubDefaults.auxiliaryShellVisible) private var isAuxiliaryShellVisible = false
   @AppStorage(AgentHubDefaults.worktreeDisplayMode)
   private var worktreeDisplayModeRawValue: String = WorktreeDisplayMode.parent.rawValue
-  @State private var isEmbeddedTrailingPanelVisible = false
-  @State private var sidebarVisibilityBeforeAutoHide: NavigationSplitViewVisibility?
+  @State private var embeddedSidePanelSidebarVisibility = EmbeddedSidePanelSidebarVisibilityState()
   @FocusState private var isSearchFieldFocused: Bool
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -203,50 +202,28 @@ public struct MultiProviderSessionsListView: View {
 
   public var body: some View {
     GeometryReader { proxy in
-      let sidebarMax = max(280, proxy.size.width * 0.20)
-    ZStack {
-      NavigationSplitView(columnVisibility: $columnVisibility) {
-        sidePanelView
-          .agentHubPanel()
-          .navigationSplitViewColumnWidth(min: 280, ideal: 280, max: sidebarMax)
-          .padding(.vertical, 8)
-          .padding(.horizontal, 8)
-      } detail: {
-        VStack(spacing: 0) {
-          // Progress bar lives above the detail pane only (not over the sidebar).
-          WorktreeGenerationProgressBar()
-
-          MultiProviderMonitoringPanelView(
-            claudeViewModel: claudeViewModel,
-            codexViewModel: codexViewModel,
-            primarySessionId: $primarySessionId,
-            selectedModuleLandingPath: $selectedModuleLandingPath,
-            onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
-            onAddFolder: { showAddRepositoryPicker() },
-            onRequestStartSession: { preferredRepositoryPath in
-              triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
-            },
-            onRequestForkSession: { session, targetProvider in
-              triggerForkSessionFlow(session: session, targetProvider: targetProvider)
-            }
-          )
-          .padding(12)
-          .agentHubPanel()
-          .frame(minWidth: 300)
-          .padding(.vertical, 8)
-          .padding(.horizontal, 8)
-          .background {
-            NSSplitViewAutosaveDisabler()
-              .frame(width: 0, height: 0)
-              .allowsHitTesting(false)
+      let sidebarWidth: CGFloat = 280
+      ZStack {
+        HStack(spacing: 0) {
+          if isSidebarVisible {
+            sidePanelView
+              .agentHubPanel()
+              .frame(width: sidebarWidth)
+              .padding(.vertical, 8)
+              .padding(.horizontal, 8)
+              .transition(sidebarVisibilityTransition)
           }
-        }
-      }
-      .navigationSplitViewStyle(.balanced)
-      .background(appBackground.ignoresSafeArea())
 
-      // Invisible global keyboard shortcuts.
-      keyboardShortcutButtons
+          detailPane
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(width: proxy.size.width, height: proxy.size.height)
+        .background(appBackground.ignoresSafeArea())
+
+        // Invisible global keyboard shortcuts.
+        keyboardShortcutButtons
+      }
+      .animation(sidebarVisibilityAnimation, value: isSidebarVisible)
     }
     .overlay {
       commandPaletteOverlay
@@ -456,10 +433,52 @@ public struct MultiProviderSessionsListView: View {
     }
     .modifier(ArchiveConfirmationAlert(confirmation: $archiveConfirmation))
     .modifier(RemoveConfirmationAlert(confirmation: $removeConfirmation))
-    }
   }
 
   // MARK: - UI Helpers
+
+  private var isSidebarVisible: Bool {
+    columnVisibility != .detailOnly
+  }
+
+  private var sidebarVisibilityAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeInOut(duration: 0.08)
+      : .timingCurve(0.22, 1, 0.36, 1, duration: 0.22)
+  }
+
+  private var sidebarVisibilityTransition: AnyTransition {
+    accessibilityReduceMotion
+      ? .opacity
+      : .move(edge: .leading).combined(with: .opacity)
+  }
+
+  private var detailPane: some View {
+    VStack(spacing: 0) {
+      // Progress bar lives above the detail pane only (not over the sidebar).
+      WorktreeGenerationProgressBar()
+
+      MultiProviderMonitoringPanelView(
+        claudeViewModel: claudeViewModel,
+        codexViewModel: codexViewModel,
+        primarySessionId: $primarySessionId,
+        selectedModuleLandingPath: $selectedModuleLandingPath,
+        onEmbeddedSidePanelVisibilityChange: handleEmbeddedSidePanelVisibilityChange,
+        onAddFolder: { showAddRepositoryPicker() },
+        onRequestStartSession: { preferredRepositoryPath in
+          triggerNewSessionFlow(preferredRepositoryPath: preferredRepositoryPath)
+        },
+        onRequestForkSession: { session, targetProvider in
+          triggerForkSessionFlow(session: session, targetProvider: targetProvider)
+        }
+      )
+      .padding(12)
+      .agentHubPanel()
+      .frame(minWidth: 300)
+      .padding(.vertical, 8)
+      .padding(.horizontal, 8)
+    }
+  }
 
   private var keyboardShortcutButtons: some View {
     Group {
@@ -1873,8 +1892,7 @@ public struct MultiProviderSessionsListView: View {
       openSettings()
 
     case .toggleSidebar:
-      sidebarVisibilityBeforeAutoHide = nil
-      columnVisibility = columnVisibility == .all ? .detailOnly : .all
+      toggleSidebarVisibility()
 
     case .toggleTerminalEditor:
       NotificationCenter.default.post(name: .toggleMonitoringContentMode, object: nil)
@@ -1882,25 +1900,17 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private func handleEmbeddedSidePanelVisibilityChange(_ isVisible: Bool) {
-    guard isEmbeddedTrailingPanelVisible != isVisible else { return }
-    isEmbeddedTrailingPanelVisible = isVisible
+    guard let nextVisibility = embeddedSidePanelSidebarVisibility.columnVisibilityChange(
+      forEmbeddedSidePanelVisible: isVisible,
+      currentColumnVisibility: columnVisibility
+    ) else { return }
 
-    if isVisible {
-      guard columnVisibility != .detailOnly else {
-        sidebarVisibilityBeforeAutoHide = nil
-        return
-      }
+    columnVisibility = nextVisibility
+  }
 
-      sidebarVisibilityBeforeAutoHide = columnVisibility
-      columnVisibility = .detailOnly
-      return
-    }
-
-    guard let previousVisibility = sidebarVisibilityBeforeAutoHide else { return }
-    sidebarVisibilityBeforeAutoHide = nil
-
-    guard columnVisibility == .detailOnly else { return }
-    columnVisibility = previousVisibility
+  private func toggleSidebarVisibility() {
+    embeddedSidePanelSidebarVisibility.resetAutoHideState()
+    columnVisibility = isSidebarVisible ? .detailOnly : .all
   }
 
   private var focusedSessionLaunchPath: String? {
