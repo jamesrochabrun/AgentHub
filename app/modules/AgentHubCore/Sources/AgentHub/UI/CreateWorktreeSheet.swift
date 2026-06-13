@@ -158,7 +158,7 @@ public struct CreateWorktreeSheet: View {
       Picker("Based On", selection: $baseBranch) {
         Text("Current HEAD").tag(nil as RemoteBranch?)
         ForEach(availableBranches) { branch in
-          Text(branch.displayName).tag(branch as RemoteBranch?)
+          Text(branch.pickerDisplayName).tag(branch as RemoteBranch?)
         }
       }
       .pickerStyle(.menu)
@@ -171,7 +171,7 @@ public struct CreateWorktreeSheet: View {
 
   private var baseBranchDescription: String {
     if let branch = baseBranch {
-      return "New branch will start from '\(branch.displayName)'"
+      return "New branch will start from \(branch.startPointDescription)"
     } else {
       return "New branch will start from current commit (HEAD)"
     }
@@ -272,11 +272,20 @@ public struct CreateWorktreeSheet: View {
     isLoading = true
 
     do {
-      // Load local branches for the "Based On" picker
-      availableBranches = try await worktreeService.getLocalBranches(at: repositoryPath)
+      // Load local branches and the fetched remote default branch for the "Based On" picker.
+      async let localBranches = worktreeService.getLocalBranches(at: repositoryPath)
+      async let remoteDefaultBranch = worktreeService.fetchAndGetDefaultRemoteBaseBranch(at: repositoryPath)
+      let branches = try await localBranches
+      let defaultRemoteBranch = try await remoteDefaultBranch
 
-      // Auto-select the first branch (usually main) as default base
-      if let firstBranch = availableBranches.first {
+      availableBranches = RemoteBranch.worktreeBaseOptions(
+        localBranches: branches,
+        remoteDefaultBranch: defaultRemoteBranch
+      )
+
+      if let defaultRemoteBranch {
+        baseBranch = defaultRemoteBranch
+      } else if let firstBranch = availableBranches.first {
         baseBranch = firstBranch
       }
     } catch {
@@ -291,7 +300,7 @@ public struct CreateWorktreeSheet: View {
   /// and surfaces progress in the top bar) and dismisses the sheet immediately.
   private func startCreation() {
     guard isValid else { return }
-    onCreate(branchName, directoryName, baseBranch?.displayName)
+    onCreate(branchName, directoryName, baseBranch?.gitStartPoint)
     onDismiss()
   }
 }

@@ -9,7 +9,7 @@ struct GitRepoFixture {
   let repoPath: String
   let parentDir: String
 
-  static func create() throws -> GitRepoFixture {
+  static func create(initialBranch: String = "main") throws -> GitRepoFixture {
     // Resolve symlinks so paths match git's resolved paths (e.g. /var -> /private/var on macOS)
     var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
     guard realpath(NSTemporaryDirectory(), &resolved) != nil else {
@@ -21,7 +21,7 @@ struct GitRepoFixture {
     try FileManager.default.createDirectory(atPath: repoPath, withIntermediateDirectories: true)
 
     let fixture = GitRepoFixture(repoPath: repoPath, parentDir: parentDir)
-    try fixture.runGit("init", "-b", "main")
+    try fixture.runGit("init", "-b", initialBranch)
     try fixture.runGit("config", "user.email", "test@test.com")
     try fixture.runGit("config", "user.name", "Test")
     try "initial".write(toFile: repoPath + "/README.md", atomically: true, encoding: .utf8)
@@ -88,6 +88,11 @@ struct GitRepoFixture {
   func localBranchExists(_ branch: String) throws -> Bool {
     let output = try runGit("branch", "--list", branch)
     return !output.isEmpty
+  }
+
+  func configureUser(at path: String? = nil) throws {
+    try runGit("config", "user.email", "test@test.com", at: path)
+    try runGit("config", "user.name", "Test", at: path)
   }
 
   func cleanup() {
@@ -171,6 +176,70 @@ struct ListWorktreesTests {
     #expect(secondary.path == worktreePath)
     #expect(secondary.branchName == "inventory-branch")
     #expect(secondary.mainRepoPath == fixture.repoPath)
+  }
+}
+
+@Suite("GitWorktreeService remote base branch")
+struct GitWorktreeServiceRemoteBaseBranchTests {
+  @Test("Returns fetched origin main as a remote worktree start point")
+  func returnsFetchedOriginMainAsRemoteStartPoint() async throws {
+    let seed = try GitRepoFixture.create()
+    defer { seed.cleanup() }
+
+    let remotePath = seed.parentDir + "/origin.git"
+    try seed.runGit("init", "--bare", "-b", "main", remotePath)
+    try seed.runGit("remote", "add", "origin", remotePath)
+    try seed.runGit("push", "-u", "origin", "main")
+
+    let localClonePath = seed.parentDir + "/local-clone"
+    try seed.runGit("clone", remotePath, localClonePath)
+    try seed.configureUser(at: localClonePath)
+
+    let writerClonePath = seed.parentDir + "/writer-clone"
+    try seed.runGit("clone", remotePath, writerClonePath)
+    try seed.configureUser(at: writerClonePath)
+    try "remote".write(toFile: writerClonePath + "/REMOTE.md", atomically: true, encoding: .utf8)
+    try seed.runGit("add", ".", at: writerClonePath)
+    try seed.runGit("commit", "-m", "remote update", at: writerClonePath)
+    try seed.runGit("push", "origin", "main", at: writerClonePath)
+
+    let service = GitWorktreeService()
+    let remoteBase = try #require(await service.fetchAndGetDefaultRemoteBaseBranch(at: localClonePath))
+
+    #expect(remoteBase.name == "origin/main")
+    #expect(remoteBase.gitStartPoint == "origin/main")
+    #expect(remoteBase.pickerDisplayName == "origin/main (latest remote)")
+
+    let path = try await service.createWorktreeWithNewBranch(
+      at: localClonePath,
+      newBranchName: "feature/from-remote-main",
+      directoryName: "feature-from-remote-main",
+      startPoint: remoteBase.gitStartPoint
+    )
+
+    #expect(FileManager.default.fileExists(atPath: path + "/REMOTE.md"))
+    #expect(!FileManager.default.fileExists(atPath: localClonePath + "/REMOTE.md"))
+  }
+
+  @Test("Returns origin master when remote main is absent")
+  func returnsOriginMasterWhenRemoteMainIsAbsent() async throws {
+    let seed = try GitRepoFixture.create(initialBranch: "master")
+    defer { seed.cleanup() }
+
+    let remotePath = seed.parentDir + "/origin.git"
+    try seed.runGit("init", "--bare", "-b", "master", remotePath)
+    try seed.runGit("remote", "add", "origin", remotePath)
+    try seed.runGit("push", "-u", "origin", "master")
+
+    let localClonePath = seed.parentDir + "/master-clone"
+    try seed.runGit("clone", remotePath, localClonePath)
+
+    let service = GitWorktreeService()
+    let remoteBase = try #require(await service.fetchAndGetDefaultRemoteBaseBranch(at: localClonePath))
+
+    #expect(remoteBase.name == "origin/master")
+    #expect(remoteBase.gitStartPoint == "origin/master")
+    #expect(remoteBase.pickerDisplayName == "origin/master (latest remote)")
   }
 }
 

@@ -611,7 +611,7 @@ public struct MultiSessionLaunchView: View {
         Picker("Base", selection: $viewModel.baseBranch) {
           Text("Current HEAD").tag(nil as RemoteBranch?)
           ForEach(viewModel.availableBranches) { branch in
-            Text(branch.displayName).tag(branch as RemoteBranch?)
+            Text(branch.pickerDisplayName).tag(branch as RemoteBranch?)
           }
         }
         .pickerStyle(.menu)
@@ -1380,7 +1380,7 @@ public struct MultiSessionLaunchView: View {
           Picker("", selection: $viewModel.baseBranch) {
             Text("Current HEAD").tag(nil as RemoteBranch?)
             ForEach(viewModel.availableBranches) { branch in
-              Text(branch.displayName).tag(branch as RemoteBranch?)
+              Text(branch.pickerDisplayName).tag(branch as RemoteBranch?)
             }
           }
           .pickerStyle(.menu)
