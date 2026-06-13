@@ -216,11 +216,6 @@ public struct GitHubPanelView: View {
 
   private var prListContent: some View {
     VStack(spacing: 0) {
-      // Stats header
-      if case .loaded = viewModel.prLoadingState, !viewModel.pullRequests.isEmpty {
-        statsHeader
-      }
-
       prFilterBar
 
       GradientDivider()
@@ -245,20 +240,23 @@ public struct GitHubPanelView: View {
 
   private var prFilterBar: some View {
     VStack(spacing: DesignTokens.Spacing.xs) {
-      HStack(spacing: DesignTokens.Spacing.xs) {
-        ForEach(GitHubPRFilter.allCases) { filter in
-          FilterChipWithCount(
-            title: filter.rawValue,
-            count: viewModel.filterCount(filter),
-            isActive: viewModel.prFilter == filter,
-            accent: accent
-          ) {
-            viewModel.prFilter = filter
-            Task { await viewModel.loadPullRequests() }
+      HStack(spacing: DesignTokens.Spacing.sm) {
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(spacing: DesignTokens.Spacing.xs) {
+            ForEach(GitHubPRFilter.allCases) { filter in
+              FilterChipWithCount(
+                title: filter.rawValue,
+                count: viewModel.filterCount(filter),
+                isActive: viewModel.prFilter == filter
+              ) {
+                viewModel.prFilter = filter
+                Task { await viewModel.loadPullRequests() }
+              }
+            }
           }
+          .padding(.vertical, 1)
         }
-
-        Spacer()
+        .frame(maxWidth: .infinity, alignment: .leading)
 
         filterMenu
       }
@@ -435,33 +433,6 @@ public struct GitHubPanelView: View {
     }
   }
 
-  private var statsHeader: some View {
-    HStack(spacing: DesignTokens.Spacing.sm) {
-      let openCount = viewModel.pullRequests.filter { $0.stateKind == .open }.count
-      let mergedCount = viewModel.pullRequests.filter { $0.stateKind == .merged }.count
-      let totalLines = viewModel.pullRequests.reduce(0) { $0 + $1.additions + $1.deletions }
-
-      StatCardView(
-        value: "\(openCount)",
-        label: "Open PRs",
-        tintColor: accent
-      )
-      StatCardView(
-        value: "\(mergedCount)",
-        label: "Merged",
-        tintColor: GitHubPalette.merged
-      )
-      StatCardView(
-        value: abbreviateNumber(totalLines),
-        label: "Lines Changed",
-        tintColor: GitHubPalette.linesChanged
-      )
-    }
-    .padding(.horizontal, DesignTokens.Spacing.md)
-    .padding(.top, DesignTokens.Spacing.md)
-    .padding(.bottom, DesignTokens.Spacing.xs)
-  }
-
   // MARK: - Issue Content
 
   @ViewBuilder
@@ -482,20 +453,22 @@ public struct GitHubPanelView: View {
   private var issueListContent: some View {
     VStack(spacing: 0) {
       // Filter bar
-      HStack(spacing: DesignTokens.Spacing.xs) {
-        ForEach(GitHubIssueFilter.allCases) { filter in
-          FilterChipWithCount(
-            title: filter.rawValue,
-            count: viewModel.issueFilterCount(filter),
-            isActive: viewModel.issueFilter == filter,
-            accent: accent
-          ) {
-            viewModel.issueFilter = filter
-            Task { await viewModel.loadIssues() }
+      ScrollView(.horizontal, showsIndicators: false) {
+        HStack(spacing: DesignTokens.Spacing.xs) {
+          ForEach(GitHubIssueFilter.allCases) { filter in
+            FilterChipWithCount(
+              title: filter.rawValue,
+              count: viewModel.issueFilterCount(filter),
+              isActive: viewModel.issueFilter == filter
+            ) {
+              viewModel.issueFilter = filter
+              Task { await viewModel.loadIssues() }
+            }
           }
         }
-        Spacer()
+        .padding(.vertical, 1)
       }
+      .frame(maxWidth: .infinity, alignment: .leading)
       .padding(.horizontal, DesignTokens.Spacing.md)
       .padding(.vertical, DesignTokens.Spacing.sm)
 
@@ -662,69 +635,37 @@ struct FilterChipWithCount: View {
   let title: String
   let count: Int
   let isActive: Bool
-  let accent: Color
   let action: () -> Void
 
+  private static let contentWidth: CGFloat = 80
   @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     Button(action: action) {
       chipContent
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(
-          RoundedRectangle(cornerRadius: AgentHubLayout.chipCornerRadius, style: .continuous)
-            .fill(isActive ? accent.opacity(colorScheme == .dark ? 0.15 : 0.12) : .clear)
-        )
-        .overlay(
-          RoundedRectangle(cornerRadius: AgentHubLayout.chipCornerRadius, style: .continuous)
-            .stroke(
-              isActive ? accent.opacity(0.35) : Color.secondary.opacity(0.18),
-              lineWidth: 1
-            )
-        )
     }
-    .buttonStyle(.plain)
+    .buttonStyle(.agentHubOutlined)
+    .background(activeBackground)
+    .clipShape(RoundedRectangle(cornerRadius: AgentHubLayout.buttonCornerRadius, style: .continuous))
+    .fixedSize()
   }
 
   private var chipContent: some View {
-    VStack(spacing: 2) {
-      titleLabel
-      countBadge
+    HStack(spacing: 4) {
+      Text(title)
+      if count > 0 {
+        Text(abbreviateNumber(count))
+      }
     }
-    .frame(minHeight: 36)
-  }
-
-  private var titleLabel: some View {
-    Text(title)
-      .font(GitHubTypography.button)
-      .foregroundStyle(isActive ? accent : .secondary)
-      .lineLimit(1)
-      .fixedSize(horizontal: true, vertical: false)
+    .frame(width: Self.contentWidth)
+    .lineLimit(1)
   }
 
   @ViewBuilder
-  private var countBadge: some View {
-    if count > 0 {
-      Text("\(count)")
-        .font(GitHubTypography.monoCaption)
-        .foregroundStyle(isActive ? accent : .secondary)
-        .lineLimit(1)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 1)
-        .background(
-          (isActive ? accent : Color.secondary).opacity(colorScheme == .dark ? 0.18 : 0.14)
-        )
-        .clipShape(Capsule())
-        .fixedSize(horizontal: true, vertical: false)
-    } else {
-      Text("0")
-        .font(GitHubTypography.monoCaption)
-        .lineLimit(1)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 1)
-        .hidden()
-        .fixedSize(horizontal: true, vertical: false)
+  private var activeBackground: some View {
+    if isActive {
+      RoundedRectangle(cornerRadius: AgentHubLayout.buttonCornerRadius, style: .continuous)
+        .fill(Color.secondary.opacity(colorScheme == .dark ? 0.12 : 0.08))
     }
   }
 }
