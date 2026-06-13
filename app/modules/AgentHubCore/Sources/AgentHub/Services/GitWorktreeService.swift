@@ -69,6 +69,10 @@ public actor GitWorktreeService: GitWorktreeInventoryServiceProtocol, GitWorktre
     try await service.fetchAndGetRemoteBranches(at: repoPath).map(Self.remoteBranch)
   }
 
+  public func fetchAndGetDefaultRemoteBaseBranch(at repoPath: String) async throws -> RemoteBranch? {
+    try await service.fetchAndGetDefaultRemoteBaseBranch(at: repoPath).map(Self.remoteBranch)
+  }
+
   public func getLocalBranches(at repoPath: String) async throws -> [RemoteBranch] {
     try await service.getLocalBranches(at: repoPath).map(Self.remoteBranch)
   }

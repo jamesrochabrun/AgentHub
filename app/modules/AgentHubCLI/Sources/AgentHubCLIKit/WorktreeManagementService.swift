@@ -7,6 +7,7 @@ public protocol WorktreeManagementServiceProtocol: Sendable {
   func listWorktrees(at repoPath: String) async throws -> [WorktreeInfo]
   func getRemoteBranches(at repoPath: String) async throws -> [BranchInfo]
   func fetchAndGetRemoteBranches(at repoPath: String) async throws -> [BranchInfo]
+  func fetchAndGetDefaultRemoteBaseBranch(at repoPath: String) async throws -> BranchInfo?
   func getLocalBranches(at repoPath: String) async throws -> [BranchInfo]
   func getLocalBranchesWithCurrent(at repoPath: String) async throws -> LocalBranchesResult
   func createWorktree(at repoPath: String, branch: String, directoryName: String) async throws -> String
@@ -138,6 +139,24 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     }
 
     return try await getRemoteBranches(at: repoPath)
+  }
+
+  public func fetchAndGetDefaultRemoteBaseBranch(at repoPath: String) async throws -> BranchInfo? {
+    let gitRoot: String
+    do {
+      gitRoot = try await findGitRoot(at: repoPath)
+    } catch {
+      throw WorktreeManagementError.notAGitRepository(repoPath)
+    }
+
+    do {
+      try await runGitCommand(["fetch", "--all"], at: gitRoot)
+    } catch {
+      // Keep the picker useful offline: fall back to the latest cached remote refs.
+    }
+
+    let output = try await runGitCommand(["branch", "-r"], at: gitRoot)
+    return defaultRemoteBaseBranch(from: output)
   }
 
   public func getLocalBranches(at repoPath: String) async throws -> [BranchInfo] {
@@ -733,6 +752,48 @@ private extension WorktreeManagementService {
         return BranchInfo(name: line, remote: String(parts[0]))
       }
       .sorted { $0.displayName < $1.displayName }
+  }
+
+  func defaultRemoteBaseBranch(from output: String) -> BranchInfo? {
+    let branches = parseRemoteBranches(output)
+    guard !branches.isEmpty else { return nil }
+
+    if let headName = remoteHeadTarget(from: output),
+       let headBranch = branches.first(where: {
+         $0.name == headName && Self.isSupportedDefaultBaseName($0.displayName)
+       }) {
+      return headBranch
+    }
+
+    if let originMain = branches.first(where: { $0.name == "origin/main" }) {
+      return originMain
+    }
+
+    if let originMaster = branches.first(where: { $0.name == "origin/master" }) {
+      return originMaster
+    }
+
+    if let remoteMain = branches.first(where: { $0.displayName == "main" }) {
+      return remoteMain
+    }
+
+    return branches.first(where: { $0.displayName == "master" })
+  }
+
+  func remoteHeadTarget(from output: String) -> String? {
+    output.components(separatedBy: .newlines)
+      .map { $0.trimmingCharacters(in: .whitespaces) }
+      .compactMap { line -> String? in
+        guard line.contains("HEAD ->") else { return nil }
+        let parts = line.components(separatedBy: "->")
+        guard parts.count == 2 else { return nil }
+        return parts[1].trimmingCharacters(in: .whitespaces)
+      }
+      .first
+  }
+
+  static func isSupportedDefaultBaseName(_ branchName: String) -> Bool {
+    branchName == "main" || branchName == "master"
   }
 
   func parseLocalBranches(_ output: String) -> [BranchInfo] {

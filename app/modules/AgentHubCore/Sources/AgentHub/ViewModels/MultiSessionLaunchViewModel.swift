@@ -401,10 +401,19 @@ public final class MultiSessionLaunchViewModel {
     isLoadingCurrentBranch = true
 
     do {
-      let result = try await worktreeService.getLocalBranchesWithCurrent(at: repo.path)
-      availableBranches = result.branches
+      async let localBranches = worktreeService.getLocalBranchesWithCurrent(at: repo.path)
+      async let remoteDefaultBranch = worktreeService.fetchAndGetDefaultRemoteBaseBranch(at: repo.path)
+      let result = try await localBranches
+      let defaultRemoteBranch = try await remoteDefaultBranch
+
+      availableBranches = RemoteBranch.worktreeBaseOptions(
+        localBranches: result.branches,
+        remoteDefaultBranch: defaultRemoteBranch
+      )
       currentBranchName = result.currentBranchName
-      if let first = availableBranches.first {
+      if let defaultRemoteBranch {
+        baseBranch = defaultRemoteBranch
+      } else if let first = availableBranches.first {
         baseBranch = first
       }
     } catch {
@@ -773,7 +782,7 @@ public final class MultiSessionLaunchViewModel {
           repoPath: repoPath,
           branchName: session.branchName,
           directoryName: dirName,
-          startPoint: baseBranch?.displayName,
+          startPoint: baseBranch?.gitStartPoint,
           progressKeyPath: \.claudeProgress
         )
 
@@ -853,7 +862,7 @@ public final class MultiSessionLaunchViewModel {
         repoPath: repoPath,
         branchName: branchName,
         directoryName: dirName,
-        startPoint: baseBranch?.displayName,
+        startPoint: baseBranch?.gitStartPoint,
         progressKeyPath: \.claudeProgress
       )
 
@@ -1016,7 +1025,7 @@ public final class MultiSessionLaunchViewModel {
         repoPath: repoPath,
         branchName: claudeBranchName,
         directoryName: dirName,
-        startPoint: baseBranch?.displayName,
+        startPoint: baseBranch?.gitStartPoint,
         progressKeyPath: \.claudeProgress
       )
     } catch is CancellationError {
@@ -1037,7 +1046,7 @@ public final class MultiSessionLaunchViewModel {
         repoPath: repoPath,
         branchName: codexBranchName,
         directoryName: dirName,
-        startPoint: baseBranch?.displayName,
+        startPoint: baseBranch?.gitStartPoint,
         progressKeyPath: \.codexProgress
       )
     } catch is CancellationError {
@@ -1116,7 +1125,7 @@ public final class MultiSessionLaunchViewModel {
         repoPath: repoPath,
         branchName: branchName,
         directoryName: dirName,
-        startPoint: baseBranch?.displayName,
+        startPoint: baseBranch?.gitStartPoint,
         progressKeyPath: progressKeyPath
       )
     } catch is CancellationError {
@@ -1156,11 +1165,11 @@ public final class MultiSessionLaunchViewModel {
   ) async throws -> WorktreeBranchNamingResult {
     let attachmentNames = attachmentBasenames
     let providerNames = providerKinds.map(\.rawValue).joined(separator: ",")
-    let baseBranchName = baseBranch?.displayName ?? "HEAD"
+    let baseBranchName = baseBranch?.gitStartPoint ?? "HEAD"
     let request = WorktreeBranchNamingRequest(
       repoName: repository.name,
       repoPath: repository.path,
-      baseBranchName: baseBranch?.displayName,
+      baseBranchName: baseBranch?.gitStartPoint,
       launchContext: launchContext,
       promptText: promptText,
       attachmentBasenames: attachmentNames,
