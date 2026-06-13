@@ -25,9 +25,15 @@ and/or fast-fail `findGitRoot` when libgit2 already reported "no repository" ins
 falling back to the CLI. Affects the whole app's git layer — review carefully.
 
 - `DiffAvailabilityServiceTests` → "Non-git path is unavailable"
+- `TerminalFileOpenProjectResolverTests` → `fallsBackToParentDirectoryWhenNoKnownRootContainsFile` — same git-Process deadlock; hangs on CI runners (60s timeout)
 - (also the root cause behind `LocalDiffSummaryService`/`WebPreviewResolver` non-git slowness)
 
 ## B. Reactive/async delivery timing (test fragility, product-adjacent)
+
+> **CI note:** most cluster-B timing tests are *flaky* (not deterministically broken) on the
+> slow/contended CI runner — they pass locally and on retry. CI runs the core suite with
+> `xcodebuild -retry-tests-on-failure -test-iterations 3`, so a flaky test only fails the gate
+> if it fails all attempts. The `.disabled` ones below failed *consistently* even with retry.
 
 These poll `waitUntil { … }` / `await condition()` for state that arrives via Combine
 `.values` async sequences or real `Date.now`/sleep-based throttles. Values sent between
