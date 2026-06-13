@@ -47,6 +47,11 @@ final class SimulatorAnnotationModel {
     annotations.removeAll { $0.id == id }
   }
 
+  func updateText(id: UUID, text: String) {
+    guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+    annotations[index].text = text
+  }
+
   func clearAnnotations() {
     annotations.removeAll()
     clearPending()

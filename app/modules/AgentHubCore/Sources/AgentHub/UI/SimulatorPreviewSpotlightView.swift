@@ -50,6 +50,9 @@ struct SimulatorPreviewSpotlightView: View {
   /// Expanded (pinned) preview: takes over the tab and stays visible across
   /// file switches and new changes until minimized.
   @State private var expandedSelection: SimulatorPreviewSelection?
+  @Namespace private var previewExpansionNamespace
+
+  private let expansionAnimation = Animation.spring(response: 0.34, dampingFraction: 0.86)
 
   private var manifestLoadID: String {
     "\(reloadGeneration)|\(isPreviewHostExpected)"
@@ -118,22 +121,26 @@ struct SimulatorPreviewSpotlightView: View {
           reloadGeneration: reloadGeneration,
           isReloadInFlight: isReloadInFlight,
           isExpanded: true,
-          onToggleExpand: { self.expandedSelection = nil }
+          onToggleExpand: collapseExpandedPreview
         )
         .id(expandedSelection.id)
+        .matchedGeometryEffect(id: expandedSelection.id, in: previewExpansionNamespace)
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transition(.opacity)
       } else if candidates.count == 1, let single = candidates.first {
         SimulatorPreviewCanvasView(
           client: client,
           selection: single,
           reloadGeneration: reloadGeneration,
           isReloadInFlight: isReloadInFlight,
-          onToggleExpand: { expandedSelection = single }
+          onToggleExpand: { expand(single) }
         )
         .id(single.id)
+        .matchedGeometryEffect(id: single.id, in: previewExpansionNamespace)
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .transition(.opacity)
       } else {
         ScrollView {
           LazyVGrid(
@@ -147,13 +154,15 @@ struct SimulatorPreviewSpotlightView: View {
                 reloadGeneration: reloadGeneration,
                 isReloadInFlight: isReloadInFlight,
                 canvasHeight: 240,
-                onToggleExpand: { expandedSelection = candidate }
+                onToggleExpand: { expand(candidate) }
               )
               .id(candidate.id)
+              .matchedGeometryEffect(id: candidate.id, in: previewExpansionNamespace)
             }
           }
           .padding(12)
         }
+        .transition(.opacity)
       }
 
       if let connectedDeviceName {
@@ -162,6 +171,19 @@ struct SimulatorPreviewSpotlightView: View {
           .foregroundStyle(.tertiary)
           .padding(.bottom, 6)
       }
+    }
+    .animation(expansionAnimation, value: expandedSelection)
+  }
+
+  private func expand(_ selection: SimulatorPreviewSelection) {
+    withAnimation(expansionAnimation) {
+      expandedSelection = selection
+    }
+  }
+
+  private func collapseExpandedPreview() {
+    withAnimation(expansionAnimation) {
+      expandedSelection = nil
     }
   }
 
@@ -299,9 +321,10 @@ struct SimulatorPreviewCanvasView: View {
           RoundedRectangle(cornerRadius: 10, style: .continuous)
             .strokeBorder(Color.secondary.opacity(0.2))
         )
-        .overlay(alignment: .topTrailing) {
+        .overlay(alignment: .topLeading) {
           if isHovering || isExpanded, onToggleExpand != nil {
             expandButton
+              .transition(.scale(scale: 0.92).combined(with: .opacity))
           }
         }
         .onHover { isHovering = $0 }
@@ -322,6 +345,8 @@ struct SimulatorPreviewCanvasView: View {
       guard !isReloadInFlight else { return }
       await render()
     }
+    .animation(.spring(response: 0.22, dampingFraction: 0.85), value: isHovering)
+    .animation(.spring(response: 0.22, dampingFraction: 0.85), value: isExpanded)
     .help(renderError ?? selection.title)
   }
 
