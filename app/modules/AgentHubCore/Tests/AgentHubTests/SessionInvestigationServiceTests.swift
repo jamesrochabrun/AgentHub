@@ -46,7 +46,7 @@ struct SessionInvestigationServiceTests {
     #expect(report.narrative == "Two sessions are ready to review.")
     #expect(report.actions.first?.category == .mergeCandidate)
 
-    let request = try await #require(programmatic.lastRequest())
+    let request = try #require(await programmatic.lastRequest())
     #expect(request.disallowedTools?.contains("Bash") == true)
     #expect(request.userPrompt.contains("\"sessionFilePath\""))
   }

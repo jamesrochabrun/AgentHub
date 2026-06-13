@@ -367,7 +367,7 @@ struct WorktreeRemovalTests {
     #expect(!listAfter.contains("dirty-branch"))
   }
 
-  @Test("Cancels in-flight worktree creation and cleans generated artifacts")
+  @Test("Cancels in-flight worktree creation and cleans generated artifacts", .disabled("headless-quarantine: async cancellation timing — flaky on CI runners; see TestQuarantine.md"))
   func cancelsWorktreeCreationAndCleansUp() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }

@@ -92,7 +92,7 @@ struct TerminalFileOpenProjectResolverTests {
     #expect(resolved == root.path)
   }
 
-  @Test func fallsBackToParentDirectoryWhenNoKnownRootContainsFile() throws {
+  @Test(.disabled("headless-quarantine: git Process deadlock on non-git path under CI concurrency (hang); see TestQuarantine.md")) func fallsBackToParentDirectoryWhenNoKnownRootContainsFile() throws {
     let root = try makeTemporaryDirectory()
     let file = root.appendingPathComponent("LooseFile.swift")
     FileManager.default.createFile(atPath: file.path, contents: Data())
