@@ -531,12 +531,14 @@ public struct MultiProviderSessionsListView: View {
     Group {
       if runtimeTheme?.hasCustomBackgrounds == true {
         Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
+      } else if colorScheme == .dark {
+        Color.black
       } else {
         LinearGradient(
           colors: [
             Color.surfaceCanvas,
-            Color.surfaceCanvas.opacity(colorScheme == .dark ? 0.98 : 0.94),
-            Color.brandTertiary.opacity(colorScheme == .dark ? 0.06 : 0.1)
+            Color.surfaceCanvas.opacity(0.94),
+            Color.brandTertiary.opacity(0.1)
           ],
           startPoint: .topLeading,
           endPoint: .bottomTrailing
