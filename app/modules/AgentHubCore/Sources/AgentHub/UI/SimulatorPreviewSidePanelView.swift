@@ -252,7 +252,7 @@ struct SimulatorPreviewSidePanelView: View {
       closeButton
     }
     .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+    .frame(height: AgentHubLayout.topBarHeight)
   }
 
   private var viewOnlyBadge: some View {
@@ -267,16 +267,23 @@ struct SimulatorPreviewSidePanelView: View {
   /// Live mirror ↔ Previews. The Previews option is only visible when the
   /// simulator previews setting is enabled.
   private var displayModePicker: some View {
-    Picker("View", selection: $displayMode) {
-      Text("Live").tag(SimulatorPanelDisplayMode.live)
-      Text("Previews").tag(SimulatorPanelDisplayMode.previews)
-    }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .tint(Color.brandPrimary)
-    .accentColor(Color.brandPrimary)
-    .fixedSize()
-    .accessibilityLabel("Panel display mode")
+    CompactPillSegmentedControl(
+      selection: $displayMode,
+      items: [
+        CompactPillSegmentedControlItem(
+          value: .live,
+          title: "Live",
+          helpText: "Show the live simulator"
+        ),
+        CompactPillSegmentedControlItem(
+          value: .previews,
+          title: "Previews",
+          helpText: "Show SwiftUI previews"
+        )
+      ],
+      selectedColor: Color.brandSecondary,
+      accessibilityLabel: "Panel display mode"
+    )
   }
 
   @ViewBuilder
