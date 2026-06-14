@@ -45,13 +45,18 @@ jobs:
       - name: Run package tests (required)
         run: bash scripts/test.sh packages
 
-      # Advisory: the AgentHubCore suite runs with retry and reports, but a tail
-      # of timing-sensitive tests (debounce/throttle/waitUntil/monitor) is flaky
-      # on slow/contended CI runners and fails non-deterministically even with
-      # retries. It does NOT fail the gate yet — tracked for hardening in
-      # TestQuarantine.md / issue #380. Flip to required once that tail is fixed.
+      # Advisory: the AgentHubCore suite runs and reports, but a tail of
+      # timing-sensitive tests (debounce/throttle/waitUntil/monitor) is flaky on
+      # slow/contended CI runners. It does NOT fail the gate yet — tracked for
+      # hardening in TestQuarantine.md / issue #380. Flip to required once fixed.
+      #
+      # continue-on-error keeps a failed/timed-out step from failing the job, and
+      # the step-level timeout-minutes bounds it so it can never reach the JOB
+      # timeout (a job timeout would cancel the whole run regardless of
+      # continue-on-error). Together: the core step can never block the gate.
       - name: Run AgentHubCore tests (advisory)
         continue-on-error: true
+        timeout-minutes: 40
         env:
           # Emit an .xcresult bundle so failures can be downloaded for inspection.
           AGENTHUB_TEST_RESULT_BUNDLE: ${{ github.workspace }}/build/AgentHubCore.xcresult

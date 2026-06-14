@@ -55,11 +55,11 @@ run_core() {
   fi
   # Per-test timeouts keep a single hanging test from blocking the whole gate
   # forever (the suite has a few service tests that can block headlessly).
-  # Retry-on-failure tolerates the timing-sensitive tests (debounce/throttle/
-  # waitUntil/monitor) that are flaky on slow/contended CI runners but pass on a
-  # retry; a test only fails the gate if it fails all attempts. Deterministic
-  # failures still fail. (Genuinely-hanging tests are quarantined, not retried —
-  # retrying a 60s timeout just wastes time.)
+  # NOTE: no -retry-tests-on-failure here. The timing-sensitive tail is flaky on
+  # slow CI runners, and retrying the whole suite up to 3x can blow past the CI
+  # job timeout (cancelling the job). In CI the AgentHubCore step is advisory
+  # (non-blocking, see test.yml), so a single deterministic-duration pass is what
+  # we want; flaky tests are tracked in TestQuarantine.md / #380.
   if ( cd "$MODULES/AgentHubCore" && \
        xcodebuild test \
          -scheme AgentHubCore-Tests \
@@ -67,8 +67,6 @@ run_core() {
          -test-timeouts-enabled YES \
          -default-test-execution-time-allowance 60 \
          -maximum-test-execution-time-allowance 120 \
-         -retry-tests-on-failure \
-         -test-iterations 3 \
          "${result_bundle_args[@]+"${result_bundle_args[@]}"}" \
          -skipPackagePluginValidation ); then
     echo "✓ AgentHubCore"

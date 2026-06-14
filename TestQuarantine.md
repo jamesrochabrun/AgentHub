@@ -13,12 +13,15 @@ Sonoma; local dev is on a newer beta). Two tiers:
 
 - **Required (hard gate):** the four fast `swift test` packages (`AgentHubCLI`,
   `AgentHubGitHub`, `SimulatorPreview`, `Storybook`). These are stable.
-- **Advisory (non-blocking):** the `AgentHubCore` xcodebuild suite. It runs with
-  `-retry-tests-on-failure -test-iterations 3`, but a tail of timing-sensitive tests
-  (debounce/throttle/`waitUntil`/monitor) is flaky on the slow runner and fails
-  non-deterministically even with retries. Until that tail is hardened (injectable
-  clocks / deterministic awaits), the core step reports but does not fail the gate.
-  **Flip it to required** (remove `continue-on-error`) once the timing tests are stable.
+- **Advisory (non-blocking):** the `AgentHubCore` xcodebuild suite. A tail of
+  timing-sensitive tests (debounce/throttle/`waitUntil`/monitor) is flaky on the slow
+  runner and fails non-deterministically. Until that tail is hardened (injectable
+  clocks / deterministic awaits), the core step **reports but does not fail the gate**:
+  it's `continue-on-error` with its own `timeout-minutes` so it can never reach (and
+  trip) the job timeout. It runs a **single pass** — no `-retry-tests-on-failure`,
+  because retrying the whole flaky suite up to 3× could blow past the job timeout and
+  cancel the run (this is what failed PR #384). **Flip it to required** (remove
+  `continue-on-error`) once the timing tests are stable.
 
 How to run only these (to iterate): remove the trait and run
 `cd app/modules/AgentHubCore && xcodebuild test -scheme AgentHubCore-Tests -destination 'platform=macOS' -test-timeouts-enabled YES -only-testing:<Target>/<SuiteType>/<method>`.
@@ -45,9 +48,10 @@ falling back to the CLI. Affects the whole app's git layer — review carefully.
 ## B. Reactive/async delivery timing (test fragility, product-adjacent)
 
 > **CI note:** most cluster-B timing tests are *flaky* (not deterministically broken) on the
-> slow/contended CI runner — they pass locally and on retry. CI runs the core suite with
-> `xcodebuild -retry-tests-on-failure -test-iterations 3`, so a flaky test only fails the gate
-> if it fails all attempts. The `.disabled` ones below failed *consistently* even with retry.
+> slow/contended CI runner — they pass locally and intermittently on CI. Because the
+> `AgentHubCore` CI step is **advisory** (non-blocking), these don't gate merges; they're not
+> all `.disabled` (only the chronic/hanging offenders are). Harden them (injectable clocks /
+> deterministic awaits) and flip the core step to required.
 
 These poll `waitUntil { … }` / `await condition()` for state that arrives via Combine
 `.values` async sequences or real `Date.now`/sleep-based throttles. Values sent between
