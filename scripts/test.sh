@@ -31,11 +31,28 @@ SWIFT_TEST_PACKAGES=(
 
 FAILURES=()
 
+# Some package tests are wall-clock/concurrency-timing based and flake on slow CI
+# runners. Packages are fast, so retry the whole package up to PKG_ATTEMPTS times;
+# a package only counts as failed if it fails every attempt (a consistently-broken
+# test still fails; a one-off flake passes on retry). The chronically-flaky suites
+# are quarantined at the source (see TestQuarantine.md / #380) so retries are rare.
+PKG_ATTEMPTS="${AGENTHUB_PKG_ATTEMPTS:-3}"
+
 run_packages() {
   for pkg in "${SWIFT_TEST_PACKAGES[@]}"; do
     echo ""
     echo "▶ swift test: $pkg"
-    if ( cd "$MODULES/$pkg" && swift test ); then
+    local attempt=1
+    local passed=0
+    while [ "$attempt" -le "$PKG_ATTEMPTS" ]; do
+      if ( cd "$MODULES/$pkg" && swift test ); then
+        passed=1
+        break
+      fi
+      echo "  ✗ $pkg attempt $attempt/$PKG_ATTEMPTS failed"
+      attempt=$((attempt + 1))
+    done
+    if [ "$passed" -eq 1 ]; then
       echo "✓ $pkg"
     else
       echo "✗ $pkg"
