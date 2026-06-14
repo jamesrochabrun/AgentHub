@@ -139,6 +139,14 @@ public final class AgentHubProvider {
     MCPAppDiscoveryService.shared
   }()
 
+  /// Installs and removes curated MCP connector definitions from global CLI config files.
+  public private(set) lazy var mcpConnectorInstallService: any MCPConnectorInstallServiceProtocol = {
+    MCPConnectorInstallService(
+      claudeConfigPath: "~/.claude.json",
+      codexConfigPath: "\(configuration.codexDataPath)/config.toml"
+    )
+  }()
+
   /// Cached project-level detector for inline diff tab visibility.
   lazy var diffAvailabilityService: any DiffAvailabilityServiceProtocol = {
     DiffAvailabilityService.shared

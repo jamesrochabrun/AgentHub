@@ -140,6 +140,11 @@ public struct SettingsView: View {
           Label("Worktrees", systemImage: "arrow.triangle.branch")
         }
 
+      ConnectorsSettingsView()
+        .tabItem {
+          Label("Connectors", systemImage: "point.3.connected.trianglepath.dotted")
+        }
+
       appearanceSettingsForm
         .tabItem {
           Label("Appearance", systemImage: "paintpalette")
