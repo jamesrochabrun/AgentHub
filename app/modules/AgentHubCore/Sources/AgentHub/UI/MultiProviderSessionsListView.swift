@@ -211,6 +211,7 @@ public struct MultiProviderSessionsListView: View {
               .frame(width: sidebarWidth)
               .padding(.vertical, 8)
               .padding(.horizontal, 8)
+              .background(appBackground.ignoresSafeArea())
               .transition(sidebarVisibilityTransition)
           }
 
@@ -528,21 +529,7 @@ public struct MultiProviderSessionsListView: View {
   }
 
   private var appBackground: some View {
-    Group {
-      if runtimeTheme?.hasCustomBackgrounds == true {
-        Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
-      } else {
-        LinearGradient(
-          colors: [
-            Color.surfaceCanvas,
-            Color.surfaceCanvas.opacity(colorScheme == .dark ? 0.98 : 0.94),
-            Color.brandTertiary.opacity(colorScheme == .dark ? 0.06 : 0.1)
-          ],
-          startPoint: .topLeading,
-          endPoint: .bottomTrailing
-        )
-      }
-    }
+    Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
   }
 
   private var sessionListContent: some View {
