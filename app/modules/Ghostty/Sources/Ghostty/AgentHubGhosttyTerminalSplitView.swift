@@ -3,11 +3,14 @@
 //  AgentHub
 //
 
+import AgentHubCore
 import GhosttySwift
 import SwiftUI
 
 @MainActor
 struct AgentHubGhosttyTerminalSplitView: View {
+  @State private var childRatios: [CGFloat] = []
+
   let node: TerminalSplitLayout.Node
   let session: TerminalSession
   let maximizedPanelID: TerminalPanelID?
@@ -78,15 +81,23 @@ struct AgentHubGhosttyTerminalSplitView: View {
     children: [TerminalSplitLayout.Node],
     size: CGSize
   ) -> some View {
-    let dividerSize: CGFloat = 1
-    let childCount = CGFloat(max(children.count, 1))
-    let totalDividerWidth = dividerSize * CGFloat(max(children.count - 1, 0))
-    let childWidth = max(0, size.width - totalDividerWidth) / childCount
+    let childWidths = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: childRatios,
+      childCount: children.count,
+      containerLength: size.width,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: .horizontal)
+    )
 
     return HStack(spacing: 0) {
       ForEach(Array(children.enumerated()), id: \.offset) { offset, child in
         if offset > 0 {
-          divider(axis: .horizontal)
+          divider(
+            axis: .horizontal,
+            dividerIndex: offset - 1,
+            childCount: children.count,
+            containerLength: size.width
+          )
+          .zIndex(1)
         }
         AgentHubGhosttyTerminalSplitView(
           node: child,
@@ -103,8 +114,15 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onToggleMaximizedPanel: onToggleMaximizedPanel,
           activityForPanel: activityForPanel
         )
-        .frame(width: childWidth, height: size.height)
+        .frame(width: childDimension(childWidths, at: offset), height: size.height)
+        .zIndex(0)
       }
+    }
+    .onAppear {
+      reconcileRatios(childCount: children.count)
+    }
+    .onChange(of: children.count) { _, childCount in
+      reconcileRatios(childCount: childCount)
     }
   }
 
@@ -112,15 +130,23 @@ struct AgentHubGhosttyTerminalSplitView: View {
     children: [TerminalSplitLayout.Node],
     size: CGSize
   ) -> some View {
-    let dividerSize: CGFloat = 1
-    let childCount = CGFloat(max(children.count, 1))
-    let totalDividerHeight = dividerSize * CGFloat(max(children.count - 1, 0))
-    let childHeight = max(0, size.height - totalDividerHeight) / childCount
+    let childHeights = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: childRatios,
+      childCount: children.count,
+      containerLength: size.height,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: .vertical)
+    )
 
     return VStack(spacing: 0) {
       ForEach(Array(children.enumerated()), id: \.offset) { offset, child in
         if offset > 0 {
-          divider(axis: .vertical)
+          divider(
+            axis: .vertical,
+            dividerIndex: offset - 1,
+            childCount: children.count,
+            containerLength: size.height
+          )
+          .zIndex(1)
         }
         AgentHubGhosttyTerminalSplitView(
           node: child,
@@ -137,20 +163,108 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onToggleMaximizedPanel: onToggleMaximizedPanel,
           activityForPanel: activityForPanel
         )
-        .frame(width: size.width, height: childHeight)
+        .frame(width: size.width, height: childDimension(childHeights, at: offset))
+        .zIndex(0)
       }
+    }
+    .onAppear {
+      reconcileRatios(childCount: children.count)
+    }
+    .onChange(of: children.count) { _, childCount in
+      reconcileRatios(childCount: childCount)
     }
   }
 
-  @ViewBuilder
-  private func divider(axis: TerminalSplitAxis) -> some View {
+  private func divider(
+    axis: TerminalSplitAxis,
+    dividerIndex: Int,
+    childCount: Int,
+    containerLength: CGFloat
+  ) -> some View {
+    let sizingAxis = TerminalPanelKit.SplitAxis(axis)
+    return TerminalPanelSplitDivider(
+      axis: sizingAxis,
+      lineOpacity: 0.35,
+      clampedTranslation: { translation in
+        clampedResizeTranslation(
+          axis: sizingAxis,
+          dividerIndex: dividerIndex,
+          childCount: childCount,
+          containerLength: containerLength,
+          translation: translation
+        )
+      },
+      onCommitResize: { translation in
+        commitResize(
+          axis: sizingAxis,
+          dividerIndex: dividerIndex,
+          childCount: childCount,
+          containerLength: containerLength,
+          translation: translation
+        )
+      }
+    )
+  }
+
+  private func childDimension(_ dimensions: [CGFloat], at index: Int) -> CGFloat {
+    dimensions.indices.contains(index) ? dimensions[index] : 0
+  }
+
+  private func reconcileRatios(childCount: Int) {
+    childRatios = TerminalPanelKit.SplitSizing.normalizedRatios(
+      childRatios,
+      childCount: childCount
+    )
+  }
+
+  private func clampedResizeTranslation(
+    axis: TerminalPanelKit.SplitAxis,
+    dividerIndex: Int,
+    childCount: Int,
+    containerLength: CGFloat,
+    translation: CGFloat
+  ) -> CGFloat {
+    TerminalPanelKit.SplitSizing.clampedResizeTranslation(
+      from: TerminalPanelKit.SplitSizing.normalizedRatios(
+        childRatios,
+        childCount: childCount
+      ),
+      childCount: childCount,
+      dividerIndex: dividerIndex,
+      translation: translation,
+      containerLength: containerLength,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: axis)
+    )
+  }
+
+  private func commitResize(
+    axis: TerminalPanelKit.SplitAxis,
+    dividerIndex: Int,
+    childCount: Int,
+    containerLength: CGFloat,
+    translation: CGFloat
+  ) {
+    childRatios = TerminalPanelKit.SplitSizing.resizedRatios(
+      from: TerminalPanelKit.SplitSizing.normalizedRatios(
+        childRatios,
+        childCount: childCount
+      ),
+      childCount: childCount,
+      dividerIndex: dividerIndex,
+      translation: translation,
+      containerLength: containerLength,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: axis)
+    )
+  }
+}
+
+private extension TerminalPanelKit.SplitAxis {
+  init(_ axis: TerminalSplitAxis) {
     switch axis {
     case .horizontal:
-      Color.primary.opacity(0.35)
-        .frame(width: 1)
+      self = .horizontal
     case .vertical:
-      Color.primary.opacity(0.35)
-        .frame(height: 1)
+      self = .vertical
     }
   }
 }

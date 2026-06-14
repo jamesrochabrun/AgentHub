@@ -229,6 +229,98 @@ struct RegularTerminalWorkspaceTests {
     )
   }
 
+  @Test("Split sizing starts with equal panel dimensions")
+  func splitSizingStartsWithEqualPanelDimensions() {
+    let dimensions = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: [],
+      childCount: 2,
+      containerLength: 1016,
+      minimumChildDimension: 280
+    )
+
+    #expect(dimensions.count == 2)
+    #expect(abs(dimensions[0] - 500) < 0.001)
+    #expect(abs(dimensions[1] - 500) < 0.001)
+  }
+
+  @Test("Split sizing resizes adjacent panels only")
+  func splitSizingResizesAdjacentPanelsOnly() {
+    let resizedRatios = TerminalPanelKit.SplitSizing.resizedRatios(
+      from: [1 / 3, 1 / 3, 1 / 3],
+      childCount: 3,
+      dividerIndex: 0,
+      translation: 100,
+      containerLength: 1232,
+      minimumChildDimension: 280
+    )
+    let dimensions = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: resizedRatios,
+      childCount: 3,
+      containerLength: 1232,
+      minimumChildDimension: 280
+    )
+
+    #expect(abs(dimensions[0] - 500) < 0.001)
+    #expect(abs(dimensions[1] - 300) < 0.001)
+    #expect(abs(dimensions[2] - 400) < 0.001)
+  }
+
+  @Test("Split sizing clamps drag at the sibling minimum dimension")
+  func splitSizingClampsDragAtSiblingMinimumDimension() {
+    let resizedRatios = TerminalPanelKit.SplitSizing.resizedRatios(
+      from: [0.5, 0.5],
+      childCount: 2,
+      dividerIndex: 0,
+      translation: 800,
+      containerLength: 1016,
+      minimumChildDimension: 280
+    )
+    let dimensions = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: resizedRatios,
+      childCount: 2,
+      containerLength: 1016,
+      minimumChildDimension: 280
+    )
+
+    #expect(abs(dimensions[0] - 720) < 0.001)
+    #expect(abs(dimensions[1] - 280) < 0.001)
+  }
+
+  @Test("Split sizing exposes the same clamped translation used by resizing")
+  func splitSizingExposesClampedTranslation() {
+    let translation = TerminalPanelKit.SplitSizing.clampedResizeTranslation(
+      from: [0.5, 0.5],
+      childCount: 2,
+      dividerIndex: 0,
+      translation: 800,
+      containerLength: 1016,
+      minimumChildDimension: 280
+    )
+
+    #expect(abs(translation - 220) < 0.001)
+  }
+
+  @Test("Split sizing scales the threshold down in compact containers")
+  func splitSizingScalesThresholdDownInCompactContainers() {
+    let resizedRatios = TerminalPanelKit.SplitSizing.resizedRatios(
+      from: [0.5, 0.5],
+      childCount: 2,
+      dividerIndex: 0,
+      translation: 800,
+      containerLength: 416,
+      minimumChildDimension: 280
+    )
+    let dimensions = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: resizedRatios,
+      childCount: 2,
+      containerLength: 416,
+      minimumChildDimension: 280
+    )
+
+    #expect(abs(dimensions[0] - 200) < 0.001)
+    #expect(abs(dimensions[1] - 200) < 0.001)
+  }
+
   @Test("Split presentation resolver renders a valid maximized panel")
   func splitPresentationResolverRendersValidMaximizedPanel() {
     let primary = RegularTerminalPanelID(UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)

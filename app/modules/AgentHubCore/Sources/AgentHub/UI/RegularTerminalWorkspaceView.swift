@@ -107,6 +107,8 @@ struct RegularTerminalWorkspaceView: View {
 
 @MainActor
 private struct RegularTerminalSplitView: View {
+  @State private var childRatios: [CGFloat] = []
+
   let node: RegularTerminalSplitNode
   let panels: [RegularTerminalPanel]
   let activePanelID: RegularTerminalPanelID?
@@ -176,15 +178,23 @@ private struct RegularTerminalSplitView: View {
     children: [RegularTerminalSplitNode],
     size: CGSize
   ) -> some View {
-    let dividerSize: CGFloat = 1
-    let childCount = CGFloat(max(children.count, 1))
-    let totalDividerWidth = dividerSize * CGFloat(max(children.count - 1, 0))
-    let childWidth = max(0, size.width - totalDividerWidth) / childCount
+    let childWidths = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: childRatios,
+      childCount: children.count,
+      containerLength: size.width,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: .horizontal)
+    )
 
     return HStack(spacing: 0) {
       ForEach(Array(children.enumerated()), id: \.offset) { offset, child in
         if offset > 0 {
-          divider(axis: .horizontal)
+          divider(
+            axis: .horizontal,
+            dividerIndex: offset - 1,
+            childCount: children.count,
+            containerLength: size.width
+          )
+          .zIndex(1)
         }
         RegularTerminalSplitView(
           node: child,
@@ -201,8 +211,15 @@ private struct RegularTerminalSplitView: View {
           onSplitPanel: onSplitPanel,
           onToggleMaximizedPanel: onToggleMaximizedPanel
         )
-        .frame(width: childWidth, height: size.height)
+        .frame(width: childDimension(childWidths, at: offset), height: size.height)
+        .zIndex(0)
       }
+    }
+    .onAppear {
+      reconcileRatios(childCount: children.count)
+    }
+    .onChange(of: children.count) { _, childCount in
+      reconcileRatios(childCount: childCount)
     }
   }
 
@@ -210,15 +227,23 @@ private struct RegularTerminalSplitView: View {
     children: [RegularTerminalSplitNode],
     size: CGSize
   ) -> some View {
-    let dividerSize: CGFloat = 1
-    let childCount = CGFloat(max(children.count, 1))
-    let totalDividerHeight = dividerSize * CGFloat(max(children.count - 1, 0))
-    let childHeight = max(0, size.height - totalDividerHeight) / childCount
+    let childHeights = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: childRatios,
+      childCount: children.count,
+      containerLength: size.height,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: .vertical)
+    )
 
     return VStack(spacing: 0) {
       ForEach(Array(children.enumerated()), id: \.offset) { offset, child in
         if offset > 0 {
-          divider(axis: .vertical)
+          divider(
+            axis: .vertical,
+            dividerIndex: offset - 1,
+            childCount: children.count,
+            containerLength: size.height
+          )
+          .zIndex(1)
         }
         RegularTerminalSplitView(
           node: child,
@@ -235,21 +260,97 @@ private struct RegularTerminalSplitView: View {
           onSplitPanel: onSplitPanel,
           onToggleMaximizedPanel: onToggleMaximizedPanel
         )
-        .frame(width: size.width, height: childHeight)
+        .frame(width: size.width, height: childDimension(childHeights, at: offset))
+        .zIndex(0)
       }
+    }
+    .onAppear {
+      reconcileRatios(childCount: children.count)
+    }
+    .onChange(of: children.count) { _, childCount in
+      reconcileRatios(childCount: childCount)
     }
   }
 
-  @ViewBuilder
-  private func divider(axis: RegularTerminalSplitAxis) -> some View {
-    switch axis {
-    case .horizontal:
-      Color.primary.opacity(0.25)
-        .frame(width: 1)
-    case .vertical:
-      Color.primary.opacity(0.25)
-        .frame(height: 1)
-    }
+  private func divider(
+    axis: RegularTerminalSplitAxis,
+    dividerIndex: Int,
+    childCount: Int,
+    containerLength: CGFloat
+  ) -> some View {
+    TerminalPanelSplitDivider(
+      axis: axis,
+      lineOpacity: 0.25,
+      clampedTranslation: { translation in
+        clampedResizeTranslation(
+          axis: axis,
+          dividerIndex: dividerIndex,
+          childCount: childCount,
+          containerLength: containerLength,
+          translation: translation
+        )
+      },
+      onCommitResize: { translation in
+        commitResize(
+          axis: axis,
+          dividerIndex: dividerIndex,
+          childCount: childCount,
+          containerLength: containerLength,
+          translation: translation
+        )
+      }
+    )
+  }
+
+  private func childDimension(_ dimensions: [CGFloat], at index: Int) -> CGFloat {
+    dimensions.indices.contains(index) ? dimensions[index] : 0
+  }
+
+  private func reconcileRatios(childCount: Int) {
+    childRatios = TerminalPanelKit.SplitSizing.normalizedRatios(
+      childRatios,
+      childCount: childCount
+    )
+  }
+
+  private func clampedResizeTranslation(
+    axis: RegularTerminalSplitAxis,
+    dividerIndex: Int,
+    childCount: Int,
+    containerLength: CGFloat,
+    translation: CGFloat
+  ) -> CGFloat {
+    TerminalPanelKit.SplitSizing.clampedResizeTranslation(
+      from: TerminalPanelKit.SplitSizing.normalizedRatios(
+        childRatios,
+        childCount: childCount
+      ),
+      childCount: childCount,
+      dividerIndex: dividerIndex,
+      translation: translation,
+      containerLength: containerLength,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: axis)
+    )
+  }
+
+  private func commitResize(
+    axis: RegularTerminalSplitAxis,
+    dividerIndex: Int,
+    childCount: Int,
+    containerLength: CGFloat,
+    translation: CGFloat
+  ) {
+    childRatios = TerminalPanelKit.SplitSizing.resizedRatios(
+      from: TerminalPanelKit.SplitSizing.normalizedRatios(
+        childRatios,
+        childCount: childCount
+      ),
+      childCount: childCount,
+      dividerIndex: dividerIndex,
+      translation: translation,
+      containerLength: containerLength,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: axis)
+    )
   }
 }
 

@@ -196,6 +196,240 @@ public enum TerminalPanelKit {
     }
   }
 
+  public enum SplitSizing {
+    public static let dividerDimension: CGFloat = 16
+    public static let dividerHitTargetDimension: CGFloat = 16
+    public static let dividerRuleDimension: CGFloat = 1
+    public static let dividerHoverRailDimension: CGFloat = 5
+    public static let minimumHorizontalPanelDimension: CGFloat = 280
+    public static let minimumVerticalPanelDimension: CGFloat = 180
+
+    public static func minimumChildDimension(for axis: SplitAxis) -> CGFloat {
+      switch axis {
+      case .horizontal:
+        return minimumHorizontalPanelDimension
+      case .vertical:
+        return minimumVerticalPanelDimension
+      }
+    }
+
+    public static func normalizedRatios(
+      _ ratios: [CGFloat],
+      childCount: Int
+    ) -> [CGFloat] {
+      guard childCount > 0 else { return [] }
+      guard ratios.count == childCount else {
+        return equalRatios(childCount: childCount)
+      }
+
+      let sanitizedRatios = ratios.map { ratio in
+        ratio.isFinite && ratio > 0 ? ratio : 0
+      }
+      let total = sanitizedRatios.reduce(0, +)
+      guard total > 0 else {
+        return equalRatios(childCount: childCount)
+      }
+
+      return sanitizedRatios.map { $0 / total }
+    }
+
+    public static func childDimensions(
+      ratios: [CGFloat],
+      childCount: Int,
+      containerLength: CGFloat,
+      minimumChildDimension: CGFloat,
+      dividerDimension: CGFloat = dividerDimension
+    ) -> [CGFloat] {
+      guard childCount > 0 else { return [] }
+
+      let availableLength = contentLength(
+        containerLength: containerLength,
+        childCount: childCount,
+        dividerDimension: dividerDimension
+      )
+      guard availableLength > 0 else {
+        return Array(repeating: 0, count: childCount)
+      }
+
+      let normalizedRatios = normalizedRatios(ratios, childCount: childCount)
+      let dimensions = normalizedRatios.map { $0 * availableLength }
+      return clampedDimensions(
+        dimensions,
+        ratios: normalizedRatios,
+        availableLength: availableLength,
+        minimumChildDimension: effectiveMinimumChildDimension(
+          minimumChildDimension,
+          childCount: childCount,
+          availableLength: availableLength
+        )
+      )
+    }
+
+    public static func resizedRatios(
+      from ratios: [CGFloat],
+      childCount: Int,
+      dividerIndex: Int,
+      translation: CGFloat,
+      containerLength: CGFloat,
+      minimumChildDimension: CGFloat,
+      dividerDimension: CGFloat = dividerDimension
+    ) -> [CGFloat] {
+      let availableLength = contentLength(
+        containerLength: containerLength,
+        childCount: childCount,
+        dividerDimension: dividerDimension
+      )
+      guard availableLength > 0,
+            dividerIndex >= 0,
+            dividerIndex + 1 < childCount else {
+        return normalizedRatios(ratios, childCount: childCount)
+      }
+
+      var dimensions = childDimensions(
+        ratios: ratios,
+        childCount: childCount,
+        containerLength: containerLength,
+        minimumChildDimension: minimumChildDimension,
+        dividerDimension: dividerDimension
+      )
+
+      guard dimensions.indices.contains(dividerIndex),
+            dimensions.indices.contains(dividerIndex + 1) else {
+        return normalizedRatios(ratios, childCount: childCount)
+      }
+
+      let clampedTranslation = clampedResizeTranslation(
+        from: ratios,
+        childCount: childCount,
+        dividerIndex: dividerIndex,
+        translation: translation,
+        containerLength: containerLength,
+        minimumChildDimension: minimumChildDimension,
+        dividerDimension: dividerDimension
+      )
+
+      dimensions[dividerIndex] += clampedTranslation
+      dimensions[dividerIndex + 1] -= clampedTranslation
+
+      return dimensions.map { $0 / availableLength }
+    }
+
+    public static func clampedResizeTranslation(
+      from ratios: [CGFloat],
+      childCount: Int,
+      dividerIndex: Int,
+      translation: CGFloat,
+      containerLength: CGFloat,
+      minimumChildDimension: CGFloat,
+      dividerDimension: CGFloat = dividerDimension
+    ) -> CGFloat {
+      let availableLength = contentLength(
+        containerLength: containerLength,
+        childCount: childCount,
+        dividerDimension: dividerDimension
+      )
+      guard availableLength > 0,
+            dividerIndex >= 0,
+            dividerIndex + 1 < childCount else {
+        return 0
+      }
+
+      let minimumDimension = effectiveMinimumChildDimension(
+        minimumChildDimension,
+        childCount: childCount,
+        availableLength: availableLength
+      )
+      let dimensions = childDimensions(
+        ratios: ratios,
+        childCount: childCount,
+        containerLength: containerLength,
+        minimumChildDimension: minimumChildDimension,
+        dividerDimension: dividerDimension
+      )
+
+      guard dimensions.indices.contains(dividerIndex),
+            dimensions.indices.contains(dividerIndex + 1) else {
+        return 0
+      }
+
+      let minimumDelta = minimumDimension - dimensions[dividerIndex]
+      let maximumDelta = dimensions[dividerIndex + 1] - minimumDimension
+      return min(max(translation, minimumDelta), maximumDelta)
+    }
+
+    private static func contentLength(
+      containerLength: CGFloat,
+      childCount: Int,
+      dividerDimension: CGFloat
+    ) -> CGFloat {
+      let dividerCount = CGFloat(max(childCount - 1, 0))
+      return max(0, containerLength - dividerDimension * dividerCount)
+    }
+
+    private static func equalRatios(childCount: Int) -> [CGFloat] {
+      guard childCount > 0 else { return [] }
+      return Array(repeating: 1 / CGFloat(childCount), count: childCount)
+    }
+
+    private static func effectiveMinimumChildDimension(
+      _ minimumChildDimension: CGFloat,
+      childCount: Int,
+      availableLength: CGFloat
+    ) -> CGFloat {
+      guard childCount > 0 else { return 0 }
+      return min(max(0, minimumChildDimension), availableLength / CGFloat(childCount))
+    }
+
+    private static func clampedDimensions(
+      _ dimensions: [CGFloat],
+      ratios: [CGFloat],
+      availableLength: CGFloat,
+      minimumChildDimension: CGFloat
+    ) -> [CGFloat] {
+      guard !dimensions.isEmpty else { return [] }
+
+      var result = dimensions
+      var lockedIndexes = Set<Int>()
+
+      while true {
+        let indexesToLock = result.indices.filter { index in
+          !lockedIndexes.contains(index) && result[index] < minimumChildDimension
+        }
+
+        guard !indexesToLock.isEmpty else { break }
+
+        for index in indexesToLock {
+          lockedIndexes.insert(index)
+          result[index] = minimumChildDimension
+        }
+
+        let remainingIndexes = result.indices.filter { !lockedIndexes.contains($0) }
+        let remainingLength = max(
+          0,
+          availableLength - CGFloat(lockedIndexes.count) * minimumChildDimension
+        )
+        let remainingRatioTotal = remainingIndexes.reduce(CGFloat(0)) { total, index in
+          total + ratios[index]
+        }
+
+        guard !remainingIndexes.isEmpty else { break }
+
+        if remainingRatioTotal > 0 {
+          for index in remainingIndexes {
+            result[index] = remainingLength * ratios[index] / remainingRatioTotal
+          }
+        } else {
+          let dimension = remainingLength / CGFloat(remainingIndexes.count)
+          for index in remainingIndexes {
+            result[index] = dimension
+          }
+        }
+      }
+
+      return result
+    }
+  }
+
   public enum PaneActivity: Equatable {
     case starting
     case closingPanel
