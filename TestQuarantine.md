@@ -8,20 +8,18 @@ by removing the `.disabled(...)` trait once the underlying issue is fixed.
 
 ## CI gate status
 
-CI (`.github/workflows/test.yml`) runs on macos-14 (Xcode 16.2 — the newest Xcode on
-Sonoma; local dev is on a newer beta). Two tiers:
+CI (`.github/workflows/test.yml`) gates on the **fast `swift test` packages only**
+(`AgentHubCLI`, `AgentHubGitHub`, `SimulatorPreview`, `Storybook`) — stable and ~5 min.
 
-- **Required (hard gate):** the four fast `swift test` packages (`AgentHubCLI`,
-  `AgentHubGitHub`, `SimulatorPreview`, `Storybook`). These are stable.
-- **Advisory (non-blocking):** the `AgentHubCore` xcodebuild suite. A tail of
-  timing-sensitive tests (debounce/throttle/`waitUntil`/monitor) is flaky on the slow
-  runner and fails non-deterministically. Until that tail is hardened (injectable
-  clocks / deterministic awaits), the core step **reports but does not fail the gate**:
-  it's `continue-on-error` with its own `timeout-minutes` so it can never reach (and
-  trip) the job timeout. It runs a **single pass** — no `-retry-tests-on-failure`,
-  because retrying the whole flaky suite up to 3× could blow past the job timeout and
-  cancel the run (this is what failed PR #384). **Flip it to required** (remove
-  `continue-on-error`) once the timing tests are stable.
+The **`AgentHubCore` suite is intentionally not run in CI**: it costs ~20 min just to
+compile, has a flaky timing tail (clusters B/C below), and the runner's Xcode (16.2,
+capped by macOS 14) differs from local dev (newer beta), so CI results diverge from what
+developers see. It runs **locally** instead — agents run the targeted tests for any code
+they change (CLAUDE.md / AGENTS.md), and `./scripts/test.sh` / `/test` runs it in full.
+
+The quarantines below still matter for the **local** core suite (keep it green locally).
+To put AgentHubCore back in CI as a real gate, harden the timing tests (injectable
+clocks / deterministic awaits) so it's stable on slow runners, then add a core job.
 
 How to run only these (to iterate): remove the trait and run
 `cd app/modules/AgentHubCore && xcodebuild test -scheme AgentHubCore-Tests -destination 'platform=macOS' -test-timeouts-enabled YES -only-testing:<Target>/<SuiteType>/<method>`.
