@@ -49,7 +49,13 @@ private func makeCoordinatorConfiguration(
   )
 }
 
-@Suite("SessionGitHubQuickAccessCoordinator")
+// Every test here is wall-clock timing-based (tight millisecond Task.sleeps vs poll
+// intervals, asserting exact poll call counts), so they flake on slow/contended CI
+// runners — timer drift produces off-by-one poll counts. Quarantined so the CI gate
+// stays reliable; harden with an injectable clock / virtual time, then re-enable.
+// See TestQuarantine.md / issue #380. (Does not change observation logic — see
+// GitHubMonitor.md.)
+@Suite("SessionGitHubQuickAccessCoordinator", .disabled("headless-quarantine: wall-clock cadence timing — flaky on CI; see TestQuarantine.md"))
 struct SessionGitHubQuickAccessCoordinatorTests {
 
   @Test("deduplicates refreshes for multiple visible subscribers on the same repo key")

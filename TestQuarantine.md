@@ -9,7 +9,14 @@ by removing the `.disabled(...)` trait once the underlying issue is fixed.
 ## CI gate status
 
 CI (`.github/workflows/test.yml`) gates on the **fast `swift test` packages only**
-(`AgentHubCLI`, `AgentHubGitHub`, `SimulatorPreview`, `Storybook`) — stable and ~5 min.
+(`AgentHubCLI`, `AgentHubGitHub`, `SimulatorPreview`, `Storybook`) — ~5 min.
+
+**Gated-package quarantines** (flaky on CI even though the package is fast):
+- `AgentHubGitHub` → whole `SessionGitHubQuickAccessCoordinator` suite (`.disabled` at the
+  suite). Every test is wall-clock cadence timing (tight ms `Task.sleep`s vs poll intervals,
+  exact poll-count asserts) → off-by-one flakes on slow runners (failed PR #384 on a run that
+  was green on `main`). Harden with an injectable clock / virtual time, then re-enable. Does
+  not change observation logic (see `GitHubMonitor.md`).
 
 The **`AgentHubCore` suite is intentionally not run in CI**: it costs ~20 min just to
 compile, has a flaky timing tail (clusters B/C below), and the runner's Xcode (16.2,
