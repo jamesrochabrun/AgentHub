@@ -84,9 +84,11 @@ responsibility.
   `GitDiffServiceTests`) and run only that:
   - Core: `cd app/modules/AgentHubCore && xcodebuild test -scheme AgentHubCore-Tests -destination 'platform=macOS' -test-timeouts-enabled YES -skipPackagePluginValidation -only-testing:AgentHubTests/<SuiteType>` (`<SuiteType>` = the test `struct` name).
   - Sub-module (`AgentHubGitHub`, `Storybook`, `SimulatorPreview`, `AgentHubCLI`): `cd app/modules/<Module> && swift test --filter <TestName>`.
-- **Full gate (before a PR, or `/test`):** `./scripts/test.sh` — the same gate CI runs
-  (`.github/workflows/test.yml`). `swift test` on `AgentHubCore` does **not** work (CodeEditSymbols
-  xcassets); use the script / the `AgentHubCore-Tests` scheme from the package dir.
+- **Full gate (before a PR, or `/test`):** `./scripts/test.sh`. **CI
+  (`.github/workflows/test.yml`) gates on the fast packages only** — the `AgentHubCore` suite runs
+  locally, not in CI (slow + timing-flaky on CI's older Xcode; see `TestQuarantine.md`), so running
+  it locally on your changes matters. `swift test` on `AgentHubCore` does **not** work
+  (CodeEditSymbols xcassets); use the script / the `AgentHubCore-Tests` scheme.
 - swift-testing runs `@Test`s in parallel **off the main thread** — AppKit-touching suites must be `@MainActor`.
 - Quarantined tests (`.disabled("headless-quarantine: …")`) are known-broken, not passing — see
   `TestQuarantine.md` / issue #380; don't re-enable without fixing the root cause.

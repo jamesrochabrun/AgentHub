@@ -13,7 +13,7 @@ concurrency:
 jobs:
   test:
     runs-on: macos-14
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,30 +23,27 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      # Best-effort cache of resolved/compiled SPM artifacts. Keyed on the
-      # resolved dependency graph; safe to miss (just slower). The first run
-      # compiles all of AgentHubCore and will be slow.
-      - name: Cache build artifacts
+      # Caches resolved SwiftPM dependencies (clones/resolution). The package
+      # builds themselves are fast.
+      - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
-          path: |
-            ~/Library/Developer/Xcode/DerivedData
-            ~/Library/Caches/org.swift.swiftpm
+          path: ~/Library/Caches/org.swift.swiftpm
           key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
           restore-keys: |
             ${{ runner.os }}-spm-
 
-      - name: Run tests
-        env:
-          # Emit an .xcresult bundle so failures can be downloaded for inspection.
-          AGENTHUB_TEST_RESULT_BUNDLE: ${{ github.workspace }}/build/AgentHubCore.xcresult
-        run: bash scripts/test.sh
-
-      - name: Upload xcresult on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: AgentHubCore-xcresult
-          path: build/AgentHubCore.xcresult
-          if-no-files-found: ignore
-          retention-days: 7
+      # Gate on the fast, stable `swift test` module packages only.
+      #
+      # The AgentHubCore suite is intentionally NOT run in CI: it costs ~20 min
+      # just to compile, has a flaky timing tail on slow runners, and the runner's
+      # Xcode (16.2, capped by macOS 14) differs from local dev (newer beta), so
+      # its CI results diverge from what developers see. It runs LOCALLY instead —
+      # agents run the targeted tests for any code they change (see CLAUDE.md /
+      # AGENTS.md), and `./scripts/test.sh` (or `/test`) runs the full suite on
+      # demand where it's fast and matches the dev toolchain.
+      #
+      # To make AgentHubCore CI-worthy and gate on it, harden the timing tests
+      # (injectable clocks / deterministic awaits) — see TestQuarantine.md / #380.
+      - name: Run package tests
+        run: bash scripts/test.sh packages

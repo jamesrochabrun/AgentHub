@@ -126,8 +126,10 @@ every edit; target the code you touched. Run the full suite only before opening/
   - A sub-module (`AgentHubGitHub`, `Storybook`, `SimulatorPreview`, `AgentHubCLI`): `cd app/modules/<Module> && swift test --filter <TestName>`.
 - **Full gate (before a PR, or `/test`): `./scripts/test.sh`** — fast `swift test` packages, then the
   whole `AgentHubCore` xcodebuild suite. Subsets: `./scripts/test.sh core` / `packages`. This is the
-  exact gate CI runs (`.github/workflows/test.yml`). There is intentionally **no** git pre-commit/
-  pre-push hook — running tests is the agent's responsibility per the rule above.
+  full local gate. **CI (`.github/workflows/test.yml`) gates on the fast packages only** — the
+  `AgentHubCore` suite is run locally, not in CI (slow to compile + timing-flaky on CI's older
+  Xcode; see `TestQuarantine.md`), so running it locally on your changes is essential. There is
+  intentionally **no** git pre-commit/pre-push hook — running tests is the agent's responsibility.
 - The `AgentHubCore` tests run via the shared `AgentHubCore-Tests` scheme, driven **from the package
   dir** (`cd app/modules/AgentHubCore`), with per-test timeouts. `swift test` on `AgentHubCore` does
   **not** work (CodeEditSymbols xcassets); use the script / xcodebuild. The app scheme

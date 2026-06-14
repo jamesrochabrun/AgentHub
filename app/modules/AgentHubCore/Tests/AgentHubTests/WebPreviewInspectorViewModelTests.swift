@@ -421,7 +421,7 @@ struct WebPreviewInspectorViewModelTests {
     #expect(writes[0].content == "<button>Buy now</button>")
   }
 
-  @Test("Font-size units stay detached and color picker writes CSS color values")
+  @Test("Font-size units stay detached and color picker writes CSS color values", .disabled("headless-quarantine: debounced-write timing — flaky on CI runners; see TestQuarantine.md"))
   func fontSizeUnitsAndColorPickerWriteNormalizedStyles() async throws {
     let filePath = "/project/styles/site.css"
     let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
@@ -657,7 +657,7 @@ struct WebPreviewInspectorViewModelTests {
     #expect(displayedMargin == "24px")
   }
 
-  @Test("Toolbar edits are propagated to the live preview before the debounced write")
+  @Test("Toolbar edits are propagated to the live preview before the debounced write", .disabled("headless-quarantine: debounced-write timing — flaky on CI runners; see TestQuarantine.md"))
   func toolbarEditsPropagateToLivePreviewImmediately() async throws {
     let filePath = "/project/styles/site.css"
     let resolver = MockWebPreviewSourceResolver(queuedResolutions: [

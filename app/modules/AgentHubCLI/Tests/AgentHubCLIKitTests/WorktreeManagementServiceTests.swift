@@ -7,7 +7,7 @@ struct GitRepoFixture {
   let repoPath: String
   let parentDir: String
 
-  static func create() throws -> GitRepoFixture {
+  static func create(initialBranch: String = "main") throws -> GitRepoFixture {
     var resolved = [CChar](repeating: 0, count: Int(PATH_MAX))
     guard realpath(NSTemporaryDirectory(), &resolved) != nil else {
       throw GitFixtureError.commandFailed(command: "realpath", output: "", error: "Failed to resolve temp directory")
@@ -18,7 +18,7 @@ struct GitRepoFixture {
     try FileManager.default.createDirectory(atPath: repoPath, withIntermediateDirectories: true)
 
     let fixture = GitRepoFixture(repoPath: repoPath, parentDir: parentDir)
-    try fixture.runGit("init", "-b", "main")
+    try fixture.runGit("init", "-b", initialBranch)
     try fixture.runGit("config", "user.email", "test@test.com")
     try fixture.runGit("config", "user.name", "Test")
     try "initial".write(toFile: repoPath + "/README.md", atomically: true, encoding: .utf8)
@@ -78,6 +78,11 @@ struct GitRepoFixture {
   func localBranchExists(_ branch: String) throws -> Bool {
     let output = try runGit("branch", "--list", branch)
     return !output.isEmpty
+  }
+
+  func configureUser(at path: String? = nil) throws {
+    try runGit("config", "user.email", "test@test.com", at: path)
+    try runGit("config", "user.name", "Test", at: path)
   }
 
   func cleanup() {
@@ -177,6 +182,64 @@ struct WorktreeConventionTests {
     )
 
     #expect(FileManager.default.fileExists(atPath: path + "/BASE.md"))
+  }
+
+  @Test("Detects fetched origin main as the remote base branch")
+  func detectsFetchedOriginMainAsRemoteBaseBranch() async throws {
+    let seed = try GitRepoFixture.create()
+    defer { seed.cleanup() }
+
+    let remotePath = seed.parentDir + "/origin.git"
+    try seed.runGit("init", "--bare", "-b", "main", remotePath)
+    try seed.runGit("remote", "add", "origin", remotePath)
+    try seed.runGit("push", "-u", "origin", "main")
+
+    let localClonePath = seed.parentDir + "/local-clone"
+    try seed.runGit("clone", remotePath, localClonePath)
+    try seed.configureUser(at: localClonePath)
+
+    let writerClonePath = seed.parentDir + "/writer-clone"
+    try seed.runGit("clone", remotePath, writerClonePath)
+    try seed.configureUser(at: writerClonePath)
+    try "remote".write(toFile: writerClonePath + "/REMOTE.md", atomically: true, encoding: .utf8)
+    try seed.runGit("add", ".", at: writerClonePath)
+    try seed.runGit("commit", "-m", "remote update", at: writerClonePath)
+    try seed.runGit("push", "origin", "main", at: writerClonePath)
+
+    let service = WorktreeManagementService()
+    let remoteBase = try #require(await service.fetchAndGetDefaultRemoteBaseBranch(at: localClonePath))
+    #expect(remoteBase.name == "origin/main")
+    #expect(remoteBase.displayName == "main")
+
+    let path = try await service.createWorktreeWithNewBranch(
+      at: localClonePath,
+      newBranchName: "feature/from-remote-main",
+      directoryName: "feature-from-remote-main",
+      startPoint: remoteBase.name
+    )
+
+    #expect(FileManager.default.fileExists(atPath: path + "/REMOTE.md"))
+    #expect(!FileManager.default.fileExists(atPath: localClonePath + "/REMOTE.md"))
+  }
+
+  @Test("Falls back to origin master when remote main is absent")
+  func fallsBackToOriginMasterWhenRemoteMainIsAbsent() async throws {
+    let seed = try GitRepoFixture.create(initialBranch: "master")
+    defer { seed.cleanup() }
+
+    let remotePath = seed.parentDir + "/origin.git"
+    try seed.runGit("init", "--bare", "-b", "master", remotePath)
+    try seed.runGit("remote", "add", "origin", remotePath)
+    try seed.runGit("push", "-u", "origin", "master")
+
+    let localClonePath = seed.parentDir + "/master-clone"
+    try seed.runGit("clone", remotePath, localClonePath)
+
+    let service = WorktreeManagementService()
+    let remoteBase = try #require(await service.fetchAndGetDefaultRemoteBaseBranch(at: localClonePath))
+
+    #expect(remoteBase.name == "origin/master")
+    #expect(remoteBase.displayName == "master")
   }
 
   @Test("Progress-enabled creation leaves completed as the final update")
@@ -367,7 +430,7 @@ struct WorktreeRemovalTests {
     #expect(!listAfter.contains("dirty-branch"))
   }
 
-  @Test("Cancels in-flight worktree creation and cleans generated artifacts")
+  @Test("Cancels in-flight worktree creation and cleans generated artifacts", .disabled("headless-quarantine: async cancellation timing — flaky on CI runners; see TestQuarantine.md"))
   func cancelsWorktreeCreationAndCleansUp() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }

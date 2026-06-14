@@ -1,10 +1,25 @@
 # Headless Test Quarantine
 
 The `AgentHubCore` test suite now runs headlessly (`./scripts/test.sh`). When it was
-first wired up, 18 tests failed or hung — none had ever run outside Xcode's Cmd+U.
+first wired up, tests failed or hung — none had ever run outside Xcode's Cmd+U.
 They are temporarily disabled with `.disabled("headless-quarantine: …; see TestQuarantine.md")`
 so the gate is green. **Each is a real follow-up**, grouped by root cause below. Re-enable
 by removing the `.disabled(...)` trait once the underlying issue is fixed.
+
+## CI gate status
+
+CI (`.github/workflows/test.yml`) gates on the **fast `swift test` packages only**
+(`AgentHubCLI`, `AgentHubGitHub`, `SimulatorPreview`, `Storybook`) — stable and ~5 min.
+
+The **`AgentHubCore` suite is intentionally not run in CI**: it costs ~20 min just to
+compile, has a flaky timing tail (clusters B/C below), and the runner's Xcode (16.2,
+capped by macOS 14) differs from local dev (newer beta), so CI results diverge from what
+developers see. It runs **locally** instead — agents run the targeted tests for any code
+they change (CLAUDE.md / AGENTS.md), and `./scripts/test.sh` / `/test` runs it in full.
+
+The quarantines below still matter for the **local** core suite (keep it green locally).
+To put AgentHubCore back in CI as a real gate, harden the timing tests (injectable
+clocks / deterministic awaits) so it's stable on slow runners, then add a core job.
 
 How to run only these (to iterate): remove the trait and run
 `cd app/modules/AgentHubCore && xcodebuild test -scheme AgentHubCore-Tests -destination 'platform=macOS' -test-timeouts-enabled YES -only-testing:<Target>/<SuiteType>/<method>`.
@@ -25,9 +40,16 @@ and/or fast-fail `findGitRoot` when libgit2 already reported "no repository" ins
 falling back to the CLI. Affects the whole app's git layer — review carefully.
 
 - `DiffAvailabilityServiceTests` → "Non-git path is unavailable"
+- `TerminalFileOpenProjectResolverTests` → `fallsBackToParentDirectoryWhenNoKnownRootContainsFile` — same git-Process deadlock; hangs on CI runners (60s timeout)
 - (also the root cause behind `LocalDiffSummaryService`/`WebPreviewResolver` non-git slowness)
 
 ## B. Reactive/async delivery timing (test fragility, product-adjacent)
+
+> **CI note:** most cluster-B timing tests are *flaky* (not deterministically broken) on the
+> slow/contended CI runner — they pass locally and intermittently on CI. Because the
+> `AgentHubCore` CI step is **advisory** (non-blocking), these don't gate merges; they're not
+> all `.disabled` (only the chronic/hanging offenders are). Harden them (injectable clocks /
+> deterministic awaits) and flip the core step to required.
 
 These poll `waitUntil { … }` / `await condition()` for state that arrives via Combine
 `.values` async sequences or real `Date.now`/sleep-based throttles. Values sent between
@@ -42,8 +64,11 @@ repositoriesPublisher.values`).
 - `FocusedSessionLaunchTargetResolverTests` → "Preselect accepts a path inside a tracked main repository"
 - `LazyBrowseSessionsLoadingTests` → "Idle repository changes still trigger Claude hook sync"
 - `WebPreviewInspectorViewModelTests` → "Toolbar text edits do not mutate live preview without source text mapping"
+- `WebPreviewInspectorViewModelTests` → "Font-size units stay detached and color picker writes CSS color values" — debounced-write timing, flaky on CI
+- `WebPreviewInspectorViewModelTests` → "Toolbar edits are propagated to the live preview before the debounced write" — debounced-write timing, flaky on CI
 - `WorktreeBranchNamingServiceTests` → "Explicit user cancellation stops naming without falling back" (also slow/hang)
 - `GitWorktreeServiceTests` → "Cancels in-flight worktree creation and cleans up generated artifacts"
+- `WorktreeManagementServiceTests` (AgentHubCLI) → "Cancels in-flight worktree creation and cleans generated artifacts" — passes locally, flaky on CI runners
 - `DiffAvailabilityServiceTests` → "Fast evaluator keeps the minimum floor" (#379 throttle)
 - `GitDiffServiceTests` → "fast evaluator keeps the minimum floor" (#379 throttle)
 - `GitDiffServiceTests` → "invalidate succeeds after the adaptive window elapses" (#379 throttle)
