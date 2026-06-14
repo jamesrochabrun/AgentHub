@@ -222,16 +222,18 @@ public struct GitDiffView: View {
 
       Spacer()
 
-      // Segmented control
-      Picker("", selection: $diffMode) {
-        ForEach(DiffMode.allCases) { mode in
-          Text(mode.rawValue).tag(mode)
-        }
-      }
-      .pickerStyle(.segmented)
-      .controlSize(.small)
-      .frame(width: 250)
-      .tint(Color.primary)
+      CompactPillSegmentedControl(
+        selection: $diffMode,
+        items: DiffMode.allCases.map { mode in
+          CompactPillSegmentedControlItem(
+            value: mode,
+            title: mode.rawValue,
+            helpText: "Show \(mode.rawValue.lowercased()) changes"
+          )
+        },
+        selectedColor: Color.brandSecondary,
+        accessibilityLabel: "Diff mode"
+      )
       .onChange(of: diffMode) { _, newMode in
         if suppressNextDiffModeReload {
           suppressNextDiffModeReload = false

@@ -3,10 +3,9 @@
 //  AgentHub
 //
 //  The "● Hot reload" status pill in the simulator panel header — a pure
-//  status light. Hot reload and the preview host are always armed for
-//  launches started from the panel (no toggles); the pill mirrors
-//  `HotReloadMonitor.phase` truthfully, pulsing while a reload or fallback
-//  rebuild is in flight and never claiming a swap that didn't happen.
+//  status light. The pill mirrors `HotReloadMonitor.phase` truthfully,
+//  pulsing while a reload or fallback rebuild is in flight and never claiming
+//  a swap that didn't happen.
 //
 
 import SimulatorPreview

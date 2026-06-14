@@ -25,8 +25,7 @@ import SimulatorPreview
 import SwiftUI
 
 /// Which surface the panel shows for a booted device: the live device
-/// mirror, or the app's SwiftUI previews. Both stay hot — they re-render on
-/// the same hot-reload signal.
+/// mirror, or the app's SwiftUI previews when that feature is enabled.
 enum SimulatorPanelDisplayMode: String, Hashable {
   case live
   case previews
@@ -35,6 +34,7 @@ enum SimulatorPanelDisplayMode: String, Hashable {
 struct SimulatorPreviewSidePanelView: View {
   let session: CLISession
   let projectPath: String
+  let providerKind: SessionProviderKind
   let onDismiss: () -> Void
   var onSendToSession: ((String, CLISession) -> Void)? = nil
   /// File open in the session's editor pane — its previews join the
@@ -47,9 +47,13 @@ struct SimulatorPreviewSidePanelView: View {
   @State private var selectedUDID: String?
   @State private var hasLoadedDevices = false
   @State private var annotationModel = SimulatorAnnotationModel()
+  @State private var isAnnotationTrayExpanded = false
   @State private var showingManageSheet = false
   @State private var displayMode: SimulatorPanelDisplayMode = .live
   @State private var hotReload = SimulatorHotReloadController()
+
+  @AppStorage(AgentHubDefaults.simulatorPreviewsEnabled)
+  private var simulatorPreviewsEnabled: Bool = true
 
   private var streamService: any SimulatorStreamServiceProtocol {
     agentHub?.simulatorStreamService ?? SimulatorStreamService.shared
@@ -91,6 +95,22 @@ struct SimulatorPreviewSidePanelView: View {
 
   private var isShowingLiveStream: Bool {
     isActiveDeviceBooted
+  }
+
+  private var effectiveDisplayMode: SimulatorPanelDisplayMode {
+    simulatorPreviewsEnabled ? displayMode : .live
+  }
+
+  /// The collapsed tray is shallow enough to dodge visually without changing
+  /// layout. Expanded comments stay overlay-only, so the simulator never
+  /// resizes as the tray opens.
+  private var liveStreamVerticalOffset: CGFloat {
+    guard effectiveDisplayMode == .live,
+          !annotationModel.annotations.isEmpty,
+          !isAnnotationTrayExpanded else {
+      return 0
+    }
+    return -56
   }
 
   /// True while an injection or fallback rebuild is mid-flight — preview
@@ -135,8 +155,10 @@ struct SimulatorPreviewSidePanelView: View {
     )
     .task {
       await loadDevicesIfNeeded()
-      hotReload.warmUp()
-      hotReload.startTracking(projectPath: projectPath)
+      if simulatorPreviewsEnabled {
+        hotReload.warmUp()
+      }
+      hotReload.setPreviewObservationEnabled(simulatorPreviewsEnabled, projectPath: projectPath)
     }
     .onDisappear {
       hotReload.stopTracking()
@@ -144,17 +166,29 @@ struct SimulatorPreviewSidePanelView: View {
     }
     .onChange(of: activeUDID) { _, _ in
       annotationModel.reset()
+      isAnnotationTrayExpanded = false
       hotReload.sessionDidStop()
-      if displayMode == .previews { autoArmPreviewsIfNeeded() }
+      if effectiveDisplayMode == .previews { autoArmPreviewsIfNeeded() }
     }
     .onChange(of: displayMode) { _, mode in
-      if mode == .previews { autoArmPreviewsIfNeeded() }
+      if simulatorPreviewsEnabled, mode == .previews { autoArmPreviewsIfNeeded() }
+    }
+    .onChange(of: simulatorPreviewsEnabled) { _, isEnabled in
+      hotReload.setPreviewObservationEnabled(isEnabled, projectPath: projectPath)
+      if isEnabled {
+        hotReload.warmUp()
+        if displayMode == .previews {
+          autoArmPreviewsIfNeeded()
+        }
+      } else {
+        displayMode = .live
+      }
     }
     .onChange(of: openEditorFilePath) { _, _ in
-      if displayMode == .previews { autoArmPreviewsIfNeeded() }
+      if effectiveDisplayMode == .previews { autoArmPreviewsIfNeeded() }
     }
     .onChange(of: hotReload.changedSourceFiles) { _, _ in
-      if displayMode == .previews { autoArmPreviewsIfNeeded() }
+      if effectiveDisplayMode == .previews { autoArmPreviewsIfNeeded() }
     }
     .onChange(of: annotationModel.isAnnotating) { _, isOn in
       if isOn {
@@ -162,6 +196,11 @@ struct SimulatorPreviewSidePanelView: View {
       } else {
         annotationModel.clearPending()
         annotationModel.hoveredElement = nil
+      }
+    }
+    .onChange(of: annotationModel.annotations.isEmpty) { _, isEmpty in
+      if isEmpty {
+        isAnnotationTrayExpanded = false
       }
     }
     .sheet(isPresented: $showingManageSheet) {
@@ -190,7 +229,7 @@ struct SimulatorPreviewSidePanelView: View {
 
   private var header: some View {
     HStack(spacing: 12) {
-      if activeUDID != nil {
+      if activeUDID != nil, simulatorPreviewsEnabled {
         displayModePicker
       }
 
@@ -213,7 +252,7 @@ struct SimulatorPreviewSidePanelView: View {
       closeButton
     }
     .padding(.horizontal, 12)
-    .padding(.vertical, 8)
+    .frame(height: AgentHubLayout.topBarHeight)
   }
 
   private var viewOnlyBadge: some View {
@@ -225,19 +264,26 @@ struct SimulatorPreviewSidePanelView: View {
       .help("Live touch injection is unavailable on this machine; showing a screenshot stream.")
   }
 
-  /// Live mirror ↔ Previews. Both surfaces are hot: the mirror updates in
-  /// place on injection, and previews re-render on the same reload signal.
+  /// Live mirror ↔ Previews. The Previews option is only visible when the
+  /// simulator previews setting is enabled.
   private var displayModePicker: some View {
-    Picker("View", selection: $displayMode) {
-      Text("Live").tag(SimulatorPanelDisplayMode.live)
-      Text("Previews").tag(SimulatorPanelDisplayMode.previews)
-    }
-    .pickerStyle(.segmented)
-    .labelsHidden()
-    .tint(Color.brandPrimary)
-    .accentColor(Color.brandPrimary)
-    .fixedSize()
-    .accessibilityLabel("Panel display mode")
+    CompactPillSegmentedControl(
+      selection: $displayMode,
+      items: [
+        CompactPillSegmentedControlItem(
+          value: .live,
+          title: "Live",
+          helpText: "Show the live simulator"
+        ),
+        CompactPillSegmentedControlItem(
+          value: .previews,
+          title: "Previews",
+          helpText: "Show SwiftUI previews"
+        )
+      ],
+      selectedColor: Color.brandSecondary,
+      accessibilityLabel: "Panel display mode"
+    )
   }
 
   @ViewBuilder
@@ -350,12 +396,19 @@ struct SimulatorPreviewSidePanelView: View {
   @ViewBuilder
   private var content: some View {
     contentBody
+      .overlay(alignment: .bottomTrailing) {
+        annotationCommentsOverlay
+      }
       .overlay(alignment: .topTrailing) {
         if activeUDID != nil {
           floatingRunControls
             .padding(14)
         }
       }
+      .animation(
+        .spring(response: 0.34, dampingFraction: 0.85),
+        value: annotationModel.annotations.isEmpty
+      )
   }
 
   @ViewBuilder
@@ -365,15 +418,20 @@ struct SimulatorPreviewSidePanelView: View {
       // re-attach the live stream (a visible reconnect).
       ZStack {
         streamContent(udid: activeUDID)
-          .opacity(displayMode == .live ? 1 : 0)
-          .allowsHitTesting(displayMode == .live)
+          .opacity(effectiveDisplayMode == .live ? 1 : 0)
+          .allowsHitTesting(effectiveDisplayMode == .live)
+          .offset(y: liveStreamVerticalOffset)
+          .animation(
+            .spring(response: 0.34, dampingFraction: 0.85),
+            value: liveStreamVerticalOffset
+          )
 
-        if displayMode == .previews {
+        if effectiveDisplayMode == .previews {
           spotlightView
             .background(Color(nsColor: .windowBackgroundColor))
         }
       }
-    } else if displayMode == .previews, activeUDID != nil {
+    } else if effectiveDisplayMode == .previews, activeUDID != nil {
       // Cold start straight into Previews: the spotlight's states guide the
       // bootstrap, and the tab switch auto-runs the app when a file is open.
       spotlightView
@@ -396,7 +454,8 @@ struct SimulatorPreviewSidePanelView: View {
       },
       isReloadInFlight: isReloadInFlight,
       onLaunchPreviews: launchPreviews,
-      isPreviewHostExpected: hotReload.activePlan?.configuration.enablePreviews == true,
+      isPreviewHostExpected: simulatorPreviewsEnabled
+        && hotReload.activePlan?.configuration.enablePreviews == true,
       connectedDeviceName: hotReload.activePlan != nil
         ? activeDevice?.name : nil
     )
@@ -441,17 +500,22 @@ struct SimulatorPreviewSidePanelView: View {
     .id(udid)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .task(id: udid) { observeStreamState(of: streamSession) }
-    .safeAreaInset(edge: .bottom) {
-      if !annotationModel.annotations.isEmpty {
-        SimulatorAnnotationTrayView(
-          annotations: annotationModel.annotations,
-          isSending: annotationModel.isSending,
-          onRemove: { annotationModel.remove(id: $0) },
-          onSendAll: sendAnnotations,
-          onClearAll: { annotationModel.clearAnnotations() }
-        )
-        .padding(12)
-      }
+  }
+
+  @ViewBuilder
+  private var annotationCommentsOverlay: some View {
+    if effectiveDisplayMode == .live, !annotationModel.annotations.isEmpty {
+      SimulatorAnnotationTrayView(
+        annotations: annotationModel.annotations,
+        providerKind: providerKind,
+        isSending: annotationModel.isSending,
+        isExpanded: $isAnnotationTrayExpanded,
+        onRemove: { annotationModel.remove(id: $0) },
+        onUpdateText: { annotationModel.updateText(id: $0, text: $1) },
+        onSendAll: sendAnnotations,
+        onClearAll: { annotationModel.clearAnnotations() }
+      )
+      .transition(.move(edge: .bottom).combined(with: .opacity))
     }
   }
 
@@ -536,14 +600,15 @@ struct SimulatorPreviewSidePanelView: View {
       if !simulatorService.isBooted(udid: activeUDID) {
         await simulatorService.bootDevice(udid: activeUDID)
       }
-      // Arms hot reload + the preview host when the support dylibs are
-      // cached (first use builds them in the background and this launch
-      // proceeds plain — the pill reports it honestly).
+      // Arms hot reload, plus the preview host when that setting is enabled,
+      // once the support dylibs are cached. First use builds them in the
+      // background and this launch proceeds plain — the pill reports it
+      // honestly.
       let plan = await hotReload.preparePlan(
         udid: activeUDID,
         projectPath: projectPath,
         enableInjection: true,
-        enablePreviews: true
+        enablePreviews: simulatorPreviewsEnabled
       )
       let success = await simulatorService.buildAndRunOnSimulator(
         udid: activeUDID, projectPath: projectPath, hotReload: plan)
@@ -565,6 +630,7 @@ struct SimulatorPreviewSidePanelView: View {
   /// isn't armed, hit the play flow programmatically — full Build & Run on
   /// a cold device, the ~1s relaunch when the app is already running.
   private func autoArmPreviewsIfNeeded() {
+    guard simulatorPreviewsEnabled else { return }
     guard activeUDID != nil, !isActiveDevicePreparing else { return }
     let hasSomethingToShow =
       openEditorFilePath?.hasSuffix(".swift") == true
@@ -583,6 +649,7 @@ struct SimulatorPreviewSidePanelView: View {
   /// in launches AgentHub armed, so an app started any other way needs this
   /// one-time relaunch.
   private func launchPreviews() {
+    guard simulatorPreviewsEnabled else { return }
     if isActiveDeviceBooted {
       enablePreviews()
     } else {
@@ -591,6 +658,7 @@ struct SimulatorPreviewSidePanelView: View {
   }
 
   private func enablePreviews() {
+    guard simulatorPreviewsEnabled else { return }
     guard let activeUDID, isActiveDeviceBooted else { return }
     Task {
       let plan = await hotReload.preparePlan(
@@ -659,6 +727,9 @@ struct SimulatorPreviewSidePanelView: View {
     guard let onSendToSession,
           let udid = activeUDID,
           !annotationModel.annotations.isEmpty,
+          annotationModel.annotations.allSatisfy({
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+          }),
           !annotationModel.isSending
     else { return }
 

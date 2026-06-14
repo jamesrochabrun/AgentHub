@@ -949,14 +949,14 @@ enum MonitoringCardContentModeItems {
   static func items(
     diffDisplayMode: DiffDisplayMode,
     diffAvailabilityStatus: DiffAvailabilityStatus?
-  ) -> [BracketedSegmentedControlItem<MonitoringCardContentMode>] {
+  ) -> [CompactPillSegmentedControlItem<MonitoringCardContentMode>] {
     MonitoringEditorStateStore.availableContentModes(
       diffDisplayMode: diffDisplayMode,
       diffAvailabilityStatus: diffAvailabilityStatus
     ).map { mode in
-      BracketedSegmentedControlItem(
+      CompactPillSegmentedControlItem(
         value: mode,
-        title: mode.label.lowercased(),
+        title: mode.label,
         helpText: mode.label
       )
     }
@@ -981,11 +981,11 @@ private struct MonitoringCardPathRow: View {
     )
   }
 
-  private var items: [BracketedSegmentedControlItem<MonitoringCardContentMode>] {
+  private var items: [CompactPillSegmentedControlItem<MonitoringCardContentMode>] {
     availableContentModes.map { mode in
-      BracketedSegmentedControlItem(
+      CompactPillSegmentedControlItem(
         value: mode,
-        title: mode.label.lowercased(),
+        title: mode.label,
         helpText: mode.label
       )
     }
@@ -1008,10 +1008,11 @@ private struct MonitoringCardPathRow: View {
 
       Spacer(minLength: 8)
 
-      BracketedSegmentedControl(
+      CompactPillSegmentedControl(
         selection: selection,
         items: items,
-        selectedColor: Color.brandPrimary(for: providerKind)
+        selectedColor: Color.brandSecondary(for: providerKind),
+        accessibilityLabel: "Switch session content"
       )
       .layoutPriority(2)
       .help("Switch session content")

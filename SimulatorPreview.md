@@ -180,13 +180,14 @@ App build: `xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -sc
 
 ## Hot reload + Previews tab
 
-The panel header has a **Live | Previews** toggle (booted devices only) and a
-**● Hot reload** status pill. Save a Swift file in the project and the running
-app hot-swaps it in place (~sub-second, state preserved) while the Previews
-tab re-renders on the same signal. Changes injection can't represent (new
-file, deleted file, stored-property layout change, compile failure) quietly
-fall back to an incremental rebuild — the pill shows "Rebuilding…", never a
-silent lie.
+The panel header has a **Live | Previews** toggle (booted devices only) when
+SwiftUI simulator previews are enabled in Settings; **Live** remains available
+when previews are disabled. The header also has a **● Hot reload** status pill.
+Save a Swift file in the project and the running app hot-swaps it in place
+(~sub-second, state preserved) while the Previews tab re-renders on the same
+signal. Changes injection can't represent (new file, deleted file,
+stored-property layout change, compile failure) quietly fall back to an
+incremental rebuild — the pill shows "Rebuilding…", never a silent lie.
 
 ### How it works
 
@@ -249,9 +250,10 @@ Pipeline: `HotReloadSourceWatcher` (host-side FSEvents; existence-snapshot
 classifier so atomic-save renames aren't mistaken for structural changes) and
 the console events feed `HotReloadMonitor` (the pill's state machine; its
 `reloadGeneration` re-renders the visible previews, and its
-`changedSourceFiles` selects it). Both features are **always armed** for
-panel launches — there are no per-feature toggles; the pill is a pure status
-light.
+`changedSourceFiles` selects it). Preview candidate observation is controlled
+by the Settings toggle: when disabled, the Previews tab is hidden, preview
+candidate tracking is stopped, and future panel launches omit the preview-host
+dylib. Live simulator streaming remains available.
 
 The Previews tab (`SimulatorPreviewSpotlightView`) is deliberately bounded:
 it shows the open Swift file first, then recent changed files, deduplicated
