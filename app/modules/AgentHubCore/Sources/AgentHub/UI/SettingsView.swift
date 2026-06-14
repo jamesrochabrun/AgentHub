@@ -60,6 +60,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.globalSessionPanelEnabled)
   private var globalSessionPanelEnabled: Bool = true
 
+  @AppStorage(AgentHubDefaults.simulatorPreviewsEnabled)
+  private var simulatorPreviewsEnabled: Bool = true
+
   @AppStorage(ClaudeHookInstaller.enabledKey)
   private var claudeApprovalHooksEnabled: Bool = true
 
@@ -263,6 +266,14 @@ public struct SettingsView: View {
             }
           }
         }
+      }
+
+      Section("iOS Simulator") {
+        settingsToggle(
+          title: "Enable SwiftUI previews",
+          description: "Show the Previews tab in the simulator side panel and watch Swift source changes while it is enabled.",
+          isOn: $simulatorPreviewsEnabled
+        )
       }
     }
     .formStyle(.grouped)

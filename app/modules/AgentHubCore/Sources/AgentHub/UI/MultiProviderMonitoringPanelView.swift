@@ -1027,6 +1027,7 @@ public struct MultiProviderMonitoringPanelView: View {
       SimulatorPreviewSidePanelView(
         session: session,
         projectPath: projectPath,
+        providerKind: payload.providerKind,
         onDismiss: closeEmbeddedSidePanel,
         onSendToSession: { prompt, sess in
           if !viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) {

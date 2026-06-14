@@ -41,10 +41,10 @@ public final class SimulatorHotReloadController {
   /// hot-reload launch.
   public private(set) var activePlan: HotReloadLaunchPlan?
 
-  /// Source file names edited in this project, most recent first — tracked
-  /// for the panel's lifetime (independent of arming, which can happen
-  /// later) and seeded from `git status` so files the agent edited before
-  /// the panel opened count too. Drives the previews spotlight.
+  /// Source file names edited in this project, most recent first. This is
+  /// populated only while preview observation is enabled and seeded from
+  /// `git status` so files the agent edited before the panel opened count
+  /// too. Drives the previews spotlight.
   public private(set) var changedSourceFiles: [String] = []
 
   /// Runs the fallback incremental rebuild + relaunch. Injected so tests
@@ -60,7 +60,10 @@ public final class SimulatorHotReloadController {
   private var activeContext: (udid: String, projectPath: String)?
   private var preparationTask: Task<Void, Never>?
   private var isRebuilding = false
-  private var isTracking = false
+  private var isPreviewObservationEnabled = false
+  private var isInjectionObservationEnabled = false
+  private var isSourceObservationActive = false
+  private var observedProjectPath: String?
 
   public init(
     artifactStore: any HotReloadArtifactProviding = HotReloadArtifactStore(),
@@ -87,36 +90,35 @@ public final class SimulatorHotReloadController {
 
   // MARK: - Change tracking (panel lifetime)
 
-  /// Starts watching the project's sources and seeds the changed-files list
-  /// from git. Call when the panel opens — tracking is what lets the
-  /// spotlight show a preview the moment the host becomes reachable, even
-  /// for edits made before any launch was armed.
-  public func startTracking(projectPath: String) {
-    guard !isTracking else { return }
-    isTracking = true
-
-    sourceWatcher.start(projectPath: projectPath) { [weak self] changes in
-      guard let self else { return }
-      for change in changes {
-        self.noteChangedSource((change.path as NSString).lastPathComponent)
-      }
-      self.monitor.handle(sourceChanges: changes)
+  /// Enables preview candidate observation. Call when the Previews feature
+  /// is enabled in settings — this lets the spotlight show a preview the
+  /// moment the host becomes reachable, even for edits made before any
+  /// launch was armed.
+  public func setPreviewObservationEnabled(_ enabled: Bool, projectPath: String) {
+    guard isPreviewObservationEnabled != enabled || observedProjectPath != projectPath else {
+      return
     }
-
-    Task { [weak self, seedChangedFiles] in
-      let seeded = await seedChangedFiles(projectPath)
-      guard let self else { return }
-      for fileName in seeded where !self.changedSourceFiles.contains(fileName) {
-        // Seeds are older than anything observed live — append, not insert.
-        self.changedSourceFiles.append(fileName)
-      }
+    isPreviewObservationEnabled = enabled
+    if enabled {
+      updateSourceObservation(projectPath: projectPath)
+      seedPreviewCandidates(projectPath: projectPath)
+    } else {
+      changedSourceFiles = []
+      updateSourceObservation(projectPath: activeContext?.projectPath ?? observedProjectPath)
     }
   }
 
-  /// Stops the watcher. Call when the panel closes.
+  /// Compatibility wrapper for tests and older call sites.
+  public func startTracking(projectPath: String) {
+    setPreviewObservationEnabled(true, projectPath: projectPath)
+  }
+
+  /// Disables preview candidate observation. Call when the panel closes or
+  /// when the Previews setting is turned off.
   public func stopTracking() {
-    sourceWatcher.stop()
-    isTracking = false
+    isPreviewObservationEnabled = false
+    changedSourceFiles = []
+    updateSourceObservation(projectPath: activeContext?.projectPath ?? observedProjectPath)
   }
 
   /// Most-recent-first, deduplicated, bounded.
@@ -218,10 +220,14 @@ public final class SimulatorHotReloadController {
           plan.configuration.artifacts.injectionDylibPath != nil
     else {
       // Previews-only launch: the pill stays off, the tab works.
+      isInjectionObservationEnabled = false
+      updateSourceObservation(projectPath: projectPath)
       monitor.markDisabled()
       return
     }
 
+    isInjectionObservationEnabled = true
+    updateSourceObservation(projectPath: projectPath)
     monitor.arm()
     monitor.onRequestRebuild = { [weak self] reason in
       self?.performRebuild(reason: reason)
@@ -238,6 +244,8 @@ public final class SimulatorHotReloadController {
     monitor.onRequestRebuild = nil
     activePlan = nil
     activeContext = nil
+    isInjectionObservationEnabled = false
+    updateSourceObservation(projectPath: observedProjectPath)
     monitor.markDisabled()
   }
 
@@ -247,13 +255,62 @@ public final class SimulatorHotReloadController {
     { [weak self] line in
       guard let self, let event = self.consoleParser.parse(line: line) else { return }
       if case .recompiling(let fileName) = event {
-        self.noteChangedSource(fileName)
+        if self.isPreviewObservationEnabled {
+          self.noteChangedSource(fileName)
+        }
       }
       self.monitor.handle(engineEvent: event)
     }
   }
 
   // MARK: - Internals
+
+  private func updateSourceObservation(projectPath: String?) {
+    let shouldObserve = isPreviewObservationEnabled || isInjectionObservationEnabled
+    guard shouldObserve, let projectPath else {
+      if isSourceObservationActive {
+        sourceWatcher.stop()
+        isSourceObservationActive = false
+      }
+      if !shouldObserve {
+        observedProjectPath = nil
+      }
+      return
+    }
+
+    if isSourceObservationActive, observedProjectPath == projectPath {
+      return
+    }
+
+    if isSourceObservationActive {
+      sourceWatcher.stop()
+    }
+
+    observedProjectPath = projectPath
+    isSourceObservationActive = true
+    sourceWatcher.start(projectPath: projectPath) { [weak self] changes in
+      guard let self else { return }
+      if self.isPreviewObservationEnabled {
+        for change in changes {
+          self.noteChangedSource((change.path as NSString).lastPathComponent)
+        }
+      }
+      if self.isInjectionObservationEnabled {
+        self.monitor.handle(sourceChanges: changes)
+      }
+    }
+  }
+
+  private func seedPreviewCandidates(projectPath: String) {
+    Task { [weak self, seedChangedFiles] in
+      let seeded = await seedChangedFiles(projectPath)
+      guard let self, self.isPreviewObservationEnabled else { return }
+      for fileName in seeded where !self.changedSourceFiles.contains(fileName) {
+        // Seeds are older than anything observed live — append, not insert.
+        self.changedSourceFiles.append(fileName)
+      }
+    }
+  }
 
   private func performRebuild(reason: String) {
     guard let context = activeContext, let plan = activePlan, !isRebuilding

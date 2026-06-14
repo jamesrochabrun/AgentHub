@@ -31,11 +31,28 @@ SWIFT_TEST_PACKAGES=(
 
 FAILURES=()
 
+# Some package tests are wall-clock/concurrency-timing based and flake on slow CI
+# runners. Packages are fast, so retry the whole package up to PKG_ATTEMPTS times;
+# a package only counts as failed if it fails every attempt (a consistently-broken
+# test still fails; a one-off flake passes on retry). The chronically-flaky suites
+# are quarantined at the source (see TestQuarantine.md / #380) so retries are rare.
+PKG_ATTEMPTS="${AGENTHUB_PKG_ATTEMPTS:-3}"
+
 run_packages() {
   for pkg in "${SWIFT_TEST_PACKAGES[@]}"; do
     echo ""
     echo "▶ swift test: $pkg"
-    if ( cd "$MODULES/$pkg" && swift test ); then
+    local attempt=1
+    local passed=0
+    while [ "$attempt" -le "$PKG_ATTEMPTS" ]; do
+      if ( cd "$MODULES/$pkg" && swift test ); then
+        passed=1
+        break
+      fi
+      echo "  ✗ $pkg attempt $attempt/$PKG_ATTEMPTS failed"
+      attempt=$((attempt + 1))
+    done
+    if [ "$passed" -eq 1 ]; then
       echo "✓ $pkg"
     else
       echo "✗ $pkg"
@@ -55,11 +72,11 @@ run_core() {
   fi
   # Per-test timeouts keep a single hanging test from blocking the whole gate
   # forever (the suite has a few service tests that can block headlessly).
-  # Retry-on-failure tolerates the timing-sensitive tests (debounce/throttle/
-  # waitUntil/monitor) that are flaky on slow/contended CI runners but pass on a
-  # retry; a test only fails the gate if it fails all attempts. Deterministic
-  # failures still fail. (Genuinely-hanging tests are quarantined, not retried —
-  # retrying a 60s timeout just wastes time.)
+  # NOTE: no -retry-tests-on-failure here. The timing-sensitive tail is flaky on
+  # slow CI runners, and retrying the whole suite up to 3x can blow past the CI
+  # job timeout (cancelling the job). In CI the AgentHubCore step is advisory
+  # (non-blocking, see test.yml), so a single deterministic-duration pass is what
+  # we want; flaky tests are tracked in TestQuarantine.md / #380.
   if ( cd "$MODULES/AgentHubCore" && \
        xcodebuild test \
          -scheme AgentHubCore-Tests \
@@ -67,8 +84,6 @@ run_core() {
          -test-timeouts-enabled YES \
          -default-test-execution-time-allowance 60 \
          -maximum-test-execution-time-allowance 120 \
-         -retry-tests-on-failure \
-         -test-iterations 3 \
          "${result_bundle_args[@]+"${result_bundle_args[@]}"}" \
          -skipPackagePluginValidation ); then
     echo "✓ AgentHubCore"

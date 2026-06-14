@@ -170,6 +170,11 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let webPreviewDesignPanelEnabled = "\(keyPrefix)developer.webPreviewDesignPanelEnabled"
 
+  /// Whether SwiftUI previews are available in the iOS simulator side panel.
+  /// The live simulator view remains available when this is disabled.
+  /// Type: Bool (default: true)
+  public static let simulatorPreviewsEnabled = "\(keyPrefix)features.simulatorPreviewsEnabled"
+
   /// Inspector payload level used by debug web preview inspect flows
   /// Type: String (default: "regular")
   public static let webPreviewInspectorDataLevel = "\(keyPrefix)developer.webPreviewInspectorDataLevel"

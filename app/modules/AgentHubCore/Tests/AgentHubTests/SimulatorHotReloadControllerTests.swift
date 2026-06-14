@@ -225,6 +225,50 @@ struct SimulatorHotReloadControllerTests {
     #expect(controller.changedSourceFiles.first == "After.swift")
   }
 
+  @Test("preview observation toggles source tracking and candidate updates")
+  func previewObservationToggle() async {
+    let (controller, watcher, _) = makeController(
+      cached: Self.artifacts, seededFiles: ["Seeded.swift"])
+
+    controller.setPreviewObservationEnabled(false, projectPath: "/p")
+    #expect(watcher.startedProjectPath == nil)
+    #expect(controller.changedSourceFiles.isEmpty)
+
+    controller.setPreviewObservationEnabled(true, projectPath: "/p")
+    #expect(watcher.startedProjectPath == "/p")
+
+    watcher.onChange?([.injectable(path: "/p/Live.swift")])
+    #expect(controller.changedSourceFiles.first == "Live.swift")
+
+    let deadline = Date().addingTimeInterval(2)
+    while controller.changedSourceFiles.count < 2, Date() < deadline {
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    #expect(controller.changedSourceFiles == ["Live.swift", "Seeded.swift"])
+
+    controller.setPreviewObservationEnabled(false, projectPath: "/p")
+    #expect(watcher.stopCount == 1)
+    #expect(controller.changedSourceFiles.isEmpty)
+  }
+
+  @Test("injection observation does not populate preview candidates when previews are disabled")
+  func injectionObservationWithoutPreviewCandidates() async {
+    let (controller, watcher, tail) = makeController(cached: Self.artifacts)
+    let plan = await controller.preparePlan(
+      udid: "UDID", projectPath: "/p", enableInjection: true, enablePreviews: false)!
+
+    controller.sessionDidLaunch(udid: "UDID", projectPath: "/p", plan: plan)
+    #expect(watcher.startedProjectPath == "/p")
+
+    watcher.onChange?([.injectable(path: "/p/Live.swift")])
+    #expect(controller.changedSourceFiles.isEmpty)
+    #expect(controller.monitor.phase == .reloading(fileName: "Live.swift"))
+
+    tail.onLine?("🔥 🔄 [Console.swift] Recompiling")
+    #expect(controller.changedSourceFiles.isEmpty)
+    #expect(controller.monitor.phase == .reloading(fileName: "Console.swift"))
+  }
+
   @Test("structural change triggers the rebuild executor and settles to idle")
   func structuralRebuild() async {
     let rebuilds = RebuildLog()
