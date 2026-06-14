@@ -206,12 +206,9 @@ public struct MultiProviderSessionsListView: View {
       ZStack {
         HStack(spacing: 0) {
           if isSidebarVisible {
-            sidePanelView
-              .agentHubPanel()
+            sidebarColumn
               .frame(width: sidebarWidth)
-              .padding(.vertical, 8)
-              .padding(.horizontal, 8)
-              .background(appBackground.ignoresSafeArea())
+              .frame(maxHeight: .infinity)
               .transition(sidebarVisibilityTransition)
           }
 
@@ -452,6 +449,22 @@ public struct MultiProviderSessionsListView: View {
     accessibilityReduceMotion
       ? .opacity
       : .move(edge: .leading).combined(with: .opacity)
+  }
+
+  private var sidebarColumn: some View {
+    ZStack {
+      sidebarBackground
+        .ignoresSafeArea()
+
+      sidePanelView
+        .agentHubPanel()
+        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+    }
+  }
+
+  private var sidebarBackground: Color {
+    Color.adaptiveBackground(for: colorScheme)
   }
 
   private var detailPane: some View {
