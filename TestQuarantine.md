@@ -9,7 +9,23 @@ by removing the `.disabled(...)` trait once the underlying issue is fixed.
 ## CI gate status
 
 CI (`.github/workflows/test.yml`) gates on the **fast `swift test` packages only**
-(`AgentHubCLI`, `AgentHubGitHub`, `SimulatorPreview`, `Storybook`) — stable and ~5 min.
+(`AgentHubCLI`, `AgentHubGitHub`, `SimulatorPreview`, `Storybook`) — ~5 min.
+
+These packages have a tail of wall-clock/concurrency-timing tests that flake on slow CI
+runners. Two defenses keep the gate reliable:
+1. **Retry:** `scripts/test.sh` re-runs each package up to `AGENTHUB_PKG_ATTEMPTS` (default 3)
+   times; a package only fails the gate if it fails every attempt. Cheap because packages are
+   fast. Absorbs one-off flakes without losing coverage.
+2. **Quarantine** for suites that fail *consistently* on CI (retry can't save them):
+   - `AgentHubGitHub` → `SessionGitHubQuickAccessCoordinator` suite — wall-clock cadence timing
+     (tight ms `Task.sleep`s vs poll intervals, exact poll-count asserts). Failed PR #384 on a
+     run that was green on `main`. (Does not change observation logic — see `GitHubMonitor.md`.)
+   - `AgentHubCLI` → `WorktreeManagementService creation queue` suite — asserts exact ordering of
+     concurrent async events; interleaves differently on slow runners.
+   - `AgentHubCLI` → `WorktreeManagementService … "Cancels in-flight worktree creation…"` (single
+     test) — async cancellation timing.
+
+   Harden these with injectable clocks / virtual time, then re-enable.
 
 The **`AgentHubCore` suite is intentionally not run in CI**: it costs ~20 min just to
 compile, has a flaky timing tail (clusters B/C below), and the runner's Xcode (16.2,

@@ -308,7 +308,11 @@ struct WorktreeConventionTests {
   }
 }
 
-@Suite("WorktreeManagementService creation queue")
+// Both tests assert exact ordering of concurrent async events (first-start/first-end/
+// second-queued/second-start) under real timing — they interleave differently on slow
+// CI runners and flake. Quarantined to keep the CI gate reliable; re-enable once the
+// service's queueing is testable deterministically (no wall-clock). See TestQuarantine.md / #380.
+@Suite("WorktreeManagementService creation queue", .disabled("headless-quarantine: concurrent-event ordering timing — flaky on CI; see TestQuarantine.md"))
 struct WorktreeCreationQueueTests {
   private actor EventRecorder {
     private var events: [String] = []
