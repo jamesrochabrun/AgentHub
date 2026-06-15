@@ -709,7 +709,6 @@ public struct MultiProviderMonitoringPanelView: View {
         .allowsHitTesting(!isSidePanelExpanded)
         .accessibilityHidden(isSidePanelExpanded)
         .clipped()
-        .blursWhileResizing()
 
       if let shellPayload = sidePanelPresentation.shellPayload {
         let isExpanded = sidePanelExpansion.isExpanded(for: shellPayload)

@@ -3,10 +3,9 @@
 //  AgentHub
 //
 //  Horizontal drag-resize primitives for split pane layouts.
-//  Shared drag handle for resizable split panels.
 //
 
-import AppKit
+import Foundation
 import SwiftUI
 
 enum ResizablePanelSide: Equatable {
@@ -14,7 +13,7 @@ enum ResizablePanelSide: Equatable {
   case trailing
 }
 
-// MARK: - Drag State Propagation
+// MARK: - Drag State Suppression
 
 /// Tracks active split-handle drags so the terminal does not treat the mouse-up
 /// that ends a resize as a terminal/tab selection click.
@@ -45,74 +44,11 @@ final class ResizeInteractionSuppression {
   }
 }
 
-/// Process-wide observable that publishes whether ANY split handle is being
-/// dragged. Individual panes subscribe via `.blursWhileResizing()` so both the
-/// main content and the resizable content can fade in a blur overlay without
-/// the overlay covering the handle itself.
-@MainActor
-@Observable
-final class ResizeInteractionState {
-  static let shared = ResizeInteractionState()
-
-  /// Number of concurrent active drags. `isResizing` is `true` when > 0.
-  /// Tracked as a counter so nested / overlapping drags all release cleanly.
-  private var activeCount: Int = 0
-
-  var isResizing: Bool { activeCount > 0 }
-
-  fileprivate func beginResize() { activeCount += 1 }
-  fileprivate func endResize() { activeCount = max(0, activeCount - 1) }
-
-  private init() {}
-}
-
-extension View {
-  /// Fades a blurred material overlay in while any descendant (or sibling)
-  /// `ResizablePanelContainer` is being dragged. Apply to each pane that should
-  /// blur. The handle itself is deliberately NOT wrapped so the preview guide +
-  /// width readout stay sharp on top.
-  func blursWhileResizing() -> some View {
-    modifier(BlurWhileResizingModifier())
-  }
-}
-
-private struct BlurWhileResizingModifier: ViewModifier {
-  @State private var state = ResizeInteractionState.shared
-
-  /// Peak opacity of the material overlay during a drag. `.ultraThinMaterial`
-  /// is already the lightest system material — lowering the opacity further
-  /// makes the blur very subtle so the underlying content stays readable.
-  private static let peakOpacity: Double = 0.75
-
-  func body(content: Content) -> some View {
-    let isResizing = state.isResizing
-    content
-      .overlay {
-        Rectangle()
-          .fill(.ultraThinMaterial)
-          .opacity(isResizing ? Self.peakOpacity : 0)
-          .animation(.easeInOut(duration: 0.2), value: isResizing)
-          .allowsHitTesting(false)
-      }
-  }
-}
-
-func resizableDividerColor(isDragging: Bool, isHovering: Bool) -> Color {
-  if isHovering {
-    return Color.primary.opacity(0.28)
-  }
-  return Color.primary.opacity(isDragging ? 0.14 : 0.09)
-}
-
-func resizableDividerThickness(isDragging: Bool, isHovering: Bool) -> CGFloat {
-  return isHovering || isDragging ? 2 : 1
-}
-
 // MARK: - ResizablePanelContainer
 
 /// A self-contained split pane whose width state lives entirely inside this view.
-/// Because width changes never propagate to the parent, the parent never re-renders
-/// during a drag — eliminating flicker in large parent views like MonitoringPanelView.
+/// During a drag, only the divider rail moves. The pane width is committed when
+/// the drag ends, matching the smoother terminal panel resize implementation.
 ///
 /// Use `.trailing` when the resizable pane is on the right (right side panel):
 /// ```
@@ -140,6 +76,8 @@ struct ResizablePanelContainer<Content: View>: View {
   let content: Content
 
   @State private var width: CGFloat
+  @State private var previewWidth: CGFloat?
+  @State private var isSuppressingTerminalSelection = false
 
   init(
     side: ResizablePanelSide,
@@ -167,6 +105,13 @@ struct ResizablePanelContainer<Content: View>: View {
     if let fixedWidth {
       return max(0, fixedWidth)
     }
+    if let previewWidth {
+      return previewWidth
+    }
+    return committedWidth
+  }
+
+  private var committedWidth: CGFloat {
     return Self.clamped(width, minWidth: minWidth, maxWidth: maxWidth)
   }
 
@@ -188,177 +133,100 @@ struct ResizablePanelContainer<Content: View>: View {
     }
   }
 
-  /// The resizable pane itself, blurred while this (or any sibling) handle is
-  /// being dragged. The handle is rendered separately so it stays sharp.
   private var resizableContent: some View {
     content
       .frame(width: resolvedWidth)
-      .blursWhileResizing()
   }
 
   private var handleSlot: some View {
     handle
       .opacity(isFixedWidth ? 0 : 1)
-      .frame(width: isFixedWidth ? 0 : 8)
-      .clipped()
+      .frame(width: isFixedWidth ? 0 : TerminalPanelKit.SplitSizing.dividerDimension)
       .allowsHitTesting(!isFixedWidth)
       .accessibilityHidden(isFixedWidth)
   }
 
   private var handle: some View {
-    ResizableSplitHandle(
-      side: side,
-      width: $width,
-      minWidth: minWidth,
-      maxWidth: maxWidth,
-      defaultWidth: defaultWidth,
-      onDragEnd: { UserDefaults.standard.set(Double($0), forKey: userDefaultsKey) }
+    TerminalPanelSplitDivider(
+      axis: .horizontal,
+      lineOpacity: 0.25,
+      helpText: "Drag to resize panel. Double-click to reset.",
+      accessibilityLabel: "Resize panel",
+      movesRailWithDrag: false,
+      clampedTranslation: clampedDragTranslation,
+      onCommitResize: commitResize,
+      onDragTranslationChanged: { dragTranslation in
+        updatePreviewWidth(dragTranslation: dragTranslation)
+      },
+      onDragActivityChanged: { isActive in
+        setTerminalSelectionSuppression(isActive: isActive)
+      }
     )
+    .onTapGesture(count: 2) {
+      commitWidth(Self.clamped(defaultWidth, minWidth: minWidth, maxWidth: maxWidth))
+    }
+    .onDisappear {
+      setTerminalSelectionSuppression(isActive: false)
+    }
   }
 
   private static func clamped(_ width: CGFloat, minWidth: CGFloat, maxWidth: CGFloat) -> CGFloat {
     max(minWidth, min(maxWidth, width))
   }
-}
 
-// MARK: - ResizableSplitHandle
-
-/// Low-level vertical drag handle. Prefer ``ResizablePanelContainer`` unless you need
-/// direct binding access. Back `width` with `@State` in the immediate parent —
-/// never bind directly to `@AppStorage`, as that invalidates the entire view tree on
-/// every drag point and causes visible flickering.
-struct ResizableSplitHandle: View {
-
-  let side: ResizablePanelSide
-  @Binding var width: CGFloat
-  let minWidth: CGFloat
-  let maxWidth: CGFloat
-  let defaultWidth: CGFloat
-  /// Called once when the drag ends. Use to persist the value.
-  var onDragEnd: ((CGFloat) -> Void)? = nil
-
-  @State private var isDragging = false
-  @State private var isHovering = false
-  @State private var widthAtDragStart: CGFloat = 0
-  @State private var previewWidth: CGFloat?
-
-  private var resolvedWidth: CGFloat {
-    clamped(width)
+  private func clampedDragTranslation(_ dragTranslation: CGFloat) -> CGFloat {
+    let proposedWidth = width(from: dragTranslation)
+    let clampedWidth = Self.clamped(proposedWidth, minWidth: minWidth, maxWidth: maxWidth)
+    return translationDelta(forWidth: clampedWidth)
   }
 
-  private var previewWidthValue: CGFloat {
-    clamped(previewWidth ?? resolvedWidth)
+  private func commitResize(_ dragTranslation: CGFloat) {
+    let proposedWidth = width(from: dragTranslation)
+    let clampedWidth = Self.clamped(proposedWidth, minWidth: minWidth, maxWidth: maxWidth)
+    commitWidth(clampedWidth)
   }
 
-  private var previewOffset: CGFloat {
+  private func commitWidth(_ newWidth: CGFloat) {
+    previewWidth = nil
+    width = newWidth
+    UserDefaults.standard.set(Double(newWidth), forKey: userDefaultsKey)
+  }
+
+  private func width(from translation: CGFloat) -> CGFloat {
     switch side {
     case .leading:
-      previewWidthValue - resolvedWidth
+      return committedWidth + translation
     case .trailing:
-      resolvedWidth - previewWidthValue
+      return committedWidth - translation
     }
   }
 
-  var body: some View {
-    ZStack {
-      Color.clear
-      Rectangle()
-        .fill(resizableDividerColor(isDragging: isDragging, isHovering: isHovering))
-        .frame(width: resizableDividerThickness(isDragging: isDragging, isHovering: isHovering))
+  private func translationDelta(forWidth newWidth: CGFloat) -> CGFloat {
+    switch side {
+    case .leading:
+      return newWidth - committedWidth
+    case .trailing:
+      return committedWidth - newWidth
     }
-    .frame(width: 8)
-    .contentShape(Rectangle())
-    .onHover { updateCursor(isHovering: $0) }
-    .gesture(dragGesture)
-    .overlay(alignment: side == .trailing ? .leading : .trailing) {
-      if isDragging {
-        previewGuide
-          .offset(x: previewOffset)
-          .allowsHitTesting(false)
-      }
-    }
-    .onTapGesture(count: 2) {
-      let resetWidth = clamped(defaultWidth)
+  }
+
+  private func updatePreviewWidth(dragTranslation: CGFloat?) {
+    guard let dragTranslation else {
       previewWidth = nil
-      withAnimation(.easeInOut(duration: 0.18)) { width = resetWidth }
-      onDragEnd?(resetWidth)
+      return
     }
-    .help("Drag to resize. Double-click to reset.")
-    .zIndex(isDragging ? 20 : 10)
-    .onDisappear {
-      if isDragging {
-        ResizeInteractionSuppression.shared.endResize()
-        ResizeInteractionState.shared.endResize()
-      }
-      isDragging = false
-      previewWidth = nil
-      updateCursor(isHovering: false)
+
+    previewWidth = Self.clamped(width(from: dragTranslation), minWidth: minWidth, maxWidth: maxWidth)
+  }
+
+  private func setTerminalSelectionSuppression(isActive: Bool) {
+    guard isActive != isSuppressingTerminalSelection else { return }
+    isSuppressingTerminalSelection = isActive
+
+    if isActive {
+      ResizeInteractionSuppression.shared.beginResize()
+    } else {
+      ResizeInteractionSuppression.shared.endResize()
     }
-    .animation(.easeInOut(duration: 0.18), value: isDragging)
-  }
-
-  private var previewGuide: some View {
-    ZStack(alignment: .top) {
-      Rectangle()
-        .fill(Color.accentColor.opacity(0.95))
-        .frame(width: 3)
-
-      Text("\(Int(previewWidthValue.rounded()))")
-        .font(.system(.caption2, design: .monospaced))
-        .foregroundColor(.accentColor)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-          Capsule()
-            .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
-        )
-        .overlay(
-          Capsule()
-            .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
-        )
-        .offset(x: side == .trailing ? -12 : 12, y: 10)
-    }
-    .frame(maxHeight: .infinity)
-  }
-
-  private var dragGesture: some Gesture {
-    DragGesture(minimumDistance: 0)
-      .onChanged { value in
-        if !isDragging {
-          isDragging = true
-          widthAtDragStart = resolvedWidth
-          ResizeInteractionSuppression.shared.beginResize()
-          ResizeInteractionState.shared.beginResize()
-        }
-
-        let translatedWidth: CGFloat
-        switch side {
-        case .leading:
-          translatedWidth = widthAtDragStart + value.translation.width
-        case .trailing:
-          translatedWidth = widthAtDragStart - value.translation.width
-        }
-
-        previewWidth = clamped(translatedWidth)
-      }
-      .onEnded { _ in
-        let finalWidth = previewWidthValue
-        width = finalWidth
-        isDragging = false
-        previewWidth = nil
-        ResizeInteractionSuppression.shared.endResize()
-        ResizeInteractionState.shared.endResize()
-        onDragEnd?(finalWidth)
-      }
-  }
-
-  private func updateCursor(isHovering: Bool) {
-    guard isHovering != self.isHovering else { return }
-    self.isHovering = isHovering
-    if isHovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-  }
-
-  private func clamped(_ width: CGFloat) -> CGFloat {
-    max(minWidth, min(maxWidth, width))
   }
 }

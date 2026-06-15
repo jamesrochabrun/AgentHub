@@ -109,7 +109,6 @@ public struct FileExplorerView: View {
             Divider()
             fileContentArea
           }
-          .blursWhileResizing()
         }
         .animation(.easeInOut(duration: 0.25), value: showSidebar)
       }

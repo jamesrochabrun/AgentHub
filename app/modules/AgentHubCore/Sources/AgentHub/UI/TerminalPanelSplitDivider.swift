@@ -8,34 +8,64 @@ import SwiftUI
 
 @MainActor
 public struct TerminalPanelSplitDivider: View {
-  @GestureState private var dragTranslation: CGFloat = 0
+  private struct DragState: Equatable {
+    var isActive = false
+    var translation: CGFloat = 0
+  }
+
+  @GestureState private var dragState = DragState()
   @State private var isHovering = false
   @State private var cursorIsPushed = false
 
   private let axis: TerminalPanelKit.SplitAxis
   private let lineOpacity: Double
+  private let helpText: String
+  private let accessibilityLabel: String
+  private let movesRailWithDrag: Bool
   private let clampedTranslation: (CGFloat) -> CGFloat
   private let onCommitResize: (CGFloat) -> Void
+  private let onDragTranslationChanged: (CGFloat?) -> Void
+  private let onDragActivityChanged: (Bool) -> Void
 
   public init(
     axis: TerminalPanelKit.SplitAxis,
     lineOpacity: Double,
+    helpText: String = "Drag to resize terminal panes",
+    accessibilityLabel: String = "Resize terminal panes",
+    movesRailWithDrag: Bool = true,
     clampedTranslation: @escaping (CGFloat) -> CGFloat,
-    onCommitResize: @escaping (CGFloat) -> Void
+    onCommitResize: @escaping (CGFloat) -> Void,
+    onDragTranslationChanged: @escaping (CGFloat?) -> Void = { _ in },
+    onDragActivityChanged: @escaping (Bool) -> Void = { _ in }
   ) {
     self.axis = axis
     self.lineOpacity = lineOpacity
+    self.helpText = helpText
+    self.accessibilityLabel = accessibilityLabel
+    self.movesRailWithDrag = movesRailWithDrag
     self.clampedTranslation = clampedTranslation
     self.onCommitResize = onCommitResize
+    self.onDragTranslationChanged = onDragTranslationChanged
+    self.onDragActivityChanged = onDragActivityChanged
   }
 
   public var body: some View {
     hitTarget
-      .help("Drag to resize terminal panes")
+      .help(helpText)
       .onChange(of: isDragActive) { _, isDragActive in
+        onDragActivityChanged(isDragActive)
+        if !isDragActive {
+          onDragTranslationChanged(nil)
+        }
         updateCursor(isActive: isHovering || isDragActive)
       }
+      .onChange(of: dragTranslation) { _, dragTranslation in
+        guard isDragActive else { return }
+        onDragTranslationChanged(clampedTranslation(dragTranslation))
+      }
       .onDisappear {
+        onDragTranslationChanged(nil)
+        onDragActivityChanged(false)
         updateCursor(isActive: false)
       }
   }
@@ -57,7 +87,7 @@ public struct TerminalPanelSplitDivider: View {
     )
     .gesture(dragGesture)
     .accessibilityElement()
-    .accessibilityLabel("Resize terminal panes")
+    .accessibilityLabel(accessibilityLabel)
     .onHover { hovering in
       isHovering = hovering
       updateCursor(isActive: hovering || isDragActive)
@@ -93,27 +123,36 @@ public struct TerminalPanelSplitDivider: View {
         maxHeight: axis == .horizontal ? .infinity : nil
       )
       .offset(
-        x: axis == .horizontal ? clampedTranslation(dragTranslation) : 0,
-        y: axis == .vertical ? clampedTranslation(dragTranslation) : 0
+        x: axis == .horizontal ? visualDragTranslation : 0,
+        y: axis == .vertical ? visualDragTranslation : 0
       )
   }
 
   private var dragGesture: some Gesture {
     DragGesture(minimumDistance: 1)
-      .updating($dragTranslation) { value, state, _ in
-        state = rawTranslation(from: value)
+      .updating($dragState) { value, state, _ in
+        state = DragState(isActive: true, translation: rawTranslation(from: value))
       }
       .onEnded { value in
         onCommitResize(clampedTranslation(rawTranslation(from: value)))
+        onDragTranslationChanged(nil)
       }
   }
 
+  private var dragTranslation: CGFloat {
+    dragState.translation
+  }
+
   private var isDragActive: Bool {
-    dragTranslation != 0
+    dragState.isActive
   }
 
   private var isIntentVisible: Bool {
     isHovering || isDragActive
+  }
+
+  private var visualDragTranslation: CGFloat {
+    movesRailWithDrag ? clampedTranslation(dragTranslation) : 0
   }
 
   private func rawTranslation(from value: DragGesture.Value) -> CGFloat {
