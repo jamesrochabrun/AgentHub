@@ -237,7 +237,7 @@ public struct SimulatorPickerView: View {
     case .failed(let error):
       HStack(spacing: 6) {
         if onSendToSession != nil {
-          Button("Fix with Claude") {
+          Button("Fix", systemImage: "wrench.and.screwdriver.fill") {
             onSendToSession?(error)
           }
           .font(.caption)
@@ -419,7 +419,7 @@ public struct SimulatorPickerView: View {
     case .failed(let error):
       HStack(spacing: 6) {
         if onSendToSession != nil {
-          Button("Fix with Claude") {
+          Button("Fix", systemImage: "wrench.and.screwdriver.fill") {
             onSendToSession?(error)
           }
           .font(.caption)

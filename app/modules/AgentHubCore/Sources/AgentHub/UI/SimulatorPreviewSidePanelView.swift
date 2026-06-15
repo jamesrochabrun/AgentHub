@@ -5,9 +5,9 @@
 //  Embedded side panel that shows a live, interactive iOS Simulator for the
 //  session's project. Device lifecycle (list/boot/build & run) reuses the
 //  existing `SimulatorService`; the live capture + input comes from the
-//  standalone `SimulatorPreview` module. The full management sheet
-//  (`SimulatorPickerView` — Mac runs, build-error forwarding) is reachable
-//  from the header, replacing the deprecated per-card Simulator button.
+//  standalone `SimulatorPreview` module. The legacy management sheet
+//  (`SimulatorPickerView` — Mac runs, build-error forwarding) is kept wired
+//  but hidden while the side panel remains the single entry point.
 //
 //  Annotate mode pauses touch forwarding so clicks drop numbered pins; the
 //  queued pins are sent to the agent as one prompt plus a pin-stamped
@@ -143,6 +143,13 @@ struct SimulatorPreviewSidePanelView: View {
       .displayName
   }
 
+  private var activeFailureMessage: String? {
+    if case .failed(let message) = activeState {
+      return message
+    }
+    return nil
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       header
@@ -209,7 +216,7 @@ struct SimulatorPreviewSidePanelView: View {
         onDismiss: { showingManageSheet = false },
         onSendToSession: onSendToSession.map { send in
           { error in
-            send("Fix this build error:\n\(error)", session)
+            send(SimulatorBuildErrorPromptBuilder.prompt(for: error), session)
             showingManageSheet = false
           }
         }
@@ -399,6 +406,9 @@ struct SimulatorPreviewSidePanelView: View {
       .overlay(alignment: .bottomTrailing) {
         annotationCommentsOverlay
       }
+      .overlay(alignment: .top) {
+        simulatorFailureBannerOverlay
+      }
       .overlay(alignment: .topTrailing) {
         if activeUDID != nil {
           floatingRunControls
@@ -519,6 +529,26 @@ struct SimulatorPreviewSidePanelView: View {
     }
   }
 
+  @ViewBuilder
+  private var simulatorFailureBannerOverlay: some View {
+    if let activeFailureMessage {
+      HStack(alignment: .top, spacing: 0) {
+        SimulatorBuildErrorBanner(
+          message: activeFailureMessage,
+          providerKind: providerKind,
+          canSend: onSendToSession != nil,
+          onSend: { sendBuildError(activeFailureMessage) }
+        )
+        .frame(maxWidth: 520, alignment: .leading)
+
+        Spacer(minLength: 52)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(14)
+      .transition(.move(edge: .top).combined(with: .opacity))
+    }
+  }
+
   private var loadingState: some View {
     VStack(spacing: 8) {
       ProgressView()
@@ -557,13 +587,6 @@ struct SimulatorPreviewSidePanelView: View {
           .font(.subheadline)
       }
 
-      if case .failed(let message) = activeState {
-        Text(message)
-          .font(.caption2)
-          .foregroundStyle(.red)
-          .lineLimit(3)
-          .padding(.horizontal)
-      }
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -623,6 +646,11 @@ struct SimulatorPreviewSidePanelView: View {
     guard let activeUDID else { return }
     hotReload.sessionDidStop()
     Task { await simulatorService.shutdownDevice(udid: activeUDID) }
+  }
+
+  private func sendBuildError(_ error: String) {
+    guard let onSendToSession else { return }
+    onSendToSession(SimulatorBuildErrorPromptBuilder.prompt(for: error), session)
   }
 
   /// Bootstraps the Previews tab without a manual play press: when there's
@@ -807,5 +835,63 @@ private struct SimulatorFloatingActionButton: View {
 
   private var buttonBackground: some View {
     Circle().fill(.thinMaterial)
+  }
+}
+
+private struct SimulatorBuildErrorBanner: View {
+  let message: String
+  let providerKind: SessionProviderKind
+  let canSend: Bool
+  let onSend: () -> Void
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  private var borderColor: Color {
+    Color.red.opacity(colorScheme == .dark ? 0.34 : 0.24)
+  }
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 10) {
+      Image(systemName: "exclamationmark.triangle.fill")
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.red)
+        .padding(.top, 1)
+        .accessibilityHidden(true)
+
+      VStack(alignment: .leading, spacing: 3) {
+        Text("Simulator error")
+          .font(.caption.weight(.semibold))
+
+        Text(message)
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+          .lineLimit(5)
+          .textSelection(.enabled)
+      }
+      .frame(maxWidth: .infinity, alignment: .leading)
+
+      if canSend {
+        Button {
+          onSend()
+        } label: {
+          Label("Fix", systemImage: "wrench.and.screwdriver.fill")
+        }
+        .font(.caption.weight(.medium))
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .tint(Color.brandPrimary(for: providerKind))
+        .help("Ask \(providerKind.rawValue) to fix this simulator error")
+        .accessibilityLabel("Fix simulator error with \(providerKind.rawValue)")
+      }
+    }
+    .padding(.horizontal, 10)
+    .padding(.vertical, 8)
+    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    .overlay(
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .stroke(borderColor, lineWidth: 1)
+    )
+    .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.24 : 0.12), radius: 10, y: 4)
+    .help(message)
   }
 }

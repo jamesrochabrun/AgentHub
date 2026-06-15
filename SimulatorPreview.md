@@ -17,9 +17,10 @@ The user clicks **Simulator** (shown only for Xcode projects). The side panel le
 them pick/boot a device and Build & Run, then mirrors the device's screen and
 forwards mouse/keyboard back to it. The old per-card Simulator button that opened
 the `SimulatorPickerView` sheet is deprecated: the panel is now the single entry
-point, and the full management sheet (Mac runs, build-error forwarding) is
-reachable from the panel header's manage button. (The legacy `MonitoringPanelView`
-path, which doesn't wire the side-panel callback, still falls back to the sheet.)
+point, and the management sheet code remains wired but hidden while it can drift
+out of sync with the panel picker. Build/run failures surface directly in the
+side panel with a send-to-agent action. (The legacy `MonitoringPanelView` path,
+which doesn't wire the side-panel callback, still falls back to the sheet.)
 
 ## Annotation feedback (element-aware pins sent to the agent)
 
