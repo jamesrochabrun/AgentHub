@@ -158,3 +158,32 @@ struct XcodePlatformTests {
     #expect(set.contains(.macOS))
   }
 }
+
+// MARK: - SimulatorBuildErrorPromptBuilder
+
+@Suite("SimulatorBuildErrorPromptBuilder")
+struct SimulatorBuildErrorPromptBuilderTests {
+
+  @Test func wrapsCompilerErrorForAgentRepair() {
+    let error = "/tmp/App/ContentView.swift:12:3: error: cannot find 'foo' in scope"
+
+    let prompt = SimulatorBuildErrorPromptBuilder.prompt(for: error)
+
+    #expect(prompt == """
+    Fix this simulator build/run error:
+    /tmp/App/ContentView.swift:12:3: error: cannot find 'foo' in scope
+    """)
+  }
+
+  @Test func preservesMultiLineErrorDetails() {
+    let error = """
+    ContentView.swift:9:7: error: type 'Demo' has no member 'missing'
+    simctl launch failed (exit 4)
+    """
+
+    let prompt = SimulatorBuildErrorPromptBuilder.prompt(for: error)
+
+    #expect(prompt.contains("ContentView.swift:9:7: error: type 'Demo' has no member 'missing'"))
+    #expect(prompt.contains("simctl launch failed (exit 4)"))
+  }
+}
