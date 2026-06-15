@@ -68,6 +68,13 @@ enum ProjectFileEnumerationResult: Sendable {
 protocol ProjectFileEnumerating: Sendable {
   func gitProjectKind(at projectPath: String) -> ProjectFileEnumerationKind?
   func enumerateFiles(in projectPath: String) async -> ProjectFileEnumerationResult
+  func enumerateFiles(matching query: String, in projectPath: String) async -> ProjectFileEnumerationResult
+}
+
+extension ProjectFileEnumerating {
+  func enumerateFiles(matching query: String, in projectPath: String) async -> ProjectFileEnumerationResult {
+    await enumerateFiles(in: projectPath)
+  }
 }
 
 struct GitProjectFileEnumerator: ProjectFileEnumerating {
@@ -95,10 +102,30 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
   func enumerateFiles(in projectPath: String) async -> ProjectFileEnumerationResult {
     let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
     let knownKind = gitProjectKind(at: resolvedProjectPath)
-    guard let result = await runGitLSFiles(in: resolvedProjectPath) else {
+    guard let result = await runGitLSFiles(in: resolvedProjectPath, pathspecs: ["."]) else {
       return knownKind == nil ? .notGitProject : .failed
     }
 
+    return Self.enumerationResult(from: result, knownKind: knownKind)
+  }
+
+  func enumerateFiles(matching query: String, in projectPath: String) async -> ProjectFileEnumerationResult {
+    let resolvedProjectPath = Self.resolvedURL(for: projectPath).path
+    let knownKind = gitProjectKind(at: resolvedProjectPath)
+    guard let pathspecs = Self.pathspecs(matching: query) else {
+      return knownKind == nil ? .notGitProject : .failed
+    }
+    guard let result = await runGitLSFiles(in: resolvedProjectPath, pathspecs: pathspecs) else {
+      return knownKind == nil ? .notGitProject : .failed
+    }
+
+    return Self.enumerationResult(from: result, knownKind: knownKind)
+  }
+
+  private static func enumerationResult(
+    from result: GitCommandResult,
+    knownKind: ProjectFileEnumerationKind?
+  ) -> ProjectFileEnumerationResult {
     if result.timedOut {
       let files = Self.parseGitLSFilesOutput(result.stdout)
       guard !files.isEmpty, let knownKind else {
@@ -115,7 +142,10 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
     return .files(files, kind: knownKind ?? .gitRepository)
   }
 
-  private func runGitLSFiles(in projectPath: String) async -> GitCommandResult? {
+  private func runGitLSFiles(
+    in projectPath: String,
+    pathspecs: [String]
+  ) async -> GitCommandResult? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     process.arguments = [
@@ -124,9 +154,8 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
       "--cached",
       "--others",
       "--exclude-standard",
-      "--",
-      "."
-    ]
+      "--"
+    ] + pathspecs
     process.currentDirectoryURL = URL(fileURLWithPath: projectPath)
 
     var environment = ProcessInfo.processInfo.environment
@@ -141,8 +170,10 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
     process.standardOutput = outputPipe
     process.standardError = errorPipe
 
-    var outputData: Data?
-    let readGroup = DispatchGroup()
+    let exitNotifier = GitFileEnumeratorProcessExitNotifier()
+    process.terminationHandler = { process in
+      exitNotifier.complete(status: process.terminationStatus)
+    }
 
     do {
       try process.run()
@@ -151,27 +182,13 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
       return nil
     }
 
-    readGroup.enter()
-    DispatchQueue.global(qos: .userInitiated).async {
-      outputData = try? outputPipe.fileHandleForReading.readToEnd()
-      readGroup.leave()
-    }
-
-    readGroup.enter()
-    DispatchQueue.global(qos: .utility).async {
-      _ = try? errorPipe.fileHandleForReading.readToEnd()
-      readGroup.leave()
-    }
+    async let outputData = Self.readHandleToEnd(outputPipe.fileHandleForReading)
+    async let errorData = Self.readHandleToEnd(errorPipe.fileHandleForReading)
 
     let timedOut = await withTaskGroup(of: Bool.self) { group in
       group.addTask {
-        await withCheckedContinuation { continuation in
-          DispatchQueue.global(qos: .utility).async {
-            readGroup.wait()
-            process.waitUntilExit()
-            continuation.resume(returning: false)
-          }
-        }
+        _ = await exitNotifier.wait()
+        return false
       }
 
       group.addTask {
@@ -191,11 +208,24 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
       return result
     }
 
+    let stdout = await outputData
+    _ = await errorData
+    let exitCode = await exitNotifier.wait()
+
     return GitCommandResult(
-      stdout: outputData ?? Data(),
-      exitCode: process.terminationStatus,
+      stdout: stdout,
+      exitCode: exitCode,
       timedOut: timedOut
     )
+  }
+
+  private static func readHandleToEnd(_ handle: FileHandle) async -> Data {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .userInitiated).async {
+        let data = (try? handle.readToEnd()) ?? Data()
+        continuation.resume(returning: data)
+      }
+    }
   }
 
   private static func parseGitLSFilesOutput(_ data: Data) -> [ProjectFileEnumeratorFile] {
@@ -217,6 +247,36 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
     return path.split(separator: "/").allSatisfy { component in
       component != "." && component != ".."
     }
+  }
+
+  private static func pathspecs(matching query: String) -> [String]? {
+    let normalizedQuery = query
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .replacingOccurrences(of: "\\", with: "/")
+    guard !normalizedQuery.isEmpty else { return nil }
+
+    let sanitizedScalars = normalizedQuery.unicodeScalars.map { scalar in
+      CharacterSet.controlCharacters.contains(scalar) ? " " : String(scalar)
+    }
+    let literal = sanitizedScalars.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !literal.isEmpty else { return nil }
+
+    let escapedLiteral = escapeGlobLiteral(literal)
+    return [
+      ":(icase,glob)*\(escapedLiteral)*",
+      ":(icase,glob)**/*\(escapedLiteral)*"
+    ]
+  }
+
+  private static func escapeGlobLiteral(_ value: String) -> String {
+    var escaped = ""
+    for character in value {
+      if character == "*" || character == "?" || character == "[" || character == "]" || character == "\\" {
+        escaped.append("\\")
+      }
+      escaped.append(character)
+    }
+    return escaped
   }
 
   private static func nearestGitPath(containing path: String) -> String? {
@@ -244,6 +304,39 @@ struct GitProjectFileEnumerator: ProjectFileEnumerating {
 
   private static func resolvedURL(for path: String) -> URL {
     URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath()
+  }
+}
+
+private final class GitFileEnumeratorProcessExitNotifier: @unchecked Sendable {
+  private let lock = NSLock()
+  private var status: Int32?
+  private var continuations: [CheckedContinuation<Int32, Never>] = []
+
+  func complete(status: Int32) {
+    lock.lock()
+    if self.status == nil {
+      self.status = status
+    }
+    let continuations = self.continuations
+    self.continuations = []
+    lock.unlock()
+
+    for continuation in continuations {
+      continuation.resume(returning: status)
+    }
+  }
+
+  func wait() async -> Int32 {
+    await withCheckedContinuation { continuation in
+      lock.lock()
+      if let status {
+        lock.unlock()
+        continuation.resume(returning: status)
+      } else {
+        continuations.append(continuation)
+        lock.unlock()
+      }
+    }
   }
 }
 
@@ -486,14 +579,29 @@ public actor FileIndexService {
     let localIndexElapsed = Date().timeIntervalSince(localIndexStart)
     let q = query.lowercased()
 
-    let scored = Self.rankIndexedFiles(allFiles, query: q)
+    var scored = Self.rankIndexedFiles(allFiles, query: q)
+    var localIndexedFileCount = allFiles.count
+    if scored.isEmpty {
+      let queryFiles = await querySpecificGitSearchIndex(
+        query: query,
+        projectPath: resolvedProjectPath
+      )
+      if !queryFiles.isEmpty {
+        let queryScored = Self.rankIndexedFiles(queryFiles, query: q)
+        if !queryScored.isEmpty {
+          scored = queryScored
+          localIndexedFileCount = max(localIndexedFileCount, queryFiles.count)
+        }
+      }
+    }
+
     return FileSearchDiagnostics(
       results: Array(scored.prefix(Self.maxSearchResults)),
       source: .localIndex,
       spotlightCandidateCount: spotlightCandidateCount,
       spotlightElapsedSeconds: spotlightElapsedSeconds,
       localIndexStatusBeforeFallback: localStatusBeforeFallback,
-      localIndexedFileCount: allFiles.count,
+      localIndexedFileCount: localIndexedFileCount,
       localIndexElapsedSeconds: localIndexElapsed
     )
   }
@@ -656,6 +764,18 @@ public actor FileIndexService {
         projectFileEnumerator: projectFileEnumerator
       )
       return SearchCacheEntry(files: result.files, date: Date(), ttl: result.ttl)
+    }
+  }
+
+  private func querySpecificGitSearchIndex(
+    query: String,
+    projectPath: String
+  ) async -> [IndexedFile] {
+    switch await projectFileEnumerator.enumerateFiles(matching: query, in: projectPath) {
+    case .files(let files, _), .partialFiles(let files, _):
+      return Self.buildSearchIndexFromGitFiles(files, rootPath: projectPath)
+    case .notGitProject, .failed:
+      return []
     }
   }
 

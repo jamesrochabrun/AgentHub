@@ -107,6 +107,7 @@ private struct FakeProjectFileSearchService: ProjectFileSearchServiceProtocol {
 private struct FakeProjectFileEnumerator: ProjectFileEnumerating {
   let kind: ProjectFileEnumerationKind?
   let result: ProjectFileEnumerationResult
+  var matchingResult: ProjectFileEnumerationResult?
 
   func gitProjectKind(at projectPath: String) -> ProjectFileEnumerationKind? {
     kind
@@ -114,6 +115,10 @@ private struct FakeProjectFileEnumerator: ProjectFileEnumerating {
 
   func enumerateFiles(in projectPath: String) async -> ProjectFileEnumerationResult {
     result
+  }
+
+  func enumerateFiles(matching query: String, in projectPath: String) async -> ProjectFileEnumerationResult {
+    matchingResult ?? result
   }
 }
 
@@ -489,6 +494,64 @@ struct FileIndexServicePrivacyTests {
     #expect(diagnostics.source == .localIndex)
     #expect(diagnostics.localIndexedFileCount == 1)
     #expect(diagnostics.results.map(\.relativePath) == ["Sources/App.swift"])
+  }
+
+  @Test("Query-specific Git fallback returns matches missed by a partial monorepo index")
+  func querySpecificGitFallbackReturnsMatchesMissedByPartialIndex() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.writeProjectFile("Packages/App/Sources/SearchTargetView.swift", content: "struct SearchTargetView {}")
+    try fixture.writeProjectFile("Packages/Other/Sources/Unrelated.swift", content: "struct Unrelated {}")
+
+    let service = FileIndexService(
+      projectFileSearchService: FakeProjectFileSearchService(results: []),
+      projectFileEnumerator: FakeProjectFileEnumerator(
+        kind: .gitRepository,
+        result: .partialFiles([
+          ProjectFileEnumeratorFile(relativePath: "Packages/Other/Sources/Unrelated.swift")
+        ], kind: .gitRepository),
+        matchingResult: .files([
+          ProjectFileEnumeratorFile(relativePath: "Packages/App/Sources/SearchTargetView.swift")
+        ], kind: .gitRepository)
+      )
+    )
+
+    let diagnostics = await service.searchWithDiagnostics(query: "searchtarget", in: fixture.projectPath)
+
+    #expect(diagnostics.source == .localIndex)
+    #expect(diagnostics.results.map(\.relativePath) == ["Packages/App/Sources/SearchTargetView.swift"])
+  }
+
+  @Test("Git query enumeration narrows tracked and untracked files")
+  func gitQueryEnumerationNarrowsTrackedAndUntrackedFiles() async throws {
+    let fixture = try FileIndexFixture.create()
+    defer { fixture.cleanup() }
+
+    try fixture.initializeGitRepository()
+    try fixture.writeProjectFile(".gitignore", content: "ignored/\n")
+    try fixture.writeProjectFile("Sources/SearchTargetView.swift", content: "struct SearchTargetView {}")
+    try fixture.writeProjectFile("Sources/OtherView.swift", content: "struct OtherView {}")
+    try fixture.runGit("add", ".")
+    try fixture.runGit("commit", "-m", "initial")
+    try fixture.writeProjectFile("Sources/UntrackedSearchTarget.swift", content: "struct UntrackedSearchTarget {}")
+    try fixture.writeProjectFile("ignored/IgnoredSearchTarget.swift", content: "struct IgnoredSearchTarget {}")
+
+    let result = await GitProjectFileEnumerator().enumerateFiles(matching: "searchtarget", in: fixture.projectPath)
+
+    let files: [ProjectFileEnumeratorFile]
+    switch result {
+    case .files(let completeFiles, _), .partialFiles(let completeFiles, _):
+      files = completeFiles
+    case .notGitProject, .failed:
+      files = []
+    }
+    let relativePaths = Set(files.map(\.relativePath))
+
+    #expect(relativePaths.contains("Sources/SearchTargetView.swift"))
+    #expect(relativePaths.contains("Sources/UntrackedSearchTarget.swift"))
+    #expect(!relativePaths.contains("Sources/OtherView.swift"))
+    #expect(!relativePaths.contains("ignored/IgnoredSearchTarget.swift"))
   }
 
   @Test("Filters hidden ancestor directories from search results")
