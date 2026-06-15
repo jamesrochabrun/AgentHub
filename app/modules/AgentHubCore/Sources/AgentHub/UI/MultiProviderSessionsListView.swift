@@ -202,28 +202,23 @@ public struct MultiProviderSessionsListView: View {
 
   public var body: some View {
     GeometryReader { proxy in
-      let sidebarWidth: CGFloat = 280
+      let sidebarMax = max(280, proxy.size.width * 0.20)
       ZStack {
-        HStack(spacing: 0) {
-          if isSidebarVisible {
-            sidePanelView
-              .agentHubPanel()
-              .frame(width: sidebarWidth)
-              .padding(.vertical, 8)
-              .padding(.horizontal, 8)
-              .transition(sidebarVisibilityTransition)
-          }
-
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+          sidePanelView
+            .agentHubPanel()
+            .navigationSplitViewColumnWidth(min: 280, ideal: 280, max: sidebarMax)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+        } detail: {
           detailPane
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: proxy.size.width, height: proxy.size.height)
+        .navigationSplitViewStyle(.balanced)
         .background(appBackground.ignoresSafeArea())
 
         // Invisible global keyboard shortcuts.
         keyboardShortcutButtons
       }
-      .animation(sidebarVisibilityAnimation, value: isSidebarVisible)
     }
     .overlay {
       commandPaletteOverlay
@@ -441,18 +436,6 @@ public struct MultiProviderSessionsListView: View {
     columnVisibility != .detailOnly
   }
 
-  private var sidebarVisibilityAnimation: Animation {
-    accessibilityReduceMotion
-      ? .easeInOut(duration: 0.08)
-      : .timingCurve(0.22, 1, 0.36, 1, duration: 0.22)
-  }
-
-  private var sidebarVisibilityTransition: AnyTransition {
-    accessibilityReduceMotion
-      ? .opacity
-      : .move(edge: .leading).combined(with: .opacity)
-  }
-
   private var detailPane: some View {
     VStack(spacing: 0) {
       // Progress bar lives above the detail pane only (not over the sidebar).
@@ -477,6 +460,11 @@ public struct MultiProviderSessionsListView: View {
       .frame(minWidth: 300)
       .padding(.vertical, 8)
       .padding(.horizontal, 8)
+      .background {
+        NSSplitViewAutosaveDisabler()
+          .frame(width: 0, height: 0)
+          .allowsHitTesting(false)
+      }
     }
   }
 
