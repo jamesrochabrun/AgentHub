@@ -24,6 +24,8 @@ struct MCPAppSidePanelView: View {
   let viewModel: CLISessionsViewModel?
   let monitorState: SessionMonitorState?
   let onDismiss: () -> Void
+  let isExpanded: Bool
+  var onToggleExpanded: (() -> Void)?
 
   @State private var selectedItemID: String?
   @State private var consentController = MCPAppConsentController()
@@ -136,8 +138,29 @@ struct MCPAppSidePanelView: View {
         .accessibilityLabel("Select MCP app")
       }
 
+      if let onToggleExpanded {
+        Button(action: onToggleExpanded) {
+          Image(systemName: isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isExpanded ? "Collapse MCP app" : "Expand MCP app to full width")
+        .help(isExpanded ? "Collapse MCP app (⌘⇧O)" : "Expand MCP app to full width (⌘⇧O)")
+      }
+
       Button("Close", action: onDismiss)
         .keyboardShortcut(.cancelAction)
+    }
+    .overlay {
+      if let onToggleExpanded {
+        Button("") { onToggleExpanded() }
+          .keyboardShortcut("o", modifiers: [.command, .shift])
+          .hidden()
+          .frame(width: 0, height: 0)
+      }
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
