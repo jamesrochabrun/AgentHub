@@ -83,13 +83,19 @@ final class SimulatorAnnotationModel {
 let simulatorAnnotationPinColor = Color(red: 0.0, green: 0.48, blue: 1.0)
 /// Element-frame tint for the inspection overlay.
 private let elementFrameColor = Color(nsColor: .systemBlue)
+private let annotationPinMovementAnimation = Animation.spring(
+  response: 0.26,
+  dampingFraction: 0.86
+)
 
 struct SimulatorAnnotationOverlayView: View {
   let model: SimulatorAnnotationModel
+  var onForwardTouch: ((SimulatorTouchPhase, CGPoint, CGSize) -> Bool)? = nil
 
   @Environment(\.colorScheme) private var colorScheme
 
   @State private var draftText = ""
+  @State private var isForwardingDrag = false
   @FocusState private var isInputFocused: Bool
 
   private var annotationSurfaceStyle: AnyShapeStyle {
@@ -119,6 +125,7 @@ struct SimulatorAnnotationOverlayView: View {
                 handleTap(at: value.location, viewSize: geometry.size)
               }
             )
+            .simultaneousGesture(forwardingDragGesture(in: geometry.size))
 
           hoverHighlight(in: geometry.size)
         }
@@ -206,12 +213,11 @@ struct SimulatorAnnotationOverlayView: View {
   @ViewBuilder
   private func pins(in viewSize: CGSize) -> some View {
     ForEach(Array(model.annotations.enumerated()), id: \.element.id) { index, annotation in
-      if let point = viewPoint(
-        forNormalized: CGPoint(x: annotation.normalizedX, y: annotation.normalizedY),
-        viewSize: viewSize
-      ) {
+      let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: model.axTree)
+      if let point = pinViewPoint(for: placement, viewSize: viewSize) {
         SimulatorAnnotationPinBadge(number: index + 1)
           .position(point)
+          .animation(annotationPinMovementAnimation, value: point)
           .help(annotation.text)
       }
     }
@@ -319,6 +325,34 @@ struct SimulatorAnnotationOverlayView: View {
     isInputFocused = true
   }
 
+  private func forwardingDragGesture(in viewSize: CGSize) -> some Gesture {
+    DragGesture(minimumDistance: 8, coordinateSpace: .local)
+      .onChanged { value in
+        handleForwardingDragChanged(value, viewSize: viewSize)
+      }
+      .onEnded { value in
+        handleForwardingDragEnded(value, viewSize: viewSize)
+      }
+  }
+
+  private func handleForwardingDragChanged(_ value: DragGesture.Value, viewSize: CGSize) {
+    guard let onForwardTouch else { return }
+    if !isForwardingDrag {
+      isForwardingDrag = onForwardTouch(.began, value.startLocation, viewSize)
+    }
+    guard isForwardingDrag else { return }
+    _ = onForwardTouch(.moved, value.location, viewSize)
+  }
+
+  private func handleForwardingDragEnded(_ value: DragGesture.Value, viewSize: CGSize) {
+    guard isForwardingDrag, let onForwardTouch else {
+      isForwardingDrag = false
+      return
+    }
+    _ = onForwardTouch(.ended, value.location, viewSize)
+    isForwardingDrag = false
+  }
+
   private func commitDraft() {
     guard let pending = model.pendingNormalizedPoint else { return }
     let text = trimmedDraft
@@ -365,6 +399,26 @@ struct SimulatorAnnotationOverlayView: View {
       contentSize: model.contentPixelSize,
       viewSize: viewSize
     )
+  }
+
+  private func pinViewPoint(
+    for placement: SimulatorAnnotationPinPlacement,
+    viewSize: CGSize
+  ) -> CGPoint? {
+    guard model.hasContentSize else { return nil }
+    guard var point = SimulatorPointMapper.viewPoint(
+      normalizedX: placement.viewportNormalizedPoint.x,
+      normalizedY: placement.viewportNormalizedPoint.y,
+      contentSize: model.contentPixelSize,
+      viewSize: viewSize
+    ) else { return nil }
+
+    if placement.isPinnedToViewportEdge {
+      let margin = CGFloat(20)
+      point.x = min(max(point.x, margin), viewSize.width - margin)
+      point.y = min(max(point.y, margin), viewSize.height - margin)
+    }
+    return point
   }
 
   /// Maps a device-point frame (accessibility space) to view space through the

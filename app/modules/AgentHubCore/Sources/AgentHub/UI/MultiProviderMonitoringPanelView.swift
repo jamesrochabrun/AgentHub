@@ -1062,12 +1062,13 @@ public struct MultiProviderMonitoringPanelView: View {
         providerKind: payload.providerKind,
         onDismiss: closeEmbeddedSidePanel,
         onSendToSession: { prompt, sess in
-          showTerminalWithPrompt(
-            prompt,
-            for: sess,
-            itemID: payload.itemID,
-            viewModel: viewModel
-          )
+          // Deliver the fix prompt to the running session terminal without
+          // disturbing the user's current view: keep the simulator side panel
+          // open and don't flip the card content mode (e.g. diffs/files) to
+          // terminal. Stash a pending prompt only if no terminal is active yet.
+          if !viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) {
+            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          }
         },
         openEditorFilePath: editorStates[payload.itemID]?.selectedFilePath
       )

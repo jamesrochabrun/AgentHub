@@ -107,6 +107,127 @@ public struct SimulatorAnnotation: Identifiable, Equatable, Sendable {
   }
 }
 
+/// View-facing placement for a simulator annotation pin.
+public struct SimulatorAnnotationPinPlacement: Equatable, Sendable {
+  /// The resolved point before viewport clamping. Values can be outside 0...1
+  /// when the target element has moved beyond the visible screen.
+  public let normalizedPoint: CGPoint
+  /// The point clamped to the visible simulator viewport.
+  public let viewportNormalizedPoint: CGPoint
+
+  public var isPinnedToViewportEdge: Bool {
+    normalizedPoint != viewportNormalizedPoint
+  }
+
+  public init(normalizedPoint: CGPoint) {
+    self.normalizedPoint = normalizedPoint
+    self.viewportNormalizedPoint = CGPoint(
+      x: min(max(normalizedPoint.x, 0), 1),
+      y: min(max(normalizedPoint.y, 0), 1))
+  }
+}
+
+/// Resolves where an annotation pin should appear against the current AX tree.
+public enum SimulatorAnnotationPinLocator {
+  public static func placement(
+    for annotation: SimulatorAnnotation,
+    in tree: SimulatorAXElement?
+  ) -> SimulatorAnnotationPinPlacement {
+    let fallback = CGPoint(x: annotation.normalizedX, y: annotation.normalizedY)
+    guard let target = annotation.target,
+          let tree,
+          tree.frame.width > 0,
+          tree.frame.height > 0,
+          let currentElement = element(matching: target, in: tree)
+    else {
+      return SimulatorAnnotationPinPlacement(normalizedPoint: fallback)
+    }
+
+    let originalPoint = CGPoint(
+      x: tree.frame.minX + annotation.normalizedX * tree.frame.width,
+      y: tree.frame.minY + annotation.normalizedY * tree.frame.height)
+    let relativeX = relativePosition(
+      originalPoint.x, start: target.frame.minX, length: target.frame.width)
+    let relativeY = relativePosition(
+      originalPoint.y, start: target.frame.minY, length: target.frame.height)
+    let currentPoint = CGPoint(
+      x: currentElement.frame.minX + currentElement.frame.width * relativeX,
+      y: currentElement.frame.minY + currentElement.frame.height * relativeY)
+    return SimulatorAnnotationPinPlacement(
+      normalizedPoint: CGPoint(
+        x: (currentPoint.x - tree.frame.minX) / tree.frame.width,
+        y: (currentPoint.y - tree.frame.minY) / tree.frame.height))
+  }
+
+  private static func relativePosition(_ value: Double, start: Double, length: Double) -> Double {
+    guard length > 0 else { return 0.5 }
+    return min(max((value - start) / length, 0), 1)
+  }
+
+  private static func element(
+    matching target: SimulatorAnnotationTarget,
+    in tree: SimulatorAXElement
+  ) -> SimulatorAXElement? {
+    let elements = Array(tree.flattened().dropFirst())
+
+    if let identifier = target.identifier, !identifier.isEmpty {
+      let matches = elements.filter {
+        $0.identifier == identifier && $0.role == target.role
+      }
+      return disambiguated(matches: matches, target: target)
+    }
+
+    if let label = target.label, !label.isEmpty {
+      let matches = elements.filter {
+        $0.label == label && $0.role == target.role
+      }
+      return disambiguated(matches: matches, target: target)
+    }
+
+    let matches = elements.filter {
+      $0.summary == target.summary && $0.role == target.role
+    }
+    return disambiguated(matches: matches, target: target)
+  }
+
+  private static func disambiguated(
+    matches: [SimulatorAXElement],
+    target: SimulatorAnnotationTarget
+  ) -> SimulatorAXElement? {
+    guard !matches.isEmpty else { return nil }
+    let ordered = matches.sorted {
+      ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX)
+    }
+    if let matchIndex = target.matchIndex,
+       matchIndex > 0,
+       matchIndex <= ordered.count {
+      return ordered[matchIndex - 1]
+    }
+    return ordered.count == 1 ? ordered[0] : nearest(to: target.frame, in: ordered)
+  }
+
+  private static func nearest(
+    to frame: CGRect,
+    in elements: [SimulatorAXElement]
+  ) -> SimulatorAXElement? {
+    elements.min {
+      distanceSquared($0.frame.center, frame.center) < distanceSquared($1.frame.center, frame.center)
+    }
+  }
+
+  private static func distanceSquared(_ lhs: CGPoint, _ rhs: CGPoint) -> Double {
+    let dx = lhs.x - rhs.x
+    let dy = lhs.y - rhs.y
+    return dx * dx + dy * dy
+  }
+}
+
+private extension CGRect {
+  var center: CGPoint {
+    CGPoint(x: midX, y: midY)
+  }
+}
+
 /// Composes the agent-facing prompt for a batch of simulator annotations.
 ///
 /// The wrapper carries no intent of its own — the user's note per pin is the

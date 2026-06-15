@@ -12,6 +12,80 @@ final class SimulatorAnnotationTests: XCTestCase {
     XCTAssertEqual(annotation.normalizedY, 1)
   }
 
+  func testPinPlacementTracksResolvedTargetFrame() {
+    let originalElement = SimulatorAXElement(
+      role: "Button", label: "Buy", identifier: "buyButton", value: nil,
+      frame: CGRect(x: 100, y: 200, width: 100, height: 50), children: [])
+    let originalTree = SimulatorAXElement(
+      role: "Application", label: nil, identifier: nil, value: nil,
+      frame: CGRect(x: 0, y: 0, width: 400, height: 800),
+      children: [originalElement])
+    let refreshedTree = SimulatorAXElement(
+      role: "Application", label: nil, identifier: nil, value: nil,
+      frame: CGRect(x: 0, y: 0, width: 400, height: 800),
+      children: [
+        SimulatorAXElement(
+          role: "Button", label: "Buy", identifier: "buyButton", value: nil,
+          frame: CGRect(x: 100, y: 80, width: 100, height: 50), children: [])
+      ])
+    let annotation = SimulatorAnnotation(
+      normalizedX: 125.0 / 400.0,
+      normalizedY: 220.0 / 800.0,
+      text: "align this",
+      target: SimulatorAnnotationTarget(element: originalElement, tree: originalTree))
+
+    let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: refreshedTree)
+
+    XCTAssertEqual(placement.normalizedPoint.x, 125.0 / 400.0, accuracy: 0.0001)
+    XCTAssertEqual(placement.normalizedPoint.y, 100.0 / 800.0, accuracy: 0.0001)
+    XCTAssertFalse(placement.isPinnedToViewportEdge)
+  }
+
+  func testPinPlacementClampsResolvedTargetBeyondViewport() {
+    let originalElement = SimulatorAXElement(
+      role: "Button", label: "Buy", identifier: "buyButton", value: nil,
+      frame: CGRect(x: 100, y: 200, width: 100, height: 50), children: [])
+    let tree = SimulatorAXElement(
+      role: "Application", label: nil, identifier: nil, value: nil,
+      frame: CGRect(x: 0, y: 0, width: 400, height: 800),
+      children: [
+        SimulatorAXElement(
+          role: "Button", label: "Buy", identifier: "buyButton", value: nil,
+          frame: CGRect(x: 100, y: -120, width: 100, height: 50), children: [])
+      ])
+    let annotation = SimulatorAnnotation(
+      normalizedX: 125.0 / 400.0,
+      normalizedY: 220.0 / 800.0,
+      text: "align this",
+      target: SimulatorAnnotationTarget(element: originalElement))
+
+    let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: tree)
+
+    XCTAssertLessThan(placement.normalizedPoint.y, 0)
+    XCTAssertEqual(placement.viewportNormalizedPoint.y, 0)
+    XCTAssertTrue(placement.isPinnedToViewportEdge)
+  }
+
+  func testPinPlacementFallsBackWhenTargetCannotBeResolved() {
+    let annotation = SimulatorAnnotation(
+      normalizedX: 0.25,
+      normalizedY: 0.75,
+      text: "align this",
+      target: SimulatorAnnotationTarget(
+        role: "Button", label: "Missing", identifier: "missingButton",
+        frame: CGRect(x: 100, y: 200, width: 100, height: 50)))
+    let tree = SimulatorAXElement(
+      role: "Application", label: nil, identifier: nil, value: nil,
+      frame: CGRect(x: 0, y: 0, width: 400, height: 800),
+      children: [])
+
+    let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: tree)
+
+    XCTAssertEqual(placement.normalizedPoint.x, 0.25)
+    XCTAssertEqual(placement.normalizedPoint.y, 0.75)
+    XCTAssertFalse(placement.isPinnedToViewportEdge)
+  }
+
   // MARK: - Prompt builder
 
   func testPromptIsEmptyWithoutAnnotations() {

@@ -9,8 +9,9 @@
 //  (`SimulatorPickerView` — Mac runs, build-error forwarding) is kept wired
 //  but hidden while the side panel remains the single entry point.
 //
-//  Annotate mode pauses touch forwarding so clicks drop numbered pins; the
-//  queued pins are sent to the agent as one prompt plus a pin-stamped
+//  Annotate mode pauses tap forwarding so clicks drop numbered pins; drag
+//  gestures still forward as simulator touches so scrollable app content can
+//  be reached. Queued pins are sent to the agent as one prompt plus a pin-stamped
 //  screenshot, through the same terminal-prompt path as web preview feedback.
 //
 //  Privacy: all capture stays in-process. Nothing is streamed off the machine
@@ -51,6 +52,10 @@ struct SimulatorPreviewSidePanelView: View {
   @State private var showingManageSheet = false
   @State private var displayMode: SimulatorPanelDisplayMode = .live
   @State private var hotReload = SimulatorHotReloadController()
+  @State private var annotationRefreshTask: Task<Void, Never>?
+  /// The failure message the user explicitly dismissed; the banner stays
+  /// hidden for that exact message but reappears for any new/different error.
+  @State private var dismissedFailureMessage: String?
 
   @AppStorage(AgentHubDefaults.simulatorPreviewsEnabled)
   private var simulatorPreviewsEnabled: Bool = true
@@ -150,6 +155,15 @@ struct SimulatorPreviewSidePanelView: View {
     return nil
   }
 
+  /// The failure message to actually render — `nil` once the user dismisses
+  /// the current one (until a different failure arrives).
+  private var visibleFailureMessage: String? {
+    guard let activeFailureMessage, activeFailureMessage != dismissedFailureMessage else {
+      return nil
+    }
+    return activeFailureMessage
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       header
@@ -168,10 +182,12 @@ struct SimulatorPreviewSidePanelView: View {
       hotReload.setPreviewObservationEnabled(simulatorPreviewsEnabled, projectPath: projectPath)
     }
     .onDisappear {
+      cancelAnnotationElementRefresh()
       hotReload.stopTracking()
       hotReload.sessionDidStop()
     }
     .onChange(of: activeUDID) { _, _ in
+      cancelAnnotationElementRefresh()
       annotationModel.reset()
       isAnnotationTrayExpanded = false
       hotReload.sessionDidStop()
@@ -486,7 +502,17 @@ struct SimulatorPreviewSidePanelView: View {
         )
 
         if annotationModel.isAnnotating || !annotationModel.annotations.isEmpty {
-          SimulatorAnnotationOverlayView(model: annotationModel)
+          SimulatorAnnotationOverlayView(
+            model: annotationModel,
+            onForwardTouch: { phase, location, viewSize in
+              forwardAnnotationTouch(
+                phase: phase,
+                location: location,
+                viewSize: viewSize,
+                streamSession: streamSession
+              )
+            }
+          )
             .allowsHitTesting(annotationModel.isAnnotating)
         }
       }
@@ -531,13 +557,14 @@ struct SimulatorPreviewSidePanelView: View {
 
   @ViewBuilder
   private var simulatorFailureBannerOverlay: some View {
-    if let activeFailureMessage {
+    if let visibleFailureMessage {
       HStack(alignment: .top, spacing: 0) {
         SimulatorBuildErrorBanner(
-          message: activeFailureMessage,
+          message: visibleFailureMessage,
           providerKind: providerKind,
           canSend: onSendToSession != nil,
-          onSend: { sendBuildError(activeFailureMessage) }
+          onSend: { sendBuildError(visibleFailureMessage) },
+          onDismiss: { dismissFailureBanner(visibleFailureMessage) }
         )
         .frame(maxWidth: 520, alignment: .leading)
 
@@ -653,6 +680,12 @@ struct SimulatorPreviewSidePanelView: View {
     onSendToSession(SimulatorBuildErrorPromptBuilder.prompt(for: error), session)
   }
 
+  private func dismissFailureBanner(_ message: String) {
+    withAnimation(.easeInOut(duration: 0.2)) {
+      dismissedFailureMessage = message
+    }
+  }
+
   /// Bootstraps the Previews tab without a manual play press: when there's
   /// something to show (a Swift file open or changed files) and the app
   /// isn't armed, hit the play flow programmatically — full Build & Run on
@@ -720,6 +753,56 @@ struct SimulatorPreviewSidePanelView: View {
     streamSession.sendButton(aspect > 1.5 && aspect < 1.85 ? .home : .swipeHome)
   }
 
+  private func forwardAnnotationTouch(
+    phase: SimulatorTouchPhase,
+    location: CGPoint,
+    viewSize: CGSize,
+    streamSession: any SimulatorStreamSessionProtocol
+  ) -> Bool {
+    guard streamService.availability.isInteractive, annotationModel.hasContentSize else {
+      return false
+    }
+
+    let normalized: CGPoint?
+    switch phase {
+    case .began:
+      normalized = SimulatorPointMapper.normalizedPoint(
+        viewPoint: location,
+        contentSize: annotationModel.contentPixelSize,
+        viewSize: viewSize)
+    case .moved, .ended:
+      normalized = SimulatorPointMapper.clampedNormalizedPoint(
+        viewPoint: location,
+        contentSize: annotationModel.contentPixelSize,
+        viewSize: viewSize)
+    }
+    guard let normalized else { return false }
+
+    streamSession.sendTouch(
+      phase: phase,
+      normalizedX: normalized.x,
+      normalizedY: normalized.y)
+    if phase == .ended {
+      scheduleAnnotationElementRefresh()
+    }
+    return true
+  }
+
+  private func scheduleAnnotationElementRefresh() {
+    guard annotationModel.isAnnotating else { return }
+    annotationRefreshTask?.cancel()
+    annotationRefreshTask = Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 250_000_000)
+      guard !Task.isCancelled, annotationModel.isAnnotating else { return }
+      refreshElements()
+    }
+  }
+
+  private func cancelAnnotationElementRefresh() {
+    annotationRefreshTask?.cancel()
+    annotationRefreshTask = nil
+  }
+
   /// Keeps the annotation model's framebuffer size current so pins can map
   /// between view space and device pixels. The render view consumes `onFrame`;
   /// this panel is the sole consumer of `onStateChange`.
@@ -762,6 +845,17 @@ struct SimulatorPreviewSidePanelView: View {
     else { return }
 
     let annotations = annotationModel.annotations
+    let screenshotAnnotations = annotations.map { annotation in
+      let placement = SimulatorAnnotationPinLocator.placement(
+        for: annotation,
+        in: annotationModel.axTree)
+      return SimulatorAnnotation(
+        id: annotation.id,
+        normalizedX: placement.viewportNormalizedPoint.x,
+        normalizedY: placement.viewportNormalizedPoint.y,
+        text: annotation.text,
+        target: annotation.target)
+    }
     let deviceName = activeDevice?.name
     let pixelSize = annotationModel.hasContentSize ? annotationModel.contentPixelSize : nil
     let screenPointSize = annotationModel.screenPointSize
@@ -770,7 +864,7 @@ struct SimulatorPreviewSidePanelView: View {
     Task {
       // Best-effort: the prompt still goes out without the screenshot.
       let screenshotURL = await SimulatorScreenshotCapture.writeAnnotatedScreenshot(
-        udid: udid, annotations: annotations)
+        udid: udid, annotations: screenshotAnnotations)
       let prompt = SimulatorAnnotationPromptBuilder.prompt(
         annotations: annotations,
         deviceName: deviceName,
@@ -843,6 +937,7 @@ private struct SimulatorBuildErrorBanner: View {
   let providerKind: SessionProviderKind
   let canSend: Bool
   let onSend: () -> Void
+  let onDismiss: () -> Void
 
   @Environment(\.colorScheme) private var colorScheme
 
@@ -883,6 +978,19 @@ private struct SimulatorBuildErrorBanner: View {
         .help("Ask \(providerKind.rawValue) to fix this simulator error")
         .accessibilityLabel("Fix simulator error with \(providerKind.rawValue)")
       }
+
+      Button {
+        onDismiss()
+      } label: {
+        Image(systemName: "xmark")
+          .font(.caption2.weight(.semibold))
+      }
+      .buttonStyle(.borderless)
+      .controlSize(.small)
+      .foregroundStyle(.secondary)
+      .padding(.top, 1)
+      .help("Dismiss")
+      .accessibilityLabel("Dismiss simulator error")
     }
     .padding(.horizontal, 10)
     .padding(.vertical, 8)

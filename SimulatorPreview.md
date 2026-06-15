@@ -24,11 +24,13 @@ which doesn't wire the side-panel callback, still falls back to the sheet.)
 
 ## Annotation feedback (element-aware pins sent to the agent)
 
-The header's **Annotate** toggle pauses touch forwarding and reads the frontmost
+The header's **Annotate** toggle pauses tap forwarding and reads the frontmost
 app's **accessibility tree** (`SimulatorAXInspector`): element frames render over
 the mirrored screen, hovering highlights the element under the cursor with a
-role/size chip, and clicks drop numbered pins **bound to that element** — an
-inline bubble captures the instruction ("move this to be top aligned"). Queued
+role/size chip, clicks drop numbered pins **bound to that element**, and drag
+gestures still forward as simulator touches so scrollable content can be
+reached — an inline bubble captures the instruction ("move this to be top
+aligned"). Queued
 pins collect in a bottom tray — the same interaction model as the web preview's
 queued updates — and **Send** delivers one composed prompt to the session
 terminal via `onSendToSession`, wired in `MultiProviderMonitoringPanelView` to
