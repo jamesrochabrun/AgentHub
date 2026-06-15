@@ -161,6 +161,8 @@ public struct MultiProviderMonitoringPanelView: View {
   @State private var observedAutoOpenKeysBySessionID: [String: Set<MonitoringAutoOpenSidePanelKey>] = [:]
   @State private var editorStates: [String: MonitoringEditorState] = [:]
   @State private var availableDetailWidth: CGFloat = 0
+  @State private var showsEmbeddedSidePanelResizeOverlay = false
+  @State private var embeddedSidePanelResizeOverlayGeneration = 0
   @Binding var primarySessionId: String?
   @Binding var selectedModuleLandingPath: String?
   @AppStorage(AgentHubDefaults.worktreeDisplayMode)
@@ -705,6 +707,11 @@ public struct MultiProviderMonitoringPanelView: View {
           maxHeight: .infinity,
           alignment: .leading
         )
+        .overlay {
+          if showsEmbeddedSidePanelResizeOverlay {
+            ResizeObscuringOverlay()
+          }
+        }
         .opacity(isSidePanelExpanded ? 0 : 1)
         .allowsHitTesting(!isSidePanelExpanded)
         .accessibilityHidden(isSidePanelExpanded)
@@ -719,7 +726,8 @@ public struct MultiProviderMonitoringPanelView: View {
           maxWidth: allowedEmbeddedSidePanelWidth,
           defaultWidth: min(embeddedSidePanelDefaultWidth, allowedEmbeddedSidePanelWidth),
           userDefaultsKey: AgentHubDefaults.sidePanelWidth,
-          fixedWidth: isExpanded ? expandedEmbeddedSidePanelWidth : nil
+          fixedWidth: isExpanded ? expandedEmbeddedSidePanelWidth : nil,
+          onResizeInteractionChanged: setEmbeddedSidePanelResizeOverlay
         ) {
           ZStack {
             if let mountedPayload = sidePanelPresentation.mountedPayload,
@@ -735,6 +743,29 @@ public struct MultiProviderMonitoringPanelView: View {
         }
         .animation(embeddedSidePanelContentAnimation, value: sidePanelPresentation.mountedPayload)
         .animation(embeddedSidePanelContentAnimation, value: isExpanded)
+      }
+    }
+  }
+
+  private func setEmbeddedSidePanelResizeOverlay(isActive: Bool) {
+    embeddedSidePanelResizeOverlayGeneration += 1
+    let generation = embeddedSidePanelResizeOverlayGeneration
+
+    if isActive {
+      var transaction = Transaction()
+      transaction.disablesAnimations = true
+      withTransaction(transaction) {
+        showsEmbeddedSidePanelResizeOverlay = true
+      }
+      return
+    }
+
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(180))
+      guard generation == embeddedSidePanelResizeOverlayGeneration else { return }
+
+      withAnimation(.easeOut(duration: 0.12)) {
+        showsEmbeddedSidePanelResizeOverlay = false
       }
     }
   }
@@ -1020,7 +1051,9 @@ public struct MultiProviderMonitoringPanelView: View {
         session: session,
         viewModel: viewModel,
         monitorState: viewModel.monitorStates[sessionId],
-        onDismiss: closeEmbeddedSidePanel
+        onDismiss: closeEmbeddedSidePanel,
+        isExpanded: sidePanelExpansion.isExpanded(for: payload),
+        onToggleExpanded: { toggleEmbeddedSidePanelExpansion(for: payload) }
       )
     case .simulator(let sessionId, let session, let projectPath):
       SimulatorPreviewSidePanelView(

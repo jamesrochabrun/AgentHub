@@ -13,6 +13,18 @@ enum ResizablePanelSide: Equatable {
   case trailing
 }
 
+struct ResizeObscuringOverlay: View {
+  var body: some View {
+    Rectangle()
+      .fill(.thinMaterial)
+      .overlay {
+        Color.black.opacity(0.08)
+      }
+      .accessibilityHidden(true)
+      .allowsHitTesting(false)
+  }
+}
+
 // MARK: - Drag State Suppression
 
 /// Tracks active split-handle drags so the terminal does not treat the mouse-up
@@ -73,11 +85,13 @@ struct ResizablePanelContainer<Content: View>: View {
   let defaultWidth: CGFloat
   let userDefaultsKey: String
   let fixedWidth: CGFloat?
+  let onResizeInteractionChanged: (Bool) -> Void
   let content: Content
 
   @State private var width: CGFloat
-  @State private var previewWidth: CGFloat?
   @State private var isSuppressingTerminalSelection = false
+  @State private var showsResizeObscuringOverlay = false
+  @State private var resizeOverlayGeneration = 0
 
   init(
     side: ResizablePanelSide,
@@ -86,6 +100,7 @@ struct ResizablePanelContainer<Content: View>: View {
     defaultWidth: CGFloat,
     userDefaultsKey: String,
     fixedWidth: CGFloat? = nil,
+    onResizeInteractionChanged: @escaping (Bool) -> Void = { _ in },
     @ViewBuilder content: () -> Content
   ) {
     self.side = side
@@ -94,6 +109,7 @@ struct ResizablePanelContainer<Content: View>: View {
     self.defaultWidth = defaultWidth
     self.userDefaultsKey = userDefaultsKey
     self.fixedWidth = fixedWidth
+    self.onResizeInteractionChanged = onResizeInteractionChanged
     self.content = content()
 
     let savedWidth = UserDefaults.standard.double(forKey: userDefaultsKey)
@@ -104,9 +120,6 @@ struct ResizablePanelContainer<Content: View>: View {
   private var resolvedWidth: CGFloat {
     if let fixedWidth {
       return max(0, fixedWidth)
-    }
-    if let previewWidth {
-      return previewWidth
     }
     return committedWidth
   }
@@ -136,6 +149,11 @@ struct ResizablePanelContainer<Content: View>: View {
   private var resizableContent: some View {
     content
       .frame(width: resolvedWidth)
+      .overlay {
+        if showsResizeObscuringOverlay {
+          ResizeObscuringOverlay()
+        }
+      }
   }
 
   private var handleSlot: some View {
@@ -152,21 +170,17 @@ struct ResizablePanelContainer<Content: View>: View {
       lineOpacity: 0.25,
       helpText: "Drag to resize panel. Double-click to reset.",
       accessibilityLabel: "Resize panel",
-      movesRailWithDrag: false,
       clampedTranslation: clampedDragTranslation,
       onCommitResize: commitResize,
-      onDragTranslationChanged: { dragTranslation in
-        updatePreviewWidth(dragTranslation: dragTranslation)
+      onDoubleClick: {
+        commitWidth(Self.clamped(defaultWidth, minWidth: minWidth, maxWidth: maxWidth))
       },
       onDragActivityChanged: { isActive in
-        setTerminalSelectionSuppression(isActive: isActive)
+        setResizeInteractionActive(isActive)
       }
     )
-    .onTapGesture(count: 2) {
-      commitWidth(Self.clamped(defaultWidth, minWidth: minWidth, maxWidth: maxWidth))
-    }
     .onDisappear {
-      setTerminalSelectionSuppression(isActive: false)
+      setResizeInteractionActive(false, immediatelyHideOverlay: true)
     }
   }
 
@@ -187,8 +201,11 @@ struct ResizablePanelContainer<Content: View>: View {
   }
 
   private func commitWidth(_ newWidth: CGFloat) {
-    previewWidth = nil
-    width = newWidth
+    var transaction = Transaction()
+    transaction.disablesAnimations = true
+    withTransaction(transaction) {
+      width = newWidth
+    }
     UserDefaults.standard.set(Double(newWidth), forKey: userDefaultsKey)
   }
 
@@ -210,13 +227,38 @@ struct ResizablePanelContainer<Content: View>: View {
     }
   }
 
-  private func updatePreviewWidth(dragTranslation: CGFloat?) {
-    guard let dragTranslation else {
-      previewWidth = nil
+  private func setResizeInteractionActive(_ isActive: Bool, immediatelyHideOverlay: Bool = false) {
+    setResizeObscuringOverlay(isActive: isActive, immediatelyHide: immediatelyHideOverlay)
+    setTerminalSelectionSuppression(isActive: isActive)
+    onResizeInteractionChanged(isActive)
+  }
+
+  private func setResizeObscuringOverlay(isActive: Bool, immediatelyHide: Bool = false) {
+    resizeOverlayGeneration += 1
+    let generation = resizeOverlayGeneration
+
+    if isActive {
+      var transaction = Transaction()
+      transaction.disablesAnimations = true
+      withTransaction(transaction) {
+        showsResizeObscuringOverlay = true
+      }
       return
     }
 
-    previewWidth = Self.clamped(width(from: dragTranslation), minWidth: minWidth, maxWidth: maxWidth)
+    if immediatelyHide {
+      showsResizeObscuringOverlay = false
+      return
+    }
+
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(180))
+      guard generation == resizeOverlayGeneration else { return }
+
+      withAnimation(.easeOut(duration: 0.12)) {
+        showsResizeObscuringOverlay = false
+      }
+    }
   }
 
   private func setTerminalSelectionSuppression(isActive: Bool) {
