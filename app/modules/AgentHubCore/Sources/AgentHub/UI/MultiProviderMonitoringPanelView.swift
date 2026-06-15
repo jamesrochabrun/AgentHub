@@ -1030,9 +1030,12 @@ public struct MultiProviderMonitoringPanelView: View {
         providerKind: payload.providerKind,
         onDismiss: closeEmbeddedSidePanel,
         onSendToSession: { prompt, sess in
-          if !viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) {
-            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
-          }
+          showTerminalWithPrompt(
+            prompt,
+            for: sess,
+            itemID: payload.itemID,
+            viewModel: viewModel
+          )
         },
         openEditorFilePath: editorStates[payload.itemID]?.selectedFilePath
       )

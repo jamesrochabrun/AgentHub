@@ -360,7 +360,9 @@ public struct MonitoringCardView: View {
         onDismiss: { simulatorSheetSession = nil },
         onSendToSession: { error in
           guard let vm = viewModel else { return }
-          vm.showTerminalWithPrompt(for: session, prompt: "Fix this build error:\n\(error)")
+          vm.showTerminalWithPrompt(
+            for: session,
+            prompt: SimulatorBuildErrorPromptBuilder.prompt(for: error))
           simulatorSheetSession = nil
         }
       )
