@@ -243,7 +243,6 @@ struct SimulatorPreviewSidePanelView: View {
         annotationModel.exitAnnotating()
         return .handled
       }
-      onDismiss()
       return .handled
     }
   }
@@ -361,7 +360,6 @@ struct SimulatorPreviewSidePanelView: View {
         .contentShape(Circle())
     }
     .buttonStyle(.plain)
-    .keyboardShortcut(.cancelAction)
     .help("Close simulator preview")
     .accessibilityLabel("Close simulator preview")
   }
@@ -782,19 +780,39 @@ struct SimulatorPreviewSidePanelView: View {
       phase: phase,
       normalizedX: normalized.x,
       normalizedY: normalized.y)
-    if phase == .ended {
+    switch phase {
+    case .began:
+      break
+    case .moved:
+      // Re-read element frames mid-drag so element-bound pins track the
+      // scrolling content live instead of snapping only after release.
+      liveAnnotationRefreshIfIdle()
+    case .ended:
       scheduleAnnotationElementRefresh()
     }
     return true
   }
 
+  /// Fires an element re-read during an active scroll. Self-throttling: it
+  /// skips while a fetch is already in flight, so refreshes run no faster than
+  /// the accessibility bridge can answer them — cheap enough to call per touch
+  /// move without flooding the bridge.
+  private func liveAnnotationRefreshIfIdle() {
+    guard annotationModel.isAnnotating, !annotationModel.isFetchingElements else { return }
+    refreshElements()
+  }
+
+  /// Catches the post-scroll resting position, including momentum
+  /// deceleration, with a few spaced re-reads rather than a single snapshot.
   private func scheduleAnnotationElementRefresh() {
     guard annotationModel.isAnnotating else { return }
     annotationRefreshTask?.cancel()
     annotationRefreshTask = Task { @MainActor in
-      try? await Task.sleep(nanoseconds: 250_000_000)
-      guard !Task.isCancelled, annotationModel.isAnnotating else { return }
-      refreshElements()
+      for delay in [UInt64(120_000_000), 350_000_000, 700_000_000] {
+        try? await Task.sleep(nanoseconds: delay)
+        guard !Task.isCancelled, annotationModel.isAnnotating else { return }
+        refreshElements()
+      }
     }
   }
 

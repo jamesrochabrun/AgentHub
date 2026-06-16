@@ -127,26 +127,7 @@ public struct PendingChangesView: View {
     HStack(spacing: 16) {
       Spacer()
 
-      // Reject - bordered outline
-      Button {
-        rejectChanges()
-      } label: {
-        HStack(spacing: 6) {
-          Image(systemName: "xmark")
-          Text("Reject")
-          Text("esc ⎋")
-            .fontWeight(.semibold)
-        }
-        .foregroundColor(rejectColor)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(
-          RoundedRectangle(cornerRadius: 8)
-            .stroke(rejectColor, lineWidth: 1.5)
-        )
-      }
-      .buttonStyle(.plain)
-      .keyboardShortcut(.escape, modifiers: [])
+      rejectButton
 
       // Accept - bordered outline
       Button {
@@ -173,6 +154,36 @@ public struct PendingChangesView: View {
     }
     .padding()
     .background(Color.surfaceElevated)
+  }
+
+  @ViewBuilder
+  private var rejectButton: some View {
+    let button = Button {
+      rejectChanges()
+    } label: {
+      HStack(spacing: 6) {
+        Image(systemName: "xmark")
+        Text("Reject")
+        if !isEmbedded {
+          Text("esc ⎋")
+            .fontWeight(.semibold)
+        }
+      }
+      .foregroundColor(rejectColor)
+      .padding(.horizontal, 20)
+      .padding(.vertical, 10)
+      .background(
+        RoundedRectangle(cornerRadius: 8)
+          .stroke(rejectColor, lineWidth: 1.5)
+      )
+    }
+    .buttonStyle(.plain)
+
+    if isEmbedded {
+      button
+    } else {
+      button.keyboardShortcut(.escape, modifiers: [])
+    }
   }
 
   // MARK: - Content

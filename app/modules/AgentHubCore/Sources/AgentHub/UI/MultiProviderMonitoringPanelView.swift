@@ -1052,6 +1052,7 @@ public struct MultiProviderMonitoringPanelView: View {
         viewModel: viewModel,
         monitorState: viewModel.monitorStates[sessionId],
         onDismiss: closeEmbeddedSidePanel,
+        isEmbedded: true,
         isExpanded: sidePanelExpansion.isExpanded(for: payload),
         onToggleExpanded: { toggleEmbeddedSidePanelExpansion(for: payload) }
       )

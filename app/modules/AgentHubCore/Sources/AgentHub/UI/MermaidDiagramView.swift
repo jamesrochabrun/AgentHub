@@ -50,6 +50,7 @@ public struct MermaidDiagramView: View {
       minHeight: isEmbedded ? 300 : 550, idealHeight: isEmbedded ? .infinity : 750, maxHeight: .infinity
     )
     .onKeyPress(.escape) {
+      guard !isEmbedded else { return .handled }
       onDismiss()
       return .handled
     }

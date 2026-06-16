@@ -88,6 +88,7 @@ public struct PlanView: View {
         : Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
     )
     .onKeyPress(.escape) {
+      guard !isEmbedded else { return .handled }
       onDismiss()
       return .handled
     }

@@ -374,6 +374,7 @@ public struct WebPreviewView: View {
         }
         return .handled
       }
+      guard !isEmbedded else { return .handled }
       onDismiss()
       return .handled
     }

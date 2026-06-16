@@ -24,6 +24,7 @@ struct MCPAppSidePanelView: View {
   let viewModel: CLISessionsViewModel?
   let monitorState: SessionMonitorState?
   let onDismiss: () -> Void
+  var isEmbedded = false
   let isExpanded: Bool
   var onToggleExpanded: (() -> Void)?
 
@@ -81,6 +82,7 @@ struct MCPAppSidePanelView: View {
       reconcileSelection(previousIDs: previousIDs, currentIDs: currentIDs)
     }
     .onKeyPress(.escape) {
+      guard !isEmbedded else { return .handled }
       onDismiss()
       return .handled
     }
@@ -151,8 +153,7 @@ struct MCPAppSidePanelView: View {
         .help(isExpanded ? "Collapse MCP app (⌘⇧O)" : "Expand MCP app to full width (⌘⇧O)")
       }
 
-      Button("Close", action: onDismiss)
-        .keyboardShortcut(.cancelAction)
+      closeButton
     }
     .overlay {
       if let onToggleExpanded {
@@ -164,6 +165,16 @@ struct MCPAppSidePanelView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
+  }
+
+  @ViewBuilder
+  private var closeButton: some View {
+    if isEmbedded {
+      Button("Close", action: onDismiss)
+    } else {
+      Button("Close", action: onDismiss)
+        .keyboardShortcut(.cancelAction)
+    }
   }
 
   private var emptyState: some View {
