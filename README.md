@@ -32,6 +32,7 @@ rom session rows, and send GitHub context back into a session
 - **Storybook support** — Auto-detects Storybook-enabled projects (`.storybook/` config, `storybook` npm script, or `@storybook/*` devDependencies) and replaces the Preview button with a one-click Storybook launcher; the dev server is started under a compound key so it can run alongside your primary app server
 - **iOS Simulator run destination** — Build, install, and launch your app on any booted iOS Simulator directly from a session card; cancel at any phase (Building / Installing / Launching) via a stop button; boot-readiness check times out after 90 seconds to prevent hangs
 - **Live iOS Simulator preview** — Mirror and control a booted simulator inside AgentHub, annotate simulated UI elements, hot-reload saved Swift files, and render matching SwiftUI previews from the same running app process
+- **MCP Apps** — When an agent in a Claude or Codex session produces an MCP app UI (e.g. an Excalidraw diagram via `mcp__excalidraw__create_view`), AgentHub renders it live in a dedicated side panel; rendering is driven by the agent's tool calls, with lazy, consent-gated access to the MCP server it actually used
 - **Plan view** — Renders Claude-generated plan files with markdown and syntax highlighting; switch to Review mode to annotate individual lines and send batch feedback directly to Claude's interactive plan prompt
 - **Global search** — Search across all session files with ranked results
 - **Usage stats** — Track token counts, costs, and daily activity per provider (menu bar or popover)
@@ -134,6 +135,8 @@ First use builds the hot-reload and preview-host support package under `~/Librar
 For visible SwiftUI body refresh after injection, the target app should opt in with the [`Inject`](https://github.com/krzysztofzablocki/Inject) package or InjectionLite's `injected()` convention. Without that opt-in, code may be injected successfully but some views will not redraw until app state changes.
 
 Current limitations: one fixed preview-host loopback port means one armed preview session at a time, app crashes can leave the status pill stale until the next action, the hot-reload derived-data path uses a separate build cache, and console logs under Application Support do not yet have a cleanup policy.
+
+See **[`SimulatorPreview.md`](SimulatorPreview.md)** for the module architecture, the privacy and private-API contract, the hot-reload + Previews internals, and the tracked list of remaining work.
 
 ## Requirements
 

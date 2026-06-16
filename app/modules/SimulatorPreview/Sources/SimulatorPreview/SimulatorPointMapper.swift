@@ -42,6 +42,20 @@ public enum SimulatorPointMapper {
     return CGPoint(x: nx, y: ny)
   }
 
+  /// Convert a point in view space to normalized device coordinates, clamping
+  /// points outside the content rect to the nearest device edge.
+  public static func clampedNormalizedPoint(
+    viewPoint: CGPoint,
+    contentSize: CGSize,
+    viewSize: CGSize
+  ) -> CGPoint? {
+    let rect = aspectFitRect(contentSize: contentSize, in: viewSize)
+    guard rect.width > 0, rect.height > 0 else { return nil }
+    let nx = min(max((viewPoint.x - rect.minX) / rect.width, 0), 1)
+    let ny = min(max((viewPoint.y - rect.minY) / rect.height, 0), 1)
+    return CGPoint(x: nx, y: ny)
+  }
+
   /// Inverse of `normalizedPoint`: where a normalized device coordinate lands
   /// in view space (top-left origin). Used to position annotation pins over
   /// the letterboxed stream. Returns nil when either size is degenerate.

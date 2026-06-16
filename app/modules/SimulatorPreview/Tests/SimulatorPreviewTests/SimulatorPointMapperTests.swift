@@ -49,10 +49,22 @@ struct SimulatorPointMapperTests {
     #expect(p == nil)
   }
 
+  @Test("clamped mapping pins points outside content to nearest edge")
+  func clampedMappingPinsOutsideContent() throws {
+    let p = try #require(SimulatorPointMapper.clampedNormalizedPoint(
+      viewPoint: CGPoint(x: 10, y: 260),
+      contentSize: CGSize(width: 100, height: 200),
+      viewSize: CGSize(width: 400, height: 200)))
+    #expect(p.x == 0)
+    #expect(p.y == 1)
+  }
+
   @Test("zero sizes degrade gracefully")
   func zeroSizes() {
     #expect(SimulatorPointMapper.aspectFitRect(contentSize: .zero, in: CGSize(width: 10, height: 10)) == .zero)
     #expect(SimulatorPointMapper.normalizedPoint(
+      viewPoint: .zero, contentSize: .zero, viewSize: .zero) == nil)
+    #expect(SimulatorPointMapper.clampedNormalizedPoint(
       viewPoint: .zero, contentSize: .zero, viewSize: .zero) == nil)
   }
 }

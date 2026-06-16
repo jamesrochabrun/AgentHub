@@ -138,6 +138,7 @@ public struct FileExplorerView: View {
       await navigateToFile(at: navigationRequest.filePath)
     }
     .onKeyPress(.escape) {
+      guard !isEmbedded else { return .handled }
       if hasUnsavedChanges {
         showDiscardAlert = true
         return .handled

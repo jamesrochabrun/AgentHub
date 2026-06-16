@@ -150,6 +150,7 @@ public struct GitDiffView: View {
         showDiscardCommentsAlert = true
         return .handled
       }
+      guard !isEmbedded else { return .handled }
       onDismiss()
       return .handled
     }
