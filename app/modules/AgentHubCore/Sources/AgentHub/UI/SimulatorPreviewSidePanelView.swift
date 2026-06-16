@@ -499,7 +499,12 @@ struct SimulatorPreviewSidePanelView: View {
           isInteractive: streamService.availability.isInteractive && !annotationModel.isAnnotating
         )
 
-        if annotationModel.isAnnotating || !annotationModel.annotations.isEmpty {
+        // Pins/overlay show only while annotating. Outside annotate mode the
+        // app is interacted with directly, and keeping pins anchored would mean
+        // polling the accessibility tree during normal use — so they hide here
+        // and reappear (freshly positioned) when annotate mode is re-entered.
+        // The annotation list stays reachable via the comments tray.
+        if annotationModel.isAnnotating {
           SimulatorAnnotationOverlayView(
             model: annotationModel,
             onForwardTouch: { phase, location, viewSize in
@@ -528,7 +533,7 @@ struct SimulatorPreviewSidePanelView: View {
             ? annotationModel.exitAnnotating()
             : (annotationModel.isAnnotating = true)
         },
-        onRefreshElements: refreshElements
+        onRefreshElements: { refreshElements() }
       )
     }
     .id(udid)
@@ -798,8 +803,8 @@ struct SimulatorPreviewSidePanelView: View {
   /// the accessibility bridge can answer them — cheap enough to call per touch
   /// move without flooding the bridge.
   private func liveAnnotationRefreshIfIdle() {
-    guard annotationModel.isAnnotating, !annotationModel.isFetchingElements else { return }
-    refreshElements()
+    guard annotationModel.isAnnotating, !annotationModel.isRefreshInFlight else { return }
+    refreshElements(showsSpinner: false)
   }
 
   /// Catches the post-scroll resting position, including momentum
@@ -811,7 +816,7 @@ struct SimulatorPreviewSidePanelView: View {
       for delay in [UInt64(120_000_000), 350_000_000, 700_000_000] {
         try? await Task.sleep(nanoseconds: delay)
         guard !Task.isCancelled, annotationModel.isAnnotating else { return }
-        refreshElements()
+        refreshElements(showsSpinner: false)
       }
     }
   }
@@ -840,14 +845,22 @@ struct SimulatorPreviewSidePanelView: View {
   /// Reads the frontmost app's accessibility tree so the overlay can show
   /// element frames and bind pins to elements. Failure is non-fatal — the
   /// overlay falls back to positional pins.
-  private func refreshElements() {
+  ///
+  /// `showsSpinner` drives the toolbar's "fetching" indicator: true for
+  /// user-initiated reads, false for the silent mid-scroll re-reads so the
+  /// spinner doesn't flicker during a drag. `isRefreshInFlight` dedups
+  /// overlapping reads regardless of caller.
+  private func refreshElements(showsSpinner: Bool = true) {
     guard let udid = activeUDID else { return }
     let model = annotationModel
-    model.isFetchingElements = true
+    guard !model.isRefreshInFlight else { return }
+    model.isRefreshInFlight = true
+    if showsSpinner { model.isFetchingElements = true }
     Task {
       let tree = try? await SimulatorAXInspector.shared.fetchFrontmostTree(
         udid: udid, developerDir: XcodeDeveloperDirectory.resolved)
       model.axTree = tree
+      model.isRefreshInFlight = false
       model.isFetchingElements = false
     }
   }
@@ -864,13 +877,16 @@ struct SimulatorPreviewSidePanelView: View {
 
     let annotations = annotationModel.annotations
     let screenshotAnnotations = annotations.map { annotation in
-      let placement = SimulatorAnnotationPinLocator.placement(
+      // Stamp the pin at its current resolved position; if its element is no
+      // longer resolvable, fall back to the original drop coordinates.
+      let point = SimulatorAnnotationPinLocator.placement(
         for: annotation,
-        in: annotationModel.axTree)
+        in: annotationModel.axTree)?.viewportNormalizedPoint
+        ?? CGPoint(x: annotation.normalizedX, y: annotation.normalizedY)
       return SimulatorAnnotation(
         id: annotation.id,
-        normalizedX: placement.viewportNormalizedPoint.x,
-        normalizedY: placement.viewportNormalizedPoint.y,
+        normalizedX: point.x,
+        normalizedY: point.y,
         text: annotation.text,
         target: annotation.target)
     }

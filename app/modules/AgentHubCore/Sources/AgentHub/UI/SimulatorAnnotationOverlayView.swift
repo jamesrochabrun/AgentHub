@@ -30,7 +30,14 @@ final class SimulatorAnnotationModel {
 
   /// The frontmost app's accessibility tree (frames in device points).
   var axTree: SimulatorAXElement?
+  /// Drives the toolbar's visible "fetching elements" spinner — set only for
+  /// user-initiated reads (entering annotate mode, manual refresh), never the
+  /// silent mid-scroll re-reads, so the spinner doesn't flicker during a drag.
   var isFetchingElements = false
+  /// True while any accessibility-tree read is running. Used purely to
+  /// throttle/dedup refreshes (including the silent scroll-tracking ones);
+  /// does not drive any UI.
+  var isRefreshInFlight = false
   var hoveredElement: SimulatorAXElement?
 
   var hasContentSize: Bool {
@@ -213,8 +220,10 @@ struct SimulatorAnnotationOverlayView: View {
   @ViewBuilder
   private func pins(in viewSize: CGSize) -> some View {
     ForEach(Array(model.annotations.enumerated()), id: \.element.id) { index, annotation in
-      let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: model.axTree)
-      if let point = pinViewPoint(for: placement, viewSize: viewSize) {
+      // `placement` is nil when the pin's element has scrolled off-screen — the
+      // pin is hidden rather than stranded at a stale position.
+      if let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: model.axTree),
+         let point = pinViewPoint(for: placement, viewSize: viewSize) {
         SimulatorAnnotationPinBadge(number: index + 1)
           .position(point)
           .animation(annotationPinMovementAnimation, value: point)

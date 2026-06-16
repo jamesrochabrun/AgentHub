@@ -12,7 +12,7 @@ final class SimulatorAnnotationTests: XCTestCase {
     XCTAssertEqual(annotation.normalizedY, 1)
   }
 
-  func testPinPlacementTracksResolvedTargetFrame() {
+  func testPinPlacementTracksResolvedTargetFrame() throws {
     let originalElement = SimulatorAXElement(
       role: "Button", label: "Buy", identifier: "buyButton", value: nil,
       frame: CGRect(x: 100, y: 200, width: 100, height: 50), children: [])
@@ -34,14 +34,15 @@ final class SimulatorAnnotationTests: XCTestCase {
       text: "align this",
       target: SimulatorAnnotationTarget(element: originalElement, tree: originalTree))
 
-    let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: refreshedTree)
+    let placement = try XCTUnwrap(
+      SimulatorAnnotationPinLocator.placement(for: annotation, in: refreshedTree))
 
     XCTAssertEqual(placement.normalizedPoint.x, 125.0 / 400.0, accuracy: 0.0001)
     XCTAssertEqual(placement.normalizedPoint.y, 100.0 / 800.0, accuracy: 0.0001)
     XCTAssertFalse(placement.isPinnedToViewportEdge)
   }
 
-  func testPinPlacementClampsResolvedTargetBeyondViewport() {
+  func testPinPlacementClampsResolvedTargetBeyondViewport() throws {
     let originalElement = SimulatorAXElement(
       role: "Button", label: "Buy", identifier: "buyButton", value: nil,
       frame: CGRect(x: 100, y: 200, width: 100, height: 50), children: [])
@@ -59,14 +60,18 @@ final class SimulatorAnnotationTests: XCTestCase {
       text: "align this",
       target: SimulatorAnnotationTarget(element: originalElement))
 
-    let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: tree)
+    let placement = try XCTUnwrap(
+      SimulatorAnnotationPinLocator.placement(for: annotation, in: tree))
 
     XCTAssertLessThan(placement.normalizedPoint.y, 0)
     XCTAssertEqual(placement.viewportNormalizedPoint.y, 0)
     XCTAssertTrue(placement.isPinnedToViewportEdge)
   }
 
-  func testPinPlacementFallsBackWhenTargetCannotBeResolved() {
+  func testPinPlacementIsNilWhenBoundElementScrolledOffScreen() {
+    // An element-bound pin whose target is no longer in the refreshed tree:
+    // the element scrolled out of view, so the pin is hidden (nil), not
+    // stranded at its original drop position.
     let annotation = SimulatorAnnotation(
       normalizedX: 0.25,
       normalizedY: 0.75,
@@ -79,11 +84,23 @@ final class SimulatorAnnotationTests: XCTestCase {
       frame: CGRect(x: 0, y: 0, width: 400, height: 800),
       children: [])
 
+    XCTAssertNil(SimulatorAnnotationPinLocator.placement(for: annotation, in: tree))
+  }
+
+  func testPinPlacementFallsBackForPositionalPinWithoutTarget() {
+    // A pin with no element binding (positional fallback) always renders at its
+    // drop point — it is never hidden.
+    let annotation = SimulatorAnnotation(normalizedX: 0.25, normalizedY: 0.75, text: "align this")
+    let tree = SimulatorAXElement(
+      role: "Application", label: nil, identifier: nil, value: nil,
+      frame: CGRect(x: 0, y: 0, width: 400, height: 800),
+      children: [])
+
     let placement = SimulatorAnnotationPinLocator.placement(for: annotation, in: tree)
 
-    XCTAssertEqual(placement.normalizedPoint.x, 0.25)
-    XCTAssertEqual(placement.normalizedPoint.y, 0.75)
-    XCTAssertFalse(placement.isPinnedToViewportEdge)
+    XCTAssertEqual(placement?.normalizedPoint.x, 0.25)
+    XCTAssertEqual(placement?.normalizedPoint.y, 0.75)
+    XCTAssertEqual(placement?.isPinnedToViewportEdge, false)
   }
 
   // MARK: - Prompt builder

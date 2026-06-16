@@ -129,18 +129,27 @@ public struct SimulatorAnnotationPinPlacement: Equatable, Sendable {
 
 /// Resolves where an annotation pin should appear against the current AX tree.
 public enum SimulatorAnnotationPinLocator {
+  /// Returns where the pin should render, or `nil` when the pin is bound to an
+  /// element that has scrolled out of the captured accessibility tree — the
+  /// caller hides those rather than stranding them at a stale position.
   public static func placement(
     for annotation: SimulatorAnnotation,
     in tree: SimulatorAXElement?
-  ) -> SimulatorAnnotationPinPlacement {
+  ) -> SimulatorAnnotationPinPlacement? {
     let fallback = CGPoint(x: annotation.normalizedX, y: annotation.normalizedY)
+    // No element binding, or no tree to resolve against yet: keep the pin at its
+    // original drop point (positional pins never move).
     guard let target = annotation.target,
           let tree,
           tree.frame.width > 0,
-          tree.frame.height > 0,
-          let currentElement = element(matching: target, in: tree)
+          tree.frame.height > 0
     else {
       return SimulatorAnnotationPinPlacement(normalizedPoint: fallback)
+    }
+    // The bound element is gone from the tree — it scrolled off the visible
+    // screen. Signal "lost" so the overlay can hide the pin.
+    guard let currentElement = element(matching: target, in: tree) else {
+      return nil
     }
 
     let originalPoint = CGPoint(
