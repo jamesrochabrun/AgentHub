@@ -22,6 +22,7 @@
 //
 
 import AppKit
+import AgentHubCLIKit
 import SimulatorPreview
 import SwiftUI
 
@@ -53,15 +54,27 @@ struct SimulatorPreviewSidePanelView: View {
   @State private var displayMode: SimulatorPanelDisplayMode = .live
   @State private var hotReload = SimulatorHotReloadController()
   @State private var annotationRefreshTask: Task<Void, Never>?
+  @State private var recordingState: SimulatorRecordingPanelState = .idle
+  @State private var lastRecordingResult: SimulatorRecordingResult?
+  @State private var recordingAuditIssue = ""
+  @State private var recordingFailureDismissTask: Task<Void, Never>?
+  @State private var streamRefreshGeneration = 0
   /// The failure message the user explicitly dismissed; the banner stays
   /// hidden for that exact message but reappears for any new/different error.
   @State private var dismissedFailureMessage: String?
+
+  private let simulatorContextStore = SimulatorSessionContextStore()
+  private let simulatorRecordingService = SimulatorRecordingService.shared
 
   @AppStorage(AgentHubDefaults.simulatorPreviewsEnabled)
   private var simulatorPreviewsEnabled: Bool = true
 
   private var streamService: any SimulatorStreamServiceProtocol {
     agentHub?.simulatorStreamService ?? SimulatorStreamService.shared
+  }
+
+  private var simulatorContextProvider: WorktreeLaunchProvider? {
+    WorktreeLaunchProvider(commandLineValue: providerKind.rawValue)
   }
 
   /// The device to preview: explicit selection, else the project's preferred
@@ -112,7 +125,8 @@ struct SimulatorPreviewSidePanelView: View {
   private var liveStreamVerticalOffset: CGFloat {
     guard effectiveDisplayMode == .live,
           !annotationModel.annotations.isEmpty,
-          !isAnnotationTrayExpanded else {
+          !isAnnotationTrayExpanded
+    else {
       return 0
     }
     return -56
@@ -164,6 +178,19 @@ struct SimulatorPreviewSidePanelView: View {
     return activeFailureMessage
   }
 
+  private var simulatorContextSignature: String {
+    [
+      simulatorContextProvider?.commandLineValue ?? "unknown",
+      session.id,
+      projectPath,
+      activeUDID ?? "",
+      activeDevice?.name ?? "",
+      activeRuntimeName ?? "",
+      isActiveDeviceBooted ? "booted" : "not-booted",
+      effectiveDisplayMode.rawValue,
+    ].joined(separator: "|")
+  }
+
   var body: some View {
     VStack(spacing: 0) {
       header
@@ -185,6 +212,12 @@ struct SimulatorPreviewSidePanelView: View {
       cancelAnnotationElementRefresh()
       hotReload.stopTracking()
       hotReload.sessionDidStop()
+      removeSimulatorContext()
+      stopRecordingOnPanelClose()
+      recordingFailureDismissTask?.cancel()
+    }
+    .task(id: simulatorContextSignature) {
+      persistSimulatorContext()
     }
     .onChange(of: activeUDID) { _, _ in
       cancelAnnotationElementRefresh()
@@ -301,7 +334,7 @@ struct SimulatorPreviewSidePanelView: View {
           value: .previews,
           title: "Previews",
           helpText: "Show SwiftUI previews"
-        )
+        ),
       ],
       selectedColor: Color.brandSecondary,
       accessibilityLabel: "Panel display mode"
@@ -417,8 +450,11 @@ struct SimulatorPreviewSidePanelView: View {
   @ViewBuilder
   private var content: some View {
     contentBody
+      .overlay(alignment: .bottom) {
+        recordingStatusOverlay
+      }
       .overlay(alignment: .bottomTrailing) {
-        annotationCommentsOverlay
+        bottomTrailingControlsOverlay
       }
       .overlay(alignment: .top) {
         simulatorFailureBannerOverlay
@@ -436,6 +472,44 @@ struct SimulatorPreviewSidePanelView: View {
   }
 
   @ViewBuilder
+  private var recordingStatusOverlay: some View {
+    if recordingState != .idle || lastRecordingResult != nil {
+      HStack(alignment: .bottom, spacing: 0) {
+        recordingOverlay
+          .allowsHitTesting(recordingOverlayAllowsHitTesting)
+
+        Spacer(minLength: 58)
+      }
+      .padding(14)
+      .frame(maxWidth: .infinity, alignment: .bottomLeading)
+    }
+  }
+
+  private var bottomTrailingControlsOverlay: some View {
+    VStack(alignment: .trailing, spacing: 10) {
+      if activeUDID != nil {
+        floatingRecordingControl
+          .padding(.trailing, 14)
+          .padding(.bottom, annotationModel.annotations.isEmpty ? 14 : 0)
+      }
+
+      annotationCommentsOverlay
+    }
+  }
+
+  private var floatingRecordingControl: some View {
+    SimulatorFloatingActionButton(
+      systemImage: recordingButtonSystemImage,
+      tint: .red,
+      isDisabled: isRecordingButtonDisabled,
+      isWorking: recordingState.isBusy,
+      help: recordingButtonHelp,
+      accessibilityLabel: recordingButtonAccessibilityLabel,
+      action: toggleRecording
+    )
+  }
+
+  @ViewBuilder
   private var contentBody: some View {
     if let activeUDID, isShowingLiveStream {
       // Both surfaces stay mounted so flipping tabs doesn't tear down and
@@ -445,6 +519,7 @@ struct SimulatorPreviewSidePanelView: View {
           .opacity(effectiveDisplayMode == .live ? 1 : 0)
           .allowsHitTesting(effectiveDisplayMode == .live)
           .offset(y: liveStreamVerticalOffset)
+          .id("\(activeUDID)-\(streamRefreshGeneration)")
           .animation(
             .spring(response: 0.34, dampingFraction: 0.85),
             value: liveStreamVerticalOffset
@@ -516,7 +591,7 @@ struct SimulatorPreviewSidePanelView: View {
               )
             }
           )
-            .allowsHitTesting(annotationModel.isAnnotating)
+          .allowsHitTesting(annotationModel.isAnnotating)
         }
       }
     } topAccessory: {
@@ -616,7 +691,6 @@ struct SimulatorPreviewSidePanelView: View {
         Text(activeDevice.map { "\($0.name) is not running" } ?? "Select a simulator")
           .font(.subheadline)
       }
-
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
@@ -643,6 +717,34 @@ struct SimulatorPreviewSidePanelView: View {
     simulatorService.setPreferredSimulator(udid: udid, for: projectPath)
   }
 
+  private func persistSimulatorContext() {
+    guard let activeUDID else {
+      removeSimulatorContext()
+      return
+    }
+
+    let context = SimulatorSessionContext(
+      provider: simulatorContextProvider,
+      sessionId: session.id.isEmpty ? nil : session.id,
+      projectPath: projectPath,
+      udid: activeUDID,
+      deviceName: activeDevice?.name,
+      runtimeName: activeRuntimeName,
+      isBooted: isActiveDeviceBooted,
+      displayMode: effectiveDisplayMode.rawValue,
+      panelVisible: true
+    )
+    try? simulatorContextStore.write(context)
+  }
+
+  private func removeSimulatorContext() {
+    try? simulatorContextStore.remove(
+      provider: simulatorContextProvider,
+      sessionId: session.id.isEmpty ? nil : session.id,
+      projectPath: projectPath
+    )
+  }
+
   private func buildAndRun() {
     guard let activeUDID else { return }
     Task {
@@ -664,10 +766,12 @@ struct SimulatorPreviewSidePanelView: View {
         enablePreviews: simulatorPreviewsEnabled
       )
       let success = await simulatorService.buildAndRunOnSimulator(
-        udid: activeUDID, projectPath: projectPath, hotReload: plan)
+        udid: activeUDID, projectPath: projectPath, hotReload: plan
+      )
       if success, let plan {
         hotReload.sessionDidLaunch(
-          udid: activeUDID, projectPath: projectPath, plan: plan)
+          udid: activeUDID, projectPath: projectPath, plan: plan
+        )
       }
     }
   }
@@ -676,6 +780,214 @@ struct SimulatorPreviewSidePanelView: View {
     guard let activeUDID else { return }
     hotReload.sessionDidStop()
     Task { await simulatorService.shutdownDevice(udid: activeUDID) }
+  }
+
+  private var recordingButtonSystemImage: String {
+    switch recordingState {
+    case .recording:
+      return "stop.fill"
+    case .idle, .starting, .stopping, .failed:
+      return "record.circle"
+    }
+  }
+
+  private var recordingButtonHelp: String {
+    recordingState.isRecording
+      ? "Stop recording simulator video"
+      : "Record simulator video"
+  }
+
+  private var recordingButtonAccessibilityLabel: String {
+    recordingState.isRecording
+      ? "Stop simulator recording"
+      : "Start simulator recording"
+  }
+
+  private var isRecordingButtonDisabled: Bool {
+    switch recordingState {
+    case .starting, .stopping:
+      return true
+    case .recording:
+      return false
+    case .idle, .failed:
+      return activeUDID == nil || !isActiveDeviceBooted
+    }
+  }
+
+  private var recordingOverlayAllowsHitTesting: Bool {
+    switch recordingState {
+    case .starting, .stopping:
+      return false
+    case .recording:
+      return true
+    case .failed:
+      return true
+    case .idle:
+      return lastRecordingResult != nil
+    }
+  }
+
+  @ViewBuilder
+  private var recordingOverlay: some View {
+    if recordingState != .idle || lastRecordingResult != nil {
+      SimulatorRecordingOverlayView(
+        state: recordingState,
+        lastRecording: lastRecordingResult,
+        auditIssue: $recordingAuditIssue,
+        canSendToAgent: onSendToSession != nil,
+        onSendToAgent: sendRecordingAudit,
+        onReveal: revealRecording,
+        onDiscard: discardRecordingOverlay,
+        onDismiss: dismissRecordingOverlay
+      )
+      .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+  }
+
+  private func toggleRecording() {
+    if recordingState.isRecording {
+      stopRecording()
+    } else {
+      startRecording()
+    }
+  }
+
+  private func startRecording() {
+    guard let activeUDID else { return }
+    recordingFailureDismissTask?.cancel()
+    lastRecordingResult = nil
+    recordingAuditIssue = ""
+    recordingState = .starting
+
+    Task {
+      do {
+        let started = try await simulatorRecordingService.startRecording(udid: activeUDID)
+        recordingState = .recording(started)
+        refreshLiveStreamAfterRecordingEvent(udid: activeUDID)
+      } catch {
+        presentRecordingFailure(error.localizedDescription)
+      }
+    }
+  }
+
+  private func stopRecording() {
+    guard let recording = recordingState.activeRecording else { return }
+    recordingState = .stopping(recording)
+
+    Task {
+      do {
+        let result = try await simulatorRecordingService.stopRecording(udid: recording.udid)
+        refreshLiveStreamAfterRecordingEvent(udid: recording.udid)
+        if result.isUsable {
+          recordingAuditIssue = ""
+          lastRecordingResult = result
+          recordingState = .idle
+        } else {
+          try? SimulatorRecordingService.deleteRecordingFile(at: result.outputPath)
+          lastRecordingResult = nil
+          recordingAuditIssue = ""
+          presentRecordingFailure(result.validationError ?? "Recording did not finalize. Try recording again.")
+        }
+      } catch {
+        refreshLiveStreamAfterRecordingEvent(udid: recording.udid)
+        presentRecordingFailure(error.localizedDescription)
+      }
+    }
+  }
+
+  private func stopRecordingOnPanelClose() {
+    guard let recording = recordingState.activeRecording else { return }
+    Task {
+      _ = try? await simulatorRecordingService.stopRecording(udid: recording.udid)
+      refreshLiveStreamAfterRecordingEvent(udid: recording.udid)
+    }
+  }
+
+  private func refreshLiveStreamAfterRecordingEvent(udid: String) {
+    guard effectiveDisplayMode == .live else { return }
+    streamService.discardSession(forDeviceUDID: udid)
+    streamRefreshGeneration += 1
+  }
+
+  private func sendRecordingAudit(_ recording: SimulatorRecordingResult, issue: String) {
+    let trimmedIssue = issue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let onSendToSession, recording.isUsable, !trimmedIssue.isEmpty else { return }
+    let prompt = SimulatorRecordingPromptBuilder.prompt(
+      for: recording,
+      deviceName: activeDevice?.name,
+      issue: trimmedIssue
+    )
+    onSendToSession(prompt, session)
+    recordingAuditIssue = ""
+  }
+
+  private func revealRecording(_ recording: SimulatorRecordingResult) {
+    NSWorkspace.shared.activateFileViewerSelecting([
+      URL(fileURLWithPath: recording.outputPath),
+    ])
+  }
+
+  private func dismissRecordingOverlay() {
+    recordingFailureDismissTask?.cancel()
+    recordingFailureDismissTask = nil
+    lastRecordingResult = nil
+    recordingAuditIssue = ""
+    if case .failed = recordingState {
+      recordingState = .idle
+    }
+  }
+
+  private func discardRecordingOverlay() {
+    recordingFailureDismissTask?.cancel()
+    recordingFailureDismissTask = nil
+
+    if let recording = recordingState.activeRecording {
+      recordingState = .stopping(recording)
+      Task {
+        do {
+          _ = try await simulatorRecordingService.discardRecording(udid: recording.udid)
+        } catch {
+          AppLogger.simulator.error("Failed to discard simulator recording: \(error.localizedDescription)")
+          try? SimulatorRecordingService.deleteRecordingFile(at: recording.outputPath)
+        }
+        refreshLiveStreamAfterRecordingEvent(udid: recording.udid)
+        lastRecordingResult = nil
+        recordingAuditIssue = ""
+        recordingState = .idle
+      }
+      return
+    }
+
+    if let recording = lastRecordingResult {
+      do {
+        try SimulatorRecordingService.deleteRecordingFile(at: recording.outputPath)
+      } catch {
+        AppLogger.simulator.error("Failed to delete simulator recording: \(error.localizedDescription)")
+      }
+    }
+
+    lastRecordingResult = nil
+    recordingAuditIssue = ""
+    if case .failed = recordingState {
+      recordingState = .idle
+    }
+  }
+
+  private func presentRecordingFailure(_ message: String) {
+    recordingFailureDismissTask?.cancel()
+    lastRecordingResult = nil
+    recordingAuditIssue = ""
+    recordingState = .failed(message)
+    recordingFailureDismissTask = Task {
+      try? await Task.sleep(for: .seconds(5))
+      guard !Task.isCancelled else { return }
+      await MainActor.run {
+        if case .failed(let currentMessage) = recordingState, currentMessage == message {
+          recordingState = .idle
+        }
+        recordingFailureDismissTask = nil
+      }
+    }
   }
 
   private func sendBuildError(_ error: String) {
@@ -733,10 +1045,12 @@ struct SimulatorPreviewSidePanelView: View {
       )
       guard let plan else { return } // support build in progress — pill reports it
       let success = await simulatorService.relaunchWithHotReload(
-        udid: activeUDID, projectPath: projectPath, hotReload: plan)
+        udid: activeUDID, projectPath: projectPath, hotReload: plan
+      )
       if success {
         hotReload.sessionDidLaunch(
-          udid: activeUDID, projectPath: projectPath, plan: plan)
+          udid: activeUDID, projectPath: projectPath, plan: plan
+        )
       } else {
         // No resolvable built app — the full pipeline is the only path.
         buildAndRun()
@@ -772,19 +1086,22 @@ struct SimulatorPreviewSidePanelView: View {
       normalized = SimulatorPointMapper.normalizedPoint(
         viewPoint: location,
         contentSize: annotationModel.contentPixelSize,
-        viewSize: viewSize)
+        viewSize: viewSize
+      )
     case .moved, .ended:
       normalized = SimulatorPointMapper.clampedNormalizedPoint(
         viewPoint: location,
         contentSize: annotationModel.contentPixelSize,
-        viewSize: viewSize)
+        viewSize: viewSize
+      )
     }
     guard let normalized else { return false }
 
     streamSession.sendTouch(
       phase: phase,
       normalizedX: normalized.x,
-      normalizedY: normalized.y)
+      normalizedY: normalized.y
+    )
     switch phase {
     case .began:
       break
@@ -858,7 +1175,8 @@ struct SimulatorPreviewSidePanelView: View {
     if showsSpinner { model.isFetchingElements = true }
     Task {
       let tree = try? await SimulatorAXInspector.shared.fetchFrontmostTree(
-        udid: udid, developerDir: XcodeDeveloperDirectory.resolved)
+        udid: udid, developerDir: XcodeDeveloperDirectory.resolved
+      )
       model.axTree = tree
       model.isRefreshInFlight = false
       model.isFetchingElements = false
@@ -881,14 +1199,16 @@ struct SimulatorPreviewSidePanelView: View {
       // longer resolvable, fall back to the original drop coordinates.
       let point = SimulatorAnnotationPinLocator.placement(
         for: annotation,
-        in: annotationModel.axTree)?.viewportNormalizedPoint
+        in: annotationModel.axTree
+      )?.viewportNormalizedPoint
         ?? CGPoint(x: annotation.normalizedX, y: annotation.normalizedY)
       return SimulatorAnnotation(
         id: annotation.id,
         normalizedX: point.x,
         normalizedY: point.y,
         text: annotation.text,
-        target: annotation.target)
+        target: annotation.target
+      )
     }
     let deviceName = activeDevice?.name
     let pixelSize = annotationModel.hasContentSize ? annotationModel.contentPixelSize : nil
@@ -898,7 +1218,8 @@ struct SimulatorPreviewSidePanelView: View {
     Task {
       // Best-effort: the prompt still goes out without the screenshot.
       let screenshotURL = await SimulatorScreenshotCapture.writeAnnotatedScreenshot(
-        udid: udid, annotations: screenshotAnnotations)
+        udid: udid, annotations: screenshotAnnotations
+      )
       let prompt = SimulatorAnnotationPromptBuilder.prompt(
         annotations: annotations,
         deviceName: deviceName,

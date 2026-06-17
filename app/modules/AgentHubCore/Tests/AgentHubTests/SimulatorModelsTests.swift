@@ -1,11 +1,12 @@
-import Testing
+import AgentHubCLIKit
 @testable import AgentHubCore
+import Foundation
+import Testing
 
 // MARK: - SimulatorDevice
 
 @Suite("SimulatorDevice")
 struct SimulatorDeviceTests {
-
   @Test func isBootedTrueWhenStateEqualsBooted() {
     let device = SimulatorDevice(
       udid: "ABCD-1234",
@@ -45,7 +46,6 @@ struct SimulatorDeviceTests {
 
 @Suite("SimulatorRuntime")
 struct SimulatorRuntimeTests {
-
   @Test func availableDevicesFiltersUnavailableOnes() {
     let available = SimulatorDevice(
       udid: "A1",
@@ -97,7 +97,6 @@ struct SimulatorRuntimeTests {
 
 @Suite("SimulatorState")
 struct SimulatorStateTests {
-
   @Test func equalityForSimpleCases() {
     #expect(SimulatorState.idle == .idle)
     #expect(SimulatorState.booting == .booting)
@@ -124,7 +123,6 @@ struct SimulatorStateTests {
 
 @Suite("MacRunState")
 struct MacRunStateTests {
-
   @Test func equalityForAllCases() {
     #expect(MacRunState.idle == .idle)
     #expect(MacRunState.building == .building)
@@ -143,7 +141,6 @@ struct MacRunStateTests {
 
 @Suite("XcodePlatform")
 struct XcodePlatformTests {
-
   @Test func hashableInSet() {
     var set: Set<XcodePlatform> = []
     set.insert(.iOS)
@@ -163,7 +160,6 @@ struct XcodePlatformTests {
 
 @Suite("SimulatorBuildErrorPromptBuilder")
 struct SimulatorBuildErrorPromptBuilderTests {
-
   @Test func wrapsCompilerErrorForAgentRepair() {
     let error = "/tmp/App/ContentView.swift:12:3: error: cannot find 'foo' in scope"
 
@@ -185,5 +181,56 @@ struct SimulatorBuildErrorPromptBuilderTests {
 
     #expect(prompt.contains("ContentView.swift:9:7: error: type 'Demo' has no member 'missing'"))
     #expect(prompt.contains("simctl launch failed (exit 4)"))
+  }
+}
+
+// MARK: - SimulatorRecordingPromptBuilder
+
+@Suite("SimulatorRecordingPromptBuilder")
+struct SimulatorRecordingPromptBuilderTests {
+  @Test func includesRecordingPathAndFFmpegGuidance() {
+    let prompt = SimulatorRecordingPromptBuilder.prompt(
+      for: SimulatorRecordingResult(
+        udid: "UDID-1",
+        outputPath: "/tmp/demo.mp4",
+        startedAt: Date(timeIntervalSince1970: 1_000),
+        endedAt: Date(timeIntervalSince1970: 1_012),
+        duration: 12,
+        fileExists: true,
+        fileSizeBytes: 1_024,
+        isFinalized: true,
+        validationError: nil
+      ),
+      deviceName: "iPhone 17 Pro",
+      issue: "The answer buttons jump after the recording starts."
+    )
+
+    #expect(prompt.contains("/tmp/demo.mp4"))
+    #expect(prompt.contains("The answer buttons jump after the recording starts."))
+    #expect(prompt.contains("ffprobe or ffmpeg"))
+    #expect(prompt.contains("Device: iPhone 17 Pro"))
+    #expect(prompt.contains("Duration: 12.0 seconds"))
+  }
+
+  @Test func explainsWhenRecordingIsNotFinalized() {
+    let prompt = SimulatorRecordingPromptBuilder.prompt(
+      for: SimulatorRecordingResult(
+        udid: "UDID-1",
+        outputPath: "/tmp/demo.mp4",
+        startedAt: Date(timeIntervalSince1970: 1_000),
+        endedAt: Date(timeIntervalSince1970: 1_001),
+        duration: 1,
+        fileExists: true,
+        fileSizeBytes: 1_024,
+        isFinalized: false,
+        validationError: "The MP4 file did not finalize correctly; missing top-level moov atom."
+      ),
+      deviceName: nil,
+      issue: "The recording fails when I stop capture."
+    )
+
+    #expect(prompt.contains("could not be audited"))
+    #expect(prompt.contains("The recording fails when I stop capture."))
+    #expect(prompt.contains("missing top-level moov atom"))
   }
 }
