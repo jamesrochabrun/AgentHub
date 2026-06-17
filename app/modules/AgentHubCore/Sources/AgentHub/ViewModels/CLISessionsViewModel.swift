@@ -3060,6 +3060,7 @@ public final class CLISessionsViewModel {
   ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
   public func startNewSessionInHub(
     _ worktree: WorktreeBranch,
+    launchPath: String? = nil,
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
     dangerouslySkipPermissions: Bool = false,
@@ -3073,6 +3074,7 @@ public final class CLISessionsViewModel {
     // Terminals are now keyed by session ID, not worktree path
     let pending = PendingHubSession(
       worktree: worktree,
+      launchPath: launchPath,
       initialPrompt: promptForProcessLaunch,
       initialInputText: initialInputText,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
@@ -3086,9 +3088,9 @@ public final class CLISessionsViewModel {
     }
 
 #if DEBUG
-    let encodedPath = worktree.path.claudeProjectPathEncoded
+    let encodedPath = pending.projectPath.claudeProjectPathEncoded
     AppLogger.session.debug(
-      "[StartInHub] pendingId=\(pending.id.uuidString, privacy: .public) worktreePath=\(worktree.path, privacy: .public) encodedPath=\(encodedPath, privacy: .public)"
+      "[StartInHub] pendingId=\(pending.id.uuidString, privacy: .public) worktreePath=\(worktree.path, privacy: .public) projectPath=\(pending.projectPath, privacy: .public) encodedPath=\(encodedPath, privacy: .public)"
     )
 #endif
 
@@ -3118,22 +3120,24 @@ public final class CLISessionsViewModel {
     }
   }
 
+  private func claudeProjectPath(for pending: PendingHubSession) -> String {
+    if let worktreeName = pending.worktreeName, !worktreeName.isEmpty {
+      return pending.projectPath + "/.claude/worktrees/" + worktreeName
+    }
+    return pending.projectPath
+  }
+
   /// Watches the Claude project directory for a new session file
   @MainActor
   private func watchForNewClaudeSession(pending: PendingHubSession, worktree: WorktreeBranch) async {
     // Auto-named --worktree: we don't know the path ahead of time, poll history.jsonl instead
     if let worktreeName = pending.worktreeName, worktreeName.isEmpty {
-      await pollForWorktreeHistoryEntry(pending: pending, repoPath: worktree.path)
+      await pollForWorktreeHistoryEntry(pending: pending, repoPath: pending.projectPath)
       return
     }
 
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
-    let watchPath: String
-    if let worktreeName = pending.worktreeName, !worktreeName.isEmpty {
-      watchPath = worktree.path + "/.claude/worktrees/" + worktreeName
-    } else {
-      watchPath = worktree.path
-    }
+    let watchPath = claudeProjectPath(for: pending)
     let encodedPath = watchPath.claudeProjectPathEncoded
     let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
 #if DEBUG
@@ -3270,7 +3274,7 @@ public final class CLISessionsViewModel {
     // Refresh to get the real session object with retry loop
     Task {
       if let worktreeName = pending.worktreeName, !worktreeName.isEmpty {
-        let expectedWorktreePath = worktree.path + "/.claude/worktrees/" + worktreeName
+        let expectedWorktreePath = claudeProjectPath(for: pending)
         await registerCreatedWorktree(
           name: worktreeName,
           path: expectedWorktreePath,
@@ -3280,12 +3284,7 @@ public final class CLISessionsViewModel {
       await monitorService.setFocusedSessionIds(monitoredSessionIds.union([sessionId]))
       // Retry loop: wait up to 2 seconds for session to appear in selectedRepositories
       let maxAttempts = 10  // 10 × 200ms = 2 seconds
-      let expectedWorktreePath: String
-      if let worktreeName = pending.worktreeName, !worktreeName.isEmpty {
-        expectedWorktreePath = worktree.path + "/.claude/worktrees/" + worktreeName
-      } else {
-        expectedWorktreePath = worktree.path
-      }
+      let expectedWorktreePath = claudeProjectPath(for: pending)
 
       for attempt in 1...maxAttempts {
         await monitorService.refreshSessions()
@@ -3332,12 +3331,7 @@ public final class CLISessionsViewModel {
         // This handles new worktrees where history.jsonl hasn't been updated yet,
         // and ensures pending sessions always resolve even after retry exhaustion.
         let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
-        let effectivePath: String
-        if let worktreeName = pending.worktreeName, !worktreeName.isEmpty {
-          effectivePath = worktree.path + "/.claude/worktrees/" + worktreeName
-        } else {
-          effectivePath = worktree.path
-        }
+        let effectivePath = claudeProjectPath(for: pending)
         let encodedPath = effectivePath.claudeProjectPathEncoded
         let fallbackSessionFilePath = "\(claudeDataPath)/projects/\(encodedPath)/\(sessionId).jsonl"
         if providerKind == .claude,
@@ -3389,7 +3383,7 @@ public final class CLISessionsViewModel {
            let sessionFilePath {
           let newSession = CLISession(
             id: sessionId,
-            projectPath: worktree.path,
+            projectPath: pending.projectPath,
             branchName: worktree.name,
             isWorktree: worktree.isWorktree,
             lastActivityAt: Date(),
@@ -3446,7 +3440,7 @@ public final class CLISessionsViewModel {
   @MainActor
   private func pollForNewClaudeSessionFallback(pending: PendingHubSession, worktree: WorktreeBranch) async {
     let claudeDataPath = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude"
-    let encodedPath = worktree.path.claudeProjectPathEncoded
+    let encodedPath = claudeProjectPath(for: pending).claudeProjectPathEncoded
     let projectDir = "\(claudeDataPath)/projects/\(encodedPath)"
 #if DEBUG
     AppLogger.watcher.debug(
@@ -3546,6 +3540,7 @@ public final class CLISessionsViewModel {
 
     if let meta = findRecentCodexSession(
       in: knownFiles,
+      pending: pending,
       worktree: worktree,
       pendingStartedAt: pending.startedAt
     ) {
@@ -3586,6 +3581,7 @@ public final class CLISessionsViewModel {
 
       if let meta = findRecentCodexSession(
         in: newFiles.isEmpty ? currentFiles : newFiles,
+        pending: pending,
         worktree: worktree,
         pendingStartedAt: pending.startedAt
       ) {
@@ -3604,6 +3600,7 @@ public final class CLISessionsViewModel {
 
   private func findRecentCodexSession(
     in filePaths: Set<String>,
+    pending: PendingHubSession,
     worktree: WorktreeBranch,
     pendingStartedAt: Date
   ) -> CodexSessionMeta? {
@@ -3615,7 +3612,7 @@ public final class CLISessionsViewModel {
     for path in filePaths {
       guard let modifiedAt = fileModificationDate(path), modifiedAt >= cutoff else { continue }
       guard let meta = CodexSessionFileScanner.readSessionMeta(from: path) else { continue }
-      guard codexSessionMatchesWorktree(meta, worktree: worktree) else { continue }
+      guard codexSessionMatchesPending(meta, pending: pending, worktree: worktree) else { continue }
 
       if let current = newest {
         if modifiedAt > current.modifiedAt {
@@ -3629,8 +3626,15 @@ public final class CLISessionsViewModel {
     return newest?.meta
   }
 
-  private func codexSessionMatchesWorktree(_ meta: CodexSessionMeta, worktree: WorktreeBranch) -> Bool {
-    meta.projectPath == worktree.path || meta.projectPath.hasPrefix(worktree.path + "/")
+  private func codexSessionMatchesPending(
+    _ meta: CodexSessionMeta,
+    pending: PendingHubSession,
+    worktree: WorktreeBranch
+  ) -> Bool {
+    meta.projectPath == pending.projectPath
+      || meta.projectPath.hasPrefix(pending.projectPath + "/")
+      || meta.projectPath == worktree.path
+      || meta.projectPath.hasPrefix(worktree.path + "/")
   }
 
   private func fileModificationDate(_ path: String) -> Date? {

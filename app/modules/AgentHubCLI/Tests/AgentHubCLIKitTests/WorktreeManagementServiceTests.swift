@@ -94,6 +94,41 @@ enum GitFixtureError: Error {
   case commandFailed(command: String, output: String, error: String)
 }
 
+private func seedMonorepoLikePaths(in fixture: GitRepoFixture) throws {
+  let files = [
+    "ios/features/payments/Feature.swift": "struct Feature {}\n",
+    "android/app/build.gradle": "plugins {}\n",
+    "ribbons/README.md": "ribbons\n",
+    ".agents/README.md": "agents\n",
+    ".claude/README.md": "claude\n",
+    ".claude-plugin/README.md": "plugin\n",
+    "scripts/git_hooks_support/hook_tooling": "return 0\n",
+    "scripts/git_support/README.md": "git support\n"
+  ]
+
+  for (relativePath, contents) in files {
+    let path = fixture.repoPath + "/" + relativePath
+    try FileManager.default.createDirectory(
+      atPath: (path as NSString).deletingLastPathComponent,
+      withIntermediateDirectories: true
+    )
+    try contents.write(toFile: path, atomically: true, encoding: .utf8)
+  }
+
+  try fixture.runGit("add", ".")
+  try fixture.runGit("commit", "-m", "monorepo paths")
+}
+
+private func installHookThatRequiresSparseSupport(in fixture: GitRepoFixture) throws {
+  let hookPath = fixture.repoPath + "/.git/hooks/post-checkout"
+  let contents = """
+  #!/bin/sh
+  . "$(git rev-parse --show-toplevel)/scripts/git_hooks_support/hook_tooling"
+  """
+  try contents.write(toFile: hookPath, atomically: true, encoding: .utf8)
+  try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hookPath)
+}
+
 private actor WorktreeProgressRecorder {
   private var values: [WorktreeCreationProgress] = []
 
@@ -182,6 +217,95 @@ struct WorktreeConventionTests {
     )
 
     #expect(FileManager.default.fileExists(atPath: path + "/BASE.md"))
+  }
+
+  @Test("Creates sparse agent worktree from nested iOS start path")
+  func createsSparseAgentWorktreeFromNestedIOSStartPath() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try seedMonorepoLikePaths(in: fixture)
+    try installHookThatRequiresSparseSupport(in: fixture)
+
+    let startPath = fixture.repoPath + "/ios/features/payments"
+    let service = WorktreeManagementService()
+    let creation = try await service.createAgentWorktreeWithNewBranch(
+      at: startPath,
+      startPath: startPath,
+      newBranchName: "feature/sparse-ios",
+      directoryName: "feature-sparse-ios",
+      startPoint: nil,
+      sparseProfile: nil,
+      fullCheckout: false
+    )
+
+    #expect(creation.worktreePath == fixture.parentDir + "/feature-sparse-ios")
+    #expect(creation.launchPath == creation.worktreePath + "/ios/features/payments")
+    #expect(creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths.contains("ios"))
+    #expect(creation.sparseCheckoutPaths.contains("scripts/git_hooks_support"))
+    #expect(FileManager.default.fileExists(atPath: creation.launchPath))
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/ios/features/payments/Feature.swift"))
+    #expect(!FileManager.default.fileExists(atPath: creation.worktreePath + "/android/app/build.gradle"))
+
+    let sparseList = try fixture.runGit("sparse-checkout", "list", at: creation.worktreePath)
+    #expect(sparseList.components(separatedBy: .newlines).contains("ios"))
+    #expect(sparseList.components(separatedBy: .newlines).contains("scripts/git_hooks_support"))
+    #expect(try fixture.runGit("status", "--short", at: creation.worktreePath).isEmpty)
+  }
+
+  @Test("Agent sparse profile filters absent support paths")
+  func agentSparseProfileFiltersAbsentSupportPaths() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try FileManager.default.createDirectory(
+      atPath: fixture.repoPath + "/ios/app",
+      withIntermediateDirectories: true
+    )
+    try "app".write(toFile: fixture.repoPath + "/ios/app/App.swift", atomically: true, encoding: .utf8)
+    try fixture.runGit("add", ".")
+    try fixture.runGit("commit", "-m", "ios app")
+
+    let service = WorktreeManagementService()
+    let creation = try await service.createAgentWorktreeWithNewBranch(
+      at: fixture.repoPath + "/ios/app",
+      startPath: fixture.repoPath + "/ios/app",
+      newBranchName: "feature/sparse-no-support",
+      directoryName: "feature-sparse-no-support",
+      startPoint: nil,
+      sparseProfile: nil,
+      fullCheckout: false
+    )
+
+    #expect(creation.sparseCheckoutPaths == ["ios"])
+    #expect(FileManager.default.fileExists(atPath: creation.launchPath))
+    #expect(try fixture.runGit("status", "--short", at: creation.worktreePath).isEmpty)
+  }
+
+  @Test("Agent worktree can explicitly use full checkout fallback")
+  func agentWorktreeCanUseFullCheckoutFallback() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try seedMonorepoLikePaths(in: fixture)
+
+    let startPath = fixture.repoPath + "/ios/features/payments"
+    let service = WorktreeManagementService()
+    let creation = try await service.createAgentWorktreeWithNewBranch(
+      at: startPath,
+      startPath: startPath,
+      newBranchName: "feature/full-agent",
+      directoryName: "feature-full-agent",
+      startPoint: nil,
+      sparseProfile: nil,
+      fullCheckout: true
+    )
+
+    #expect(!creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths.isEmpty)
+    #expect(creation.launchPath == creation.worktreePath + "/ios/features/payments")
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/android/app/build.gradle"))
   }
 
   @Test("Detects fetched origin main as the remote base branch")

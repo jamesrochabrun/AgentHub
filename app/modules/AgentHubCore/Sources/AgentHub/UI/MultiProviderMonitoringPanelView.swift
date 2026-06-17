@@ -106,7 +106,7 @@ enum ProviderMonitoringItem: Identifiable {
   var projectPath: String {
     switch self {
     case .pending(_, _, let pending):
-      return pending.worktree.path
+      return pending.projectPath
     case .monitored(_, _, let session, _):
       return session.projectPath
     }

@@ -162,25 +162,59 @@ struct CreateWorktree: AsyncParsableCommand {
   @Option(name: .long, help: "Prompt for the launched session. Required with --launch-session.")
   var prompt: String?
 
+  @Option(name: .long, help: "Agent launch directory used to infer sparse checkout. Defaults to the repository path.")
+  var startPath: String?
+
+  @Option(name: .long, help: "Sparse checkout path for --launch-session. Repeat to provide an explicit profile.")
+  var sparseProfile: [String] = []
+
+  @Flag(name: .long, help: "With --launch-session, create a full checkout instead of an inferred sparse checkout.")
+  var fullCheckout = false
+
   func run() async throws {
     let service = WorktreeManagementService()
     let directoryName = WorktreeNaming.worktreeDirectoryName(for: branch)
-    let path = try await service.createWorktreeWithNewBranch(
-      at: options.repositoryPath,
-      newBranchName: branch,
-      directoryName: directoryName,
-      startPoint: from
-    )
+    let creation: WorktreeCreationLocation
+    if launchSession {
+      creation = try await service.createAgentWorktreeWithNewBranch(
+        at: options.repositoryPath,
+        startPath: startPath,
+        newBranchName: branch,
+        directoryName: directoryName,
+        startPoint: from,
+        sparseProfile: sparseProfile.isEmpty ? nil : WorktreeSparseCheckoutProfile(paths: sparseProfile),
+        fullCheckout: fullCheckout
+      )
+    } else {
+      let path = try await service.createWorktreeWithNewBranch(
+        at: options.repositoryPath,
+        newBranchName: branch,
+        directoryName: directoryName,
+        startPoint: from
+      )
+      creation = WorktreeCreationLocation(
+        worktreePath: path,
+        launchPath: path,
+        isSparseCheckout: false
+      )
+    }
     let launchRequestId = try await queueLaunchIfRequested(
       launchSession: launchSession,
       provider: provider,
       prompt: prompt,
       service: service,
       repositoryPath: options.repositoryPath,
-      worktreePath: path,
+      worktreePath: creation.worktreePath,
+      launchPath: creation.launchPath,
       branch: branch
     )
-    try printResult(path: path, branch: branch, launchRequestId: launchRequestId, json: options.json)
+    try printResult(
+      path: creation.worktreePath,
+      branch: branch,
+      launchPath: creation.launchPath,
+      launchRequestId: launchRequestId,
+      json: options.json
+    )
   }
 }
 
@@ -213,6 +247,16 @@ struct CheckoutWorktree: AsyncParsableCommand {
       directoryName: directoryName
     )
 
+    let launchPath: String?
+    if launchSession {
+      launchPath = try await service.launchPath(
+        forStartPath: options.repositoryPath,
+        repoPath: options.repositoryPath,
+        worktreePath: resolvedPath
+      )
+    } else {
+      launchPath = nil
+    }
     let launchRequestId = try await queueLaunchIfRequested(
       launchSession: launchSession,
       provider: provider,
@@ -220,9 +264,16 @@ struct CheckoutWorktree: AsyncParsableCommand {
       service: service,
       repositoryPath: options.repositoryPath,
       worktreePath: resolvedPath,
+      launchPath: launchPath,
       branch: branch
     )
-    try printResult(path: resolvedPath, branch: branch, launchRequestId: launchRequestId, json: options.json)
+    try printResult(
+      path: resolvedPath,
+      branch: branch,
+      launchPath: launchPath,
+      launchRequestId: launchRequestId,
+      json: options.json
+    )
   }
 }
 
@@ -278,6 +329,7 @@ struct PrintWorktreeRoot: AsyncParsableCommand {
 private struct WorktreePathResult: Codable {
   let path: String
   let branch: String
+  let launchPath: String?
   let launchRequestId: String?
 }
 
@@ -302,9 +354,20 @@ private enum JSONPrinter {
   }
 }
 
-private func printResult(path: String, branch: String, launchRequestId: String? = nil, json: Bool) throws {
+private func printResult(
+  path: String,
+  branch: String,
+  launchPath: String? = nil,
+  launchRequestId: String? = nil,
+  json: Bool
+) throws {
   if json {
-    try JSONPrinter.print(WorktreePathResult(path: path, branch: branch, launchRequestId: launchRequestId))
+    try JSONPrinter.print(WorktreePathResult(
+      path: path,
+      branch: branch,
+      launchPath: launchPath == path ? nil : launchPath,
+      launchRequestId: launchRequestId
+    ))
   } else {
     Swift.print(path)
   }
@@ -317,6 +380,7 @@ private func queueLaunchIfRequested(
   service: WorktreeManagementService,
   repositoryPath: String,
   worktreePath: String,
+  launchPath: String?,
   branch: String
 ) async throws -> String? {
   guard launchSession else { return nil }
@@ -331,6 +395,7 @@ private func queueLaunchIfRequested(
     provider: launchProvider,
     repositoryPath: mainRepositoryPath,
     worktreePath: worktreePath,
+    launchPath: launchPath == worktreePath ? nil : launchPath,
     branchName: branch,
     prompt: prompt,
     sourceProvider: sourceProvider,
