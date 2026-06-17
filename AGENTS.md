@@ -45,6 +45,11 @@ Concrete types: `CLISessionMonitorService` / `CodexSessionMonitorService`, `Sess
 - Read `AccessorySessions.md` before editing accessory terminal panes, sub-session launch/detection, terminal workspace linked-session restore, or `session_relationships`.
 - AI override flags are applied only when starting a new CLI session, never when resuming an existing one
 - AgentHub-created worktrees live as sibling directories beside the main repository. Do not create a repo-local `.worktrees` folder or add `.worktrees/` to `.git/info/exclude`.
+- Worktree Git roots stay at the repository root. For monorepos, do not try to create `ios`/`android` subdirectory Git roots; launch agents from the requested subdirectory inside the repo-root worktree instead.
+- Preserve the distinction between `worktree.path` and `launchPath`: register, group, delete, and clean up using the worktree root; start the embedded terminal and detect pending session files using the launch path when one is provided.
+- Sparse agent worktree creation is only the default for known monorepo profiles (`ios`, `android`, `ribbons`, `tools/ios/SproutApp`) or explicit sparse profiles. Repo-root starts and generic/non-monorepo subdirectory starts must fall back to full checkouts unless a caller explicitly asks for sparse checkout.
+- Sparse profiles must be installed before checkout materialization and must not break repo hooks. Keep shared support paths such as `.agents`, `.claude`, `.claude-plugin`, `scripts/git_hooks_support`, and `scripts/git_support` in known agent profiles when those paths exist.
+- Never disable sparse checkout as an expansion strategy. Add paths with `git sparse-checkout add -- <path>` or route through the shared expansion helper when one exists.
 - Empty or unsupported saved provider settings must fall back to the CLI's own defaults instead of emitting override flags
 - UserDefaults is only for app/UI preferences. Session/workspace management state must live in SQLite via `SessionMetadataStore`.
 - Never add `AgentHubDefaults` keys for selected repositories, monitored session IDs, session restore state, repo mappings, terminal workspace state, or terminal/dev-server process cleanup state.
