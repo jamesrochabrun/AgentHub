@@ -5,16 +5,16 @@
 //  Central service provider for AgentHub
 //
 
-import AgentHubGitHub
-import AgentHubGitDiff
 import AgentHubCLIKit
-import SimulatorPreview
+import AgentHubGitDiff
+import AgentHubGitHub
+import ClaudeCodeClient
 import Foundation
 import os
-import ClaudeCodeClient
+import SimulatorPreview
 
 #if canImport(AppKit)
-import AppKit
+  import AppKit
 #endif
 
 /// Central service provider that manages all AgentHub services
@@ -36,7 +36,6 @@ import AppKit
 /// ```
 @MainActor
 public final class AgentHubProvider {
-
   // MARK: - Configuration
 
   /// The configuration used by this provider
@@ -52,58 +51,41 @@ public final class AgentHubProvider {
   private let metadataStoreOverride: SessionMetadataStore?
   private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
   private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
+  private let simulatorRunRequestMonitorOverride: (any SimulatorRunRequestMonitorProtocol)?
 
   // MARK: - Lazy Services
 
   /// Monitor service for tracking CLI sessions
-  public private(set) lazy var monitorService: CLISessionMonitorService = {
-    CLISessionMonitorService(claudeDataPath: configuration.claudeDataPath, metadataStore: metadataStore)
-  }()
+  public private(set) lazy var monitorService: CLISessionMonitorService = .init(claudeDataPath: configuration.claudeDataPath, metadataStore: metadataStore)
 
   /// Monitor service for tracking Codex sessions
-  public private(set) lazy var codexMonitorService: CodexSessionMonitorService = {
-    CodexSessionMonitorService(codexDataPath: configuration.codexDataPath, metadataStore: metadataStore)
-  }()
+  public private(set) lazy var codexMonitorService: CodexSessionMonitorService = .init(codexDataPath: configuration.codexDataPath, metadataStore: metadataStore)
 
   /// Git worktree service for branch/worktree operations
-  public private(set) lazy var gitService: GitWorktreeService = {
-    GitWorktreeService()
-  }()
+  public private(set) lazy var gitService: GitWorktreeService = .init()
 
   /// Global stats service for Claude usage metrics
-  public private(set) lazy var statsService: GlobalStatsService = {
-    GlobalStatsService(claudePath: configuration.claudeDataPath)
-  }()
+  public private(set) lazy var statsService: GlobalStatsService = .init(claudePath: configuration.claudeDataPath)
 
   /// Global stats service for Codex usage metrics
-  public private(set) lazy var codexStatsService: CodexGlobalStatsService = {
-    CodexGlobalStatsService(codexPath: configuration.codexDataPath)
-  }()
+  public private(set) lazy var codexStatsService: CodexGlobalStatsService = .init(codexPath: configuration.codexDataPath)
 
   /// Codex file watcher for real-time monitoring
-  private lazy var codexFileWatcher: CodexSessionFileWatcher = {
-    CodexSessionFileWatcher(codexPath: configuration.codexDataPath)
-  }()
+  private lazy var codexFileWatcher: CodexSessionFileWatcher = .init(codexPath: configuration.codexDataPath)
 
   /// Claude file watcher for real-time monitoring. Wired to the approval hook
   /// sidecar so pending-approval state can be surfaced while Claude Code CLI
   /// buffers its JSONL writes.
-  private lazy var claudeFileWatcher: SessionFileWatcher = {
-    SessionFileWatcher(
-      claudePath: configuration.claudeDataPath,
-      hookSidecarWatcher: claudeHookSidecarWatcher
-    )
-  }()
+  private lazy var claudeFileWatcher: SessionFileWatcher = .init(
+    claudePath: configuration.claudeDataPath,
+    hookSidecarWatcher: claudeHookSidecarWatcher
+  )
 
   /// Shared claim store gating the approval hook script.
-  public private(set) lazy var approvalClaimStore: any ApprovalClaimStoreProtocol = {
-    ApprovalClaimStore()
-  }()
+  public private(set) lazy var approvalClaimStore: any ApprovalClaimStoreProtocol = ApprovalClaimStore()
 
   /// Watches the approval sidecar directory populated by the installed hook.
-  public private(set) lazy var claudeHookSidecarWatcher: any ClaudeHookSidecarWatcherProtocol = {
-    ClaudeHookSidecarWatcher()
-  }()
+  public private(set) lazy var claudeHookSidecarWatcher: any ClaudeHookSidecarWatcherProtocol = ClaudeHookSidecarWatcher()
 
   /// Installs/uninstalls the AgentHub approval hook per worktree.
   public private(set) lazy var claudeHookInstaller: any ClaudeHookInstallerProtocol = {
@@ -115,41 +97,27 @@ public final class AgentHubProvider {
   }()
 
   /// Claude search service
-  private lazy var claudeSearchService: GlobalSearchService = {
-    GlobalSearchService(claudeDataPath: configuration.claudeDataPath)
-  }()
+  private lazy var claudeSearchService: GlobalSearchService = .init(claudeDataPath: configuration.claudeDataPath)
 
   /// Codex search service
-  private lazy var codexSearchService: CodexSearchService = {
-    CodexSearchService(codexDataPath: configuration.codexDataPath)
-  }()
+  private lazy var codexSearchService: CodexSearchService = .init(codexDataPath: configuration.codexDataPath)
 
   /// Display settings for stats visualization
-  public private(set) lazy var displaySettings: StatsDisplaySettings = {
-    StatsDisplaySettings(configuration.statsDisplayMode)
-  }()
+  public private(set) lazy var displaySettings: StatsDisplaySettings = .init(configuration.statsDisplayMode)
 
   /// Cached project-level detector for web preview button visibility.
-  lazy var webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = {
-    WebPreviewCandidateService.shared
-  }()
+  lazy var webPreviewCandidateService: any WebPreviewCandidateServiceProtocol = WebPreviewCandidateService.shared
 
   /// Discovers and routes MCP App UI resources exposed by configured MCP servers.
-  public private(set) lazy var mcpAppDiscoveryService: any MCPAppDiscoveryServiceProtocol = {
-    MCPAppDiscoveryService.shared
-  }()
+  public private(set) lazy var mcpAppDiscoveryService: any MCPAppDiscoveryServiceProtocol = MCPAppDiscoveryService.shared
 
   /// Cached project-level detector for inline diff tab visibility.
-  lazy var diffAvailabilityService: any DiffAvailabilityServiceProtocol = {
-    DiffAvailabilityService.shared
-  }()
+  lazy var diffAvailabilityService: any DiffAvailabilityServiceProtocol = DiffAvailabilityService.shared
 
   /// Live in-app iOS Simulator capture/streaming. All capture stays in-process;
   /// no network, no Screen Recording/Accessibility permissions. See the
   /// `SimulatorPreview` module README for the privacy contract.
-  public private(set) lazy var simulatorStreamService: any SimulatorStreamServiceProtocol = {
-    SimulatorStreamService.shared
-  }()
+  public private(set) lazy var simulatorStreamService: any SimulatorStreamServiceProtocol = SimulatorStreamService.shared
 
   /// Session metadata store for user-provided session names
   public private(set) lazy var metadataStore: SessionMetadataStore? = {
@@ -172,110 +140,82 @@ public final class AgentHubProvider {
 
   /// Shared `claude -p` invocation service used by short, non-interactive
   /// callers (branch naming, inline-edit style reconciliation, etc.).
-  public private(set) lazy var programmaticClaudeService: any ClaudeProgrammaticServiceProtocol = {
-    ClaudeProgrammaticService(
-      additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths)
-    )
-  }()
+  public private(set) lazy var programmaticClaudeService: any ClaudeProgrammaticServiceProtocol = ClaudeProgrammaticService(
+    additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths)
+  )
 
   /// Claude-backed service for naming launcher-generated worktree branches.
-  public private(set) lazy var worktreeBranchNamingService: any WorktreeBranchNamingServiceProtocol = {
-    ClaudeWorktreeBranchNamingService(programmaticService: programmaticClaudeService)
-  }()
+  public private(set) lazy var worktreeBranchNamingService: any WorktreeBranchNamingServiceProtocol = ClaudeWorktreeBranchNamingService(programmaticService: programmaticClaudeService)
 
   /// Claude-backed local audit of AgentHub's current session/worktree state.
-  public private(set) lazy var sessionInvestigationService: any SessionInvestigationServiceProtocol = {
-    ClaudeSessionInvestigationService(programmaticService: programmaticClaudeService)
-  }()
+  public private(set) lazy var sessionInvestigationService: any SessionInvestigationServiceProtocol = ClaudeSessionInvestigationService(programmaticService: programmaticClaudeService)
 
   /// Reformats Canvas inline-toolbar edits so the persisted file matches the
   /// project's existing code style. Runs Haiku via `claude -p` after the
   /// debounced direct write so the UX stays snappy.
-  public private(set) lazy var inlineEditReconciler: any InlineEditStyleReconcilerProtocol = {
-    ClaudeInlineEditStyleReconciler(programmaticService: programmaticClaudeService)
-  }()
+  public private(set) lazy var inlineEditReconciler: any InlineEditStyleReconcilerProtocol = ClaudeInlineEditStyleReconciler(programmaticService: programmaticClaudeService)
 
   /// Success sound service for completed launcher-created worktrees.
-  public private(set) lazy var worktreeSuccessSoundService: any WorktreeSuccessSoundServiceProtocol = {
-    WorktreeSuccessSoundService()
-  }()
+  public private(set) lazy var worktreeSuccessSoundService: any WorktreeSuccessSoundServiceProtocol = WorktreeSuccessSoundService()
 
   /// Watches requests written by the bundled `agenthub` helper.
-  public private(set) lazy var worktreeLaunchRequestMonitor: any WorktreeLaunchRequestMonitorProtocol = {
-    worktreeLaunchRequestMonitorOverride ?? WorktreeLaunchRequestMonitor()
-  }()
+  public private(set) lazy var worktreeLaunchRequestMonitor: any WorktreeLaunchRequestMonitorProtocol = worktreeLaunchRequestMonitorOverride ?? WorktreeLaunchRequestMonitor()
 
   /// Watches worktree deletion cleanup requests written by the bundled `agenthub` helper.
-  public private(set) lazy var worktreeDeletionRequestMonitor: any WorktreeDeletionRequestMonitorProtocol = {
-    worktreeDeletionRequestMonitorOverride ?? WorktreeDeletionRequestMonitor()
-  }()
+  public private(set) lazy var worktreeDeletionRequestMonitor: any WorktreeDeletionRequestMonitorProtocol = worktreeDeletionRequestMonitorOverride ?? WorktreeDeletionRequestMonitor()
 
-  public private(set) lazy var worktreeLaunchRequestHandler: any WorktreeLaunchRequestHandlingProtocol = {
-    WorktreeLaunchRequestHandler(
-      claudeViewModel: claudeSessionsViewModel,
-      codexViewModel: codexSessionsViewModel
-    )
-  }()
+  /// Watches simulator Build & Run requests written by the bundled `agenthub` helper.
+  public private(set) lazy var simulatorRunRequestMonitor: any SimulatorRunRequestMonitorProtocol = simulatorRunRequestMonitorOverride ?? SimulatorRunRequestMonitor()
 
-  public private(set) lazy var worktreeDeletionRequestHandler: any WorktreeDeletionRequestHandlingProtocol = {
-    WorktreeDeletionRequestHandler(
-      claudeViewModel: claudeSessionsViewModel,
-      codexViewModel: codexSessionsViewModel
-    )
-  }()
+  public private(set) lazy var worktreeLaunchRequestHandler: any WorktreeLaunchRequestHandlingProtocol = WorktreeLaunchRequestHandler(
+    claudeViewModel: claudeSessionsViewModel,
+    codexViewModel: codexSessionsViewModel
+  )
+
+  public private(set) lazy var worktreeDeletionRequestHandler: any WorktreeDeletionRequestHandlingProtocol = WorktreeDeletionRequestHandler(
+    claudeViewModel: claudeSessionsViewModel,
+    codexViewModel: codexSessionsViewModel
+  )
+
+  public private(set) lazy var simulatorRunRequestHandler: any SimulatorRunRequestHandlingProtocol = SimulatorRunRequestHandler(simulatorService: SimulatorService.shared)
 
   /// Watches the worktree-progress sidecar directory the `agenthub` CLI writes
   /// during MCP-initiated creations, so the app can surface live git progress.
-  public private(set) lazy var worktreeProgressSidecarWatcher: any WorktreeProgressSidecarWatcherProtocol = {
-    WorktreeProgressSidecarWatcher()
-  }()
+  public private(set) lazy var worktreeProgressSidecarWatcher: any WorktreeProgressSidecarWatcherProtocol = WorktreeProgressSidecarWatcher()
 
   /// Posts the "worktrees ready" macOS notification when a batch completes.
-  public private(set) lazy var worktreeReadyNotificationService: any WorktreeReadyNotificationServiceProtocol = {
-    WorktreeReadyNotificationService()
-  }()
+  public private(set) lazy var worktreeReadyNotificationService: any WorktreeReadyNotificationServiceProtocol = WorktreeReadyNotificationService()
 
   /// App-wide coordinator unifying worktree creation progress (side panel + MCP)
   /// for the top bar; fires the completion sound/notification once per batch.
-  public private(set) lazy var worktreeGenerationProgressCoordinator: WorktreeGenerationProgressCoordinator = {
-    WorktreeGenerationProgressCoordinator(
-      soundService: worktreeSuccessSoundService,
-      notificationService: worktreeReadyNotificationService
-    )
-  }()
+  public private(set) lazy var worktreeGenerationProgressCoordinator: WorktreeGenerationProgressCoordinator = .init(
+    soundService: worktreeSuccessSoundService,
+    notificationService: worktreeReadyNotificationService
+  )
 
   private var isWorktreeLaunchRequestMonitoringStarted = false
   private var isWorktreeDeletionRequestMonitoringStarted = false
+  private var isSimulatorRunRequestMonitoringStarted = false
   private var isWorktreeProgressMonitoringStarted = false
 
   // MARK: - GitHub Integration
 
   /// GitHub CLI service for PR/issue operations
-  public private(set) lazy var gitHubService: any GitHubCLIServiceProtocol = {
-    GitHubCLIService()
-  }()
+  public private(set) lazy var gitHubService: any GitHubCLIServiceProtocol = GitHubCLIService()
 
   /// Shared session-card GitHub quick access coordinator
-  public private(set) lazy var gitHubQuickAccessCoordinator: any SessionGitHubQuickAccessCoordinatorProtocol = {
-    SessionGitHubQuickAccessCoordinator(service: gitHubService)
-  }()
+  public private(set) lazy var gitHubQuickAccessCoordinator: any SessionGitHubQuickAccessCoordinatorProtocol = SessionGitHubQuickAccessCoordinator(service: gitHubService)
 
   /// Shared GitHub PR/check observation service for panels and session rows
-  public private(set) lazy var gitHubPRObservationService: any GitHubPRObservationServiceProtocol = {
-    GitHubPRObservationService(service: gitHubService)
-  }()
+  public private(set) lazy var gitHubPRObservationService: any GitHubPRObservationServiceProtocol = GitHubPRObservationService(service: gitHubService)
 
   // MARK: - Global Session Control Panel
 
   /// Routes global-panel session selections into the main sessions UI.
-  public private(set) lazy var globalSessionSelectionRouter: GlobalSessionSelectionRouter = {
-    GlobalSessionSelectionRouter()
-  }()
+  public private(set) lazy var globalSessionSelectionRouter: GlobalSessionSelectionRouter = .init()
 
   /// Coordinates the opt-in global hotkey and floating sessions panel.
-  public private(set) lazy var globalSessionControlPanelCoordinator: GlobalSessionControlPanelCoordinator = {
-    GlobalSessionControlPanelCoordinator(provider: self)
-  }()
+  public private(set) lazy var globalSessionControlPanelCoordinator: GlobalSessionControlPanelCoordinator = .init(provider: self)
 
   public func makeGlobalSessionControlPanelPresenter(
     defaults: UserDefaults = .standard
@@ -286,31 +226,21 @@ public final class AgentHubProvider {
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes
-  public private(set) lazy var themeManager: ThemeManager = {
-    ThemeManager()
-  }()
+  public private(set) lazy var themeManager: ThemeManager = .init()
 
   // MARK: - View Models
 
   /// Claude sessions view model - created lazily and cached
-  public private(set) lazy var claudeSessionsViewModel: CLISessionsViewModel = {
-    makeSessionsViewModel(providerKind: .claude)
-  }()
+  public private(set) lazy var claudeSessionsViewModel: CLISessionsViewModel = makeSessionsViewModel(providerKind: .claude)
 
   /// Codex sessions view model - created lazily and cached
-  public private(set) lazy var codexSessionsViewModel: CLISessionsViewModel = {
-    makeSessionsViewModel(providerKind: .codex)
-  }()
+  public private(set) lazy var codexSessionsViewModel: CLISessionsViewModel = makeSessionsViewModel(providerKind: .codex)
 
   /// Backwards-compatible default sessions view model (Claude)
-  public private(set) lazy var sessionsViewModel: CLISessionsViewModel = {
-    claudeSessionsViewModel
-  }()
+  public private(set) lazy var sessionsViewModel: CLISessionsViewModel = claudeSessionsViewModel
 
   /// Intelligence view model - created lazily and cached
-  public private(set) lazy var intelligenceViewModel: IntelligenceViewModel = {
-    IntelligenceViewModel(processService: createProcessService())
-  }()
+  public private(set) lazy var intelligenceViewModel: IntelligenceViewModel = .init(processService: createProcessService())
 
   // MARK: - Initialization
 
@@ -329,15 +259,17 @@ public final class AgentHubProvider {
     },
     metadataStore: SessionMetadataStore? = nil,
     worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
-    worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil
+    worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil,
+    simulatorRunRequestMonitor: (any SimulatorRunRequestMonitorProtocol)? = nil
   ) {
     self.configuration = configuration
-    self.terminalBackend = .storedPreference
+    terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
     self.globalSessionControlPanelPresenterFactory = globalSessionControlPanelPresenterFactory
-    self.metadataStoreOverride = metadataStore
-    self.worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
-    self.worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
+    metadataStoreOverride = metadataStore
+    worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
+    worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
+    simulatorRunRequestMonitorOverride = simulatorRunRequestMonitor
     if let metadataStore {
       Task {
         await TerminalProcessRegistry.shared.configure(store: metadataStore)
@@ -348,7 +280,7 @@ public final class AgentHubProvider {
     let defaults = UserDefaults.standard
     defaults.register(defaults: [
       AgentHubDefaults.globalSessionPanelEnabled: true,
-      AgentHubDefaults.globalSessionPanelDisplayMode: 0
+      AgentHubDefaults.globalSessionPanelDisplayMode: 0,
     ])
 
     // Claude command: if developer provided non-default, lock it
@@ -496,6 +428,7 @@ public final class AgentHubProvider {
     startWorktreeLaunchQueueMonitoring()
     startWorktreeDeletionQueueMonitoring()
     startWorktreeProgressMonitoring()
+    startSimulatorRunQueueMonitoring()
   }
 
   private func startWorktreeProgressMonitoring() {
@@ -545,6 +478,21 @@ public final class AgentHubProvider {
     }
   }
 
+  private func startSimulatorRunQueueMonitoring() {
+    guard !isSimulatorRunRequestMonitoringStarted else { return }
+    isSimulatorRunRequestMonitoringStarted = true
+
+    let monitor = simulatorRunRequestMonitor
+    Task {
+      await monitor.start { [weak self] queued in
+        guard let self else {
+          throw SimulatorRunRequestHandlingError.invalidTarget
+        }
+        try await self.simulatorRunRequestHandler.handle(queued.request)
+      }
+    }
+  }
+
   public func stopWorktreeLaunchRequestMonitoring() {
     if isWorktreeLaunchRequestMonitoringStarted {
       isWorktreeLaunchRequestMonitoringStarted = false
@@ -563,6 +511,16 @@ public final class AgentHubProvider {
         await monitor.stop()
       }
     }
+
+    if isSimulatorRunRequestMonitoringStarted {
+      isSimulatorRunRequestMonitoringStarted = false
+
+      let monitor = simulatorRunRequestMonitor
+      Task {
+        await monitor.stop()
+      }
+    }
+
   }
 
   /// Sweeps any previously-installed approval hooks, wipes stale claim files,
@@ -640,21 +598,21 @@ public final class AgentHubProvider {
 
   public func relaunchApplication() {
     #if canImport(AppKit)
-    let bundlePath = Bundle.main.bundlePath
-    let escapedBundlePath = shellEscapedPath(bundlePath)
-    let script = "sleep 1; /usr/bin/open -n \(escapedBundlePath)"
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/sh")
-    process.arguments = ["-c", script]
+      let bundlePath = Bundle.main.bundlePath
+      let escapedBundlePath = shellEscapedPath(bundlePath)
+      let script = "sleep 1; /usr/bin/open -n \(escapedBundlePath)"
+      let process = Process()
+      process.executableURL = URL(fileURLWithPath: "/bin/sh")
+      process.arguments = ["-c", script]
 
-    do {
-      try process.run()
-      NSApplication.shared.terminate(nil)
-    } catch {
-      AppLogger.session.error("Failed to relaunch AgentHub: \(error.localizedDescription)")
-    }
+      do {
+        try process.run()
+        NSApplication.shared.terminate(nil)
+      } catch {
+        AppLogger.session.error("Failed to relaunch AgentHub: \(error.localizedDescription)")
+      }
     #else
-    AppLogger.session.error("Relaunch is unavailable outside AppKit")
+      AppLogger.session.error("Relaunch is unavailable outside AppKit")
     #endif
   }
 

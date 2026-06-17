@@ -6,6 +6,9 @@ struct AgentHubMCPServer {
   private let queue = WorktreeLaunchRequestQueue()
   private let deletionQueue = WorktreeDeletionRequestQueue()
   private let progressQueue = WorktreeProgressQueue()
+  private let simulatorContextStore = SimulatorSessionContextStore()
+  private let simulatorRunQueue = SimulatorRunRequestQueue()
+  private let simulatorRecordingService = SimulatorRecordingService()
 
   /// Hard ceiling on any single `tools/call`. Worktree creation normally
   /// completes in seconds and each underlying `git` invocation has its own
@@ -15,7 +18,8 @@ struct AgentHubMCPServer {
   /// tool-level error. Override with `AGENTHUB_MCP_TOOL_TIMEOUT_SECONDS`.
   private static let toolCallTimeout: Duration = {
     if let raw = ProcessInfo.processInfo.environment["AGENTHUB_MCP_TOOL_TIMEOUT_SECONDS"],
-       let seconds = Int(raw.trimmingCharacters(in: .whitespaces)), seconds > 0 {
+       let seconds = Int(raw.trimmingCharacters(in: .whitespaces)), seconds > 0
+    {
       return .seconds(seconds)
     }
     return .seconds(300)
@@ -32,7 +36,8 @@ struct AgentHubMCPServer {
     do {
       guard let data = line.data(using: .utf8),
             let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let method = object["method"] as? String else {
+            let method = object["method"] as? String
+      else {
         return
       }
 
@@ -45,12 +50,12 @@ struct AgentHubMCPServer {
         writeResponse(id: id, result: [
           "protocolVersion": protocolVersion,
           "capabilities": [
-            "tools": [:]
+            "tools": [:],
           ],
           "serverInfo": [
             "name": "agenthub",
-            "version": "1.0.0"
-          ]
+            "version": "1.0.0",
+          ],
         ])
 
       case "tools/list":
@@ -60,8 +65,11 @@ struct AgentHubMCPServer {
             createWorktreeSessionsToolSchema(),
             listWorktreesToolSchema(),
             deleteWorktreeToolSchema(),
-            planningToolSchema()
-          ]
+            planningToolSchema(),
+            simulatorStatusToolSchema(),
+            simulatorRunToolSchema(),
+            simulatorRecordToolSchema(),
+          ],
         ])
 
       case "tools/call":
@@ -122,7 +130,8 @@ struct AgentHubMCPServer {
 
   private func handleToolCall(params: [String: Any]?) async throws -> [String: Any] {
     guard let params,
-          let name = params["name"] as? String else {
+          let name = params["name"] as? String
+    else {
       throw MCPError.invalidRequest("Missing tool name.")
     }
     let arguments = params["arguments"] as? [String: Any] ?? [:]
@@ -154,6 +163,18 @@ struct AgentHubMCPServer {
     case "agent_hub_planning":
       let plan = try await buildDelegationPlan(arguments: arguments)
       return toolResult(text: planSummary(plan), structuredContent: planJSONObject(plan))
+
+    case "agenthub_simulator_status":
+      let status = try simulatorStatus(arguments: arguments)
+      return toolResult(text: status.summary, structuredContent: status.dictionary)
+
+    case "agenthub_simulator_run":
+      let result = try queueSimulatorRun(arguments: arguments)
+      return toolResult(text: result.summary, structuredContent: result.dictionary)
+
+    case "agenthub_simulator_record":
+      let result = try await recordSimulator(arguments: arguments)
+      return toolResult(text: result.summary, structuredContent: result.dictionary, isError: result.isError)
 
     default:
       throw MCPError.invalidRequest("Unknown AgentHub tool: \(name).")
@@ -388,6 +409,111 @@ struct AgentHubMCPServer {
     )
   }
 
+  private func simulatorStatus(arguments: [String: Any]) throws -> MCPSimulatorStatusResult {
+    let context = try simulatorContextStore.resolveContext(
+      provider: requestedSourceProvider(arguments: arguments),
+      sessionId: optionalString("sessionId", in: arguments) ?? sourceSessionId,
+      projectPath: simulatorProjectPath(arguments: arguments)
+    )
+    let contexts = try simulatorContextStore.contexts()
+    return MCPSimulatorStatusResult(activeContext: context, contexts: contexts)
+  }
+
+  private func queueSimulatorRun(arguments: [String: Any]) throws -> MCPSimulatorRunResult {
+    let target = try simulatorTarget(arguments: arguments, requiresProject: true)
+    guard let projectPath = target.projectPath else {
+      throw MCPError.invalidRequest("Missing simulator project path.")
+    }
+    let request = SimulatorRunRequest(
+      projectPath: projectPath,
+      udid: target.udid,
+      sourceProvider: sourceProvider,
+      sourceSessionId: sourceSessionId,
+      reason: optionalString("reason", in: arguments)
+    )
+    let queued = try simulatorRunQueue.enqueue(request)
+    return MCPSimulatorRunResult(
+      requestID: queued.request.id,
+      target: target,
+      context: target.context
+    )
+  }
+
+  private func recordSimulator(arguments: [String: Any]) async throws -> MCPSimulatorRecordResult {
+    let action = (optionalString("action", in: arguments) ?? "start").lowercased()
+    let target = try simulatorTarget(arguments: arguments, requiresProject: false)
+
+    switch action {
+    case "start":
+      let outputDirectory = optionalString("outputDirectory", in: arguments).map {
+        URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true)
+      }
+      let started = try await simulatorRecordingService.startRecording(
+        udid: target.udid,
+        outputDirectory: outputDirectory,
+        fileName: optionalString("fileName", in: arguments)
+      )
+      return .started(started, target: target)
+
+    case "stop":
+      let result = try await simulatorRecordingService.stopRecording(udid: target.udid)
+      return .stopped(result, target: target)
+
+    default:
+      throw MCPError.invalidRequest("Invalid simulator recording action '\(action)'. Expected start or stop.")
+    }
+  }
+
+  private func simulatorTarget(arguments: [String: Any], requiresProject: Bool) throws -> MCPSimulatorTarget {
+    let explicitProjectPath = simulatorProjectPath(arguments: arguments)
+    if let explicitUDID = optionalString("udid", in: arguments), !explicitUDID.isEmpty {
+      if requiresProject {
+        guard let projectPath = explicitProjectPath, !projectPath.isEmpty else {
+          throw MCPError.invalidRequest("Pass projectPath/repo when using an explicit simulator udid.")
+        }
+        return MCPSimulatorTarget(udid: explicitUDID, projectPath: projectPath, context: nil)
+      }
+      return MCPSimulatorTarget(udid: explicitUDID, projectPath: explicitProjectPath, context: nil)
+    }
+
+    guard let context = try simulatorContextStore.resolveContext(
+      provider: requestedSourceProvider(arguments: arguments),
+      sessionId: optionalString("sessionId", in: arguments) ?? sourceSessionId,
+      projectPath: explicitProjectPath
+    ) else {
+      throw MCPError.invalidRequest(
+        "No AgentHub simulator panel context was found. Open the Simulator panel for this session, or pass an explicit udid."
+      )
+    }
+
+    return MCPSimulatorTarget(
+      udid: context.udid,
+      projectPath: context.projectPath,
+      context: context
+    )
+  }
+
+  private var sourceProvider: WorktreeLaunchProvider? {
+    ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
+      .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
+  }
+
+  private var sourceSessionId: String? {
+    ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"]
+  }
+
+  private func requestedSourceProvider(arguments: [String: Any]) -> WorktreeLaunchProvider? {
+    optionalString("provider", in: arguments)
+      .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
+      ?? sourceProvider
+  }
+
+  private func simulatorProjectPath(arguments: [String: Any]) -> String? {
+    optionalString("projectPath", in: arguments)
+      ?? optionalString("repo", in: arguments)
+      ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
+  }
+
   private func planSummary(_ plan: DelegationPlan) -> String {
     var lines = ["Delegation plan: \(plan.assignments.count) subtask(s)."]
     for assignment in plan.assignments {
@@ -408,7 +534,7 @@ struct AgentHubMCPServer {
       [
         "provider": cli.provider.commandLineValue,
         "harness": cli.provider.harnessName,
-        "executablePath": cli.executablePath
+        "executablePath": cli.executablePath,
       ]
     }
 
@@ -417,7 +543,7 @@ struct AgentHubMCPServer {
         "provider": capability.provider.commandLineValue,
         "harness": capability.provider.harnessName,
         "skills": capability.skills.map { ["name": $0.name, "description": $0.description] },
-        "mcpServers": capability.mcpServers
+        "mcpServers": capability.mcpServers,
       ]
     }
 
@@ -427,11 +553,11 @@ struct AgentHubMCPServer {
           "id": assignment.subtask.id,
           "title": assignment.subtask.title,
           "detail": assignment.subtask.detail,
-          "tags": tags(assignment.subtask.tags)
+          "tags": tags(assignment.subtask.tags),
         ],
         "rationale": assignment.rationale,
         "instructions": assignment.instructions,
-        "branchSuggestion": assignment.branchSuggestion
+        "branchSuggestion": assignment.branchSuggestion,
       ]
       if let provider = assignment.assignedProvider {
         value["assignedProvider"] = provider.commandLineValue
@@ -448,7 +574,7 @@ struct AgentHubMCPServer {
       "detectedCLIs": detectedCLIs,
       "harnessCapabilities": harnessCapabilities,
       "assignments": assignments,
-      "notes": plan.notes
+      "notes": plan.notes,
     ]
     if let repositoryPath = plan.repositoryPath {
       result["repositoryPath"] = repositoryPath
@@ -489,7 +615,8 @@ struct AgentHubMCPServer {
     }
 
     if let provider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
-      .flatMap(WorktreeLaunchProvider.init(commandLineValue:)) {
+      .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
+    {
       return provider
     }
 
@@ -555,11 +682,11 @@ struct AgentHubMCPServer {
       "content": [
         [
           "type": "text",
-          "text": text
-        ]
+          "text": text,
+        ],
       ],
       "structuredContent": structuredContent,
-      "isError": isError
+      "isError": isError,
     ]
   }
 
@@ -572,12 +699,12 @@ struct AgentHubMCPServer {
         "properties": [
           "repo": [
             "type": "string",
-            "description": "Repository path applied to every task unless a task overrides it. Defaults to AGENTHUB_PROJECT_PATH."
+            "description": "Repository path applied to every task unless a task overrides it. Defaults to AGENTHUB_PROJECT_PATH.",
           ],
           "provider": [
             "type": "string",
             "enum": ["claude", "codex"],
-            "description": "Provider applied to every task unless a task overrides it."
+            "description": "Provider applied to every task unless a task overrides it.",
           ],
           "tasks": [
             "type": "array",
@@ -590,19 +717,19 @@ struct AgentHubMCPServer {
                 "provider": [
                   "type": "string",
                   "enum": ["claude", "codex"],
-                  "description": "Agent/provider assigned to this task."
+                  "description": "Agent/provider assigned to this task.",
                 ],
                 "from": ["type": "string"],
-                "checkoutExisting": ["type": "boolean"]
+                "checkoutExisting": ["type": "boolean"],
               ],
               "required": ["branch", "prompt", "provider"],
-              "additionalProperties": false
-            ]
-          ]
+              "additionalProperties": false,
+            ],
+          ],
         ],
         "required": ["tasks"],
-        "additionalProperties": false
-      ]
+        "additionalProperties": false,
+      ],
     ]
   }
 
@@ -615,11 +742,11 @@ struct AgentHubMCPServer {
         "properties": [
           "repo": [
             "type": "string",
-            "description": "Optional repository or worktree path. Defaults to AGENTHUB_PROJECT_PATH, then the MCP server current working directory."
-          ]
+            "description": "Optional repository or worktree path. Defaults to AGENTHUB_PROJECT_PATH, then the MCP server current working directory.",
+          ],
         ],
-        "additionalProperties": false
-      ]
+        "additionalProperties": false,
+      ],
     ]
   }
 
@@ -632,24 +759,24 @@ struct AgentHubMCPServer {
         "properties": [
           "target": [
             "type": "string",
-            "description": "Exact worktree path, branch name, or worktree directory name from agenthub_list_worktrees. The main repository entry cannot be deleted."
+            "description": "Exact worktree path, branch name, or worktree directory name from agenthub_list_worktrees. The main repository entry cannot be deleted.",
           ],
           "repo": [
             "type": "string",
-            "description": "Optional repository or worktree path used to resolve the main repository root. Defaults to AGENTHUB_PROJECT_PATH."
+            "description": "Optional repository or worktree path used to resolve the main repository root. Defaults to AGENTHUB_PROJECT_PATH.",
           ],
           "force": [
             "type": "boolean",
-            "description": "When true, force-removes the worktree even if git reports untracked or modified files."
+            "description": "When true, force-removes the worktree even if git reports untracked or modified files.",
           ],
           "deleteAssociatedBranch": [
             "type": "boolean",
-            "description": "When true, also deletes the local branch checked out in the worktree. Defaults to false."
-          ]
+            "description": "When true, also deletes the local branch checked out in the worktree. Defaults to false.",
+          ],
         ],
         "required": ["target"],
-        "additionalProperties": false
-      ]
+        "additionalProperties": false,
+      ],
     ]
   }
 
@@ -662,21 +789,126 @@ struct AgentHubMCPServer {
         "properties": [
           "prompt": [
             "type": "string",
-            "description": "The full bundled, multi-part request to plan and delegate."
+            "description": "The full bundled, multi-part request to plan and delegate.",
           ],
           "subtasks": [
             "type": "array",
             "items": ["type": "string"],
-            "description": "The independent subtasks you inferred from the request, one entry per task. When omitted, AgentHub plans the whole prompt as a single task — it never statically splits prose or lists."
+            "description": "The independent subtasks you inferred from the request, one entry per task. When omitted, AgentHub plans the whole prompt as a single task — it never statically splits prose or lists.",
           ],
           "repo": [
             "type": "string",
-            "description": "Optional repository path for context. Defaults to AGENTHUB_PROJECT_PATH."
-          ]
+            "description": "Optional repository path for context. Defaults to AGENTHUB_PROJECT_PATH.",
+          ],
         ],
         "required": ["prompt"],
-        "additionalProperties": false
-      ]
+        "additionalProperties": false,
+      ],
+    ]
+  }
+
+  private func simulatorStatusToolSchema() -> [String: Any] {
+    [
+      "name": "agenthub_simulator_status",
+      "description": "Returns the iOS Simulator target currently displayed by AgentHub's Simulator panel for this agent session/project. Use this before running simctl yourself so verification targets the same device the user is viewing.",
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "sessionId": [
+            "type": "string",
+            "description": "Optional AgentHub session id. Defaults to AGENTHUB_SESSION_ID.",
+          ],
+          "provider": [
+            "type": "string",
+            "enum": ["claude", "codex"],
+            "description": "Optional provider used to disambiguate the session.",
+          ],
+          "projectPath": [
+            "type": "string",
+            "description": "Optional project path. Defaults to AGENTHUB_PROJECT_PATH.",
+          ],
+          "repo": [
+            "type": "string",
+            "description": "Alias for projectPath.",
+          ],
+        ],
+        "additionalProperties": false,
+      ],
+    ]
+  }
+
+  private func simulatorRunToolSchema() -> [String: Any] {
+    [
+      "name": "agenthub_simulator_run",
+      "description": "Queues AgentHub to Build & Run the current project on the same simulator device shown in the AgentHub Simulator panel. Prefer this over launching a random booted simulator from the terminal.",
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "udid": [
+            "type": "string",
+            "description": "Optional simulator UDID. Defaults to the AgentHub Simulator panel target.",
+          ],
+          "projectPath": [
+            "type": "string",
+            "description": "Optional Xcode project repository path. Defaults to the panel context or AGENTHUB_PROJECT_PATH.",
+          ],
+          "repo": [
+            "type": "string",
+            "description": "Alias for projectPath.",
+          ],
+          "sessionId": [
+            "type": "string",
+            "description": "Optional AgentHub session id. Defaults to AGENTHUB_SESSION_ID.",
+          ],
+          "reason": [
+            "type": "string",
+            "description": "Short note explaining why the run was requested.",
+          ],
+        ],
+        "additionalProperties": false,
+      ],
+    ]
+  }
+
+  private func simulatorRecordToolSchema() -> [String: Any] {
+    [
+      "name": "agenthub_simulator_record",
+      "description": "Starts or stops a simulator video recording for the same device shown in AgentHub's Simulator panel. After stop, finalized MP4s include ffprobe/ffmpeg hints for animation and motion timing audits.",
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "action": [
+            "type": "string",
+            "enum": ["start", "stop"],
+            "description": "Recording action. Defaults to start.",
+          ],
+          "udid": [
+            "type": "string",
+            "description": "Optional simulator UDID. Defaults to the AgentHub Simulator panel target.",
+          ],
+          "sessionId": [
+            "type": "string",
+            "description": "Optional AgentHub session id. Defaults to AGENTHUB_SESSION_ID.",
+          ],
+          "projectPath": [
+            "type": "string",
+            "description": "Optional project path used only to resolve the panel context.",
+          ],
+          "repo": [
+            "type": "string",
+            "description": "Alias for projectPath.",
+          ],
+          "outputDirectory": [
+            "type": "string",
+            "description": "Optional directory for the MP4. Defaults to Application Support/AgentHub/Simulator Recordings.",
+          ],
+          "fileName": [
+            "type": "string",
+            "description": "Optional output filename. .mp4 is appended when omitted.",
+          ],
+        ],
+        "additionalProperties": false,
+      ],
     ]
   }
 
@@ -684,7 +916,7 @@ struct AgentHubMCPServer {
     writeJSON([
       "jsonrpc": "2.0",
       "id": id,
-      "result": result
+      "result": result,
     ])
   }
 
@@ -693,8 +925,8 @@ struct AgentHubMCPServer {
       "jsonrpc": "2.0",
       "error": [
         "code": code,
-        "message": message
-      ]
+        "message": message,
+      ],
     ]
     if let id {
       response["id"] = id
@@ -704,7 +936,8 @@ struct AgentHubMCPServer {
 
   private func writeJSON(_ object: [String: Any]) {
     guard JSONSerialization.isValidJSONObject(object),
-          let data = try? JSONSerialization.data(withJSONObject: object, options: []) else {
+          let data = try? JSONSerialization.data(withJSONObject: object, options: [])
+    else {
       // Never silently drop a JSON-RPC message: a dropped response leaves the
       // caller's tool call loading forever. Surface it on stderr (stdout is
       // reserved for the protocol) so the failure is at least diagnosable.
@@ -719,7 +952,8 @@ struct AgentHubMCPServer {
 
   private func requestId(from line: String) -> Any? {
     guard let data = line.data(using: .utf8),
-          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
       return nil
     }
     return object["id"]
@@ -742,7 +976,7 @@ private struct MCPWorktreeInventory {
   var dictionary: [String: Any] {
     [
       "repositoryPath": repositoryPath,
-      "worktrees": items.map(\.dictionary)
+      "worktrees": items.map(\.dictionary),
     ]
   }
 }
@@ -760,8 +994,8 @@ private struct MCPWorktreeInventoryItem {
       "sessionCounts": [
         "total": sessionCounts.total,
         "claude": sessionCounts.claude,
-        "codex": sessionCounts.codex
-      ]
+        "codex": sessionCounts.codex,
+      ],
     ]
     if let branch {
       value["branch"] = branch
@@ -788,7 +1022,7 @@ private struct MCPWorktreeDeletionResult {
       "deletedWorktree": deletedWorktree.dictionary,
       "force": force,
       "deleteAssociatedBranch": deleteAssociatedBranch,
-      "sidebarCleanupRequestId": sidebarCleanupRequestId
+      "sidebarCleanupRequestId": sidebarCleanupRequestId,
     ]
   }
 }
@@ -812,7 +1046,7 @@ private struct MCPWorktreeTaskFailure {
   var dictionary: [String: Any] {
     [
       "branch": branch,
-      "error": message
+      "error": message,
     ]
   }
 }
@@ -834,9 +1068,206 @@ private struct MCPWorktreeLaunchResult {
       "provider": provider.commandLineValue,
       "repositoryPath": repositoryPath,
       "worktreePath": worktreePath,
-      "launchRequestId": launchRequestId
+      "launchRequestId": launchRequestId,
     ]
   }
+}
+
+private struct MCPSimulatorTarget {
+  let udid: String
+  let projectPath: String?
+  let context: SimulatorSessionContext?
+
+  var displayName: String {
+    context?.deviceName ?? udid
+  }
+
+  var dictionary: [String: Any] {
+    var value: [String: Any] = [
+      "udid": udid,
+    ]
+    if let projectPath {
+      value["projectPath"] = projectPath
+    }
+    if let context {
+      value["context"] = context.dictionary
+    }
+    return value
+  }
+}
+
+private struct MCPSimulatorStatusResult {
+  let activeContext: SimulatorSessionContext?
+  let contexts: [SimulatorSessionContext]
+
+  var summary: String {
+    guard let activeContext else {
+      return "No active AgentHub Simulator panel context found. Open the Simulator panel for this session, or pass an explicit simulator UDID."
+    }
+
+    let device = activeContext.deviceName ?? activeContext.udid
+    let runtime = activeContext.runtimeName.map { " on \($0)" } ?? ""
+    let bootState = activeContext.isBooted ? "booted" : "not booted"
+    return "AgentHub Simulator panel target: \(device)\(runtime) (\(activeContext.udid)), \(bootState), project \(activeContext.projectPath)."
+  }
+
+  var dictionary: [String: Any] {
+    var value: [String: Any] = [
+      "contexts": contexts.map(\.dictionary),
+      "recordingSupported": true,
+      "runRequestSupported": true,
+    ]
+    if let activeContext {
+      value["activeContext"] = activeContext.dictionary
+    }
+    return value
+  }
+}
+
+private struct MCPSimulatorRunResult {
+  let requestID: String
+  let target: MCPSimulatorTarget
+  let context: SimulatorSessionContext?
+
+  var summary: String {
+    let project = target.projectPath ?? context?.projectPath ?? "(unknown project)"
+    return "Queued AgentHub simulator Build & Run request \(requestID) for \(target.displayName) (\(target.udid)) in \(project)."
+  }
+
+  var dictionary: [String: Any] {
+    [
+      "requestId": requestID,
+      "target": target.dictionary,
+    ]
+  }
+}
+
+private enum MCPSimulatorRecordResult {
+  case started(SimulatorRecordingStarted, target: MCPSimulatorTarget)
+  case stopped(SimulatorRecordingResult, target: MCPSimulatorTarget)
+
+  var isError: Bool {
+    switch self {
+    case .started:
+      return false
+    case let .stopped(result, _):
+      return !result.isUsable
+    }
+  }
+
+  var summary: String {
+    switch self {
+    case let .started(started, target):
+      return "Started simulator recording for \(target.displayName) (\(started.udid)). Output: \(started.outputPath)"
+    case let .stopped(result, target):
+      if result.isUsable {
+        return [
+          "Stopped simulator recording for \(target.displayName) (\(result.udid)).",
+          "Saved finalized MP4: \(result.outputPath)",
+          "Duration: \(String(format: "%.1f", result.duration))s",
+          "Use ffprobe or ffmpeg to inspect motion timing, for example: ffprobe -hide_banner \(shellExample(result.outputPath))",
+        ].joined(separator: "\n")
+      }
+
+      return [
+        "Stopped simulator recording for \(target.displayName) (\(result.udid)).",
+        "Recording did not produce a finalized MP4: \(result.validationError ?? "validation failed")",
+        "Output path: \(result.outputPath)",
+      ].joined(separator: "\n")
+    }
+  }
+
+  var dictionary: [String: Any] {
+    switch self {
+    case let .started(started, target):
+      return [
+        "action": "start",
+        "target": target.dictionary,
+        "recording": started.dictionary,
+      ]
+    case let .stopped(result, target):
+      var value: [String: Any] = [
+        "action": "stop",
+        "target": target.dictionary,
+        "recording": result.dictionary,
+      ]
+      if result.isUsable {
+        value["ffmpegHints"] = [
+          "ffprobe -hide_banner \(shellExample(result.outputPath))",
+          "ffmpeg -i \(shellExample(result.outputPath)) -vf fps=6 frames/frame-%04d.png",
+        ]
+      }
+      return value
+    }
+  }
+
+  private func shellExample(_ path: String) -> String {
+    "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
+  }
+}
+
+private extension SimulatorSessionContext {
+  var dictionary: [String: Any] {
+    var value: [String: Any] = [
+      "projectPath": projectPath,
+      "udid": udid,
+      "isBooted": isBooted,
+      "panelVisible": panelVisible,
+      "updatedAt": iso8601(updatedAt),
+    ]
+    if let provider {
+      value["provider"] = provider.commandLineValue
+    }
+    if let sessionId {
+      value["sessionId"] = sessionId
+    }
+    if let deviceName {
+      value["deviceName"] = deviceName
+    }
+    if let runtimeName {
+      value["runtimeName"] = runtimeName
+    }
+    if let displayMode {
+      value["displayMode"] = displayMode
+    }
+    return value
+  }
+}
+
+private extension SimulatorRecordingStarted {
+  var dictionary: [String: Any] {
+    [
+      "udid": udid,
+      "outputPath": outputPath,
+      "startedAt": iso8601(startedAt),
+    ]
+  }
+}
+
+private extension SimulatorRecordingResult {
+  var dictionary: [String: Any] {
+    var value: [String: Any] = [
+      "udid": udid,
+      "outputPath": outputPath,
+      "startedAt": iso8601(startedAt),
+      "endedAt": iso8601(endedAt),
+      "duration": duration,
+      "fileExists": fileExists,
+      "isFinalized": isFinalized,
+      "isUsable": isUsable,
+    ]
+    if let fileSizeBytes {
+      value["fileSizeBytes"] = fileSizeBytes
+    }
+    if let validationError {
+      value["validationError"] = validationError
+    }
+    return value
+  }
+}
+
+private func iso8601(_ date: Date) -> String {
+  ISO8601DateFormatter().string(from: date)
 }
 
 private enum MCPError: LocalizedError {
@@ -844,7 +1275,7 @@ private enum MCPError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .invalidRequest(let message):
+    case let .invalidRequest(message):
       return message
     }
   }
