@@ -257,10 +257,13 @@ public struct GlobalSessionCleanupSuggestion: Identifiable, Equatable, Sendable 
 // MARK: - GlobalSessionCleanupSuggestionBuilder
 
 public enum GlobalSessionCleanupSuggestionBuilder {
-  public static func makeSuggestions(items: [GlobalSessionControlPanelItem]) -> [GlobalSessionCleanupSuggestion] {
+  public static func makeSuggestions(
+    items: [GlobalSessionControlPanelItem],
+    repositories: [SelectedRepository] = []
+  ) -> [GlobalSessionCleanupSuggestion] {
     let worktreeItems = items.filter { $0.session.isWorktree }
     let grouped = Dictionary(grouping: worktreeItems) { item in
-      WorktreeModuleResolver.normalizedDirectoryPath(item.session.projectPath)
+      cleanupWorktreePath(for: item, repositories: repositories)
     }
 
     return grouped.compactMap { path, items in
@@ -300,6 +303,20 @@ public enum GlobalSessionCleanupSuggestionBuilder {
       providerKinds: sortedUnique(items.map(\.providerKind)),
       mergedPullRequestNumbers: mergedPullRequestNumbers
     )
+  }
+
+  private static func cleanupWorktreePath(
+    for item: GlobalSessionControlPanelItem,
+    repositories: [SelectedRepository]
+  ) -> String {
+    if let match = WorktreeModuleResolver.bestMatch(
+      for: item.session.projectPath,
+      repositories: repositories
+    ), match.worktree.isWorktree {
+      return WorktreeModuleResolver.normalizedDirectoryPath(match.worktree.path)
+    }
+
+    return WorktreeModuleResolver.normalizedDirectoryPath(item.session.projectPath)
   }
 
   private static func hasUnsafeStatus(_ item: GlobalSessionControlPanelItem) -> Bool {

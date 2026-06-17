@@ -261,26 +261,14 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
       let sourceRoot = try await findGitRoot(at: repoPath)
       let worktreePath = try await prepareWorktreePath(repoPath: repoPath, directoryName: directoryName)
 
-      guard !fullCheckout else {
-        var args = ["worktree", "add", "-b", newBranchName, worktreePath]
-        if let startPoint {
-          args.append(startPoint)
-        }
-
-        try await runGitCommand(args, at: sourceRoot, timeout: Self.gitWorktreeTimeout)
-        let resolvedPath = await resolveCreatedWorktreePath(
-          requestedPath: worktreePath,
-          branch: newBranchName,
-          repoPath: sourceRoot
-        )
-        return WorktreeCreationLocation(
-          worktreePath: resolvedPath,
-          launchPath: try launchPath(
-            sourceRoot: sourceRoot,
-            startPath: startPath ?? repoPath,
-            worktreePath: resolvedPath
-          ),
-          isSparseCheckout: false
+      if fullCheckout {
+        return try await createFullAgentWorktree(
+          sourceRoot: sourceRoot,
+          worktreePath: worktreePath,
+          newBranchName: newBranchName,
+          startPoint: startPoint,
+          repoPath: repoPath,
+          startPath: startPath
         )
       }
 
@@ -296,9 +284,20 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
         sourceRoot: sourceRoot
       )
 
+      if sparsePaths.isEmpty, sparseProfile == nil {
+        return try await createFullAgentWorktree(
+          sourceRoot: sourceRoot,
+          worktreePath: worktreePath,
+          newBranchName: newBranchName,
+          startPoint: startPoint,
+          repoPath: repoPath,
+          startPath: startPath
+        )
+      }
+
       guard !sparsePaths.isEmpty else {
         throw WorktreeManagementError.gitCommandFailed(
-          "Could not infer a sparse checkout profile for \(startPath ?? repoPath). Pass an explicit sparse profile or request a full checkout."
+          "Sparse checkout profile did not match any tracked paths for \(startPath ?? repoPath). Pass tracked sparse paths or request a full checkout."
         )
       }
 
@@ -327,6 +326,36 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
         sparseCheckoutPaths: sparsePaths
       )
     }
+  }
+
+  private func createFullAgentWorktree(
+    sourceRoot: String,
+    worktreePath: String,
+    newBranchName: String,
+    startPoint: String?,
+    repoPath: String,
+    startPath: String?
+  ) async throws -> WorktreeCreationLocation {
+    var args = ["worktree", "add", "-b", newBranchName, worktreePath]
+    if let startPoint {
+      args.append(startPoint)
+    }
+
+    try await runGitCommand(args, at: sourceRoot, timeout: Self.gitWorktreeTimeout)
+    let resolvedPath = await resolveCreatedWorktreePath(
+      requestedPath: worktreePath,
+      branch: newBranchName,
+      repoPath: sourceRoot
+    )
+    return WorktreeCreationLocation(
+      worktreePath: resolvedPath,
+      launchPath: try launchPath(
+        sourceRoot: sourceRoot,
+        startPath: startPath ?? repoPath,
+        worktreePath: resolvedPath
+      ),
+      isSparseCheckout: false
+    )
   }
 
   public func launchPath(forStartPath startPath: String?, repoPath: String, worktreePath: String) async throws -> String {

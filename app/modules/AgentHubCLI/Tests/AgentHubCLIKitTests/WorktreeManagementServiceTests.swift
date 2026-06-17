@@ -308,6 +308,65 @@ struct WorktreeConventionTests {
     #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/android/app/build.gradle"))
   }
 
+  @Test("Agent worktree defaults to full checkout from repository root")
+  func agentWorktreeDefaultsToFullCheckoutFromRepositoryRoot() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let service = WorktreeManagementService()
+    let creation = try await service.createAgentWorktreeWithNewBranch(
+      at: fixture.repoPath,
+      startPath: nil,
+      newBranchName: "feature/root-default-full",
+      directoryName: "feature-root-default-full",
+      startPoint: nil,
+      sparseProfile: nil,
+      fullCheckout: false
+    )
+
+    #expect(!creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths.isEmpty)
+    #expect(creation.launchPath == creation.worktreePath)
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/README.md"))
+  }
+
+  @Test("Agent worktree defaults to full checkout for generic subdirectory starts")
+  func agentWorktreeDefaultsToFullCheckoutForGenericSubdirectoryStarts() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try FileManager.default.createDirectory(
+      atPath: fixture.repoPath + "/src/features/payments",
+      withIntermediateDirectories: true
+    )
+    try "root config\n".write(toFile: fixture.repoPath + "/Package.swift", atomically: true, encoding: .utf8)
+    try "feature\n".write(
+      toFile: fixture.repoPath + "/src/features/payments/Feature.swift",
+      atomically: true,
+      encoding: .utf8
+    )
+    try fixture.runGit("add", ".")
+    try fixture.runGit("commit", "-m", "generic app")
+
+    let startPath = fixture.repoPath + "/src/features/payments"
+    let service = WorktreeManagementService()
+    let creation = try await service.createAgentWorktreeWithNewBranch(
+      at: startPath,
+      startPath: startPath,
+      newBranchName: "feature/generic-default-full",
+      directoryName: "feature-generic-default-full",
+      startPoint: nil,
+      sparseProfile: nil,
+      fullCheckout: false
+    )
+
+    #expect(!creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths.isEmpty)
+    #expect(creation.launchPath == creation.worktreePath + "/src/features/payments")
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/Package.swift"))
+    #expect(FileManager.default.fileExists(atPath: creation.launchPath + "/Feature.swift"))
+  }
+
   @Test("Detects fetched origin main as the remote base branch")
   func detectsFetchedOriginMainAsRemoteBaseBranch() async throws {
     let seed = try GitRepoFixture.create()

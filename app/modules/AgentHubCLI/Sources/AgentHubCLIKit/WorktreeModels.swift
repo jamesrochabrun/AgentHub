@@ -104,7 +104,7 @@ public struct WorktreeSparseCheckoutProfile: Codable, Equatable, Sendable {
     case "tools/ios/SproutApp":
       sourcePaths = ["tools/ios/SproutApp"]
     default:
-      sourcePaths = [ownerPath]
+      return nil
     }
 
     return WorktreeSparseCheckoutProfile(paths: sourcePaths + agentSupportPaths)
