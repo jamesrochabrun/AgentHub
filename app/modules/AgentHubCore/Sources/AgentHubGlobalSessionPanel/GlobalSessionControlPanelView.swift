@@ -319,7 +319,16 @@ public struct GlobalSessionControlPanelView: View {
   }
 
   private var cleanupSuggestions: [GlobalSessionCleanupSuggestion] {
-    GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: items)
+    GlobalSessionCleanupSuggestionBuilder.makeSuggestions(
+      items: items,
+      repositories: cleanupRepositories
+    )
+  }
+
+  private var cleanupRepositories: [SelectedRepository] {
+    WorktreeModuleResolver.mergedRepositories(
+      claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
+    )
   }
 
   // Item IDs whose worktree is a safe-to-delete cleanup candidate (merged PR and

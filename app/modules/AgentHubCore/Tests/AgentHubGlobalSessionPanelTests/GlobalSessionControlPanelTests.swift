@@ -334,6 +334,38 @@ struct GlobalSessionControlPanelTests {
     #expect(suggestions.first?.mergedPullRequestNumbers == [12])
   }
 
+  @Test("Cleanup suggestions resolve nested session paths to registered worktree root")
+  func cleanupSuggestionsResolveNestedSessionPathsToRegisteredWorktreeRoot() {
+    let repoPath = "/tmp/agenthub-cleanup/repo"
+    let worktreePath = "/tmp/agenthub-cleanup/repo-feature"
+    let repositories = [
+      SelectedRepository(
+        path: repoPath,
+        worktrees: [
+          WorktreeBranch(name: "main", path: repoPath, isWorktree: false),
+          WorktreeBranch(name: "feature", path: worktreePath, isWorktree: true)
+        ]
+      )
+    ]
+    let items = [
+      cleanupItem(
+        id: "nested",
+        path: worktreePath + "/ios/features/payments",
+        gitHubState: gitHubState(number: 34, state: .merged)
+      )
+    ]
+
+    let suggestions = GlobalSessionCleanupSuggestionBuilder.makeSuggestions(
+      items: items,
+      repositories: repositories
+    )
+
+    #expect(suggestions.count == 1)
+    #expect(suggestions.first?.worktreePath == worktreePath)
+    #expect(suggestions.first?.worktreeName == "repo-feature")
+    #expect(suggestions.first?.sessionIDs == ["nested"])
+  }
+
   @Test("Cleanup suggestions require merged PR evidence")
   func cleanupSuggestionsRequireMergedPullRequestEvidence() {
     #expect(GlobalSessionCleanupSuggestionBuilder.makeSuggestions(items: [

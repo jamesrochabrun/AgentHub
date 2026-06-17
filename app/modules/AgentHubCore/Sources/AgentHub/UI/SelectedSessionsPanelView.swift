@@ -118,7 +118,7 @@ public struct SelectedSessionsPanelView: View {
         id: "pending-\(pending.id.uuidString)",
         session: pending.placeholderSession,
         timestamp: pending.startedAt,
-        modulePath: findModulePath(for: pending.worktree.path),
+        modulePath: findModulePath(for: pending.projectPath),
         isPending: true
       ))
     }
@@ -284,7 +284,7 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         session: pending.placeholderSession,
         providerKind: .claude,
         timestamp: pending.startedAt,
-        modulePath: findModulePath(for: pending.worktree.path),
+        modulePath: findModulePath(for: pending.projectPath),
         isPending: true
       ))
     }
@@ -295,7 +295,7 @@ public struct MultiProviderSelectedSessionsPanelView: View {
         session: pending.placeholderSession,
         providerKind: .codex,
         timestamp: pending.startedAt,
-        modulePath: findModulePath(for: pending.worktree.path),
+        modulePath: findModulePath(for: pending.projectPath),
         isPending: true
       ))
     }

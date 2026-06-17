@@ -70,6 +70,90 @@ public struct WorktreeChangeSnapshot: Sendable, Equatable {
   }
 }
 
+public struct WorktreeSparseCheckoutProfile: Codable, Equatable, Sendable {
+  public static let agentSupportPaths = [
+    ".agents",
+    ".claude",
+    ".claude-plugin",
+    "scripts/git_hooks_support",
+    "scripts/git_support"
+  ]
+
+  public let paths: [String]
+
+  public init(paths: [String]) {
+    var seen = Set<String>()
+    self.paths = paths.compactMap { path in
+      let normalized = Self.normalizedPath(path)
+      guard !normalized.isEmpty, seen.insert(normalized).inserted else { return nil }
+      return normalized
+    }
+  }
+
+  public static func inferred(relativeStartPath: String) -> WorktreeSparseCheckoutProfile? {
+    guard let ownerPath = ownerPath(for: relativeStartPath) else { return nil }
+
+    let sourcePaths: [String]
+    switch ownerPath {
+    case "ios":
+      sourcePaths = ["ios"]
+    case "android":
+      sourcePaths = ["android", "gradle", "ribbons"]
+    case "ribbons":
+      sourcePaths = ["ribbons"]
+    case "tools/ios/SproutApp":
+      sourcePaths = ["tools/ios/SproutApp"]
+    default:
+      return nil
+    }
+
+    return WorktreeSparseCheckoutProfile(paths: sourcePaths + agentSupportPaths)
+  }
+
+  public static func ownerPath(for relativeStartPath: String) -> String? {
+    let normalized = normalizedPath(relativeStartPath)
+    guard !normalized.isEmpty else { return nil }
+
+    let components = normalized.split(separator: "/").map(String.init)
+    guard let first = components.first else { return nil }
+
+    if components.count >= 3,
+       components[0] == "tools",
+       components[1] == "ios",
+       components[2] == "SproutApp" {
+      return "tools/ios/SproutApp"
+    }
+
+    return first
+  }
+
+  private static func normalizedPath(_ path: String) -> String {
+    path
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .split(separator: "/", omittingEmptySubsequences: true)
+      .joined(separator: "/")
+  }
+}
+
+public struct WorktreeCreationLocation: Sendable, Equatable {
+  public let worktreePath: String
+  public let launchPath: String
+  public let isSparseCheckout: Bool
+  public let sparseCheckoutPaths: [String]
+
+  public init(
+    worktreePath: String,
+    launchPath: String,
+    isSparseCheckout: Bool,
+    sparseCheckoutPaths: [String] = []
+  ) {
+    self.worktreePath = worktreePath
+    self.launchPath = launchPath
+    self.isSparseCheckout = isSparseCheckout
+    self.sparseCheckoutPaths = sparseCheckoutPaths
+  }
+}
+
 public struct BranchInfo: Codable, Equatable, Identifiable, Sendable {
   public let name: String
   public let remote: String

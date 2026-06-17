@@ -13,6 +13,16 @@ public protocol WorktreeManagementServiceProtocol: Sendable {
   func createWorktree(at repoPath: String, branch: String, directoryName: String) async throws -> String
   func checkoutWorktree(at repoPath: String, branch: String, directoryName: String) async throws -> String
   func createWorktreeWithNewBranch(at repoPath: String, newBranchName: String, directoryName: String, startPoint: String?) async throws -> String
+  func createAgentWorktreeWithNewBranch(
+    at repoPath: String,
+    startPath: String?,
+    newBranchName: String,
+    directoryName: String,
+    startPoint: String?,
+    sparseProfile: WorktreeSparseCheckoutProfile?,
+    fullCheckout: Bool
+  ) async throws -> WorktreeCreationLocation
+  func launchPath(forStartPath startPath: String?, repoPath: String, worktreePath: String) async throws -> String
   func createWorktreeWithNewBranch(
     at repoPath: String,
     newBranchName: String,
@@ -235,6 +245,126 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
         repoPath: sourceRoot
       )
     }
+  }
+
+  public func createAgentWorktreeWithNewBranch(
+    at repoPath: String,
+    startPath: String?,
+    newBranchName: String,
+    directoryName: String,
+    startPoint: String? = nil,
+    sparseProfile: WorktreeSparseCheckoutProfile?,
+    fullCheckout: Bool
+  ) async throws -> WorktreeCreationLocation {
+    let repoKey = try await findMainRepositoryRoot(at: repoPath)
+    return try await Self.creationQueue.withPermit(repoKey: repoKey) { [self] in
+      let sourceRoot = try await findGitRoot(at: repoPath)
+      let worktreePath = try await prepareWorktreePath(repoPath: repoPath, directoryName: directoryName)
+
+      if fullCheckout {
+        return try await createFullAgentWorktree(
+          sourceRoot: sourceRoot,
+          worktreePath: worktreePath,
+          newBranchName: newBranchName,
+          startPoint: startPoint,
+          repoPath: repoPath,
+          startPath: startPath
+        )
+      }
+
+      let relativeStartPath = try relativeStartPath(
+        sourceRoot: sourceRoot,
+        startPath: startPath ?? repoPath
+      )
+      let treeish = startPoint ?? "HEAD"
+      let sparsePaths = try await resolvedSparseCheckoutPaths(
+        profile: sparseProfile,
+        relativeStartPath: relativeStartPath,
+        treeish: treeish,
+        sourceRoot: sourceRoot
+      )
+
+      if sparsePaths.isEmpty, sparseProfile == nil {
+        return try await createFullAgentWorktree(
+          sourceRoot: sourceRoot,
+          worktreePath: worktreePath,
+          newBranchName: newBranchName,
+          startPoint: startPoint,
+          repoPath: repoPath,
+          startPath: startPath
+        )
+      }
+
+      guard !sparsePaths.isEmpty else {
+        throw WorktreeManagementError.gitCommandFailed(
+          "Sparse checkout profile did not match any tracked paths for \(startPath ?? repoPath). Pass tracked sparse paths or request a full checkout."
+        )
+      }
+
+      var args = ["worktree", "add", "--no-checkout", "-b", newBranchName, worktreePath]
+      if let startPoint {
+        args.append(startPoint)
+      }
+
+      try await runGitCommand(args, at: sourceRoot, timeout: Self.gitWorktreeTimeout)
+      try await configureSparseCheckout(paths: sparsePaths, at: worktreePath)
+      try await runGitCommand(["checkout", "HEAD"], at: worktreePath, timeout: Self.gitWorktreeTimeout)
+
+      let resolvedPath = await resolveCreatedWorktreePath(
+        requestedPath: worktreePath,
+        branch: newBranchName,
+        repoPath: sourceRoot
+      )
+      return WorktreeCreationLocation(
+        worktreePath: resolvedPath,
+        launchPath: try launchPath(
+          sourceRoot: sourceRoot,
+          startPath: startPath ?? repoPath,
+          worktreePath: resolvedPath
+        ),
+        isSparseCheckout: true,
+        sparseCheckoutPaths: sparsePaths
+      )
+    }
+  }
+
+  private func createFullAgentWorktree(
+    sourceRoot: String,
+    worktreePath: String,
+    newBranchName: String,
+    startPoint: String?,
+    repoPath: String,
+    startPath: String?
+  ) async throws -> WorktreeCreationLocation {
+    var args = ["worktree", "add", "-b", newBranchName, worktreePath]
+    if let startPoint {
+      args.append(startPoint)
+    }
+
+    try await runGitCommand(args, at: sourceRoot, timeout: Self.gitWorktreeTimeout)
+    let resolvedPath = await resolveCreatedWorktreePath(
+      requestedPath: worktreePath,
+      branch: newBranchName,
+      repoPath: sourceRoot
+    )
+    return WorktreeCreationLocation(
+      worktreePath: resolvedPath,
+      launchPath: try launchPath(
+        sourceRoot: sourceRoot,
+        startPath: startPath ?? repoPath,
+        worktreePath: resolvedPath
+      ),
+      isSparseCheckout: false
+    )
+  }
+
+  public func launchPath(forStartPath startPath: String?, repoPath: String, worktreePath: String) async throws -> String {
+    let sourceRoot = try await findGitRoot(at: repoPath)
+    return try launchPath(
+      sourceRoot: sourceRoot,
+      startPath: startPath ?? repoPath,
+      worktreePath: worktreePath
+    )
   }
 
   public func createWorktreeWithNewBranch(
@@ -628,6 +758,100 @@ private extension WorktreeManagementService {
     }
 
     return worktreePath
+  }
+
+  nonisolated func launchPath(sourceRoot: String, startPath: String, worktreePath: String) throws -> String {
+    let relativePath = try relativeStartPath(sourceRoot: sourceRoot, startPath: startPath)
+    guard !relativePath.isEmpty else { return worktreePath }
+    return (worktreePath as NSString).appendingPathComponent(relativePath)
+  }
+
+  nonisolated func relativeStartPath(sourceRoot: String, startPath: String) throws -> String {
+    let normalizedRoot = normalizedExistingPath(sourceRoot)
+    let normalizedStart = normalizedExistingPath(startPath)
+    if normalizedStart == normalizedRoot {
+      return ""
+    }
+
+    let prefix = normalizedRoot + "/"
+    guard normalizedStart.hasPrefix(prefix) else {
+      throw WorktreeManagementError.gitCommandFailed(
+        "Start path must be inside the git repository root: \(startPath)"
+      )
+    }
+
+    return String(normalizedStart.dropFirst(prefix.count))
+  }
+
+  func resolvedSparseCheckoutPaths(
+    profile: WorktreeSparseCheckoutProfile?,
+    relativeStartPath: String,
+    treeish: String,
+    sourceRoot: String
+  ) async throws -> [String] {
+    let inferredProfile = profile ?? WorktreeSparseCheckoutProfile.inferred(relativeStartPath: relativeStartPath)
+    guard var paths = inferredProfile?.paths else { return [] }
+
+    if let ownerPath = WorktreeSparseCheckoutProfile.ownerPath(for: relativeStartPath),
+       !Self.sparsePaths(paths, contain: ownerPath) {
+      paths.insert(ownerPath, at: 0)
+    }
+
+    var existingPaths: [String] = []
+    for path in paths {
+      try validateSparseCheckoutPath(path)
+      guard try await trackedPathExists(path, treeish: treeish, sourceRoot: sourceRoot) else { continue }
+      if !Self.sparsePaths(existingPaths, contain: path) {
+        existingPaths.append(path)
+      }
+    }
+    return existingPaths
+  }
+
+  nonisolated func validateSparseCheckoutPath(_ path: String) throws {
+    let components = path.split(separator: "/", omittingEmptySubsequences: false)
+    guard !path.isEmpty,
+          !path.hasPrefix("/"),
+          !components.contains(where: { $0 == "." || $0 == ".." || $0.isEmpty }) else {
+      throw WorktreeManagementError.gitCommandFailed("Invalid sparse checkout path: \(path)")
+    }
+  }
+
+  func trackedPathExists(_ path: String, treeish: String, sourceRoot: String) async throws -> Bool {
+    do {
+      try await runGitCommand(["cat-file", "-e", "\(treeish):\(path)"], at: sourceRoot)
+      return true
+    } catch WorktreeManagementError.gitCommandFailed {
+      return false
+    }
+  }
+
+  func configureSparseCheckout(paths: [String], at worktreePath: String) async throws {
+    do {
+      try await runGitCommand(
+        ["sparse-checkout", "init", "--cone", "--sparse-index"],
+        at: worktreePath,
+        timeout: Self.gitWorktreeTimeout
+      )
+    } catch {
+      try await runGitCommand(
+        ["sparse-checkout", "init", "--cone"],
+        at: worktreePath,
+        timeout: Self.gitWorktreeTimeout
+      )
+    }
+
+    try await runGitCommand(
+      ["sparse-checkout", "set", "--"] + paths,
+      at: worktreePath,
+      timeout: Self.gitWorktreeTimeout
+    )
+  }
+
+  static func sparsePaths(_ paths: [String], contain candidate: String) -> Bool {
+    paths.contains { path in
+      candidate == path || candidate.hasPrefix(path + "/")
+    }
   }
 
   nonisolated func siblingWorktreeDirectory(mainRoot: String) -> String {

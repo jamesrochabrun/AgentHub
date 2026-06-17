@@ -280,13 +280,21 @@ AgentHub supports two display modes:
 
 Toggle between modes in the app settings.
 
-### Worktree Grouping
+### How AgentHub Works With Worktrees
 
-Worktree sessions are grouped under their parent module by default, so `ModuleA` shows its regular sessions plus AgentHub-owned worktree sessions. The Worktrees settings tab can switch to separate modules, where the root module and its AgentHub-owned worktrees appear as sibling module rows grouped by repository.
+AgentHub uses native Git linked worktrees for isolated agent tasks. A worktree's Git root is always the repository root Git reports with `git rev-parse --show-toplevel`; for monorepos this means an iOS or Android task still has a repo-root worktree, even when the agent starts inside `ios/...` or `android/...`.
 
-AgentHub creates new worktrees as sibling directories beside the main repository, using the generated or manual directory name directly under the repository's parent directory. It no longer creates a repo-local `.worktrees` folder or adds `.worktrees/` to Git's exclude file.
+**Storage location.** AgentHub-created worktrees live as sibling directories beside the main repository, using the generated or manual directory name directly under the repository's parent directory. AgentHub does not create repo-local `.worktrees` folders and does not add `.worktrees/` to Git exclude files.
 
-AgentHub only treats worktrees it created, explicitly added, or focused through monitored sessions as owned. External Git worktrees discovered from the repository are ignored for session grouping, which keeps large local worktree setups from flooding the session list. The Worktrees settings inventory still lists all Git worktrees for tracked repositories: focused rows participate in AgentHub grouping, while external rows can be deleted without becoming focused.
+**Agent launch directory.** When a task starts from a subdirectory, AgentHub still registers the worktree root for sidebar grouping, deletion, and cleanup, but launches the embedded Claude or Codex terminal from the requested launch path inside the worktree. For example, an agent can start in `/worktrees/my-task/ios/features/foo` while Git operations still see `/worktrees/my-task` as the repository root.
+
+**Sparse checkouts for known monorepo profiles.** For launched agent worktrees in known large repo areas, AgentHub creates the worktree with `git worktree add --no-checkout`, configures sparse checkout before materializing files, then starts the agent in the requested subdirectory. The built-in sparse profiles currently cover `ios`, `android`, `ribbons`, and `tools/ios/SproutApp`; profiles include shared agent/tooling support paths when those paths exist.
+
+**No sparse surprises for regular repos.** Repo-root launches and generic/non-monorepo subdirectory launches keep the old full-checkout behavior unless the caller passes an explicit sparse profile. This avoids hiding root-level project files such as package manifests, build scripts, or config files in small and conventional repositories.
+
+**Grouping and cleanup.** Worktree sessions are grouped under their parent module by default, so `ModuleA` shows its regular sessions plus AgentHub-owned worktree sessions. The Worktrees settings tab can switch to separate modules, where the root module and its AgentHub-owned worktrees appear as sibling module rows grouped by repository. Nested agent launch paths are resolved back to the registered worktree root before cleanup suggestions or delete actions are offered.
+
+**Ownership.** AgentHub only treats worktrees it created, explicitly added, or focused through monitored sessions as owned. External Git worktrees discovered from the repository are ignored for session grouping, which keeps large local worktree setups from flooding the session list. The Worktrees settings inventory still lists all Git worktrees for tracked repositories: focused rows participate in AgentHub grouping, while external rows can be deleted without becoming focused.
 
 ### Provider Defaults
 

@@ -12,6 +12,7 @@ import Foundation
 public struct PendingHubSession: Identifiable {
   public let id: UUID
   public let worktree: WorktreeBranch
+  public let launchPath: String?
   public let startedAt: Date
   public let initialPrompt: String?
   public let initialInputText: String?
@@ -22,6 +23,7 @@ public struct PendingHubSession: Identifiable {
 
   public init(
     worktree: WorktreeBranch,
+    launchPath: String? = nil,
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
     dangerouslySkipPermissions: Bool = false,
@@ -30,6 +32,7 @@ public struct PendingHubSession: Identifiable {
   ) {
     self.id = UUID()
     self.worktree = worktree
+    self.launchPath = launchPath
     self.startedAt = Date()
     self.initialPrompt = initialPrompt
     self.initialInputText = initialInputText
@@ -38,11 +41,19 @@ public struct PendingHubSession: Identifiable {
     self.worktreeName = worktreeName
   }
 
+  public var projectPath: String {
+    let trimmed = launchPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let trimmed, !trimmed.isEmpty {
+      return trimmed
+    }
+    return worktree.path
+  }
+
   /// Creates a placeholder CLISession for use with MonitoringCardView
   public var placeholderSession: CLISession {
     CLISession(
       id: "pending-\(id.uuidString)",
-      projectPath: worktree.path,
+      projectPath: projectPath,
       branchName: worktree.name,
       isWorktree: worktree.isWorktree,
       lastActivityAt: startedAt,

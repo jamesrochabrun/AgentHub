@@ -65,7 +65,11 @@ public final class WorktreeLaunchRequestHandler: WorktreeLaunchRequestHandlingPr
     guard let launchWorktree else {
       throw WorktreeLaunchRequestHandlingError.providerUnavailable
     }
-    launchViewModel.startNewSessionInHub(launchWorktree, initialPrompt: prompt)
+    launchViewModel.startNewSessionInHub(
+      launchWorktree,
+      launchPath: request.launchPath,
+      initialPrompt: prompt
+    )
     launchViewModel.refresh()
   }
 

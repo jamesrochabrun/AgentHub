@@ -31,14 +31,15 @@ struct HubAuxiliaryShellContextTests {
         name: "feature-branch",
         path: "/tmp/worktree",
         isWorktree: true
-      )
+      ),
+      launchPath: "/tmp/worktree/ios/app"
     )
 
     let context = HubAuxiliaryShellContext.pending(pending: pending, providerKind: .claude)
 
     #expect(context.terminalKey == "pending-\(pending.id.uuidString)")
     #expect(context.sessionId == nil)
-    #expect(context.projectPath == "/tmp/worktree")
+    #expect(context.projectPath == "/tmp/worktree/ios/app")
     #expect(context.isLaunchable)
     #expect(context.placeholderMessage == nil)
   }

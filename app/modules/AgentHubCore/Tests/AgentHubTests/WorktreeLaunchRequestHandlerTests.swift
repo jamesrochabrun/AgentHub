@@ -28,7 +28,8 @@ struct WorktreeLaunchRequestHandlerTests {
       .appendingPathComponent("agenthub-launch-handler-\(UUID().uuidString)", isDirectory: true)
     let repoPath = root.appendingPathComponent("repo", isDirectory: true).path
     let worktreePath = root.appendingPathComponent("repo/.worktrees/feature", isDirectory: true).path
-    try FileManager.default.createDirectory(atPath: worktreePath, withIntermediateDirectories: true)
+    let launchPath = worktreePath + "/ios/features/payments"
+    try FileManager.default.createDirectory(atPath: launchPath, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: root) }
 
     try await handler.handle(WorktreeLaunchRequest(
@@ -36,6 +37,7 @@ struct WorktreeLaunchRequestHandlerTests {
       provider: .codex,
       repositoryPath: repoPath,
       worktreePath: worktreePath,
+      launchPath: launchPath,
       branchName: "feature",
       prompt: "Implement the feature"
     ))
@@ -43,6 +45,8 @@ struct WorktreeLaunchRequestHandlerTests {
     #expect(claudeViewModel.pendingHubSessions.isEmpty)
     let pending = try #require(codexViewModel.pendingHubSessions.first)
     #expect(pending.worktree.path == worktreePath)
+    #expect(pending.projectPath == launchPath)
+    #expect(pending.placeholderSession.projectPath == launchPath)
     #expect(pending.worktree.name == "feature")
     #expect(pending.initialPrompt == "Implement the feature")
     #expect(

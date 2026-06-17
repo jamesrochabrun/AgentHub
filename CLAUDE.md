@@ -79,6 +79,17 @@ Concrete implementations: `CLISessionMonitorService` / `CodexSessionMonitorServi
 - `MultiSessionLaunchViewModel` — Parallel session launcher (manual + smart mode)
 - `IntelligenceViewModel` — Calls Claude Code SDK to generate orchestration plans
 
+## Worktree Contract
+
+AgentHub uses native Git linked worktrees and keeps their Git root at the repository root. In monorepos, an `ios/...` or `android/...` task still runs inside a repo-root worktree; the embedded terminal can start from a nested launch directory, but Git, grouping, deletion, and cleanup still operate on the worktree root.
+
+- AgentHub-created worktrees are sibling directories beside the main repository. Do not create repo-local `.worktrees` folders or write `.worktrees/` into `.git/info/exclude`.
+- Keep `worktree.path` and `launchPath` separate. `worktree.path` is the registered root used for ownership, sidebar grouping, deletion, cleanup suggestions, and worktree settings. `launchPath` is only the agent's starting cwd inside that root.
+- Sparse checkout is the default only for known monorepo profiles (`ios`, `android`, `ribbons`, `tools/ios/SproutApp`) or explicit sparse profiles. Repo-root starts and generic/non-monorepo subdirectory starts must preserve the old full-checkout behavior unless sparse was explicitly requested.
+- Sparse worktrees must be created with `git worktree add --no-checkout`, configured before materialization, then checked out. Known profiles include shared support paths such as `.agents`, `.claude`, `.claude-plugin`, `scripts/git_hooks_support`, and `scripts/git_support` when those paths exist so hooks and agent tooling keep working.
+- If a sparse worktree needs more files, expand it with `git sparse-checkout add -- <path>` or the shared expansion helper. Do not disable sparse checkout or create a second full worktree as the first response.
+- When code maps a session path back to a worktree, use `WorktreeModuleResolver.bestMatch` or `modulePath` so nested launch paths resolve to the registered worktree root before grouping, cleanup, or deletion.
+
 ## Services & Testability
 
 ### Protocol-Driven Services

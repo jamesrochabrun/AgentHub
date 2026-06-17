@@ -17,6 +17,7 @@ struct WorktreeLaunchRequestQueueTests {
       provider: .claude,
       repositoryPath: "/tmp/repo",
       worktreePath: "/tmp/repo/.worktrees/feature",
+      launchPath: "/tmp/repo/.worktrees/feature/ios/app",
       branchName: "feature",
       prompt: "Implement feature",
       sourceProvider: .codex,
@@ -29,6 +30,32 @@ struct WorktreeLaunchRequestQueueTests {
     #expect(FileManager.default.fileExists(atPath: queued.fileURL.path))
     #expect(pending.map(\.request) == [request])
     #expect(pending.first?.request == request)
+  }
+
+  @Test("Pending requests decode legacy payloads without launch path")
+  func pendingRequestsDecodeLegacyPayloadsWithoutLaunchPath() throws {
+    let directory = try temporaryRequestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let legacyJSON = """
+    {
+      "id": "legacy-1",
+      "createdAt": 1000,
+      "provider": "Claude",
+      "repositoryPath": "/tmp/repo",
+      "worktreePath": "/tmp/repo/.worktrees/feature",
+      "branchName": "feature",
+      "prompt": "Implement feature"
+    }
+    """
+    try legacyJSON.write(to: directory.appendingPathComponent("legacy-1.json"), atomically: true, encoding: .utf8)
+
+    let pending = try WorktreeLaunchRequestQueue(directoryURL: directory).pendingRequests()
+
+    let request = try #require(pending.first?.request)
+    #expect(request.id == "legacy-1")
+    #expect(request.launchPath == nil)
   }
 
   @Test("Remove deletes handled request")

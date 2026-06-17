@@ -45,14 +45,14 @@ extension HubAuxiliaryShellContext {
     providerKind: SessionProviderKind
   ) -> String? {
     guard providerKind == .claude, let worktreeName = pending.worktreeName else {
-      return pending.worktree.path
+      return pending.projectPath
     }
 
     guard !worktreeName.isEmpty else {
       return nil
     }
 
-    let expectedPath = pending.worktree.path + "/.claude/worktrees/" + worktreeName
+    let expectedPath = pending.projectPath + "/.claude/worktrees/" + worktreeName
     return FileManager.default.fileExists(atPath: expectedPath) ? expectedPath : nil
   }
 }

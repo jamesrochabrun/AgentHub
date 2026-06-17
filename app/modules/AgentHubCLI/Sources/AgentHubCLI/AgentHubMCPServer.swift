@@ -190,6 +190,9 @@ struct AgentHubMCPServer {
     let provider = try resolveProvider(optionalString("provider", in: arguments))
     let startPoint = optionalString("from", in: arguments)
     let checkoutExisting = arguments["checkoutExisting"] as? Bool ?? false
+    let startPath = optionalString("startPath", in: arguments) ?? repositoryPath
+    let sparseProfilePaths = try optionalStringArray("sparseProfile", in: arguments)
+    let fullCheckout = arguments["fullCheckout"] as? Bool ?? false
 
     // Proactively avoid name collisions: when creating a NEW branch, derive a
     // free branch/directory name from the existing branches and worktrees so
@@ -220,13 +223,23 @@ struct AgentHubMCPServer {
     }
     writeProgress(.preparing(message: "Starting worktree…"))
 
-    let worktreePath: String
+    let creation: WorktreeCreationLocation
     do {
       if checkoutExisting {
-        worktreePath = try await service.checkoutWorktree(
+        let worktreePath = try await service.checkoutWorktree(
           at: repositoryPath,
           branch: branch,
           directoryName: directoryName
+        )
+        let launchPath = try await service.launchPath(
+          forStartPath: startPath,
+          repoPath: repositoryPath,
+          worktreePath: worktreePath
+        )
+        creation = WorktreeCreationLocation(
+          worktreePath: worktreePath,
+          launchPath: launchPath,
+          isSparseCheckout: false
         )
       } else {
         // Plain, NON-streaming creation. We deliberately avoid the
@@ -239,11 +252,14 @@ struct AgentHubMCPServer {
         // for the app's top-bar banner, NOT git's per-file "Updating files" stream,
         // so the simple blocking path (concurrently pipe-drained, timeout-bounded)
         // is both sufficient and robust.
-        worktreePath = try await service.createWorktreeWithNewBranch(
+        creation = try await service.createAgentWorktreeWithNewBranch(
           at: repositoryPath,
+          startPath: startPath,
           newBranchName: branch,
           directoryName: directoryName,
-          startPoint: startPoint
+          startPoint: startPoint,
+          sparseProfile: sparseProfilePaths.map { WorktreeSparseCheckoutProfile(paths: $0) },
+          fullCheckout: fullCheckout
         )
       }
     } catch {
@@ -251,7 +267,7 @@ struct AgentHubMCPServer {
       throw error
     }
 
-    writeProgress(.completed(path: worktreePath))
+    writeProgress(.completed(path: creation.worktreePath))
 
     let mainRepositoryPath = try await service.findMainRepositoryRoot(at: repositoryPath)
     let sourceProvider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
@@ -260,7 +276,8 @@ struct AgentHubMCPServer {
     let request = WorktreeLaunchRequest(
       provider: provider,
       repositoryPath: mainRepositoryPath,
-      worktreePath: worktreePath,
+      worktreePath: creation.worktreePath,
+      launchPath: creation.launchPath == creation.worktreePath ? nil : creation.launchPath,
       branchName: branch,
       prompt: prompt,
       sourceProvider: sourceProvider,
@@ -272,7 +289,10 @@ struct AgentHubMCPServer {
       branch: branch,
       provider: provider,
       repositoryPath: mainRepositoryPath,
-      worktreePath: worktreePath,
+      worktreePath: creation.worktreePath,
+      launchPath: creation.launchPath,
+      isSparseCheckout: creation.isSparseCheckout,
+      sparseCheckoutPaths: creation.sparseCheckoutPaths,
       launchRequestId: queued.request.id
     )
   }
@@ -309,6 +329,9 @@ struct AgentHubMCPServer {
 
     let defaultRepo = optionalString("repo", in: arguments)
     let defaultProvider = optionalString("provider", in: arguments)
+    let defaultStartPath = optionalString("startPath", in: arguments)
+    let defaultSparseProfile = try optionalStringArray("sparseProfile", in: arguments)
+    let defaultFullCheckout = arguments["fullCheckout"] as? Bool
 
     var batch = MCPWorktreeBatchResult()
     for task in tasks {
@@ -318,6 +341,15 @@ struct AgentHubMCPServer {
       }
       if merged["provider"] == nil, let defaultProvider {
         merged["provider"] = defaultProvider
+      }
+      if merged["startPath"] == nil, let defaultStartPath {
+        merged["startPath"] = defaultStartPath
+      }
+      if merged["sparseProfile"] == nil, let defaultSparseProfile {
+        merged["sparseProfile"] = defaultSparseProfile
+      }
+      if merged["fullCheckout"] == nil, let defaultFullCheckout {
+        merged["fullCheckout"] = defaultFullCheckout
       }
 
       // Isolate per-task failures: one bad task (invalid args, a git error)
@@ -646,6 +678,18 @@ struct AgentHubMCPServer {
     (arguments[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
+  private func optionalStringArray(_ key: String, in arguments: [String: Any]) throws -> [String]? {
+    guard let rawValue = arguments[key] else { return nil }
+    guard let values = rawValue as? [String] else {
+      throw MCPError.invalidRequest("Expected \(key) to be an array of strings.")
+    }
+
+    let trimmed = values
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
   private func defaultRepositoryPath(arguments: [String: Any]) -> String {
     optionalString("repo", in: arguments)
       ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
@@ -693,13 +737,26 @@ struct AgentHubMCPServer {
   private func createWorktreeSessionsToolSchema() -> [String: Any] {
     [
       "name": "agenthub_create_worktree_sessions",
-      "description": "Creates AgentHub-managed git worktree sessions from task objects. Each task requires an explicit provider, branch, and prompt. Optional repo/from values control repository resolution and base branch selection.",
+      "description": "Creates AgentHub-managed git worktree sessions from task objects. Each task requires an explicit provider, branch, and prompt. By default, new worktrees are sparse checkouts inferred from startPath/repo; pass fullCheckout only when a full materialized repo is explicitly required.",
       "inputSchema": [
         "type": "object",
         "properties": [
           "repo": [
             "type": "string",
             "description": "Repository path applied to every task unless a task overrides it. Defaults to AGENTHUB_PROJECT_PATH.",
+          ],
+          "startPath": [
+            "type": "string",
+            "description": "Agent launch directory applied to every task unless a task overrides it. Must be inside repo; defaults to the task repo.",
+          ],
+          "sparseProfile": [
+            "type": "array",
+            "items": ["type": "string"],
+            "description": "Explicit sparse-checkout paths applied to every new worktree unless a task overrides them. Defaults to a profile inferred from startPath.",
+          ],
+          "fullCheckout": [
+            "type": "boolean",
+            "description": "Explicit fallback that disables sparse checkout and materializes the full repository for new worktrees. Defaults to false.",
           ],
           "provider": [
             "type": "string",
@@ -720,6 +777,19 @@ struct AgentHubMCPServer {
                   "description": "Agent/provider assigned to this task.",
                 ],
                 "from": ["type": "string"],
+                "startPath": [
+                  "type": "string",
+                  "description": "Agent launch directory for this task. Must be inside repo; used to infer the sparse profile and launch cwd.",
+                ],
+                "sparseProfile": [
+                  "type": "array",
+                  "items": ["type": "string"],
+                  "description": "Explicit sparse-checkout paths for this task.",
+                ],
+                "fullCheckout": [
+                  "type": "boolean",
+                  "description": "When true, disables sparse checkout for this task.",
+                ],
                 "checkoutExisting": ["type": "boolean"],
               ],
               "required": ["branch", "prompt", "provider"],
@@ -1056,10 +1126,15 @@ private struct MCPWorktreeLaunchResult {
   let provider: WorktreeLaunchProvider
   let repositoryPath: String
   let worktreePath: String
+  let launchPath: String
+  let isSparseCheckout: Bool
+  let sparseCheckoutPaths: [String]
   let launchRequestId: String
 
   var summary: String {
-    "Queued AgentHub \(provider.rawValue) session for \(branch) at \(worktreePath) (request \(launchRequestId))."
+    let cwdSuffix = launchPath == worktreePath ? "" : " launching in \(launchPath)"
+    let checkoutKind = isSparseCheckout ? "sparse" : "full"
+    return "Queued AgentHub \(provider.rawValue) session for \(branch) at \(worktreePath) (\(checkoutKind) checkout\(cwdSuffix), request \(launchRequestId))."
   }
 
   var dictionary: [String: Any] {
@@ -1068,6 +1143,9 @@ private struct MCPWorktreeLaunchResult {
       "provider": provider.commandLineValue,
       "repositoryPath": repositoryPath,
       "worktreePath": worktreePath,
+      "launchPath": launchPath,
+      "isSparseCheckout": isSparseCheckout,
+      "sparseCheckoutPaths": sparseCheckoutPaths,
       "launchRequestId": launchRequestId,
     ]
   }

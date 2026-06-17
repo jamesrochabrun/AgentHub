@@ -36,6 +36,7 @@ public struct WorktreeLaunchRequest: Codable, Equatable, Identifiable, Sendable 
   public let provider: WorktreeLaunchProvider
   public let repositoryPath: String
   public let worktreePath: String
+  public let launchPath: String?
   public let branchName: String
   public let prompt: String
   public let sourceProvider: WorktreeLaunchProvider?
@@ -47,6 +48,7 @@ public struct WorktreeLaunchRequest: Codable, Equatable, Identifiable, Sendable 
     provider: WorktreeLaunchProvider,
     repositoryPath: String,
     worktreePath: String,
+    launchPath: String? = nil,
     branchName: String,
     prompt: String,
     sourceProvider: WorktreeLaunchProvider? = nil,
@@ -57,6 +59,7 @@ public struct WorktreeLaunchRequest: Codable, Equatable, Identifiable, Sendable 
     self.provider = provider
     self.repositoryPath = repositoryPath
     self.worktreePath = worktreePath
+    self.launchPath = launchPath
     self.branchName = branchName
     self.prompt = prompt
     self.sourceProvider = sourceProvider
