@@ -20,8 +20,8 @@ jobs:
         with:
           xcode-version: '26.2'
 
-      - name: Install create-dmg
-        run: brew install create-dmg
+      - name: Install build dependencies
+        run: brew install create-dmg libgit2
 
       - name: Import signing certificate
         env:
