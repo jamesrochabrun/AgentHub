@@ -18,7 +18,7 @@ jobs:
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '26.2'
+          xcode-version: '26.4.1'
 
       - name: Install build dependencies
         run: brew install create-dmg libgit2
