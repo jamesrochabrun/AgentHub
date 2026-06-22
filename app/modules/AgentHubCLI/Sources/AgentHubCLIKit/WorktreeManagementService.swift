@@ -82,6 +82,45 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     maxConcurrentPerRepository: 1
   )
   private static let updatingFilesPattern = #/Updating files:\s+\d+%\s+\((\d+)/(\d+)\)/#
+  private static let sparseProjectMarkerFileNames: Set<String> = [
+    "Package.swift",
+    "Project.swift",
+    "Workspace.swift",
+    "Podfile",
+    "package.json",
+    "pnpm-workspace.yaml",
+    "Cargo.toml",
+    "go.mod",
+    "pyproject.toml",
+    "requirements.txt",
+    "Gemfile",
+    "Makefile",
+    "CMakeLists.txt"
+  ]
+  private static let sparseGradleRootMarkerFileNames: Set<String> = [
+    "settings.gradle",
+    "settings.gradle.kts",
+    "gradlew"
+  ]
+  private static let sparseGradleBuildMarkerFileNames: Set<String> = [
+    "build.gradle",
+    "build.gradle.kts"
+  ]
+  private static let sparseProjectMarkerSuffixes = [
+    ".xcodeproj",
+    ".xcworkspace"
+  ]
+  private static let topLevelGradleSupportPath = "gradle"
+
+  private struct SparseCheckoutInference: Sendable {
+    let ownerPath: String
+    let paths: [String]
+  }
+
+  private struct SparseProjectMarkerMatch: Sendable {
+    let ownerPath: String
+    let includesGradleSupport: Bool
+  }
 
   private var gitRootCache: [String: String] = [:]
   private var mainRootCache: [String: String] = [:]
@@ -789,23 +828,144 @@ private extension WorktreeManagementService {
     treeish: String,
     sourceRoot: String
   ) async throws -> [String] {
-    let inferredProfile = profile ?? WorktreeSparseCheckoutProfile.inferred(relativeStartPath: relativeStartPath)
-    guard var paths = inferredProfile?.paths else { return [] }
+    let inference = try await sparseCheckoutInference(
+      relativeStartPath: relativeStartPath,
+      treeish: treeish,
+      sourceRoot: sourceRoot
+    )
 
-    if let ownerPath = WorktreeSparseCheckoutProfile.ownerPath(for: relativeStartPath),
-       !Self.sparsePaths(paths, contain: ownerPath) {
-      paths.insert(ownerPath, at: 0)
+    let profilePaths: [String]
+    if let profile {
+      var paths = profile.paths
+      if let ownerPath = inference?.ownerPath,
+         !Self.sparsePaths(paths, contain: ownerPath) {
+        paths.insert(ownerPath, at: 0)
+      }
+      profilePaths = paths
+    } else {
+      guard let inference else { return [] }
+      profilePaths = inference.paths
     }
 
     var existingPaths: [String] = []
-    for path in paths {
+    for path in profilePaths {
       try validateSparseCheckoutPath(path)
       guard try await trackedPathExists(path, treeish: treeish, sourceRoot: sourceRoot) else { continue }
       if !Self.sparsePaths(existingPaths, contain: path) {
         existingPaths.append(path)
       }
     }
+
+    if let ownerPath = inference?.ownerPath,
+       !Self.sparsePaths(existingPaths, contain: ownerPath) {
+      guard profile != nil else { return [] }
+      throw WorktreeManagementError.gitCommandFailed(
+        "Sparse checkout launch path did not match any tracked paths for \(relativeStartPath). Pass tracked sparse paths or request a full checkout."
+      )
+    }
+
     return existingPaths
+  }
+
+  private func sparseCheckoutInference(
+    relativeStartPath: String,
+    treeish: String,
+    sourceRoot: String
+  ) async throws -> SparseCheckoutInference? {
+    let normalizedStartPath = WorktreeSparseCheckoutProfile.normalizedPath(relativeStartPath)
+    guard !normalizedStartPath.isEmpty else { return nil }
+
+    let markerMatch = try await nearestSparseProjectMarker(
+      relativeStartPath: normalizedStartPath,
+      treeish: treeish,
+      sourceRoot: sourceRoot
+    )
+    let ownerPath = markerMatch?.ownerPath ?? normalizedStartPath
+    var paths = [ownerPath] + WorktreeSparseCheckoutProfile.agentSupportPaths
+    if markerMatch?.includesGradleSupport == true {
+      paths.append(Self.topLevelGradleSupportPath)
+    }
+
+    return SparseCheckoutInference(
+      ownerPath: ownerPath,
+      paths: WorktreeSparseCheckoutProfile(paths: paths).paths
+    )
+  }
+
+  private func nearestSparseProjectMarker(
+    relativeStartPath: String,
+    treeish: String,
+    sourceRoot: String
+  ) async throws -> SparseProjectMarkerMatch? {
+    var nearestGradleBuildMatch: SparseProjectMarkerMatch?
+
+    for candidatePath in sparseOwnerCandidates(for: relativeStartPath) {
+      guard let entryNames = try await treeEntryNames(
+        at: candidatePath,
+        treeish: treeish,
+        sourceRoot: sourceRoot
+      ) else { continue }
+
+      let hasGradleRootMarker = entryNames.contains(where: Self.isSparseGradleRootMarker)
+      let hasGradleBuildMarker = entryNames.contains(where: Self.isSparseGradleBuildMarker)
+      if hasGradleRootMarker || entryNames.contains(where: Self.isSparseProjectMarker) {
+        return SparseProjectMarkerMatch(
+          ownerPath: candidatePath,
+          includesGradleSupport: hasGradleRootMarker || hasGradleBuildMarker
+        )
+      }
+
+      if hasGradleBuildMarker, nearestGradleBuildMatch == nil {
+        nearestGradleBuildMatch = SparseProjectMarkerMatch(
+          ownerPath: candidatePath,
+          includesGradleSupport: true
+        )
+      }
+    }
+    return nearestGradleBuildMatch
+  }
+
+  private nonisolated func sparseOwnerCandidates(for relativeStartPath: String) -> [String] {
+    let components = WorktreeSparseCheckoutProfile.normalizedPath(relativeStartPath)
+      .split(separator: "/")
+      .map(String.init)
+    guard !components.isEmpty else { return [] }
+
+    return stride(from: components.count, through: 1, by: -1).map { count in
+      components.prefix(count).joined(separator: "/")
+    }
+  }
+
+  private func treeEntryNames(
+    at relativePath: String,
+    treeish: String,
+    sourceRoot: String
+  ) async throws -> [String]? {
+    do {
+      let output = try await runGitCommand(
+        ["ls-tree", "--name-only", "\(treeish):\(relativePath)"],
+        at: sourceRoot
+      )
+      return output
+        .components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+    } catch WorktreeManagementError.gitCommandFailed {
+      return nil
+    }
+  }
+
+  private nonisolated static func isSparseProjectMarker(_ name: String) -> Bool {
+    sparseProjectMarkerFileNames.contains(name)
+      || sparseProjectMarkerSuffixes.contains(where: name.hasSuffix)
+  }
+
+  private nonisolated static func isSparseGradleRootMarker(_ name: String) -> Bool {
+    sparseGradleRootMarkerFileNames.contains(name)
+  }
+
+  private nonisolated static func isSparseGradleBuildMarker(_ name: String) -> Bool {
+    sparseGradleBuildMarkerFileNames.contains(name)
   }
 
   nonisolated func validateSparseCheckoutPath(_ path: String) throws {

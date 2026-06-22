@@ -92,42 +92,16 @@ public struct WorktreeSparseCheckoutProfile: Codable, Equatable, Sendable {
 
   public static func inferred(relativeStartPath: String) -> WorktreeSparseCheckoutProfile? {
     guard let ownerPath = ownerPath(for: relativeStartPath) else { return nil }
-
-    let sourcePaths: [String]
-    switch ownerPath {
-    case "ios":
-      sourcePaths = ["ios"]
-    case "android":
-      sourcePaths = ["android", "gradle", "ribbons"]
-    case "ribbons":
-      sourcePaths = ["ribbons"]
-    case "tools/ios/SproutApp":
-      sourcePaths = ["tools/ios/SproutApp"]
-    default:
-      return nil
-    }
-
-    return WorktreeSparseCheckoutProfile(paths: sourcePaths + agentSupportPaths)
+    return WorktreeSparseCheckoutProfile(paths: [ownerPath] + agentSupportPaths)
   }
 
   public static func ownerPath(for relativeStartPath: String) -> String? {
     let normalized = normalizedPath(relativeStartPath)
     guard !normalized.isEmpty else { return nil }
-
-    let components = normalized.split(separator: "/").map(String.init)
-    guard let first = components.first else { return nil }
-
-    if components.count >= 3,
-       components[0] == "tools",
-       components[1] == "ios",
-       components[2] == "SproutApp" {
-      return "tools/ios/SproutApp"
-    }
-
-    return first
+    return normalized
   }
 
-  private static func normalizedPath(_ path: String) -> String {
+  static func normalizedPath(_ path: String) -> String {
     path
       .trimmingCharacters(in: .whitespacesAndNewlines)
       .split(separator: "/", omittingEmptySubsequences: true)

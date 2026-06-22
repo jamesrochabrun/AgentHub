@@ -737,7 +737,7 @@ struct AgentHubMCPServer {
   private func createWorktreeSessionsToolSchema() -> [String: Any] {
     [
       "name": "agenthub_create_worktree_sessions",
-      "description": "Creates AgentHub-managed git worktree sessions from task objects. Each task requires an explicit provider, branch, and prompt. By default, new worktrees are sparse checkouts inferred from startPath/repo; pass fullCheckout only when a full materialized repo is explicitly required.",
+      "description": "Creates AgentHub-managed git worktree sessions from task objects. Each task requires an explicit provider, branch, and prompt. By default, subdirectory starts create sparse checkouts inferred from project markers near startPath; pass fullCheckout only when a full materialized repo is explicitly required.",
       "inputSchema": [
         "type": "object",
         "properties": [
@@ -747,12 +747,12 @@ struct AgentHubMCPServer {
           ],
           "startPath": [
             "type": "string",
-            "description": "Agent launch directory applied to every task unless a task overrides it. Must be inside repo; defaults to the task repo.",
+            "description": "Agent launch directory applied to every task unless a task overrides it. Must be inside repo; defaults to the task repo. Non-root start paths infer sparse checkout from nearby project markers.",
           ],
           "sparseProfile": [
             "type": "array",
             "items": ["type": "string"],
-            "description": "Explicit sparse-checkout paths applied to every new worktree unless a task overrides them. Defaults to a profile inferred from startPath.",
+            "description": "Explicit sparse-checkout paths applied to every new worktree unless a task overrides them. Defaults to a profile inferred from project markers near startPath.",
           ],
           "fullCheckout": [
             "type": "boolean",
@@ -779,7 +779,7 @@ struct AgentHubMCPServer {
                 "from": ["type": "string"],
                 "startPath": [
                   "type": "string",
-                  "description": "Agent launch directory for this task. Must be inside repo; used to infer the sparse profile and launch cwd.",
+                  "description": "Agent launch directory for this task. Must be inside repo; used to infer the sparse profile from nearby project markers and launch cwd.",
                 ],
                 "sparseProfile": [
                   "type": "array",
