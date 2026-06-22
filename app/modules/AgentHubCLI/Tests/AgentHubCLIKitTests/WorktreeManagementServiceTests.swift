@@ -96,8 +96,9 @@ enum GitFixtureError: Error {
 
 private func seedMonorepoLikePaths(in fixture: GitRepoFixture) throws {
   let files = [
-    "ios/features/payments/Feature.swift": "struct Feature {}\n",
-    "android/app/build.gradle": "plugins {}\n",
+    "apps/ios/Package.swift": "// swift-tools-version: 6.0\n",
+    "apps/ios/features/payments/Feature.swift": "struct Feature {}\n",
+    "apps/android/app/build.gradle": "plugins {}\n",
     "ribbons/README.md": "ribbons\n",
     ".agents/README.md": "agents\n",
     ".claude/README.md": "claude\n",
@@ -219,15 +220,15 @@ struct WorktreeConventionTests {
     #expect(FileManager.default.fileExists(atPath: path + "/BASE.md"))
   }
 
-  @Test("Creates sparse agent worktree from nested iOS start path")
-  func createsSparseAgentWorktreeFromNestedIOSStartPath() async throws {
+  @Test("Creates sparse agent worktree from nested marked project start path")
+  func createsSparseAgentWorktreeFromNestedMarkedProjectStartPath() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }
 
     try seedMonorepoLikePaths(in: fixture)
     try installHookThatRequiresSparseSupport(in: fixture)
 
-    let startPath = fixture.repoPath + "/ios/features/payments"
+    let startPath = fixture.repoPath + "/apps/ios/features/payments"
     let service = WorktreeManagementService()
     let creation = try await service.createAgentWorktreeWithNewBranch(
       at: startPath,
@@ -240,22 +241,23 @@ struct WorktreeConventionTests {
     )
 
     #expect(creation.worktreePath == fixture.parentDir + "/feature-sparse-ios")
-    #expect(creation.launchPath == creation.worktreePath + "/ios/features/payments")
+    #expect(creation.launchPath == creation.worktreePath + "/apps/ios/features/payments")
     #expect(creation.isSparseCheckout)
-    #expect(creation.sparseCheckoutPaths.contains("ios"))
+    #expect(creation.sparseCheckoutPaths.contains("apps/ios"))
     #expect(creation.sparseCheckoutPaths.contains("scripts/git_hooks_support"))
+    #expect(!creation.sparseCheckoutPaths.contains("gradle"))
     #expect(FileManager.default.fileExists(atPath: creation.launchPath))
-    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/ios/features/payments/Feature.swift"))
-    #expect(!FileManager.default.fileExists(atPath: creation.worktreePath + "/android/app/build.gradle"))
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/apps/ios/features/payments/Feature.swift"))
+    #expect(!FileManager.default.fileExists(atPath: creation.worktreePath + "/apps/android/app/build.gradle"))
 
     let sparseList = try fixture.runGit("sparse-checkout", "list", at: creation.worktreePath)
-    #expect(sparseList.components(separatedBy: .newlines).contains("ios"))
+    #expect(sparseList.components(separatedBy: .newlines).contains("apps/ios"))
     #expect(sparseList.components(separatedBy: .newlines).contains("scripts/git_hooks_support"))
     #expect(try fixture.runGit("status", "--short", at: creation.worktreePath).isEmpty)
   }
 
-  @Test("Agent sparse profile filters absent support paths")
-  func agentSparseProfileFiltersAbsentSupportPaths() async throws {
+  @Test("Agent sparse inference falls back to exact start path without project markers")
+  func agentSparseInferenceFallsBackToExactStartPathWithoutProjectMarkers() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }
 
@@ -278,9 +280,120 @@ struct WorktreeConventionTests {
       fullCheckout: false
     )
 
-    #expect(creation.sparseCheckoutPaths == ["ios"])
+    #expect(creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths == ["ios/app"])
     #expect(FileManager.default.fileExists(atPath: creation.launchPath))
     #expect(try fixture.runGit("status", "--short", at: creation.worktreePath).isEmpty)
+  }
+
+  @Test("Agent sparse inference falls back to full checkout when launch owner is untracked")
+  func agentSparseInferenceFallsBackToFullCheckoutWhenLaunchOwnerIsUntracked() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try FileManager.default.createDirectory(
+      atPath: fixture.repoPath + "/.agents",
+      withIntermediateDirectories: true
+    )
+    try "agents\n".write(toFile: fixture.repoPath + "/.agents/README.md", atomically: true, encoding: .utf8)
+    try fixture.runGit("add", ".")
+    try fixture.runGit("commit", "-m", "agent support")
+
+    let startPath = fixture.repoPath + "/src/new-feature"
+    try FileManager.default.createDirectory(atPath: startPath, withIntermediateDirectories: true)
+
+    let service = WorktreeManagementService()
+    let creation = try await service.createAgentWorktreeWithNewBranch(
+      at: fixture.repoPath,
+      startPath: startPath,
+      newBranchName: "feature/untracked-owner",
+      directoryName: "feature-untracked-owner",
+      startPoint: nil,
+      sparseProfile: nil,
+      fullCheckout: false
+    )
+
+    #expect(!creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths.isEmpty)
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/.agents/README.md"))
+  }
+
+  @Test("Agent sparse inference includes top-level Gradle support for Gradle projects")
+  func agentSparseInferenceIncludesTopLevelGradleSupportForGradleProjects() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let files = [
+      "apps/android/settings.gradle.kts": "pluginManagement {}\n",
+      "apps/android/app/build.gradle.kts": "plugins {}\n",
+      "apps/android/app/src/main/AndroidManifest.xml": "<manifest />\n",
+      "apps/ios/Package.swift": "// swift-tools-version: 6.0\n",
+      "gradle/libs.versions.toml": "[versions]\n"
+    ]
+    for (relativePath, contents) in files {
+      let path = fixture.repoPath + "/" + relativePath
+      try FileManager.default.createDirectory(
+        atPath: (path as NSString).deletingLastPathComponent,
+        withIntermediateDirectories: true
+      )
+      try contents.write(toFile: path, atomically: true, encoding: .utf8)
+    }
+    try fixture.runGit("add", ".")
+    try fixture.runGit("commit", "-m", "android app")
+
+    let startPath = fixture.repoPath + "/apps/android/app/src/main"
+    let service = WorktreeManagementService()
+    let creation = try await service.createAgentWorktreeWithNewBranch(
+      at: startPath,
+      startPath: startPath,
+      newBranchName: "feature/sparse-android",
+      directoryName: "feature-sparse-android",
+      startPoint: nil,
+      sparseProfile: nil,
+      fullCheckout: false
+    )
+
+    #expect(creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths.contains("apps/android"))
+    #expect(creation.sparseCheckoutPaths.contains("gradle"))
+    #expect(!creation.sparseCheckoutPaths.contains("apps/ios"))
+    #expect(FileManager.default.fileExists(atPath: creation.launchPath))
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/gradle/libs.versions.toml"))
+    #expect(!FileManager.default.fileExists(atPath: creation.worktreePath + "/apps/ios/Package.swift"))
+  }
+
+  @Test("Explicit sparse profile is augmented with inferred launch owner")
+  func explicitSparseProfileIsAugmentedWithInferredLaunchOwner() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    try seedMonorepoLikePaths(in: fixture)
+    try FileManager.default.createDirectory(
+      atPath: fixture.repoPath + "/shared",
+      withIntermediateDirectories: true
+    )
+    try "shared\n".write(toFile: fixture.repoPath + "/shared/README.md", atomically: true, encoding: .utf8)
+    try fixture.runGit("add", ".")
+    try fixture.runGit("commit", "-m", "shared")
+
+    let startPath = fixture.repoPath + "/apps/ios/features/payments"
+    let service = WorktreeManagementService()
+    let creation = try await service.createAgentWorktreeWithNewBranch(
+      at: startPath,
+      startPath: startPath,
+      newBranchName: "feature/explicit-sparse",
+      directoryName: "feature-explicit-sparse",
+      startPoint: nil,
+      sparseProfile: WorktreeSparseCheckoutProfile(paths: ["shared"]),
+      fullCheckout: false
+    )
+
+    #expect(creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths.contains("apps/ios"))
+    #expect(creation.sparseCheckoutPaths.contains("shared"))
+    #expect(FileManager.default.fileExists(atPath: creation.launchPath))
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/shared/README.md"))
+    #expect(!FileManager.default.fileExists(atPath: creation.worktreePath + "/apps/android/app/build.gradle"))
   }
 
   @Test("Agent worktree can explicitly use full checkout fallback")
@@ -290,7 +403,7 @@ struct WorktreeConventionTests {
 
     try seedMonorepoLikePaths(in: fixture)
 
-    let startPath = fixture.repoPath + "/ios/features/payments"
+    let startPath = fixture.repoPath + "/apps/ios/features/payments"
     let service = WorktreeManagementService()
     let creation = try await service.createAgentWorktreeWithNewBranch(
       at: startPath,
@@ -304,8 +417,8 @@ struct WorktreeConventionTests {
 
     #expect(!creation.isSparseCheckout)
     #expect(creation.sparseCheckoutPaths.isEmpty)
-    #expect(creation.launchPath == creation.worktreePath + "/ios/features/payments")
-    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/android/app/build.gradle"))
+    #expect(creation.launchPath == creation.worktreePath + "/apps/ios/features/payments")
+    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/apps/android/app/build.gradle"))
   }
 
   @Test("Agent worktree defaults to full checkout from repository root")
@@ -330,8 +443,8 @@ struct WorktreeConventionTests {
     #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/README.md"))
   }
 
-  @Test("Agent worktree defaults to full checkout for generic subdirectory starts")
-  func agentWorktreeDefaultsToFullCheckoutForGenericSubdirectoryStarts() async throws {
+  @Test("Agent worktree defaults to sparse exact path for generic subdirectory starts")
+  func agentWorktreeDefaultsToSparseExactPathForGenericSubdirectoryStarts() async throws {
     let fixture = try GitRepoFixture.create()
     defer { fixture.cleanup() }
 
@@ -360,10 +473,9 @@ struct WorktreeConventionTests {
       fullCheckout: false
     )
 
-    #expect(!creation.isSparseCheckout)
-    #expect(creation.sparseCheckoutPaths.isEmpty)
+    #expect(creation.isSparseCheckout)
+    #expect(creation.sparseCheckoutPaths == ["src/features/payments"])
     #expect(creation.launchPath == creation.worktreePath + "/src/features/payments")
-    #expect(FileManager.default.fileExists(atPath: creation.worktreePath + "/Package.swift"))
     #expect(FileManager.default.fileExists(atPath: creation.launchPath + "/Feature.swift"))
   }
 
