@@ -115,6 +115,146 @@ struct ParseDeviceListTests {
   }
 }
 
+// MARK: - parsePhysicalDeviceList
+
+@Suite("parsePhysicalDeviceList")
+struct ParsePhysicalDeviceListTests {
+  private let sampleJSON = """
+  [
+    {
+      "simulator": false,
+      "available": true,
+      "platform": "com.apple.platform.iphoneos",
+      "identifier": "00008150-000E411A1A87801C",
+      "name": "Zizou2",
+      "modelName": "iPhone 17 Pro",
+      "operatingSystemVersion": "26.5 (23F77)",
+      "interface": "usb"
+    },
+    {
+      "simulator": false,
+      "available": false,
+      "platform": "com.apple.platform.iphoneos",
+      "identifier": "00008120-000A45121EF0201E",
+      "name": "Offline iPad",
+      "modelName": "iPad (A16)",
+      "operatingSystemVersion": "18.7.1 (22H31)"
+    },
+    {
+      "simulator": true,
+      "available": true,
+      "platform": "com.apple.platform.iphonesimulator",
+      "identifier": "SIM-1",
+      "name": "iPhone 17"
+    },
+    {
+      "simulator": false,
+      "available": true,
+      "platform": "com.apple.platform.macosx",
+      "identifier": "MAC-1",
+      "name": "My Mac"
+    }
+  ]
+  """
+
+  private let deviceCtlJSON = """
+  {
+    "info": {
+      "outcome": "success"
+    },
+    "result": {
+      "devices": [
+        {
+          "capabilities": [
+            { "featureIdentifier": "com.apple.coredevice.feature.tags" }
+          ],
+          "deviceProperties": {
+            "name": "Offline iPad",
+            "osVersionNumber": "18.7.1",
+            "osBuildUpdate": "22H31"
+          },
+          "hardwareProperties": {
+            "marketingName": "iPad (A16)",
+            "platform": "iOS",
+            "reality": "physical",
+            "udid": "00008120-000A45121EF0201E"
+          }
+        },
+        {
+          "capabilities": [
+            { "featureIdentifier": "com.apple.coredevice.feature.installapp" },
+            { "featureIdentifier": "com.apple.coredevice.feature.launchapplication" }
+          ],
+          "deviceProperties": {
+            "name": "Zizou2",
+            "osVersionNumber": "26.6",
+            "osBuildUpdate": "23G5043d"
+          },
+          "hardwareProperties": {
+            "marketingName": "iPhone 17 Pro",
+            "platform": "iOS",
+            "productType": "iPhone18,1",
+            "reality": "physical",
+            "udid": "00008150-000E411A1A87801C"
+          }
+        },
+        {
+          "capabilities": [
+            { "featureIdentifier": "com.apple.coredevice.feature.installapp" },
+            { "featureIdentifier": "com.apple.coredevice.feature.launchapplication" }
+          ],
+          "deviceProperties": {
+            "name": "Vision Device",
+            "osVersionNumber": "26.0"
+          },
+          "hardwareProperties": {
+            "marketingName": "Apple Vision Pro",
+            "platform": "xrOS",
+            "reality": "physical",
+            "udid": "XR-DEVICE"
+          }
+        }
+      ]
+    }
+  }
+  """
+
+  @Test func keepsOnlyAvailablePhysicalIOSDevices() throws {
+    let devices = try SimulatorService.parsePhysicalDeviceList(from: sampleJSON.data(using: .utf8)!)
+
+    #expect(devices.count == 1)
+    #expect(devices.first?.identifier == "00008150-000E411A1A87801C")
+    #expect(devices.first?.name == "Zizou2")
+    #expect(devices.first?.modelName == "iPhone 17 Pro")
+    #expect(devices.first?.operatingSystemVersion == "26.5 (23F77)")
+    #expect(devices.first?.interface == "usb")
+  }
+
+  @Test func parsesRunCapableDevicectlPhysicalIOSDevices() throws {
+    let devices = try SimulatorService.parseDeviceCtlPhysicalDeviceList(
+      from: deviceCtlJSON.data(using: .utf8)!
+    )
+
+    #expect(devices.count == 1)
+    #expect(devices.first?.identifier == "00008150-000E411A1A87801C")
+    #expect(devices.first?.name == "Zizou2")
+    #expect(devices.first?.modelName == "iPhone 17 Pro")
+    #expect(devices.first?.operatingSystemVersion == "26.6 (23G5043d)")
+  }
+
+  @Test func throwsOnMalformedJSON() {
+    #expect(throws: (any Error).self) {
+      try SimulatorService.parsePhysicalDeviceList(from: Data("{}".utf8))
+    }
+  }
+
+  @Test func devicectlParserThrowsOnMalformedJSON() {
+    #expect(throws: (any Error).self) {
+      try SimulatorService.parseDeviceCtlPhysicalDeviceList(from: Data("[]".utf8))
+    }
+  }
+}
+
 // MARK: - state(for:)
 
 @Suite("state(for:)")
@@ -257,6 +397,50 @@ struct BuildHelperTests {
 
     #expect(URL(fileURLWithPath: builtApp.appPath).standardizedFileURL.path == launchableApp.standardizedFileURL.path)
     #expect(builtApp.bundleIdentifier == "com.agenthub.demo-preview")
+  }
+
+  @Test func resolveDeviceAppUsesIPhoneOSProducts() throws {
+    let root = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("SimulatorServiceTests-\(UUID().uuidString)", isDirectory: true)
+    let deviceProducts = root.appendingPathComponent("Build/Products/Debug-iphoneos", isDirectory: true)
+    let simulatorProducts = root.appendingPathComponent("Build/Products/Debug-iphonesimulator", isDirectory: true)
+    let expectedApp = deviceProducts.appendingPathComponent("Demo.app", isDirectory: true)
+
+    try FileManager.default.createDirectory(at: expectedApp, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      at: simulatorProducts.appendingPathComponent("Demo.app", isDirectory: true),
+      withIntermediateDirectories: true
+    )
+    try writeInfoPlist(bundleIdentifier: "com.agenthub.demo-device", to: expectedApp)
+
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let builtApp = try #require(SimulatorService.resolveBuiltApp(
+      derivedDataPath: root.path,
+      scheme: "Demo",
+      platform: .iOSDevice,
+      requiresBundleIdentifier: true
+    ))
+
+    #expect(URL(fileURLWithPath: builtApp.appPath).standardizedFileURL.path == expectedApp.standardizedFileURL.path)
+    #expect(builtApp.bundleIdentifier == "com.agenthub.demo-device")
+  }
+
+  @Test func physicalDeviceBuildArgumentsAllowAutomaticProvisioning() {
+    let args = SimulatorService.physicalDeviceBuildArguments(
+      scheme: "Demo",
+      targetPath: "/tmp/Demo.xcodeproj",
+      isWorkspace: false,
+      identifier: "DEVICE-1",
+      derivedDataPath: "/tmp/DerivedData"
+    )
+
+    #expect(args.contains("-allowProvisioningUpdates"))
+    #expect(args.contains("-allowProvisioningDeviceRegistration"))
+    #expect(args.contains("-destination-timeout"))
+    #expect(args.contains("id=DEVICE-1"))
+    #expect(args.contains("-project"))
+    #expect(args.contains("/tmp/Demo.xcodeproj"))
   }
 
   @Test func bundleIdentifierReadsInfoPlist() throws {

@@ -22,6 +22,10 @@ public struct SimulatorPickerView: View {
     SimulatorService.shared.preferredSimulatorUDIDs[session.projectPath]
   }
 
+  private var preferredPhysicalDeviceID: String? {
+    SimulatorService.shared.preferredPhysicalDeviceIDs[session.projectPath]
+  }
+
   public init(
     session: CLISession,
     onDismiss: @escaping () -> Void,
@@ -103,7 +107,8 @@ public struct SimulatorPickerView: View {
     if isLoadingPlatforms
         || (platforms.contains(.iOS)
             && SimulatorService.shared.isLoadingDevices
-            && SimulatorService.shared.runtimes.isEmpty) {
+            && SimulatorService.shared.runtimes.isEmpty
+            && SimulatorService.shared.physicalDevices.isEmpty) {
       loadingState
     } else if !platforms.contains(.macOS) && !hasIOSDevices {
       emptyState
@@ -270,6 +275,16 @@ public struct SimulatorPickerView: View {
 
   @ViewBuilder
   private var iosDeviceSections: some View {
+    if !SimulatorService.shared.physicalDevices.isEmpty {
+      Section(header: physicalDeviceSectionHeader) {
+        ForEach(SimulatorService.shared.physicalDevices) { device in
+          physicalDeviceRow(device)
+          Divider()
+            .padding(.leading, 16)
+        }
+      }
+    }
+
     ForEach(SimulatorService.shared.runtimes) { runtime in
       if !runtime.availableDevices.isEmpty {
         Section(header: runtimeHeader(runtime)) {
@@ -281,6 +296,21 @@ public struct SimulatorPickerView: View {
         }
       }
     }
+  }
+
+  private var physicalDeviceSectionHeader: some View {
+    HStack {
+      Text("Connected Devices")
+        .font(.subheadline.weight(.semibold))
+        .foregroundColor(.secondary)
+      Spacer()
+      Text("\(SimulatorService.shared.physicalDevices.count)")
+        .font(.caption)
+        .foregroundColor(.secondary)
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 6)
+    .background(colorScheme == .dark ? Color(white: 0.10) : Color(white: 0.94))
   }
 
   // MARK: - Runtime Header
@@ -301,6 +331,55 @@ public struct SimulatorPickerView: View {
   }
 
   // MARK: - Device Row
+
+  private func physicalDeviceRow(_ device: PhysicalIOSDevice) -> some View {
+    let serviceState = SimulatorService.shared.physicalDeviceState(
+      for: device.identifier,
+      projectPath: session.projectPath
+    )
+
+    return HStack(alignment: .firstTextBaseline, spacing: 10) {
+      StatusDotView(
+        color: physicalStatusColor(for: serviceState),
+        isAnimating: {
+          switch serviceState {
+          case .building, .installing, .launching: return true
+          default: return false
+          }
+        }()
+      )
+
+      VStack(alignment: .leading, spacing: 2) {
+        Text(device.name)
+          .font(.system(.body, design: .default))
+          .lineLimit(1)
+        Text(physicalStateLabel(for: serviceState, device: device))
+          .font(.caption)
+          .foregroundColor(stateLabelColor(for: serviceState))
+          .lineLimit(nil)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+
+      Spacer()
+
+      physicalActionButtons(for: device, state: serviceState)
+    }
+    .padding(.horizontal, 16)
+    .padding(.vertical, 10)
+    .contentShape(Rectangle())
+    .background(
+      preferredPhysicalDeviceID == device.identifier
+        ? Color.accentColor.opacity(0.08)
+        : Color.clear
+    )
+    .onTapGesture {
+      SimulatorService.shared.setPreferredPhysicalDevice(
+        identifier: device.identifier,
+        for: session.projectPath
+      )
+      SimulatorService.shared.setPreferredSimulator(udid: nil, for: session.projectPath)
+    }
+  }
 
   private func deviceRow(_ device: SimulatorDevice) -> some View {
     let serviceState = SimulatorService.shared.state(for: device.udid, projectPath: session.projectPath)
@@ -344,6 +423,67 @@ public struct SimulatorPickerView: View {
     )
     .onTapGesture {
       SimulatorService.shared.setPreferredSimulator(udid: device.udid, for: session.projectPath)
+      SimulatorService.shared.setPreferredPhysicalDevice(identifier: nil, for: session.projectPath)
+    }
+  }
+
+  @ViewBuilder
+  private func physicalActionButtons(for device: PhysicalIOSDevice, state: SimulatorState) -> some View {
+    switch state {
+    case .idle, .booted, .shuttingDown:
+      physicalRunButton(identifier: device.identifier)
+    case .building:
+      HStack(spacing: 6) {
+        ProgressView()
+          .scaleEffect(0.6)
+          .frame(width: 16, height: 16)
+        Text("Building...")
+          .font(.caption)
+          .foregroundColor(.secondary)
+        physicalCancelButton(identifier: device.identifier)
+      }
+    case .installing:
+      HStack(spacing: 6) {
+        ProgressView()
+          .scaleEffect(0.6)
+          .frame(width: 16, height: 16)
+        Text("Installing...")
+          .font(.caption)
+          .foregroundColor(.secondary)
+        physicalCancelButton(identifier: device.identifier)
+      }
+    case .launching:
+      HStack(spacing: 6) {
+        ProgressView()
+          .scaleEffect(0.6)
+          .frame(width: 16, height: 16)
+        Text("Launching...")
+          .font(.caption)
+          .foregroundColor(.secondary)
+        physicalCancelButton(identifier: device.identifier)
+      }
+    case .booting:
+      HStack(spacing: 6) {
+        ProgressView()
+          .scaleEffect(0.6)
+          .frame(width: 16, height: 16)
+        Text("Preparing...")
+          .font(.caption)
+          .foregroundColor(.secondary)
+      }
+    case .failed(let error):
+      HStack(spacing: 6) {
+        if onSendToSession != nil {
+          Button("Fix", systemImage: "wrench.and.screwdriver.fill") {
+            onSendToSession?(error)
+          }
+          .font(.caption)
+          .buttonStyle(.bordered)
+          .controlSize(.small)
+          .tint(.accentColor)
+        }
+        physicalRunButton(identifier: device.identifier)
+      }
     }
   }
 
@@ -448,9 +588,40 @@ public struct SimulatorPickerView: View {
     .controlSize(.small)
   }
 
+  private func physicalRunButton(identifier: String) -> some View {
+    Button {
+      Task {
+        await SimulatorService.shared.buildAndRunOnPhysicalDevice(
+          identifier: identifier,
+          projectPath: session.projectPath
+        )
+      }
+    } label: {
+      Image(systemName: "play.fill")
+        .font(.caption)
+    }
+    .buttonStyle(.bordered)
+    .controlSize(.small)
+  }
+
   private func cancelButton(udid: String) -> some View {
     Button {
       SimulatorService.shared.cancelSimulatorBuild(udid: udid, projectPath: session.projectPath)
+    } label: {
+      Image(systemName: "stop.fill")
+        .font(.caption)
+    }
+    .buttonStyle(.bordered)
+    .controlSize(.small)
+    .tint(.red)
+  }
+
+  private func physicalCancelButton(identifier: String) -> some View {
+    Button {
+      SimulatorService.shared.cancelPhysicalDeviceRun(
+        identifier: identifier,
+        projectPath: session.projectPath
+      )
     } label: {
       Image(systemName: "stop.fill")
         .font(.caption)
@@ -486,8 +657,8 @@ public struct SimulatorPickerView: View {
   // MARK: - Helpers
 
   private var hasIOSDevices: Bool {
-    !SimulatorService.shared.runtimes.isEmpty
-      && SimulatorService.shared.runtimes.contains(where: { !$0.availableDevices.isEmpty })
+    !SimulatorService.shared.physicalDevices.isEmpty
+      || SimulatorService.shared.runtimes.contains(where: { !$0.availableDevices.isEmpty })
   }
 
   private func macStatusColor(for state: MacRunState) -> Color {
@@ -523,6 +694,19 @@ public struct SimulatorPickerView: View {
     }
   }
 
+  private func physicalStatusColor(for state: SimulatorState) -> Color {
+    switch state {
+    case .idle, .booted:
+      return .green
+    case .booting, .building, .installing, .launching:
+      return .yellow
+    case .shuttingDown:
+      return .orange
+    case .failed:
+      return .red
+    }
+  }
+
   private func stateLabel(for state: SimulatorState, device: SimulatorDevice) -> String {
     switch state {
     case .idle:
@@ -539,6 +723,27 @@ public struct SimulatorPickerView: View {
       return "Booted"
     case .shuttingDown:
       return "Shutting Down..."
+    case .failed:
+      return "Build failed"
+    }
+  }
+
+  private func physicalStateLabel(for state: SimulatorState, device: PhysicalIOSDevice) -> String {
+    switch state {
+    case .idle:
+      return device.subtitle.isEmpty ? "Connected" : device.subtitle
+    case .booting:
+      return "Preparing..."
+    case .building:
+      return "Building..."
+    case .installing:
+      return "Installing..."
+    case .launching:
+      return "Launching..."
+    case .booted:
+      return "Running"
+    case .shuttingDown:
+      return "Stopping..."
     case .failed:
       return "Build failed"
     }

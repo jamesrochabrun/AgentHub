@@ -33,6 +33,42 @@ enum SimulatorPanelDisplayMode: String, Hashable {
   case previews
 }
 
+private enum SimulatorRunDestination: Identifiable, Hashable {
+  case simulator(SimulatorDevice)
+  case physical(PhysicalIOSDevice)
+
+  static func simulatorID(udid: String) -> String {
+    "simulator:\(udid)"
+  }
+
+  static func physicalID(identifier: String) -> String {
+    "physical:\(identifier)"
+  }
+
+  var id: String {
+    switch self {
+    case .simulator(let device):
+      return Self.simulatorID(udid: device.udid)
+    case .physical(let device):
+      return Self.physicalID(identifier: device.identifier)
+    }
+  }
+
+  var name: String {
+    switch self {
+    case .simulator(let device):
+      return device.name
+    case .physical(let device):
+      return device.name
+    }
+  }
+
+  var simulatorUDID: String? {
+    if case .simulator(let device) = self { return device.udid }
+    return nil
+  }
+}
+
 struct SimulatorPreviewSidePanelView: View {
   let session: CLISession
   let projectPath: String
@@ -46,7 +82,7 @@ struct SimulatorPreviewSidePanelView: View {
   @Environment(\.agentHub) private var agentHub
 
   @State private var simulatorService = SimulatorService.shared
-  @State private var selectedUDID: String?
+  @State private var selectedDestinationID: String?
   @State private var hasLoadedDevices = false
   @State private var annotationModel = SimulatorAnnotationModel()
   @State private var isAnnotationTrayExpanded = false
@@ -77,12 +113,36 @@ struct SimulatorPreviewSidePanelView: View {
     WorktreeLaunchProvider(commandLineValue: providerKind.rawValue)
   }
 
-  /// The device to preview: explicit selection, else the project's preferred
-  /// device, else the first booted device we can find.
+  /// The destination to run on: explicit selection, then project preferences,
+  /// then connected hardware, an already-running simulator, or any simulator.
+  private var activeDestination: SimulatorRunDestination? {
+    if let selectedDestinationID,
+       let destination = runDestinations.first(where: { $0.id == selectedDestinationID }) {
+      return destination
+    }
+    if let preferred = simulatorService.preferredSimulatorUDIDs[projectPath],
+       let device = availableDevices.first(where: { $0.udid == preferred }) {
+      return .simulator(device)
+    }
+    if let preferred = simulatorService.preferredPhysicalDeviceIDs[projectPath],
+       let device = physicalDevices.first(where: { $0.identifier == preferred }) {
+      return .physical(device)
+    }
+    if let physical = physicalDevices.first {
+      return .physical(physical)
+    }
+    if let booted = bootedDevices.first {
+      return .simulator(booted)
+    }
+    return availableDevices.first.map(SimulatorRunDestination.simulator)
+  }
+
+  private var activeDestinationID: String? {
+    activeDestination?.id
+  }
+
   private var activeUDID: String? {
-    if let selectedUDID { return selectedUDID }
-    if let preferred = simulatorService.preferredSimulatorUDIDs[projectPath] { return preferred }
-    return bootedDevices.first?.udid
+    activeDestination?.simulatorUDID
   }
 
   private var bootedDevices: [SimulatorDevice] {
@@ -93,14 +153,36 @@ struct SimulatorPreviewSidePanelView: View {
     simulatorService.runtimes.flatMap { $0.availableDevices }
   }
 
+  private var physicalDevices: [PhysicalIOSDevice] {
+    simulatorService.physicalDevices
+  }
+
+  private var runDestinations: [SimulatorRunDestination] {
+    physicalDevices.map(SimulatorRunDestination.physical)
+      + availableDevices.map(SimulatorRunDestination.simulator)
+  }
+
   private var activeDevice: SimulatorDevice? {
     guard let activeUDID else { return nil }
     return availableDevices.first { $0.udid == activeUDID }
   }
 
+  private var activePhysicalDevice: PhysicalIOSDevice? {
+    guard case .physical(let device) = activeDestination else { return nil }
+    return device
+  }
+
   private var activeState: SimulatorState {
-    guard let activeUDID else { return .idle }
-    return simulatorService.state(for: activeUDID, projectPath: projectPath)
+    if let activeUDID {
+      return simulatorService.state(for: activeUDID, projectPath: projectPath)
+    }
+    if let activePhysicalDevice {
+      return simulatorService.physicalDeviceState(
+        for: activePhysicalDevice.identifier,
+        projectPath: projectPath
+      )
+    }
+    return .idle
   }
 
   /// Live boot state — consults `SimulatorService.isBooted` (updated by boot /
@@ -203,10 +285,7 @@ struct SimulatorPreviewSidePanelView: View {
     )
     .task {
       await loadDevicesIfNeeded()
-      if simulatorPreviewsEnabled {
-        hotReload.warmUp()
-      }
-      hotReload.setPreviewObservationEnabled(simulatorPreviewsEnabled, projectPath: projectPath)
+      syncSimulatorFeatureTracking()
     }
     .onDisappear {
       cancelAnnotationElementRefresh()
@@ -219,24 +298,27 @@ struct SimulatorPreviewSidePanelView: View {
     .task(id: simulatorContextSignature) {
       persistSimulatorContext()
     }
-    .onChange(of: activeUDID) { _, _ in
+    .onChange(of: activeDestinationID) { _, _ in
       cancelAnnotationElementRefresh()
       annotationModel.reset()
       isAnnotationTrayExpanded = false
       hotReload.sessionDidStop()
-      if effectiveDisplayMode == .previews { autoArmPreviewsIfNeeded() }
+      if activeUDID == nil {
+        displayMode = .live
+        removeSimulatorContext()
+      } else if effectiveDisplayMode == .previews {
+        autoArmPreviewsIfNeeded()
+      }
+      syncSimulatorFeatureTracking()
     }
     .onChange(of: displayMode) { _, mode in
       if simulatorPreviewsEnabled, mode == .previews { autoArmPreviewsIfNeeded() }
     }
     .onChange(of: simulatorPreviewsEnabled) { _, isEnabled in
-      hotReload.setPreviewObservationEnabled(isEnabled, projectPath: projectPath)
-      if isEnabled {
-        hotReload.warmUp()
-        if displayMode == .previews {
-          autoArmPreviewsIfNeeded()
-        }
-      } else {
+      syncSimulatorFeatureTracking()
+      if isEnabled, displayMode == .previews {
+        autoArmPreviewsIfNeeded()
+      } else if !isEnabled {
         displayMode = .live
       }
     }
@@ -288,14 +370,16 @@ struct SimulatorPreviewSidePanelView: View {
         displayModePicker
       }
 
-      if !streamService.availability.isInteractive {
+      if activeUDID != nil, !streamService.availability.isInteractive {
         viewOnlyBadge
       }
 
-      HotReloadStatusPillView(
-        phase: hotReload.monitor.phase,
-        warning: hotReload.monitor.lastWarning
-      )
+      if activeUDID != nil {
+        HotReloadStatusPillView(
+          phase: hotReload.monitor.phase,
+          warning: hotReload.monitor.lastWarning
+        )
+      }
 
       Spacer(minLength: 8)
 
@@ -343,26 +427,48 @@ struct SimulatorPreviewSidePanelView: View {
 
   @ViewBuilder
   private var devicePicker: some View {
-    if !availableDevices.isEmpty {
+    if !runDestinations.isEmpty {
       Menu {
-        ForEach(availableDevices) { device in
-          Button {
-            selectDevice(udid: device.udid)
-          } label: {
-            HStack {
-              Text(device.name)
-              if device.isBooted {
-                Text("Running")
+        if !physicalDevices.isEmpty {
+          Section("Connected Devices") {
+            ForEach(physicalDevices) { device in
+              Button {
+                selectPhysicalDevice(identifier: device.identifier)
+              } label: {
+                HStack {
+                  Text(device.name)
+                  Text(device.subtitle.isEmpty ? "Device" : device.subtitle)
+                  if activeDestinationID == SimulatorRunDestination.physical(device).id {
+                    Image(systemName: "checkmark")
+                  }
+                }
               }
-              if activeUDID == device.udid {
-                Image(systemName: "checkmark")
+            }
+          }
+        }
+
+        if !availableDevices.isEmpty {
+          Section("Simulators") {
+            ForEach(availableDevices) { device in
+              Button {
+                selectSimulator(udid: device.udid)
+              } label: {
+                HStack {
+                  Text(device.name)
+                  if device.isBooted {
+                    Text("Running")
+                  }
+                  if activeUDID == device.udid {
+                    Image(systemName: "checkmark")
+                  }
+                }
               }
             }
           }
         }
       } label: {
         HStack(spacing: 6) {
-          Text(activeDevice?.name ?? "Select Simulator")
+          Text(activeDestination?.name ?? "Select Destination")
             .font(.caption.weight(.medium))
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
@@ -380,7 +486,7 @@ struct SimulatorPreviewSidePanelView: View {
       .menuIndicator(.hidden)
       .fixedSize(horizontal: true, vertical: false)
       .layoutPriority(2)
-      .accessibilityLabel("Select simulator")
+      .accessibilityLabel("Select run destination")
     }
   }
 
@@ -414,22 +520,26 @@ struct SimulatorPreviewSidePanelView: View {
       SimulatorFloatingActionButton(
         systemImage: "play.fill",
         tint: Color.brandPrimary,
-        isDisabled: activeUDID == nil || isBuildAndRunInProgress,
+        isDisabled: activeDestination == nil || isBuildAndRunInProgress,
         isWorking: isBuildAndRunInProgress,
-        help: "Build & run this project on the selected simulator",
+        help: activePhysicalDevice == nil
+          ? "Build & run this project on the selected simulator"
+          : "Build & run this project on the selected device",
         accessibilityLabel: "Build and run",
         action: buildAndRun
       )
 
-      SimulatorFloatingActionButton(
-        systemImage: "stop.fill",
-        tint: .red,
-        isDisabled: !isActiveDeviceBooted || isShutdownInProgress,
-        isWorking: isShutdownInProgress,
-        help: "Shut down the simulator",
-        accessibilityLabel: "Shut down simulator",
-        action: stopSimulator
-      )
+      if activeUDID != nil {
+        SimulatorFloatingActionButton(
+          systemImage: "stop.fill",
+          tint: .red,
+          isDisabled: !isActiveDeviceBooted || isShutdownInProgress,
+          isWorking: isShutdownInProgress,
+          help: "Shut down the simulator",
+          accessibilityLabel: "Shut down simulator",
+          action: stopSimulator
+        )
+      }
     }
   }
 
@@ -460,7 +570,7 @@ struct SimulatorPreviewSidePanelView: View {
         simulatorFailureBannerOverlay
       }
       .overlay(alignment: .topTrailing) {
-        if activeUDID != nil {
+        if activeDestination != nil {
           floatingRunControls
             .padding(14)
         }
@@ -536,8 +646,10 @@ struct SimulatorPreviewSidePanelView: View {
       spotlightView
     } else if simulatorService.isLoadingDevices && !hasLoadedDevices {
       loadingState
-    } else if availableDevices.isEmpty {
+    } else if runDestinations.isEmpty {
       emptyState
+    } else if activePhysicalDevice != nil {
+      physicalDeviceStateView
     } else {
       notBootedState
     }
@@ -666,11 +778,79 @@ struct SimulatorPreviewSidePanelView: View {
 
   private var emptyState: some View {
     ContentUnavailableView(
-      "No Simulators",
+      "No Run Destinations",
       systemImage: "iphone.slash",
-      description: Text("No available iOS simulators were found on this machine.")
+      description: Text("No available iOS simulators or connected iOS devices were found on this machine.")
     )
     .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var physicalDeviceStateView: some View {
+    VStack(spacing: 12) {
+      Image(systemName: "iphone")
+        .font(.system(size: 40))
+        .foregroundStyle(.secondary)
+
+      if isActiveDevicePreparing {
+        Text(preparingLabel)
+          .font(.subheadline)
+        ProgressView()
+          .controlSize(.small)
+      } else {
+        Text(physicalDeviceStatusTitle)
+          .font(.subheadline)
+        Text("Live mirroring is available for simulators only.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+        if let activeFailureMessage {
+          Text(activeFailureMessage)
+            .font(.caption)
+            .foregroundStyle(.red)
+            .multilineTextAlignment(.center)
+            .lineLimit(4)
+            .frame(maxWidth: 420)
+        }
+
+        Button(physicalDeviceRunButtonTitle, systemImage: "play.fill", action: buildAndRun)
+          .buttonStyle(.borderedProminent)
+          .controlSize(.small)
+          .tint(Color.brandPrimary)
+          .disabled(activeDestination == nil)
+          .help("Build, install, and launch this project on the selected device")
+
+        if !bootedDevices.isEmpty {
+          Button(shutdownBootedSimulatorsButtonTitle, systemImage: "stop.fill", action: shutdownBootedSimulators)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.red)
+            .help("Shut down booted simulators to release memory")
+        }
+      }
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
+  private var physicalDeviceStatusTitle: String {
+    guard let activePhysicalDevice else { return "Select a device" }
+    if case .failed = activeState {
+      return "Run failed on \(activePhysicalDevice.name)"
+    }
+    if activeState == .booted {
+      return "Running on \(activePhysicalDevice.name)"
+    }
+    return "Ready to run on \(activePhysicalDevice.name)"
+  }
+
+  private var physicalDeviceRunButtonTitle: String {
+    if case .failed = activeState {
+      return "Try Again"
+    }
+    return activeState == .booted ? "Run Again" : "Build & Run"
+  }
+
+  private var shutdownBootedSimulatorsButtonTitle: String {
+    bootedDevices.count == 1 ? "Shut Down Simulator" : "Shut Down Simulators"
   }
 
   @ViewBuilder
@@ -712,9 +892,26 @@ struct SimulatorPreviewSidePanelView: View {
     hasLoadedDevices = true
   }
 
-  private func selectDevice(udid: String) {
-    selectedUDID = udid
+  private func syncSimulatorFeatureTracking() {
+    let isSimulatorDestination = activeUDID != nil
+    let shouldObservePreviews = simulatorPreviewsEnabled && isSimulatorDestination
+    hotReload.setPreviewObservationEnabled(shouldObservePreviews, projectPath: projectPath)
+    if shouldObservePreviews {
+      hotReload.warmUp()
+    }
+  }
+
+  private func selectSimulator(udid: String) {
+    selectedDestinationID = SimulatorRunDestination.simulatorID(udid: udid)
     simulatorService.setPreferredSimulator(udid: udid, for: projectPath)
+    simulatorService.setPreferredPhysicalDevice(identifier: nil, for: projectPath)
+  }
+
+  private func selectPhysicalDevice(identifier: String) {
+    guard let device = physicalDevices.first(where: { $0.identifier == identifier }) else { return }
+    selectedDestinationID = SimulatorRunDestination.physical(device).id
+    simulatorService.setPreferredPhysicalDevice(identifier: identifier, for: projectPath)
+    simulatorService.setPreferredSimulator(udid: nil, for: projectPath)
   }
 
   private func persistSimulatorContext() {
@@ -746,6 +943,17 @@ struct SimulatorPreviewSidePanelView: View {
   }
 
   private func buildAndRun() {
+    dismissedFailureMessage = nil
+    if let activePhysicalDevice {
+      Task {
+        await simulatorService.buildAndRunOnPhysicalDevice(
+          identifier: activePhysicalDevice.identifier,
+          projectPath: projectPath
+        )
+      }
+      return
+    }
+
     guard let activeUDID else { return }
     Task {
       // Boot first so the preview switches to the live stream immediately,
@@ -780,6 +988,15 @@ struct SimulatorPreviewSidePanelView: View {
     guard let activeUDID else { return }
     hotReload.sessionDidStop()
     Task { await simulatorService.shutdownDevice(udid: activeUDID) }
+  }
+
+  private func shutdownBootedSimulators() {
+    let udids = bootedDevices.map(\.udid)
+    Task {
+      for udid in udids {
+        await simulatorService.shutdownDevice(udid: udid)
+      }
+    }
   }
 
   private var recordingButtonSystemImage: String {
@@ -1026,6 +1243,7 @@ struct SimulatorPreviewSidePanelView: View {
   /// one-time relaunch.
   private func launchPreviews() {
     guard simulatorPreviewsEnabled else { return }
+    guard activeUDID != nil else { return }
     if isActiveDeviceBooted {
       enablePreviews()
     } else {
@@ -1309,7 +1527,7 @@ private struct SimulatorBuildErrorBanner: View {
         .accessibilityHidden(true)
 
       VStack(alignment: .leading, spacing: 3) {
-        Text("Simulator error")
+        Text("Run error")
           .font(.caption.weight(.semibold))
 
         Text(message)
@@ -1330,8 +1548,8 @@ private struct SimulatorBuildErrorBanner: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.small)
         .tint(Color.brandPrimary(for: providerKind))
-        .help("Ask \(providerKind.rawValue) to fix this simulator error")
-        .accessibilityLabel("Fix simulator error with \(providerKind.rawValue)")
+        .help("Ask \(providerKind.rawValue) to fix this run error")
+        .accessibilityLabel("Fix run error with \(providerKind.rawValue)")
       }
 
       Button {

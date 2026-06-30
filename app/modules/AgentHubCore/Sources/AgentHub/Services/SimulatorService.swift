@@ -43,6 +43,12 @@ private final class DataAccumulator: @unchecked Sendable {
   }
 }
 
+private struct ProcessExecutionResult: Sendable {
+  let exitCode: Int32
+  let outputText: String
+  let errorText: String
+}
+
 /// Result of the detection phase — workspace/project path, scheme, and xcodebuild path.
 private struct BuildSetup: Sendable {
   let targetPath: String
@@ -70,6 +76,7 @@ struct BuiltAppInfo: Sendable {
 enum BuildPlatform {
   case macOS
   case iOSSimulator
+  case iOSDevice
 
   var productsDirectoryName: String {
     switch self {
@@ -77,6 +84,8 @@ enum BuildPlatform {
       return "Debug"
     case .iOSSimulator:
       return "Debug-iphonesimulator"
+    case .iOSDevice:
+      return "Debug-iphoneos"
     }
   }
 
@@ -113,6 +122,11 @@ enum BuildPlatform {
         return nil
       }
       return 30
+    case .iOSDevice:
+      guard lowercased.contains(where: { $0.contains("iphoneos") }) else {
+        return nil
+      }
+      return 30
     }
   }
 }
@@ -140,8 +154,14 @@ public final class SimulatorService {
   /// Per-(projectPath|UDID) build state — isolated per worktree session
   private(set) var sessionBuildStates: [String: SimulatorState] = [:]
 
+  /// Per-(projectPath|hardware device ID) build state for physical iOS devices.
+  private(set) var physicalRunStates: [String: SimulatorState] = [:]
+
   /// Cached list of runtimes with their available devices
   private(set) var runtimes: [SimulatorRuntime] = []
+
+  /// Connected physical iOS/iPadOS run destinations.
+  private(set) var physicalDevices: [PhysicalIOSDevice] = []
 
   /// True while the device list is being fetched
   private(set) var isLoadingDevices: Bool = false
@@ -152,14 +172,23 @@ public final class SimulatorService {
   /// Per-projectPath preferred simulator UDID — shared across all views
   private(set) var preferredSimulatorUDIDs: [String: String] = [:]
 
+  /// Per-projectPath preferred physical iOS device identifier.
+  private(set) var preferredPhysicalDeviceIDs: [String: String] = [:]
+
   /// Live process references for in-flight Mac builds, keyed by projectPath
   private var macBuildProcesses: [String: ProcessRef] = [:]
 
   /// Live process references for in-flight simulator builds, keyed by projectPath|UDID
   private var simulatorBuildProcesses: [String: ProcessRef] = [:]
 
+  /// Live process references for in-flight physical-device builds.
+  private var physicalBuildProcesses: [String: ProcessRef] = [:]
+
   /// In-flight Phase 3 tasks for simulator builds, keyed by projectPath|UDID
   private var simulatorRunTasks: [String: Task<Result<Void, Error>, Never>] = [:]
+
+  /// In-flight Phase 3 tasks for physical-device builds.
+  private var physicalRunTasks: [String: Task<Result<Void, Error>, Never>] = [:]
 
   /// Cached workspace/project and scheme selection per project path.
   private var buildSetupCache: [String: BuildSetup] = [:]
@@ -169,6 +198,11 @@ public final class SimulatorService {
   /// Sets the preferred simulator UDID for a given project path.
   public func setPreferredSimulator(udid: String?, for projectPath: String) {
     preferredSimulatorUDIDs[projectPath] = udid
+  }
+
+  /// Sets the preferred physical iOS device for a given project path.
+  public func setPreferredPhysicalDevice(identifier: String?, for projectPath: String) {
+    preferredPhysicalDeviceIDs[projectPath] = identifier
   }
 
   /// Returns the SimulatorDevice for a given UDID, if it exists in the loaded runtimes.
@@ -203,16 +237,26 @@ public final class SimulatorService {
     return deviceStates[udid] ?? .idle
   }
 
-  /// Fetches the device list from `xcrun simctl list devices --json`.
-  /// Filters to iOS runtimes only, sorts newest first.
+  /// Returns the build/install/launch state for a physical iOS device.
+  public func physicalDeviceState(for identifier: String, projectPath: String) -> SimulatorState {
+    physicalRunStates[sessionKey(projectPath: projectPath, udid: identifier)] ?? .idle
+  }
+
+  /// Fetches simulator runtimes plus connected physical iOS devices.
   public func listDevices() async {
     guard !isLoadingDevices else { return }
     isLoadingDevices = true
     defer { isLoadingDevices = false }
 
-    let result = await Task.detached {
+    let simulatorTask = Task.detached {
       SimulatorService.fetchDeviceList()
-    }.value
+    }
+    let physicalDeviceTask = Task.detached {
+      SimulatorService.fetchPhysicalDeviceList()
+    }
+
+    let result = await simulatorTask.value
+    let physicalResult = await physicalDeviceTask.value
 
     switch result {
     case .success(let runtimes):
@@ -232,6 +276,14 @@ public final class SimulatorService {
       AppLogger.simulator.info("Loaded \(runtimes.count) runtimes")
     case .failure(let error):
       AppLogger.simulator.error("Failed to list devices: \(error.localizedDescription)")
+    }
+
+    switch physicalResult {
+    case .success(let devices):
+      physicalDevices = devices
+      AppLogger.simulator.info("Loaded \(devices.count) physical iOS devices")
+    case .failure(let error):
+      AppLogger.simulator.error("Failed to list physical iOS devices: \(error.localizedDescription)")
     }
   }
 
@@ -463,6 +515,71 @@ public final class SimulatorService {
     }
   }
 
+  /// Builds for a connected physical iOS/iPadOS device, installs, and launches the app.
+  @discardableResult
+  public func buildAndRunOnPhysicalDevice(
+    identifier: String,
+    projectPath: String
+  ) async -> Bool {
+    let key = sessionKey(projectPath: projectPath, udid: identifier)
+    physicalRunStates[key] = .building
+    AppLogger.simulator.info("Building for physical iOS device \(identifier)")
+
+    let detectResult = await buildSetup(for: projectPath)
+
+    guard case .success(let setup) = detectResult else {
+      if case .failure(let e) = detectResult {
+        physicalRunStates[key] = .failed(error: e.localizedDescription)
+        AppLogger.simulator.error("Physical device build setup failed: \(e.localizedDescription)")
+      }
+      return false
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: setup.xcodebuild)
+    let buildArgs = SimulatorService.physicalDeviceBuildArguments(
+      scheme: setup.scheme,
+      targetPath: setup.targetPath,
+      isWorkspace: setup.isWorkspace,
+      identifier: identifier,
+      derivedDataPath: setup.derivedDataPath
+    )
+    process.arguments = buildArgs
+    let outputPipe = Pipe()
+    process.standardOutput = outputPipe
+    let errorPipe = Pipe()
+    process.standardError = errorPipe
+
+    let ref = ProcessRef(process: process, outputPipe: outputPipe, errorPipe: errorPipe)
+    physicalBuildProcesses[key] = ref
+
+    let phase3Task = Task.detached {
+      await SimulatorService.executePhysicalDeviceBuild(
+        ref: ref,
+        deviceIdentifier: identifier,
+        sessionKey: key,
+        setup: setup
+      )
+    }
+    physicalRunTasks[key] = phase3Task
+    let result = await phase3Task.value
+    physicalRunTasks.removeValue(forKey: key)
+    physicalBuildProcesses.removeValue(forKey: key)
+
+    guard physicalRunStates[key] != nil else { return false }
+
+    switch result {
+    case .success:
+      physicalRunStates[key] = .booted
+      AppLogger.simulator.info("Physical device build+run succeeded for \(identifier)")
+      return true
+    case .failure(let error):
+      physicalRunStates[key] = .failed(error: error.localizedDescription)
+      AppLogger.simulator.error("Physical device build failed: \(error.localizedDescription)")
+      return false
+    }
+  }
+
   /// Relaunches the project's already-installed app with the hot-reload
   /// dylibs inserted — no rebuild, ~1s. Used by the Previews tab to
   /// self-heal when the running app was launched without the preview host
@@ -531,6 +648,17 @@ public final class SimulatorService {
     simulatorRunTasks.removeValue(forKey: key)
     sessionBuildStates.removeValue(forKey: key)
     AppLogger.simulator.info("Cancelled simulator build for \(udid)")
+  }
+
+  /// Terminates an in-flight physical-device build and clears this session's run state.
+  public func cancelPhysicalDeviceRun(identifier: String, projectPath: String) {
+    let key = sessionKey(projectPath: projectPath, udid: identifier)
+    physicalBuildProcesses[key]?.process.terminate()
+    physicalBuildProcesses.removeValue(forKey: key)
+    physicalRunTasks[key]?.cancel()
+    physicalRunTasks.removeValue(forKey: key)
+    physicalRunStates.removeValue(forKey: key)
+    AppLogger.simulator.info("Cancelled physical device build for \(identifier)")
   }
 
   // MARK: - Key Helpers
@@ -616,6 +744,44 @@ public final class SimulatorService {
     }
   }
 
+  /// Runs `xcrun devicectl <arguments>` and captures output for diagnostics.
+  private nonisolated static func runDeviceCtl(arguments: [String]) -> ProcessExecutionResult {
+    guard let xcrun = findExecutable(named: "xcrun") else {
+      AppLogger.simulator.error("xcrun not found in PATH")
+      return ProcessExecutionResult(
+        exitCode: -1,
+        outputText: "",
+        errorText: "xcrun not found"
+      )
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: xcrun)
+    process.arguments = ["devicectl"] + arguments
+    let outputPipe = Pipe()
+    process.standardOutput = outputPipe
+    let errorPipe = Pipe()
+    process.standardError = errorPipe
+
+    do {
+      try process.run()
+      process.waitUntilExit()
+    } catch {
+      AppLogger.simulator.error("Failed to run xcrun devicectl: \(error.localizedDescription)")
+      return ProcessExecutionResult(
+        exitCode: -1,
+        outputText: "",
+        errorText: error.localizedDescription
+      )
+    }
+
+    return ProcessExecutionResult(
+      exitCode: process.terminationStatus,
+      outputText: String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
+      errorText: String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    )
+  }
+
   /// Runs `open -a <name>` to bring an app to the foreground.
   private nonisolated static func runOpenApp(name: String) {
     guard let open = findExecutable(named: "open") else { return }
@@ -689,6 +855,20 @@ public final class SimulatorService {
       .components(separatedBy: "\n")
       .filter { !$0.isEmpty }
       .last ?? "Build failed (exit \(exitCode))"
+  }
+
+  private nonisolated static func devicectlFailureMessage(
+    prefix: String,
+    result: ProcessExecutionResult
+  ) -> String {
+    let details = [result.errorText, result.outputText]
+      .flatMap { $0.components(separatedBy: "\n") }
+      .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+      .filter { !$0.isEmpty }
+    guard let lastDetail = details.last else {
+      return "\(prefix) (exit \(result.exitCode))"
+    }
+    return "\(prefix): \(lastDetail)"
   }
 
   /// Phase 3: runs the already-configured process, waits for it, finds and opens the app.
@@ -839,6 +1019,64 @@ public final class SimulatorService {
     return result
   }
 
+  /// Runs xcodebuild for a physical iOS device, then installs and launches the app.
+  private nonisolated static func executePhysicalDeviceBuild(
+    ref: ProcessRef,
+    deviceIdentifier: String,
+    sessionKey: String,
+    setup: BuildSetup
+  ) async -> Result<Void, Error> {
+    let totalStart = phaseTimestamp()
+    let buildStart = phaseTimestamp()
+    let stdoutChunks = DataAccumulator()
+    ref.outputPipe.fileHandleForReading.readabilityHandler = { handle in
+      let chunk = handle.availableData
+      guard !chunk.isEmpty else { return }
+      stdoutChunks.append(chunk)
+    }
+    do {
+      try ref.process.run()
+      ref.process.waitUntilExit()
+    } catch {
+      ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+      return .failure(error)
+    }
+    ref.outputPipe.fileHandleForReading.readabilityHandler = nil
+    let tail = ref.outputPipe.fileHandleForReading.readDataToEndOfFile()
+    if !tail.isEmpty { stdoutChunks.append(tail) }
+
+    guard ref.process.terminationStatus == 0 else {
+      if ref.process.terminationReason == .uncaughtSignal {
+        return .failure(NSError(domain: "SimulatorService", code: -7,
+          userInfo: [NSLocalizedDescriptionKey: "Build cancelled"]))
+      }
+      let outputText = String(data: stdoutChunks.combinedData(), encoding: .utf8) ?? ""
+      let stderrText = String(data: ref.errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let msg = SimulatorService.extractBuildError(outputText: outputText, stderrText: stderrText, exitCode: ref.process.terminationStatus)
+      return .failure(NSError(domain: "SimulatorService",
+        code: Int(ref.process.terminationStatus),
+        userInfo: [NSLocalizedDescriptionKey: msg]))
+    }
+
+    AppLogger.simulator.info(
+      "xcodebuild finished for physical device scheme \(setup.scheme, privacy: .public) in \(formattedElapsed(since: buildStart), privacy: .public)s"
+    )
+
+    let result = await installAndLaunchPhysicalDevice(
+      identifier: deviceIdentifier,
+      sessionKey: sessionKey,
+      setup: setup
+    )
+
+    if case .success = result {
+      AppLogger.simulator.info(
+        "Physical device run completed in \(formattedElapsed(since: totalStart), privacy: .public)s for scheme \(setup.scheme, privacy: .public)"
+      )
+    }
+
+    return result
+  }
+
   /// Locates the built simulator app, installs it, and launches it.
   private nonisolated static func installAndLaunch(
     udid: String,
@@ -909,6 +1147,77 @@ public final class SimulatorService {
 
     // Bring Simulator.app to foreground
     runOpenApp(name: "Simulator")
+    return .success(())
+  }
+
+  /// Locates the built device app, installs it with devicectl, and launches it.
+  private nonisolated static func installAndLaunchPhysicalDevice(
+    identifier: String,
+    sessionKey: String,
+    setup: BuildSetup
+  ) async -> Result<Void, Error> {
+    guard let builtApp = resolveBuiltApp(
+      derivedDataPath: setup.derivedDataPath,
+      scheme: setup.scheme,
+      platform: .iOSDevice,
+      requiresBundleIdentifier: true
+    ),
+    let bundle = builtApp.bundleIdentifier else {
+      return .failure(NSError(domain: "SimulatorService", code: -11,
+        userInfo: [NSLocalizedDescriptionKey: "Could not locate built device app"]))
+    }
+
+    AppLogger.simulator.info(
+      "Resolved physical device app at \(builtApp.appPath, privacy: .public) with bundle \(bundle, privacy: .public)"
+    )
+
+    await MainActor.run {
+      SimulatorService.shared.physicalRunStates[sessionKey] = .installing
+    }
+
+    let installStart = phaseTimestamp()
+    let installResult = runDeviceCtl(arguments: [
+      "device", "install", "app",
+      "--device", identifier,
+      builtApp.appPath
+    ])
+    guard installResult.exitCode == 0 else {
+      return .failure(NSError(domain: "SimulatorService", code: Int(installResult.exitCode),
+        userInfo: [
+          NSLocalizedDescriptionKey: devicectlFailureMessage(
+            prefix: "devicectl install failed",
+            result: installResult
+          )
+        ]))
+    }
+    AppLogger.simulator.info(
+      "Installed app on physical device in \(formattedElapsed(since: installStart), privacy: .public)s"
+    )
+
+    await MainActor.run {
+      SimulatorService.shared.physicalRunStates[sessionKey] = .launching
+    }
+
+    let launchStart = phaseTimestamp()
+    let launchResult = runDeviceCtl(arguments: [
+      "device", "process", "launch",
+      "--device", identifier,
+      "--terminate-existing",
+      bundle
+    ])
+    guard launchResult.exitCode == 0 else {
+      return .failure(NSError(domain: "SimulatorService", code: Int(launchResult.exitCode),
+        userInfo: [
+          NSLocalizedDescriptionKey: devicectlFailureMessage(
+            prefix: "devicectl launch failed",
+            result: launchResult
+          )
+        ]))
+    }
+    AppLogger.simulator.info(
+      "Launched app on physical device in \(formattedElapsed(since: launchStart), privacy: .public)s"
+    )
+
     return .success(())
   }
 
@@ -1016,6 +1325,31 @@ public final class SimulatorService {
       .map { String(format: "%02x", $0) }
       .joined()
     return buildsDirectory.appendingPathComponent(digest, isDirectory: true).path
+  }
+
+  nonisolated static func physicalDeviceBuildArguments(
+    scheme: String,
+    targetPath: String,
+    isWorkspace: Bool,
+    identifier: String,
+    derivedDataPath: String
+  ) -> [String] {
+    var arguments = [
+      "build",
+      "-quiet",
+      "-scheme", scheme,
+      "-destination", "id=\(identifier)",
+      "-destination-timeout", "30",
+      "-derivedDataPath", derivedDataPath,
+      "-allowProvisioningUpdates",
+      "-allowProvisioningDeviceRegistration"
+    ]
+    if isWorkspace {
+      arguments += ["-workspace", targetPath]
+    } else {
+      arguments += ["-project", targetPath]
+    }
+    return arguments
   }
 
   nonisolated static func preferredAppBundlePath(
@@ -1207,6 +1541,93 @@ public final class SimulatorService {
     }
   }
 
+  /// Lists connected physical iOS devices, preferring CoreDevice's stable JSON output.
+  private nonisolated static func fetchPhysicalDeviceList() -> Result<[PhysicalIOSDevice], Error> {
+    let devicectlResult = fetchPhysicalDeviceListFromDeviceCtl()
+    if case .success = devicectlResult {
+      return devicectlResult
+    }
+    return fetchPhysicalDeviceListFromXCDevice()
+  }
+
+  /// Parses `xcrun devicectl list devices --json-output` and returns connected physical iOS devices.
+  private nonisolated static func fetchPhysicalDeviceListFromDeviceCtl() -> Result<[PhysicalIOSDevice], Error> {
+    guard let xcrun = findExecutable(named: "xcrun") else {
+      return .failure(NSError(domain: "SimulatorService", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "xcrun not found"]))
+    }
+
+    let outputURL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+      .appendingPathComponent("agenthub-devicectl-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: outputURL) }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: xcrun)
+    process.arguments = [
+      "devicectl", "list", "devices",
+      "--timeout", "5",
+      "--json-output", outputURL.path
+    ]
+
+    process.standardOutput = Pipe()
+    let errorPipe = Pipe()
+    process.standardError = errorPipe
+
+    do {
+      try process.run()
+      process.waitUntilExit()
+    } catch {
+      return .failure(error)
+    }
+
+    guard process.terminationStatus == 0 else {
+      let errorText = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      return .failure(NSError(domain: "SimulatorService", code: Int(process.terminationStatus),
+                              userInfo: [NSLocalizedDescriptionKey: errorText.isEmpty ? "devicectl list devices failed" : errorText]))
+    }
+
+    do {
+      return .success(try parseDeviceCtlPhysicalDeviceList(from: Data(contentsOf: outputURL)))
+    } catch {
+      return .failure(error)
+    }
+  }
+
+  /// Parses `xcrun xcdevice list --timeout 5` and returns connected physical iOS devices.
+  private nonisolated static func fetchPhysicalDeviceListFromXCDevice() -> Result<[PhysicalIOSDevice], Error> {
+    guard let xcrun = findExecutable(named: "xcrun") else {
+      return .failure(NSError(domain: "SimulatorService", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "xcrun not found"]))
+    }
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: xcrun)
+    process.arguments = ["xcdevice", "list", "--timeout", "5"]
+
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+
+    do {
+      try process.run()
+      process.waitUntilExit()
+    } catch {
+      return .failure(error)
+    }
+
+    guard process.terminationStatus == 0 else {
+      return .failure(NSError(domain: "SimulatorService", code: Int(process.terminationStatus),
+                              userInfo: [NSLocalizedDescriptionKey: "xcdevice list failed"]))
+    }
+
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    do {
+      return .success(try parsePhysicalDeviceList(from: data))
+    } catch {
+      return .failure(error)
+    }
+  }
+
   /// Parses the JSON produced by `xcrun simctl list devices --json`.
   nonisolated static func parseDeviceList(from data: Data) throws -> [SimulatorRuntime] {
     guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1249,6 +1670,108 @@ public final class SimulatorService {
     // Sort newest iOS version first
     return result.sorted { lhs, rhs in
       lhs.identifier > rhs.identifier
+    }
+  }
+
+  /// Parses the JSON produced by `xcrun xcdevice list`.
+  nonisolated static func parsePhysicalDeviceList(from data: Data) throws -> [PhysicalIOSDevice] {
+    guard let rawDevices = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+      throw NSError(domain: "SimulatorService", code: -12,
+                    userInfo: [NSLocalizedDescriptionKey: "Unexpected xcdevice JSON structure"])
+    }
+
+    let devices = rawDevices.compactMap { dict -> PhysicalIOSDevice? in
+      guard
+        (dict["simulator"] as? Bool) == false,
+        (dict["available"] as? Bool) == true,
+        let platform = dict["platform"] as? String,
+        platform == "com.apple.platform.iphoneos",
+        let identifier = dict["identifier"] as? String,
+        let name = dict["name"] as? String
+      else {
+        return nil
+      }
+
+      let modelName = dict["modelName"] as? String ?? ""
+      let operatingSystemVersion = dict["operatingSystemVersion"] as? String ?? ""
+      let interface = dict["interface"] as? String
+      return PhysicalIOSDevice(
+        identifier: identifier,
+        name: name,
+        modelName: modelName,
+        operatingSystemVersion: operatingSystemVersion,
+        interface: interface
+      )
+    }
+
+    return sortPhysicalDevices(devices)
+  }
+
+  /// Parses the JSON produced by `xcrun devicectl list devices --json-output`.
+  nonisolated static func parseDeviceCtlPhysicalDeviceList(from data: Data) throws -> [PhysicalIOSDevice] {
+    guard
+      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+      let result = json["result"] as? [String: Any],
+      let rawDevices = result["devices"] as? [[String: Any]]
+    else {
+      throw NSError(domain: "SimulatorService", code: -13,
+                    userInfo: [NSLocalizedDescriptionKey: "Unexpected devicectl JSON structure"])
+    }
+
+    let devices = rawDevices.compactMap { dict -> PhysicalIOSDevice? in
+      guard
+        let hardware = dict["hardwareProperties"] as? [String: Any],
+        (hardware["reality"] as? String) == "physical",
+        (hardware["platform"] as? String) == "iOS",
+        let udid = hardware["udid"] as? String,
+        hasCoreDeviceRunCapabilities(dict)
+      else {
+        return nil
+      }
+
+      let deviceProperties = dict["deviceProperties"] as? [String: Any]
+      let name = deviceProperties?["name"] as? String
+        ?? hardware["marketingName"] as? String
+        ?? udid
+      let modelName = hardware["marketingName"] as? String
+        ?? hardware["productType"] as? String
+        ?? ""
+      let osVersion = deviceProperties?["osVersionNumber"] as? String ?? ""
+      let osBuild = deviceProperties?["osBuildUpdate"] as? String
+      let formattedOSVersion: String
+      if let osBuild, !osBuild.isEmpty, !osVersion.isEmpty {
+        formattedOSVersion = "\(osVersion) (\(osBuild))"
+      } else {
+        formattedOSVersion = osVersion
+      }
+
+      return PhysicalIOSDevice(
+        identifier: udid,
+        name: name,
+        modelName: modelName,
+        operatingSystemVersion: formattedOSVersion,
+        interface: nil
+      )
+    }
+
+    return sortPhysicalDevices(devices)
+  }
+
+  private nonisolated static func hasCoreDeviceRunCapabilities(_ device: [String: Any]) -> Bool {
+    guard let capabilities = device["capabilities"] as? [[String: Any]] else { return false }
+    let identifiers = Set(capabilities.compactMap { $0["featureIdentifier"] as? String })
+    return identifiers.contains("com.apple.coredevice.feature.installapp")
+      && identifiers.contains("com.apple.coredevice.feature.launchapplication")
+  }
+
+  private nonisolated static func sortPhysicalDevices(
+    _ devices: [PhysicalIOSDevice]
+  ) -> [PhysicalIOSDevice] {
+    devices.sorted {
+      if $0.name != $1.name {
+        return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+      }
+      return $0.identifier < $1.identifier
     }
   }
 

@@ -14,13 +14,21 @@ same capability Codex shipped via its "Build iOS Apps" plugin (which used
 `serve-sim` + `SnapshotPreviews`), but native, in-process, and private by default.
 
 The user clicks **Simulator** (shown only for Xcode projects). The side panel lets
-them pick/boot a device and Build & Run, then mirrors the device's screen and
-forwards mouse/keyboard back to it. The old per-card Simulator button that opened
-the `SimulatorPickerView` sheet is deprecated: the panel is now the single entry
-point, and the management sheet code remains wired but hidden while it can drift
-out of sync with the panel picker. Build/run failures surface directly in the
-side panel with a send-to-agent action. (The legacy `MonitoringPanelView` path,
-which doesn't wire the side-panel callback, still falls back to the sheet.)
+them pick/boot a simulator and Build & Run, then mirrors the simulator's screen
+and forwards mouse/keyboard back to it. Connected physical iOS/iPadOS devices are
+also valid run destinations: AgentHub can build, install, and launch on them via
+`xcodebuild` + `devicectl`, but live mirroring, input forwarding, recording,
+annotation, hot reload, and previews remain simulator-only. The old per-card
+Simulator button that opened the `SimulatorPickerView` sheet is deprecated: the
+panel is now the single entry point, and the management sheet code remains wired
+but hidden while it can drift out of sync with the panel picker. Build/run
+failures surface directly in the side panel with a send-to-agent action. (The
+legacy `MonitoringPanelView` path, which doesn't wire the side-panel callback,
+still falls back to the sheet.)
+
+When a physical device is selected, keep the panel quiet: do not warm
+hot-reload artifacts, start preview source watchers, arm the preview host, or
+display simulator-only hot-reload state.
 
 ## Annotation feedback (element-aware pins sent to the agent)
 
@@ -160,7 +168,8 @@ This is the design constraint, not an afterthought:
   The one exception is explicit and user-initiated: sending annotations writes a
   single pin-stamped screenshot to the app's temp directory so the agent can read
   it — never automatically, never anywhere else.
-- Device lifecycle stays on public `xcrun simctl` / `xcodebuild`.
+- Simulator lifecycle stays on public `xcrun simctl` / `xcodebuild`; physical
+  device runs use Xcode's public `devicectl` CLI after the device build.
 
 ## Private-API risk
 

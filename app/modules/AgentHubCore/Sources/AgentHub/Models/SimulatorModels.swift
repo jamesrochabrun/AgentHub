@@ -31,6 +31,25 @@ struct SimulatorRuntime: Identifiable, Sendable {
   var availableDevices: [SimulatorDevice] { devices.filter { $0.isAvailable } }
 }
 
+// MARK: - PhysicalIOSDevice
+
+/// A connected iOS/iPadOS hardware run destination reported by Xcode.
+struct PhysicalIOSDevice: Identifiable, Sendable, Hashable, Codable {
+  let identifier: String
+  let name: String
+  let modelName: String
+  let operatingSystemVersion: String
+  let interface: String?
+
+  var id: String { identifier }
+
+  var subtitle: String {
+    let model = modelName.isEmpty || modelName == name ? nil : modelName
+    let version = operatingSystemVersion.isEmpty ? nil : operatingSystemVersion
+    return [model, version].compactMap { $0 }.joined(separator: " - ")
+  }
+}
+
 // MARK: - SimulatorState
 
 public enum SimulatorState: Equatable, Sendable {
