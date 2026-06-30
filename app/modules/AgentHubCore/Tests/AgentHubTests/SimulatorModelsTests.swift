@@ -93,6 +93,47 @@ struct SimulatorRuntimeTests {
   }
 }
 
+// MARK: - PhysicalIOSDevice
+
+@Suite("PhysicalIOSDevice")
+struct PhysicalIOSDeviceTests {
+  @Test func idEqualsIdentifier() {
+    let device = PhysicalIOSDevice(
+      identifier: "00008150",
+      name: "Zizou2",
+      modelName: "iPhone 17 Pro",
+      operatingSystemVersion: "26.5 (23F77)",
+      interface: "usb"
+    )
+
+    #expect(device.id == "00008150")
+  }
+
+  @Test func subtitleIncludesDistinctModelAndOSVersion() {
+    let device = PhysicalIOSDevice(
+      identifier: "00008150",
+      name: "Zizou2",
+      modelName: "iPhone 17 Pro",
+      operatingSystemVersion: "26.5 (23F77)",
+      interface: "usb"
+    )
+
+    #expect(device.subtitle == "iPhone 17 Pro - 26.5 (23F77)")
+  }
+
+  @Test func subtitleAvoidsDuplicateModelName() {
+    let device = PhysicalIOSDevice(
+      identifier: "00008150",
+      name: "iPhone 17 Pro",
+      modelName: "iPhone 17 Pro",
+      operatingSystemVersion: "26.5 (23F77)",
+      interface: nil
+    )
+
+    #expect(device.subtitle == "26.5 (23F77)")
+  }
+}
+
 // MARK: - SimulatorState
 
 @Suite("SimulatorState")
