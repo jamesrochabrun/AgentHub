@@ -11,6 +11,7 @@ struct WebPreviewInspectorRail: View {
   @Bindable var viewModel: WebPreviewInspectorViewModel
   let updateState: WebPreviewUpdateState
   let onUpdate: () -> Void
+  let onApplyPendingEdits: () -> Void
   let onClose: () -> Void
 
   var body: some View {
@@ -26,7 +27,7 @@ struct WebPreviewInspectorRail: View {
       if viewModel.shouldShowLowConfidenceFallback {
         statusBanner(
           viewModel.needsSourceConfirmation
-            ? "Low-confidence match. Choose a source file before live editing is enabled."
+            ? "Low-confidence match. Choose a source file before code editing is enabled."
             : "Low-confidence match. Review the selected file before editing.",
           color: .orange
         )
@@ -48,13 +49,36 @@ struct WebPreviewInspectorRail: View {
     }
     .background(Color(NSColor.windowBackgroundColor))
     .safeAreaInset(edge: .bottom, spacing: 0) {
-      if updateState.isVisible {
-        WebPreviewUpdateBar(
-          state: updateState,
-          onUpdate: onUpdate
-        )
+      VStack(spacing: 0) {
+        if viewModel.pendingEditCount > 0 {
+          pendingEditsFooter
+        }
+        if updateState.isVisible {
+          WebPreviewUpdateBar(
+            state: updateState,
+            onUpdate: onUpdate
+          )
+        }
       }
     }
+  }
+
+  private var pendingEditsFooter: some View {
+    HStack(spacing: 10) {
+      Text(viewModel.saveStatusText)
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+        .lineLimit(2)
+
+      Spacer()
+
+      Button("Apply", action: onApplyPendingEdits)
+        .controlSize(.small)
+        .help("Send these changes to the agent (⌘↵)")
+    }
+    .padding(.horizontal, 12)
+    .padding(.vertical, 8)
+    .background(Color.surfaceElevated)
   }
 
   private var header: some View {
@@ -86,6 +110,15 @@ struct WebPreviewInspectorRail: View {
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(.secondary)
             .lineLimit(2)
+        }
+
+        if let sourceHint = viewModel.primarySourceHintDisplay {
+          Label(sourceHint, systemImage: "scope")
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .help("Source location reported by the framework's dev build")
         }
 
         if let parentContext = viewModel.parentContext {
@@ -175,9 +208,7 @@ struct WebPreviewInspectorRail: View {
   private var designTabContent: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 14) {
-        if let message = viewModel.designTabMessage {
-          statusBanner(message, color: .secondary)
-        }
+        statusBanner(viewModel.persistenceTierLabel, color: .secondary)
 
         layoutSection
         propertiesSection
@@ -591,7 +622,7 @@ struct WebPreviewInspectorRail: View {
     if viewModel.writeErrorMessage != nil {
       return .red
     }
-    if viewModel.isWriting || viewModel.hasUnsavedChanges {
+    if viewModel.isWriting || viewModel.hasUnsavedChanges || viewModel.pendingEditCount > 0 {
       return .orange
     }
     return .secondary

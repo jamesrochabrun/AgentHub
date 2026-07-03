@@ -90,6 +90,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.webPreviewDesignPanelEnabled)
   private var webPreviewDesignPanelEnabled: Bool = false
 
+  @AppStorage(AgentHubDefaults.webPreviewDirectCSSWriteEnabled)
+  private var webPreviewDirectCSSWriteEnabled: Bool = true
+
   @Environment(ThemeManager.self) private var themeManager
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
@@ -441,6 +444,12 @@ public struct SettingsView: View {
           title: "Enable web preview design panel",
           description: "Uses the side-panel Design/Code/Console editor instead of the inline toolbar",
           isOn: $webPreviewDesignPanelEnabled
+        )
+
+        settingsToggle(
+          title: "Direct CSS writes in Edit Mode",
+          description: "Write style edits straight to the stylesheet when the exact rule is proven; otherwise they still apply via the agent",
+          isOn: $webPreviewDirectCSSWriteEnabled
         )
 
         Picker("Inspector payload", selection: webPreviewInspectorDataLevelBinding) {

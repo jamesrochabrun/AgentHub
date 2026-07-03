@@ -23,7 +23,6 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
     let score: Int
     let matchedRanges: [WebPreviewSourceMatchRange]
     let matchedSelector: String?
-    let supportsStyleEditing: Bool
   }
 
   private let fileService: any ProjectFileServiceProtocol
@@ -61,9 +60,10 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
       recentFiles: Set(recentFiles)
     )
 
+    // Broad-scan when the seeded matches are weak or the candidate list is
+    // too thin to be useful as Code-tab/prompt hints.
     let currentTopScore = scoredCandidates.map(\.score).max() ?? 0
-    let hasStyleCandidate = scoredCandidates.contains { $0.supportsStyleEditing }
-    if currentTopScore < 150 || !hasStyleCandidate {
+    if currentTopScore < 150 || scoredCandidates.count < 3 {
       let allFiles = await fileService.listTextFiles(
         in: normalizedProjectPath,
         extensions: Self.supportedExtensions
@@ -86,54 +86,28 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
       return lhs.path < rhs.path
     }
 
-    let styleSorted = sorted.filter(\.supportsStyleEditing)
-    let preferredBest = styleSorted.first ?? sorted.first
-
     let candidatePaths = Array(sorted.prefix(5).map(\.path))
 
-    guard let best = preferredBest, best.score > 0 else {
+    guard let best = sorted.first, best.score > 0 else {
       return WebPreviewSourceResolution(
         primaryFilePath: normalizedPreviewFilePath,
         candidateFilePaths: candidatePaths,
         confidence: .low,
         matchedRanges: [:],
-        editableCapabilities: [.code],
         matchedSelector: nil,
-        matchedStylesheetPath: nil,
-        allowsInlineStyleEditing: false,
         matchedText: nil
       )
     }
 
-    let nextBest: CandidateScore?
-    if Self.styleExtensions.contains(URL(fileURLWithPath: best.path).pathExtension.lowercased()) {
-      nextBest = styleSorted.drop(while: { $0.path == best.path }).first
-    } else {
-      nextBest = sorted.drop(while: { $0.path == best.path }).first
-    }
-
+    let nextBest = sorted.drop(while: { $0.path == best.path }).first
     let confidence = Self.confidence(for: best, nextBest: nextBest)
-    let matchedStylesheetPath =
-      Self.styleExtensions.contains(URL(fileURLWithPath: best.path).pathExtension.lowercased())
-      && best.supportsStyleEditing ? best.path : nil
-    let allowsInlineStyleEditing = confidence > .low && best.supportsStyleEditing
-
-    var capabilities: Set<WebPreviewEditableCapability> = [.code]
-    if allowsInlineStyleEditing {
-      for property in WebPreviewStyleProperty.allCases {
-        capabilities.insert(property.capability)
-      }
-    }
 
     return WebPreviewSourceResolution(
       primaryFilePath: best.path,
       candidateFilePaths: LinkedHashSet(elements: [best.path] + candidatePaths).elements,
       confidence: confidence,
       matchedRanges: [best.path: best.matchedRanges],
-      editableCapabilities: capabilities,
       matchedSelector: best.matchedSelector,
-      matchedStylesheetPath: matchedStylesheetPath,
-      allowsInlineStyleEditing: allowsInlineStyleEditing,
       matchedText: element.textContent.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     )
   }
@@ -223,20 +197,11 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
         score += 10
       }
 
-      let supportsStyleEditing = matchedSelector.map { selector in
-        Self.cssBodyRange(for: [selector], in: content) != nil
-      } ?? false
-
-      if supportsStyleEditing {
-        score += Self.styleExtensions.contains(ext) ? 90 : 65
-      }
-
       results.append(CandidateScore(
         path: path,
         score: score,
         matchedRanges: matchedRanges,
-        matchedSelector: matchedSelector,
-        supportsStyleEditing: supportsStyleEditing
+        matchedSelector: matchedSelector
       ))
     }
 
@@ -396,35 +361,6 @@ actor WebPreviewSourceResolver: WebPreviewSourceResolverProtocol {
       return nil
     }
     return makeRange(range, in: haystack)
-  }
-
-  private static func cssBodyRange(
-    for selectorCandidates: [String],
-    in content: String
-  ) -> Range<String.Index>? {
-    for selector in selectorCandidates where !selector.isEmpty {
-      guard let selectorRange = content.range(of: selector),
-            let braceStart = content[selectorRange.upperBound...].firstIndex(of: "{") else {
-        continue
-      }
-
-      var depth = 1
-      var cursor = content.index(after: braceStart)
-      while cursor < content.endIndex {
-        let character = content[cursor]
-        if character == "{" {
-          depth += 1
-        } else if character == "}" {
-          depth -= 1
-          if depth == 0 {
-            return content.index(after: braceStart)..<cursor
-          }
-        }
-        cursor = content.index(after: cursor)
-      }
-    }
-
-    return nil
   }
 
   private static func makeRange(_ range: Range<String.Index>, in string: String) -> WebPreviewSourceMatchRange {

@@ -997,8 +997,7 @@ public struct MultiProviderMonitoringPanelView: View {
         monitorState: viewModel.monitorStates[sessionId],
         isExpanded: sidePanelExpansion.isExpanded(for: payload),
         onToggleExpanded: { toggleEmbeddedSidePanelExpansion(for: payload) },
-        onCollapseExpandedAfterSend: { collapseEmbeddedSidePanelExpansion(for: payload) },
-        inlineEditReconciler: viewModel.agentHubProvider?.inlineEditReconciler
+        onCollapseExpandedAfterSend: { collapseEmbeddedSidePanelExpansion(for: payload) }
       )
     case .mermaid(_, let session):
       MermaidDiagramView(

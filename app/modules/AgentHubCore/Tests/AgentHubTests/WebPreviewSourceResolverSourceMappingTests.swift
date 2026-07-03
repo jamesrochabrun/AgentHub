@@ -95,14 +95,11 @@ struct WebPreviewSourceResolverSourceMappingTests {
 
     #expect(resolution.primaryFilePath == indexPath)
     #expect(resolution.confidence == .high)
-    #expect(resolution.editableCapabilities == [.code])
     #expect(resolution.candidateFilePaths.first == indexPath)
-    #expect(resolution.matchedStylesheetPath == nil)
-    #expect(!resolution.allowsInlineStyleEditing)
   }
 
-  @Test("Prefers a matched stylesheet over the preview HTML for style editing")
-  func prefersMatchedStylesheetOverPreviewHTML() async throws {
+  @Test("Preview HTML with a unique text match outranks a stylesheet, which stays a candidate")
+  func prefersPreviewHTMLAndKeepsStylesheetCandidate() async throws {
     let fixture = try SourceResolverFixture.create()
     defer { fixture.cleanup() }
 
@@ -139,13 +136,11 @@ struct WebPreviewSourceResolverSourceMappingTests {
       recentActivities: []
     )
 
-    #expect(resolution.primaryFilePath == stylesheetPath)
-    #expect(resolution.matchedStylesheetPath == stylesheetPath)
-    #expect(resolution.allowsInlineStyleEditing)
-    #expect(resolution.editableCapabilities.contains(.lineHeight))
+    #expect(resolution.primaryFilePath == indexPath)
+    #expect(resolution.candidateFilePaths.contains(stylesheetPath))
   }
 
-  @Test("Prefers recently edited stylesheet files for styleable matches")
+  @Test("Prefers recently edited files with a selector match")
   func resolvesRecentStylesheetForStyleEditing() async throws {
     let fixture = try SourceResolverFixture.create()
     defer { fixture.cleanup() }
@@ -181,10 +176,7 @@ struct WebPreviewSourceResolverSourceMappingTests {
 
     #expect(resolution.primaryFilePath == stylesheetPath)
     #expect(resolution.confidence == .high)
-    #expect(resolution.editableCapabilities.contains(.textColor))
-    #expect(resolution.editableCapabilities.contains(.padding))
-    #expect(resolution.matchedStylesheetPath == stylesheetPath)
-    #expect(resolution.allowsInlineStyleEditing)
+    #expect(resolution.matchedSelector == ".cta")
   }
 
   @Test("Leaves ambiguous matches in low confidence fallback mode")
@@ -209,8 +201,6 @@ struct WebPreviewSourceResolverSourceMappingTests {
 
     #expect(resolution.confidence == .low)
     #expect(Set(resolution.candidateFilePaths) == Set([firstPath, secondPath]))
-    #expect(resolution.editableCapabilities == [.code])
-    #expect(!resolution.allowsInlineStyleEditing)
   }
 
   @Test("Parent and sibling context break ties between otherwise similar candidates")

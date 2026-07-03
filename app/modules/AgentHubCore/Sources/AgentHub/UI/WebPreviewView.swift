@@ -196,8 +196,7 @@ public struct WebPreviewView: View {
     isExpanded: Bool = false,
     onToggleExpanded: (() -> Void)? = nil,
     onCollapseExpandedAfterSend: (() -> Void)? = nil,
-    reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe(),
-    inlineEditReconciler: (any InlineEditStyleReconcilerProtocol)? = nil
+    reachabilityProbe: any LocalhostReachabilityProbing = LocalhostReachabilityProbe()
   ) {
     self.session = session
     self.projectPath = projectPath
@@ -216,8 +215,7 @@ public struct WebPreviewView: View {
     self._inspectorViewModel = State(
       initialValue: WebPreviewInspectorViewModel(
         sessionID: session.id,
-        projectPath: projectPath,
-        inlineEditReconciler: inlineEditReconciler
+        projectPath: projectPath
       )
     )
   }
@@ -346,6 +344,9 @@ public struct WebPreviewView: View {
     .onChange(of: inspectBehavior) { _, newBehavior in
       guard inspectState.isActive else { return }
       inspectState.activate(mode: newBehavior.canvasMode)
+      if newBehavior != .edit {
+        flushPendingDesignEditsToQueue()
+      }
       Task {
         await inspectorViewModel.flushPendingWriteIfNeeded()
         if newBehavior != .edit {
@@ -614,10 +615,16 @@ public struct WebPreviewView: View {
           .keyboardShortcut("i", modifiers: [.command, .shift])
         Button("") { refreshPreview() }
           .keyboardShortcut("r", modifiers: .command)
-        if showsInspectorRail {
-          Button("") { handleManualUpdate() }
-            .keyboardShortcut(.return, modifiers: .command)
-            .disabled(!updateState.isEnabled)
+        if showsInspectorRail || showsInlineDesignToolbar {
+          Button("") {
+            if inspectorViewModel.pendingEditCount > 0 {
+              applyPendingDesignEdits()
+            } else {
+              handleManualUpdate()
+            }
+          }
+          .keyboardShortcut(.return, modifiers: .command)
+          .disabled(inspectorViewModel.pendingEditCount == 0 && !updateState.isEnabled)
         }
         if isEmbedded, let onToggleExpanded {
           Button("") { onToggleExpanded() }
@@ -663,6 +670,7 @@ public struct WebPreviewView: View {
             viewModel: inspectorViewModel,
             updateState: updateState,
             onUpdate: handleManualUpdate,
+            onApplyPendingEdits: applyPendingDesignEdits,
             onClose: closeEditRail
           )
         }
@@ -1322,6 +1330,16 @@ public struct WebPreviewView: View {
                   handleInspectOverlayHover(hovering)
                 }
               }
+              if inspectBehavior == .edit, inspectorViewModel.pendingEditCount > 0 {
+                WebPreviewPendingEditsBar(
+                  count: inspectorViewModel.pendingEditCount,
+                  tierLabel: inspectorViewModel.persistenceTierLabel,
+                  onApply: applyPendingDesignEdits
+                )
+                .inspectOverlayCursor(label: "pendingEditsBar") { hovering in
+                  handleInspectOverlayHover(hovering)
+                }
+              }
             }
           }
         }
@@ -1415,6 +1433,47 @@ public struct WebPreviewView: View {
     }
   }
 
+  /// Describes the running preview so agent prompts can reference it.
+  private var previewContextDescription: String? {
+    switch resolution {
+    case .directFile:
+      return selectedFilePath.map { "static file preview of \(URL(fileURLWithPath: $0).lastPathComponent)" }
+    case .devServer:
+      if case .ready(let url) = serverState {
+        return "dev server at \(url.absoluteString)"
+      }
+      return "dev server preview"
+    case .launchOptions, .noContent, nil:
+      return nil
+    }
+  }
+
+  /// Sends the pending design-edit batch to the session terminal immediately.
+  /// Falls back to queueing when no terminal is available so nothing is lost.
+  private func applyPendingDesignEdits() {
+    queueSendFailureMessage = nil
+    guard let handoff = inspectorViewModel.takePendingDesignEditHandoff(
+      previewContext: previewContextDescription
+    ) else { return }
+
+    var queue = WebPreviewContextQueue()
+    queue.append(handoff.element, instruction: handoff.instruction)
+
+    guard sendWebPreviewQueue(queue) else {
+      queueInspectUpdate(element: handoff.element, instruction: handoff.instruction, resetFailure: false)
+      return
+    }
+  }
+
+  /// Moves the pending design-edit batch into the session's context queue,
+  /// where it is sent with the next terminal message and remains removable.
+  private func flushPendingDesignEditsToQueue() {
+    guard let handoff = inspectorViewModel.takePendingDesignEditHandoff(
+      previewContext: previewContextDescription
+    ) else { return }
+    queueInspectUpdate(element: handoff.element, instruction: handoff.instruction)
+  }
+
   private func toggleInspector() {
     if inspectState.isActive {
       deactivateInspector()
@@ -1448,6 +1507,7 @@ public struct WebPreviewView: View {
   }
 
   private func deactivateInspector() {
+    flushPendingDesignEditsToQueue()
     inspectState.deactivate()
     Task {
       await inspectorViewModel.closePanel()
@@ -1455,6 +1515,7 @@ public struct WebPreviewView: View {
   }
 
   private func closeEditRail() {
+    flushPendingDesignEditsToQueue()
     inspectState.dismissInput()
     Task {
       await inspectorViewModel.closePanel()
@@ -1585,12 +1646,28 @@ public struct WebPreviewView: View {
 
     guard isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
 
+    flushPendingDesignEditsToQueue()
     Task {
       await inspectorViewModel.inspect(
         element: element,
         previewFilePath: selectedFilePath,
-        recentActivities: monitorState?.recentActivities ?? []
+        recentActivities: monitorState?.recentActivities ?? [],
+        stylesheetContext: stylesheetPreviewContext
       )
+    }
+  }
+
+  private var stylesheetPreviewContext: WebPreviewStylesheetPreviewContext? {
+    switch resolution {
+    case .directFile(_, let projPath):
+      return selectedFilePath.map { .directFile(servedFilePath: $0, projectPath: projPath) }
+    case .devServer(let projPath):
+      if case .ready(let url) = serverState {
+        return .devServer(baseURL: url, projectPath: projPath)
+      }
+      return nil
+    case .launchOptions, .noContent, nil:
+      return nil
     }
   }
 
@@ -1816,10 +1893,7 @@ public struct WebPreviewView: View {
       Spacer()
 
       Button {
-        inspectState.deactivate()
-        Task {
-          await inspectorViewModel.closePanel()
-        }
+        deactivateInspector()
       } label: {
         Image(systemName: "xmark")
           .font(.system(size: 10))
