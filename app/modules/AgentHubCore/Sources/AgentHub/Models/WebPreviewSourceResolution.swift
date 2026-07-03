@@ -144,15 +144,15 @@ struct WebPreviewSourceMatchRange: Equatable, Sendable {
 
 // MARK: - WebPreviewSourceResolution
 
+/// Read-only source mapping for the inspector's Code tab and agent-prompt
+/// hints. Resolution never decides where edits are written — style and text
+/// edits batch to the session's agent unless a direct mapping is proven.
 struct WebPreviewSourceResolution: Equatable, Sendable {
   let primaryFilePath: String?
   let candidateFilePaths: [String]
   let confidence: WebPreviewSourceResolutionConfidence
   let matchedRanges: [String: [WebPreviewSourceMatchRange]]
-  let editableCapabilities: Set<WebPreviewEditableCapability>
   let matchedSelector: String?
-  let matchedStylesheetPath: String?
-  let allowsInlineStyleEditing: Bool
   let matchedText: String?
 
   var isLowConfidence: Bool {

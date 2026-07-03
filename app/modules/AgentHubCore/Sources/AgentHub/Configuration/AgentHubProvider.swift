@@ -139,7 +139,7 @@ public final class AgentHubProvider {
   }()
 
   /// Shared `claude -p` invocation service used by short, non-interactive
-  /// callers (branch naming, inline-edit style reconciliation, etc.).
+  /// callers (branch naming, session investigation, etc.).
   public private(set) lazy var programmaticClaudeService: any ClaudeProgrammaticServiceProtocol = ClaudeProgrammaticService(
     additionalPaths: ClaudeCodePathResolver.searchPaths(additionalPaths: configuration.additionalCLIPaths)
   )
@@ -149,11 +149,6 @@ public final class AgentHubProvider {
 
   /// Claude-backed local audit of AgentHub's current session/worktree state.
   public private(set) lazy var sessionInvestigationService: any SessionInvestigationServiceProtocol = ClaudeSessionInvestigationService(programmaticService: programmaticClaudeService)
-
-  /// Reformats Canvas inline-toolbar edits so the persisted file matches the
-  /// project's existing code style. Runs Haiku via `claude -p` after the
-  /// debounced direct write so the UX stays snappy.
-  public private(set) lazy var inlineEditReconciler: any InlineEditStyleReconcilerProtocol = ClaudeInlineEditStyleReconciler(programmaticService: programmaticClaudeService)
 
   /// Success sound service for completed launcher-created worktrees.
   public private(set) lazy var worktreeSuccessSoundService: any WorktreeSuccessSoundServiceProtocol = WorktreeSuccessSoundService()
