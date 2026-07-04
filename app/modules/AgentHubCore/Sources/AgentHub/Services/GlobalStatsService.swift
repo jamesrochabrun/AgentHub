@@ -29,6 +29,9 @@ public final class GlobalStatsService: @unchecked Sendable {
   private let statsFilePath: String
   private var fileWatcher: DispatchSourceFileSystemObject?
   private var fileDescriptor: Int32 = -1
+  /// Only touched from the file-watcher source's event handler, which the
+  /// dispatch source serializes.
+  private var reloadDebounceItem: DispatchWorkItem?
 
   // MARK: - Computed Properties
 
@@ -143,6 +146,32 @@ public final class GlobalStatsService: @unchecked Sendable {
     }
   }
 
+  /// Debounced, off-main reload for watcher events. The CLI rewrites
+  /// stats-cache.json in bursts, and the previous handler did the whole file
+  /// read + decode on the main thread per event; now only the property
+  /// assignment hops to main.
+  private func scheduleDebouncedReload() {
+    reloadDebounceItem?.cancel()
+    let item = DispatchWorkItem { [weak self] in
+      guard let self else { return }
+      guard
+        let data = try? Data(contentsOf: URL(fileURLWithPath: self.statsFilePath)),
+        let decoded = try? JSONDecoder().decode(GlobalStatsCache.self, from: data)
+      else {
+        AppLogger.stats.error("Failed to reload stats after file change")
+        DispatchQueue.main.async { self.isAvailable = false }
+        return
+      }
+      DispatchQueue.main.async {
+        self.stats = decoded
+        self.isAvailable = true
+        self.lastUpdated = Date()
+      }
+    }
+    reloadDebounceItem = item
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.3, execute: item)
+  }
+
   private func startWatching() {
     guard FileManager.default.fileExists(atPath: statsFilePath) else {
       // Try again later when file might exist
@@ -165,9 +194,7 @@ public final class GlobalStatsService: @unchecked Sendable {
     )
 
     source.setEventHandler { [weak self] in
-      DispatchQueue.main.async {
-        self?.loadStats()
-      }
+      self?.scheduleDebouncedReload()
     }
 
     source.setCancelHandler { [weak self] in

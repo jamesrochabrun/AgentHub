@@ -6,6 +6,7 @@
 //
 
 import Combine
+import Darwin
 import Foundation
 import os
 
@@ -130,6 +131,10 @@ public actor CodexSessionFileWatcher {
         let timeSinceLastEvent = Date().timeIntervalSince(lastFileEventTime)
         let currentFileSize = self.getFileSize(filePath)
 
+        // Tracks whether this tick changed anything worth persisting back to
+        // the actor; no-op ticks skip the updateStoredWatcherInfo Task hop.
+        var storedInfoNeedsUpdate = false
+
         if timeSinceLastEvent > 5 && currentFileSize > lastKnownFileSize {
           var tempPosition = lastKnownFileSize
           let newLines = self.readNewLines(from: filePath, startingAt: &tempPosition)
@@ -140,6 +145,7 @@ public actor CodexSessionFileWatcher {
           } else {
             lastKnownFileSize = currentFileSize
           }
+          storedInfoNeedsUpdate = true
         }
 
         let previousStatus = lastEmittedStatus
@@ -147,6 +153,7 @@ public actor CodexSessionFileWatcher {
 
         if parseResult.currentStatus != lastEmittedStatus {
           lastEmittedStatus = parseResult.currentStatus
+          storedInfoNeedsUpdate = true
           let updatedState = self.buildMonitorState(from: parseResult)
 
           Task { @MainActor in
@@ -154,18 +161,21 @@ public actor CodexSessionFileWatcher {
           }
         } else if previousStatus != parseResult.currentStatus {
           lastEmittedStatus = parseResult.currentStatus
+          storedInfoNeedsUpdate = true
         }
 
-        let parseResultSnapshot = parseResult
-        let lastFileEventSnapshot = lastFileEventTime
-        let lastKnownFileSizeSnapshot = lastKnownFileSize
-        Task {
-          await self.updateStoredWatcherInfo(
-            sessionId: sessionId,
-            parseResult: parseResultSnapshot,
-            lastFileEventTime: lastFileEventSnapshot,
-            lastKnownFileSize: lastKnownFileSizeSnapshot
-          )
+        if storedInfoNeedsUpdate {
+          let parseResultSnapshot = parseResult
+          let lastFileEventSnapshot = lastFileEventTime
+          let lastKnownFileSizeSnapshot = lastKnownFileSize
+          Task {
+            await self.updateStoredWatcherInfo(
+              sessionId: sessionId,
+              parseResult: parseResultSnapshot,
+              lastFileEventTime: lastFileEventSnapshot,
+              lastKnownFileSize: lastKnownFileSizeSnapshot
+            )
+          }
         }
 
         rescheduleStatusTimer()
@@ -232,11 +242,12 @@ public actor CodexSessionFileWatcher {
   }
 
   private nonisolated func getFileSize(_ path: String) -> UInt64 {
-    guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-          let size = attrs[.size] as? UInt64 else {
-      return 0
-    }
-    return size
+    // Direct stat() — FileManager.attributesOfItem is far more expensive and
+    // this runs on every status-timer tick.
+    var st = stat()
+    // Unqualified call: `Darwin.stat` resolves to the struct type, not the function.
+    guard stat(path, &st) == 0 else { return 0 }
+    return UInt64(st.st_size)
   }
 
   private nonisolated func readNewLines(from path: String, startingAt position: inout UInt64) -> [String] {

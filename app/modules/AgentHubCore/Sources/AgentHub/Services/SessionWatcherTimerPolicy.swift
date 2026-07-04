@@ -3,6 +3,9 @@ import Foundation
 
 struct SessionWatcherTimerPolicy {
   static let staleWatcherRecoveryInterval: TimeInterval = 5
+  /// Floor for any scheduled interval. Overdue deadlines would otherwise
+  /// return 0 and busy-loop the watcher's serial processing queue.
+  static let minimumInterval: TimeInterval = 1.0
   static let timerLeeway: DispatchTimeInterval = .milliseconds(200)
 
   static func nextInterval(
@@ -12,9 +15,17 @@ struct SessionWatcherTimerPolicy {
     approvalTimeoutSeconds: Int,
     now: Date = Date()
   ) -> TimeInterval? {
-    let staleRecoveryInterval = needsHealthCheck(for: currentStatus)
-      ? max(0, staleWatcherRecoveryInterval - now.timeIntervalSince(lastFileEventTime))
-      : nil
+    let staleRecoveryInterval: TimeInterval?
+    if needsHealthCheck(for: currentStatus) {
+      let sinceEvent = now.timeIntervalSince(lastFileEventTime)
+      // Once overdue, the handler firing now performs the check — the next
+      // one belongs a full period later, not immediately.
+      staleRecoveryInterval = sinceEvent >= staleWatcherRecoveryInterval
+        ? staleWatcherRecoveryInterval
+        : staleWatcherRecoveryInterval - sinceEvent
+    } else {
+      staleRecoveryInterval = nil
+    }
 
     let statusTransitionInterval = nextStatusTransitionInterval(
       lastActivity: lastActivity,
@@ -27,11 +38,11 @@ struct SessionWatcherTimerPolicy {
     case (nil, nil):
       return nil
     case let (lhs?, nil):
-      return lhs
+      return max(lhs, minimumInterval)
     case let (nil, rhs?):
-      return rhs
+      return max(rhs, minimumInterval)
     case let (lhs?, rhs?):
-      return min(lhs, rhs)
+      return max(min(lhs, rhs), minimumInterval)
     }
   }
 

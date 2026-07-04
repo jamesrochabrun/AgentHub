@@ -58,6 +58,8 @@ public struct MonitoringCardView: View {
   @State private var showingActionsPopover = false
   @State private var showingFilePicker = false
   @State private var showingNameSheet = false
+  @State private var activityRefreshTask: Task<Void, Never>?
+  @State private var pendingActivityTimestamp: Date?
   @AppStorage(AgentHubDefaults.diffDisplayMode)
   private var diffDisplayModeRawValue: String = DiffDisplayMode.inline.rawValue
   @Environment(\.agentHub) private var agentHub
@@ -331,11 +333,23 @@ public struct MonitoringCardView: View {
     }
     .onDisappear {
       sessionGitHubQuickAccessViewModel.stopPolling()
+      activityRefreshTask?.cancel()
+      activityRefreshTask = nil
     }
     .onChange(of: state?.lastActivityAt) { _, newValue in
       guard let newValue else { return }
-      Task {
-        await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: newValue)
+      // Coalesce to one refresh pass per 2s: this fires on every parsed JSONL
+      // activity while the agent streams, and per-tick forced git refreshes
+      // thrash the observable dictionaries and the diff actors. The trailing
+      // task picks up the latest timestamp at fire time.
+      pendingActivityTimestamp = newValue
+      guard activityRefreshTask == nil else { return }
+      activityRefreshTask = Task { @MainActor in
+        defer { activityRefreshTask = nil }
+        try? await Task.sleep(for: .seconds(2))
+        guard !Task.isCancelled, let timestamp = pendingActivityTimestamp else { return }
+        pendingActivityTimestamp = nil
+        await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: timestamp)
         await loadWebPreviewCandidateIfNeeded()
         await viewModel?.ensureDiffAvailability(for: session.projectPath, forceRefresh: true)
         await viewModel?.ensureLocalDiffSummary(for: session.projectPath, forceRefresh: true)
