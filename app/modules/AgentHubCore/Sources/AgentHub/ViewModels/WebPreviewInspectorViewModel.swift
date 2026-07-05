@@ -47,6 +47,7 @@ final class WebPreviewInspectorViewModel {
   private let stylesheetSourceMapper: any StylesheetSourceMapping
   private let staticStyleResolver: any WebPreviewStaticStyleResolving
   private let directWriteCoordinator: any WebPreviewDirectCSSWriting
+  private let pageEnvironmentCapture: any WebPreviewPageEnvironmentCapturing
   private let isDirectCSSWriteEnabled: () -> Bool
 
   private var pendingWriteTask: Task<Void, Never>?
@@ -62,6 +63,9 @@ final class WebPreviewInspectorViewModel {
   private var trackedStructuredTextContent: SourceTextContentMapping?
   private var userConfirmedLowConfidenceFile = false
   private weak var previewWebView: WKWebView?
+  /// Unit-conversion context read from the page for the selected element;
+  /// direct writes fall back to `.fallback` when the probe fails.
+  private var pageEnvironment: WebPreviewPageEnvironment?
 
   private(set) var selectedElement: ElementInspectorData?
   private(set) var resolution: WebPreviewSourceResolution?
@@ -71,7 +75,15 @@ final class WebPreviewInspectorViewModel {
   private(set) var consoleEntries: [String] = []
   private(set) var pendingEditBatch: WebPreviewPendingDesignEditBatch?
   private(set) var styleTiers: [String: WebPreviewStyleEditTier] = [:]
+  /// Property → short human-readable reason why it routes to the agent tier.
+  private(set) var styleTierReasons: [String: String] = [:]
+  /// Blanket reason when tier proving could not run at all (probe failed,
+  /// element inside a frame, direct writes disabled, …).
+  private(set) var styleTierGeneralReason: String?
   private(set) var sourceHints: [WebPreviewElementSourceHint] = []
+  /// Set when the latest direct write detached from a shared design token
+  /// and can be promoted to a token-wide update instead.
+  private(set) var tokenPromotionOffer: WebPreviewTokenPromotionOffer?
 
   var isPanelVisible = false
   var isResolving = false
@@ -101,6 +113,7 @@ final class WebPreviewInspectorViewModel {
     stylesheetSourceMapper: (any StylesheetSourceMapping)? = nil,
     staticStyleResolver: (any WebPreviewStaticStyleResolving)? = nil,
     directWriteCoordinator: (any WebPreviewDirectCSSWriting)? = nil,
+    pageEnvironmentCapture: (any WebPreviewPageEnvironmentCapturing)? = nil,
     isDirectCSSWriteEnabled: (() -> Bool)? = nil
   ) {
     self.sessionID = sessionID
@@ -114,6 +127,7 @@ final class WebPreviewInspectorViewModel {
     self.stylesheetSourceMapper = stylesheetSourceMapper ?? StylesheetSourceMapper(fileService: fileService)
     self.staticStyleResolver = staticStyleResolver ?? WebPreviewStaticStyleResolver(fileService: fileService)
     self.directWriteCoordinator = directWriteCoordinator ?? WebPreviewDirectCSSWriteCoordinator(fileService: fileService)
+    self.pageEnvironmentCapture = pageEnvironmentCapture ?? WebPreviewPageEnvironmentCapture()
     self.isDirectCSSWriteEnabled = isDirectCSSWriteEnabled ?? {
       UserDefaults.standard.object(forKey: AgentHubDefaults.webPreviewDirectCSSWriteEnabled) as? Bool ?? true
     }
@@ -172,7 +186,29 @@ final class WebPreviewInspectorViewModel {
     if directFileNames.count > 1 {
       return "Edits \(directFileNames.count) stylesheets directly"
     }
+    if let reason = dominantAgentTierReason {
+      return "Applies via agent · \(reason)"
+    }
     return "Applies via agent"
+  }
+
+  /// Why the pending edits route to the agent. Reasons for properties the
+  /// user actually edited take priority over the rest of the element's
+  /// properties; ties break alphabetically so the label is deterministic.
+  var dominantAgentTierReason: String? {
+    let pendingReasons = (pendingEditBatch?.styleChanges ?? [])
+      .compactMap { styleTierReasons[$0.property] }
+    let pool = pendingReasons.isEmpty ? Array(styleTierReasons.values) : pendingReasons
+    let counts = pool.reduce(into: [String: Int]()) { $0[$1, default: 0] += 1 }
+    let dominant = counts.max { lhs, rhs in
+      (lhs.value, rhs.key) < (rhs.value, lhs.key)
+    }
+    return dominant?.key ?? styleTierGeneralReason
+  }
+
+  /// The reason a specific property cannot be written directly, if known.
+  func agentTierReason(for property: String) -> String? {
+    styleTierReasons[property] ?? styleTierGeneralReason
   }
 
   /// True when the loaded source file is the file being previewed directly
@@ -381,6 +417,9 @@ final class WebPreviewInspectorViewModel {
     resolution = nil
     pendingEditBatch = nil
     styleTiers = [:]
+    styleTierReasons = [:]
+    styleTierGeneralReason = nil
+    tokenPromotionOffer = nil
     sourceHints = []
     pendingDirectWrites = [:]
     self.previewFilePath = previewFilePath
@@ -445,6 +484,9 @@ final class WebPreviewInspectorViewModel {
     resolution = nil
     pendingEditBatch = nil
     styleTiers = [:]
+    styleTierReasons = [:]
+    styleTierGeneralReason = nil
+    tokenPromotionOffer = nil
     sourceHints = []
     pendingDirectWrites = [:]
     stylesheetContext = nil
@@ -833,21 +875,43 @@ final class WebPreviewInspectorViewModel {
   private func refreshStyleTiers(for element: ElementInspectorData) {
     provenanceTask?.cancel()
     styleTiers = [:]
+    styleTierReasons = [:]
+    styleTierGeneralReason = nil
+    pageEnvironment = nil
 
-    guard isDirectCSSWriteEnabled(),
-          let stylesheetContext,
-          let previewWebView else {
+    guard isDirectCSSWriteEnabled() else {
+      styleTierGeneralReason = "direct writes are disabled"
+      return
+    }
+    guard let stylesheetContext else {
+      styleTierGeneralReason = "the preview source is unknown"
+      return
+    }
+    guard let previewWebView else {
+      styleTierGeneralReason = "the preview is not connected"
       return
     }
 
     let selector = element.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !selector.isEmpty else { return }
+    guard !selector.isEmpty else {
+      styleTierGeneralReason = "the element has no usable selector"
+      return
+    }
 
     let properties = WebPreviewStyleProperty.allCases.map(\.rawValue)
     provenanceTask = Task { [weak self, weak previewWebView] in
       guard let self, let previewWebView else { return }
 
+      let environment = await self.pageEnvironmentCapture.captureEnvironment(
+        selector: selector,
+        in: previewWebView
+      )
+      guard !Task.isCancelled, self.selectedElement?.id == element.id else { return }
+      self.pageEnvironment = environment
+
       let tiers: [String: WebPreviewStyleEditTier]
+      var reasons: [String: String] = [:]
+      var generalReason: String?
       switch stylesheetContext {
       case .directFile(let servedFilePath, let contextProjectPath):
         // Static previews: CSSOM cannot read file:// linked stylesheets, but
@@ -861,20 +925,32 @@ final class WebPreviewInspectorViewModel {
           in: previewWebView
         )
         tiers = targets.mapValues { .direct($0) }
+        for property in properties where targets[property] == nil {
+          reasons[property] = "no matching rule in the served stylesheets"
+        }
 
       case .devServer:
         guard let provenance = await self.styleProvenanceCapture.captureProvenance(
           selector: selector,
           properties: properties,
           in: previewWebView
-        ) else { return }
+        ) else {
+          guard !Task.isCancelled, self.selectedElement?.id == element.id else { return }
+          // The probe anchors via the top document; a frame-hosted element
+          // or a failed script leaves nothing provable.
+          self.styleTierGeneralReason = "the element's styles couldn't be probed"
+          return
+        }
         guard !Task.isCancelled, self.selectedElement?.id == element.id else { return }
 
         var resolved: [String: WebPreviewStyleEditTier] = [:]
         var mappingCache: [WebPreviewCSSRuleLocator: StylesheetMappingResult] = [:]
 
-        for winner in provenance.winners where winner.isProvable {
-          guard let rule = winner.rule else { continue }
+        for winner in provenance.winners {
+          guard winner.isProvable, let rule = winner.rule else {
+            reasons[winner.property] = Self.agentReason(for: winner)
+            continue
+          }
           let result: StylesheetMappingResult
           if let cached = mappingCache[rule] {
             result = cached
@@ -886,20 +962,123 @@ final class WebPreviewInspectorViewModel {
             mappingCache[rule] = result
           }
           guard !Task.isCancelled else { return }
-          if case .proven(let filePath, let contentSHA256) = result {
+          if case .proven(let filePath, let contentSHA256, let blockIndex) = result {
             resolved[winner.property] = .direct(WebPreviewDirectStyleTarget(
               filePath: filePath,
               ruleIndexPath: rule.ruleIndexPath,
-              contentSHA256: contentSHA256
+              contentSHA256: contentSHA256,
+              embeddedStyleBlockIndex: blockIndex
             ))
+          } else {
+            reasons[winner.property] = "the rule didn't match a project file"
           }
+        }
+
+        // Properties no rule declares at all: insert them into the
+        // element's plainest matching rule when that rule maps to a
+        // project file and no hidden sheet could contradict the proof.
+        // When insertion is impossible, record WHICH guard blocked it so
+        // the pending-edits pill can say so.
+        let coveredProperties = Set(provenance.winners.map(\.property))
+        let uncoveredProperties = properties.filter { !coveredProperties.contains($0) }
+        var insertionBlocker: String?
+        if !provenance.unreadableSheetHrefs.isEmpty {
+          insertionBlocker = "a stylesheet isn't readable, so new rules can't be proven"
+        } else if provenance.hasAdoptedSheets {
+          insertionBlocker = "the page injects styles via constructed stylesheets"
+        } else if provenance.anchorRule == nil {
+          insertionBlocker = "no plain rule matches the element"
+        }
+        if !uncoveredProperties.isEmpty, insertionBlocker == nil,
+           let anchor = provenance.anchorRule {
+          let result: StylesheetMappingResult
+          if let cached = mappingCache[anchor] {
+            result = cached
+          } else {
+            result = await self.stylesheetSourceMapper.mapToProvenFile(
+              ruleLocator: anchor,
+              context: stylesheetContext
+            )
+            mappingCache[anchor] = result
+          }
+          guard !Task.isCancelled else { return }
+          switch result {
+          case .proven(let filePath, let contentSHA256, let blockIndex):
+            let blockers = Set(
+              (provenance.declaredPropertyNames + provenance.inlinePropertyNames).map { $0.lowercased() }
+            )
+            for property in uncoveredProperties {
+              if CSSPropertyFamily.conflicts(property, with: blockers) {
+                reasons[property] = "it overlaps a property the page already sets"
+              } else {
+                resolved[property] = .direct(WebPreviewDirectStyleTarget(
+                  filePath: filePath,
+                  ruleIndexPath: anchor.ruleIndexPath,
+                  contentSHA256: contentSHA256,
+                  embeddedStyleBlockIndex: blockIndex
+                ))
+              }
+            }
+          case .unproven:
+            insertionBlocker = "the element's rule isn't in a project file"
+          }
+        }
+        for property in uncoveredProperties
+        where resolved[property] == nil && reasons[property] == nil {
+          reasons[property] = insertionBlocker ?? "no existing rule sets it"
+        }
+        if resolved.isEmpty, reasons.isEmpty {
+          generalReason = "the element's styles couldn't be probed"
         }
         tiers = resolved
       }
 
       guard !Task.isCancelled, self.selectedElement?.id == element.id else { return }
       self.styleTiers = tiers
+      self.styleTierReasons = reasons
+      self.styleTierGeneralReason = generalReason
+      self.rerouteBatchedEditsAfterTierRefresh()
     }
+  }
+
+  /// Short label for why a winning declaration is not directly writable.
+  private static func agentReason(for winner: WebPreviewPropertyWinner) -> String {
+    if winner.isInline {
+      return "an inline style attribute overrides it"
+    }
+    guard let uncertainty = winner.uncertainties.sorted(by: { $0.rawValue < $1.rawValue }).first else {
+      return "the owning rule couldn't be located"
+    }
+    switch uncertainty {
+    case .layer: return "the rule lives in an @layer block"
+    case .scope: return "the rule lives in an @scope block"
+    case .containerQuery: return "the rule lives in a container query"
+    case .unknownGroup: return "the rule lives in an unrecognized at-rule"
+    case .adoptedSheet: return "styles come from a constructed stylesheet"
+    case .unreadableSheet: return "the stylesheet isn't readable"
+    case .nestedSelector: return "the rule uses a nested selector"
+    case .complexSelector: return "the rule uses a complex selector"
+    case .importantConflict: return "an !important rule conflicts"
+    }
+  }
+
+  /// Edits recorded while tier proving was still in flight land in the agent
+  /// batch; once proving completes, move every change whose property proved
+  /// direct into the direct-write queue so it persists deterministically.
+  private func rerouteBatchedEditsAfterTierRefresh() {
+    guard let batch = pendingEditBatch else { return }
+    var rerouted = false
+    for change in batch.styleChanges {
+      guard case .direct = styleTiers[change.property] else { continue }
+      pendingDirectWrites[change.property] = change.newValue
+      pendingEditBatch?.removeStyleChange(property: change.property)
+      rerouted = true
+    }
+    guard rerouted else { return }
+    if pendingEditBatch?.isEmpty == true {
+      pendingEditBatch = nil
+    }
+    scheduleDirectWriteFlush()
   }
 
   /// Reads framework dev-build source metadata for the selected element.
@@ -954,6 +1133,7 @@ final class WebPreviewInspectorViewModel {
         filePath: target.filePath,
         embeddedStyleBlockIndex: target.embeddedStyleBlockIndex,
         expectedSHA256: target.contentSHA256,
+        environment: pageEnvironment ?? .fallback,
         projectPath: projectPath
       )
 
@@ -964,12 +1144,97 @@ final class WebPreviewInspectorViewModel {
         rebaseDirectTargets(filePath: target.filePath, to: newSHA256, excluding: property)
         await refreshCodeTabAfterDirectWrite(to: target.filePath)
         writeErrorMessage = nil
+        if tokenPromotionOffer?.property == property {
+          tokenPromotionOffer = nil
+        }
+      case .writtenWithTokenDetachment(let newSHA256, let detachment):
+        target.contentSHA256 = newSHA256
+        styleTiers[property] = .direct(target)
+        rebaseDirectTargets(filePath: target.filePath, to: newSHA256, excluding: property)
+        await refreshCodeTabAfterDirectWrite(to: target.filePath)
+        writeErrorMessage = nil
+        // Offer promoting the detached edit to a token-wide update when the
+        // definition is provably editable in the same source.
+        if let definitionRuleIndexPath = detachment.definitionRuleIndexPath {
+          tokenPromotionOffer = WebPreviewTokenPromotionOffer(
+            property: property,
+            token: detachment.token,
+            usageCount: detachment.projectUsageCount,
+            appliedLiteral: detachment.appliedLiteral,
+            definitionRuleIndexPath: definitionRuleIndexPath
+          )
+        }
       case .baselineDrift, .editFailed:
         styleTiers[property] = .agent
         downgradeToAgentBatch(property: property, value: value)
       }
     }
     isWriting = false
+  }
+
+  /// Promotes the last detached token edit into a token-wide update: the
+  /// element's declaration is restored to `var(token)` and the token's
+  /// definition is rewritten to the new value, so every consumer updates.
+  /// Both steps are ordinary proven writes with post-conditions.
+  func promoteTokenDetachment() async {
+    guard let offer = tokenPromotionOffer else { return }
+    tokenPromotionOffer = nil
+    guard case .direct(var target) = styleTiers[offer.property] else { return }
+
+    isWriting = true
+    defer { isWriting = false }
+
+    // 1. Point the element's declaration back at the token.
+    let restore = CSSDeclarationEdit(
+      ruleIndexPath: target.ruleIndexPath,
+      property: offer.property,
+      value: "var(\(offer.token))"
+    )
+    let restoreOutcome = await directWriteCoordinator.write(
+      edit: restore,
+      filePath: target.filePath,
+      embeddedStyleBlockIndex: target.embeddedStyleBlockIndex,
+      expectedSHA256: target.contentSHA256,
+      environment: pageEnvironment ?? .fallback,
+      projectPath: projectPath
+    )
+    guard let restoredSHA = restoreOutcome.writtenSHA256 else {
+      writeErrorMessage = "Couldn't update \(offer.token): the file changed underneath"
+      return
+    }
+    target.contentSHA256 = restoredSHA
+    styleTiers[offer.property] = .direct(target)
+    rebaseDirectTargets(filePath: target.filePath, to: restoredSHA, excluding: offer.property)
+
+    // 2. Rewrite the token's definition; the planner preserves the
+    // definition's notation automatically.
+    let definitionEdit = CSSDeclarationEdit(
+      ruleIndexPath: offer.definitionRuleIndexPath,
+      property: offer.token,
+      value: offer.appliedLiteral
+    )
+    let definitionOutcome = await directWriteCoordinator.write(
+      edit: definitionEdit,
+      filePath: target.filePath,
+      embeddedStyleBlockIndex: target.embeddedStyleBlockIndex,
+      expectedSHA256: restoredSHA,
+      environment: pageEnvironment ?? .fallback,
+      projectPath: projectPath
+    )
+    guard let finalSHA = definitionOutcome.writtenSHA256 else {
+      writeErrorMessage = "Couldn't update \(offer.token): the file changed underneath"
+      return
+    }
+    target.contentSHA256 = finalSHA
+    styleTiers[offer.property] = .direct(target)
+    rebaseDirectTargets(filePath: target.filePath, to: finalSHA, excluding: offer.property)
+    await refreshCodeTabAfterDirectWrite(to: target.filePath)
+    writeErrorMessage = nil
+  }
+
+  /// Dismisses the pending token-promotion offer without acting on it.
+  func dismissTokenPromotionOffer() {
+    tokenPromotionOffer = nil
   }
 
   private func rebaseDirectTargets(filePath: String, to newSHA256: String, excluding property: String) {

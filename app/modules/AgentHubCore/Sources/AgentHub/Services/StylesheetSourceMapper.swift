@@ -23,7 +23,9 @@ enum WebPreviewStylesheetPreviewContext: Equatable, Sendable {
 }
 
 enum StylesheetMappingResult: Equatable, Sendable {
-  case proven(filePath: String, contentSHA256: String)
+  /// `embeddedStyleBlockIndex` is set when the rule lives in the N-th inline
+  /// `<style>` block of an HTML file rather than a standalone stylesheet.
+  case proven(filePath: String, contentSHA256: String, embeddedStyleBlockIndex: Int?)
   case unproven(reason: String)
 }
 
@@ -50,6 +52,15 @@ actor StylesheetSourceMapper: StylesheetSourceMapping {
     ruleLocator: WebPreviewCSSRuleLocator,
     context: WebPreviewStylesheetPreviewContext
   ) async -> StylesheetMappingResult {
+    // Inline <style> blocks have no href. On a dev server that serves
+    // project files verbatim, prove them by locating the same block ordinal
+    // inside the served HTML document.
+    if ruleLocator.stylesheetHref == nil,
+       ruleLocator.ownerNodeAttributes["data-vite-dev-id"] == nil,
+       case .devServer(let baseURL, let projectPath) = context {
+      return await mapInlineBlock(ruleLocator, baseURL: baseURL, projectPath: projectPath)
+    }
+
     let candidates = Self.candidatePaths(for: ruleLocator, context: context)
     guard !candidates.isEmpty else {
       return .unproven(reason: "No mappable source file for this stylesheet")
@@ -69,10 +80,66 @@ actor StylesheetSourceMapper: StylesheetSourceMapping {
         continue
       }
 
-      return .proven(filePath: candidate, contentSHA256: Self.sha256(of: content))
+      return .proven(filePath: candidate, contentSHA256: Self.sha256(of: content), embeddedStyleBlockIndex: nil)
     }
 
     return .unproven(reason: "No candidate file matched the runtime rule")
+  }
+
+  /// Proves a rule that lives in an inline `<style>` block: the served HTML
+  /// document must contain, at the same stylesheet index, an inline block
+  /// whose parsed rule at the same index path carries the same selector.
+  private func mapInlineBlock(
+    _ ruleLocator: WebPreviewCSSRuleLocator,
+    baseURL: URL,
+    projectPath: String
+  ) async -> StylesheetMappingResult {
+    for candidate in Self.servedDocumentCandidates(baseURL: baseURL, projectPath: projectPath) {
+      guard Self.isPath(candidate, inside: projectPath),
+            let html = try? await fileService.readFile(at: candidate, projectPath: projectPath) else {
+        continue
+      }
+      let sources = HTMLStylesheetScanner.stylesheetSources(in: html)
+      guard ruleLocator.styleSheetIndex >= 0,
+            ruleLocator.styleSheetIndex < sources.count,
+            case .inlineBlock(_, let ordinal, _) = sources[ruleLocator.styleSheetIndex],
+            let block = HTMLStylesheetScanner.inlineBlockContent(ordinal: ordinal, in: html) else {
+        continue
+      }
+      guard let document = try? cssEditor.parse(block.content),
+            let rule = document.rule(at: ruleLocator.ruleIndexPath),
+            let fileSelector = rule.normalizedSelectorText,
+            fileSelector == CSSSourceEditor.normalizeSelector(ruleLocator.selectorText) else {
+        continue
+      }
+      return .proven(
+        filePath: candidate,
+        contentSHA256: Self.sha256(of: html),
+        embeddedStyleBlockIndex: ordinal
+      )
+    }
+    return .unproven(reason: "The inline <style> block couldn't be matched to a served project file")
+  }
+
+  /// Which project file the dev server most plausibly served for a URL
+  /// path, in deterministic priority order.
+  static func servedDocumentCandidates(baseURL: URL, projectPath: String) -> [String] {
+    var urlPath = baseURL.path
+    if urlPath.isEmpty { urlPath = "/" }
+
+    var paths: [String] = []
+    if urlPath.hasSuffix("/") {
+      paths.append(normalize(path: projectPath + urlPath + "index.html"))
+    } else {
+      paths.append(normalize(path: projectPath + urlPath))
+      paths.append(normalize(path: projectPath + urlPath + "/index.html"))
+      if !URL(fileURLWithPath: urlPath).lastPathComponent.contains(".") {
+        paths.append(normalize(path: projectPath + urlPath + ".html"))
+      }
+    }
+
+    var seen = Set<String>()
+    return paths.filter { seen.insert($0).inserted }
   }
 
   static func sha256(of content: String) -> String {

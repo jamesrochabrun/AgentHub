@@ -154,12 +154,29 @@ struct WebPreviewStaticStyleResolver: WebPreviewStaticStyleResolving {
       return [:]
     }
 
-    let winners = Self.computeWinners(
+    var winners = Self.computeWinners(
       candidates: candidates,
       selectorIndex: selectorIndex,
       verdicts: verdicts,
       properties: properties
     )
+
+    // Properties no stylesheet declares at all still deserve an exact write:
+    // insert them into the element's best unconditioned matching rule.
+    if let anchor = Self.insertionAnchor(
+      candidates: candidates,
+      selectorIndex: selectorIndex,
+      verdicts: verdicts
+    ) {
+      for property in Self.insertableProperties(
+        candidates: candidates,
+        selectorIndex: selectorIndex,
+        verdicts: verdicts,
+        properties: properties
+      ) where winners[property] == nil {
+        winners[property] = anchor
+      }
+    }
 
     var targets: [String: WebPreviewDirectStyleTarget] = [:]
     for (property, winner) in winners {
@@ -270,6 +287,88 @@ struct WebPreviewStaticStyleResolver: WebPreviewStaticStyleResolving {
     }
 
     return winners
+  }
+
+  /// The rule a brand-new declaration should be inserted into: the matching,
+  /// unflagged, unconditioned (no media/supports) candidate with the highest
+  /// specificity, breaking ties by source order. Conditioned rules are
+  /// excluded because an inserted declaration must apply in every
+  /// environment, exactly like the live edit the user previewed.
+  nonisolated static func insertionAnchor(
+    candidates: [StaticStyleRuleCandidate],
+    selectorIndex: [String: Int],
+    verdicts: WebPreviewStaticMatchVerdicts
+  ) -> StaticStyleRuleCandidate? {
+    var best: (candidate: StaticStyleRuleCandidate, specificity: [Int], order: Int)?
+
+    for (order, candidate) in candidates.enumerated() {
+      guard !candidate.isFlagged,
+            candidate.mediaConditionIndices.isEmpty,
+            candidate.supportsConditionIndices.isEmpty else {
+        continue
+      }
+
+      var bestSpecificity: [Int]?
+      var hasComplexPart = false
+      for part in candidate.selectorParts {
+        guard let flatIndex = selectorIndex[part],
+              flatIndex < verdicts.selectorMatches.count,
+              verdicts.selectorMatches[flatIndex] else {
+          continue
+        }
+        if CSSSelectorSpecificity.hasComplexPseudo(part) {
+          hasComplexPart = true
+          break
+        }
+        let specificity = CSSSelectorSpecificity.compute(part)
+        if bestSpecificity == nil || CSSSelectorSpecificity.compare(specificity, bestSpecificity!) > 0 {
+          bestSpecificity = specificity
+        }
+      }
+      guard !hasComplexPart, let specificity = bestSpecificity else { continue }
+
+      if let current = best {
+        let comparison = CSSSelectorSpecificity.compare(specificity, current.specificity)
+        if comparison > 0 || (comparison == 0 && order >= current.order) {
+          best = (candidate, specificity, order)
+        }
+      } else {
+        best = (candidate, specificity, order)
+      }
+    }
+
+    return best?.candidate
+  }
+
+  /// Properties that are safe to insert: no rule that matches the element
+  /// (or whose match is uncertain — flagged/nested) declares them or a
+  /// related shorthand/longhand, and the element's style attribute doesn't
+  /// either. Conditioned rules count even when their condition doesn't
+  /// currently hold, so a resize can't reorder the persisted cascade.
+  nonisolated static func insertableProperties(
+    candidates: [StaticStyleRuleCandidate],
+    selectorIndex: [String: Int],
+    verdicts: WebPreviewStaticMatchVerdicts,
+    properties: [String]
+  ) -> [String] {
+    var declared = Set(verdicts.inlineDeclaredNames.map { $0.lowercased() })
+    declared.formUnion(verdicts.inlineStyles.keys.map { $0.lowercased() })
+
+    for candidate in candidates {
+      let matchIsRelevant = candidate.isFlagged || candidate.selectorParts.contains { part in
+        guard let flatIndex = selectorIndex[part],
+              flatIndex < verdicts.selectorMatches.count else {
+          return false
+        }
+        return verdicts.selectorMatches[flatIndex]
+      }
+      guard matchIsRelevant else { continue }
+      for declaration in candidate.declarations {
+        declared.insert(declaration.name.lowercased())
+      }
+    }
+
+    return properties.filter { !CSSPropertyFamily.conflicts($0, with: declared) }
   }
 
   // MARK: - Rule collection

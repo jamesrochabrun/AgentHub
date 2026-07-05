@@ -71,7 +71,7 @@ struct StylesheetSourceMapperTests {
     )
 
     let expectedSHA = StylesheetSourceMapper.sha256(of: css)
-    #expect(result == .proven(filePath: cssPath, contentSHA256: expectedSHA))
+    #expect(result == .proven(filePath: cssPath, contentSHA256: expectedSHA, embeddedStyleBlockIndex: nil))
   }
 
   @Test("Dev-server hrefs map through the project path")
@@ -90,7 +90,7 @@ struct StylesheetSourceMapperTests {
       context: .devServer(baseURL: URL(string: "http://localhost:5173")!, projectPath: fixture.root.path)
     )
 
-    guard case .proven(let filePath, _) = result else {
+    guard case .proven(let filePath, _, _) = result else {
       Issue.record("Expected proven mapping, got \(result)")
       return
     }
@@ -114,7 +114,7 @@ struct StylesheetSourceMapperTests {
       context: .devServer(baseURL: URL(string: "http://localhost:5173")!, projectPath: fixture.root.path)
     )
 
-    guard case .proven(let filePath, _) = result else {
+    guard case .proven(let filePath, _, _) = result else {
       Issue.record("Expected proven mapping, got \(result)")
       return
     }

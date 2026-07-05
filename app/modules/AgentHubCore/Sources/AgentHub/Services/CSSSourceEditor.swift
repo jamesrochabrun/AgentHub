@@ -58,7 +58,9 @@ struct CSSSourceRule: Equatable, Sendable {
 }
 
 struct CSSSourceDeclaration: Equatable, Sendable {
-  /// Lowercased property name.
+  /// Canonical property name: lowercased for standard properties, original
+  /// case for `--custom-properties` (custom property names are
+  /// case-sensitive per spec).
   let name: String
   /// Trimmed value text, excluding any `!important`.
   let valueText: String
@@ -117,7 +119,7 @@ struct CSSSourceEditor: CSSSourceEditing {
       throw CSSSourceEditorError.ruleNotFound(edit.ruleIndexPath)
     }
 
-    let propertyName = edit.property.lowercased()
+    let propertyName = Self.canonicalPropertyName(edit.property)
     var bytes = Array(source.utf8)
     let matching = rule.declarations.filter { $0.name == propertyName }
 
@@ -151,6 +153,15 @@ struct CSSSourceEditor: CSSSourceEditing {
     )
 
     return edited
+  }
+
+  // MARK: - Property names
+
+  /// Standard property names are case-insensitive and canonicalize to
+  /// lowercase; custom properties (`--x`) are case-sensitive and keep their
+  /// original spelling.
+  static func canonicalPropertyName(_ name: String) -> String {
+    name.hasPrefix("--") ? name : name.lowercased()
   }
 
   // MARK: - Selector normalization
@@ -327,7 +338,7 @@ struct CSSSourceEditor: CSSSourceEditing {
     }
 
     let nameEnd = trimmedEnd(bytes, from: start, to: colon)
-    let name = string(bytes, start..<nameEnd).lowercased()
+    let name = canonicalPropertyName(string(bytes, start..<nameEnd))
     guard !name.isEmpty else {
       throw CSSSourceEditorError.parseFailed("Declaration with empty property name at offset \(start)")
     }
@@ -454,7 +465,7 @@ struct CSSSourceEditor: CSSSourceEditing {
       )
     }
 
-    let propertyName = edit.property.lowercased()
+    let propertyName = canonicalPropertyName(edit.property)
 
     for (originalRule, editedRule) in zip(originalRules, editedRules) {
       guard originalRule.indexPath == editedRule.indexPath,

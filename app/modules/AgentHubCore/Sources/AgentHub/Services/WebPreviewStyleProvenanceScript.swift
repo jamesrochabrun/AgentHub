@@ -35,9 +35,25 @@ enum WebPreviewStyleProvenanceScript {
       var orderCounter = 0;
       var candidates = {};
       PROPERTIES.forEach(function(p) { candidates[p] = []; });
+      var declaredNames = {};
+      var anchorBest = null;
 
       var adoptedSheets = [];
       try { adoptedSheets = Array.prototype.slice.call(document.adoptedStyleSheets || []); } catch (err) {}
+
+      // Font CDNs only serve @font-face rules, which never compete in the
+      // element cascade — an unreadable sheet from one of these hosts can't
+      // contradict a computed winner or an insertion.
+      var BENIGN_SHEET_HOSTS = [
+        'fonts.googleapis.com', 'fonts.gstatic.com', 'use.typekit.net',
+        'fonts.bunny.net', 'fonts.cdnfonts.com'
+      ];
+      function isBenignUnreadableSheet(href) {
+        if (!href) { return false; }
+        try {
+          return BENIGN_SHEET_HOSTS.indexOf(new URL(href, location.href).host) >= 0;
+        } catch (err) { return false; }
+      }
 
       function isType(rule, name) {
         try {
@@ -129,6 +145,36 @@ enum WebPreviewStyleProvenanceScript {
         var isNested = selectorText.indexOf('&') >= 0 || (ctx.nestedParent === true);
         if (!matched && !isNested) { return; }
 
+        try {
+          for (var d = 0; d < rule.style.length; d++) { declaredNames[rule.style[d]] = true; }
+        } catch (err) {}
+        // Rules in inactive media/supports branches only contribute their
+        // declared names (so insertions steer clear of them) — they can't
+        // win the cascade right now.
+        if (ctx.inactive) { orderCounter += 1; return; }
+
+        // Insertion anchor: the plainest matching rule (no uncertainty
+        // flags, no media/supports condition, no complex pseudo) with the
+        // highest specificity; source order breaks ties.
+        if (matched && !isNested && !ctx.conditioned && !ctx.adopted
+            && contextFlags(ctx).length === 0
+            && !selectorHasComplexPseudo(selectorText)) {
+          var anchorSpec = matchingSpecificity(selectorText);
+          if (anchorSpec && (!anchorBest
+              || compareSpecificity(anchorSpec, anchorBest.spec) > 0
+              || (compareSpecificity(anchorSpec, anchorBest.spec) === 0 && orderCounter >= anchorBest.order))) {
+            anchorBest = {
+              spec: anchorSpec,
+              order: orderCounter,
+              sheetIndex: sheetIndex,
+              path: path,
+              selectorText: selectorText,
+              href: sheet.href || null,
+              ownerNodeAttributes: ownerNodeAttributes(sheet)
+            };
+          }
+        }
+
         for (var i = 0; i < PROPERTIES.length; i++) {
           var property = PROPERTIES[i];
           var value = '';
@@ -173,11 +219,13 @@ enum WebPreviewStyleProvenanceScript {
             try {
               mediaMatches = window.matchMedia(rule.conditionText || rule.media.mediaText).matches;
             } catch (err) {}
-            if (mediaMatches) { walkRules(rule.cssRules, path, sheetIndex, sheet, ctx); }
+            walkRules(rule.cssRules, path, sheetIndex, sheet,
+              mergeCtx(ctx, mediaMatches ? { conditioned: true } : { conditioned: true, inactive: true }));
           } else if (isType(rule, 'CSSSupportsRule')) {
             var supported = false;
             try { supported = CSS.supports(rule.conditionText); } catch (err) {}
-            if (supported) { walkRules(rule.cssRules, path, sheetIndex, sheet, ctx); }
+            walkRules(rule.cssRules, path, sheetIndex, sheet,
+              mergeCtx(ctx, supported ? { conditioned: true } : { conditioned: true, inactive: true }));
           } else if (isType(rule, 'CSSLayerBlockRule')) {
             walkRules(rule.cssRules, path, sheetIndex, sheet, mergeCtx(ctx, { layer: true }));
           } else if (isType(rule, 'CSSContainerRule')) {
@@ -197,7 +245,9 @@ enum WebPreviewStyleProvenanceScript {
         var sheet = documentSheets[s];
         var rules = null;
         try { rules = sheet.cssRules; } catch (err) {
-          unreadableSheets.push(sheet.href || '(inline)');
+          if (!isBenignUnreadableSheet(sheet.href)) {
+            unreadableSheets.push(sheet.href || '(inline)');
+          }
           continue;
         }
         walkRules(rules, [], s, sheet, {});
@@ -279,11 +329,26 @@ enum WebPreviewStyleProvenanceScript {
         if (winner) { winners.push(winner); }
       }
 
+      var inlineNames = [];
+      try {
+        for (var n = 0; n < el.style.length; n++) { inlineNames.push(el.style[n]); }
+      } catch (err) {}
+
       return {
         ok: true,
         winners: winners,
         unreadableSheets: unreadableSheets,
-        hasAdoptedSheets: adoptedSheets.length > 0
+        hasAdoptedSheets: adoptedSheets.length > 0,
+        declaredNames: Object.keys(declaredNames),
+        inlineNames: inlineNames,
+        anchor: anchorBest ? {
+          stylesheetHref: anchorBest.href,
+          styleSheetIndex: anchorBest.sheetIndex,
+          ruleIndexPath: anchorBest.path,
+          selectorText: anchorBest.selectorText,
+          specificity: anchorBest.spec,
+          ownerNodeAttributes: anchorBest.ownerNodeAttributes
+        } : null
       };
     })();
     """
