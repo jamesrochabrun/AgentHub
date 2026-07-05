@@ -17,6 +17,7 @@ final class WebPreviewFileWatcher {
   private var source: DispatchSourceFileSystemObject?
   private var fileDescriptor: Int32 = -1
   private var debounceWorkItem: DispatchWorkItem?
+  private var suppressedReloadsUntil: Date?
 
   func watch(directory: String) {
     stop()
@@ -53,6 +54,24 @@ final class WebPreviewFileWatcher {
     source?.cancel()
     source = nil
     fileDescriptor = -1
+    suppressedReloadsUntil = nil
+  }
+
+  func suppressReloads(for duration: TimeInterval) {
+    guard duration > 0 else { return }
+    suppressReloads(until: Date().addingTimeInterval(duration))
+  }
+
+  func suppressReloads(until date: Date) {
+    if let suppressedReloadsUntil, suppressedReloadsUntil >= date { return }
+    suppressedReloadsUntil = date
+  }
+
+  func isReloadSuppressed(at date: Date = Date()) -> Bool {
+    guard let suppressedReloadsUntil else { return false }
+    if suppressedReloadsUntil > date { return true }
+    self.suppressedReloadsUntil = nil
+    return false
   }
 
   deinit {
@@ -69,7 +88,8 @@ final class WebPreviewFileWatcher {
     debounceWorkItem?.cancel()
     let work = DispatchWorkItem { [weak self] in
       DispatchQueue.main.async {
-        self?.reloadToken = UUID()
+        guard let self, !self.isReloadSuppressed() else { return }
+        self.reloadToken = UUID()
       }
     }
     debounceWorkItem = work
