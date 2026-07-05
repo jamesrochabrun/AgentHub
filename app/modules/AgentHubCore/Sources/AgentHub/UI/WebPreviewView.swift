@@ -558,9 +558,7 @@ public struct WebPreviewView: View {
         }
       }
 
-      WebPreviewToolbarGroup {
-        tweaksButton
-      }
+      tweaksButton
 
       if canRefreshCurrentPreview {
         headerActionButton("Reload", systemImage: "arrow.clockwise", action: refreshPreview)
@@ -657,16 +655,14 @@ public struct WebPreviewView: View {
   }
 
   private var tweaksButton: some View {
-    WebPreviewToolbarIconButton(
-      title: "Tweaks",
-      systemImage: "slider.horizontal.3",
-      isActive: isTweaksPopoverPresented,
-      width: 32,
-      height: 28,
-      font: .system(size: 14, weight: .medium),
-      activeColor: .purple,
-      action: { isTweaksPopoverPresented.toggle() }
-    )
+    Button {
+      isTweaksPopoverPresented.toggle()
+    } label: {
+      Label("Tweaks", systemImage: "slider.horizontal.3")
+        .font(.caption)
+    }
+    .webPreviewSecondaryButtonStyle()
+    .controlSize(.small)
     .help("Tweak this design with live controls")
     .popover(isPresented: $isTweaksPopoverPresented, arrowEdge: .bottom) {
       TweaksPanelView(
