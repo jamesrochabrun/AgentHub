@@ -5,8 +5,9 @@
 //  Created by Assistant on 1/10/26.
 //
 
-import Foundation
 import Combine
+import Darwin
+import Foundation
 import os
 
 // MARK: - SessionFileWatcher
@@ -217,6 +218,10 @@ public actor SessionFileWatcher {
         let timeSinceLastEvent = Date().timeIntervalSince(lastFileEventTime)
         let currentFileSize = self.getFileSize(filePath)
 
+        // Tracks whether this tick changed anything worth persisting back to
+        // the actor; no-op ticks skip the updateStoredWatcherInfo Task hop.
+        var storedInfoNeedsUpdate = false
+
         // If file has grown but no events in 5+ seconds, watcher may be stale
         if timeSinceLastEvent > 5 && currentFileSize > lastKnownFileSize {
           AppLogger.watcher.warning("Stale watcher detected for \(sessionId), recovering...")
@@ -235,11 +240,16 @@ public actor SessionFileWatcher {
             // No new lines but file size changed - update tracking anyway
             lastKnownFileSize = currentFileSize
           }
+          storedInfoNeedsUpdate = true
         }
 
         // Re-evaluate status based on current time
         let previousStatus = lastEmittedStatus
+        let derivedStatusBeforeUpdate = parseResult.currentStatus
         SessionJSONLParser.updateCurrentStatus(&parseResult, approvalTimeoutSeconds: timeout)
+        if parseResult.currentStatus != derivedStatusBeforeUpdate {
+          storedInfoNeedsUpdate = true
+        }
         let updatedState = self.buildMonitorState(
           from: parseResult,
           hookPending: hookPendingInfo,
@@ -267,22 +277,25 @@ public actor SessionFileWatcher {
           }
 
           lastEmittedStatus = updatedState.status
+          storedInfoNeedsUpdate = true
 
           Task { @MainActor in
             self.stateSubject.send(StateUpdate(sessionId: sessionId, state: updatedState))
           }
         }
 
-        let parseResultSnapshot = parseResult
-        let lastFileEventSnapshot = lastFileEventTime
-        let lastKnownFileSizeSnapshot = lastKnownFileSize
-        Task {
-          await self.updateStoredWatcherInfo(
-            sessionId: sessionId,
-            parseResult: parseResultSnapshot,
-            lastFileEventTime: lastFileEventSnapshot,
-            lastKnownFileSize: lastKnownFileSizeSnapshot
-          )
+        if storedInfoNeedsUpdate {
+          let parseResultSnapshot = parseResult
+          let lastFileEventSnapshot = lastFileEventTime
+          let lastKnownFileSizeSnapshot = lastKnownFileSize
+          Task {
+            await self.updateStoredWatcherInfo(
+              sessionId: sessionId,
+              parseResult: parseResultSnapshot,
+              lastFileEventTime: lastFileEventSnapshot,
+              lastKnownFileSize: lastKnownFileSizeSnapshot
+            )
+          }
         }
 
         rescheduleStatusTimer()
@@ -468,11 +481,12 @@ public actor SessionFileWatcher {
   }
 
   private nonisolated func getFileSize(_ path: String) -> UInt64 {
-    guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-          let size = attrs[.size] as? UInt64 else {
-      return 0
-    }
-    return size
+    // Direct stat() — FileManager.attributesOfItem is far more expensive and
+    // this runs on every status-timer tick.
+    var st = stat()
+    // Unqualified call: `Darwin.stat` resolves to the struct type, not the function.
+    guard stat(path, &st) == 0 else { return 0 }
+    return UInt64(st.st_size)
   }
 
   private nonisolated func readNewLines(from path: String, startingAt position: inout UInt64) -> [String] {

@@ -129,8 +129,12 @@ public struct SessionJSONLParser {
 
     let lines = content.components(separatedBy: .newlines)
 
+    // One decoder per batch: JSONDecoder allocation per line is a measurable hot spot,
+    // and concurrent `decode` on a shared decoder is not documented thread-safe, so the
+    // decoder is scoped to this call rather than stored as a shared static.
+    let decoder = JSONDecoder()
     for line in lines where !line.isEmpty {
-      if let entry = parseEntry(line) {
+      if let entry = parseEntry(line, decoder: decoder) {
         processEntry(entry, into: &result)
       }
     }
@@ -147,8 +151,10 @@ public struct SessionJSONLParser {
   ///   - result: Parse result to update
   ///   - approvalTimeoutSeconds: Seconds to wait before considering a tool as awaiting approval (default: 5)
   public static func parseNewLines(_ lines: [String], into result: inout ParseResult, approvalTimeoutSeconds: Int = 0) {
+    // One decoder per batch — see `parseSessionFile` for the thread-safety rationale.
+    let decoder = JSONDecoder()
     for line in lines where !line.isEmpty {
-      if let entry = parseEntry(line) {
+      if let entry = parseEntry(line, decoder: decoder) {
         processEntry(entry, into: &result)
       }
     }
@@ -157,10 +163,14 @@ public struct SessionJSONLParser {
 
   /// Parse a single JSONL line
   public static func parseEntry(_ line: String) -> SessionEntry? {
+    parseEntry(line, decoder: JSONDecoder())
+  }
+
+  /// Parse a single JSONL line with a caller-provided decoder (reused per batch on the hot path)
+  private static func parseEntry(_ line: String, decoder: JSONDecoder) -> SessionEntry? {
     guard let data = line.data(using: .utf8) else { return nil }
 
     do {
-      let decoder = JSONDecoder()
       return try decoder.decode(SessionEntry.self, from: data)
     } catch {
       // Many lines may not match our expected format, that's OK
@@ -238,6 +248,13 @@ public struct SessionJSONLParser {
     default:
       break
     }
+
+    // Compact once per entry instead of once per appended activity: compaction is
+    // idempotent and depends only on the current array contents, `ParseResult` is
+    // never observed mid-entry, and any activity older than the newest five detailed
+    // code changes at an intermediate step is still older at entry end — so the
+    // final state is identical to per-activity compaction.
+    compactRecentCodeChangeActivities(in: &result)
   }
 
   private static func processContentBlocks(
@@ -448,8 +465,6 @@ public struct SessionJSONLParser {
     if result.recentActivities.count > maxRecentActivities {
       result.recentActivities.removeFirst(result.recentActivities.count - maxRecentActivities)
     }
-
-    compactRecentCodeChangeActivities(in: &result)
   }
 
   /// Extract full input parameters for code-changing tools (Edit, Write, MultiEdit)
@@ -502,18 +517,16 @@ public struct SessionJSONLParser {
   // MARK: - Helpers
 
   private static func parseTimestamp(_ string: String?) -> Date? {
-    guard let string = string else { return nil }
-
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
-    if let date = formatter.date(from: string) {
-      return date
-    }
-
-    // Try without fractional seconds
-    formatter.formatOptions = [.withInternetDateTime]
-    return formatter.date(from: string)
+    // Hot path: this runs once per streamed JSONL line, and constructing
+    // ISO8601DateFormatter per line is extremely expensive. `CodexTimestampParser`
+    // (AgentHubSessionGraph, already a dependency of this target) byte-scans the
+    // common `YYYY-MM-DDTHH:MM:SS[.fff]Z` shape Claude Code writes, and only for
+    // exotic strings falls back to the same fractional-then-plain
+    // ISO8601DateFormatter sequence this method used before — so results are
+    // identical. Thread safety: the fast path is pure stack computation and the
+    // fallback constructs fresh formatters per call (no shared mutable state), so
+    // concurrent `parseNewLines` calls from multiple watcher queues are safe.
+    CodexTimestampParser.parse(string)
   }
 
   private static func extractTextPreview(from blocks: [ContentBlock]?) -> String {
@@ -658,13 +671,17 @@ public struct SessionJSONLParser {
     }
   }
 
+  /// Matches http:// and https:// URLs. Compiled once — the pattern is constant and
+  /// NSRegularExpression is documented thread-safe, so a shared static is safe even
+  /// when `parseNewLines` runs concurrently on multiple watcher queues.
+  private static let resourceLinkRegex = try? NSRegularExpression(
+    pattern: "https?://[^\\s)\\]>\"'`]+",
+    options: []
+  )
+
   /// Extract URLs from text content and return as ResourceLink instances
   private static func extractResourceLinks(from text: String, timestamp: Date?) -> [ResourceLink] {
-    // Match http:// and https:// URLs
-    guard let regex = try? NSRegularExpression(
-      pattern: "https?://[^\\s)\\]>\"'`]+",
-      options: []
-    ) else { return [] }
+    guard let regex = resourceLinkRegex else { return [] }
 
     let range = NSRange(text.startIndex..., in: text)
     let matches = regex.matches(in: text, options: [], range: range)

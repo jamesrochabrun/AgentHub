@@ -557,14 +557,24 @@ public final class CLISessionsViewModel {
       }
 
       if let cachedStatus = await diffAvailabilityService.cachedAvailability(for: normalizedProjectPath) {
-        diffAvailability[normalizedProjectPath] = cachedStatus
+        if diffAvailability[normalizedProjectPath] != cachedStatus {
+          diffAvailability[normalizedProjectPath] = cachedStatus
+        }
         return
       }
     }
 
-    diffAvailability[normalizedProjectPath] = .checking
+    // Only surface `.checking` for the initial load. On refreshes the previous
+    // status stays visible, and the result is written only when it changed —
+    // this method runs on every activity tick of the visible card, and each
+    // write to the observed dictionary invalidates every reader.
+    if diffAvailability[normalizedProjectPath] == nil {
+      diffAvailability[normalizedProjectPath] = .checking
+    }
     let status = await diffAvailabilityService.availability(for: normalizedProjectPath)
-    diffAvailability[normalizedProjectPath] = status
+    if diffAvailability[normalizedProjectPath] != status {
+      diffAvailability[normalizedProjectPath] = status
+    }
   }
 
   public func ensureLocalDiffSummary(
@@ -581,13 +591,18 @@ public final class CLISessionsViewModel {
       }
 
       if let cachedSummary = await localDiffSummaryService.cachedSummary(for: normalizedProjectPath) {
-        localDiffSummaries[normalizedProjectPath] = cachedSummary
+        if localDiffSummaries[normalizedProjectPath] != cachedSummary {
+          localDiffSummaries[normalizedProjectPath] = cachedSummary
+        }
         return
       }
     }
 
     let summary = await localDiffSummaryService.summary(for: normalizedProjectPath)
-    localDiffSummaries[normalizedProjectPath] = summary
+    // Write-on-change only — see `ensureDiffAvailability`.
+    if localDiffSummaries[normalizedProjectPath] != summary {
+      localDiffSummaries[normalizedProjectPath] = summary
+    }
   }
 
   /// Start polling for a session
@@ -599,10 +614,14 @@ public final class CLISessionsViewModel {
       return
     }
 
-    // Subscribe to state updates
+    // Subscribe to state updates. Throttled: while an agent streams, the
+    // watcher emits per JSONL append (many times a second) and every delivery
+    // invalidates wide slices of the view tree; 10 Hz with `latest: true`
+    // keeps the UI current without the invalidation storm. `throttle` also
+    // delivers on its scheduler, replacing the previous `receive(on:)` hop.
     let cancellable = fileWatcher.statePublisher
       .filter { $0.sessionId == session.id }
-      .receive(on: DispatchQueue.main)
+      .throttle(for: .milliseconds(100), scheduler: DispatchQueue.main, latest: true)
       .sink { [weak self] update in
         self?.updateMonitorState(update.state, for: session.id)
       }
@@ -3287,7 +3306,11 @@ public final class CLISessionsViewModel {
       let expectedWorktreePath = claudeProjectPath(for: pending)
 
       for attempt in 1...maxAttempts {
-        await monitorService.refreshSessions()
+        // Full worktree redetection (git subprocesses across every repo) only
+        // on the first pass — the new session's worktree is registered above;
+        // retries only need the session list re-read. Matters when many
+        // sessions spawn at once and each runs its own retry loop.
+        await monitorService.refreshSessions(skipWorktreeRedetection: attempt > 1)
 
         // Wait for the publisher to propagate to selectedRepositories
         // The Combine subscription updates asynchronously on MainActor
@@ -3775,17 +3798,23 @@ public final class CLISessionsViewModel {
   /// Get all currently monitored sessions with their states.
   /// Uses a backup store to preserve sessions that may not yet be in history.jsonl.
   public var monitoredSessions: [(session: CLISession, state: SessionMonitorState?)] {
-    monitoredSessionIds.compactMap { sessionId in
-      // First try to get from allSessions (authoritative source if available)
-      if let session = allSessions.first(where: { $0.id == sessionId }) {
-        return (session: session, state: monitorStates[sessionId])
+    // Single pass over allSessions: this property is recomputed by every
+    // consumer on every monitor-state publish, and a per-id `first(where:)`
+    // made it O(monitored × total sessions) with a fresh flattened array per id.
+    var sessionsById: [String: CLISession] = [:]
+    for session in allSessions where monitoredSessionIds.contains(session.id) {
+      // Keep the first occurrence, matching the previous `first(where:)` semantics
+      if sessionsById[session.id] == nil {
+        sessionsById[session.id] = session
       }
-      // Fallback to backup if not in allSessions (race condition during refresh)
-      if let backupSession = monitoredSessionBackup[sessionId] {
-        return (session: backupSession, state: monitorStates[sessionId])
+    }
+    return monitoredSessionIds.compactMap { sessionId in
+      // allSessions is authoritative; fall back to the backup for sessions not
+      // yet in history.jsonl (race during refresh); drop if in neither.
+      guard let session = sessionsById[sessionId] ?? monitoredSessionBackup[sessionId] else {
+        return nil
       }
-      // Session not found anywhere - should not happen, but handle gracefully
-      return nil
+      return (session: session, state: monitorStates[sessionId])
     }
   }
 

@@ -227,9 +227,8 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
   private var hasPrefilledInitialInputText = false
-  private var lastAppliedFontSize: CGFloat?
-  private var lastAppliedFontFamily: String?
-  private var lastAppliedIsDark: Bool?
+  private var lastAppliedFontFingerprint: TerminalAppearanceSync.FontFingerprint?
+  private var lastAppliedColorFingerprint: TerminalAppearanceSync.ColorFingerprint?
   private var currentIsDark = true
   private var currentFontSize: CGFloat = 12
   private var currentFontFamily = "SF Mono"
@@ -496,8 +495,20 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
   }
 
   /// Updates terminal font size and family.
+  /// Skips the (expensive) SwiftTerm font assignment when the requested font
+  /// and the set of terminal views are unchanged — `syncAppearance` runs on
+  /// every SwiftUI re-render, and SwiftTerm's font setter rebuilds the font
+  /// set, recomputes cell dimensions, and relayouts unconditionally.
   public func updateFont(size: CGFloat, family: String = "SF Mono") {
     let resolvedSize = max(size, 8)
+    let fingerprint = TerminalAppearanceSync.FontFingerprint(
+      family: family,
+      size: Double(resolvedSize),
+      surfaceIDs: appearanceSurfaceIDs
+    )
+    guard TerminalAppearanceSync.shouldApply(current: lastAppliedFontFingerprint, incoming: fingerprint) else {
+      return
+    }
 
     let font = NSFont(name: family, size: resolvedSize)
       ?? NSFont(name: "SF Mono", size: resolvedSize)
@@ -505,17 +516,27 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     for terminal in allTerminalViews {
       terminal.font = font
     }
-    lastAppliedFontSize = resolvedSize
-    lastAppliedFontFamily = family
+    lastAppliedFontFingerprint = fingerprint
   }
-
-  private var lastAppliedThemeId: String?
 
   /// Updates terminal colors from theme or falls back to default dark/light.
   /// Only background and cursor are themed — foreground and ANSI colors are left
   /// untouched to preserve Claude Code / Codex syntax highlighting.
+  /// Skips work (including the full-view redraw from `needsDisplay`) when the
+  /// resolved color inputs and the set of terminal views are unchanged. The
+  /// fingerprint is keyed on resolved color values — not the theme id — so
+  /// YAML theme hot-reloads that keep the id but change
+  /// `terminal.background` / `terminal.cursor` still apply.
   public func updateColors(isDark: Bool, theme: RuntimeTheme? = nil) {
-    let themeId = theme?.id
+    let fingerprint = TerminalAppearanceSync.ColorFingerprint(
+      isDark: isDark,
+      themeBackground: theme?.terminalBackground?.toHexString(),
+      themeCursor: theme?.terminalCursor?.toHexString(),
+      surfaceIDs: appearanceSurfaceIDs
+    )
+    guard TerminalAppearanceSync.shouldApply(current: lastAppliedColorFingerprint, incoming: fingerprint) else {
+      return
+    }
 
     for terminal in allTerminalViews {
       // Theme terminal colors only apply in dark mode
@@ -543,13 +564,15 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       terminal.needsDisplay = true
     }
 
-    lastAppliedIsDark = isDark
-    lastAppliedThemeId = themeId
+    lastAppliedColorFingerprint = fingerprint
   }
 
+  /// Applies a provisional appearance to a freshly created terminal view.
+  /// Deliberately does NOT update the appearance fingerprints: those track
+  /// full-workspace applications, and the new view changes the surface set so
+  /// the next `syncAppearance` reapplies the real font/theme to every view.
   private func applyInitialAppearance(to terminal: TerminalView, isDark: Bool) {
     let fontSize: CGFloat = 12
-    lastAppliedFontSize = fontSize
     let font = NSFont(name: "SF Mono", size: fontSize)
       ?? NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     terminal.font = font
@@ -561,8 +584,6 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       terminal.nativeBackgroundColor = NSColor(Color.backgroundLight)
       terminal.nativeForegroundColor = NSColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0)
     }
-
-    lastAppliedIsDark = isDark
   }
 
   private func installInteractionMonitorIfNeeded() {
@@ -838,6 +859,14 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   private var allTerminalViews: [SafeLocalProcessTerminalView] {
     allTabs.map(\.terminalView)
+  }
+
+  /// Identity of every terminal view appearance updates apply to, keyed by the
+  /// owning tab's UUID (tabs own exactly one terminal view and tab IDs are
+  /// never reused). Part of the appearance fingerprints so newly opened
+  /// tabs/panes are painted even when font/theme inputs are unchanged.
+  private var appearanceSurfaceIDs: Set<UUID> {
+    Set(allTabs.map(\.id.rawValue))
   }
 
   private func mountInitialWorkspace(
