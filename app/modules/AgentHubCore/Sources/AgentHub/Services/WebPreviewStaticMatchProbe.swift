@@ -18,6 +18,23 @@ struct WebPreviewStaticMatchVerdicts: Equatable, Sendable {
   let supportsMatches: [Bool]
   /// Property → declared value on the element's `style` attribute.
   let inlineStyles: [String: String]
+  /// Every property name the element's `style` attribute declares (longhands
+  /// included), so insertions can detect shorthand interference.
+  let inlineDeclaredNames: [String]
+
+  init(
+    selectorMatches: [Bool],
+    mediaMatches: [Bool],
+    supportsMatches: [Bool],
+    inlineStyles: [String: String],
+    inlineDeclaredNames: [String] = []
+  ) {
+    self.selectorMatches = selectorMatches
+    self.mediaMatches = mediaMatches
+    self.supportsMatches = supportsMatches
+    self.inlineStyles = inlineStyles
+    self.inlineDeclaredNames = inlineDeclaredNames
+  }
 
   static func parse(_ body: Any?) -> WebPreviewStaticMatchVerdicts? {
     guard let dictionary = body as? [String: Any],
@@ -31,7 +48,8 @@ struct WebPreviewStaticMatchVerdicts: Equatable, Sendable {
       selectorMatches: selectorMatches,
       mediaMatches: mediaMatches,
       supportsMatches: supportsMatches,
-      inlineStyles: dictionary["inline"] as? [String: String] ?? [:]
+      inlineStyles: dictionary["inline"] as? [String: String] ?? [:],
+      inlineDeclaredNames: dictionary["inlineNames"] as? [String] ?? []
     )
   }
 
@@ -128,7 +146,12 @@ struct WebPreviewStaticMatchProbe: WebPreviewStaticMatchProbing {
         } catch (err) {}
       });
 
-      return { ok: true, matches: matches, media: media, supports: supports, inline: inline };
+      var inlineNames = [];
+      try {
+        for (var n = 0; n < el.style.length; n++) { inlineNames.push(el.style[n]); }
+      } catch (err) {}
+
+      return { ok: true, matches: matches, media: media, supports: supports, inline: inline, inlineNames: inlineNames };
     })();
     """
   }

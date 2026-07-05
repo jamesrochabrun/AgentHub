@@ -1340,6 +1340,16 @@ public struct WebPreviewView: View {
                   handleInspectOverlayHover(hovering)
                 }
               }
+              if inspectBehavior == .edit, let offer = inspectorViewModel.tokenPromotionOffer {
+                WebPreviewTokenPromotionBar(
+                  offer: offer,
+                  onPromote: { Task { await inspectorViewModel.promoteTokenDetachment() } },
+                  onDismiss: inspectorViewModel.dismissTokenPromotionOffer
+                )
+                .inspectOverlayCursor(label: "tokenPromotionBar") { hovering in
+                  handleInspectOverlayHover(hovering)
+                }
+              }
             }
           }
         }

@@ -91,6 +91,7 @@ private actor MockDirectWriter: WebPreviewDirectCSSWriting {
     filePath: String,
     embeddedStyleBlockIndex: Int?,
     expectedSHA256: String,
+    environment: WebPreviewPageEnvironment,
     projectPath: String
   ) async -> DirectWriteOutcome {
     calls.append(Call(edit: edit, filePath: filePath, expectedSHA256: expectedSHA256))
@@ -224,7 +225,7 @@ struct WebPreviewInspectorViewModelTierRoutingTests {
   private func makeViewModel(
     coordinator: MockDirectWriter,
     fileService: TierMockFileService,
-    mapperResult: StylesheetMappingResult = .proven(filePath: cssPath, contentSHA256: "baseline-sha"),
+    mapperResult: StylesheetMappingResult = .proven(filePath: cssPath, contentSHA256: "baseline-sha", embeddedStyleBlockIndex: nil),
     flagEnabled: Bool = true,
     sourceHints: [WebPreviewElementSourceHint] = [],
     staticTargets: [String: WebPreviewDirectStyleTarget] = [:]
@@ -341,7 +342,7 @@ struct WebPreviewInspectorViewModelTierRoutingTests {
     try await Task.sleep(for: .milliseconds(50))
 
     #expect(viewModel.styleTiers.isEmpty)
-    #expect(viewModel.persistenceTierLabel == "Applies via agent")
+    #expect(viewModel.persistenceTierLabel == "Applies via agent · direct writes are disabled")
 
     viewModel.apply(DesignEdit(element: element, action: .updateProperty(.lineHeight, value: "30px")))
     try await Task.sleep(for: .milliseconds(40))

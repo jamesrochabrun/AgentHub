@@ -327,7 +327,15 @@ struct WebPreviewStaticStyleResolverTests {
       contentSHA256: StylesheetSourceMapper.sha256(of: html),
       embeddedStyleBlockIndex: 0
     ))
-    #expect(targets["padding"] == nil)
+    // `padding` is declared by no matching rule, so it inserts into the
+    // element's plainest matching anchor (the inline `.cta` block wins the
+    // source-order tie against site.css's `.cta`).
+    #expect(targets["padding"] == WebPreviewDirectStyleTarget(
+      filePath: htmlPath,
+      ruleIndexPath: [0],
+      contentSHA256: StylesheetSourceMapper.sha256(of: html),
+      embeddedStyleBlockIndex: 0
+    ))
   }
 }
 
@@ -380,6 +388,7 @@ struct WebPreviewDirectCSSWriteEmbeddedTests {
       filePath: path,
       embeddedStyleBlockIndex: 1,
       expectedSHA256: StylesheetSourceMapper.sha256(of: html),
+      environment: .fallback,
       projectPath: "/project"
     )
 
@@ -401,6 +410,7 @@ struct WebPreviewDirectCSSWriteEmbeddedTests {
       filePath: path,
       embeddedStyleBlockIndex: 3,
       expectedSHA256: StylesheetSourceMapper.sha256(of: html),
+      environment: .fallback,
       projectPath: "/project"
     )
 

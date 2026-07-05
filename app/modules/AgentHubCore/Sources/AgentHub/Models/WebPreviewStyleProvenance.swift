@@ -82,6 +82,31 @@ struct WebPreviewStyleProvenance: Equatable, Sendable {
   let winners: [WebPreviewPropertyWinner]
   let unreadableSheetHrefs: [String]
   let hasAdoptedSheets: Bool
+  /// Every property name declared by any matched (or possibly-matched) rule,
+  /// longhands included — used to keep insertions clear of shorthand
+  /// interference.
+  let declaredPropertyNames: [String]
+  /// Property names declared on the element's `style` attribute.
+  let inlinePropertyNames: [String]
+  /// The plainest matching rule (no flags, no conditions): where a
+  /// brand-new declaration may be inserted.
+  let anchorRule: WebPreviewCSSRuleLocator?
+
+  init(
+    winners: [WebPreviewPropertyWinner],
+    unreadableSheetHrefs: [String],
+    hasAdoptedSheets: Bool,
+    declaredPropertyNames: [String] = [],
+    inlinePropertyNames: [String] = [],
+    anchorRule: WebPreviewCSSRuleLocator? = nil
+  ) {
+    self.winners = winners
+    self.unreadableSheetHrefs = unreadableSheetHrefs
+    self.hasAdoptedSheets = hasAdoptedSheets
+    self.declaredPropertyNames = declaredPropertyNames
+    self.inlinePropertyNames = inlinePropertyNames
+    self.anchorRule = anchorRule
+  }
 
   func winner(for property: String) -> WebPreviewPropertyWinner? {
     winners.first { $0.property == property }
@@ -104,21 +129,6 @@ struct WebPreviewStyleProvenance: Equatable, Sendable {
         return nil
       }
 
-      var rule: WebPreviewCSSRuleLocator?
-      if let rawRule = raw["rule"] as? [String: Any],
-         let selectorText = rawRule["selectorText"] as? String,
-         let ruleIndexPath = intArray(rawRule["ruleIndexPath"]),
-         let styleSheetIndex = intValue(rawRule["styleSheetIndex"]) {
-        rule = WebPreviewCSSRuleLocator(
-          stylesheetHref: rawRule["stylesheetHref"] as? String,
-          styleSheetIndex: styleSheetIndex,
-          ruleIndexPath: ruleIndexPath,
-          selectorText: selectorText,
-          specificity: intArray(rawRule["specificity"]) ?? [],
-          ownerNodeAttributes: rawRule["ownerNodeAttributes"] as? [String: String] ?? [:]
-        )
-      }
-
       let flags = (raw["flags"] as? [String] ?? [])
         .compactMap(WebPreviewStyleUncertainty.init(rawValue:))
 
@@ -127,7 +137,7 @@ struct WebPreviewStyleProvenance: Equatable, Sendable {
         declaredValue: declaredValue,
         isInline: raw["isInline"] as? Bool ?? false,
         isImportant: raw["isImportant"] as? Bool ?? false,
-        rule: rule,
+        rule: parseRuleLocator(raw["rule"]),
         uncertainties: Set(flags)
       )
     }
@@ -135,7 +145,27 @@ struct WebPreviewStyleProvenance: Equatable, Sendable {
     return WebPreviewStyleProvenance(
       winners: winners,
       unreadableSheetHrefs: unreadable,
-      hasAdoptedSheets: hasAdopted
+      hasAdoptedSheets: hasAdopted,
+      declaredPropertyNames: dictionary["declaredNames"] as? [String] ?? [],
+      inlinePropertyNames: dictionary["inlineNames"] as? [String] ?? [],
+      anchorRule: parseRuleLocator(dictionary["anchor"])
+    )
+  }
+
+  private static func parseRuleLocator(_ value: Any?) -> WebPreviewCSSRuleLocator? {
+    guard let rawRule = value as? [String: Any],
+          let selectorText = rawRule["selectorText"] as? String,
+          let ruleIndexPath = intArray(rawRule["ruleIndexPath"]),
+          let styleSheetIndex = intValue(rawRule["styleSheetIndex"]) else {
+      return nil
+    }
+    return WebPreviewCSSRuleLocator(
+      stylesheetHref: rawRule["stylesheetHref"] as? String,
+      styleSheetIndex: styleSheetIndex,
+      ruleIndexPath: ruleIndexPath,
+      selectorText: selectorText,
+      specificity: intArray(rawRule["specificity"]) ?? [],
+      ownerNodeAttributes: rawRule["ownerNodeAttributes"] as? [String: String] ?? [:]
     )
   }
 

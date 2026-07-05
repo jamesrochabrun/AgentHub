@@ -58,6 +58,7 @@ struct WebPreviewDirectCSSWriteCoordinatorTests {
       filePath: filePath,
       embeddedStyleBlockIndex: nil,
       expectedSHA256: StylesheetSourceMapper.sha256(of: css),
+      environment: .fallback,
       projectPath: "/project"
     )
 
@@ -77,6 +78,7 @@ struct WebPreviewDirectCSSWriteCoordinatorTests {
       filePath: filePath,
       embeddedStyleBlockIndex: nil,
       expectedSHA256: StylesheetSourceMapper.sha256(of: css),
+      environment: .fallback,
       projectPath: "/project"
     )
 
@@ -95,6 +97,7 @@ struct WebPreviewDirectCSSWriteCoordinatorTests {
       filePath: filePath,
       embeddedStyleBlockIndex: nil,
       expectedSHA256: StylesheetSourceMapper.sha256(of: css),
+      environment: .fallback,
       projectPath: "/project"
     )
 
@@ -117,6 +120,7 @@ struct WebPreviewDirectCSSWriteCoordinatorTests {
       filePath: filePath,
       embeddedStyleBlockIndex: nil,
       expectedSHA256: baseline,
+      environment: .fallback,
       projectPath: "/project"
     )
 
