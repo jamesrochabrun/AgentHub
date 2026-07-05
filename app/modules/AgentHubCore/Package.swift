@@ -48,7 +48,7 @@ let package = Package(
     .package(path: "../SimulatorPreview"),
     .package(url: "https://github.com/jamesrochabrun/Canvas", exact: "1.2.2"),
     .package(url: "https://github.com/jamesrochabrun/PierreDiffsSwift", exact: "1.2.2"),
-    .package(url: "https://github.com/jamesrochabrun/SwiftTerm", exact: "1.13.0-agenthub.7"),
+    .package(url: "https://github.com/jamesrochabrun/SwiftTerm", exact: "1.13.0-agenthub.8"),
     .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.0.0"),
     .package(url: "https://github.com/groue/GRDB.swift", from: "6.24.0"),
     .package(url: "https://github.com/appstefan/HighlightSwift", from: "1.1.0"),
