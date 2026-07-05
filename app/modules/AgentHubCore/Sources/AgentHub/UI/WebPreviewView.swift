@@ -153,6 +153,9 @@ public struct WebPreviewView: View {
   @State private var previewWebView: WKWebView?
   @State private var consoleMessageHandler = WebPreviewConsoleMessageHandler()
   @State private var scrollRestorationCoordinator = WebPreviewScrollRestorationCoordinator()
+  @State private var tweaksState = TweaksState()
+  @State private var tweaksDefaultsWriteCoordinator = TweaksDefaultsWriteCoordinator()
+  @State private var isTweaksPopoverPresented = false
   @State private var launchOptionsStatusOverride: String?
   @State private var askAgentReprobeTask: Task<Void, Never>?
   @State private var queueSendFailureMessage: String?
@@ -383,6 +386,7 @@ public struct WebPreviewView: View {
       deactivateInspector()
       Task {
         await inspectorViewModel.flushPendingWriteIfNeeded()
+        await tweaksDefaultsWriteCoordinator.cancelPendingWrite()
       }
       localhostReloadTask?.cancel()
       askAgentReprobeTask?.cancel()
@@ -516,15 +520,16 @@ public struct WebPreviewView: View {
   @ViewBuilder
   private var headerControls: some View {
     HStack(spacing: 12) {
-      // Inspect toggle
-      Button {
-        toggleInspector()
-      } label: {
-        Image(systemName: "cursorarrow.rays")
-          .font(.system(size: 14, weight: .medium))
-          .foregroundColor(inspectState.isActive ? .accentColor : .secondary)
-      }
-      .buttonStyle(.plain)
+      WebPreviewToolbarIconButton(
+        title: "\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior.modeName) mode",
+        systemImage: "cursorarrow.rays",
+        isActive: inspectState.isActive,
+        width: 28,
+        height: 28,
+        font: .system(size: 14, weight: .medium),
+        activeColor: .accentColor,
+        action: toggleInspector
+      )
       .help(
         inspectState.isActive
           ? "Stop \(inspectBehavior.modeName) mode. ⌘⇧I cycles modes."
@@ -534,26 +539,27 @@ public struct WebPreviewView: View {
       if inspectState.isActive {
         let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
         if availableModes.count > 1 {
-          HStack(spacing: 6) {
+          WebPreviewToolbarGroup {
             ForEach(availableModes) { behavior in
-              Button {
+              WebPreviewToolbarIconButton(
+                title: behavior.accessibilityLabel,
+                systemImage: behavior.icon,
+                isActive: inspectBehavior == behavior,
+                width: 32,
+                height: 28,
+                font: .system(size: 14, weight: .medium),
+                activeColor: .accentColor
+              ) {
                 inspectBehavior = behavior
-              } label: {
-                Image(systemName: behavior.icon)
-                  .font(.caption)
-                  .frame(width: 26, height: 20)
-                  .foregroundColor(inspectBehavior == behavior ? .accentColor : .secondary)
-                  .contentShape(Rectangle())
               }
-              .buttonStyle(.plain)
-              .accessibilityLabel(behavior.accessibilityLabel)
               .help(behavior.helpText)
             }
           }
-          .padding(4)
-          .background(Color.secondary.opacity(0.12))
-          .clipShape(RoundedRectangle(cornerRadius: 6))
         }
+      }
+
+      WebPreviewToolbarGroup {
+        tweaksButton
       }
 
       if canRefreshCurrentPreview {
@@ -648,6 +654,29 @@ public struct WebPreviewView: View {
     }
     .webPreviewSecondaryButtonStyle()
     .controlSize(.small)
+  }
+
+  private var tweaksButton: some View {
+    WebPreviewToolbarIconButton(
+      title: "Tweaks",
+      systemImage: "slider.horizontal.3",
+      isActive: isTweaksPopoverPresented,
+      width: 32,
+      height: 28,
+      font: .system(size: 14, weight: .medium),
+      activeColor: .purple,
+      action: { isTweaksPopoverPresented.toggle() }
+    )
+    .help("Tweak this design with live controls")
+    .popover(isPresented: $isTweaksPopoverPresented, arrowEdge: .bottom) {
+      TweaksPanelView(
+        state: tweaksState,
+        onSubmitDescription: sendCustomTweaksPrompt,
+        onIdeas: sendTweaksIdeasPrompt,
+        onValueChange: handleTweakValueChange
+      )
+      .frame(width: 320)
+    }
   }
 
   // MARK: - Content
@@ -1208,6 +1237,7 @@ public struct WebPreviewView: View {
     resolution = newResolution
     previewWebView = nil
     isLoading = false
+    tweaksState.clear()
     syncReloadCoordinatorBaseline()
 
     switch newResolution {
@@ -1306,7 +1336,8 @@ public struct WebPreviewView: View {
           isInspectModeActive: $inspectState.isActive,
           selectedElementId: inspectState.selectedElement?.id,
           selectorToRestore: activeSelectorToRestore,
-          onWebViewReady: handleWebViewReady
+          onWebViewReady: handleWebViewReady,
+          onTweakPropsChange: handleTweakPropsChange
         )
         .overlay(alignment: .top) {
           if inspectState.isActive {
@@ -1386,7 +1417,8 @@ public struct WebPreviewView: View {
           inspectMode: inspectBehavior.canvasMode,
           selectedElementId: inspectState.selectedElement?.id,
           selectorToRestore: activeSelectorToRestore,
-          onWebViewReady: handleWebViewReady
+          onWebViewReady: handleWebViewReady,
+          onTweakPropsChange: handleTweakPropsChange
         )
         .webInspectorOverlay(
           state: inspectState,
@@ -1455,6 +1487,70 @@ public struct WebPreviewView: View {
       return "dev server preview"
     case .launchOptions, .noContent, nil:
       return nil
+    }
+  }
+
+  private var tweakPromptTargetName: String {
+    if let selectedFilePath {
+      return URL(fileURLWithPath: selectedFilePath).lastPathComponent
+    }
+    return "\(session.projectName)'s current preview"
+  }
+
+  private func handleTweakPropsChange(_ props: [TweakProp]) {
+    tweaksState.updateSchema(props)
+  }
+
+  private func handleTweakValueChange(prop: TweakProp, value: TweakPropValue) {
+    tweaksState.updateValue(name: prop.name, value)
+    if let previewWebView {
+      TweaksBridge.setProp(name: prop.name, value: value, in: previewWebView)
+    }
+    persistTweakDefaultIfPossible(propName: prop.name, value: value)
+  }
+
+  private func sendTweaksIdeasPrompt() {
+    sendTweaksPrompt(TweaksPromptBuilder.ideasPrompt(fileName: tweakPromptTargetName))
+  }
+
+  private func sendCustomTweaksPrompt(_ instruction: String) {
+    sendTweaksPrompt(TweaksPromptBuilder.customPrompt(
+      fileName: tweakPromptTargetName,
+      instruction: instruction
+    ))
+  }
+
+  private func sendTweaksPrompt(_ prompt: String) {
+    isTweaksPopoverPresented = false
+    queueSendFailureMessage = nil
+
+    if let onInspectSubmit {
+      onInspectSubmit(prompt, session)
+      onCollapseExpandedAfterSend?()
+      return
+    }
+
+    guard let onQueuedSubmit, onQueuedSubmit(prompt, session) else {
+      queueSendFailureMessage = "Could not find an active terminal for this session. Keep the preview open and try again when the terminal is ready."
+      return
+    }
+    onCollapseExpandedAfterSend?()
+  }
+
+  private func persistTweakDefaultIfPossible(propName: String, value: TweakPropValue) {
+    guard case .directFile = resolution,
+          let selectedFilePath else {
+      return
+    }
+
+    fileWatcher.suppressReloads(for: TweaksDefaultsWriteCoordinator.reloadSuppressionDuration)
+    Task {
+      await tweaksDefaultsWriteCoordinator.scheduleValueWrite(
+        propName: propName,
+        value: value,
+        filePath: selectedFilePath,
+        projectPath: projectPath
+      )
     }
   }
 
@@ -1568,7 +1664,10 @@ public struct WebPreviewView: View {
     isLoading = loading
     handleOverlayReloadingState(loading)
 
-    guard !loading else { return }
+    guard !loading else {
+      tweaksState.clear()
+      return
+    }
 
     restorePendingScrollPositionIfNeeded()
     lastSelectedSelector = nil
@@ -2023,6 +2122,88 @@ private struct InspectOverlayCursorModifier: ViewModifier {
 private extension View {
   func inspectOverlayCursor(label: String, onHoverChange: @escaping (Bool) -> Void) -> some View {
     modifier(InspectOverlayCursorModifier(label: label, onHoverChange: onHoverChange))
+  }
+}
+
+private struct WebPreviewToolbarGroup<Content: View>: View {
+  @Environment(\.colorScheme) private var colorScheme
+  let content: Content
+
+  init(@ViewBuilder content: () -> Content) {
+    self.content = content()
+  }
+
+  var body: some View {
+    HStack(spacing: 6) {
+      content
+    }
+    .padding(4)
+    .background(groupBackground, in: RoundedRectangle(cornerRadius: 10))
+    .overlay {
+      RoundedRectangle(cornerRadius: 10)
+        .stroke(groupBorder, lineWidth: 1)
+    }
+  }
+
+  private var groupBackground: Color {
+    colorScheme == .dark
+      ? Color.black.opacity(0.28)
+      : Color.secondary.opacity(0.10)
+  }
+
+  private var groupBorder: Color {
+    colorScheme == .dark
+      ? Color.white.opacity(0.06)
+      : Color.black.opacity(0.08)
+  }
+}
+
+private struct WebPreviewToolbarIconButton: View {
+  let title: String
+  let systemImage: String
+  let isActive: Bool
+  let width: CGFloat
+  let height: CGFloat
+  let font: Font
+  let activeColor: Color
+  let action: () -> Void
+
+  @Environment(\.colorScheme) private var colorScheme
+
+  var body: some View {
+    Button(action: action) {
+      ZStack {
+        RoundedRectangle(cornerRadius: 8)
+          .fill(backgroundColor)
+
+        Image(systemName: systemImage)
+          .font(font)
+          .foregroundStyle(iconColor)
+      }
+      .frame(width: width, height: height)
+      .overlay {
+        RoundedRectangle(cornerRadius: 8)
+          .stroke(borderColor, lineWidth: isActive ? 1 : 0)
+      }
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityLabel(title)
+    .accessibilityValue(isActive ? "On" : "Off")
+  }
+
+  private var iconColor: Color {
+    isActive ? activeColor : .secondary
+  }
+
+  private var backgroundColor: Color {
+    guard isActive else { return .clear }
+    return activeColor.opacity(colorScheme == .dark ? 0.16 : 0.12)
+  }
+
+  private var borderColor: Color {
+    guard isActive else { return .clear }
+    return activeColor.opacity(colorScheme == .dark ? 0.32 : 0.22)
   }
 }
 
