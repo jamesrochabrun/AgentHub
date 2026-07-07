@@ -676,7 +676,7 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
       return
     }
 
-    let registeredInfo = try await registeredWorktree(at: worktreePath, relativeTo: mainRepoPath)
+    let registeredInfo = try? await registeredWorktree(at: worktreePath, relativeTo: mainRepoPath)
     if let registeredInfo, !registeredInfo.isWorktree {
       throw WorktreeManagementError.gitCommandFailed("Refusing to delete the main worktree: \(worktreePath)")
     }
@@ -698,20 +698,34 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     // still bounding a genuine git hang (the old sync path waited forever).
     do {
       try await runGitCommand(args, at: mainRepoPath, timeout: Self.gitWorktreeTimeout)
-    } catch {
-      guard force, registeredInfo?.isWorktree == true else {
-        throw error
+    } catch let gitError {
+      guard force else {
+        throw gitError
       }
-      try await forceRemoveRegisteredWorktreeDirectory(worktreePath, parentRepoPath: mainRepoPath)
+      do {
+        try Self.validateFilesystemForceRemoval(
+          of: worktreePath,
+          mainRepoPath: mainRepoPath,
+          isRegisteredLinkedWorktree: registeredInfo?.isWorktree == true
+        )
+      } catch {
+        throw gitError
+      }
+      try await forceRemoveWorktreeDirectory(worktreePath, parentRepoPath: mainRepoPath)
     }
 
     if FileManager.default.fileExists(atPath: worktreePath) {
-      guard force, registeredInfo?.isWorktree == true else {
+      guard force else {
         throw WorktreeManagementError.gitCommandFailed(
           "Git reported success but the worktree directory still exists: \(worktreePath)"
         )
       }
-      try await forceRemoveRegisteredWorktreeDirectory(worktreePath, parentRepoPath: mainRepoPath)
+      try Self.validateFilesystemForceRemoval(
+        of: worktreePath,
+        mainRepoPath: mainRepoPath,
+        isRegisteredLinkedWorktree: registeredInfo?.isWorktree == true
+      )
+      try await forceRemoveWorktreeDirectory(worktreePath, parentRepoPath: mainRepoPath)
     }
 
     if let stillRegistered = try await registeredWorktree(at: worktreePath, relativeTo: mainRepoPath),
@@ -783,7 +797,17 @@ public actor WorktreeManagementService: WorktreeManagementServiceProtocol {
     guard FileManager.default.fileExists(atPath: worktreePath) else {
       return
     }
-    try FileManager.default.removeItem(atPath: worktreePath)
+    try Self.validateFilesystemForceRemoval(
+      of: worktreePath,
+      mainRepoPath: parentRepoPath,
+      isRegisteredLinkedWorktree: false
+    )
+    await forceRemoveDirectory(worktreePath)
+    if FileManager.default.fileExists(atPath: worktreePath) {
+      throw WorktreeManagementError.gitCommandFailed(
+        "Worktree directory still exists after orphan delete: \(worktreePath)"
+      )
+    }
   }
 }
 
@@ -1067,14 +1091,97 @@ private extension WorktreeManagementService {
     }
   }
 
-  func forceRemoveRegisteredWorktreeDirectory(_ worktreePath: String, parentRepoPath: String) async throws {
-    if FileManager.default.fileExists(atPath: worktreePath) {
-      try FileManager.default.removeItem(atPath: worktreePath)
+  /// Last line of defense before the filesystem fallback deletes a directory git
+  /// refused to remove. Require evidence the path is a linked worktree and can
+  /// never be the main checkout.
+  nonisolated static func validateFilesystemForceRemoval(
+    of worktreePath: String,
+    mainRepoPath: String,
+    isRegisteredLinkedWorktree: Bool
+  ) throws {
+    let target = (worktreePath as NSString).standardizingPath
+    let mainRoot = (mainRepoPath as NSString).standardizingPath
+    if target == mainRoot || mainRoot.hasPrefix(target + "/") {
+      throw WorktreeManagementError.gitCommandFailed(
+        "Refusing to force-delete \(worktreePath): it is or contains the main repository"
+      )
     }
+
+    guard isRegisteredLinkedWorktree || hasLinkedWorktreeMarker(at: worktreePath) else {
+      throw WorktreeManagementError.gitCommandFailed(
+        "Refusing to force-delete \(worktreePath): it is not a registered worktree and has no linked-worktree .git marker"
+      )
+    }
+  }
+
+  /// Whether the directory's `.git` entry is a linked-worktree marker file.
+  nonisolated static func hasLinkedWorktreeMarker(at path: String) -> Bool {
+    let gitEntry = (path as NSString).appendingPathComponent(".git")
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: gitEntry, isDirectory: &isDirectory),
+          !isDirectory.boolValue,
+          let contents = try? String(contentsOfFile: gitEntry, encoding: .utf8),
+          let gitdirLine = contents.components(separatedBy: .newlines).first(where: { $0.hasPrefix("gitdir:") }) else {
+      return false
+    }
+    return gitdirLine.contains("/.git/worktrees/")
+  }
+
+  func forceRemoveWorktreeDirectory(_ worktreePath: String, parentRepoPath: String) async throws {
+    await forceRemoveDirectory(worktreePath)
     try await pruneStaleWorktreeMetadata(for: worktreePath, parentRepoPath: parentRepoPath)
     if FileManager.default.fileExists(atPath: worktreePath) {
       throw WorktreeManagementError.gitCommandFailed(
         "Worktree directory still exists after force delete: \(worktreePath)"
+      )
+    }
+  }
+
+  /// Removes a directory tree even when it contains read-only files. `chmod -R`
+  /// and `rm -rf` do not traverse symlinked directories on macOS, so symlinked
+  /// caches outside the tree are left untouched. Callers must validate the path
+  /// with `validateFilesystemForceRemoval` first.
+  func forceRemoveDirectory(_ path: String) async {
+    guard FileManager.default.fileExists(atPath: path) else { return }
+    _ = try? await runShellCommand("/bin/chmod", arguments: ["-R", "u+w", path], timeout: 30)
+    _ = try? await runShellCommand("/bin/rm", arguments: ["-rf", path], timeout: 60)
+  }
+
+  func runShellCommand(
+    _ executablePath: String,
+    arguments: [String],
+    timeout: TimeInterval
+  ) async throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executablePath)
+    process.arguments = arguments
+
+    try process.run()
+    let exitCode = await withTaskCancellationHandler {
+      await withTaskGroup(of: Int32.self) { group in
+        group.addTask {
+          process.waitUntilExit()
+          return process.terminationStatus
+        }
+        group.addTask {
+          try? await Task.sleep(for: .seconds(timeout))
+          if process.isRunning {
+            process.terminate()
+          }
+          return Int32(-1)
+        }
+
+        let result = await group.next() ?? Int32(-1)
+        group.cancelAll()
+        return result
+      }
+    } onCancel: {
+      Self.terminateIfRunning(process)
+    }
+
+    if exitCode != 0 {
+      throw WorktreeManagementError.gitCommandFailed(
+        "\(executablePath) failed with exit code \(exitCode)"
       )
     }
   }

@@ -28,6 +28,7 @@ struct WorktreeSettingsWorktree: Identifiable, Equatable {
   let monitoredSessionCount: Int
   let activeMonitoredSessionCount: Int
   let historicalSessionCount: Int
+  let diskSizeBytes: Int64?
 
   var providerLabel: String {
     providerKinds.map(\.rawValue).joined(separator: " + ")
@@ -147,7 +148,8 @@ enum WorktreeSettingsInventoryBuilder {
         isFocusedInAgentHub: !providerMatches.isEmpty,
         monitoredSessionCount: monitoredSessionsById.count,
         activeMonitoredSessionCount: monitoredSessionsById.values.filter(\.isActive).count,
-        historicalSessionCount: historicalSessionCount
+        historicalSessionCount: historicalSessionCount,
+        diskSizeBytes: nil
       )
     }
   }

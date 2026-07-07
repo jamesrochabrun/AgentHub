@@ -2,8 +2,8 @@
 //  SessionsBrowserPanel.swift
 //  AgentHub
 //
-//  Sidebar view showing monitored sessions grouped by module.
-//  Used when sidebar mode is "Hub Sessions".
+//  Sidebar view showing monitored sessions with selectable grouping, sorting,
+//  and status filtering. Used when sidebar mode is "Hub Sessions".
 //
 
 import Foundation

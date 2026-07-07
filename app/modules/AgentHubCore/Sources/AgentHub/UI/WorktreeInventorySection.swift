@@ -351,6 +351,8 @@ private struct WorktreeInventoryRow: View {
           )
         }
 
+        diskSizeView
+
         Spacer(minLength: 12)
 
         sessionImportControl
@@ -361,6 +363,23 @@ private struct WorktreeInventoryRow: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .fill(Color.primary.opacity(0.04))
     )
+  }
+
+  @ViewBuilder
+  private var diskSizeView: some View {
+    if let diskSizeBytes = worktree.diskSizeBytes {
+      WorktreeInventoryBadge(
+        title: ByteCountFormatter.string(fromByteCount: diskSizeBytes, countStyle: .file),
+        systemImage: "externaldrive",
+        isProminent: false,
+        helpText: "Approximate disk space reclaimed by deleting this worktree."
+      )
+    } else {
+      ProgressView()
+        .scaleEffect(0.55)
+        .frame(width: 18, height: 18)
+        .help("Calculating worktree size")
+    }
   }
 
   @ViewBuilder

@@ -214,7 +214,8 @@ private func settingsWorktree() -> WorktreeSettingsWorktree {
     isFocusedInAgentHub: false,
     monitoredSessionCount: 0,
     activeMonitoredSessionCount: 0,
-    historicalSessionCount: 0
+    historicalSessionCount: 0,
+    diskSizeBytes: nil
   )
 }
 
