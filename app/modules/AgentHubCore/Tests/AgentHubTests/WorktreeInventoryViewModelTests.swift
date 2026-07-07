@@ -36,6 +36,46 @@ struct WorktreeInventoryViewModelTests {
     #expect(!worktree.isFocusedInAgentHub)
   }
 
+  @Test("Reload computes worktree disk sizes and applies them to the snapshot")
+  func reloadComputesAndAppliesDiskSizes() async throws {
+    let base = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("WorktreeInventorySize-\(UUID().uuidString)")
+    let repoDir = base.appendingPathComponent("AgentHub")
+    let worktreeDir = base.appendingPathComponent("AgentHub-feature")
+    try FileManager.default.createDirectory(at: repoDir, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: worktreeDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: base) }
+    try Data(repeating: 0xAB, count: 4096).write(to: worktreeDir.appendingPathComponent("file.bin"))
+
+    let repoPath = repoDir.path
+    let inventory = StubWorktreeInventoryService(results: [
+      WorktreeModuleResolver.normalizedDirectoryPath(repoPath): .success([
+        inventoryItem(path: worktreeDir.path, branchName: "feature/size", mainRepoPath: repoPath)
+      ])
+    ])
+    let viewModel = WorktreeInventoryViewModel(
+      inventoryService: inventory,
+      removalService: RecordingInventoryRemovalService()
+    )
+
+    await viewModel.reload(
+      claudeRepositories: [SelectedRepository(path: repoPath)],
+      codexRepositories: [],
+      claudeMonitoredSessions: [],
+      codexMonitoredSessions: []
+    )
+
+    var size: Int64?
+    for _ in 0..<300 {
+      size = viewModel.snapshot.modules.first?.worktrees.first?.diskSizeBytes
+      if size != nil { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+
+    let resolved = try #require(size)
+    #expect(resolved >= 4096)
+  }
+
   @Test("Keeps focused rows when git inventory loading fails")
   func keepsFocusedRowsWhenInventoryLoadingFails() async throws {
     let focusedSession = session("focused-session", path: "/tmp/AgentHub-focused")

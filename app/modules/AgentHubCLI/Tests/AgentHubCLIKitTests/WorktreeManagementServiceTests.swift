@@ -709,6 +709,54 @@ struct WorktreeRemovalTests {
     #expect(!listAfter.contains("test-branch"))
   }
 
+  @Test("Force delete refuses a directory that is not a linked worktree")
+  func forceDeleteRefusesNonWorktreeDirectory() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let plainDir = fixture.repoPath + "-not-a-worktree"
+    try FileManager.default.createDirectory(atPath: plainDir, withIntermediateDirectories: true)
+    try "irreplaceable".write(toFile: plainDir + "/data.txt", atomically: true, encoding: .utf8)
+
+    let service = WorktreeManagementService()
+    await #expect(throws: (any Error).self) {
+      try await service.removeWorktree(at: plainDir, relativeTo: fixture.repoPath, force: true)
+    }
+
+    #expect(FileManager.default.fileExists(atPath: plainDir + "/data.txt"))
+  }
+
+  @Test("Force delete refuses the main repository root")
+  func forceDeleteRefusesMainRepositoryRoot() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let service = WorktreeManagementService()
+    await #expect(throws: (any Error).self) {
+      try await service.removeWorktree(at: fixture.repoPath, relativeTo: fixture.repoPath, force: true)
+    }
+
+    #expect(FileManager.default.fileExists(atPath: fixture.repoPath + "/README.md"))
+    #expect(FileManager.default.fileExists(atPath: fixture.repoPath + "/.git"))
+  }
+
+  @Test("Orphan removal refuses a directory without the linked-worktree marker")
+  func orphanRemovalRefusesUnmarkedDirectory() async throws {
+    let fixture = try GitRepoFixture.create()
+    defer { fixture.cleanup() }
+
+    let plainDir = fixture.repoPath + "-orphan-imposter"
+    try FileManager.default.createDirectory(atPath: plainDir, withIntermediateDirectories: true)
+    try "keep me".write(toFile: plainDir + "/data.txt", atomically: true, encoding: .utf8)
+
+    let service = WorktreeManagementService()
+    await #expect(throws: (any Error).self) {
+      try await service.removeOrphanedWorktree(at: plainDir, parentRepoPath: fixture.repoPath)
+    }
+
+    #expect(FileManager.default.fileExists(atPath: plainDir + "/data.txt"))
+  }
+
   @Test("Force removes dirty worktree from disk")
   func forceRemovesDirtyWorktreeFromDisk() async throws {
     let fixture = try GitRepoFixture.create()

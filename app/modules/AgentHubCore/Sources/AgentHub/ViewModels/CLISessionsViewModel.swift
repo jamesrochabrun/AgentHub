@@ -144,6 +144,10 @@ public final class CLISessionsViewModel {
   private var existingSessionIdsBeforeTerminal: Set<String> = []
   /// Session IDs awaiting progressive restoration on app launch
   private var pendingRestorationSessionIds: Set<String> = []
+  /// Persisted session IDs this launch could not restore. They stay out of the
+  /// UI but remain part of workspace-state writes so a transient launch failure
+  /// cannot permanently forget a monitored session.
+  private var unrestoredSessionIds: Set<String> = []
 
   /// Maps session IDs to prompts that should be sent to the terminal when it becomes ready.
   ///
@@ -2064,6 +2068,10 @@ public final class CLISessionsViewModel {
     Task {
       let workspaceState = metadataStore?.getWorkspaceStateSync(for: providerKind) ?? SessionWorkspaceState()
       let paths = workspaceState.selectedRepositoryPaths
+      // Retain every saved session ID before any restore step can fail. Even if
+      // repositories or worktrees are unavailable this launch, the IDs keep
+      // riding along in workspace-state writes and retry on the next launch.
+      unrestoredSessionIds.formUnion(workspaceState.monitoredSessionIds)
       guard !paths.isEmpty else {
         return
       }
@@ -2141,8 +2149,11 @@ public final class CLISessionsViewModel {
       isLaunchRestoreInProgress = false
       loadDeferredBrowseSessionsIfNeeded()
 
-      // Safety timeout: stop trying to restore after 10 seconds
+      // Safety timeout: stop actively retrying after 10 seconds, but keep the
+      // still-unrestored IDs persisted so slow or partially failed launches do
+      // not forget sessions.
       try? await Task.sleep(for: .seconds(10))
+      unrestoredSessionIds.formUnion(pendingRestorationSessionIds)
       pendingRestorationSessionIds.removeAll()
       persistMonitoredSessions()
     }
@@ -2157,6 +2168,13 @@ public final class CLISessionsViewModel {
     let rejectedIds = Set(sessions.map(\.id)).subtracting(restorableSessions.map(\.id))
     if !rejectedIds.isEmpty {
       pendingRestorationSessionIds.subtract(rejectedIds)
+      let confirmedGoneIds = Set(
+        sessions
+          .filter { rejectedIds.contains($0.id) && !FileManager.default.fileExists(atPath: $0.projectPath) }
+          .map(\.id)
+      )
+      unrestoredSessionIds.subtract(confirmedGoneIds)
+      unrestoredSessionIds.formUnion(rejectedIds.subtracting(confirmedGoneIds))
       persistMonitoredSessions()
     }
 
@@ -2173,6 +2191,7 @@ public final class CLISessionsViewModel {
     }
 
     pendingRestorationSessionIds.subtract(restoredIds)
+    unrestoredSessionIds.subtract(restoredIds)
     expandItemsContainingLoadedSessions(restorableSessions)
     loadCustomNames()
     loadPinnedSessions()
@@ -2231,6 +2250,7 @@ public final class CLISessionsViewModel {
 
     if !restoredIds.isEmpty {
       pendingRestorationSessionIds.subtract(restoredIds)
+      unrestoredSessionIds.subtract(restoredIds)
       expandItemsContainingMonitoredSessions()
       loadCustomNames()
       loadPinnedSessions()
@@ -2263,7 +2283,9 @@ public final class CLISessionsViewModel {
       }
     }
 
-    let sessionIdsToPersist = monitoredSessionIds.union(pendingRestorationSessionIds)
+    let sessionIdsToPersist = monitoredSessionIds
+      .union(pendingRestorationSessionIds)
+      .union(unrestoredSessionIds)
 
     return SessionWorkspaceState(
       selectedRepositoryPaths: selectedRepositories.map(\.path),
@@ -3774,6 +3796,8 @@ public final class CLISessionsViewModel {
   /// Stop monitoring by session ID
   public func stopMonitoring(sessionId: String) {
     monitoredSessionIds.remove(sessionId)
+    unrestoredSessionIds.remove(sessionId)
+    pendingRestorationSessionIds.remove(sessionId)
     monitoredSessionBackup.removeValue(forKey: sessionId)
     removeMonitorState(for: sessionId)
     monitoringCancellables.removeValue(forKey: sessionId)

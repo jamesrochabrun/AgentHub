@@ -12,6 +12,8 @@ final class WorktreeInventoryViewModel {
   @ObservationIgnored private let inventoryService: any GitWorktreeInventoryServiceProtocol
   @ObservationIgnored private let removalService: any GitWorktreeRemovalServiceProtocol
   @ObservationIgnored private var locallyDeletedWorktreePaths: Set<String> = []
+  @ObservationIgnored private var diskSizesByPath: [String: Int64] = [:]
+  @ObservationIgnored private var sizeComputationTask: Task<Void, Never>?
 
   init(
     inventoryService: any GitWorktreeInventoryServiceProtocol = GitWorktreeService(),
@@ -19,6 +21,10 @@ final class WorktreeInventoryViewModel {
   ) {
     self.inventoryService = inventoryService
     self.removalService = removalService
+  }
+
+  deinit {
+    sizeComputationTask?.cancel()
   }
 
   func reload(
@@ -33,6 +39,7 @@ final class WorktreeInventoryViewModel {
       claudeMonitoredSessions: claudeMonitoredSessions,
       codexMonitoredSessions: codexMonitoredSessions
     )
+    snapshot = applyDiskSizes(to: snapshot)
 
     let repositoryPaths = Self.repositoryPaths(
       claudeRepositories: claudeRepositories,
@@ -86,8 +93,10 @@ final class WorktreeInventoryViewModel {
       codexMonitoredSessions: codexMonitoredSessions,
       discoveredWorktreesByRepositoryPath: loadResult.0
     )
+    snapshot = applyDiskSizes(to: snapshot)
     loadFailuresByRepositoryPath = loadResult.1
     isLoading = false
+    startDiskSizeComputation()
   }
 
   @discardableResult
@@ -102,6 +111,7 @@ final class WorktreeInventoryViewModel {
         force: force
       )
       locallyDeletedWorktreePaths.insert(Self.normalized(worktree.path))
+      diskSizesByPath.removeValue(forKey: Self.normalized(worktree.path))
       snapshot = filteredSnapshot(snapshot)
       deletingWorktreePath = nil
       return true
@@ -123,6 +133,7 @@ final class WorktreeInventoryViewModel {
         parentRepoPath: parentRepoPath
       )
       locallyDeletedWorktreePaths.insert(Self.normalized(worktree.path))
+      diskSizesByPath.removeValue(forKey: Self.normalized(worktree.path))
       snapshot = filteredSnapshot(snapshot)
       deletingWorktreePath = nil
       return true
@@ -197,6 +208,59 @@ final class WorktreeInventoryViewModel {
           path: module.path,
           worktrees: module.worktrees.filter {
             !locallyDeletedWorktreePaths.contains(Self.normalized($0.path))
+          }
+        )
+      }
+    )
+  }
+
+  private func startDiskSizeComputation() {
+    sizeComputationTask?.cancel()
+
+    let pathsNeedingSize = snapshot.modules
+      .flatMap(\.worktrees)
+      .map { Self.normalized($0.path) }
+      .filter { diskSizesByPath[$0] == nil }
+
+    guard !pathsNeedingSize.isEmpty else { return }
+
+    // Walk one worktree at a time off the main actor, caching and applying each
+    // result as it lands. Reloads are common while sessions are active; applying
+    // progressively prevents a canceled coordinator from discarding a whole
+    // batch of completed filesystem work.
+    sizeComputationTask = Task { [weak self] in
+      for path in pathsNeedingSize {
+        if Task.isCancelled { return }
+        let size = await Task.detached(priority: .utility) {
+          WorktreeDiskSize.bytes(at: URL(fileURLWithPath: path))
+        }.value
+
+        guard let self else { return }
+        self.diskSizesByPath[path] = size
+        self.snapshot = self.applyDiskSizes(to: self.snapshot)
+      }
+    }
+  }
+
+  private func applyDiskSizes(to snapshot: WorktreeSettingsSnapshot) -> WorktreeSettingsSnapshot {
+    WorktreeSettingsSnapshot(
+      modules: snapshot.modules.map { module in
+        WorktreeSettingsModule(
+          name: module.name,
+          path: module.path,
+          worktrees: module.worktrees.map { worktree in
+            WorktreeSettingsWorktree(
+              branchName: worktree.branchName,
+              path: worktree.path,
+              worktree: worktree.worktree,
+              parentModulePath: worktree.parentModulePath,
+              providerKinds: worktree.providerKinds,
+              isFocusedInAgentHub: worktree.isFocusedInAgentHub,
+              monitoredSessionCount: worktree.monitoredSessionCount,
+              activeMonitoredSessionCount: worktree.activeMonitoredSessionCount,
+              historicalSessionCount: worktree.historicalSessionCount,
+              diskSizeBytes: diskSizesByPath[Self.normalized(worktree.path)]
+            )
           }
         )
       }
