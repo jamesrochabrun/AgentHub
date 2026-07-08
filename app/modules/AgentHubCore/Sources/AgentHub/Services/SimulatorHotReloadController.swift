@@ -30,7 +30,9 @@ public final class SimulatorHotReloadController {
   public let monitor = HotReloadMonitor()
 
   /// Client for the Previews tab (talks to the inserted preview-host dylib).
-  public let previewClient: any PreviewHostClientProtocol
+  /// Re-created on each armed launch so it targets that launch's per-device
+  /// port (see `PreviewHostPortAllocator`).
+  public private(set) var previewClient: any PreviewHostClientProtocol
 
   /// Bumped every time a launch inserts the preview host. The Previews tab
   /// uses this to retry manifest loading after auto-arm/relaunch, even if no
@@ -40,6 +42,11 @@ public final class SimulatorHotReloadController {
   /// The plan used for the current/last launch — nil before the first
   /// hot-reload launch.
   public private(set) var activePlan: HotReloadLaunchPlan?
+
+  /// Startup status of the inserted preview host, from its structured
+  /// console lines. Lets the Previews tab distinguish "still starting" from
+  /// port conflicts, a backgrounded app, or an unsupported OS.
+  public private(set) var previewHostStatus: PreviewHostStatus = .unknown
 
   /// Source file names edited in this project, most recent first. This is
   /// populated only while preview observation is enabled and seeded from
@@ -56,6 +63,8 @@ public final class SimulatorHotReloadController {
   private let sourceWatcher: any HotReloadSourceWatching
   private let consoleTail: any HotReloadConsoleTailing
   private let consoleParser = HotReloadConsoleParser()
+  private let hostStatusParser = PreviewHostStatusParser()
+  private let previewClientFactory: @Sendable (Int) -> any PreviewHostClientProtocol
   private let seedChangedFiles: @Sendable (String) async -> [String]
   private var activeContext: (udid: String, projectPath: String)?
   private var preparationTask: Task<Void, Never>?
@@ -70,6 +79,7 @@ public final class SimulatorHotReloadController {
     sourceWatcher: any HotReloadSourceWatching = HotReloadSourceWatcher(),
     consoleTail: any HotReloadConsoleTailing = HotReloadConsoleTail(),
     previewClient: any PreviewHostClientProtocol = PreviewHostHTTPClient(),
+    previewClientFactory: (@Sendable (Int) -> any PreviewHostClientProtocol)? = nil,
     seedChangedFiles: @escaping @Sendable (String) async -> [String] = {
       await GitChangedSwiftFiles.changedFiles(inProjectAt: $0)
     },
@@ -81,6 +91,7 @@ public final class SimulatorHotReloadController {
     self.sourceWatcher = sourceWatcher
     self.consoleTail = consoleTail
     self.previewClient = previewClient
+    self.previewClientFactory = previewClientFactory ?? { PreviewHostHTTPClient(port: $0) }
     self.seedChangedFiles = seedChangedFiles
     self.rebuildExecutor = rebuildExecutor ?? { udid, projectPath, plan in
       await SimulatorService.shared.buildAndRunOnSimulator(
@@ -180,13 +191,19 @@ public final class SimulatorHotReloadController {
       projectPath: projectPath,
       artifacts: artifacts,
       enableInjection: enableInjection,
-      enablePreviews: enablePreviews
+      enablePreviews: enablePreviews,
+      previewPort: enablePreviews
+        ? PreviewHostPortAllocator.port(forDeviceUDID: udid)
+        : nil
     )
     guard configuration.isEffective else {
       monitor.markUnavailable(reason: "Hot-reload support libraries unavailable")
       return nil
     }
-    let wantsConsole = enableInjection && artifacts.injectionDylibPath != nil
+    // Injection events and the preview host's startup status both arrive on
+    // the app's stdout, so either inserted dylib warrants the console tail.
+    let wantsConsole = (enableInjection && artifacts.injectionDylibPath != nil)
+      || (enablePreviews && artifacts.previewHostDylibPath != nil)
     var consolePath: String?
     if wantsConsole {
       consolePath = Self.consoleLogPath(projectPath: projectPath, udid: udid)
@@ -211,9 +228,20 @@ public final class SimulatorHotReloadController {
     monitor.onRequestRebuild = nil
     activePlan = plan
     activeContext = (udid, projectPath)
+    previewHostStatus = .unknown
     if plan.configuration.enablePreviews,
        plan.configuration.artifacts.previewHostDylibPath != nil {
+      // Swap the client before bumping the generation so the Previews tab's
+      // retry loop targets this launch's port.
+      previewClient = previewClientFactory(
+        plan.configuration.previewPort ?? PreviewHostHTTPClient.port)
       previewHostGeneration += 1
+    }
+
+    // The tail runs for any inserted dylib: injection events and the preview
+    // host's startup status share the app's stdout.
+    if let consolePath = plan.consoleStdoutPath {
+      consoleTail.start(path: consolePath, onLine: makeConsoleLineHandler())
     }
 
     guard plan.configuration.enableInjection,
@@ -232,9 +260,6 @@ public final class SimulatorHotReloadController {
     monitor.onRequestRebuild = { [weak self] reason in
       self?.performRebuild(reason: reason)
     }
-    if let consolePath = plan.consoleStdoutPath {
-      consoleTail.start(path: consolePath, onLine: makeConsoleLineHandler())
-    }
   }
 
   /// Stops the armed launch's console + monitor (device shut down, device
@@ -244,6 +269,7 @@ public final class SimulatorHotReloadController {
     monitor.onRequestRebuild = nil
     activePlan = nil
     activeContext = nil
+    previewHostStatus = .unknown
     isInjectionObservationEnabled = false
     updateSourceObservation(projectPath: observedProjectPath)
     monitor.markDisabled()
@@ -251,9 +277,15 @@ public final class SimulatorHotReloadController {
 
   /// Console lines feed the pill's state machine, and recompile events also
   /// count as changed files (covers saves the host-side watcher misses).
+  /// Preview-host status lines update `previewHostStatus` on the same tail.
   private func makeConsoleLineHandler() -> (String) -> Void {
     { [weak self] line in
-      guard let self, let event = self.consoleParser.parse(line: line) else { return }
+      guard let self else { return }
+      if let status = self.hostStatusParser.parse(line: line) {
+        self.previewHostStatus = status
+        return
+      }
+      guard let event = self.consoleParser.parse(line: line) else { return }
       if case .recompiling(let fileName) = event {
         if self.isPreviewObservationEnabled {
           self.noteChangedSource(fileName)
@@ -321,6 +353,10 @@ public final class SimulatorHotReloadController {
       guard let self else { return }
       let success = await self.rebuildExecutor(
         context.udid, context.projectPath, plan)
+      // `isRebuilding` must clear BEFORE `markRebuildFinished`: the monitor
+      // replays queued mid-rebuild structural changes from there via
+      // `onRequestRebuild`, and `performRebuild` drops requests while this
+      // flag is set.
       self.isRebuilding = false
       if success, let consolePath = plan.consoleStdoutPath {
         // The relaunch truncated the console log; restart the tail so its

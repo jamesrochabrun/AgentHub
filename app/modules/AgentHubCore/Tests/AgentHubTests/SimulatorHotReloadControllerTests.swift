@@ -188,15 +188,44 @@ struct SimulatorHotReloadControllerTests {
 
   @Test("previews-only launch keeps the pill off but stores the plan")
   func previewsOnlyLaunch() async {
-    let (controller, _, _) = makeController(cached: Self.artifacts)
+    let (controller, _, tail) = makeController(cached: Self.artifacts)
     let plan = await controller.preparePlan(
       udid: "UDID", projectPath: "/p", enableInjection: false, enablePreviews: true)!
+
+    // The preview host reports startup status over stdout, so even a
+    // previews-only launch gets a console log and a running tail.
+    #expect(plan.consoleStdoutPath != nil)
 
     controller.sessionDidLaunch(udid: "UDID", projectPath: "/p", plan: plan)
 
     #expect(controller.monitor.phase == .disabled)
     #expect(controller.activePlan == plan)
     #expect(controller.previewHostGeneration == 1)
+    #expect(tail.startedPath == plan.consoleStdoutPath)
+  }
+
+  @Test("host status lines update previewHostStatus and bypass the pill")
+  func hostStatusLines() async {
+    let (controller, _, tail) = makeController(cached: Self.artifacts)
+    let plan = await controller.preparePlan(
+      udid: "UDID", projectPath: "/p", enableInjection: false, enablePreviews: true)!
+    controller.sessionDidLaunch(udid: "UDID", projectPath: "/p", plan: plan)
+    #expect(controller.previewHostStatus == .unknown)
+
+    tail.onLine?("AGENTHUB_PREVIEW_HOST: waiting reason=app-not-active")
+    #expect(controller.previewHostStatus == .waitingForForeground)
+
+    tail.onLine?("AGENTHUB_PREVIEW_HOST: listening port=38712")
+    #expect(controller.previewHostStatus == .listening(port: 38712))
+
+    tail.onLine?("AGENTHUB_PREVIEW_HOST: failed reason=port-in-use port=38712")
+    #expect(controller.previewHostStatus
+      == .failed(reason: .portInUse(port: 38712), detail: ""))
+    // Status lines never leak into the reload pill.
+    #expect(controller.monitor.phase == .disabled)
+
+    controller.sessionDidStop()
+    #expect(controller.previewHostStatus == .unknown)
   }
 
   @Test("tracking runs independently of arming and seeds from git")
@@ -269,6 +298,31 @@ struct SimulatorHotReloadControllerTests {
     #expect(controller.monitor.phase == .reloading(fileName: "Console.swift"))
   }
 
+  @Test("armed previews launch swaps the client to the plan's per-device port")
+  func previewClientTargetsPlanPort() async {
+    let ports = RebuildLog()
+    let controller = SimulatorHotReloadController(
+      artifactStore: MockArtifactStore(cached: Self.artifacts),
+      sourceWatcher: MockSourceWatcher(),
+      consoleTail: MockConsoleTail(),
+      previewClient: MockPreviewClient(),
+      previewClientFactory: { port in
+        ports.append("\(port)")
+        return MockPreviewClient()
+      },
+      seedChangedFiles: { _ in [] },
+      rebuildExecutor: { _, _, _ in true }
+    )
+    let plan = await controller.preparePlan(
+      udid: "UDID-PORT", projectPath: "/p", enableInjection: false, enablePreviews: true)!
+    let expected = PreviewHostPortAllocator.port(forDeviceUDID: "UDID-PORT")
+    #expect(plan.configuration.previewPort == expected)
+
+    controller.sessionDidLaunch(udid: "UDID-PORT", projectPath: "/p", plan: plan)
+    #expect(ports.entries == ["\(expected)"])
+    #expect(controller.previewHostGeneration == 1)
+  }
+
   @Test("structural change triggers the rebuild executor and settles to idle")
   func structuralRebuild() async {
     let rebuilds = RebuildLog()
@@ -290,6 +344,84 @@ struct SimulatorHotReloadControllerTests {
     #expect(rebuilds.entries == ["UDID|/p"])
     #expect(controller.monitor.phase == .idle)
     #expect(controller.monitor.reloadGeneration == 1)
+  }
+
+  /// Lets a test hold the mock rebuild executor open deterministically.
+  private final class RebuildGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+      await withCheckedContinuation { held in
+        lock.lock()
+        if released {
+          lock.unlock()
+          held.resume()
+          return
+        }
+        continuation = held
+        lock.unlock()
+      }
+    }
+
+    func release() {
+      lock.lock()
+      let held = continuation
+      continuation = nil
+      released = true
+      lock.unlock()
+      held?.resume()
+    }
+  }
+
+  @Test("structural change during a rebuild runs exactly one follow-up rebuild")
+  func structuralChangeDuringRebuildRunsFollowUp() async {
+    let rebuilds = RebuildLog()
+    let gate = RebuildGate()
+    let watcher = MockSourceWatcher()
+    let controller = SimulatorHotReloadController(
+      artifactStore: MockArtifactStore(cached: Self.artifacts),
+      sourceWatcher: watcher,
+      consoleTail: MockConsoleTail(),
+      previewClient: MockPreviewClient(),
+      seedChangedFiles: { _ in [] },
+      rebuildExecutor: { udid, projectPath, _ in
+        rebuilds.append("\(udid)|\(projectPath)")
+        if rebuilds.entries.count == 1 {
+          await gate.wait()
+        }
+        return true
+      }
+    )
+    let plan = await controller.preparePlan(
+      udid: "UDID", projectPath: "/p", enableInjection: true, enablePreviews: false)!
+    controller.sessionDidLaunch(udid: "UDID", projectPath: "/p", plan: plan)
+
+    // First structural change starts a rebuild the gate holds open.
+    watcher.onChange?([.structural(path: "/p/New.swift", kind: .created)])
+    var deadline = Date().addingTimeInterval(2)
+    while rebuilds.entries.isEmpty, Date() < deadline {
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    #expect(rebuilds.entries == ["UDID|/p"])
+    #expect(controller.monitor.phase == .rebuilding(reason: "New.swift was created"))
+
+    // A structural change landing mid-rebuild queues — no concurrent rebuild.
+    watcher.onChange?([.structural(path: "/p/Another.swift", kind: .created)])
+    #expect(rebuilds.entries.count == 1)
+
+    gate.release()
+
+    // The queued change replays as exactly one follow-up, settling to idle.
+    deadline = Date().addingTimeInterval(2)
+    while rebuilds.entries.count < 2 || controller.monitor.phase != .idle,
+          Date() < deadline {
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    #expect(rebuilds.entries == ["UDID|/p", "UDID|/p"])
+    #expect(controller.monitor.phase == .idle)
+    #expect(controller.monitor.reloadGeneration == 2)
   }
 
   @Test("stop tears down the console + pill; stopTracking stops the watcher")

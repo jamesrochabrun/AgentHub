@@ -28,8 +28,9 @@ public struct HotReloadArtifacts: Equatable, Sendable {
 /// stdout should be redirected so the injection engine's events can be tailed.
 public struct HotReloadLaunchPlan: Equatable, Sendable {
   public let configuration: HotReloadLaunchConfiguration
-  /// Console log path for `--stdout=`; nil when injection is off (the
-  /// preview host needs no console).
+  /// Console log path for `--stdout=`; nil when neither the injection
+  /// engine nor the preview host is inserted (both report through it —
+  /// engine events and host startup status).
   public let consoleStdoutPath: String?
 
   public init(
@@ -49,17 +50,23 @@ public struct HotReloadLaunchConfiguration: Equatable, Sendable {
   public let artifacts: HotReloadArtifacts
   public let enableInjection: Bool
   public let enablePreviews: Bool
+  /// Per-device loopback port for the preview host (see
+  /// `PreviewHostPortAllocator`); nil falls back to the host's built-in
+  /// default port.
+  public let previewPort: Int?
 
   public init(
     projectPath: String,
     artifacts: HotReloadArtifacts,
     enableInjection: Bool,
-    enablePreviews: Bool
+    enablePreviews: Bool,
+    previewPort: Int? = nil
   ) {
     self.projectPath = projectPath
     self.artifacts = artifacts
     self.enableInjection = enableInjection
     self.enablePreviews = enablePreviews
+    self.previewPort = previewPort
   }
 
   /// True if at least one runtime feature will actually be armed.
@@ -100,6 +107,7 @@ public struct HotReloadLaunchConfiguration: Equatable, Sendable {
   /// - `DYLD_FRAMEWORK_PATH`: where dyld resolves their dependent frameworks.
   /// - `AGENTHUB_PREVIEW_HOST=1`: gates our preview host's boot constructor
   ///   (it starts its loopback server only when AgentHub armed the launch).
+  /// - `AGENTHUB_PREVIEW_PORT`: the per-device loopback port the host binds.
   /// - `INJECTION_DIRECTORIES`: scopes InjectionLite's FSEvents watcher to
   ///   the project, plus `~/Library` so it can discover the build log under
   ///   AgentHub's custom derived-data path.
@@ -119,6 +127,11 @@ public struct HotReloadLaunchConfiguration: Equatable, Sendable {
       insertedLibraries.append(previewHost)
       environment[
         "SIMCTL_CHILD_\(HotReloadHostPackage.previewHostEnvironmentKey)"] = "1"
+      if let previewPort {
+        environment[
+          "SIMCTL_CHILD_\(HotReloadHostPackage.previewPortEnvironmentKey)"] =
+          String(previewPort)
+      }
     }
 
     guard !insertedLibraries.isEmpty else { return [:] }

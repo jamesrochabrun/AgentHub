@@ -41,6 +41,29 @@ public enum HotReloadEngineEvent: Equatable, Sendable {
   case warning(message: String)
 }
 
+/// Startup status of the inserted preview host, parsed from its structured
+/// console lines (`AGENTHUB_PREVIEW_HOST: …`). Distinguishes "still starting"
+/// from real failures so the Previews tab can say what actually went wrong.
+public enum PreviewHostStatus: Equatable, Sendable {
+  /// No status line seen yet (host not inserted, or app still booting).
+  case unknown
+  /// The host is waiting for the app to become active before serving.
+  case waitingForForeground
+  /// The host's server is accepting connections on `port`.
+  case listening(port: Int)
+  /// The host could not start.
+  case failed(reason: PreviewHostFailureReason, detail: String)
+}
+
+public enum PreviewHostFailureReason: Equatable, Sendable {
+  /// Another process already owns the host's loopback port.
+  case portInUse(port: Int)
+  /// The server threw on startup for a non-port reason.
+  case serverError
+  /// The simulator runs an OS older than the previews floor (iOS 16).
+  case unsupportedOSVersion
+}
+
 /// A classified change to the project's Swift sources, observed host-side.
 public enum HotReloadSourceChange: Equatable, Sendable {
   /// An edit to an existing file — the injection engine can hot-swap it.

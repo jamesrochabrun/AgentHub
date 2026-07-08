@@ -4,9 +4,13 @@ import Foundation
 /// `simctl launch --stdout=<file>`) into `HotReloadEngineEvent`s.
 ///
 /// InjectionLite logs to the app's stdout with an `🔥 InjectionLite: `-style
-/// prefix. The exact strings matched here come from InjectionLite's
+/// prefix. The exact strings matched first come from InjectionLite's
 /// `Reloader`/`Recompiler`/`InjectionBase` sources (pinned in
-/// `HotReloadHostPackage`); revisit when bumping that pin.
+/// `HotReloadHostPackage`); revisit when bumping that pin. The looser
+/// 🔥-prefixed patterns after them are drift insurance only — if the pinned
+/// wording changes, reload confirmation keeps working instead of silently
+/// degrading every save into timeout → full rebuild. The pins remain the
+/// contract and must still be re-verified on every version bump.
 public struct HotReloadConsoleParser: Sendable {
 
   public init() {}
@@ -53,8 +57,39 @@ public struct HotReloadConsoleParser: Sendable {
     }
 
     // "🔥 ℹ️ No symbols replaced, have you added -Xlinker -interposable …"
+    // The running binary wasn't linked with -interposable (e.g. it was
+    // launched from a plain build and only armed at relaunch): the engine
+    // keeps compiling dylibs but nothing ever rebinds into the app, so
+    // every "reload" is a silent no-op. Only a full armed rebuild fixes the
+    // binary — treat it as a failed injection so the fallback fires.
     if trimmed.contains("No symbols replaced") {
-      return .warning(message: "Injection loaded but no symbols were replaced")
+      return .injectionFailed(
+        message: "App wasn't built with injection support — rebuilding")
+    }
+
+    // ── Tolerant fallbacks (drift insurance; see the type comment) ──────
+    if trimmed.hasPrefix("🔥") {
+      if trimmed.contains("Watching") {
+        return .engineReady
+      }
+      if trimmed.contains("ompiling"),
+         let fileRange = trimmed.range(
+           of: #"[A-Za-z0-9_+\-.]+\.swift"#, options: .regularExpression) {
+        return .recompiling(fileName: String(trimmed[fileRange]))
+      }
+      if trimmed.contains("✅"),
+         trimmed.contains("eload") || trimmed.contains("nject")
+           || trimmed.contains("Rebound"),
+         let range = trimmed.range(of: "✅") {
+        let summary = trimmed[range.upperBound...]
+          .trimmingCharacters(in: .whitespaces)
+        return .injected(summary: summary.isEmpty ? "Hot reload complete" : summary)
+      }
+      if let range = trimmed.range(of: "❌") {
+        let message = trimmed[range.upperBound...]
+          .trimmingCharacters(in: .whitespaces)
+        return .injectionFailed(message: message.isEmpty ? "Injection failed" : message)
+      }
     }
 
     // Any other engine warning ("🔥 … ⚠️ …") surfaces as a tooltip detail.

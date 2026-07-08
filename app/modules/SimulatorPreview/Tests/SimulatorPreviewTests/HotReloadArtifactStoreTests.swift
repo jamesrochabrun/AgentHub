@@ -40,6 +40,74 @@ struct HotReloadHostPackageTests {
     #expect(host?.contains("result[\"scale\"]") == true)
   }
 
+  @Test("the host binds the per-device port from the launch environment")
+  func hostReadsPortFromEnvironment() {
+    let host = HotReloadHostPackage.sourceFiles[
+      "Sources/\(HotReloadHostPackage.previewHostScheme)/\(HotReloadHostPackage.previewHostScheme).swift"]
+    #expect(host?.contains(
+      "environment[\"\(HotReloadHostPackage.previewPortEnvironmentKey)\"]") == true)
+    #expect(host?.contains("?? \(HotReloadHostPackage.previewHostDefaultPort)") == true)
+    #expect(host?.contains("port: AgentHubPreviewHost.configuredPort") == true)
+  }
+
+  /// Pins the generated host's status lines to what
+  /// `PreviewHostStatusParser` understands — same discipline as the
+  /// InjectionLite console pins: change them together.
+  @Test("the host prints the structured status lines the parser understands")
+  func hostPrintsParsableStatusLines() {
+    let host = HotReloadHostPackage.sourceFiles[
+      "Sources/\(HotReloadHostPackage.previewHostScheme)/\(HotReloadHostPackage.previewHostScheme).swift"]
+
+    #expect(host?.contains(
+      "AGENTHUB_PREVIEW_HOST: unsupported reason=ios-version") == true)
+    #expect(host?.contains(
+      "AGENTHUB_PREVIEW_HOST: waiting reason=app-not-active") == true)
+    #expect(host?.contains("AGENTHUB_PREVIEW_HOST: listening ") == true)
+    #expect(host?.contains("AGENTHUB_PREVIEW_HOST: failed reason=port-in-use ") == true)
+    #expect(host?.contains("AGENTHUB_PREVIEW_HOST: failed reason=server-error ") == true)
+    #expect(host?.contains("waitUntilListening") == true)
+
+    // And the parser accepts the exact shapes the host emits.
+    let parser = PreviewHostStatusParser()
+    #expect(parser.parse(
+      line: "AGENTHUB_PREVIEW_HOST: unsupported reason=ios-version") != nil)
+    #expect(parser.parse(
+      line: "AGENTHUB_PREVIEW_HOST: waiting reason=app-not-active") != nil)
+    #expect(parser.parse(line: "AGENTHUB_PREVIEW_HOST: listening port=38824") != nil)
+    #expect(parser.parse(
+      line: "AGENTHUB_PREVIEW_HOST: failed reason=port-in-use port=38824") != nil)
+    #expect(parser.parse(
+      line: "AGENTHUB_PREVIEW_HOST: failed reason=server-error detail=boom") != nil)
+  }
+
+  @Test("fingerprint is a deterministic content hash")
+  func fingerprintDeterminism() {
+    #expect(HotReloadHostPackage.fingerprint.hasPrefix("host-sha256-"))
+    #expect(HotReloadHostPackage.fingerprint == HotReloadHostPackage.fingerprint(
+      manifest: HotReloadHostPackage.manifest,
+      sourceFiles: HotReloadHostPackage.sourceFiles
+    ))
+  }
+
+  @Test("fingerprint changes when the manifest or any generated source changes")
+  func fingerprintSensitivity() {
+    let manifest = HotReloadHostPackage.manifest
+    var sources = HotReloadHostPackage.sourceFiles
+    let base = HotReloadHostPackage.fingerprint(manifest: manifest, sourceFiles: sources)
+
+    let manifestVariant = HotReloadHostPackage.fingerprint(
+      manifest: manifest + "\n// pin bump",
+      sourceFiles: sources
+    )
+    #expect(manifestVariant != base)
+
+    let key = sources.keys.sorted()[0]
+    sources[key] = (sources[key] ?? "") + "\n// edited"
+    let sourceVariant = HotReloadHostPackage.fingerprint(manifest: manifest, sourceFiles: sources)
+    #expect(sourceVariant != base)
+    #expect(sourceVariant != manifestVariant)
+  }
+
   @Test("write is idempotent and only touches changed files")
   func writeIdempotent() throws {
     let directory = FileManager.default.temporaryDirectory

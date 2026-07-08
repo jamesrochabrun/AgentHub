@@ -33,42 +33,6 @@ enum SimulatorPanelDisplayMode: String, Hashable {
   case previews
 }
 
-private enum SimulatorRunDestination: Identifiable, Hashable {
-  case simulator(SimulatorDevice)
-  case physical(PhysicalIOSDevice)
-
-  static func simulatorID(udid: String) -> String {
-    "simulator:\(udid)"
-  }
-
-  static func physicalID(identifier: String) -> String {
-    "physical:\(identifier)"
-  }
-
-  var id: String {
-    switch self {
-    case .simulator(let device):
-      return Self.simulatorID(udid: device.udid)
-    case .physical(let device):
-      return Self.physicalID(identifier: device.identifier)
-    }
-  }
-
-  var name: String {
-    switch self {
-    case .simulator(let device):
-      return device.name
-    case .physical(let device):
-      return device.name
-    }
-  }
-
-  var simulatorUDID: String? {
-    if case .simulator(let device) = self { return device.udid }
-    return nil
-  }
-}
-
 struct SimulatorPreviewSidePanelView: View {
   let session: CLISession
   let projectPath: String
@@ -113,28 +77,17 @@ struct SimulatorPreviewSidePanelView: View {
     WorktreeLaunchProvider(commandLineValue: providerKind.rawValue)
   }
 
-  /// The destination to run on: explicit selection, then project preferences,
-  /// then connected hardware, an already-running simulator, or any simulator.
+  /// The destination to run on: explicit selection, then this project's
+  /// persisted preference. Never another project's booted simulator — with
+  /// no association the panel shows the destination picker instead.
   private var activeDestination: SimulatorRunDestination? {
-    if let selectedDestinationID,
-       let destination = runDestinations.first(where: { $0.id == selectedDestinationID }) {
-      return destination
-    }
-    if let preferred = simulatorService.preferredSimulatorUDIDs[projectPath],
-       let device = availableDevices.first(where: { $0.udid == preferred }) {
-      return .simulator(device)
-    }
-    if let preferred = simulatorService.preferredPhysicalDeviceIDs[projectPath],
-       let device = physicalDevices.first(where: { $0.identifier == preferred }) {
-      return .physical(device)
-    }
-    if let physical = physicalDevices.first {
-      return .physical(physical)
-    }
-    if let booted = bootedDevices.first {
-      return .simulator(booted)
-    }
-    return availableDevices.first.map(SimulatorRunDestination.simulator)
+    SimulatorDestinationResolver.resolve(
+      selectedDestinationID: selectedDestinationID,
+      preferredSimulatorUDID: simulatorService.preferredSimulatorUDIDs[projectPath],
+      preferredPhysicalDeviceID: simulatorService.preferredPhysicalDeviceIDs[projectPath],
+      simulators: availableDevices,
+      physicalDevices: physicalDevices
+    )
   }
 
   private var activeDestinationID: String? {
@@ -429,43 +382,7 @@ struct SimulatorPreviewSidePanelView: View {
   private var devicePicker: some View {
     if !runDestinations.isEmpty {
       Menu {
-        if !physicalDevices.isEmpty {
-          Section("Connected Devices") {
-            ForEach(physicalDevices) { device in
-              Button {
-                selectPhysicalDevice(identifier: device.identifier)
-              } label: {
-                HStack {
-                  Text(device.name)
-                  Text(device.subtitle.isEmpty ? "Device" : device.subtitle)
-                  if activeDestinationID == SimulatorRunDestination.physical(device).id {
-                    Image(systemName: "checkmark")
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        if !availableDevices.isEmpty {
-          Section("Simulators") {
-            ForEach(availableDevices) { device in
-              Button {
-                selectSimulator(udid: device.udid)
-              } label: {
-                HStack {
-                  Text(device.name)
-                  if device.isBooted {
-                    Text("Running")
-                  }
-                  if activeUDID == device.udid {
-                    Image(systemName: "checkmark")
-                  }
-                }
-              }
-            }
-          }
-        }
+        destinationMenuContent
       } label: {
         HStack(spacing: 6) {
           Text(activeDestination?.name ?? "Select Destination")
@@ -488,6 +405,16 @@ struct SimulatorPreviewSidePanelView: View {
       .layoutPriority(2)
       .accessibilityLabel("Select run destination")
     }
+  }
+
+  private var destinationMenuContent: some View {
+    SimulatorDestinationMenuContent(
+      physicalDevices: physicalDevices,
+      simulators: availableDevices,
+      activeDestinationID: activeDestinationID,
+      onSelectSimulator: { selectSimulator(udid: $0) },
+      onSelectPhysicalDevice: { selectPhysicalDevice(identifier: $0) }
+    )
   }
 
   private var closeButton: some View {
@@ -644,10 +571,12 @@ struct SimulatorPreviewSidePanelView: View {
       // Cold start straight into Previews: the spotlight's states guide the
       // bootstrap, and the tab switch auto-runs the app when a file is open.
       spotlightView
-    } else if simulatorService.isLoadingDevices && !hasLoadedDevices {
+    } else if !hasLoadedDevices && runDestinations.isEmpty {
       loadingState
     } else if runDestinations.isEmpty {
       emptyState
+    } else if activeDestination == nil {
+      selectDestinationState
     } else if activePhysicalDevice != nil {
       physicalDeviceStateView
     } else {
@@ -667,6 +596,7 @@ struct SimulatorPreviewSidePanelView: View {
       onLaunchPreviews: launchPreviews,
       isPreviewHostExpected: simulatorPreviewsEnabled
         && hotReload.activePlan?.configuration.enablePreviews == true,
+      previewHostStatus: hotReload.previewHostStatus,
       connectedDeviceName: hotReload.activePlan != nil
         ? activeDevice?.name : nil
     )
@@ -785,6 +715,35 @@ struct SimulatorPreviewSidePanelView: View {
     .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 
+  /// Shown when this project/worktree has no run destination associated yet.
+  /// Deliberately never adopts another project's booted simulator.
+  private var selectDestinationState: some View {
+    VStack(spacing: 16) {
+      ContentUnavailableView(
+        "Choose a Run Destination",
+        systemImage: "iphone.gen3",
+        description: Text("Pick the simulator or device this project should use. AgentHub remembers the choice per project and worktree.")
+      )
+      .frame(maxHeight: 220)
+
+      Menu {
+        destinationMenuContent
+      } label: {
+        Label("Select Destination", systemImage: "iphone.gen3")
+          .font(.subheadline.weight(.medium))
+          .padding(.horizontal, 14)
+          .padding(.vertical, 7)
+      }
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .background(Capsule().fill(Color.brandPrimary.opacity(0.16)))
+      .overlay(Capsule().stroke(Color.brandPrimary.opacity(0.3), lineWidth: 1))
+      .accessibilityLabel("Select run destination")
+    }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+  }
+
   private var physicalDeviceStateView: some View {
     VStack(spacing: 12) {
       Image(systemName: "iphone")
@@ -888,6 +847,9 @@ struct SimulatorPreviewSidePanelView: View {
 
   private func loadDevicesIfNeeded() async {
     guard !hasLoadedDevices else { return }
+    // Hydrate persisted preferences first so a relaunched app restores the
+    // project's device instead of flashing the destination picker.
+    await simulatorService.ensurePreferencesLoaded()
     await simulatorService.listDevices()
     hasLoadedDevices = true
   }

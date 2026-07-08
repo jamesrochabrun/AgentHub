@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The Swift package AgentHub materializes on disk and builds (once, cached)
@@ -37,10 +38,31 @@ public enum HotReloadHostPackage {
   /// preview host inside the app.
   public static let previewHostEnvironmentKey = "AGENTHUB_PREVIEW_HOST"
 
-  /// Identifies the generated package + pins; cached build artifacts are
-  /// invalidated when this changes.
+  /// The environment variable carrying the per-device loopback port the
+  /// preview host binds (see `PreviewHostPortAllocator`).
+  public static let previewPortEnvironmentKey = "AGENTHUB_PREVIEW_PORT"
+
+  /// The port the generated host falls back to when launched without
+  /// `AGENTHUB_PREVIEW_PORT` (the original fixed-port contract).
+  public static let previewHostDefaultPort = 38824
+
+  /// Identifies the generated package; cached build artifacts are invalidated
+  /// when this changes. A content hash over the fully materialized package
+  /// (manifest + every generated source), so any pin bump or source edit
+  /// invalidates the cache automatically — no manual version suffix to forget.
   public static var fingerprint: String {
-    "snapshot-previews-\(snapshotPreviewsVersion)_injection-lite-\(injectionLiteVersion)_v3"
+    fingerprint(manifest: manifest, sourceFiles: sourceFiles)
+  }
+
+  static func fingerprint(manifest: String, sourceFiles: [String: String]) -> String {
+    var hasher = SHA256()
+    hasher.update(data: Data(manifest.utf8))
+    for (path, content) in sourceFiles.sorted(by: { $0.key < $1.key }) {
+      hasher.update(data: Data(path.utf8))
+      hasher.update(data: Data(content.utf8))
+    }
+    let hex = hasher.finalize().prefix(12).map { String(format: "%02x", $0) }.joined()
+    return "host-sha256-\(hex)"
   }
 
   public static var manifest: String {
@@ -160,9 +182,10 @@ public enum HotReloadHostPackage {
   }
 
   /// The preview host. Serves SnapshotPreviews' HTTP contract (`GET /file`
-  /// manifest + `GET /display/{type}/{id}` render) on loopback port 38824,
-  /// rendering with the windowless `SwiftUIRenderingStrategy` so the running
-  /// app's UI is never covered.
+  /// manifest + `GET /display/{type}/{id}` render) on the loopback port from
+  /// `AGENTHUB_PREVIEW_PORT` (per-device; default 38824), rendering with the
+  /// windowless `SwiftUIRenderingStrategy` so the running app's UI is never
+  /// covered.
   private static var previewHostSource: String {
     #"""
     #if canImport(UIKit) && DEBUG
@@ -176,7 +199,7 @@ public enum HotReloadHostPackage {
     @_cdecl("agenthub_preview_host_start")
     public func agenthub_preview_host_start() {
       guard #available(iOS 16.0, *) else {
-        print("AgentHubPreviewHost: previews require an iOS 16+ simulator")
+        print("AGENTHUB_PREVIEW_HOST: unsupported reason=ios-version")
         return
       }
       Task { @MainActor in
@@ -198,6 +221,7 @@ public enum HotReloadHostPackage {
         if UIApplication.shared.applicationState == .active {
           host.start()
         } else {
+          print("AGENTHUB_PREVIEW_HOST: waiting reason=app-not-active")
           NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification,
             object: nil,
@@ -208,7 +232,16 @@ public enum HotReloadHostPackage {
         }
       }
 
-      private let server = HTTPServer(address: .loopback(port: 38824))
+      /// AgentHub assigns each simulator device its own loopback port and
+      /// passes it through the launch environment; the fixed default keeps
+      /// an env-less insert working.
+      static var configuredPort: UInt16 {
+        ProcessInfo.processInfo.environment["\#(previewPortEnvironmentKey)"]
+          .flatMap(UInt16.init) ?? \#(previewHostDefaultPort)
+      }
+
+      private let server = HTTPServer(
+        address: .loopback(port: AgentHubPreviewHost.configuredPort))
       private var serverTask: Task<Void, Never>?
 
       private static var resultsDirectory: URL {
@@ -236,10 +269,25 @@ public enum HotReloadHostPackage {
             }
             try await server.start()
           } catch {
-            print("AgentHubPreviewHost: server failed to start: \(error)")
+            let description = String(describing: error)
+              .replacingOccurrences(of: "\n", with: " ")
+            if description.lowercased().contains("in use") {
+              print("AGENTHUB_PREVIEW_HOST: failed reason=port-in-use "
+                + "port=\(AgentHubPreviewHost.configuredPort)")
+            } else {
+              print("AGENTHUB_PREVIEW_HOST: failed reason=server-error "
+                + "detail=\(description)")
+            }
           }
         }
-        print("AgentHubPreviewHost: serving previews on loopback port 38824")
+        // Confirm the socket is actually accepting before reporting success;
+        // the catch above reports bind failures.
+        Task { [server] in
+          if (try? await server.waitUntilListening(timeout: 10)) != nil {
+            print("AGENTHUB_PREVIEW_HOST: listening "
+              + "port=\(AgentHubPreviewHost.configuredPort)")
+          }
+        }
       }
 
       /// Rewrites the manifest of all discovered preview types.

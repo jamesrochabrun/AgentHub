@@ -269,6 +269,13 @@ public final class AgentHubProvider {
       Task {
         await TerminalProcessRegistry.shared.configure(store: metadataStore)
       }
+      SimulatorService.shared.configurePreferenceStore(metadataStore)
+    } else {
+      // The lazy accessor builds the real store; defer so init stays light.
+      Task { @MainActor [weak self] in
+        guard let self, let store = self.metadataStore else { return }
+        SimulatorService.shared.configurePreferenceStore(store)
+      }
     }
 
     // Persist developer-provided commands to UserDefaults

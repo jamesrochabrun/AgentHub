@@ -38,6 +38,10 @@ struct SimulatorPreviewSpotlightView: View {
   /// True after AgentHub has launched the app with the preview host inserted.
   /// A transient connection failure then means "still starting", not "not armed".
   var isPreviewHostExpected = false
+  /// Startup status reported by the inserted host over the console tail —
+  /// turns generic "did not respond" into the actual failure (port conflict,
+  /// backgrounded app, unsupported OS).
+  var previewHostStatus: PreviewHostStatus = .unknown
   /// Device the armed app runs on, when this panel launched it.
   var connectedDeviceName: String?
 
@@ -55,7 +59,33 @@ struct SimulatorPreviewSpotlightView: View {
   private let expansionAnimation = Animation.spring(response: 0.34, dampingFraction: 0.86)
 
   private var manifestLoadID: String {
-    "\(reloadGeneration)|\(isPreviewHostExpected)"
+    "\(reloadGeneration)|\(isPreviewHostExpected)|\(hostStatusToken)"
+  }
+
+  private var hostStatusToken: String {
+    switch previewHostStatus {
+    case .unknown: return "unknown"
+    case .waitingForForeground: return "waiting"
+    case .listening(let port): return "listening-\(port)"
+    case .failed: return "failed"
+    }
+  }
+
+  /// The specific startup failure to surface instead of a generic
+  /// "did not respond", when the host reported one.
+  private var hostFailureMessage: String? {
+    guard case .failed(let reason, let detail) = previewHostStatus else { return nil }
+    switch reason {
+    case .portInUse(let port):
+      return "Preview port \(port) is in use — another app or session owns it. "
+        + "Relaunch previews to retry."
+    case .unsupportedOSVersion:
+      return "SwiftUI previews require an iOS 16 or later simulator."
+    case .serverError:
+      return detail.isEmpty
+        ? "The preview host failed to start."
+        : "The preview host failed to start: \(detail)"
+    }
   }
 
   var body: some View {
@@ -80,16 +110,30 @@ struct SimulatorPreviewSpotlightView: View {
 
   // MARK: - Candidates
 
-  /// Open-file previews first, then changed files by recency, deduplicated
-  /// and bounded.
-  private var candidates: [SimulatorPreviewSelection] {
+  /// The spotlight deliberately shows previews for ONLY two files: the one
+  /// open in the editor and the most recently modified one — never the
+  /// whole recent-change history, which floods the tab with previews of
+  /// every file touched this session (e.g. all git-modified files from the
+  /// seed).
+  static func candidateFileNames(
+    openFileName: String?,
+    changedFiles: [String]
+  ) -> [String] {
     var fileNames: [String] = []
     if let openFileName, openFileName.hasSuffix(".swift") {
       fileNames.append(openFileName)
     }
-    for file in changedFiles where !fileNames.contains(file) {
-      fileNames.append(file)
+    if let latestChange = changedFiles.first, !fileNames.contains(latestChange) {
+      fileNames.append(latestChange)
     }
+    return fileNames
+  }
+
+  private var candidates: [SimulatorPreviewSelection] {
+    let fileNames = Self.candidateFileNames(
+      openFileName: openFileName,
+      changedFiles: changedFiles
+    )
 
     var selections: [SimulatorPreviewSelection] = []
     for file in fileNames {
@@ -201,7 +245,9 @@ struct SimulatorPreviewSpotlightView: View {
   private var startingState: some View {
     VStack(spacing: 8) {
       ProgressView()
-      Text("Starting previews…")
+      Text(previewHostStatus == .waitingForForeground
+        ? "Waiting for the app to come to the foreground…"
+        : "Starting previews…")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
@@ -251,6 +297,13 @@ struct SimulatorPreviewSpotlightView: View {
 
     let maxAttempts = isPreviewHostExpected ? 16 : 1
     for attempt in 1...maxAttempts {
+      // A reported startup failure ends the retry loop — the host told us
+      // exactly what's wrong; "still starting" spinners would be a lie.
+      if let hostFailureMessage {
+        previewTypes = []
+        loadErrorMessage = hostFailureMessage
+        return
+      }
       do {
         previewTypes = try await client.listPreviews()
         loadErrorMessage = nil
@@ -265,14 +318,18 @@ struct SimulatorPreviewSpotlightView: View {
     }
 
     previewTypes = []
-    loadErrorMessage = "Preview support did not respond after launch."
+    loadErrorMessage = hostFailureMessage ?? unresponsiveMessage
+  }
+
+  private var unresponsiveMessage: String {
+    previewHostStatus == .waitingForForeground
+      ? "The app hasn't come to the foreground in the simulator yet."
+      : "Preview support did not respond after launch."
   }
 
   private func userFacingLoadErrorMessage(for error: Error) -> String {
     if (error as? PreviewHostClientError) == .serverUnreachable {
-      return isPreviewHostExpected
-        ? "Preview support did not respond after launch."
-        : ""
+      return isPreviewHostExpected ? unresponsiveMessage : ""
     }
     return error.localizedDescription
   }

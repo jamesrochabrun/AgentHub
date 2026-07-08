@@ -31,14 +31,26 @@ public final class HotReloadMonitor {
 
   /// How long "Reloaded" lingers before settling back to idle.
   public var settleDelay: TimeInterval = 2.5
-  /// How long a save may sit in "Reloading…" without engine confirmation
+  /// How long a save may sit in "Reloading…" without ANY engine activity
   /// before we assume the change can't be hot-swapped.
   public var reloadTimeout: TimeInterval = 12
+  /// Extended deadline once the engine acknowledged the save (a
+  /// `.recompiling` console event). Evidence the engine is working means a
+  /// slow compile of a large file shouldn't be mistaken for a dead engine —
+  /// each engine event pushes the deadline out again. The engine always
+  /// terminates a real failure with its own `❌`/`⚠️` event, so this only
+  /// delays the fallback when the engine went truly silent mid-compile.
+  public var engineActivityTimeout: TimeInterval = 45
   /// Whether failed/timed-out injections automatically trigger a rebuild.
   public var automaticRebuildFallback = true
 
   private var settleTask: Task<Void, Never>?
   private var timeoutTask: Task<Void, Never>?
+
+  /// Changes that arrived while a rebuild was in flight, coalesced per path
+  /// (structural wins over injectable for the same path). Replayed as at
+  /// most one follow-up rebuild when the rebuild finishes — never dropped.
+  private var pendingChangesDuringRebuild: [String: HotReloadSourceChange] = [:]
 
   public init() {}
 
@@ -46,6 +58,7 @@ public final class HotReloadMonitor {
 
   public func markDisabled() {
     cancelTimers()
+    pendingChangesDuringRebuild = [:]
     phase = .disabled
   }
 
@@ -56,12 +69,14 @@ public final class HotReloadMonitor {
 
   public func markUnavailable(reason: String) {
     cancelTimers()
+    pendingChangesDuringRebuild = [:]
     phase = .unavailable(reason: reason)
   }
 
   /// The app was launched with the injection dylib inserted.
   public func arm() {
     cancelTimers()
+    pendingChangesDuringRebuild = [:]
     lastWarning = nil
     phase = .idle
   }
@@ -71,6 +86,22 @@ public final class HotReloadMonitor {
   public func handle(sourceChanges: [HotReloadSourceChange]) {
     guard isArmed else { return }
 
+    // Mid-rebuild saves are queued, never dropped — `markRebuildFinished`
+    // replays them.
+    if case .rebuilding = phase {
+      for change in sourceChanges {
+        switch change {
+        case .structural:
+          pendingChangesDuringRebuild[change.path] = change
+        case .injectable:
+          if pendingChangesDuringRebuild[change.path] == nil {
+            pendingChangesDuringRebuild[change.path] = change
+          }
+        }
+      }
+      return
+    }
+
     if let structural = sourceChanges.first(where: {
       if case .structural = $0 { return true } else { return false }
     }), case .structural(let path, let kind) = structural {
@@ -79,12 +110,9 @@ public final class HotReloadMonitor {
       return
     }
 
-    guard case .rebuilding = phase else {
-      if let change = sourceChanges.last {
-        let file = (change.path as NSString).lastPathComponent
-        beginReloading(fileName: file)
-      }
-      return
+    if let change = sourceChanges.last {
+      let file = (change.path as NSString).lastPathComponent
+      beginReloading(fileName: file)
     }
   }
 
@@ -98,10 +126,14 @@ public final class HotReloadMonitor {
 
     case .recompiling(let fileName):
       guard isArmed else { return }
-      beginReloading(fileName: fileName)
+      beginReloading(fileName: fileName, timeout: engineActivityTimeout)
 
     case .injected(let summary):
       guard isArmed else { return }
+      // A stray "✅" right after a failure-triggered rebuild started (the
+      // engine prints the pair warning→complete) must not flip the pill to
+      // "Reloaded" — the rebuild bumps the generation when it finishes.
+      if case .rebuilding = phase { return }
       cancelTimers()
       reloadGeneration += 1
       phase = .reloaded(summary: summary)
@@ -130,10 +162,23 @@ public final class HotReloadMonitor {
 
   public func markRebuildFinished(success: Bool, message: String? = nil) {
     cancelTimers()
+    let pending = pendingChangesDuringRebuild
+    pendingChangesDuringRebuild = [:]
     if success {
       reloadGeneration += 1
       phase = .idle
+      // The finished rebuild compiled current on-disk sources, so
+      // injectable saves that landed mid-rebuild are already in the running
+      // binary and the generation bump re-renders previews. Only structural
+      // changes (files added/removed mid-rebuild) need one follow-up pass.
+      if let structural = pending.values.first(where: {
+        if case .structural = $0 { return true } else { return false }
+      }), case .structural(let path, let kind) = structural {
+        let file = (path as NSString).lastPathComponent
+        requestRebuild(reason: "\(file) was \(kind.rawValue) during the rebuild")
+      }
     } else {
+      // Never chain rebuilds off a failing build — the next save retries.
       phase = .failed(message: message ?? "Rebuild failed")
     }
   }
@@ -149,10 +194,10 @@ public final class HotReloadMonitor {
     }
   }
 
-  private func beginReloading(fileName: String) {
+  private func beginReloading(fileName: String, timeout: TimeInterval? = nil) {
     if case .rebuilding = phase { return }
     phase = .reloading(fileName: fileName)
-    scheduleReloadTimeout()
+    scheduleReloadTimeout(timeout ?? reloadTimeout)
   }
 
   private func requestRebuild(reason: String) {
@@ -172,9 +217,8 @@ public final class HotReloadMonitor {
     }
   }
 
-  private func scheduleReloadTimeout() {
+  private func scheduleReloadTimeout(_ timeout: TimeInterval) {
     timeoutTask?.cancel()
-    let timeout = reloadTimeout
     timeoutTask = Task { [weak self] in
       try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
       guard !Task.isCancelled, let self else { return }
