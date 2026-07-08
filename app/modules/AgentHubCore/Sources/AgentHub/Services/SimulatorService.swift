@@ -146,6 +146,11 @@ public final class SimulatorService {
   public static let shared = SimulatorService()
   private init() {}
 
+  /// Isolated instance for unit tests — production code uses `shared`.
+  static func makeForTesting() -> SimulatorService {
+    SimulatorService()
+  }
+
   // MARK: - Observable State
 
   /// Per-UDID global boot/shutdown state, shared across all sessions
@@ -175,6 +180,18 @@ public final class SimulatorService {
   /// Per-projectPath preferred physical iOS device identifier.
   private(set) var preferredPhysicalDeviceIDs: [String: String] = [:]
 
+  /// True once persisted preferences have been hydrated into the dictionaries.
+  public private(set) var preferencesLoaded = false
+
+  /// Backing store for run-destination preferences; nil until configured.
+  private var preferenceStore: (any SimulatorPreferencePersisting)?
+
+  /// In-flight hydration of persisted preferences.
+  private var preferenceLoadTask: Task<Void, Never>?
+
+  /// Serializes preference writes so they land in call order.
+  private var preferencePersistChain: Task<Void, Never>?
+
   /// Live process references for in-flight Mac builds, keyed by projectPath
   private var macBuildProcesses: [String: ProcessRef] = [:]
 
@@ -198,11 +215,76 @@ public final class SimulatorService {
   /// Sets the preferred simulator UDID for a given project path.
   public func setPreferredSimulator(udid: String?, for projectPath: String) {
     preferredSimulatorUDIDs[projectPath] = udid
+    persistPreference(for: projectPath)
   }
 
   /// Sets the preferred physical iOS device for a given project path.
   public func setPreferredPhysicalDevice(identifier: String?, for projectPath: String) {
     preferredPhysicalDeviceIDs[projectPath] = identifier
+    persistPreference(for: projectPath)
+  }
+
+  /// Attaches the persistence backend and hydrates saved preferences.
+  /// Persisted values never override selections already made this launch.
+  public func configurePreferenceStore(_ store: any SimulatorPreferencePersisting) {
+    preferenceStore = store
+    preferenceLoadTask?.cancel()
+    preferenceLoadTask = Task {
+      let preferences = (try? await store.getProjectSimulatorPreferences()) ?? []
+      guard !Task.isCancelled else { return }
+      for preference in preferences {
+        let path = preference.projectPath
+        guard preferredSimulatorUDIDs[path] == nil, preferredPhysicalDeviceIDs[path] == nil else {
+          continue
+        }
+        switch preference.kind {
+        case .simulator:
+          preferredSimulatorUDIDs[path] = preference.deviceIdentifier
+        case .physical:
+          preferredPhysicalDeviceIDs[path] = preference.deviceIdentifier
+        }
+      }
+      preferencesLoaded = true
+    }
+  }
+
+  /// Awaits preference hydration; returns immediately when no store is configured.
+  public func ensurePreferencesLoaded() async {
+    await preferenceLoadTask?.value
+  }
+
+  /// Awaits any queued preference writes (test hook).
+  func flushPreferencePersistence() async {
+    await preferencePersistChain?.value
+  }
+
+  private func persistPreference(for projectPath: String) {
+    guard let store = preferenceStore else { return }
+    let preference: ProjectSimulatorPreference?
+    if let udid = preferredSimulatorUDIDs[projectPath] {
+      preference = ProjectSimulatorPreference(
+        projectPath: projectPath,
+        deviceIdentifier: udid,
+        kind: .simulator
+      )
+    } else if let identifier = preferredPhysicalDeviceIDs[projectPath] {
+      preference = ProjectSimulatorPreference(
+        projectPath: projectPath,
+        deviceIdentifier: identifier,
+        kind: .physical
+      )
+    } else {
+      preference = nil
+    }
+    let previous = preferencePersistChain
+    preferencePersistChain = Task {
+      await previous?.value
+      if let preference {
+        try? await store.setProjectSimulatorPreference(preference)
+      } else {
+        try? await store.deleteProjectSimulatorPreference(projectPath: projectPath)
+      }
+    }
   }
 
   /// Returns the SimulatorDevice for a given UDID, if it exists in the loaded runtimes.
