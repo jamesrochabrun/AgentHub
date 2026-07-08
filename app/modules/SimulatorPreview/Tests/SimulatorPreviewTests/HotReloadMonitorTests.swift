@@ -104,6 +104,121 @@ struct HotReloadMonitorTests {
     #expect(monitor.lastWarning == "No symbols were replaced")
   }
 
+  @Test("engine activity extends the reload deadline past the base timeout")
+  func engineActivityExtendsDeadline() async throws {
+    let monitor = makeMonitor()
+    monitor.reloadTimeout = 0.05
+    monitor.engineActivityTimeout = 0.5
+    monitor.arm()
+    var rebuilds: [String] = []
+    monitor.onRequestRebuild = { rebuilds.append($0) }
+
+    monitor.handle(sourceChanges: [.injectable(path: "/p/Big.swift")])
+    monitor.handle(engineEvent: .recompiling(fileName: "Big.swift"))
+
+    // Well past the base deadline but the engine acknowledged the save —
+    // a slow compile must not be mistaken for a dead engine.
+    try await Task.sleep(nanoseconds: 200_000_000)
+    #expect(monitor.phase == .reloading(fileName: "Big.swift"))
+    #expect(rebuilds.isEmpty)
+
+    // Engine goes silent past the extended deadline — fallback still fires.
+    let deadline = Date().addingTimeInterval(2)
+    while rebuilds.isEmpty, Date() < deadline {
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    #expect(rebuilds == ["Change didn't hot-swap"])
+  }
+
+  @Test("engine activity followed by confirmation never rebuilds")
+  func engineActivityThenConfirmation() async throws {
+    let monitor = makeMonitor()
+    monitor.reloadTimeout = 0.05
+    monitor.engineActivityTimeout = 0.2
+    monitor.arm()
+    var rebuilds: [String] = []
+    monitor.onRequestRebuild = { rebuilds.append($0) }
+
+    monitor.handle(sourceChanges: [.injectable(path: "/p/HomeView.swift")])
+    monitor.handle(engineEvent: .recompiling(fileName: "HomeView.swift"))
+    monitor.handle(engineEvent: .injected(summary: "Hot reload complete"))
+    #expect(monitor.reloadGeneration == 1)
+
+    try await Task.sleep(nanoseconds: 400_000_000)
+    #expect(rebuilds.isEmpty)
+  }
+
+  @Test("structural change during a rebuild queues exactly one follow-up")
+  func structuralQueuedDuringRebuild() {
+    let monitor = makeMonitor()
+    monitor.arm()
+    var rebuilds: [String] = []
+    monitor.onRequestRebuild = { rebuilds.append($0) }
+
+    monitor.handle(sourceChanges: [.structural(path: "/p/New.swift", kind: .created)])
+    #expect(rebuilds.count == 1)
+
+    // Mid-rebuild: repeated saves of the same new file coalesce, injectable
+    // saves ride along — none of it is dropped.
+    for _ in 0..<5 {
+      monitor.handle(sourceChanges: [.structural(path: "/p/Another.swift", kind: .created)])
+    }
+    monitor.handle(sourceChanges: [.injectable(path: "/p/Edited.swift")])
+    #expect(rebuilds.count == 1)
+
+    monitor.markRebuildFinished(success: true)
+    #expect(rebuilds == [
+      "New.swift was created",
+      "Another.swift was created during the rebuild",
+    ])
+    #expect(monitor.phase == .rebuilding(reason: "Another.swift was created during the rebuild"))
+
+    // The follow-up rebuild finishing settles to idle with nothing queued.
+    monitor.markRebuildFinished(success: true)
+    #expect(monitor.phase == .idle)
+    #expect(rebuilds.count == 2)
+  }
+
+  @Test("injectable-only saves during a rebuild are covered by it, not replayed")
+  func injectableQueueClearsWithoutFollowUp() {
+    let monitor = makeMonitor()
+    monitor.arm()
+    var rebuilds: [String] = []
+    monitor.onRequestRebuild = { rebuilds.append($0) }
+
+    monitor.handle(sourceChanges: [.structural(path: "/p/New.swift", kind: .created)])
+    monitor.handle(sourceChanges: [.injectable(path: "/p/Edited.swift")])
+
+    monitor.markRebuildFinished(success: true)
+    // The rebuild compiled current on-disk sources, so the mid-rebuild save
+    // is already in the binary; the generation bump re-renders previews.
+    #expect(monitor.phase == .idle)
+    #expect(rebuilds.count == 1)
+    #expect(monitor.reloadGeneration == 1)
+  }
+
+  @Test("a failed rebuild clears the queue without chaining another rebuild")
+  func failedRebuildClearsQueue() {
+    let monitor = makeMonitor()
+    monitor.arm()
+    var rebuilds: [String] = []
+    monitor.onRequestRebuild = { rebuilds.append($0) }
+
+    monitor.handle(sourceChanges: [.structural(path: "/p/New.swift", kind: .created)])
+    monitor.handle(sourceChanges: [.structural(path: "/p/Another.swift", kind: .created)])
+
+    monitor.markRebuildFinished(success: false, message: "Build failed")
+    #expect(monitor.phase == .failed(message: "Build failed"))
+    #expect(rebuilds.count == 1)
+
+    // Re-arming starts clean — the stale queue must not resurface.
+    monitor.arm()
+    monitor.markRebuildStarted(reason: "manual")
+    monitor.markRebuildFinished(success: true)
+    #expect(monitor.phase == .idle)
+    #expect(rebuilds.count == 1)
+  }
+
   @Test("reload timeout falls back to rebuild")
   func reloadTimeout() async throws {
     let monitor = makeMonitor()

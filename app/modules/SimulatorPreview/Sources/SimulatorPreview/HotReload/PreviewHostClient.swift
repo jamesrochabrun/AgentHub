@@ -101,12 +101,17 @@ public struct PreviewHostRenderResult: Equatable, Sendable {
 
 public enum PreviewHostClientError: LocalizedError, Equatable {
   case serverUnreachable
+  /// Something is listening but did not answer in time — unlike
+  /// `.serverUnreachable`, retrying immediately is unlikely to help.
+  case timedOut
   case malformedResponse(detail: String)
 
   public var errorDescription: String? {
     switch self {
     case .serverUnreachable:
       return "The preview host isn't running. Build & run with previews enabled."
+    case .timedOut:
+      return "The preview host is not responding (request timed out)."
     case .malformedResponse(let detail):
       return "Unexpected preview host response: \(detail)"
     }
@@ -173,9 +178,9 @@ public protocol PreviewHostClientProtocol: Sendable {
 /// IPv4 instead.
 public struct PreviewHostHTTPClient: PreviewHostClientProtocol {
 
-  /// Fixed port shared with the generated preview host (see
-  /// `HotReloadHostPackage`).
-  public static let port = 38824
+  /// Default port shared with the generated preview host — used when a
+  /// launch didn't carry a per-device port (see `PreviewHostPortAllocator`).
+  public static let port = HotReloadHostPackage.previewHostDefaultPort
 
   private let baseURLs: [URL]
   private let session: URLSession
@@ -234,6 +239,8 @@ public struct PreviewHostHTTPClient: PreviewHostClientProtocol {
         return data
       } catch let error as PreviewHostClientError {
         lastError = error
+      } catch let error as URLError where error.code == .timedOut {
+        lastError = .timedOut
       } catch {
         lastError = .serverUnreachable
       }

@@ -66,4 +66,37 @@ struct HotReloadConsoleParserTests {
     #expect(parser.parse(line: "") == nil)
     #expect(parser.parse(line: "⚠️ app's own warning") == nil)
   }
+
+  @Test("tolerant fallbacks catch drifted engine wording")
+  func tolerantFallbacks() {
+    // Wording drift in a future InjectionLite must not silently degrade
+    // every save into timeout → full rebuild.
+    #expect(parser.parse(line: "🔥 InjectionLite v2.2: Watching /Users/dev/App")
+      == .engineReady)
+    #expect(parser.parse(line: "🔥 Compiling HomeView.swift")
+      == .recompiling(fileName: "HomeView.swift"))
+    #expect(parser.parse(line: "🔥 Recompiling: Detail-View.swift please wait")
+      == .recompiling(fileName: "Detail-View.swift"))
+    #expect(parser.parse(line: "🔥 ✅ Reload finished - Rebound 3 symbols")
+      == .injected(summary: "Reload finished - Rebound 3 symbols"))
+    #expect(parser.parse(line: "🔥 Injection ✅")
+      == .injected(summary: "Hot reload complete"))
+    #expect(parser.parse(line: "🔥 ❌ Injection error: type changed")
+      == .injectionFailed(message: "Injection error: type changed"))
+  }
+
+  @Test("tolerant fallbacks never match lines without the engine prefix")
+  func tolerantFallbacksRequireEnginePrefix() {
+    #expect(parser.parse(line: "✅ Reload of my web page finished") == nil)
+    #expect(parser.parse(line: "Tests ❌ failed") == nil)
+    #expect(parser.parse(line: "Watching directory /tmp") == nil)
+    #expect(parser.parse(line: "Compiling Shaders.swift") == nil)
+  }
+
+  @Test("tolerant fallbacks don't misread unrelated engine chatter")
+  func tolerantFallbacksIgnoreOtherEngineLines() {
+    #expect(parser.parse(line: "🔥 Loaded dylib /tmp/eval1.dylib") == nil)
+    // ✅ without any reload/inject wording is not a confirmation.
+    #expect(parser.parse(line: "🔥 Setup ✅ ready") == nil)
+  }
 }

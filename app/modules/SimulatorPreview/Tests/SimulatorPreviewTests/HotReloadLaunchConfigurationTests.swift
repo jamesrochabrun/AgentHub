@@ -17,7 +17,8 @@ struct HotReloadLaunchConfigurationTests {
       projectPath: "/Users/dev/App",
       artifacts: artifacts,
       enableInjection: true,
-      enablePreviews: true
+      enablePreviews: true,
+      previewPort: 38712
     )
     let env = configuration.simctlChildEnvironment(homeDirectory: "/Users/dev")
 
@@ -27,9 +28,32 @@ struct HotReloadLaunchConfigurationTests {
     #expect(env["SIMCTL_CHILD_DYLD_FRAMEWORK_PATH"] ==
       "/store/PackageFrameworks:/store/artifacts/sim")
     #expect(env["SIMCTL_CHILD_AGENTHUB_PREVIEW_HOST"] == "1")
+    #expect(env["SIMCTL_CHILD_AGENTHUB_PREVIEW_PORT"] == "38712")
     #expect(env["SIMCTL_CHILD_INJECTION_DIRECTORIES"] ==
       "/Users/dev/App,/Users/dev/Library")
     #expect(configuration.isEffective)
+  }
+
+  @Test("preview port env is omitted without a port or without previews")
+  func previewPortOmission() {
+    let noPort = HotReloadLaunchConfiguration(
+      projectPath: "/Users/dev/App",
+      artifacts: artifacts,
+      enableInjection: false,
+      enablePreviews: true
+    )
+    #expect(noPort.simctlChildEnvironment(
+      homeDirectory: "/Users/dev")["SIMCTL_CHILD_AGENTHUB_PREVIEW_PORT"] == nil)
+
+    let injectionOnly = HotReloadLaunchConfiguration(
+      projectPath: "/Users/dev/App",
+      artifacts: artifacts,
+      enableInjection: true,
+      enablePreviews: false,
+      previewPort: 38712
+    )
+    #expect(injectionOnly.simctlChildEnvironment(
+      homeDirectory: "/Users/dev")["SIMCTL_CHILD_AGENTHUB_PREVIEW_PORT"] == nil)
   }
 
   @Test("previews only — no injection env, no build overrides")
