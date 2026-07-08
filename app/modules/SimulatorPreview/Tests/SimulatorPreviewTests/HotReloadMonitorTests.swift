@@ -104,6 +104,33 @@ struct HotReloadMonitorTests {
     #expect(monitor.lastWarning == "No symbols were replaced")
   }
 
+  @Test("stray injection confirmation during a rebuild is ignored")
+  func injectedDuringRebuildIgnored() {
+    // The non-interposable failure prints warning→complete as a pair: the
+    // warning starts the rebuild, and the trailing "✅" must not flip the
+    // pill to "Reloaded" or bump the generation — nothing actually rebound.
+    let monitor = makeMonitor()
+    monitor.arm()
+    var rebuilds: [String] = []
+    monitor.onRequestRebuild = { rebuilds.append($0) }
+
+    monitor.handle(sourceChanges: [.injectable(path: "/p/HomeView.swift")])
+    monitor.handle(engineEvent: .injectionFailed(
+      message: "App wasn't built with injection support — rebuilding"))
+    #expect(rebuilds.count == 1)
+    #expect(monitor.phase == .rebuilding(
+      reason: "App wasn't built with injection support — rebuilding"))
+
+    monitor.handle(engineEvent: .injected(summary: "Hot reload complete - Rebound 0 symbols"))
+    #expect(monitor.phase == .rebuilding(
+      reason: "App wasn't built with injection support — rebuilding"))
+    #expect(monitor.reloadGeneration == 0)
+
+    monitor.markRebuildFinished(success: true)
+    #expect(monitor.phase == .idle)
+    #expect(monitor.reloadGeneration == 1)
+  }
+
   @Test("engine activity extends the reload deadline past the base timeout")
   func engineActivityExtendsDeadline() async throws {
     let monitor = makeMonitor()

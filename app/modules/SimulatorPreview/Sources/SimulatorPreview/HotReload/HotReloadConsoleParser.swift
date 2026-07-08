@@ -57,8 +57,14 @@ public struct HotReloadConsoleParser: Sendable {
     }
 
     // "🔥 ℹ️ No symbols replaced, have you added -Xlinker -interposable …"
+    // The running binary wasn't linked with -interposable (e.g. it was
+    // launched from a plain build and only armed at relaunch): the engine
+    // keeps compiling dylibs but nothing ever rebinds into the app, so
+    // every "reload" is a silent no-op. Only a full armed rebuild fixes the
+    // binary — treat it as a failed injection so the fallback fires.
     if trimmed.contains("No symbols replaced") {
-      return .warning(message: "Injection loaded but no symbols were replaced")
+      return .injectionFailed(
+        message: "App wasn't built with injection support — rebuilding")
     }
 
     // ── Tolerant fallbacks (drift insurance; see the type comment) ──────

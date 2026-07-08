@@ -279,7 +279,12 @@ host-side (`HotReloadConsoleTail`, kqueue + byte offsets) whenever **either**
 dylib is inserted — previews-only launches tail too, for the host status
 lines. `HotReloadConsoleParser` turns InjectionLite's `🔥` lines into events:
 `✅ Hot reload complete` → injected, `❌ Compilation failed` / `⚠️ Could not
-locate command` / type-size-changed → rebuild fallback. The exact pinned
+locate command` / type-size-changed / `ℹ️ No symbols replaced …
+-interposable` → rebuild fallback. The last one matters: it means the
+running binary was never linked with `-interposable` (e.g. launched plain
+and armed only at relaunch), so injections compile but can never rebind —
+the automatic armed rebuild is the only honest fix, and the stray `✅` the
+engine prints right after is ignored while the rebuild runs. The exact pinned
 strings are matched first; tolerant 🔥-prefixed fallbacks are drift insurance
 so a wording change in a future pin can't silently degrade every save into
 timeout → full rebuild. The reload timeout is evidence-based: 12s with no
@@ -299,11 +304,14 @@ by the Settings toggle: when disabled, the Previews tab is hidden, preview
 candidate tracking is stopped, and future panel launches omit the preview-host
 dylib. Live simulator streaming remains available.
 
-The Previews tab (`SimulatorPreviewSpotlightView`) is deliberately bounded:
-it shows the open Swift file first, then recent changed files, deduplicated
-and capped. One matching preview renders as a large spotlight; several matches
-render as a small grid, and the user can expand any preview so it stays pinned
-until minimized. The tab is **self-healing and self-starting**: previews live
+The Previews tab (`SimulatorPreviewSpotlightView`) is deliberately narrow:
+candidates come from at most **two files — the open Swift file and the most
+recently changed file** (`candidateFileNames`, unit-tested). Never the whole
+recent-change history: with several git-modified files the seed would
+otherwise flood the tab with unrelated previews. One matching preview renders
+as a large spotlight; several matches (e.g. multiple `#Preview`s in one file)
+render as a small grid, and the user can expand any preview so it stays
+pinned until minimized. The tab is **self-healing and self-starting**: previews live
 inside the app's process (they follow the armed process, not the device picker).
 Switching to the tab — or opening a Swift file while on it — auto-runs the
 play flow when there's something to show: a cold device gets a full

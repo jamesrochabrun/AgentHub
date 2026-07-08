@@ -46,11 +46,13 @@ struct HotReloadConsoleParserTests {
       .injectionFailed(message: "Stored-property layout changed — rebuilding"))
   }
 
-  @Test("missing interposable flag surfaces as warning")
+  @Test("missing interposable flag is a failed injection, not a warning")
   func noSymbolsReplaced() {
+    // A binary without -interposable can never rebind injected code — every
+    // "reload" would be a silent no-op. Only the rebuild fallback fixes it.
     let line = "🔥 ℹ️ No symbols replaced, have you added -Xlinker -interposable to your project?"
     #expect(parser.parse(line: line) ==
-      .warning(message: "Injection loaded but no symbols were replaced"))
+      .injectionFailed(message: "App wasn't built with injection support — rebuilding"))
   }
 
   @Test("generic engine warning becomes a warning event")

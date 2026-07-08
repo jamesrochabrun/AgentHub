@@ -130,6 +130,10 @@ public final class HotReloadMonitor {
 
     case .injected(let summary):
       guard isArmed else { return }
+      // A stray "✅" right after a failure-triggered rebuild started (the
+      // engine prints the pair warning→complete) must not flip the pill to
+      // "Reloaded" — the rebuild bumps the generation when it finishes.
+      if case .rebuilding = phase { return }
       cancelTimers()
       reloadGeneration += 1
       phase = .reloaded(summary: summary)

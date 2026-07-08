@@ -110,16 +110,30 @@ struct SimulatorPreviewSpotlightView: View {
 
   // MARK: - Candidates
 
-  /// Open-file previews first, then changed files by recency, deduplicated
-  /// and bounded.
-  private var candidates: [SimulatorPreviewSelection] {
+  /// The spotlight deliberately shows previews for ONLY two files: the one
+  /// open in the editor and the most recently modified one — never the
+  /// whole recent-change history, which floods the tab with previews of
+  /// every file touched this session (e.g. all git-modified files from the
+  /// seed).
+  static func candidateFileNames(
+    openFileName: String?,
+    changedFiles: [String]
+  ) -> [String] {
     var fileNames: [String] = []
     if let openFileName, openFileName.hasSuffix(".swift") {
       fileNames.append(openFileName)
     }
-    for file in changedFiles where !fileNames.contains(file) {
-      fileNames.append(file)
+    if let latestChange = changedFiles.first, !fileNames.contains(latestChange) {
+      fileNames.append(latestChange)
     }
+    return fileNames
+  }
+
+  private var candidates: [SimulatorPreviewSelection] {
+    let fileNames = Self.candidateFileNames(
+      openFileName: openFileName,
+      changedFiles: changedFiles
+    )
 
     var selections: [SimulatorPreviewSelection] = []
     for file in fileNames {
