@@ -30,6 +30,18 @@ When a physical device is selected, keep the panel quiet: do not warm
 hot-reload artifacts, start preview source watchers, arm the preview host, or
 display simulator-only hot-reload state.
 
+**Run destinations are project/worktree-scoped.** `SimulatorDestinationResolver`
+resolves the panel's device from the explicit in-panel selection, then the
+project's persisted preference — and deliberately nothing else: with no
+association the panel shows a "Choose a Run Destination" picker rather than
+adopting another project's booted simulator or a random connected phone.
+Preferences are keyed by `projectPath` (worktrees are distinct paths, so each
+worktree remembers its own device) and persisted in `SessionMetadataStore`
+(`project_simulator_preferences`, hydrated into `SimulatorService` at launch),
+so they survive app relaunches. Do not reintroduce global
+`bootedDevices.first`-style fallbacks — that was the "project A shows
+project B's simulator" bug.
+
 ## Annotation feedback (element-aware pins sent to the agent)
 
 The header's **Annotate** toggle pauses tap forwarding and reads the frontmost

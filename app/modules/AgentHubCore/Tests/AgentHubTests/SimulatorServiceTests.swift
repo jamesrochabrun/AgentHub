@@ -469,3 +469,115 @@ struct BuildHelperTests {
     try data.write(to: app.appendingPathComponent("Info.plist"))
   }
 }
+
+// MARK: - Preference persistence
+
+/// Mock persistence backend recording calls in order.
+private final class MockSimulatorPreferenceStore: SimulatorPreferencePersisting, @unchecked Sendable {
+  enum Call: Equatable {
+    case save(ProjectSimulatorPreference)
+    case delete(String)
+  }
+
+  private let lock = NSLock()
+  private var _calls: [Call] = []
+  var seeded: [ProjectSimulatorPreference] = []
+
+  var calls: [Call] {
+    lock.withLock { _calls }
+  }
+
+  func getProjectSimulatorPreferences() async throws -> [ProjectSimulatorPreference] {
+    seeded
+  }
+
+  func setProjectSimulatorPreference(_ preference: ProjectSimulatorPreference) async throws {
+    lock.withLock { _calls.append(.save(preference)) }
+  }
+
+  func deleteProjectSimulatorPreference(projectPath: String) async throws {
+    lock.withLock { _calls.append(.delete(projectPath)) }
+  }
+}
+
+@Suite("SimulatorService preference persistence")
+@MainActor
+struct SimulatorServicePreferencePersistenceTests {
+
+  @Test func settingSimulatorPersistsPreference() async {
+    let store = MockSimulatorPreferenceStore()
+    let service = SimulatorService.makeForTesting()
+    service.configurePreferenceStore(store)
+    await service.ensurePreferencesLoaded()
+    let path = "/tmp/persist-test-\(UUID().uuidString)"
+
+    service.setPreferredSimulator(udid: "UDID-1", for: path)
+    service.setPreferredPhysicalDevice(identifier: nil, for: path)
+    await service.flushPreferencePersistence()
+
+    let saves = store.calls.compactMap { call -> ProjectSimulatorPreference? in
+      if case .save(let preference) = call, preference.projectPath == path { return preference }
+      return nil
+    }
+    #expect(saves.last?.deviceIdentifier == "UDID-1")
+    #expect(saves.last?.kind == .simulator)
+  }
+
+  @Test func switchingToPhysicalPersistsPhysicalKind() async {
+    let store = MockSimulatorPreferenceStore()
+    let service = SimulatorService.makeForTesting()
+    service.configurePreferenceStore(store)
+    await service.ensurePreferencesLoaded()
+    let path = "/tmp/persist-test-\(UUID().uuidString)"
+
+    service.setPreferredSimulator(udid: "UDID-1", for: path)
+    service.setPreferredPhysicalDevice(identifier: nil, for: path)
+    service.setPreferredPhysicalDevice(identifier: "PHONE-1", for: path)
+    service.setPreferredSimulator(udid: nil, for: path)
+    await service.flushPreferencePersistence()
+
+    guard case .save(let last)? = store.calls.last(where: {
+      if case .save(let preference) = $0 { return preference.projectPath == path }
+      return false
+    }) else {
+      Issue.record("expected a save call")
+      return
+    }
+    #expect(last.deviceIdentifier == "PHONE-1")
+    #expect(last.kind == .physical)
+  }
+
+  @Test func clearingBothSidesDeletesPreference() async {
+    let store = MockSimulatorPreferenceStore()
+    let service = SimulatorService.makeForTesting()
+    service.configurePreferenceStore(store)
+    await service.ensurePreferencesLoaded()
+    let path = "/tmp/persist-test-\(UUID().uuidString)"
+
+    service.setPreferredSimulator(udid: "UDID-1", for: path)
+    service.setPreferredSimulator(udid: nil, for: path)
+    await service.flushPreferencePersistence()
+
+    #expect(store.calls.last == .delete(path))
+  }
+
+  @Test func hydrationPopulatesDictionariesWithoutOverridingLiveSelections() async {
+    let service = SimulatorService.makeForTesting()
+    let persistedPath = "/tmp/hydrate-test-\(UUID().uuidString)"
+    let livePath = "/tmp/live-test-\(UUID().uuidString)"
+    service.setPreferredSimulator(udid: "LIVE-UDID", for: livePath)
+
+    let store = MockSimulatorPreferenceStore()
+    store.seeded = [
+      ProjectSimulatorPreference(projectPath: persistedPath, deviceIdentifier: "SAVED-UDID", kind: .simulator),
+      ProjectSimulatorPreference(projectPath: livePath, deviceIdentifier: "STALE-UDID", kind: .physical)
+    ]
+    service.configurePreferenceStore(store)
+    await service.ensurePreferencesLoaded()
+
+    #expect(service.preferredSimulatorUDIDs[persistedPath] == "SAVED-UDID")
+    #expect(service.preferredSimulatorUDIDs[livePath] == "LIVE-UDID")
+    #expect(service.preferredPhysicalDeviceIDs[livePath] == nil)
+    #expect(service.preferencesLoaded)
+  }
+}

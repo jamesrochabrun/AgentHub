@@ -25,6 +25,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     static let createClaudeHookInstallations = "v8_create_claude_hook_installations"
     static let addOwnedWorktreePaths = "v9_add_owned_worktree_paths"
     static let createSessionRelationships = "v10_create_session_relationships"
+    static let createProjectSimulatorPreferences = "v11_create_project_simulator_preferences"
   }
 
   static let migrationIdentifiers = [
@@ -37,7 +38,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     MigrationID.createManagedProcesses,
     MigrationID.createClaudeHookInstallations,
     MigrationID.addOwnedWorktreePaths,
-    MigrationID.createSessionRelationships
+    MigrationID.createSessionRelationships,
+    MigrationID.createProjectSimulatorPreferences
   ]
 
   private let dbQueue: DatabaseQueue
@@ -191,6 +193,15 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       )
     }
 
+    migrator.registerMigration(MigrationID.createProjectSimulatorPreferences) { db in
+      try db.create(table: "project_simulator_preferences") { t in
+        t.column("projectPath", .text).primaryKey(onConflict: .replace)
+        t.column("deviceIdentifier", .text).notNull()
+        t.column("kind", .text).notNull()
+        t.column("updatedAt", .datetime).notNull()
+      }
+    }
+
     return migrator
   }
 
@@ -291,6 +302,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       _ = try ClaudeHookInstallationRecord.deleteAll(db)
       _ = try ManagedProcessRecord.deleteAll(db)
       _ = try SessionRelationshipRecord.deleteAll(db)
+      _ = try ProjectSimulatorPreference.deleteAll(db)
       _ = try AIConfigRecord.deleteAll(db)
       _ = try SessionRepoMapping.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
@@ -537,6 +549,29 @@ extension SessionMetadataStore: SessionRelationshipStoreProtocol {
         .filter(Column("targetSessionId") == targetSessionId)
         .filter(Column("kind") == kind.rawValue)
         .deleteAll(db)
+    }
+  }
+
+  // MARK: - Project Simulator Preferences
+
+  /// Gets all persisted run-destination preferences, keyed one row per project path
+  public func getProjectSimulatorPreferences() throws -> [ProjectSimulatorPreference] {
+    try dbQueue.read { db in
+      try ProjectSimulatorPreference.fetchAll(db)
+    }
+  }
+
+  /// Saves the run destination for a project path (replaces any prior row)
+  public func setProjectSimulatorPreference(_ preference: ProjectSimulatorPreference) throws {
+    try dbQueue.write { db in
+      try preference.save(db)
+    }
+  }
+
+  /// Deletes the run-destination preference for a project path
+  public func deleteProjectSimulatorPreference(projectPath: String) throws {
+    try dbQueue.write { db in
+      _ = try ProjectSimulatorPreference.deleteOne(db, key: projectPath)
     }
   }
 }
