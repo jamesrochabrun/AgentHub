@@ -5,6 +5,8 @@ struct SimulatorRecordingAuditComposerView: View {
   @Binding var issue: String
   let onSend: () -> Void
 
+  @State private var isSendHovered = false
+
   private var trimmedIssue: String {
     issue.trimmingCharacters(in: .whitespacesAndNewlines)
   }
@@ -33,19 +35,26 @@ struct SimulatorRecordingAuditComposerView: View {
         Button(action: onSend) {
           HStack(spacing: 6) {
             Image(systemName: "paperplane.fill")
+              .font(.system(size: 11, weight: .semibold))
             Text("Send")
-            Text("⌘ Return")
-              .font(.caption2.monospaced().weight(.semibold))
-              .padding(.horizontal, 5)
-              .padding(.vertical, 2)
-              .background(Color.white.opacity(0.18), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+              .font(.system(size: 12, weight: .semibold))
           }
+          .foregroundStyle(.white)
+          .padding(.horizontal, 12)
+          .padding(.vertical, 6)
+          .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+              .fill(Color.brandPrimary)
+              .brightness(isSendHovered ? 0.06 : 0)
+          )
+          .opacity(canSend ? 1 : 0.5)
+          .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
-        .buttonStyle(.borderedProminent)
-        .controlSize(.small)
-        .tint(Color.brandPrimary)
+        .buttonStyle(.plain)
+        .onHover { isSendHovered = $0 }
         .disabled(!canSend)
         .keyboardShortcut(.return, modifiers: [.command])
+        .help(canSend ? "Send recording to the agent (⌘↵)" : "Describe what the agent should audit before sending")
         .accessibilityLabel("Send recording audit")
         .accessibilityHint("Sends with Command Return")
       }

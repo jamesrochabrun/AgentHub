@@ -76,6 +76,35 @@ struct SimulatorRecordingServiceTests {
     #expect(result.validationError?.contains("did not stop gracefully") == true)
   }
 
+  @Test("Forced stop keeps a finalized recording usable")
+  func forcedStopKeepsFinalizedRecordingUsable() async throws {
+    let directory = try temporarySimulatorRecordingDirectory()
+    defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+
+    let process = MockRecordingProcess(exitsOnInterrupt: false)
+    let service = SimulatorRecordingService(
+      runner: MockRecordingRunner(process: process),
+      dateProvider: { Date(timeIntervalSince1970: 1_000) },
+      gracefulStopTimeout: .zero,
+      forcedStopTimeout: .zero,
+      finalizationTimeout: .zero,
+      pollingInterval: .zero
+    )
+
+    let started = try await service.startRecording(
+      udid: "UDID-1",
+      outputDirectory: directory,
+      fileName: "forced-but-finalized"
+    )
+    try minimalMP4Data().write(to: URL(fileURLWithPath: started.outputPath))
+    let result = try await service.stopRecording(udid: "UDID-1")
+
+    #expect(process.terminateCallCount == 1)
+    #expect(result.isFinalized == true)
+    #expect(result.validationError == nil)
+    #expect(result.isUsable == true)
+  }
+
   @Test("Stop reports incomplete MP4 when moov atom is missing")
   func stopReportsMissingMoovAtom() async throws {
     let directory = try temporarySimulatorRecordingDirectory()

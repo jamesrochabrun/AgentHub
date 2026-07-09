@@ -412,6 +412,19 @@ Manual recording remains an AgentHub side-panel feature only. The record button
 uses `SimulatorRecordingService` from the app UI and there is intentionally no
 agent-facing recording tool in AgentHub's MCP server.
 
+The recording audit flow assumes the agent **cannot decode video**: after a
+recording stops and validates, `SimulatorRecordingFrameSampler` (AVFoundation,
+no ffmpeg dependency) extracts up to 10 evenly spaced JPEG frames into a
+sibling `<recording>-frames/` directory, and the audit prompt lists those frame
+paths as directly readable images — ffmpeg/ffprobe is mentioned only as an
+optional finer-timing tool. Deleting a recording
+(`SimulatorRecordingService.deleteRecordingFile`) also removes its frames
+directory. A recording whose MP4 validates as finalized stays usable even if
+the recorder process needed a forced stop; only an unfinalized file or a
+recorder that never exited fails the recording. Sending the audit dismisses the
+composer and shows a transient "Sent to agent" pill — the MP4 and frames stay
+on disk because the agent reads them from the prompt paths.
+
 ## Auto Build & Run on code changes
 
 Settings → iOS Simulator → **Auto Build & Run on code changes** (default on,

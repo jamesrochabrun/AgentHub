@@ -56,8 +56,9 @@ struct SimulatorPreviewSidePanelView: View {
   @State private var annotationRefreshTask: Task<Void, Never>?
   @State private var recordingState: SimulatorRecordingPanelState = .idle
   @State private var lastRecordingResult: SimulatorRecordingResult?
+  @State private var lastRecordingFrameSample: SimulatorRecordingFrameSample?
   @State private var recordingAuditIssue = ""
-  @State private var recordingFailureDismissTask: Task<Void, Never>?
+  @State private var recordingTransientDismissTask: Task<Void, Never>?
   @State private var streamRefreshGeneration = 0
   /// The failure message the user explicitly dismissed; the banner stays
   /// hidden for that exact message but reappears for any new/different error.
@@ -65,6 +66,7 @@ struct SimulatorPreviewSidePanelView: View {
 
   private let simulatorContextStore = SimulatorSessionContextStore()
   private let simulatorRecordingService = SimulatorRecordingService.shared
+  private let recordingFrameSampler: any SimulatorRecordingFrameSampling = SimulatorRecordingFrameSampler()
 
   @AppStorage(AgentHubDefaults.simulatorPreviewsEnabled)
   private var simulatorPreviewsEnabled: Bool = true
@@ -255,7 +257,7 @@ struct SimulatorPreviewSidePanelView: View {
       hotReload.sessionDidStop()
       removeSimulatorContext()
       stopRecordingOnPanelClose()
-      recordingFailureDismissTask?.cancel()
+      recordingTransientDismissTask?.cancel()
     }
     .task(id: simulatorContextSignature) {
       persistSimulatorContext()
@@ -1001,7 +1003,7 @@ struct SimulatorPreviewSidePanelView: View {
     switch recordingState {
     case .recording:
       return "stop.fill"
-    case .idle, .starting, .stopping, .failed:
+    case .idle, .starting, .stopping, .sent, .failed:
       return "record.circle"
     }
   }
@@ -1024,14 +1026,14 @@ struct SimulatorPreviewSidePanelView: View {
       return true
     case .recording:
       return false
-    case .idle, .failed:
+    case .idle, .sent, .failed:
       return activeUDID == nil || !isActiveDeviceBooted
     }
   }
 
   private var recordingOverlayAllowsHitTesting: Bool {
     switch recordingState {
-    case .starting, .stopping:
+    case .starting, .stopping, .sent:
       return false
     case .recording:
       return true
@@ -1069,8 +1071,9 @@ struct SimulatorPreviewSidePanelView: View {
 
   private func startRecording() {
     guard let activeUDID else { return }
-    recordingFailureDismissTask?.cancel()
+    recordingTransientDismissTask?.cancel()
     lastRecordingResult = nil
+    lastRecordingFrameSample = nil
     recordingAuditIssue = ""
     recordingState = .starting
 
@@ -1094,12 +1097,21 @@ struct SimulatorPreviewSidePanelView: View {
         let result = try await simulatorRecordingService.stopRecording(udid: recording.udid)
         refreshLiveStreamAfterRecordingEvent(udid: recording.udid)
         if result.isUsable {
+          // Pre-extract frames while still "Finishing recording" so the audit
+          // prompt can point the agent at images it can always read, even
+          // when ffmpeg/ffprobe aren't installed.
+          let frameSample = await recordingFrameSampler.sampleFrames(
+            fromVideoAt: result.outputPath,
+            maxFrames: SimulatorRecordingFrameSampler.defaultMaxFrames
+          )
           recordingAuditIssue = ""
           lastRecordingResult = result
+          lastRecordingFrameSample = frameSample
           recordingState = .idle
         } else {
           try? SimulatorRecordingService.deleteRecordingFile(at: result.outputPath)
           lastRecordingResult = nil
+          lastRecordingFrameSample = nil
           recordingAuditIssue = ""
           presentRecordingFailure(result.validationError ?? "Recording did not finalize. Try recording again.")
         }
@@ -1130,10 +1142,32 @@ struct SimulatorPreviewSidePanelView: View {
     let prompt = SimulatorRecordingPromptBuilder.prompt(
       for: recording,
       deviceName: activeDevice?.name,
-      issue: trimmedIssue
+      issue: trimmedIssue,
+      sampledFrames: lastRecordingFrameSample
     )
     onSendToSession(prompt, session)
+
+    // The recording and its sampled frames stay on disk — the agent reads
+    // them from the prompt paths. Only the overlay UI is dismissed.
     recordingAuditIssue = ""
+    lastRecordingResult = nil
+    lastRecordingFrameSample = nil
+    presentRecordingSentConfirmation(outputPath: recording.outputPath)
+  }
+
+  private func presentRecordingSentConfirmation(outputPath: String) {
+    recordingTransientDismissTask?.cancel()
+    recordingState = .sent(outputPath: outputPath)
+    recordingTransientDismissTask = Task {
+      try? await Task.sleep(for: .seconds(4))
+      guard !Task.isCancelled else { return }
+      await MainActor.run {
+        if case .sent(let currentPath) = recordingState, currentPath == outputPath {
+          recordingState = .idle
+        }
+        recordingTransientDismissTask = nil
+      }
+    }
   }
 
   private func revealRecording(_ recording: SimulatorRecordingResult) {
@@ -1143,18 +1177,22 @@ struct SimulatorPreviewSidePanelView: View {
   }
 
   private func dismissRecordingOverlay() {
-    recordingFailureDismissTask?.cancel()
-    recordingFailureDismissTask = nil
+    recordingTransientDismissTask?.cancel()
+    recordingTransientDismissTask = nil
     lastRecordingResult = nil
+    lastRecordingFrameSample = nil
     recordingAuditIssue = ""
-    if case .failed = recordingState {
+    switch recordingState {
+    case .failed, .sent:
       recordingState = .idle
+    case .idle, .starting, .recording, .stopping:
+      break
     }
   }
 
   private func discardRecordingOverlay() {
-    recordingFailureDismissTask?.cancel()
-    recordingFailureDismissTask = nil
+    recordingTransientDismissTask?.cancel()
+    recordingTransientDismissTask = nil
 
     if let recording = recordingState.activeRecording {
       recordingState = .stopping(recording)
@@ -1167,6 +1205,7 @@ struct SimulatorPreviewSidePanelView: View {
         }
         refreshLiveStreamAfterRecordingEvent(udid: recording.udid)
         lastRecordingResult = nil
+        lastRecordingFrameSample = nil
         recordingAuditIssue = ""
         recordingState = .idle
       }
@@ -1182,25 +1221,30 @@ struct SimulatorPreviewSidePanelView: View {
     }
 
     lastRecordingResult = nil
+    lastRecordingFrameSample = nil
     recordingAuditIssue = ""
-    if case .failed = recordingState {
+    switch recordingState {
+    case .failed, .sent:
       recordingState = .idle
+    case .idle, .starting, .recording, .stopping:
+      break
     }
   }
 
   private func presentRecordingFailure(_ message: String) {
-    recordingFailureDismissTask?.cancel()
+    recordingTransientDismissTask?.cancel()
     lastRecordingResult = nil
+    lastRecordingFrameSample = nil
     recordingAuditIssue = ""
     recordingState = .failed(message)
-    recordingFailureDismissTask = Task {
+    recordingTransientDismissTask = Task {
       try? await Task.sleep(for: .seconds(5))
       guard !Task.isCancelled else { return }
       await MainActor.run {
         if case .failed(let currentMessage) = recordingState, currentMessage == message {
           recordingState = .idle
         }
-        recordingFailureDismissTask = nil
+        recordingTransientDismissTask = nil
       }
     }
   }

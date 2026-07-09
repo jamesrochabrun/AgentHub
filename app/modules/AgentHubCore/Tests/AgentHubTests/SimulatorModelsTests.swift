@@ -225,6 +225,27 @@ struct SimulatorBuildErrorPromptBuilderTests {
   }
 }
 
+// MARK: - SimulatorRecordingPanelState
+
+@Suite("SimulatorRecordingPanelState")
+struct SimulatorRecordingPanelStateTests {
+  @Test func sentStateIsNeitherBusyNorRecording() {
+    let state = SimulatorRecordingPanelState.sent(outputPath: "/tmp/demo.mp4")
+
+    #expect(state.isBusy == false)
+    #expect(state.isRecording == false)
+    #expect(state.activeRecording == nil)
+  }
+
+  @Test func sentStateEqualityComparesOutputPath() {
+    #expect(SimulatorRecordingPanelState.sent(outputPath: "/tmp/a.mp4")
+      == .sent(outputPath: "/tmp/a.mp4"))
+    #expect(SimulatorRecordingPanelState.sent(outputPath: "/tmp/a.mp4")
+      != .sent(outputPath: "/tmp/b.mp4"))
+    #expect(SimulatorRecordingPanelState.sent(outputPath: "/tmp/a.mp4") != .idle)
+  }
+}
+
 // MARK: - SimulatorRecordingPromptBuilder
 
 @Suite("SimulatorRecordingPromptBuilder")
@@ -251,6 +272,59 @@ struct SimulatorRecordingPromptBuilderTests {
     #expect(prompt.contains("ffprobe or ffmpeg"))
     #expect(prompt.contains("Device: iPhone 17 Pro"))
     #expect(prompt.contains("Duration: 12.0 seconds"))
+  }
+
+  @Test func listsSampledFramesWhenAvailable() {
+    let prompt = SimulatorRecordingPromptBuilder.prompt(
+      for: SimulatorRecordingResult(
+        udid: "UDID-1",
+        outputPath: "/tmp/demo.mp4",
+        startedAt: Date(timeIntervalSince1970: 1_000),
+        endedAt: Date(timeIntervalSince1970: 1_012),
+        duration: 12,
+        fileExists: true,
+        fileSizeBytes: 1_024,
+        isFinalized: true,
+        validationError: nil
+      ),
+      deviceName: nil,
+      issue: "The tab bar flickers while scrolling.",
+      sampledFrames: SimulatorRecordingFrameSample(
+        directory: "/tmp/demo-frames",
+        framePaths: [
+          "/tmp/demo-frames/frame-01-0.0s.jpg",
+          "/tmp/demo-frames/frame-02-6.0s.jpg",
+        ]
+      )
+    )
+
+    #expect(prompt.contains("/tmp/demo.mp4"))
+    #expect(prompt.contains("/tmp/demo-frames/frame-01-0.0s.jpg"))
+    #expect(prompt.contains("/tmp/demo-frames/frame-02-6.0s.jpg"))
+    #expect(prompt.contains("read these directly as images"))
+    #expect(prompt.contains("only if you need finer timing"))
+  }
+
+  @Test func fallsBackToFFmpegGuidanceWithoutSampledFrames() {
+    let prompt = SimulatorRecordingPromptBuilder.prompt(
+      for: SimulatorRecordingResult(
+        udid: "UDID-1",
+        outputPath: "/tmp/demo.mp4",
+        startedAt: Date(timeIntervalSince1970: 1_000),
+        endedAt: Date(timeIntervalSince1970: 1_012),
+        duration: 12,
+        fileExists: true,
+        fileSizeBytes: 1_024,
+        isFinalized: true,
+        validationError: nil
+      ),
+      deviceName: nil,
+      issue: "The tab bar flickers while scrolling.",
+      sampledFrames: nil
+    )
+
+    #expect(prompt.contains("Use ffprobe or ffmpeg to inspect timing and sampled frames"))
+    #expect(!prompt.contains("read these directly as images"))
   }
 
   @Test func explainsWhenRecordingIsNotFinalized() {
