@@ -12,6 +12,46 @@ public enum CLICommandMode: String, Codable, Sendable {
   case codex
 }
 
+public struct XcodeBuildMCPBootstrap: Equatable, Sendable {
+  public var workingDirectory: String
+  public var projectPath: String?
+  public var workspacePath: String?
+  public var simulatorUDID: String?
+  public var enabledWorkflows: String
+
+  public init(
+    workingDirectory: String,
+    projectPath: String? = nil,
+    workspacePath: String? = nil,
+    simulatorUDID: String? = nil,
+    enabledWorkflows: String = "simulator,ui-automation"
+  ) {
+    self.workingDirectory = workingDirectory
+    self.projectPath = projectPath
+    self.workspacePath = workspacePath
+    self.simulatorUDID = simulatorUDID
+    self.enabledWorkflows = enabledWorkflows
+  }
+
+  var environment: [String: String] {
+    var values = [
+      "XCODEBUILDMCP_CWD": workingDirectory,
+      "XCODEBUILDMCP_ENABLED_WORKFLOWS": enabledWorkflows,
+      "XCODEBUILDMCP_PLATFORM": "iOS Simulator",
+      "XCODEBUILDMCP_SENTRY_DISABLED": "true"
+    ]
+    if let workspacePath, !workspacePath.isEmpty {
+      values["XCODEBUILDMCP_WORKSPACE_PATH"] = workspacePath
+    } else if let projectPath, !projectPath.isEmpty {
+      values["XCODEBUILDMCP_PROJECT_PATH"] = projectPath
+    }
+    if let simulatorUDID, !simulatorUDID.isEmpty {
+      values["XCODEBUILDMCP_SIMULATOR_ID"] = simulatorUDID
+    }
+    return values
+  }
+}
+
 public struct CLICommandConfiguration: Codable, Sendable {
   public var command: String
   public var additionalPaths: [String]
@@ -80,6 +120,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
     allowedTools: [String]? = nil,
     disallowedTools: [String]? = nil,
     codexApprovalPolicy: String? = nil,
+    xcodeBuildMCPBootstrap: XcodeBuildMCPBootstrap? = nil,
     appendSystemPrompt: String? = nil
   ) -> [String] {
     let prefix = normalizedPrefixArguments()
@@ -90,8 +131,14 @@ public struct CLICommandConfiguration: Codable, Sendable {
 
       let isNewSession = sessionId == nil || sessionId?.isEmpty == true || sessionId?.hasPrefix("pending-") == true
 
-      if let agentHubMCPServerPath, !agentHubMCPServerPath.isEmpty {
-        providerArgs += ["--mcp-config", claudeMCPConfig(agentHubCLIPath: agentHubMCPServerPath)]
+      if shouldConfigureMCP(agentHubCLIPath: agentHubMCPServerPath, xcodeBuildMCP: xcodeBuildMCPBootstrap) {
+        providerArgs += [
+          "--mcp-config",
+          claudeMCPConfig(
+            agentHubCLIPath: agentHubMCPServerPath,
+            xcodeBuildMCP: xcodeBuildMCPBootstrap
+          )
+        ]
       }
 
       // Add flags only for NEW sessions (not resume)
@@ -147,16 +194,25 @@ public struct CLICommandConfiguration: Codable, Sendable {
       if let sessionId, !sessionId.isEmpty, !sessionId.hasPrefix("pending-") {
         // Codex CLI resume: codex resume <SESSION_ID>
         var providerArgs: [String] = []
-        if let agentHubMCPServerPath, !agentHubMCPServerPath.isEmpty {
-          providerArgs += codexMCPConfigArgs(agentHubCLIPath: agentHubMCPServerPath)
+        if shouldConfigureMCP(agentHubCLIPath: agentHubMCPServerPath, xcodeBuildMCP: xcodeBuildMCPBootstrap) {
+          providerArgs += codexMCPConfigArgs(
+            agentHubCLIPath: agentHubMCPServerPath,
+            xcodeBuildMCP: xcodeBuildMCPBootstrap
+          )
         }
         return assembleArguments(prefix: prefix, providerArgs: providerArgs, trailingArgs: ["resume", sessionId])
       }
 
       // AI configuration flags for new Codex sessions
       var providerArgs: [String] = []
-      if let agentHubMCPServerPath, !agentHubMCPServerPath.isEmpty {
-        providerArgs += codexMCPConfigArgs(agentHubCLIPath: agentHubMCPServerPath)
+      if shouldConfigureMCP(agentHubCLIPath: agentHubMCPServerPath, xcodeBuildMCP: xcodeBuildMCPBootstrap) {
+        providerArgs += codexMCPConfigArgs(
+          agentHubCLIPath: agentHubMCPServerPath,
+          xcodeBuildMCP: xcodeBuildMCPBootstrap
+        )
+      }
+      if let appendSystemPrompt, !appendSystemPrompt.isEmpty {
+        providerArgs += ["-c", "developer_instructions=\(tomlStringLiteral(appendSystemPrompt))"]
       }
       if let model, !model.isEmpty {
         providerArgs += ["--model", model]
@@ -284,15 +340,29 @@ public struct CLICommandConfiguration: Codable, Sendable {
     URL(fileURLWithPath: executableName).lastPathComponent != nativeProviderExecutableName
   }
 
-  private func claudeMCPConfig(agentHubCLIPath: String) -> String {
-    let config: [String: Any] = [
-      "mcpServers": [
-        "agenthub": [
-          "command": "/bin/sh",
-          "args": ["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]
-        ]
+  private func shouldConfigureMCP(
+    agentHubCLIPath: String?,
+    xcodeBuildMCP: XcodeBuildMCPBootstrap?
+  ) -> Bool {
+    agentHubCLIPath?.isEmpty == false || xcodeBuildMCP != nil
+  }
+
+  private func claudeMCPConfig(
+    agentHubCLIPath: String?,
+    xcodeBuildMCP: XcodeBuildMCPBootstrap?
+  ) -> String {
+    var servers: [String: Any] = [:]
+    if let agentHubCLIPath, !agentHubCLIPath.isEmpty {
+      servers["agenthub"] = [
+        "command": "/bin/sh",
+        "args": ["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]
       ]
-    ]
+    }
+    if let xcodeBuildMCP {
+      servers["XcodeBuildMCP"] = xcodeBuildMCPServerConfig(xcodeBuildMCP)
+    }
+
+    let config: [String: Any] = ["mcpServers": servers]
     guard let data = try? JSONSerialization.data(withJSONObject: config),
           let encoded = String(data: data, encoding: .utf8) else {
       return "{}"
@@ -300,11 +370,28 @@ public struct CLICommandConfiguration: Codable, Sendable {
     return encoded
   }
 
-  private func codexMCPConfigArgs(agentHubCLIPath: String) -> [String] {
-    [
-      "-c", "mcp_servers.agenthub.command=\(tomlStringLiteral("/bin/sh"))",
-      "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]))"
-    ]
+  private func codexMCPConfigArgs(
+    agentHubCLIPath: String?,
+    xcodeBuildMCP: XcodeBuildMCPBootstrap?
+  ) -> [String] {
+    var args: [String] = []
+    if let agentHubCLIPath, !agentHubCLIPath.isEmpty {
+      args += [
+        "-c", "mcp_servers.agenthub.command=\(tomlStringLiteral("/bin/sh"))",
+        "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]))"
+      ]
+    }
+    if let xcodeBuildMCP {
+      args += [
+        "-c", "mcp_servers.XcodeBuildMCP.command=\(tomlStringLiteral("/bin/zsh"))",
+        "-c", "mcp_servers.XcodeBuildMCP.args=\(tomlStringArray(["-lc", xcodeBuildMCPShellScript()]))",
+        "-c", "mcp_servers.XcodeBuildMCP.tool_timeout_sec=600"
+      ]
+      for (key, value) in xcodeBuildMCP.environment.sorted(by: { $0.key < $1.key }) {
+        args += ["-c", "mcp_servers.XcodeBuildMCP.env.\(key)=\(tomlStringLiteral(value))"]
+      }
+    }
+    return args
   }
 
   private func mcpServerShellScript(agentHubCLIPath: String) -> String {
@@ -313,6 +400,26 @@ public struct CLICommandConfiguration: Codable, Sendable {
     if [ -n "${AGENTHUB_CLI:-}" ] && [ -x "${AGENTHUB_CLI:-}" ]; then exec "$AGENTHUB_CLI" mcp-server; fi
     if [ -x \(escapedCLIPath) ]; then exec \(escapedCLIPath) mcp-server; fi
     exec agenthub mcp-server
+    """
+  }
+
+  private func xcodeBuildMCPServerConfig(_ bootstrap: XcodeBuildMCPBootstrap) -> [String: Any] {
+    [
+      "command": "/bin/zsh",
+      "args": ["-lc", xcodeBuildMCPShellScript()],
+      "env": bootstrap.environment
+    ]
+  }
+
+  private func xcodeBuildMCPShellScript() -> String {
+    """
+    PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}
+    export PATH
+    if command -v xcodebuildmcp >/dev/null 2>&1; then exec xcodebuildmcp mcp; fi
+    export NVM_DIR="$HOME/.nvm"
+    if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; fi
+    if command -v nvm >/dev/null 2>&1; then nvm use --silent >/dev/null 2>&1 || true; fi
+    exec npx -y xcodebuildmcp@latest mcp
     """
   }
 

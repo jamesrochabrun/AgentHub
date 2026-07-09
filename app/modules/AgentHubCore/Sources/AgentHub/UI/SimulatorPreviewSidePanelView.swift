@@ -62,9 +62,6 @@ struct SimulatorPreviewSidePanelView: View {
   /// The failure message the user explicitly dismissed; the banner stays
   /// hidden for that exact message but reappears for any new/different error.
   @State private var dismissedFailureMessage: String?
-  /// Identifies this panel's agent-run registration so a late close never
-  /// unregisters a newer panel for the same project.
-  @State private var agentRunRegistrationID = UUID()
 
   private let simulatorContextStore = SimulatorSessionContextStore()
   private let simulatorRecordingService = SimulatorRecordingService.shared
@@ -247,14 +244,11 @@ struct SimulatorPreviewSidePanelView: View {
     )
     .task {
       await loadDevicesIfNeeded()
-      registerAgentRunSupport()
+      configureAutoRunSupport()
       syncSimulatorFeatureTracking()
     }
     .onDisappear {
       cancelAnnotationElementRefresh()
-      SimulatorAgentRunRegistry.shared.unregister(
-        projectPath: projectPath, id: agentRunRegistrationID
-      )
       hotReload.onRequestAutoRun = nil
       hotReload.setAutoRunEnabled(false, projectPath: projectPath)
       hotReload.stopTracking()
@@ -895,22 +889,15 @@ struct SimulatorPreviewSidePanelView: View {
     )
   }
 
-  /// Offers this panel's Build & Run flow to agent-initiated runs (the MCP
-  /// `agenthub_simulator_run` queue) and to auto-run on source changes. The
-  /// closures capture the long-lived service/controller objects — never the
+  /// Offers this panel's Build & Run flow to auto-run on source changes. The
+  /// closure captures the long-lived service/controller objects — never the
   /// view — so firing outside a view update never touches `@State`.
-  private func registerAgentRunSupport() {
+  private func configureAutoRunSupport() {
     let flow = SimulatorPanelRunFlow(
       simulatorService: simulatorService,
       hotReload: hotReload,
       projectPath: projectPath
     )
-    SimulatorAgentRunRegistry.shared.register(
-      projectPath: projectPath,
-      id: agentRunRegistrationID
-    ) { udid in
-      await flow.run(udid: udid)
-    }
 
     let service = simulatorService
     let projectPath = projectPath

@@ -79,10 +79,10 @@ are normalized framebuffer coordinates (`SimulatorAnnotation`), which map 1:1
 onto the device-resolution screenshot; element frames are in device points
 against the AX root (screen) frame (`SimulatorAnnotationPromptBuilder`,
 unit-tested). The prompt ends with one **conditional** process footer ("If you
-make code changes in response…") pointing the agent at the
-`agenthub_simulator_*` verify loop — added because agents otherwise "validate"
-with a bare `xcodebuild build`, which neither updates nor checks the app on
-screen. The user's note remains the only instruction in the message.
+make code changes in response…") pointing the agent at the XcodeBuildMCP verify
+loop — added because agents otherwise "validate" with a bare `xcodebuild build`,
+which neither updates nor checks the app on screen. The user's note remains the
+only instruction in the message.
 
 Sending feedback must never lose the panel: the auto-open side-panel policy
 (`openAutoSidePanelIfNeeded` in `MultiProviderMonitoringPanelView`) refuses to
@@ -358,73 +358,38 @@ per-project opt-in.
 
 ## Agent-driven runs & the verification loop (MCP)
 
-The bundled `agenthub` MCP server (injected into every AgentHub-launched
-session) exposes the simulator to agents: `agenthub_simulator_status`,
-`agenthub_simulator_run`, `agenthub_simulator_screenshot`,
-`agenthub_simulator_describe_ui`, the `tap`/`swipe`/`type`/`press_button`
-interaction tools, and `agenthub_simulator_record`. Together they close the
-loop *edit → rebuild/relaunch → navigate → verify* without user action.
+AgentHub does **not** expose bundled simulator-control MCP tools. For Xcode
+project launches, AgentHub instead bootstraps the external
+[XcodeBuildMCP](https://www.xcodebuildmcp.com/) server into both Claude and
+Codex sessions. The bootstrap is generated in `CLICommandConfiguration` and
+attached by `EmbeddedTerminalLaunchBuilder` only when the launch directory is
+an Xcode project.
 
-Three layers push agents onto that loop instead of the classic raw
-`xcodebuild build` "validation" (which neither updates nor verifies the
-running app): the tool descriptions, the annotation prompt's conditional
-verification footer, and — strongest — `SimulatorAgentGuidance.systemPrompt`,
-appended to **new Claude sessions** via `--append-system-prompt` whenever the
-launch directory is an Xcode project (`EmbeddedTerminalLaunchBuilder`).
-Codex has no equivalent injection flag, so it relies on the first two layers.
-Note all of this ships inside the app bundle: a session only gets the new
-tools/guidance when launched from a build that contains them.
+The XcodeBuildMCP config includes:
 
-**Run pipeline (results, not fire-and-forget).** `agenthub_simulator_run`
-enqueues a `SimulatorRunRequest` (`simulator-run-requests/` under Application
-Support) and **waits** for the outcome. App side, the app-wide
-`SimulatorRunRequestMonitor` (starts at launch, 1s poll) hands it to
-`SimulatorRunRequestHandler`, which:
+- `XCODEBUILDMCP_CWD`: the AgentHub launch path, so project-local
+  `.xcodebuildmcp/config.yaml` and relative paths resolve from the same place
+  as the terminal session.
+- `XCODEBUILDMCP_WORKSPACE_PATH` or `XCODEBUILDMCP_PROJECT_PATH`: the detected
+  `.xcworkspace` (preferred) or `.xcodeproj`, including one subdirectory deep
+  for common monorepos.
+- `XCODEBUILDMCP_SIMULATOR_ID`: the saved AgentHub run destination for that
+  project when it is a simulator.
+- `XCODEBUILDMCP_ENABLED_WORKFLOWS=simulator,ui-automation`, plus telemetry
+  opt-out through `XCODEBUILDMCP_SENTRY_DISABLED=true`.
 
-- resolves the destination — request `udid` first, else the project's
-  persisted preference (`SimulatorService.preferredSimulatorUDID(forProjectPath:)`).
-  There is deliberately **no booted-device fallback for runs** (same
-  per-project scoping rule as the panel); with no preference the result says
-  to pick a Run Destination once.
-- waits out an in-flight build for the same project+device (two xcodebuilds
-  would fight over derived data),
-- prefers the open panel's executor via `SimulatorAgentRunRegistry`, so an
-  agent-triggered run boots + prepares the hot-reload plan + arms injection
-  **exactly like the Build & Run button** (`SimulatorPanelRunFlow`, also used
-  by the button itself); with no panel it falls back to a plain
-  `buildAndRunOnSimulator`,
-- writes a terminal `SimulatorRunResult` (success/failure + the xcodebuild
-  error text + whether hot reload armed) to `simulator-run-results/`, which
-  the MCP server polls (default wait 240s; `requestId` re-polls longer
-  builds). Build errors reach the agent verbatim; results and `.failed`
-  queue markers are pruned after 24h at app launch.
+`SimulatorAgentGuidance.systemPrompt` is injected for new Xcode sessions:
+Claude receives it via `--append-system-prompt`; Codex receives it via the
+`developer_instructions` config override. The guidance tells agents to start
+their verification loop by inspecting XcodeBuildMCP session defaults, set
+missing project/scheme/simulator context with XcodeBuildMCP discovery tools,
+then use XcodeBuildMCP build/run, UI automation, screenshot, or UI inspection
+tools before declaring a UI change done. The annotation prompt footer repeats
+the same conditional rule when a user sends pins from the simulator.
 
-**Verification tools (read-only).** `agenthub_simulator_screenshot` shells
-out to `simctl io screenshot` and returns a temp PNG path;
-`agenthub_simulator_describe_ui` reads the frontmost app's AX tree through
-`SimulatorAXInspector` and renders it with `SimulatorAXTreeTextRenderer`
-(bounded depth/element count, explicit truncation markers). Read-only and
-interaction tools resolve their device as explicit udid → panel context → the
-*single* booted simulator; runs never adopt booted devices.
-
-**Interaction tools (drive the app to the screen under test).**
-`agenthub_simulator_tap` / `_swipe` / `_type` / `_press_button` inject HID
-events through `SimulatorUIDriver` — a public wrapper over the same internal
-`HIDInjector` (Indigo, SimulatorKit) that powers the panel's live mirror, so
-the privacy contract is unchanged: events go straight to the device, no host
-mouse, no TCC prompts, nothing persisted. This is the bundled equivalent of
-`idb ui` / AXe; no external tool install. Taps target elements by
-**label/identifier** resolved through the AX tree
-(`SimulatorAXElementFinder`: exact → case-insensitive → substring tiers,
-ambiguity reported with ordinals, zero-size elements skipped) with
-coordinate/normalized fallbacks; point→normalized conversion uses the AX root
-frame (screen bounds, top-left origin — the same space
-`SimulatorPointMapper` uses). Typing maps characters to US-layout HID usages
-(`KeyCodeMapping.hidUsage(forCharacter:)`) and fails loudly on unmappable
-characters. Interaction requires a booted device — the tools check
-`simctl` live state first because HID sends into a shut-down device are
-silent no-ops. The intended agent loop:
-`run → describe_ui → tap/swipe/type → describe_ui | screenshot`.
+Manual recording remains an AgentHub side-panel feature only. The record button
+uses `SimulatorRecordingService` from the app UI and there is intentionally no
+agent-facing recording tool in AgentHub's MCP server.
 
 ## Auto Build & Run on code changes
 
@@ -447,9 +412,9 @@ mirroring** (default on, `AgentHubDefaults.simulatorHideSimulatorAppWhileMirrori
 
 - Panel-mirrored launches pass `foregroundSimulatorApp: false` through
   `buildAndRunOnSimulator` (threaded down to `installAndLaunch`), so the
-  post-launch `open -a Simulator` is skipped. The MCP run-request handler's
-  no-panel fallback still foregrounds — with no mirror, the real window is
-  the only place the user can see the app. The controller's default rebuild
+  post-launch `open -a Simulator` is skipped. A non-panel build/run still
+  foregrounds by default — with no mirror, the real window is the only place
+  the user can see the app. The controller's default rebuild
   executor (structural-change rebuilds) respects the setting too.
 - `SimulatorAppHider` ⌘H-hides an already-running Simulator.app
   (`NSRunningApplication.hide()` — public API, no TCC, never terminates;
@@ -484,7 +449,6 @@ mirroring** (default on, `AgentHubDefaults.simulatorHideSimulatorAppWhileMirrori
   a separate build cache, and console logs under Application Support do not
   have a cleanup policy yet.
 - Auto Build & Run is panel-scoped: with the Simulator panel closed there is
-  no source watcher, so hands-free relaunch relies on the agent calling
-  `agenthub_simulator_run` after its edits (the tool description instructs
-  this). An app-wide watcher for Xcode projects with saved destinations is
-  future work.
+  no source watcher, so hands-free relaunch relies on the agent using
+  XcodeBuildMCP build/run after its edits. An app-wide watcher for Xcode
+  projects with saved destinations is future work.

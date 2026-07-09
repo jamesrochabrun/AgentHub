@@ -247,8 +247,8 @@ final class SimulatorAnnotationTests: XCTestCase {
       // Conditional process guidance, not an instruction — the user's note
       // stays the only intent in the message.
       XCTAssertTrue(prompt.contains("If you make code changes in response"), prompt)
-      XCTAssertTrue(prompt.contains("agenthub_simulator_run"), prompt)
-      XCTAssertTrue(prompt.contains("agenthub_simulator_screenshot"), prompt)
+      XCTAssertTrue(prompt.contains("XcodeBuildMCP"), prompt)
+      XCTAssertTrue(prompt.contains("screenshot or UI inspection tools"), prompt)
       XCTAssertFalse(prompt.lowercased().contains("make the requested changes"))
     }
   }

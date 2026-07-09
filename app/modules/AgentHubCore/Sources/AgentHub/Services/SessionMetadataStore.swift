@@ -561,6 +561,14 @@ extension SessionMetadataStore: SessionRelationshipStoreProtocol {
     }
   }
 
+  /// Synchronous read for launch configuration, safe to call from non-async contexts.
+  /// Returns an empty list if the store cannot be read.
+  public nonisolated func getProjectSimulatorPreferencesSync() -> [ProjectSimulatorPreference] {
+    (try? dbQueue.read { db in
+      try ProjectSimulatorPreference.fetchAll(db)
+    }) ?? []
+  }
+
   /// Saves the run destination for a project path (replaces any prior row)
   public func setProjectSimulatorPreference(_ preference: ProjectSimulatorPreference) throws {
     try dbQueue.write { db in

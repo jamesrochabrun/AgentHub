@@ -19,7 +19,6 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
-    .package(path: "../SimulatorPreview"),
   ],
   targets: [
     .target(
@@ -33,8 +32,6 @@ let package = Package(
       dependencies: [
         "AgentHubCLIKit",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        // Reuses the AX-inspection bridge for agenthub_simulator_describe_ui.
-        .product(name: "SimulatorPreview", package: "SimulatorPreview"),
       ],
       swiftSettings: [
         .swiftLanguageMode(.v5)

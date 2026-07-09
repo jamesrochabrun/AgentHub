@@ -98,6 +98,82 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(args.last == "Start work")
   }
 
+  @Test("Claude MCP config can include XcodeBuildMCP bootstrap")
+  func claudeMCPConfigIncludesXcodeBuildMCPBootstrap() throws {
+    let config = CLICommandConfiguration.claudeDefault
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: nil,
+      agentHubMCPServerPath: "/Applications/AgentHub.app/Contents/Helpers/agenthub",
+      xcodeBuildMCPBootstrap: XcodeBuildMCPBootstrap(
+        workingDirectory: "/repo",
+        projectPath: "/repo/App.xcodeproj",
+        simulatorUDID: "SIM-123"
+      )
+    )
+
+    let mcpConfigIndex = try #require(args.firstIndex(of: "--mcp-config"))
+    let data = Data(args[mcpConfigIndex + 1].utf8)
+    let root = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    let servers = try #require(root["mcpServers"] as? [String: Any])
+    let server = try #require(servers["XcodeBuildMCP"] as? [String: Any])
+    let env = try #require(server["env"] as? [String: Any])
+
+    #expect(server["command"] as? String == "/bin/zsh")
+    #expect(env["XCODEBUILDMCP_CWD"] as? String == "/repo")
+    #expect(env["XCODEBUILDMCP_PROJECT_PATH"] as? String == "/repo/App.xcodeproj")
+    #expect(env["XCODEBUILDMCP_SIMULATOR_ID"] as? String == "SIM-123")
+    #expect(env["XCODEBUILDMCP_ENABLED_WORKFLOWS"] as? String == "simulator,ui-automation")
+    #expect(env["XCODEBUILDMCP_SENTRY_DISABLED"] as? String == "true")
+  }
+
+  @Test("Codex MCP config can include XcodeBuildMCP bootstrap")
+  func codexMCPConfigIncludesXcodeBuildMCPBootstrap() {
+    let config = CLICommandConfiguration.codexDefault
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: nil,
+      agentHubMCPServerPath: "/Applications/AgentHub.app/Contents/Helpers/agenthub",
+      xcodeBuildMCPBootstrap: XcodeBuildMCPBootstrap(
+        workingDirectory: "/repo",
+        workspacePath: "/repo/App.xcworkspace",
+        simulatorUDID: "SIM-123"
+      )
+    )
+
+    #expect(args.contains("mcp_servers.XcodeBuildMCP.command=\"/bin/zsh\""))
+    #expect(args.contains("mcp_servers.XcodeBuildMCP.tool_timeout_sec=600"))
+    #expect(args.contains("mcp_servers.XcodeBuildMCP.env.XCODEBUILDMCP_CWD=\"/repo\""))
+    #expect(args.contains("mcp_servers.XcodeBuildMCP.env.XCODEBUILDMCP_WORKSPACE_PATH=\"/repo/App.xcworkspace\""))
+    #expect(args.contains("mcp_servers.XcodeBuildMCP.env.XCODEBUILDMCP_SIMULATOR_ID=\"SIM-123\""))
+    #expect(args.contains("mcp_servers.XcodeBuildMCP.env.XCODEBUILDMCP_SENTRY_DISABLED=\"true\""))
+  }
+
+  @Test("XcodeBuildMCP does not require the AgentHub MCP helper")
+  func xcodeBuildMCPDoesNotRequireAgentHubHelper() {
+    let bootstrap = XcodeBuildMCPBootstrap(
+      workingDirectory: "/repo",
+      projectPath: "/repo/App.xcodeproj"
+    )
+
+    let claudeArgs = CLICommandConfiguration.claudeDefault.argumentsForSession(
+      sessionId: nil,
+      prompt: nil,
+      xcodeBuildMCPBootstrap: bootstrap
+    )
+    #expect(claudeArgs.contains("--mcp-config"))
+    #expect(claudeArgs.contains { $0.contains("XcodeBuildMCP") })
+    #expect(!claudeArgs.contains { $0.contains("\"agenthub\"") })
+
+    let codexArgs = CLICommandConfiguration.codexDefault.argumentsForSession(
+      sessionId: nil,
+      prompt: nil,
+      xcodeBuildMCPBootstrap: bootstrap
+    )
+    #expect(codexArgs.contains("mcp_servers.XcodeBuildMCP.command=\"/bin/zsh\""))
+    #expect(!codexArgs.contains { $0.contains("mcp_servers.agenthub.") })
+  }
+
   @Test("Any non-native wrapper executable gets the direct-argument separator")
   func arbitraryWrapperUsesDirectArgumentSeparator() {
     let config = CLICommandConfiguration(
@@ -162,7 +238,7 @@ struct CLICommandConfigurationArgumentHandlingTests {
       Issue.record("missing --append-system-prompt in \(newSession)")
       return
     }
-    #expect(newSession[flagIndex + 1].contains("agenthub_simulator_run"))
+    #expect(newSession[flagIndex + 1].contains("XcodeBuildMCP"))
 
     let resumed = config.argumentsForSession(
       sessionId: "existing-session",
@@ -175,8 +251,8 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(!withoutGuidance.contains("--append-system-prompt"))
   }
 
-  @Test("Codex sessions never receive the Claude-only system-prompt flag")
-  func codexIgnoresAppendSystemPrompt() {
+  @Test("New Codex sessions receive developer instructions; resumes do not")
+  func appendSystemPromptBecomesCodexDeveloperInstructions() {
     let config = CLICommandConfiguration.codexDefault
 
     let args = config.argumentsForSession(
@@ -185,6 +261,15 @@ struct CLICommandConfigurationArgumentHandlingTests {
       appendSystemPrompt: SimulatorAgentGuidance.systemPrompt
     )
     #expect(!args.contains("--append-system-prompt"))
+    #expect(args.contains { $0.hasPrefix("developer_instructions=") && $0.contains("XcodeBuildMCP") })
+
+    let resumed = config.argumentsForSession(
+      sessionId: "existing-session",
+      prompt: nil,
+      appendSystemPrompt: SimulatorAgentGuidance.systemPrompt
+    )
+    #expect(!resumed.contains("--append-system-prompt"))
+    #expect(!resumed.contains { $0.hasPrefix("developer_instructions=") })
   }
 
   @Test("Decodes previous CLI configuration payloads without extra args")

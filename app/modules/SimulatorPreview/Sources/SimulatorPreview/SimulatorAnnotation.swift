@@ -306,11 +306,10 @@ public enum SimulatorAnnotationPromptBuilder {
   static let verificationFooter = """
     If you make code changes in response, verify them in the running simulator instead of \
     stopping at a successful compile — `xcodebuild build` on its own neither updates nor \
-    checks the app on screen. Use the agenthub MCP tools: agenthub_simulator_run rebuilds & \
-    relaunches and reports the outcome (skip it when hot reload is armed and you only edited \
-    existing Swift files), then navigate back to this exact screen with agenthub_simulator_tap \
-    / agenthub_simulator_swipe (agenthub_simulator_describe_ui shows what is tappable) and \
-    confirm the result with agenthub_simulator_screenshot.
+    checks the app on screen. Use XcodeBuildMCP for the verification loop: build and run the \
+    app unless hot reload is armed and you only edited existing Swift files, navigate back to \
+    this exact screen with XcodeBuildMCP UI automation, and confirm the result with its \
+    screenshot or UI inspection tools.
     """
 
   /// The pin's subject, without a leading article: `Button "Exit" (...)`,

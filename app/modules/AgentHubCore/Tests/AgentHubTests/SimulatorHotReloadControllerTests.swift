@@ -79,7 +79,7 @@ private struct MockPreviewClient: PreviewHostClientProtocol {
 }
 
 @MainActor
-private final class FlowMockExecutor: SimulatorRunExecuting {
+private final class FlowMockExecutor: SimulatorPanelRunExecuting {
   var foregroundFlags: [Bool] = []
 
   func isBooted(udid: String) -> Bool { true }
@@ -94,10 +94,7 @@ private final class FlowMockExecutor: SimulatorRunExecuting {
     return true
   }
 
-  func ensurePreferencesLoaded() async {}
-  func preferredSimulatorUDID(forProjectPath projectPath: String) -> String? { nil }
   func isRunInFlight(udid: String, projectPath: String) -> Bool { false }
-  func buildFailureMessage(udid: String, projectPath: String) -> String? { nil }
 }
 
 @MainActor

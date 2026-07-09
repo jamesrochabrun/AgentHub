@@ -121,12 +121,15 @@ public enum EmbeddedTerminalLaunchBuilder {
     let aiConfig = metadataStore?.getAIConfigSync(for: cliConfiguration.mode.rawValue)
     let allowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.allowedTools)
     let disallowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.disallowedTools)
-    // Xcode projects get simulator-loop guidance at system-prompt level:
-    // tool descriptions alone don't stop agents from "validating" with a raw
-    // `xcodebuild build` that never touches the app the user is watching.
-    let appendSystemPrompt = XcodeProjectDetector.isXcodeProject(at: workingDirectory)
-      ? SimulatorAgentGuidance.systemPrompt
-      : nil
+    let xcodeReference = XcodeProjectDetector.preferredProjectReference(at: workingDirectory)
+    let xcodeBuildMCPBootstrap = makeXcodeBuildMCPBootstrap(
+      workingDirectory: workingDirectory,
+      reference: xcodeReference,
+      metadataStore: metadataStore
+    )
+    // Xcode projects get simulator-loop guidance at system-prompt level so
+    // agents verify through the same live app surface the user is watching.
+    let appendSystemPrompt = xcodeReference == nil ? nil : SimulatorAgentGuidance.systemPrompt
     let args = cliConfiguration.argumentsForSession(
       sessionId: sessionId,
       prompt: initialPrompt,
@@ -139,6 +142,7 @@ public enum EmbeddedTerminalLaunchBuilder {
       allowedTools: allowedTools.isEmpty ? nil : allowedTools,
       disallowedTools: disallowedTools.isEmpty ? nil : disallowedTools,
       codexApprovalPolicy: aiConfig?.approvalPolicy,
+      xcodeBuildMCPBootstrap: xcodeBuildMCPBootstrap,
       appendSystemPrompt: appendSystemPrompt
     )
     let joinedArgs = args
@@ -217,6 +221,51 @@ public enum EmbeddedTerminalLaunchBuilder {
       return candidate
     }
     return "/bin/zsh"
+  }
+
+  private static func makeXcodeBuildMCPBootstrap(
+    workingDirectory: String,
+    reference: XcodeProjectReference?,
+    metadataStore: SessionMetadataStore?
+  ) -> XcodeBuildMCPBootstrap? {
+    guard let reference else { return nil }
+    let simulatorUDID = savedSimulatorUDID(
+      forProjectPath: workingDirectory,
+      metadataStore: metadataStore
+    )
+    switch reference.kind {
+    case .project:
+      return XcodeBuildMCPBootstrap(
+        workingDirectory: workingDirectory,
+        projectPath: reference.path,
+        simulatorUDID: simulatorUDID
+      )
+    case .workspace:
+      return XcodeBuildMCPBootstrap(
+        workingDirectory: workingDirectory,
+        workspacePath: reference.path,
+        simulatorUDID: simulatorUDID
+      )
+    }
+  }
+
+  private static func savedSimulatorUDID(
+    forProjectPath projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> String? {
+    guard let metadataStore else { return nil }
+    let normalizedProjectPath = normalizedPath(projectPath)
+    let preferences = metadataStore.getProjectSimulatorPreferencesSync()
+    return preferences
+      .filter { $0.kind == .simulator && normalizedPath($0.projectPath) == normalizedProjectPath }
+      .sorted { $0.updatedAt > $1.updatedAt }
+      .first?
+      .deviceIdentifier
+  }
+
+  private static func normalizedPath(_ path: String) -> String {
+    let expanded = NSString(string: path).expandingTildeInPath
+    return (expanded as NSString).standardizingPath
   }
 }
 

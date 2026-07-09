@@ -207,6 +207,56 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(!launch.shellCommand.contains("AgentHub session context:"))
   }
 
+  @Test("Xcode launch passes XcodeBuildMCP bootstrap with saved simulator")
+  func xcodeLaunchPassesXcodeBuildMCPBootstrapWithSavedSimulator() async throws {
+    let projectRoot = try makeTemporaryDirectory(named: "AgentHubXcodeLaunch")
+    defer { try? FileManager.default.removeItem(at: projectRoot) }
+    let xcodeProject = projectRoot.appendingPathComponent("App.xcodeproj", isDirectory: true)
+    try FileManager.default.createDirectory(at: xcodeProject, withIntermediateDirectories: true)
+    try "".write(
+      to: xcodeProject.appendingPathComponent("project.pbxproj"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    let store = try SessionMetadataStore(path: temporaryDatabasePath())
+    try await store.setProjectSimulatorPreference(
+      ProjectSimulatorPreference(
+        projectPath: projectRoot.appendingPathComponent(".").path,
+        deviceIdentifier: "SIM-123",
+        kind: .simulator
+      )
+    )
+
+    var installCount = 0
+    let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: nil,
+      projectPath: projectRoot.path,
+      cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: .codex),
+      initialPrompt: nil,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: store,
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: { installCount += 1 }
+    )
+
+    guard case .success(let launch) = result else {
+      Issue.record("Expected launch builder success")
+      return
+    }
+
+    #expect(installCount == 1)
+    #expect(launch.shellCommand.contains("mcp_servers.XcodeBuildMCP.command"))
+    #expect(launch.shellCommand.contains("XCODEBUILDMCP_PROJECT_PATH"))
+    #expect(launch.shellCommand.contains("App.xcodeproj"))
+    #expect(launch.shellCommand.contains("XCODEBUILDMCP_SIMULATOR_ID"))
+    #expect(launch.shellCommand.contains("SIM-123"))
+    #expect(launch.shellCommand.contains("developer_instructions="))
+    #expect(launch.shellCommand.contains("XcodeBuildMCP"))
+  }
+
   @Test("Resume launch does not reinstall worktree skill")
   func resumeLaunchDoesNotReinstallWorktreeSkill() throws {
     var installCount = 0
@@ -325,5 +375,18 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     }
 
     perform()
+  }
+
+  private func makeTemporaryDirectory(named prefix: String) throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
+  private func temporaryDatabasePath() -> String {
+    FileManager.default.temporaryDirectory
+      .appendingPathComponent("AgentHubLaunchBuilderTests-\(UUID().uuidString).sqlite")
+      .path
   }
 }

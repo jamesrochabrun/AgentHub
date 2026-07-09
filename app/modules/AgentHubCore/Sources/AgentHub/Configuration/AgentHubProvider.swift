@@ -51,7 +51,6 @@ public final class AgentHubProvider {
   private let metadataStoreOverride: SessionMetadataStore?
   private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
   private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
-  private let simulatorRunRequestMonitorOverride: (any SimulatorRunRequestMonitorProtocol)?
 
   // MARK: - Lazy Services
 
@@ -159,9 +158,6 @@ public final class AgentHubProvider {
   /// Watches worktree deletion cleanup requests written by the bundled `agenthub` helper.
   public private(set) lazy var worktreeDeletionRequestMonitor: any WorktreeDeletionRequestMonitorProtocol = worktreeDeletionRequestMonitorOverride ?? WorktreeDeletionRequestMonitor()
 
-  /// Watches simulator Build & Run requests written by the bundled `agenthub` helper.
-  public private(set) lazy var simulatorRunRequestMonitor: any SimulatorRunRequestMonitorProtocol = simulatorRunRequestMonitorOverride ?? SimulatorRunRequestMonitor()
-
   public private(set) lazy var worktreeLaunchRequestHandler: any WorktreeLaunchRequestHandlingProtocol = WorktreeLaunchRequestHandler(
     claudeViewModel: claudeSessionsViewModel,
     codexViewModel: codexSessionsViewModel
@@ -171,8 +167,6 @@ public final class AgentHubProvider {
     claudeViewModel: claudeSessionsViewModel,
     codexViewModel: codexSessionsViewModel
   )
-
-  public private(set) lazy var simulatorRunRequestHandler: any SimulatorRunRequestHandlingProtocol = SimulatorRunRequestHandler(simulatorService: SimulatorService.shared)
 
   /// Watches the worktree-progress sidecar directory the `agenthub` CLI writes
   /// during MCP-initiated creations, so the app can surface live git progress.
@@ -190,7 +184,6 @@ public final class AgentHubProvider {
 
   private var isWorktreeLaunchRequestMonitoringStarted = false
   private var isWorktreeDeletionRequestMonitoringStarted = false
-  private var isSimulatorRunRequestMonitoringStarted = false
   private var isWorktreeProgressMonitoringStarted = false
 
   // MARK: - GitHub Integration
@@ -254,8 +247,7 @@ public final class AgentHubProvider {
     },
     metadataStore: SessionMetadataStore? = nil,
     worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
-    worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil,
-    simulatorRunRequestMonitor: (any SimulatorRunRequestMonitorProtocol)? = nil
+    worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil
   ) {
     self.configuration = configuration
     terminalBackend = .storedPreference
@@ -264,7 +256,6 @@ public final class AgentHubProvider {
     metadataStoreOverride = metadataStore
     worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
     worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
-    simulatorRunRequestMonitorOverride = simulatorRunRequestMonitor
     if let metadataStore {
       Task {
         await TerminalProcessRegistry.shared.configure(store: metadataStore)
@@ -430,7 +421,6 @@ public final class AgentHubProvider {
     startWorktreeLaunchQueueMonitoring()
     startWorktreeDeletionQueueMonitoring()
     startWorktreeProgressMonitoring()
-    startSimulatorRunQueueMonitoring()
   }
 
   private func startWorktreeProgressMonitoring() {
@@ -480,31 +470,6 @@ public final class AgentHubProvider {
     }
   }
 
-  private func startSimulatorRunQueueMonitoring() {
-    guard !isSimulatorRunRequestMonitoringStarted else { return }
-    isSimulatorRunRequestMonitoringStarted = true
-
-    // Run results are one-shot handshakes with the bundled `agenthub` MCP
-    // server; anything older than a day is an unread leftover. The same goes
-    // for `.failed` markers in the request queue.
-    let resultStore = SimulatorRunResultStore()
-    let requestQueue = SimulatorRunRequestQueue()
-    Task.detached(priority: .utility) {
-      resultStore.prune(olderThan: 24 * 60 * 60)
-      requestQueue.pruneFailed(olderThan: 24 * 60 * 60)
-    }
-
-    let monitor = simulatorRunRequestMonitor
-    Task {
-      await monitor.start { [weak self] queued in
-        guard let self else {
-          throw SimulatorRunRequestHandlingError.invalidTarget
-        }
-        try await self.simulatorRunRequestHandler.handle(queued.request)
-      }
-    }
-  }
-
   public func stopWorktreeLaunchRequestMonitoring() {
     if isWorktreeLaunchRequestMonitoringStarted {
       isWorktreeLaunchRequestMonitoringStarted = false
@@ -519,15 +484,6 @@ public final class AgentHubProvider {
       isWorktreeDeletionRequestMonitoringStarted = false
 
       let monitor = worktreeDeletionRequestMonitor
-      Task {
-        await monitor.stop()
-      }
-    }
-
-    if isSimulatorRunRequestMonitoringStarted {
-      isSimulatorRunRequestMonitoringStarted = false
-
-      let monitor = simulatorRunRequestMonitor
       Task {
         await monitor.stop()
       }
