@@ -81,9 +81,17 @@ private struct MockPreviewClient: PreviewHostClientProtocol {
 @MainActor
 private final class FlowMockExecutor: SimulatorPanelRunExecuting {
   var foregroundFlags: [Bool] = []
+  var preferredSimulatorUpdates: [(udid: String?, projectPath: String)] = []
+  var preferredPhysicalDeviceUpdates: [(identifier: String?, projectPath: String)] = []
 
   func isBooted(udid: String) -> Bool { true }
   func bootDevice(udid: String) async {}
+  func setPreferredSimulator(udid: String?, for projectPath: String) {
+    preferredSimulatorUpdates.append((udid, projectPath))
+  }
+  func setPreferredPhysicalDevice(identifier: String?, for projectPath: String) {
+    preferredPhysicalDeviceUpdates.append((identifier, projectPath))
+  }
   func buildAndRunOnSimulator(
     udid: String,
     projectPath: String,
@@ -448,6 +456,29 @@ struct SimulatorHotReloadControllerTests {
 
     #expect(executor.foregroundFlags == [true])
     #expect(hider.hideCount == 0)
+  }
+
+  @Test("panel run flow stores the selected simulator as the project run destination")
+  func panelRunFlowStoresProjectDestination() async {
+    let (controller, _, _) = makeController(cached: Self.artifacts)
+    let executor = FlowMockExecutor()
+    let flow = SimulatorPanelRunFlow(
+      simulatorService: executor,
+      hotReload: controller,
+      projectPath: "/p",
+      previewsEnabled: { false },
+      hideSimulatorAppWhileMirroring: { true },
+      simulatorAppHider: MockSimulatorAppHider()
+    )
+
+    _ = await flow.run(udid: "UDID")
+
+    #expect(executor.preferredSimulatorUpdates.count == 1)
+    #expect(executor.preferredSimulatorUpdates.first?.udid == "UDID")
+    #expect(executor.preferredSimulatorUpdates.first?.projectPath == "/p")
+    #expect(executor.preferredPhysicalDeviceUpdates.count == 1)
+    #expect(executor.preferredPhysicalDeviceUpdates.first?.identifier == nil)
+    #expect(executor.preferredPhysicalDeviceUpdates.first?.projectPath == "/p")
   }
 
   @Test("stop tears down the console + pill; stopTracking stops the watcher")
