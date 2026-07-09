@@ -191,6 +191,11 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true)
   public static let simulatorHideSimulatorAppWhileMirroring = "\(keyPrefix)features.simulatorHideSimulatorAppWhileMirroring"
 
+  /// Whether agent sessions launched in Xcode projects get the XcodeBuildMCP
+  /// server (simulator build/run, UI automation, screenshots) configured.
+  /// Type: Bool (default: true)
+  public static let xcodeBuildMCPEnabled = "\(keyPrefix)features.xcodeBuildMCPEnabled"
+
   /// Inspector payload level used by debug web preview inspect flows
   /// Type: String (default: "regular")
   public static let webPreviewInspectorDataLevel = "\(keyPrefix)developer.webPreviewInspectorDataLevel"

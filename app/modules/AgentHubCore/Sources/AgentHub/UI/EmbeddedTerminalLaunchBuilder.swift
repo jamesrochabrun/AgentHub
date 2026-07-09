@@ -81,7 +81,10 @@ public enum EmbeddedTerminalLaunchBuilder {
     worktreeName: String?,
     metadataStore: SessionMetadataStore?,
     agentHubCLIPath: String? = nil,
-    installAgentHubWorktreeSkill: () -> Void
+    installAgentHubWorktreeSkill: () -> Void,
+    xcodeBuildMCPEnabled: Bool = XcodeBuildMCPPreflight.isEnabled(),
+    xcodeBuildMCPToolingAvailable: () -> Bool = { XcodeBuildMCPPreflight.nodeToolingAvailable() },
+    notifyXcodeBuildMCPToolingMissing: () -> Void = { Task { @MainActor in XcodeBuildMCPNodeNotice.notifyOnce() } }
   ) -> Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError> {
     let executablePath: String?
     switch cliConfiguration.mode {
@@ -122,14 +125,22 @@ public enum EmbeddedTerminalLaunchBuilder {
     let allowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.allowedTools)
     let disallowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.disallowedTools)
     let xcodeReference = XcodeProjectDetector.preferredProjectReference(at: workingDirectory)
-    let xcodeBuildMCPBootstrap = makeXcodeBuildMCPBootstrap(
-      workingDirectory: workingDirectory,
-      reference: xcodeReference,
-      metadataStore: metadataStore
-    )
+    var xcodeBuildMCPBootstrap: XcodeBuildMCPBootstrap?
+    if xcodeReference != nil, xcodeBuildMCPEnabled {
+      if xcodeBuildMCPToolingAvailable() {
+        xcodeBuildMCPBootstrap = makeXcodeBuildMCPBootstrap(
+          workingDirectory: workingDirectory,
+          reference: xcodeReference,
+          metadataStore: metadataStore
+        )
+      } else {
+        notifyXcodeBuildMCPToolingMissing()
+      }
+    }
     // Xcode projects get simulator-loop guidance at system-prompt level so
     // agents verify through the same live app surface the user is watching.
-    let appendSystemPrompt = xcodeReference == nil ? nil : SimulatorAgentGuidance.systemPrompt
+    // Tied to the bootstrap: guidance without the tools misleads agents.
+    let appendSystemPrompt = xcodeBuildMCPBootstrap == nil ? nil : SimulatorAgentGuidance.systemPrompt
     let args = cliConfiguration.argumentsForSession(
       sessionId: sessionId,
       prompt: initialPrompt,

@@ -13,6 +13,10 @@ public enum CLICommandMode: String, Codable, Sendable {
 }
 
 public struct XcodeBuildMCPBootstrap: Equatable, Sendable {
+  /// Known-good XcodeBuildMCP release used by the npx fallback. Pinned so
+  /// sessions don't pick up whatever npm's `latest` tag points at.
+  public static let pinnedNPMVersion = "2.6.2"
+
   public var workingDirectory: String
   public var projectPath: String?
   public var workspacePath: String?
@@ -419,7 +423,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
     export NVM_DIR="$HOME/.nvm"
     if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; fi
     if command -v nvm >/dev/null 2>&1; then nvm use --silent >/dev/null 2>&1 || true; fi
-    exec npx -y xcodebuildmcp@latest mcp
+    exec npx -y xcodebuildmcp@\(XcodeBuildMCPBootstrap.pinnedNPMVersion) mcp
     """
   }
 

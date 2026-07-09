@@ -119,6 +119,9 @@ struct CLICommandConfigurationArgumentHandlingTests {
     let server = try #require(servers["XcodeBuildMCP"] as? [String: Any])
     let env = try #require(server["env"] as? [String: Any])
 
+    let serverArgs = try #require(server["args"] as? [String])
+    #expect(serverArgs.contains { $0.contains("xcodebuildmcp@\(XcodeBuildMCPBootstrap.pinnedNPMVersion)") })
+    #expect(!serverArgs.contains { $0.contains("xcodebuildmcp@latest") })
     #expect(server["command"] as? String == "/bin/zsh")
     #expect(env["XCODEBUILDMCP_CWD"] as? String == "/repo")
     #expect(env["XCODEBUILDMCP_PROJECT_PATH"] as? String == "/repo/App.xcodeproj")
@@ -147,6 +150,8 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(args.contains("mcp_servers.XcodeBuildMCP.env.XCODEBUILDMCP_WORKSPACE_PATH=\"/repo/App.xcworkspace\""))
     #expect(args.contains("mcp_servers.XcodeBuildMCP.env.XCODEBUILDMCP_SIMULATOR_ID=\"SIM-123\""))
     #expect(args.contains("mcp_servers.XcodeBuildMCP.env.XCODEBUILDMCP_SENTRY_DISABLED=\"true\""))
+    #expect(args.contains { $0.contains("xcodebuildmcp@\(XcodeBuildMCPBootstrap.pinnedNPMVersion)") })
+    #expect(!args.contains { $0.contains("xcodebuildmcp@latest") })
   }
 
   @Test("XcodeBuildMCP does not require the AgentHub MCP helper")

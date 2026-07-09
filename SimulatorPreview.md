@@ -362,8 +362,23 @@ AgentHub does **not** expose bundled simulator-control MCP tools. For Xcode
 project launches, AgentHub instead bootstraps the external
 [XcodeBuildMCP](https://www.xcodebuildmcp.com/) server into both Claude and
 Codex sessions. The bootstrap is generated in `CLICommandConfiguration` and
-attached by `EmbeddedTerminalLaunchBuilder` only when the launch directory is
-an Xcode project.
+attached by `EmbeddedTerminalLaunchBuilder` only when all three hold:
+
+- the launch directory is an Xcode project;
+- **Agent simulator tools (XcodeBuildMCP)** is on (Settings → iOS Simulator,
+  default on, `AgentHubDefaults.xcodeBuildMCPEnabled`);
+- `XcodeBuildMCPPreflight` finds a way to actually run the server: a global
+  `xcodebuildmcp` binary, `npx` on the search path, or an nvm-managed Node
+  install.
+
+Nothing needs preinstalling: the server launch script prefers a global
+`xcodebuildmcp` binary and otherwise fetches the **pinned** release via
+`npx` (`XcodeBuildMCPBootstrap.pinnedNPMVersion` — never `@latest`, so
+sessions don't drift with npm's latest tag). When the preflight fails (no
+Node at all), the session still launches — just without the bootstrap and
+without the guidance prompt below — and `XcodeBuildMCPNodeNotice` posts a
+one-time notification suggesting a Node.js install; the Settings toggle also
+shows an inline warning.
 
 The XcodeBuildMCP config includes:
 
@@ -378,14 +393,20 @@ The XcodeBuildMCP config includes:
 - `XCODEBUILDMCP_ENABLED_WORKFLOWS=simulator,ui-automation`, plus telemetry
   opt-out through `XCODEBUILDMCP_SENTRY_DISABLED=true`.
 
-`SimulatorAgentGuidance.systemPrompt` is injected for new Xcode sessions:
-Claude receives it via `--append-system-prompt`; Codex receives it via the
-`developer_instructions` config override. The guidance tells agents to start
-their verification loop by inspecting XcodeBuildMCP session defaults, set
-missing project/scheme/simulator context with XcodeBuildMCP discovery tools,
-then use XcodeBuildMCP build/run, UI automation, screenshot, or UI inspection
-tools before declaring a UI change done. The annotation prompt footer repeats
-the same conditional rule when a user sends pins from the simulator.
+`SimulatorAgentGuidance.systemPrompt` is injected whenever the bootstrap is
+attached (never without it — guidance pointing at tools that can't connect
+misleads agents): Claude receives it via `--append-system-prompt`; Codex
+receives it via the `developer_instructions` config override. The guidance
+tells agents to inspect XcodeBuildMCP session defaults before the first
+build (setting missing project/scheme/simulator context with its discovery
+tools) and to **scale verification to the change and the user's intent**:
+compile check for refactors and non-visual changes; build/run when runtime
+behavior changes; the full UI-automation + screenshot/inspection loop only
+when the user asked for visual/end-to-end verification or a specific visual
+result is being claimed. The full loop is deliberately not the default — it
+is slow and token-expensive, and the depth decision is the model's. The
+annotation prompt footer still asks for live-simulator verification when a
+user sends pins from the simulator: pins are explicit visual intent.
 
 Manual recording remains an AgentHub side-panel feature only. The record button
 uses `SimulatorRecordingService` from the app UI and there is intentionally no

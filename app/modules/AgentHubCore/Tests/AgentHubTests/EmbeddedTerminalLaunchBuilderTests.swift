@@ -239,7 +239,9 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       worktreeName: nil,
       metadataStore: store,
       agentHubCLIPath: agentHubCLIPath,
-      installAgentHubWorktreeSkill: { installCount += 1 }
+      installAgentHubWorktreeSkill: { installCount += 1 },
+      xcodeBuildMCPEnabled: true,
+      xcodeBuildMCPToolingAvailable: { true }
     )
 
     guard case .success(let launch) = result else {
@@ -255,6 +257,84 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(launch.shellCommand.contains("SIM-123"))
     #expect(launch.shellCommand.contains("developer_instructions="))
     #expect(launch.shellCommand.contains("XcodeBuildMCP"))
+  }
+
+  @Test("Xcode launch without Node tooling skips XcodeBuildMCP and guidance, notifies once")
+  func xcodeLaunchWithoutNodeToolingSkipsXcodeBuildMCPAndNotifies() throws {
+    let projectRoot = try makeTemporaryDirectory(named: "AgentHubXcodeNoNode")
+    defer { try? FileManager.default.removeItem(at: projectRoot) }
+    let xcodeProject = projectRoot.appendingPathComponent("App.xcodeproj", isDirectory: true)
+    try FileManager.default.createDirectory(at: xcodeProject, withIntermediateDirectories: true)
+    try "".write(
+      to: xcodeProject.appendingPathComponent("project.pbxproj"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    var notifyCount = 0
+    let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: nil,
+      projectPath: projectRoot.path,
+      cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: .codex),
+      initialPrompt: nil,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: nil,
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: {},
+      xcodeBuildMCPEnabled: true,
+      xcodeBuildMCPToolingAvailable: { false },
+      notifyXcodeBuildMCPToolingMissing: { notifyCount += 1 }
+    )
+
+    guard case .success(let launch) = result else {
+      Issue.record("Expected launch builder success")
+      return
+    }
+
+    #expect(notifyCount == 1)
+    #expect(!launch.shellCommand.contains("XcodeBuildMCP"))
+    #expect(!launch.shellCommand.contains("developer_instructions="))
+  }
+
+  @Test("Xcode launch with XcodeBuildMCP disabled skips bootstrap, guidance, and notice")
+  func xcodeLaunchWithXcodeBuildMCPDisabledSkipsBootstrapAndNotice() throws {
+    let projectRoot = try makeTemporaryDirectory(named: "AgentHubXcodeDisabled")
+    defer { try? FileManager.default.removeItem(at: projectRoot) }
+    let xcodeProject = projectRoot.appendingPathComponent("App.xcodeproj", isDirectory: true)
+    try FileManager.default.createDirectory(at: xcodeProject, withIntermediateDirectories: true)
+    try "".write(
+      to: xcodeProject.appendingPathComponent("project.pbxproj"),
+      atomically: true,
+      encoding: .utf8
+    )
+
+    var notifyCount = 0
+    let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: nil,
+      projectPath: projectRoot.path,
+      cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: .codex),
+      initialPrompt: nil,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: nil,
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: {},
+      xcodeBuildMCPEnabled: false,
+      xcodeBuildMCPToolingAvailable: { true },
+      notifyXcodeBuildMCPToolingMissing: { notifyCount += 1 }
+    )
+
+    guard case .success(let launch) = result else {
+      Issue.record("Expected launch builder success")
+      return
+    }
+
+    #expect(notifyCount == 0)
+    #expect(!launch.shellCommand.contains("XcodeBuildMCP"))
+    #expect(!launch.shellCommand.contains("developer_instructions="))
   }
 
   @Test("Resume launch does not reinstall worktree skill")
