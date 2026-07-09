@@ -304,12 +304,8 @@ public enum SimulatorAnnotationPromptBuilder {
   /// bare `xcodebuild build` "validation" neither updates nor verifies the
   /// app the user is looking at.
   static let verificationFooter = """
-    If you make code changes in response, verify them in the running simulator instead of \
-    stopping at a successful compile — `xcodebuild build` on its own neither updates nor \
-    checks the app on screen. Use XcodeBuildMCP for the verification loop: build and run the \
-    app unless hot reload is armed and you only edited existing Swift files, navigate back to \
-    this exact screen with XcodeBuildMCP UI automation, and confirm the result with its \
-    screenshot or UI inspection tools.
+    If you make code changes in response, verify them in the live simulator with XcodeBuildMCP \
+    build/run and screenshot or UI inspection tools before declaring the change done.
     """
 
   /// The pin's subject, without a leading article: `Button "Exit" (...)`,
