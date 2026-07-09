@@ -15,6 +15,8 @@ import SimulatorPreview
 public protocol SimulatorPanelRunExecuting: AnyObject {
   func isBooted(udid: String) -> Bool
   func bootDevice(udid: String) async
+  func setPreferredSimulator(udid: String?, for projectPath: String)
+  func setPreferredPhysicalDevice(identifier: String?, for projectPath: String)
   func buildAndRunOnSimulator(
     udid: String,
     projectPath: String,
@@ -87,6 +89,8 @@ public struct SimulatorPanelRunFlow {
 
   @discardableResult
   public func run(udid: String) async -> SimulatorPanelRunOutcome {
+    simulatorService.setPreferredSimulator(udid: udid, for: projectPath)
+    simulatorService.setPreferredPhysicalDevice(identifier: nil, for: projectPath)
     // Boot first so the panel's preview switches to the live stream while the
     // build runs; the build's own boot is then a no-op.
     if !simulatorService.isBooted(udid: udid) {

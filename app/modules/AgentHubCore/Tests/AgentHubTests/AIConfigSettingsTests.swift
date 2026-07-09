@@ -244,6 +244,7 @@ struct CLICommandConfigurationArgumentHandlingTests {
       return
     }
     #expect(newSession[flagIndex + 1].contains("XcodeBuildMCP"))
+    #expect(newSession[flagIndex + 1].contains("build_run_sim"))
 
     let resumed = config.argumentsForSession(
       sessionId: "existing-session",
@@ -267,6 +268,7 @@ struct CLICommandConfigurationArgumentHandlingTests {
     )
     #expect(!args.contains("--append-system-prompt"))
     #expect(args.contains { $0.hasPrefix("developer_instructions=") && $0.contains("XcodeBuildMCP") })
+    #expect(args.contains { $0.hasPrefix("developer_instructions=") && $0.contains("build_sim") })
 
     let resumed = config.argumentsForSession(
       sessionId: "existing-session",

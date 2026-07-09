@@ -574,6 +574,8 @@ public struct SimulatorPickerView: View {
 
   private func runButton(udid: String) -> some View {
     Button {
+      SimulatorService.shared.setPreferredSimulator(udid: udid, for: session.projectPath)
+      SimulatorService.shared.setPreferredPhysicalDevice(identifier: nil, for: session.projectPath)
       Task {
         await SimulatorService.shared.buildAndRunOnSimulator(
           udid: udid,
@@ -590,6 +592,8 @@ public struct SimulatorPickerView: View {
 
   private func physicalRunButton(identifier: String) -> some View {
     Button {
+      SimulatorService.shared.setPreferredPhysicalDevice(identifier: identifier, for: session.projectPath)
+      SimulatorService.shared.setPreferredSimulator(udid: nil, for: session.projectPath)
       Task {
         await SimulatorService.shared.buildAndRunOnPhysicalDevice(
           identifier: identifier,
