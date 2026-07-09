@@ -56,8 +56,9 @@ struct SimulatorPreviewSidePanelView: View {
   @State private var annotationRefreshTask: Task<Void, Never>?
   @State private var recordingState: SimulatorRecordingPanelState = .idle
   @State private var lastRecordingResult: SimulatorRecordingResult?
+  @State private var lastRecordingFrameSample: SimulatorRecordingFrameSample?
   @State private var recordingAuditIssue = ""
-  @State private var recordingFailureDismissTask: Task<Void, Never>?
+  @State private var recordingTransientDismissTask: Task<Void, Never>?
   @State private var streamRefreshGeneration = 0
   /// The failure message the user explicitly dismissed; the banner stays
   /// hidden for that exact message but reappears for any new/different error.
@@ -65,9 +66,16 @@ struct SimulatorPreviewSidePanelView: View {
 
   private let simulatorContextStore = SimulatorSessionContextStore()
   private let simulatorRecordingService = SimulatorRecordingService.shared
+  private let recordingFrameSampler: any SimulatorRecordingFrameSampling = SimulatorRecordingFrameSampler()
 
   @AppStorage(AgentHubDefaults.simulatorPreviewsEnabled)
   private var simulatorPreviewsEnabled: Bool = true
+
+  @AppStorage(AgentHubDefaults.simulatorAutoRunOnAgentChanges)
+  private var simulatorAutoRunOnAgentChanges: Bool = true
+
+  @AppStorage(AgentHubDefaults.simulatorHideSimulatorAppWhileMirroring)
+  private var hideSimulatorAppWhileMirroring: Bool = true
 
   private var streamService: any SimulatorStreamServiceProtocol {
     agentHub?.simulatorStreamService ?? SimulatorStreamService.shared
@@ -238,18 +246,30 @@ struct SimulatorPreviewSidePanelView: View {
     )
     .task {
       await loadDevicesIfNeeded()
+      configureAutoRunSupport()
       syncSimulatorFeatureTracking()
     }
     .onDisappear {
       cancelAnnotationElementRefresh()
+      hotReload.onRequestAutoRun = nil
+      hotReload.setAutoRunEnabled(false, projectPath: projectPath)
       hotReload.stopTracking()
       hotReload.sessionDidStop()
       removeSimulatorContext()
       stopRecordingOnPanelClose()
-      recordingFailureDismissTask?.cancel()
+      recordingTransientDismissTask?.cancel()
     }
     .task(id: simulatorContextSignature) {
       persistSimulatorContext()
+    }
+    // The mirror is the display: once it's live (and the preference is on),
+    // ⌘H-hide the real Simulator.app window — still running, one ⌘Tab away.
+    // Fires on stream activation and when the setting flips, never on a
+    // timer, so a user who deliberately unhides it isn't fought.
+    .task(id: "\(isShowingLiveStream)|\(hideSimulatorAppWhileMirroring)") {
+      if isShowingLiveStream, hideSimulatorAppWhileMirroring {
+        SimulatorAppHider.shared.hideSimulatorApp()
+      }
     }
     .onChange(of: activeDestinationID) { _, _ in
       cancelAnnotationElementRefresh()
@@ -274,6 +294,9 @@ struct SimulatorPreviewSidePanelView: View {
       } else if !isEnabled {
         displayMode = .live
       }
+    }
+    .onChange(of: simulatorAutoRunOnAgentChanges) { _, _ in
+      syncSimulatorFeatureTracking()
     }
     .onChange(of: openEditorFilePath) { _, _ in
       if effectiveDisplayMode == .previews { autoArmPreviewsIfNeeded() }
@@ -860,6 +883,37 @@ struct SimulatorPreviewSidePanelView: View {
     if shouldObservePreviews {
       hotReload.warmUp()
     }
+    // Auto Build & Run applies only to simulator destinations — hot reload
+    // and hands-free relaunch are simulator-only by design.
+    hotReload.setAutoRunEnabled(
+      simulatorAutoRunOnAgentChanges && isSimulatorDestination,
+      projectPath: projectPath
+    )
+  }
+
+  /// Offers this panel's Build & Run flow to auto-run on source changes. The
+  /// closure captures the long-lived service/controller objects — never the
+  /// view — so firing outside a view update never touches `@State`.
+  private func configureAutoRunSupport() {
+    let flow = SimulatorPanelRunFlow(
+      simulatorService: simulatorService,
+      hotReload: hotReload,
+      projectPath: projectPath
+    )
+
+    let service = simulatorService
+    let projectPath = projectPath
+    hotReload.onRequestAutoRun = {
+      // Physical-device destination: hands-free installs to a phone would be
+      // intrusive — drop the change rather than retrying forever.
+      guard service.preferredPhysicalDeviceIDs[projectPath] == nil else { return true }
+      // No destination chosen yet: nothing sensible to run on; drop.
+      guard let udid = service.preferredSimulatorUDIDs[projectPath] else { return true }
+      // A build is mid-flight — report busy so the change retries after it.
+      guard !service.isRunInFlight(udid: udid, projectPath: projectPath) else { return false }
+      Task { await flow.run(udid: udid) }
+      return true
+    }
   }
 
   private func selectSimulator(udid: String) {
@@ -916,32 +970,17 @@ struct SimulatorPreviewSidePanelView: View {
     }
 
     guard let activeUDID else { return }
+    // Same flow the agent-run registry and auto-run use: boot, prepare the
+    // hot-reload plan (first use builds support dylibs in the background and
+    // this launch proceeds plain — the pill reports it honestly), build, and
+    // arm on success.
+    let flow = SimulatorPanelRunFlow(
+      simulatorService: simulatorService,
+      hotReload: hotReload,
+      projectPath: projectPath
+    )
     Task {
-      // Boot first so the preview switches to the live stream immediately,
-      // before the build finishes installing/launching the app. `bootDevice`
-      // is idempotent and refreshes the device list; the build's own boot is
-      // then a no-op.
-      if !simulatorService.isBooted(udid: activeUDID) {
-        await simulatorService.bootDevice(udid: activeUDID)
-      }
-      // Arms hot reload, plus the preview host when that setting is enabled,
-      // once the support dylibs are cached. First use builds them in the
-      // background and this launch proceeds plain — the pill reports it
-      // honestly.
-      let plan = await hotReload.preparePlan(
-        udid: activeUDID,
-        projectPath: projectPath,
-        enableInjection: true,
-        enablePreviews: simulatorPreviewsEnabled
-      )
-      let success = await simulatorService.buildAndRunOnSimulator(
-        udid: activeUDID, projectPath: projectPath, hotReload: plan
-      )
-      if success, let plan {
-        hotReload.sessionDidLaunch(
-          udid: activeUDID, projectPath: projectPath, plan: plan
-        )
-      }
+      await flow.run(udid: activeUDID)
     }
   }
 
@@ -964,7 +1003,7 @@ struct SimulatorPreviewSidePanelView: View {
     switch recordingState {
     case .recording:
       return "stop.fill"
-    case .idle, .starting, .stopping, .failed:
+    case .idle, .starting, .stopping, .sent, .failed:
       return "record.circle"
     }
   }
@@ -987,14 +1026,14 @@ struct SimulatorPreviewSidePanelView: View {
       return true
     case .recording:
       return false
-    case .idle, .failed:
+    case .idle, .sent, .failed:
       return activeUDID == nil || !isActiveDeviceBooted
     }
   }
 
   private var recordingOverlayAllowsHitTesting: Bool {
     switch recordingState {
-    case .starting, .stopping:
+    case .starting, .stopping, .sent:
       return false
     case .recording:
       return true
@@ -1032,8 +1071,9 @@ struct SimulatorPreviewSidePanelView: View {
 
   private func startRecording() {
     guard let activeUDID else { return }
-    recordingFailureDismissTask?.cancel()
+    recordingTransientDismissTask?.cancel()
     lastRecordingResult = nil
+    lastRecordingFrameSample = nil
     recordingAuditIssue = ""
     recordingState = .starting
 
@@ -1057,12 +1097,21 @@ struct SimulatorPreviewSidePanelView: View {
         let result = try await simulatorRecordingService.stopRecording(udid: recording.udid)
         refreshLiveStreamAfterRecordingEvent(udid: recording.udid)
         if result.isUsable {
+          // Pre-extract frames while still "Finishing recording" so the audit
+          // prompt can point the agent at images it can always read, even
+          // when ffmpeg/ffprobe aren't installed.
+          let frameSample = await recordingFrameSampler.sampleFrames(
+            fromVideoAt: result.outputPath,
+            maxFrames: SimulatorRecordingFrameSampler.defaultMaxFrames
+          )
           recordingAuditIssue = ""
           lastRecordingResult = result
+          lastRecordingFrameSample = frameSample
           recordingState = .idle
         } else {
           try? SimulatorRecordingService.deleteRecordingFile(at: result.outputPath)
           lastRecordingResult = nil
+          lastRecordingFrameSample = nil
           recordingAuditIssue = ""
           presentRecordingFailure(result.validationError ?? "Recording did not finalize. Try recording again.")
         }
@@ -1093,10 +1142,32 @@ struct SimulatorPreviewSidePanelView: View {
     let prompt = SimulatorRecordingPromptBuilder.prompt(
       for: recording,
       deviceName: activeDevice?.name,
-      issue: trimmedIssue
+      issue: trimmedIssue,
+      sampledFrames: lastRecordingFrameSample
     )
     onSendToSession(prompt, session)
+
+    // The recording and its sampled frames stay on disk — the agent reads
+    // them from the prompt paths. Only the overlay UI is dismissed.
     recordingAuditIssue = ""
+    lastRecordingResult = nil
+    lastRecordingFrameSample = nil
+    presentRecordingSentConfirmation(outputPath: recording.outputPath)
+  }
+
+  private func presentRecordingSentConfirmation(outputPath: String) {
+    recordingTransientDismissTask?.cancel()
+    recordingState = .sent(outputPath: outputPath)
+    recordingTransientDismissTask = Task {
+      try? await Task.sleep(for: .seconds(4))
+      guard !Task.isCancelled else { return }
+      await MainActor.run {
+        if case .sent(let currentPath) = recordingState, currentPath == outputPath {
+          recordingState = .idle
+        }
+        recordingTransientDismissTask = nil
+      }
+    }
   }
 
   private func revealRecording(_ recording: SimulatorRecordingResult) {
@@ -1106,18 +1177,22 @@ struct SimulatorPreviewSidePanelView: View {
   }
 
   private func dismissRecordingOverlay() {
-    recordingFailureDismissTask?.cancel()
-    recordingFailureDismissTask = nil
+    recordingTransientDismissTask?.cancel()
+    recordingTransientDismissTask = nil
     lastRecordingResult = nil
+    lastRecordingFrameSample = nil
     recordingAuditIssue = ""
-    if case .failed = recordingState {
+    switch recordingState {
+    case .failed, .sent:
       recordingState = .idle
+    case .idle, .starting, .recording, .stopping:
+      break
     }
   }
 
   private func discardRecordingOverlay() {
-    recordingFailureDismissTask?.cancel()
-    recordingFailureDismissTask = nil
+    recordingTransientDismissTask?.cancel()
+    recordingTransientDismissTask = nil
 
     if let recording = recordingState.activeRecording {
       recordingState = .stopping(recording)
@@ -1130,6 +1205,7 @@ struct SimulatorPreviewSidePanelView: View {
         }
         refreshLiveStreamAfterRecordingEvent(udid: recording.udid)
         lastRecordingResult = nil
+        lastRecordingFrameSample = nil
         recordingAuditIssue = ""
         recordingState = .idle
       }
@@ -1145,25 +1221,30 @@ struct SimulatorPreviewSidePanelView: View {
     }
 
     lastRecordingResult = nil
+    lastRecordingFrameSample = nil
     recordingAuditIssue = ""
-    if case .failed = recordingState {
+    switch recordingState {
+    case .failed, .sent:
       recordingState = .idle
+    case .idle, .starting, .recording, .stopping:
+      break
     }
   }
 
   private func presentRecordingFailure(_ message: String) {
-    recordingFailureDismissTask?.cancel()
+    recordingTransientDismissTask?.cancel()
     lastRecordingResult = nil
+    lastRecordingFrameSample = nil
     recordingAuditIssue = ""
     recordingState = .failed(message)
-    recordingFailureDismissTask = Task {
+    recordingTransientDismissTask = Task {
       try? await Task.sleep(for: .seconds(5))
       guard !Task.isCancelled else { return }
       await MainActor.run {
         if case .failed(let currentMessage) = recordingState, currentMessage == message {
           recordingState = .idle
         }
-        recordingFailureDismissTask = nil
+        recordingTransientDismissTask = nil
       }
     }
   }
@@ -1327,9 +1408,16 @@ struct SimulatorPreviewSidePanelView: View {
   /// this panel is the sole consumer of `onStateChange`.
   private func observeStreamState(of streamSession: any SimulatorStreamSessionProtocol) {
     let model = annotationModel
+    let service = simulatorService
     let apply: (SimulatorStreamSessionState) -> Void = { state in
       if case .streaming(let width, let height) = state {
         model.contentPixelSize = CGSize(width: width, height: height)
+      }
+      // The session's watchdog noticed the device died. `isBooted` is a
+      // stale snapshot until a device-list refresh, so refresh it — the
+      // panel then swaps the frozen mirror for the boot/run affordance.
+      if case .failed = state {
+        Task { await service.listDevices() }
       }
     }
     apply(streamSession.state)

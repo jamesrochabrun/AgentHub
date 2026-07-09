@@ -11,11 +11,24 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
     var makeCapture: (_ developerDir: String) -> FrameCaptureBackend
     var makePoller: (_ udid: String) -> FrameCaptureBackend
     var makeHID: (_ developerDir: String) -> HIDInjector?
+    /// Cheap in-process device-liveness probe (no subprocess). Nil when the
+    /// answer can't be determined (frameworks missing) — the watchdog stays
+    /// inert then, preserving the previous behavior.
+    var isDeviceBooted: (_ udid: String, _ developerDir: String) -> Bool?
+    /// Liveness poll cadence; 0 disables the watchdog.
+    var watchdogInterval: TimeInterval
 
     static let live = Dependencies(
       makeCapture: { FramebufferCapture(developerDir: $0) },
       makePoller: { ScreenshotPoller(udid: $0) },
-      makeHID: { HIDInjector(developerDir: $0) }
+      makeHID: { HIDInjector(developerDir: $0) },
+      isDeviceBooted: { udid, developerDir in
+        guard CoreSimulatorBridge.loadFrameworks(developerDir: developerDir),
+              let device = CoreSimulatorBridge.findSimDevice(udid: udid, developerDir: developerDir)
+        else { return nil }
+        return CoreSimulatorBridge.stateString(of: device) == "Booted"
+      },
+      watchdogInterval: 3.0
     )
   }
 
@@ -49,6 +62,10 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
   private var started = false
   private var currentState: SimulatorStreamSessionState = .idle
   private let lock = NSLock()
+  private var watchdog: DispatchSourceTimer?
+  private let watchdogQueue = DispatchQueue(
+    label: "com.agenthub.simpreview.session-watchdog", qos: .utility
+  )
 
   init(
     udid: String,
@@ -71,6 +88,7 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
 
     transition(to: .starting)
     startBackend()
+    startWatchdog()
   }
 
   func stop() {
@@ -80,11 +98,78 @@ final class SimulatorStreamSession: SimulatorStreamSessionProtocol {
     lock.unlock()
     guard wasStarted else { return }
 
+    stopWatchdog()
     backend?.stop()
     backend = nil
     hid?.teardown()
     hid = nil
     transition(to: .stopped)
+  }
+
+  // MARK: - Liveness watchdog
+
+  /// The capture path has no end-of-stream signal: when the device shuts
+  /// down (or Simulator.app takes it down), frame callbacks just stop and the
+  /// idle re-emit keeps painting the last frame — a frozen mirror. This
+  /// watchdog polls boot state cheaply in-process, fails the session loudly
+  /// when the device dies, and restarts the backend when it boots again.
+  private func startWatchdog() {
+    let interval = dependencies.watchdogInterval
+    guard watchdog == nil, interval > 0 else { return }
+    let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+    timer.schedule(
+      deadline: .now() + interval, repeating: interval, leeway: .milliseconds(250)
+    )
+    timer.setEventHandler { [weak self] in
+      guard let self else { return }
+      // Probe off-main (reflective CoreSimulator read), mutate on main where
+      // all other backend lifecycle happens.
+      guard let booted = self.dependencies.isDeviceBooted(self.udid, self.developerDir) else {
+        return
+      }
+      DispatchQueue.main.async { [weak self] in
+        self?.applyWatchdogVerdict(deviceIsBooted: booted)
+      }
+    }
+    timer.resume()
+    watchdog = timer
+  }
+
+  private func stopWatchdog() {
+    watchdog?.cancel()
+    watchdog = nil
+  }
+
+  /// Internal (not private) so lifecycle tests can drive verdicts
+  /// deterministically instead of racing the timer.
+  func applyWatchdogVerdict(deviceIsBooted: Bool) {
+    lock.lock()
+    let isStarted = started
+    let hasConsumer = onFrame != nil
+    let state = currentState
+    lock.unlock()
+    guard isStarted else { return }
+
+    if !deviceIsBooted {
+      if backend != nil {
+        backend?.stop()
+        backend = nil
+        hid?.teardown()
+        hid = nil
+      }
+      if case .failed = state {} else {
+        transition(to: .failed(
+          message: "The simulator shut down — the stream reconnects automatically when it boots again."
+        ))
+      }
+      return
+    }
+
+    // Device is back after a failure — self-heal while someone is watching.
+    if case .failed = state, backend == nil, hasConsumer {
+      transition(to: .starting)
+      startBackend()
+    }
   }
 
   private func transition(to newState: SimulatorStreamSessionState) {

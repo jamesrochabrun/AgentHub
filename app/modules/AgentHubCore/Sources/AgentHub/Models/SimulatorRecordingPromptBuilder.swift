@@ -5,7 +5,8 @@ enum SimulatorRecordingPromptBuilder {
   static func prompt(
     for recording: SimulatorRecordingResult,
     deviceName: String?,
-    issue: String
+    issue: String,
+    sampledFrames: SimulatorRecordingFrameSample? = nil
   ) -> String {
     let trimmedIssue = issue.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -37,9 +38,24 @@ enum SimulatorRecordingPromptBuilder {
       "",
       "Recording:",
       recording.outputPath,
-      "",
-      "Use ffprobe or ffmpeg to inspect timing and sampled frames as needed before changing code.",
     ]
+
+    if let sampledFrames, !sampledFrames.framePaths.isEmpty {
+      lines.append(contentsOf: [
+        "",
+        "Sampled frames from the recording (evenly spaced JPEGs, timestamp in the file name) — read these directly as images:",
+      ])
+      lines.append(contentsOf: sampledFrames.framePaths)
+      lines.append(contentsOf: [
+        "",
+        "Use ffprobe or ffmpeg on the MP4 only if you need finer timing than the sampled frames.",
+      ])
+    } else {
+      lines.append(contentsOf: [
+        "",
+        "Use ffprobe or ffmpeg to inspect timing and sampled frames as needed before changing code.",
+      ])
+    }
 
     if let deviceName, !deviceName.isEmpty {
       lines.append("Device: \(deviceName)")

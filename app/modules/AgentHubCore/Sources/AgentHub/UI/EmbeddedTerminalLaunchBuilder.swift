@@ -81,7 +81,10 @@ public enum EmbeddedTerminalLaunchBuilder {
     worktreeName: String?,
     metadataStore: SessionMetadataStore?,
     agentHubCLIPath: String? = nil,
-    installAgentHubWorktreeSkill: () -> Void
+    installAgentHubWorktreeSkill: () -> Void,
+    xcodeBuildMCPEnabled: Bool = XcodeBuildMCPPreflight.isEnabled(),
+    xcodeBuildMCPToolingAvailable: () -> Bool = { XcodeBuildMCPPreflight.nodeToolingAvailable() },
+    notifyXcodeBuildMCPToolingMissing: () -> Void = { Task { @MainActor in XcodeBuildMCPNodeNotice.notifyOnce() } }
   ) -> Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError> {
     let executablePath: String?
     switch cliConfiguration.mode {
@@ -121,6 +124,23 @@ public enum EmbeddedTerminalLaunchBuilder {
     let aiConfig = metadataStore?.getAIConfigSync(for: cliConfiguration.mode.rawValue)
     let allowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.allowedTools)
     let disallowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.disallowedTools)
+    let xcodeReference = XcodeProjectDetector.preferredProjectReference(at: workingDirectory)
+    var xcodeBuildMCPBootstrap: XcodeBuildMCPBootstrap?
+    if xcodeReference != nil, xcodeBuildMCPEnabled {
+      if xcodeBuildMCPToolingAvailable() {
+        xcodeBuildMCPBootstrap = makeXcodeBuildMCPBootstrap(
+          workingDirectory: workingDirectory,
+          reference: xcodeReference,
+          metadataStore: metadataStore
+        )
+      } else {
+        notifyXcodeBuildMCPToolingMissing()
+      }
+    }
+    // Xcode projects get simulator-loop guidance at system-prompt level so
+    // agents verify through the same live app surface the user is watching.
+    // Tied to the bootstrap: guidance without the tools misleads agents.
+    let appendSystemPrompt = xcodeBuildMCPBootstrap == nil ? nil : SimulatorAgentGuidance.systemPrompt
     let args = cliConfiguration.argumentsForSession(
       sessionId: sessionId,
       prompt: initialPrompt,
@@ -132,7 +152,9 @@ public enum EmbeddedTerminalLaunchBuilder {
       effortLevel: aiConfig?.effortLevel,
       allowedTools: allowedTools.isEmpty ? nil : allowedTools,
       disallowedTools: disallowedTools.isEmpty ? nil : disallowedTools,
-      codexApprovalPolicy: aiConfig?.approvalPolicy
+      codexApprovalPolicy: aiConfig?.approvalPolicy,
+      xcodeBuildMCPBootstrap: xcodeBuildMCPBootstrap,
+      appendSystemPrompt: appendSystemPrompt
     )
     let joinedArgs = args
       .map { "'\(shellEscape($0))'" }
@@ -210,6 +232,51 @@ public enum EmbeddedTerminalLaunchBuilder {
       return candidate
     }
     return "/bin/zsh"
+  }
+
+  private static func makeXcodeBuildMCPBootstrap(
+    workingDirectory: String,
+    reference: XcodeProjectReference?,
+    metadataStore: SessionMetadataStore?
+  ) -> XcodeBuildMCPBootstrap? {
+    guard let reference else { return nil }
+    let simulatorUDID = savedSimulatorUDID(
+      forProjectPath: workingDirectory,
+      metadataStore: metadataStore
+    )
+    switch reference.kind {
+    case .project:
+      return XcodeBuildMCPBootstrap(
+        workingDirectory: workingDirectory,
+        projectPath: reference.path,
+        simulatorUDID: simulatorUDID
+      )
+    case .workspace:
+      return XcodeBuildMCPBootstrap(
+        workingDirectory: workingDirectory,
+        workspacePath: reference.path,
+        simulatorUDID: simulatorUDID
+      )
+    }
+  }
+
+  private static func savedSimulatorUDID(
+    forProjectPath projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> String? {
+    guard let metadataStore else { return nil }
+    let normalizedProjectPath = normalizedPath(projectPath)
+    let preferences = metadataStore.getProjectSimulatorPreferencesSync()
+    return preferences
+      .filter { $0.kind == .simulator && normalizedPath($0.projectPath) == normalizedProjectPath }
+      .sorted { $0.updatedAt > $1.updatedAt }
+      .first?
+      .deviceIdentifier
+  }
+
+  private static func normalizedPath(_ path: String) -> String {
+    let expanded = NSString(string: path).expandingTildeInPath
+    return (expanded as NSString).standardizingPath
   }
 }
 

@@ -7,18 +7,33 @@
 
 import Foundation
 
+struct XcodeProjectReference: Equatable, Sendable {
+  enum Kind: Equatable, Sendable {
+    case project
+    case workspace
+  }
+
+  var path: String
+  var kind: Kind
+}
+
 enum XcodeProjectDetector {
   static func isXcodeProject(at path: String) -> Bool {
-    // Check the root directory
-    if containsXcodeProject(at: path) { return true }
-    // Check one level of subdirectories (e.g. project root has app/Foo.xcodeproj)
-    guard let subdirs = try? FileManager.default.contentsOfDirectory(atPath: path) else { return false }
-    return subdirs.contains { sub in
+    preferredProjectReference(at: path) != nil
+  }
+
+  static func preferredProjectReference(at path: String) -> XcodeProjectReference? {
+    if let reference = firstProjectReference(in: path) { return reference }
+    guard let subdirs = try? FileManager.default.contentsOfDirectory(atPath: path).sorted() else { return nil }
+    for sub in subdirs {
       var isDir: ObjCBool = false
       let full = (path as NSString).appendingPathComponent(sub)
       FileManager.default.fileExists(atPath: full, isDirectory: &isDir)
-      return isDir.boolValue && containsXcodeProject(at: full)
+      if isDir.boolValue, let reference = firstProjectReference(in: full) {
+        return reference
+      }
     }
+    return nil
   }
 
   /// Parses project.pbxproj to determine which platforms the project supports.
@@ -46,15 +61,10 @@ enum XcodeProjectDetector {
 
   // MARK: - Private Helpers
 
-  private static func containsXcodeProject(at path: String) -> Bool {
-    guard let items = try? FileManager.default.contentsOfDirectory(atPath: path) else { return false }
-    return items.contains { $0.hasSuffix(".xcodeproj") || $0.hasSuffix(".xcworkspace") }
-  }
-
   /// Returns the path to the first .xcodeproj found at root or one subdir deep.
   private static func findXcodeproj(at path: String) -> String? {
     if let proj = firstXcodeproj(in: path) { return proj }
-    guard let subdirs = try? FileManager.default.contentsOfDirectory(atPath: path) else { return nil }
+    guard let subdirs = try? FileManager.default.contentsOfDirectory(atPath: path).sorted() else { return nil }
     for sub in subdirs {
       var isDir: ObjCBool = false
       let full = (path as NSString).appendingPathComponent(sub)
@@ -64,8 +74,25 @@ enum XcodeProjectDetector {
     return nil
   }
 
+  private static func firstProjectReference(in path: String) -> XcodeProjectReference? {
+    guard let items = try? FileManager.default.contentsOfDirectory(atPath: path).sorted() else { return nil }
+    if let workspace = items.first(where: { $0.hasSuffix(".xcworkspace") }) {
+      return XcodeProjectReference(
+        path: (path as NSString).appendingPathComponent(workspace),
+        kind: .workspace
+      )
+    }
+    if let project = items.first(where: { $0.hasSuffix(".xcodeproj") }) {
+      return XcodeProjectReference(
+        path: (path as NSString).appendingPathComponent(project),
+        kind: .project
+      )
+    }
+    return nil
+  }
+
   private static func firstXcodeproj(in path: String) -> String? {
-    guard let items = try? FileManager.default.contentsOfDirectory(atPath: path) else { return nil }
+    guard let items = try? FileManager.default.contentsOfDirectory(atPath: path).sorted() else { return nil }
     guard let name = items.first(where: { $0.hasSuffix(".xcodeproj") }) else { return nil }
     return (path as NSString).appendingPathComponent(name)
   }

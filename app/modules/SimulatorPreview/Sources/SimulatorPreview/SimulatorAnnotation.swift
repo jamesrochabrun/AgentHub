@@ -271,6 +271,8 @@ public enum SimulatorAnnotationPromptBuilder {
         lines.append("")
         lines.append("(If you need visual context, a screenshot with the pin marked is saved at: \(screenshotPath))")
       }
+      lines.append("")
+      lines.append(verificationFooter)
       return lines.joined(separator: "\n")
     }
 
@@ -292,8 +294,19 @@ public enum SimulatorAnnotationPromptBuilder {
       lines.append("")
       lines.append("(If you need visual context, a screenshot with the numbered pins drawn on it is saved at: \(screenshotPath))")
     }
+    lines.append("")
+    lines.append(verificationFooter)
     return lines.joined(separator: "\n")
   }
+
+  /// Process guidance only — conditional on the agent choosing to change
+  /// code, so the user's note stays the sole instruction. Exists because a
+  /// bare `xcodebuild build` "validation" neither updates nor verifies the
+  /// app the user is looking at.
+  static let verificationFooter = """
+    If you make code changes in response, verify them in the live simulator with XcodeBuildMCP \
+    build/run and screenshot or UI inspection tools before declaring the change done.
+    """
 
   /// The pin's subject, without a leading article: `Button "Exit" (...)`,
   /// `Image — frame (...) pt ...`, or a positional fallback

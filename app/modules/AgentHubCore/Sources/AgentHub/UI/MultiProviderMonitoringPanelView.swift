@@ -13,7 +13,7 @@ import SwiftUI
 
 // MARK: - SidePanelContent
 
-private enum SidePanelContent: Equatable {
+enum SidePanelContent: Equatable {
   case diff(sessionId: String, session: CLISession, projectPath: String)
   case plan(sessionId: String, session: CLISession, planState: PlanState)
   case webPreview(sessionId: String, session: CLISession, projectPath: String, mode: WebPreviewMode)
@@ -42,6 +42,28 @@ private enum SidePanelContent: Equatable {
     case (.simulator(let id1, _, let p1), .simulator(let id2, _, let p2)):
       return id1 == id2 && p1 == p2
     default: return false
+    }
+  }
+
+  func replacingPendingSession(with session: CLISession) -> SidePanelContent? {
+    switch self {
+    case .webPreview(let sessionId, _, let projectPath, let mode)
+      where sessionId.hasPrefix("pending-") && session.projectPath == projectPath:
+      return .webPreview(
+        sessionId: session.id,
+        session: session,
+        projectPath: session.projectPath,
+        mode: mode
+      )
+    case .simulator(let sessionId, _, let projectPath)
+      where sessionId.hasPrefix("pending-") && session.projectPath == projectPath:
+      return .simulator(
+        sessionId: session.id,
+        session: session,
+        projectPath: session.projectPath
+      )
+    default:
+      return nil
     }
   }
 }
@@ -358,22 +380,15 @@ public struct MultiProviderMonitoringPanelView: View {
     .onChange(of: snapshot.effectivePrimaryItemID) { _, newId in
       guard let currentSidePanelPayload = sidePanelPresentation.currentPayload else { return }
       let currentSnapshot = makeItemSnapshot()
-      if case .webPreview(let sessionId, _, let projectPath, let mode) = currentSidePanelPayload.content,
-         sessionId.hasPrefix("pending-"),
-         let newId,
+      if let newId,
          let item = currentSnapshot.allItems.first(where: { $0.id == newId }),
          case .monitored(_, _, let session, _) = item,
-         session.projectPath == projectPath {
+         let reboundContent = currentSidePanelPayload.content.replacingPendingSession(with: session) {
         openEmbeddedSidePanel(
           SidePanelPayload(
             itemID: item.id,
             providerKind: item.providerKind,
-            content: .webPreview(
-              sessionId: session.id,
-              session: session,
-              projectPath: session.projectPath,
-              mode: mode
-            )
+            content: reboundContent
           )
         )
       } else {
@@ -831,6 +846,17 @@ public struct MultiProviderMonitoringPanelView: View {
     autoOpenedSidePanelKeys.insert(candidate.key)
     observedAutoOpenKeysBySessionID[candidate.session.id, default: []].insert(candidate.key)
 
+    // Auto-open may replace nothing or another auto-opened surface — never a
+    // panel the user opened deliberately. Without this, sending simulator
+    // annotation (or web-preview inspect) feedback "closed" the panel: the
+    // agent's first edit produced an .edits candidate that swapped out the
+    // .simulator panel mid-loop.
+    if let current = sidePanelPresentation.currentPayload,
+       !Self.isAutoOpenableContent(current.content)
+    {
+      return
+    }
+
     let payload = SidePanelPayload(
       itemID: candidate.itemID,
       providerKind: candidate.providerKind,
@@ -838,6 +864,17 @@ public struct MultiProviderMonitoringPanelView: View {
     )
     guard sidePanelPresentation.currentPayload != payload else { return }
     openEmbeddedSidePanel(payload)
+  }
+
+  /// The only surfaces the auto-open policy itself produces; everything else
+  /// on screen was put there by the user and must not be replaced.
+  private static func isAutoOpenableContent(_ content: SidePanelContent) -> Bool {
+    switch content {
+    case .edits, .plan:
+      return true
+    case .diff, .webPreview, .mermaid, .gitHub, .mcpApp, .simulator:
+      return false
+    }
   }
 
   private func shouldSuppressFirstObservedAutoOpenCandidate(

@@ -232,6 +232,27 @@ final class SimulatorAnnotationTests: XCTestCase {
     XCTAssertFalse(prompt.lowercased().contains("make the requested changes"))
   }
 
+  func testPromptEndsWithConditionalVerificationGuidance() {
+    let multi = SimulatorAnnotationPromptBuilder.prompt(
+      annotations: [
+        SimulatorAnnotation(normalizedX: 0.5, normalizedY: 0.25, text: "align this"),
+        SimulatorAnnotation(normalizedX: 0.1, normalizedY: 0.9, text: "bigger"),
+      ],
+      deviceName: nil, screenshotPixelSize: nil, screenshotPath: nil)
+    let single = SimulatorAnnotationPromptBuilder.prompt(
+      annotations: [SimulatorAnnotation(normalizedX: 0.5, normalizedY: 0.5, text: "fix")],
+      deviceName: nil, screenshotPixelSize: nil, screenshotPath: nil)
+
+    for prompt in [multi, single] {
+      // Conditional process guidance, not an instruction — the user's note
+      // stays the only intent in the message.
+      XCTAssertTrue(prompt.contains("If you make code changes in response"), prompt)
+      XCTAssertTrue(prompt.contains("XcodeBuildMCP"), prompt)
+      XCTAssertTrue(prompt.contains("screenshot or UI inspection tools"), prompt)
+      XCTAssertFalse(prompt.lowercased().contains("make the requested changes"))
+    }
+  }
+
   // MARK: - AX element model
 
   func testDeepestElementPrefersSmallestContainingFrame() {

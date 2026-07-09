@@ -78,7 +78,18 @@ file whose path is included in the prompt so the agent can read it. Pin position
 are normalized framebuffer coordinates (`SimulatorAnnotation`), which map 1:1
 onto the device-resolution screenshot; element frames are in device points
 against the AX root (screen) frame (`SimulatorAnnotationPromptBuilder`,
-unit-tested).
+unit-tested). The prompt ends with one **conditional** process footer ("If you
+make code changes in response…") pointing the agent at the XcodeBuildMCP verify
+loop — added because agents otherwise "validate" with a bare `xcodebuild build`,
+which neither updates nor checks the app on screen. The user's note remains the
+only instruction in the message.
+
+Sending feedback must never lose the panel: the auto-open side-panel policy
+(`openAutoSidePanelIfNeeded` in `MultiProviderMonitoringPanelView`) refuses to
+replace any panel the user opened deliberately — auto-open only lands on an
+empty slot or on another auto-opened `.edits`/`.plan` surface. Without that
+guard, the agent's first edit in response to annotation feedback swapped the
+`.simulator` panel for the edits panel.
 
 ### How the AX tree is read (`SimulatorAXInspector`)
 
@@ -161,6 +172,18 @@ and are unchanged. The new module only adds capture + input + the in-app view.
 
 All private access is reflective and guarded, so a missing/renamed symbol falls
 back rather than crashing.
+
+**Self-healing:** the capture path has no end-of-stream signal — when a device
+dies, frame callbacks just stop and the idle re-emit keeps painting the last
+frame. `SimulatorStreamSession` therefore runs a liveness watchdog (3s cadence,
+cheap in-process `SimDevice.stateString` read, injectable for tests): device
+not booted → backend torn down + `.failed(message:)` emitted (the panel
+refreshes the device list so the boot/run affordance replaces the frozen
+mirror); device booted again with a consumer attached → the backend restarts on
+its own. The Previews tab is similarly self-healing: after its fast ~8s
+"Starting previews…" window, `SimulatorPreviewSpotlightView` keeps a slow 3s
+re-probe alive while the host is expected, so a host that comes back (slow
+launch, relaunch) recovers without the manual button.
 
 ## Privacy contract (do not regress)
 
@@ -333,6 +356,108 @@ per-project opt-in.
   (`swift test` in the module: env contract, parser, classifier, locator,
   monitor transitions, manifest/render decoding, tail).
 
+## Agent-driven runs & the verification loop (MCP)
+
+AgentHub does **not** expose bundled simulator-control MCP tools. For Xcode
+project launches, AgentHub instead bootstraps the external
+[XcodeBuildMCP](https://www.xcodebuildmcp.com/) server into both Claude and
+Codex sessions. The bootstrap is generated in `CLICommandConfiguration` and
+attached by `EmbeddedTerminalLaunchBuilder` only when all three hold:
+
+- the launch directory is an Xcode project;
+- **Agent simulator tools (XcodeBuildMCP)** is on (Settings → iOS Simulator,
+  default on, `AgentHubDefaults.xcodeBuildMCPEnabled`);
+- `XcodeBuildMCPPreflight` finds a way to actually run the server: a global
+  `xcodebuildmcp` binary, `npx` on the search path, or an nvm-managed Node
+  install.
+
+Nothing needs preinstalling: the server launch script prefers a global
+`xcodebuildmcp` binary and otherwise fetches the **pinned** release via
+`npx` (`XcodeBuildMCPBootstrap.pinnedNPMVersion` — never `@latest`, so
+sessions don't drift with npm's latest tag). When the preflight fails (no
+Node at all), the session still launches — just without the bootstrap and
+without the guidance prompt below — and `XcodeBuildMCPNodeNotice` posts a
+one-time notification suggesting a Node.js install; the Settings toggle also
+shows an inline warning.
+
+The XcodeBuildMCP config includes:
+
+- `XCODEBUILDMCP_CWD`: the AgentHub launch path, so project-local
+  `.xcodebuildmcp/config.yaml` and relative paths resolve from the same place
+  as the terminal session.
+- `XCODEBUILDMCP_WORKSPACE_PATH` or `XCODEBUILDMCP_PROJECT_PATH`: the detected
+  `.xcworkspace` (preferred) or `.xcodeproj`, including one subdirectory deep
+  for common monorepos.
+- `XCODEBUILDMCP_SIMULATOR_ID`: the saved AgentHub run destination for that
+  project when it is a simulator.
+- `XCODEBUILDMCP_ENABLED_WORKFLOWS=simulator,ui-automation`, plus telemetry
+  opt-out through `XCODEBUILDMCP_SENTRY_DISABLED=true`.
+
+`SimulatorAgentGuidance.systemPrompt` is injected whenever the bootstrap is
+attached (never without it — guidance pointing at tools that can't connect
+misleads agents): Claude receives it via `--append-system-prompt`; Codex
+receives it via the `developer_instructions` config override. The guidance
+tells agents to inspect XcodeBuildMCP session defaults before the first
+build (setting missing project/scheme/simulator context with its discovery
+tools) and to **scale verification to the change and the user's intent**:
+compile check for refactors and non-visual changes; build/run when runtime
+behavior changes; the full UI-automation + screenshot/inspection loop only
+when the user asked for visual/end-to-end verification or a specific visual
+result is being claimed. The full loop is deliberately not the default — it
+is slow and token-expensive, and the depth decision is the model's. The
+annotation prompt footer still asks for live-simulator verification when a
+user sends pins from the simulator: pins are explicit visual intent.
+
+Manual recording remains an AgentHub side-panel feature only. The record button
+uses `SimulatorRecordingService` from the app UI and there is intentionally no
+agent-facing recording tool in AgentHub's MCP server.
+
+The recording audit flow assumes the agent **cannot decode video**: after a
+recording stops and validates, `SimulatorRecordingFrameSampler` (AVFoundation,
+no ffmpeg dependency) extracts up to 10 evenly spaced JPEG frames into a
+sibling `<recording>-frames/` directory, and the audit prompt lists those frame
+paths as directly readable images — ffmpeg/ffprobe is mentioned only as an
+optional finer-timing tool. Deleting a recording
+(`SimulatorRecordingService.deleteRecordingFile`) also removes its frames
+directory. A recording whose MP4 validates as finalized stays usable even if
+the recorder process needed a forced stop; only an unfinalized file or a
+recorder that never exited fails the recording. Sending the audit dismisses the
+composer and shows a transient "Sent to agent" pill — the MP4 and frames stay
+on disk because the agent reads them from the prompt paths.
+
+## Auto Build & Run on code changes
+
+Settings → iOS Simulator → **Auto Build & Run on code changes** (default on,
+`AgentHubDefaults.simulatorAutoRunOnAgentChanges`). While a Simulator panel is
+open with a simulator destination and the running app is **not**
+injection-armed, any Swift source change (agent or human) debounces (2s) into
+the panel's own Build & Run flow — `SimulatorHotReloadController` observes the
+same `HotReloadSourceWatcher` stream and calls `onRequestAutoRun`; a busy
+build retries instead of dropping the change. Once a launch **is** armed,
+injection hot-swaps saves and the structural-rebuild fallback covers
+created/deleted files, so auto-run stays out of the way. Physical-device
+destinations never auto-run.
+
+## Hiding the real Simulator.app while mirroring
+
+The panel is the display, so showing the real Simulator window next to it is
+duplicate noise. Settings → iOS Simulator → **Hide Simulator.app while
+mirroring** (default on, `AgentHubDefaults.simulatorHideSimulatorAppWhileMirroring`):
+
+- Panel-mirrored launches pass `foregroundSimulatorApp: false` through
+  `buildAndRunOnSimulator` (threaded down to `installAndLaunch`), so the
+  post-launch `open -a Simulator` is skipped. A non-panel build/run still
+  foregrounds by default — with no mirror, the real window is the only place
+  the user can see the app. The controller's default rebuild
+  executor (structural-change rebuilds) respects the setting too.
+- `SimulatorAppHider` ⌘H-hides an already-running Simulator.app
+  (`NSRunningApplication.hide()` — public API, no TCC, never terminates;
+  the device and capture keep running because rendering lives in the
+  CoreSimulator daemons, not the window). The panel hides on live-stream
+  activation and after panel-flow runs — never on a timer, so a user who
+  deliberately unhides it isn't fought. The picker's explicit "Open
+  Simulator.app" action activates (and thus unhides) it.
+
 ## Known gaps / future work
 
 - Element data comes from the accessibility tree: role, label, identifier,
@@ -357,3 +482,7 @@ per-project opt-in.
   stale until the next panel action. The `...-hotreload` derived-data path is
   a separate build cache, and console logs under Application Support do not
   have a cleanup policy yet.
+- Auto Build & Run is panel-scoped: with the Simulator panel closed there is
+  no source watcher, so hands-free relaunch relies on the agent using
+  XcodeBuildMCP build/run after its edits. An app-wide watcher for Xcode
+  projects with saved destinations is future work.

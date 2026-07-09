@@ -6,13 +6,14 @@ enum SimulatorRecordingPanelState: Equatable {
   case starting
   case recording(SimulatorRecordingStarted)
   case stopping(SimulatorRecordingStarted)
+  case sent(outputPath: String)
   case failed(String)
 
   var activeRecording: SimulatorRecordingStarted? {
     switch self {
     case .recording(let recording), .stopping(let recording):
       return recording
-    case .idle, .starting, .failed:
+    case .idle, .starting, .sent, .failed:
       return nil
     }
   }
@@ -21,7 +22,7 @@ enum SimulatorRecordingPanelState: Equatable {
     switch self {
     case .starting, .stopping:
       return true
-    case .idle, .recording, .failed:
+    case .idle, .recording, .sent, .failed:
       return false
     }
   }
@@ -66,6 +67,15 @@ struct SimulatorRecordingOverlayView: View {
 
       case .stopping:
         recordingPill(title: "Finishing recording", detail: nil, showsProgress: true)
+
+      case .sent(let outputPath):
+        recordingPill(
+          title: "Sent to agent",
+          detail: outputPath,
+          indicator: .success
+        ) {
+          EmptyView()
+        }
 
       case .failed(let message):
         recordingPill(
@@ -127,20 +137,32 @@ struct SimulatorRecordingOverlayView: View {
     }
   }
 
+  private enum PillIndicator {
+    case progress
+    case recordingDot
+    case success
+  }
+
   private func recordingPill<Trailing: View>(
     title: String,
     detail: String?,
-    showsProgress: Bool,
+    indicator: PillIndicator,
     @ViewBuilder trailing: () -> Trailing
   ) -> some View {
     HStack(spacing: 10) {
-      if showsProgress {
+      switch indicator {
+      case .progress:
         ProgressView()
           .controlSize(.small)
-      } else {
+      case .recordingDot:
         Circle()
           .fill(Color.red)
           .frame(width: 8, height: 8)
+          .accessibilityHidden(true)
+      case .success:
+        Image(systemName: "checkmark.circle.fill")
+          .font(.caption)
+          .foregroundStyle(.green)
           .accessibilityHidden(true)
       }
 
@@ -168,6 +190,20 @@ struct SimulatorRecordingOverlayView: View {
         .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
     )
     .shadow(color: Color.black.opacity(0.16), radius: 10, y: 4)
+  }
+
+  private func recordingPill<Trailing: View>(
+    title: String,
+    detail: String?,
+    showsProgress: Bool,
+    @ViewBuilder trailing: () -> Trailing
+  ) -> some View {
+    recordingPill(
+      title: title,
+      detail: detail,
+      indicator: showsProgress ? .progress : .recordingDot,
+      trailing: trailing
+    )
   }
 
   private func recordingPill(

@@ -220,9 +220,9 @@ public actor SimulatorRecordingService {
     runner: any SimulatorRecordingProcessRunning = SimulatorRecordingProcessRunner(),
     dateProvider: @escaping @Sendable () -> Date = { Date() },
     startConfirmationTimeout: Duration = .seconds(5),
-    gracefulStopTimeout: Duration = .seconds(8),
+    gracefulStopTimeout: Duration = .seconds(15),
     forcedStopTimeout: Duration = .seconds(2),
-    finalizationTimeout: Duration = .seconds(3),
+    finalizationTimeout: Duration = .seconds(10),
     pollingInterval: Duration = .milliseconds(100)
   ) {
     self.runner = runner
@@ -400,15 +400,20 @@ public actor SimulatorRecordingService {
     from validation: SimulatorRecordingFileValidation,
     stopResult: ProcessStopResult
   ) -> String? {
+    // A finalized, stable MP4 is usable even when the recorder needed a
+    // forced stop — the file already validated, so don't discard it over
+    // the process's exit style. Only a recorder that never exited (and may
+    // still be writing) keeps the recording unusable.
+    if validation.isFinalized, stopResult.exited {
+      return nil
+    }
+
     var messages: [String] = []
     if stopResult.wasForced {
       messages.append("Recording process did not stop gracefully.")
     }
     if !stopResult.exited {
       messages.append("Recording process did not exit after fallback termination.")
-    }
-    if validation.isFinalized, messages.isEmpty {
-      return nil
     }
 
     if let validationError = validation.errorDescription {
@@ -443,6 +448,11 @@ public actor SimulatorRecordingService {
   }
 
   public static func deleteRecordingFile(at path: String, fileManager: FileManager = .default) throws {
+    let framesPath = SimulatorRecordingFrameSampler.frameDirectoryPath(forRecordingPath: path)
+    if fileManager.fileExists(atPath: framesPath) {
+      try? fileManager.removeItem(atPath: framesPath)
+    }
+
     let url = URL(fileURLWithPath: path)
     guard fileManager.fileExists(atPath: url.path) else { return }
     try fileManager.removeItem(at: url)

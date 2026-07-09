@@ -63,6 +63,17 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.simulatorPreviewsEnabled)
   private var simulatorPreviewsEnabled: Bool = true
 
+  @AppStorage(AgentHubDefaults.simulatorAutoRunOnAgentChanges)
+  private var simulatorAutoRunOnAgentChanges: Bool = true
+
+  @AppStorage(AgentHubDefaults.simulatorHideSimulatorAppWhileMirroring)
+  private var hideSimulatorAppWhileMirroring: Bool = true
+
+  @AppStorage(AgentHubDefaults.xcodeBuildMCPEnabled)
+  private var xcodeBuildMCPEnabled: Bool = true
+
+  @State private var xcodeBuildMCPToolingAvailable = true
+
   @AppStorage(ClaudeHookInstaller.enabledKey)
   private var claudeApprovalHooksEnabled: Bool = true
 
@@ -277,11 +288,42 @@ public struct SettingsView: View {
           description: "Show the Previews tab in the simulator side panel and watch Swift source changes while it is enabled.",
           isOn: $simulatorPreviewsEnabled
         )
+
+        settingsToggle(
+          title: "Auto Build & Run on code changes",
+          description: "While the simulator panel is open, rebuild and relaunch automatically when Swift sources change and hot reload isn't armed to swap them in place.",
+          isOn: $simulatorAutoRunOnAgentChanges
+        )
+
+        settingsToggle(
+          title: "Hide Simulator.app while mirroring",
+          description: "Keep the real Simulator window hidden (still running, ⌘H style) while the side panel mirrors the device, and don't bring it forward on panel Build & Run. Turn off to see both.",
+          isOn: $hideSimulatorAppWhileMirroring
+        )
+
+        settingsToggle(
+          title: "Agent simulator tools (XcodeBuildMCP)",
+          description: "Give agent sessions in Xcode projects the XcodeBuildMCP server so they can build, run, and verify changes in the simulator. Uses a globally installed xcodebuildmcp, or fetches a pinned version via npx (requires Node.js).",
+          isOn: $xcodeBuildMCPEnabled
+        )
+        if xcodeBuildMCPEnabled && !xcodeBuildMCPToolingAvailable {
+          Label(
+            "Node.js not found — Xcode project sessions will launch without simulator tools until Node.js or xcodebuildmcp is installed.",
+            systemImage: "exclamationmark.triangle"
+          )
+          .font(.caption)
+          .foregroundColor(.orange)
+        }
       }
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
     .background(settingsBackground.ignoresSafeArea())
+    .task {
+      xcodeBuildMCPToolingAvailable = await Task.detached {
+        XcodeBuildMCPPreflight.nodeToolingAvailable()
+      }.value
+    }
   }
 
   private var configurationSettingsForm: some View {

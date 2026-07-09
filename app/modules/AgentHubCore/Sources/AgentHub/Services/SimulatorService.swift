@@ -502,11 +502,15 @@ public final class SimulatorService {
   /// `EMIT_FRONTEND_COMMAND_LINES`) and the launch inserts the support
   /// dylibs with stdout redirected to the plan's console log. Returns
   /// whether the full build–install–launch pipeline succeeded.
+  /// `foregroundSimulatorApp` controls whether Simulator.app is brought to
+  /// the front after launch. Panel-mirrored runs pass false — the in-app
+  /// stream is the display, so the real window stays wherever it is (hidden).
   @discardableResult
   public func buildAndRunOnSimulator(
     udid: String,
     projectPath: String,
-    hotReload: HotReloadLaunchPlan? = nil
+    hotReload: HotReloadLaunchPlan? = nil,
+    foregroundSimulatorApp: Bool = true
   ) async -> Bool {
     let key = sessionKey(projectPath: projectPath, udid: udid)
     sessionBuildStates[key] = .building
@@ -571,7 +575,8 @@ public final class SimulatorService {
     // Phase 3: execute off main actor; store the task so cancelSimulatorBuild can cancel it
     let phase3Task = Task.detached {
       await SimulatorService.executeSimulatorBuild(
-        ref: ref, udid: udid, sessionKey: key, setup: setup, hotReload: hotReload)
+        ref: ref, udid: udid, sessionKey: key, setup: setup, hotReload: hotReload,
+        foregroundSimulatorApp: foregroundSimulatorApp)
     }
     simulatorRunTasks[key] = phase3Task
     let result = await phase3Task.value
@@ -1009,7 +1014,8 @@ public final class SimulatorService {
     udid: String,
     sessionKey: String,
     setup: BuildSetup,
-    hotReload: HotReloadLaunchPlan? = nil
+    hotReload: HotReloadLaunchPlan? = nil,
+    foregroundSimulatorApp: Bool = true
   ) async -> Result<Void, Error> {
     let totalStart = phaseTimestamp()
     let bootTask = Task.detached(priority: .utility) {
@@ -1089,7 +1095,8 @@ public final class SimulatorService {
       udid: udid,
       sessionKey: sessionKey,
       setup: setup,
-      hotReload: hotReload
+      hotReload: hotReload,
+      foregroundSimulatorApp: foregroundSimulatorApp
     )
 
     if case .success = result {
@@ -1164,7 +1171,8 @@ public final class SimulatorService {
     udid: String,
     sessionKey: String,
     setup: BuildSetup,
-    hotReload: HotReloadLaunchPlan? = nil
+    hotReload: HotReloadLaunchPlan? = nil,
+    foregroundSimulatorApp: Bool = true
   ) async -> Result<Void, Error> {
     guard findExecutable(named: "xcrun") != nil else {
       return .failure(NSError(domain: "SimulatorService", code: -8,
@@ -1227,8 +1235,12 @@ public final class SimulatorService {
       "Launched app in \(formattedElapsed(since: launchStart), privacy: .public)s"
     )
 
-    // Bring Simulator.app to foreground
-    runOpenApp(name: "Simulator")
+    // Bring Simulator.app to the foreground — skipped for panel-mirrored
+    // runs, where the in-app stream is the display and the real window
+    // stays hidden.
+    if foregroundSimulatorApp {
+      runOpenApp(name: "Simulator")
+    }
     return .success(())
   }
 

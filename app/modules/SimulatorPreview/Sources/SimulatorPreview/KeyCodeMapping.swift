@@ -12,6 +12,9 @@ public enum KeyCodeMapping {
     table[keyCode]
   }
 
+  /// USB HID usage for the left-shift modifier key.
+  public static let shiftUsage: UInt32 = 0xE1
+
   private static let table: [UInt16: UInt32] = [
     // Letters (kVK_ANSI_A ...). HID 'a' = 0x04.
     0x00: 0x04,  // A
