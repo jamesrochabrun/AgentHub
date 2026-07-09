@@ -79,7 +79,8 @@ public struct CLICommandConfiguration: Codable, Sendable {
     effortLevel: String? = nil,
     allowedTools: [String]? = nil,
     disallowedTools: [String]? = nil,
-    codexApprovalPolicy: String? = nil
+    codexApprovalPolicy: String? = nil,
+    appendSystemPrompt: String? = nil
   ) -> [String] {
     let prefix = normalizedPrefixArguments()
 
@@ -100,6 +101,9 @@ public struct CLICommandConfiguration: Codable, Sendable {
           providerArgs += ["--permission-mode", "plan"]
         } else if dangerouslySkipPermissions {
           providerArgs.append("--dangerously-skip-permissions")
+        }
+        if let appendSystemPrompt, !appendSystemPrompt.isEmpty {
+          providerArgs += ["--append-system-prompt", appendSystemPrompt]
         }
         if let name = worktreeName {
           if name.isEmpty {

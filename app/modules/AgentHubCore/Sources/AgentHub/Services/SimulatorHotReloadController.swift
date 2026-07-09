@@ -52,18 +52,28 @@ public final class SimulatorHotReloadController {
   public var rebuildExecutor:
     (_ udid: String, _ projectPath: String, _ plan: HotReloadLaunchPlan) async -> Bool
 
+  /// Asked to Build & Run when auto-run observation sees a source change while
+  /// no injection-armed launch can hot-swap it. Returns whether the request
+  /// was accepted; a `false` (build already in flight, no destination yet)
+  /// re-schedules the attempt so the change isn't lost.
+  public var onRequestAutoRun: (@MainActor () -> Bool)?
+
   private let artifactStore: any HotReloadArtifactProviding
   private let sourceWatcher: any HotReloadSourceWatching
   private let consoleTail: any HotReloadConsoleTailing
   private let consoleParser = HotReloadConsoleParser()
   private let seedChangedFiles: @Sendable (String) async -> [String]
+  private let autoRunDebounce: Duration
   private var activeContext: (udid: String, projectPath: String)?
   private var preparationTask: Task<Void, Never>?
   private var isRebuilding = false
   private var isPreviewObservationEnabled = false
   private var isInjectionObservationEnabled = false
+  private var isAutoRunObservationEnabled = false
   private var isSourceObservationActive = false
   private var observedProjectPath: String?
+  private var hasPendingAutoRun = false
+  private var autoRunDebounceTask: Task<Void, Never>?
 
   public init(
     artifactStore: any HotReloadArtifactProviding = HotReloadArtifactStore(),
@@ -75,16 +85,24 @@ public final class SimulatorHotReloadController {
     },
     rebuildExecutor: (
       (String, String, HotReloadLaunchPlan) async -> Bool
-    )? = nil
+    )? = nil,
+    autoRunDebounce: Duration = .seconds(2)
   ) {
     self.artifactStore = artifactStore
     self.sourceWatcher = sourceWatcher
     self.consoleTail = consoleTail
     self.previewClient = previewClient
     self.seedChangedFiles = seedChangedFiles
+    self.autoRunDebounce = autoRunDebounce
     self.rebuildExecutor = rebuildExecutor ?? { udid, projectPath, plan in
-      await SimulatorService.shared.buildAndRunOnSimulator(
-        udid: udid, projectPath: projectPath, hotReload: plan)
+      // Panel-scoped rebuilds relaunch behind the mirror; keep the real
+      // Simulator.app window from stealing focus when the user hides it.
+      let hideRealSimulator = UserDefaults.standard.object(
+        forKey: AgentHubDefaults.simulatorHideSimulatorAppWhileMirroring
+      ) as? Bool ?? true
+      return await SimulatorService.shared.buildAndRunOnSimulator(
+        udid: udid, projectPath: projectPath, hotReload: plan,
+        foregroundSimulatorApp: !hideRealSimulator)
     }
   }
 
@@ -111,6 +129,24 @@ public final class SimulatorHotReloadController {
   /// Compatibility wrapper for tests and older call sites.
   public func startTracking(projectPath: String) {
     setPreviewObservationEnabled(true, projectPath: projectPath)
+  }
+
+  /// Enables auto Build & Run: while no injection-armed launch can hot-swap
+  /// saved files, any Swift source change debounces into `onRequestAutoRun`
+  /// so agent edits reach the simulator without the user pressing anything.
+  public func setAutoRunEnabled(_ enabled: Bool, projectPath: String) {
+    guard isAutoRunObservationEnabled != enabled || observedProjectPath != projectPath else {
+      return
+    }
+    isAutoRunObservationEnabled = enabled
+    if enabled {
+      updateSourceObservation(projectPath: projectPath)
+    } else {
+      autoRunDebounceTask?.cancel()
+      autoRunDebounceTask = nil
+      hasPendingAutoRun = false
+      updateSourceObservation(projectPath: activeContext?.projectPath ?? observedProjectPath)
+    }
   }
 
   /// Disables preview candidate observation. Call when the panel closes or
@@ -266,7 +302,9 @@ public final class SimulatorHotReloadController {
   // MARK: - Internals
 
   private func updateSourceObservation(projectPath: String?) {
-    let shouldObserve = isPreviewObservationEnabled || isInjectionObservationEnabled
+    let shouldObserve = isPreviewObservationEnabled
+      || isInjectionObservationEnabled
+      || isAutoRunObservationEnabled
     guard shouldObserve, let projectPath else {
       if isSourceObservationActive {
         sourceWatcher.stop()
@@ -297,6 +335,48 @@ public final class SimulatorHotReloadController {
       }
       if self.isInjectionObservationEnabled {
         self.monitor.handle(sourceChanges: changes)
+      } else if self.isAutoRunObservationEnabled, !changes.isEmpty {
+        // No armed launch can hot-swap this save — debounce into a full
+        // Build & Run so the change still reaches the simulator hands-free.
+        self.scheduleAutoRun()
+      }
+    }
+  }
+
+  private func scheduleAutoRun() {
+    hasPendingAutoRun = true
+    autoRunDebounceTask?.cancel()
+    autoRunDebounceTask = Task { [weak self] in
+      guard let self else { return }
+      try? await Task.sleep(for: self.autoRunDebounce)
+      guard !Task.isCancelled else { return }
+      self.fireAutoRunIfPending()
+    }
+  }
+
+  private func fireAutoRunIfPending() {
+    guard hasPendingAutoRun, isAutoRunObservationEnabled else { return }
+    // An injection-armed launch appeared while we debounced — it owns the
+    // change now (hot swap or structural rebuild), so drop the pending run.
+    guard !isInjectionObservationEnabled else {
+      hasPendingAutoRun = false
+      return
+    }
+    guard let onRequestAutoRun else {
+      hasPendingAutoRun = false
+      return
+    }
+    if onRequestAutoRun() {
+      hasPendingAutoRun = false
+    } else {
+      // Busy (a build mid-flight) or no destination yet — try again after
+      // another debounce interval rather than dropping the change.
+      autoRunDebounceTask?.cancel()
+      autoRunDebounceTask = Task { [weak self] in
+        guard let self else { return }
+        try? await Task.sleep(for: self.autoRunDebounce)
+        guard !Task.isCancelled else { return }
+        self.fireAutoRunIfPending()
       }
     }
   }

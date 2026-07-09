@@ -12,6 +12,54 @@ public enum KeyCodeMapping {
     table[keyCode]
   }
 
+  /// USB HID usage for the left-shift modifier key.
+  public static let shiftUsage: UInt32 = 0xE1
+
+  /// Character → (HID usage, needs shift) for text typing on a US layout.
+  /// Covers what agent-built apps commonly type: letters, digits, space,
+  /// newline (return), and US-keyboard punctuation. Unmapped characters
+  /// return nil so callers can report them instead of guessing.
+  public static func hidUsage(forCharacter character: Character) -> (usage: UInt32, shift: Bool)? {
+    if let scalar = character.unicodeScalars.first, character.unicodeScalars.count == 1 {
+      // Letters: HID 'a' = 0x04; uppercase is shift + same usage.
+      if scalar.value >= 97, scalar.value <= 122 {  // a-z
+        return (0x04 + scalar.value - 97, false)
+      }
+      if scalar.value >= 65, scalar.value <= 90 {  // A-Z
+        return (0x04 + scalar.value - 65, true)
+      }
+      // Digits: HID '1' = 0x1E ... '9' = 0x26, '0' = 0x27.
+      if scalar.value >= 49, scalar.value <= 57 {  // 1-9
+        return (0x1E + scalar.value - 49, false)
+      }
+      if scalar.value == 48 {  // 0
+        return (0x27, false)
+      }
+    }
+    return characterTable[character]
+  }
+
+  private static let characterTable: [Character: (usage: UInt32, shift: Bool)] = [
+    " ": (0x2C, false),
+    "\n": (0x28, false),
+    "\t": (0x2B, false),
+    "-": (0x2D, false), "_": (0x2D, true),
+    "=": (0x2E, false), "+": (0x2E, true),
+    "[": (0x2F, false), "{": (0x2F, true),
+    "]": (0x30, false), "}": (0x30, true),
+    "\\": (0x31, false), "|": (0x31, true),
+    ";": (0x33, false), ":": (0x33, true),
+    "'": (0x34, false), "\"": (0x34, true),
+    "`": (0x35, false), "~": (0x35, true),
+    ",": (0x36, false), "<": (0x36, true),
+    ".": (0x37, false), ">": (0x37, true),
+    "/": (0x38, false), "?": (0x38, true),
+    "!": (0x1E, true), "@": (0x1F, true), "#": (0x20, true),
+    "$": (0x21, true), "%": (0x22, true), "^": (0x23, true),
+    "&": (0x24, true), "*": (0x25, true), "(": (0x26, true),
+    ")": (0x27, true),
+  ]
+
   private static let table: [UInt16: UInt32] = [
     // Letters (kVK_ANSI_A ...). HID 'a' = 0x04.
     0x00: 0x04,  // A

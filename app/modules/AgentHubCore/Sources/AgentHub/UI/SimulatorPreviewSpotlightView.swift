@@ -260,12 +260,34 @@ struct SimulatorPreviewSpotlightView: View {
       } catch {
         previewTypes = []
         loadErrorMessage = userFacingLoadErrorMessage(for: error)
+        if isPreviewHostExpected {
+          await reprobeSlowlyUntilHostReturns()
+        }
         return
       }
     }
 
     previewTypes = []
     loadErrorMessage = "Preview support did not respond after launch."
+    await reprobeSlowlyUntilHostReturns()
+  }
+
+  /// The fast window expired or the host dropped mid-session (app relaunched
+  /// plain, crashed, slow first launch). While the host is still expected,
+  /// keep a slow probe alive — the unavailable state with its manual button
+  /// stays visible, but the moment the host answers, previews recover on
+  /// their own instead of dead-ending. The owning `.task(id:)` cancels this
+  /// on unmount or when a relaunch bumps the generation.
+  private func reprobeSlowlyUntilHostReturns() async {
+    while !Task.isCancelled, isPreviewHostExpected {
+      try? await Task.sleep(for: .seconds(3))
+      guard !Task.isCancelled else { return }
+      if let types = try? await client.listPreviews() {
+        previewTypes = types
+        loadErrorMessage = nil
+        return
+      }
+    }
   }
 
   private func userFacingLoadErrorMessage(for error: Error) -> String {

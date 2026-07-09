@@ -62,12 +62,21 @@ struct SimulatorPreviewSidePanelView: View {
   /// The failure message the user explicitly dismissed; the banner stays
   /// hidden for that exact message but reappears for any new/different error.
   @State private var dismissedFailureMessage: String?
+  /// Identifies this panel's agent-run registration so a late close never
+  /// unregisters a newer panel for the same project.
+  @State private var agentRunRegistrationID = UUID()
 
   private let simulatorContextStore = SimulatorSessionContextStore()
   private let simulatorRecordingService = SimulatorRecordingService.shared
 
   @AppStorage(AgentHubDefaults.simulatorPreviewsEnabled)
   private var simulatorPreviewsEnabled: Bool = true
+
+  @AppStorage(AgentHubDefaults.simulatorAutoRunOnAgentChanges)
+  private var simulatorAutoRunOnAgentChanges: Bool = true
+
+  @AppStorage(AgentHubDefaults.simulatorHideSimulatorAppWhileMirroring)
+  private var hideSimulatorAppWhileMirroring: Bool = true
 
   private var streamService: any SimulatorStreamServiceProtocol {
     agentHub?.simulatorStreamService ?? SimulatorStreamService.shared
@@ -238,10 +247,16 @@ struct SimulatorPreviewSidePanelView: View {
     )
     .task {
       await loadDevicesIfNeeded()
+      registerAgentRunSupport()
       syncSimulatorFeatureTracking()
     }
     .onDisappear {
       cancelAnnotationElementRefresh()
+      SimulatorAgentRunRegistry.shared.unregister(
+        projectPath: projectPath, id: agentRunRegistrationID
+      )
+      hotReload.onRequestAutoRun = nil
+      hotReload.setAutoRunEnabled(false, projectPath: projectPath)
       hotReload.stopTracking()
       hotReload.sessionDidStop()
       removeSimulatorContext()
@@ -250,6 +265,15 @@ struct SimulatorPreviewSidePanelView: View {
     }
     .task(id: simulatorContextSignature) {
       persistSimulatorContext()
+    }
+    // The mirror is the display: once it's live (and the preference is on),
+    // ⌘H-hide the real Simulator.app window — still running, one ⌘Tab away.
+    // Fires on stream activation and when the setting flips, never on a
+    // timer, so a user who deliberately unhides it isn't fought.
+    .task(id: "\(isShowingLiveStream)|\(hideSimulatorAppWhileMirroring)") {
+      if isShowingLiveStream, hideSimulatorAppWhileMirroring {
+        SimulatorAppHider.shared.hideSimulatorApp()
+      }
     }
     .onChange(of: activeDestinationID) { _, _ in
       cancelAnnotationElementRefresh()
@@ -274,6 +298,9 @@ struct SimulatorPreviewSidePanelView: View {
       } else if !isEnabled {
         displayMode = .live
       }
+    }
+    .onChange(of: simulatorAutoRunOnAgentChanges) { _, _ in
+      syncSimulatorFeatureTracking()
     }
     .onChange(of: openEditorFilePath) { _, _ in
       if effectiveDisplayMode == .previews { autoArmPreviewsIfNeeded() }
@@ -860,6 +887,44 @@ struct SimulatorPreviewSidePanelView: View {
     if shouldObservePreviews {
       hotReload.warmUp()
     }
+    // Auto Build & Run applies only to simulator destinations — hot reload
+    // and hands-free relaunch are simulator-only by design.
+    hotReload.setAutoRunEnabled(
+      simulatorAutoRunOnAgentChanges && isSimulatorDestination,
+      projectPath: projectPath
+    )
+  }
+
+  /// Offers this panel's Build & Run flow to agent-initiated runs (the MCP
+  /// `agenthub_simulator_run` queue) and to auto-run on source changes. The
+  /// closures capture the long-lived service/controller objects — never the
+  /// view — so firing outside a view update never touches `@State`.
+  private func registerAgentRunSupport() {
+    let flow = SimulatorPanelRunFlow(
+      simulatorService: simulatorService,
+      hotReload: hotReload,
+      projectPath: projectPath
+    )
+    SimulatorAgentRunRegistry.shared.register(
+      projectPath: projectPath,
+      id: agentRunRegistrationID
+    ) { udid in
+      await flow.run(udid: udid)
+    }
+
+    let service = simulatorService
+    let projectPath = projectPath
+    hotReload.onRequestAutoRun = {
+      // Physical-device destination: hands-free installs to a phone would be
+      // intrusive — drop the change rather than retrying forever.
+      guard service.preferredPhysicalDeviceIDs[projectPath] == nil else { return true }
+      // No destination chosen yet: nothing sensible to run on; drop.
+      guard let udid = service.preferredSimulatorUDIDs[projectPath] else { return true }
+      // A build is mid-flight — report busy so the change retries after it.
+      guard !service.isRunInFlight(udid: udid, projectPath: projectPath) else { return false }
+      Task { await flow.run(udid: udid) }
+      return true
+    }
   }
 
   private func selectSimulator(udid: String) {
@@ -916,32 +981,17 @@ struct SimulatorPreviewSidePanelView: View {
     }
 
     guard let activeUDID else { return }
+    // Same flow the agent-run registry and auto-run use: boot, prepare the
+    // hot-reload plan (first use builds support dylibs in the background and
+    // this launch proceeds plain — the pill reports it honestly), build, and
+    // arm on success.
+    let flow = SimulatorPanelRunFlow(
+      simulatorService: simulatorService,
+      hotReload: hotReload,
+      projectPath: projectPath
+    )
     Task {
-      // Boot first so the preview switches to the live stream immediately,
-      // before the build finishes installing/launching the app. `bootDevice`
-      // is idempotent and refreshes the device list; the build's own boot is
-      // then a no-op.
-      if !simulatorService.isBooted(udid: activeUDID) {
-        await simulatorService.bootDevice(udid: activeUDID)
-      }
-      // Arms hot reload, plus the preview host when that setting is enabled,
-      // once the support dylibs are cached. First use builds them in the
-      // background and this launch proceeds plain — the pill reports it
-      // honestly.
-      let plan = await hotReload.preparePlan(
-        udid: activeUDID,
-        projectPath: projectPath,
-        enableInjection: true,
-        enablePreviews: simulatorPreviewsEnabled
-      )
-      let success = await simulatorService.buildAndRunOnSimulator(
-        udid: activeUDID, projectPath: projectPath, hotReload: plan
-      )
-      if success, let plan {
-        hotReload.sessionDidLaunch(
-          udid: activeUDID, projectPath: projectPath, plan: plan
-        )
-      }
+      await flow.run(udid: activeUDID)
     }
   }
 
@@ -1327,9 +1377,16 @@ struct SimulatorPreviewSidePanelView: View {
   /// this panel is the sole consumer of `onStateChange`.
   private func observeStreamState(of streamSession: any SimulatorStreamSessionProtocol) {
     let model = annotationModel
+    let service = simulatorService
     let apply: (SimulatorStreamSessionState) -> Void = { state in
       if case .streaming(let width, let height) = state {
         model.contentPixelSize = CGSize(width: width, height: height)
+      }
+      // The session's watchdog noticed the device died. `isBooted` is a
+      // stale snapshot until a device-list refresh, so refresh it — the
+      // panel then swaps the frozen mirror for the boot/run affordance.
+      if case .failed = state {
+        Task { await service.listDevices() }
       }
     }
     apply(streamSession.state)

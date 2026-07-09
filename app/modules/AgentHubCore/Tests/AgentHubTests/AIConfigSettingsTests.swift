@@ -149,6 +149,44 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(Array(args.suffix(2)) == ["--debug", "Start work"])
   }
 
+  @Test("New Claude sessions receive the appended system prompt; resumes do not")
+  func appendSystemPromptOnlyForNewClaudeSessions() {
+    let config = CLICommandConfiguration.claudeDefault
+
+    let newSession = config.argumentsForSession(
+      sessionId: nil,
+      prompt: nil,
+      appendSystemPrompt: SimulatorAgentGuidance.systemPrompt
+    )
+    guard let flagIndex = newSession.firstIndex(of: "--append-system-prompt") else {
+      Issue.record("missing --append-system-prompt in \(newSession)")
+      return
+    }
+    #expect(newSession[flagIndex + 1].contains("agenthub_simulator_run"))
+
+    let resumed = config.argumentsForSession(
+      sessionId: "existing-session",
+      prompt: nil,
+      appendSystemPrompt: SimulatorAgentGuidance.systemPrompt
+    )
+    #expect(!resumed.contains("--append-system-prompt"))
+
+    let withoutGuidance = config.argumentsForSession(sessionId: nil, prompt: nil)
+    #expect(!withoutGuidance.contains("--append-system-prompt"))
+  }
+
+  @Test("Codex sessions never receive the Claude-only system-prompt flag")
+  func codexIgnoresAppendSystemPrompt() {
+    let config = CLICommandConfiguration.codexDefault
+
+    let args = config.argumentsForSession(
+      sessionId: nil,
+      prompt: nil,
+      appendSystemPrompt: SimulatorAgentGuidance.systemPrompt
+    )
+    #expect(!args.contains("--append-system-prompt"))
+  }
+
   @Test("Decodes previous CLI configuration payloads without extra args")
   func decodesLegacyConfigurationWithoutExtraArgs() throws {
     let data = Data("""

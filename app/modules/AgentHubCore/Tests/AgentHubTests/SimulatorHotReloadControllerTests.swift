@@ -78,6 +78,34 @@ private struct MockPreviewClient: PreviewHostClientProtocol {
   }
 }
 
+@MainActor
+private final class FlowMockExecutor: SimulatorRunExecuting {
+  var foregroundFlags: [Bool] = []
+
+  func isBooted(udid: String) -> Bool { true }
+  func bootDevice(udid: String) async {}
+  func buildAndRunOnSimulator(
+    udid: String,
+    projectPath: String,
+    hotReload: HotReloadLaunchPlan?,
+    foregroundSimulatorApp: Bool
+  ) async -> Bool {
+    foregroundFlags.append(foregroundSimulatorApp)
+    return true
+  }
+
+  func ensurePreferencesLoaded() async {}
+  func preferredSimulatorUDID(forProjectPath projectPath: String) -> String? { nil }
+  func isRunInFlight(udid: String, projectPath: String) -> Bool { false }
+  func buildFailureMessage(udid: String, projectPath: String) -> String? { nil }
+}
+
+@MainActor
+private final class MockSimulatorAppHider: SimulatorAppHiding {
+  var hideCount = 0
+  func hideSimulatorApp() { hideCount += 1 }
+}
+
 // MARK: - Tests
 
 @Suite("SimulatorHotReloadController")
@@ -94,7 +122,8 @@ struct SimulatorHotReloadControllerTests {
     cached: HotReloadArtifacts?,
     rebuildResult: Bool = true,
     rebuilds: RebuildLog = RebuildLog(),
-    seededFiles: [String] = []
+    seededFiles: [String] = [],
+    autoRunDebounce: Duration = .seconds(2)
   ) -> (SimulatorHotReloadController, MockSourceWatcher, MockConsoleTail) {
     let watcher = MockSourceWatcher()
     let tail = MockConsoleTail()
@@ -107,7 +136,8 @@ struct SimulatorHotReloadControllerTests {
       rebuildExecutor: { udid, projectPath, _ in
         rebuilds.append("\(udid)|\(projectPath)")
         return rebuildResult
-      }
+      },
+      autoRunDebounce: autoRunDebounce
     )
     return (controller, watcher, tail)
   }
@@ -290,6 +320,137 @@ struct SimulatorHotReloadControllerTests {
     #expect(rebuilds.entries == ["UDID|/p"])
     #expect(controller.monitor.phase == .idle)
     #expect(controller.monitor.reloadGeneration == 1)
+  }
+
+  @Test("auto-run: unarmed source change debounces into one Build & Run request")
+  func autoRunFiresWhenUnarmed() async {
+    let (controller, watcher, _) = makeController(
+      cached: Self.artifacts, autoRunDebounce: .milliseconds(20))
+    var requests = 0
+    controller.onRequestAutoRun = {
+      requests += 1
+      return true
+    }
+
+    controller.setAutoRunEnabled(true, projectPath: "/p")
+    #expect(watcher.startedProjectPath == "/p") // auto-run alone starts observation
+
+    // A burst of saves coalesces into a single request.
+    watcher.onChange?([.injectable(path: "/p/A.swift")])
+    watcher.onChange?([.injectable(path: "/p/B.swift")])
+
+    let deadline = Date().addingTimeInterval(2)
+    while requests == 0, Date() < deadline {
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    #expect(requests == 1)
+
+    // The pending flag cleared — a later save schedules a fresh request.
+    watcher.onChange?([.structural(path: "/p/New.swift", kind: .created)])
+    let secondDeadline = Date().addingTimeInterval(2)
+    while requests < 2, Date() < secondDeadline {
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    #expect(requests == 2)
+  }
+
+  @Test("auto-run: rejected requests retry instead of dropping the change")
+  func autoRunRetriesWhenBusy() async {
+    let (controller, watcher, _) = makeController(
+      cached: Self.artifacts, autoRunDebounce: .milliseconds(20))
+    var attempts = 0
+    controller.onRequestAutoRun = {
+      attempts += 1
+      return attempts >= 3 // busy twice, then accept
+    }
+
+    controller.setAutoRunEnabled(true, projectPath: "/p")
+    watcher.onChange?([.injectable(path: "/p/A.swift")])
+
+    let deadline = Date().addingTimeInterval(2)
+    while attempts < 3, Date() < deadline {
+      try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    #expect(attempts == 3)
+  }
+
+  @Test("auto-run: an injection-armed launch owns changes — no auto request")
+  func autoRunSuppressedWhenArmed() async {
+    let (controller, watcher, _) = makeController(
+      cached: Self.artifacts, autoRunDebounce: .milliseconds(20))
+    var requests = 0
+    controller.onRequestAutoRun = {
+      requests += 1
+      return true
+    }
+    controller.setAutoRunEnabled(true, projectPath: "/p")
+    let plan = await controller.preparePlan(
+      udid: "UDID", projectPath: "/p", enableInjection: true, enablePreviews: false)!
+    controller.sessionDidLaunch(udid: "UDID", projectPath: "/p", plan: plan)
+
+    watcher.onChange?([.injectable(path: "/p/A.swift")])
+    try? await Task.sleep(nanoseconds: 100_000_000)
+    #expect(requests == 0)
+    #expect(controller.monitor.phase == .reloading(fileName: "A.swift"))
+  }
+
+  @Test("auto-run: disabling cancels a pending debounce")
+  func autoRunDisableCancelsPending() async {
+    let (controller, watcher, _) = makeController(
+      cached: Self.artifacts, autoRunDebounce: .milliseconds(20))
+    var requests = 0
+    controller.onRequestAutoRun = {
+      requests += 1
+      return true
+    }
+    controller.setAutoRunEnabled(true, projectPath: "/p")
+    watcher.onChange?([.injectable(path: "/p/A.swift")])
+    controller.setAutoRunEnabled(false, projectPath: "/p")
+
+    try? await Task.sleep(nanoseconds: 100_000_000)
+    #expect(requests == 0)
+    #expect(watcher.stopCount == 1)
+  }
+
+  @Test("panel run flow hides the real Simulator.app and skips foregrounding when the setting is on")
+  func panelRunFlowHidesSimulatorApp() async {
+    let (controller, _, _) = makeController(cached: Self.artifacts)
+    let executor = FlowMockExecutor()
+    let hider = MockSimulatorAppHider()
+    let flow = SimulatorPanelRunFlow(
+      simulatorService: executor,
+      hotReload: controller,
+      projectPath: "/p",
+      previewsEnabled: { false },
+      hideSimulatorAppWhileMirroring: { true },
+      simulatorAppHider: hider
+    )
+
+    let outcome = await flow.run(udid: "UDID")
+
+    #expect(outcome.success)
+    #expect(executor.foregroundFlags == [false])
+    #expect(hider.hideCount == 1)
+  }
+
+  @Test("panel run flow keeps legacy foregrounding when the hide setting is off")
+  func panelRunFlowForegroundsWhenSettingOff() async {
+    let (controller, _, _) = makeController(cached: Self.artifacts)
+    let executor = FlowMockExecutor()
+    let hider = MockSimulatorAppHider()
+    let flow = SimulatorPanelRunFlow(
+      simulatorService: executor,
+      hotReload: controller,
+      projectPath: "/p",
+      previewsEnabled: { false },
+      hideSimulatorAppWhileMirroring: { false },
+      simulatorAppHider: hider
+    )
+
+    _ = await flow.run(udid: "UDID")
+
+    #expect(executor.foregroundFlags == [true])
+    #expect(hider.hideCount == 0)
   }
 
   @Test("stop tears down the console + pill; stopTracking stops the watcher")

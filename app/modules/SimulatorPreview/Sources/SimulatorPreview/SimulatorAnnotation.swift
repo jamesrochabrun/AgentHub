@@ -271,6 +271,8 @@ public enum SimulatorAnnotationPromptBuilder {
         lines.append("")
         lines.append("(If you need visual context, a screenshot with the pin marked is saved at: \(screenshotPath))")
       }
+      lines.append("")
+      lines.append(verificationFooter)
       return lines.joined(separator: "\n")
     }
 
@@ -292,8 +294,24 @@ public enum SimulatorAnnotationPromptBuilder {
       lines.append("")
       lines.append("(If you need visual context, a screenshot with the numbered pins drawn on it is saved at: \(screenshotPath))")
     }
+    lines.append("")
+    lines.append(verificationFooter)
     return lines.joined(separator: "\n")
   }
+
+  /// Process guidance only — conditional on the agent choosing to change
+  /// code, so the user's note stays the sole instruction. Exists because a
+  /// bare `xcodebuild build` "validation" neither updates nor verifies the
+  /// app the user is looking at.
+  static let verificationFooter = """
+    If you make code changes in response, verify them in the running simulator instead of \
+    stopping at a successful compile — `xcodebuild build` on its own neither updates nor \
+    checks the app on screen. Use the agenthub MCP tools: agenthub_simulator_run rebuilds & \
+    relaunches and reports the outcome (skip it when hot reload is armed and you only edited \
+    existing Swift files), then navigate back to this exact screen with agenthub_simulator_tap \
+    / agenthub_simulator_swipe (agenthub_simulator_describe_ui shows what is tappable) and \
+    confirm the result with agenthub_simulator_screenshot.
+    """
 
   /// The pin's subject, without a leading article: `Button "Exit" (...)`,
   /// `Image — frame (...) pt ...`, or a positional fallback

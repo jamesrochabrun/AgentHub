@@ -46,6 +46,25 @@ struct SimulatorRunRequestQueueTests {
     #expect(!FileManager.default.fileExists(atPath: queued.fileURL.path))
   }
 
+  @Test("Requests without a udid round-trip so the app resolves the destination")
+  func requestsWithoutUDIDRoundTrip() throws {
+    let directory = try temporarySimulatorRunRequestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+
+    let queue = SimulatorRunRequestQueue(directoryURL: directory)
+    let request = SimulatorRunRequest(
+      id: "request-1",
+      projectPath: "/tmp/App",
+      reason: "run after agent edits"
+    )
+
+    try queue.enqueue(request)
+    let pending = try queue.pendingRequests()
+
+    #expect(pending.map(\.request) == [request])
+    #expect(pending.first?.request.udid == nil)
+  }
+
   @Test("Mark failed moves simulator request out of pending queue")
   func markFailedMovesRequestOutOfPendingQueue() throws {
     let directory = try temporarySimulatorRunRequestDirectory()

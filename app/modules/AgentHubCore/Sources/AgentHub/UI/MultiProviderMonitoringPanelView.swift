@@ -831,6 +831,17 @@ public struct MultiProviderMonitoringPanelView: View {
     autoOpenedSidePanelKeys.insert(candidate.key)
     observedAutoOpenKeysBySessionID[candidate.session.id, default: []].insert(candidate.key)
 
+    // Auto-open may replace nothing or another auto-opened surface — never a
+    // panel the user opened deliberately. Without this, sending simulator
+    // annotation (or web-preview inspect) feedback "closed" the panel: the
+    // agent's first edit produced an .edits candidate that swapped out the
+    // .simulator panel mid-loop.
+    if let current = sidePanelPresentation.currentPayload,
+       !Self.isAutoOpenableContent(current.content)
+    {
+      return
+    }
+
     let payload = SidePanelPayload(
       itemID: candidate.itemID,
       providerKind: candidate.providerKind,
@@ -838,6 +849,17 @@ public struct MultiProviderMonitoringPanelView: View {
     )
     guard sidePanelPresentation.currentPayload != payload else { return }
     openEmbeddedSidePanel(payload)
+  }
+
+  /// The only surfaces the auto-open policy itself produces; everything else
+  /// on screen was put there by the user and must not be replaced.
+  private static func isAutoOpenableContent(_ content: SidePanelContent) -> Bool {
+    switch content {
+    case .edits, .plan:
+      return true
+    case .diff, .webPreview, .mermaid, .gitHub, .mcpApp, .simulator:
+      return false
+    }
   }
 
   private func shouldSuppressFirstObservedAutoOpenCandidate(

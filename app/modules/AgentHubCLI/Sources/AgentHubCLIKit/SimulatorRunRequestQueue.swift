@@ -8,7 +8,9 @@ public struct SimulatorRunRequest: Codable, Equatable, Identifiable, Sendable {
   public let id: String
   public let createdAt: Date
   public let projectPath: String
-  public let udid: String
+  /// Nil asks the app to resolve the project's persisted run destination
+  /// (the same per-project preference the Simulator panel uses).
+  public let udid: String?
   public let mode: SimulatorRunRequestMode
   public let sourceProvider: WorktreeLaunchProvider?
   public let sourceSessionId: String?
@@ -18,7 +20,7 @@ public struct SimulatorRunRequest: Codable, Equatable, Identifiable, Sendable {
     id: String = UUID().uuidString,
     createdAt: Date = Date(),
     projectPath: String,
-    udid: String,
+    udid: String? = nil,
     mode: SimulatorRunRequestMode = .buildAndRun,
     sourceProvider: WorktreeLaunchProvider? = nil,
     sourceSessionId: String? = nil,
@@ -128,5 +130,22 @@ public struct SimulatorRunRequestQueue: Sendable {
       try FileManager.default.removeItem(at: failedURL)
     }
     try FileManager.default.moveItem(at: queued.fileURL, to: failedURL)
+  }
+
+  /// Deletes `.failed` markers older than `age` — they exist only so a
+  /// just-queued run can report failure, and would otherwise accumulate.
+  public func pruneFailed(olderThan age: TimeInterval, now: Date = Date()) {
+    guard let files = try? FileManager.default.contentsOfDirectory(
+      at: directoryURL,
+      includingPropertiesForKeys: [.contentModificationDateKey]
+    ) else { return }
+
+    for url in files where url.pathExtension == "failed" {
+      let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+        .contentModificationDate ?? .distantPast
+      if now.timeIntervalSince(modified) > age {
+        try? FileManager.default.removeItem(at: url)
+      }
+    }
   }
 }

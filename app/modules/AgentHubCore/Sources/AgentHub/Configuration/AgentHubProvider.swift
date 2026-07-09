@@ -484,6 +484,16 @@ public final class AgentHubProvider {
     guard !isSimulatorRunRequestMonitoringStarted else { return }
     isSimulatorRunRequestMonitoringStarted = true
 
+    // Run results are one-shot handshakes with the bundled `agenthub` MCP
+    // server; anything older than a day is an unread leftover. The same goes
+    // for `.failed` markers in the request queue.
+    let resultStore = SimulatorRunResultStore()
+    let requestQueue = SimulatorRunRequestQueue()
+    Task.detached(priority: .utility) {
+      resultStore.prune(olderThan: 24 * 60 * 60)
+      requestQueue.pruneFailed(olderThan: 24 * 60 * 60)
+    }
+
     let monitor = simulatorRunRequestMonitor
     Task {
       await monitor.start { [weak self] queued in

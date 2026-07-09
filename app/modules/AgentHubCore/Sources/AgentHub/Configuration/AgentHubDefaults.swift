@@ -180,6 +180,17 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true)
   public static let simulatorPreviewsEnabled = "\(keyPrefix)features.simulatorPreviewsEnabled"
 
+  /// Whether the simulator side panel automatically Build & Runs when Swift
+  /// sources change and no injection-armed launch can hot-swap them.
+  /// Type: Bool (default: true)
+  public static let simulatorAutoRunOnAgentChanges = "\(keyPrefix)features.simulatorAutoRunOnAgentChanges"
+
+  /// Whether the real Simulator.app window is kept hidden (⌘H-style, still
+  /// running) while the side panel mirrors the device. Panel-mirrored runs
+  /// also skip bringing Simulator.app to the foreground.
+  /// Type: Bool (default: true)
+  public static let simulatorHideSimulatorAppWhileMirroring = "\(keyPrefix)features.simulatorHideSimulatorAppWhileMirroring"
+
   /// Inspector payload level used by debug web preview inspect flows
   /// Type: String (default: "regular")
   public static let webPreviewInspectorDataLevel = "\(keyPrefix)developer.webPreviewInspectorDataLevel"

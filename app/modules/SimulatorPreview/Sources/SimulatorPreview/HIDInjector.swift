@@ -31,6 +31,8 @@ final class HIDInjector {
   private let buttonQueue = DispatchQueue(label: "com.agenthub.simpreview.hid-button")
 
   var isReady: Bool { hidClient != nil && mouseFunc != nil }
+  var supportsKeyboard: Bool { hidClient != nil && keyboardFunc != nil }
+  var supportsButtons: Bool { hidClient != nil && buttonFunc != nil }
 
   init(developerDir: String) {
     self.developerDir = developerDir

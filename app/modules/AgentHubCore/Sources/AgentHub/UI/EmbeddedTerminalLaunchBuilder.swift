@@ -121,6 +121,12 @@ public enum EmbeddedTerminalLaunchBuilder {
     let aiConfig = metadataStore?.getAIConfigSync(for: cliConfiguration.mode.rawValue)
     let allowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.allowedTools)
     let disallowedTools = AIConfigRecord.parseToolPatterns(aiConfig?.disallowedTools)
+    // Xcode projects get simulator-loop guidance at system-prompt level:
+    // tool descriptions alone don't stop agents from "validating" with a raw
+    // `xcodebuild build` that never touches the app the user is watching.
+    let appendSystemPrompt = XcodeProjectDetector.isXcodeProject(at: workingDirectory)
+      ? SimulatorAgentGuidance.systemPrompt
+      : nil
     let args = cliConfiguration.argumentsForSession(
       sessionId: sessionId,
       prompt: initialPrompt,
@@ -132,7 +138,8 @@ public enum EmbeddedTerminalLaunchBuilder {
       effortLevel: aiConfig?.effortLevel,
       allowedTools: allowedTools.isEmpty ? nil : allowedTools,
       disallowedTools: disallowedTools.isEmpty ? nil : disallowedTools,
-      codexApprovalPolicy: aiConfig?.approvalPolicy
+      codexApprovalPolicy: aiConfig?.approvalPolicy,
+      appendSystemPrompt: appendSystemPrompt
     )
     let joinedArgs = args
       .map { "'\(shellEscape($0))'" }
