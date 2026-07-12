@@ -159,6 +159,7 @@ public struct WebPreviewView: View {
   @State private var tweaksState = TweaksState()
   @State private var tweaksDefaultsWriteCoordinator = TweaksDefaultsWriteCoordinator()
   @State private var tweaksAgentState: TweaksAgentState = .idle
+  @State private var tweakGenerationTimer = TweakGenerationTimer()
   @State private var tweaksDefaultsSaveState: TweaksDefaultsSaveState = .idle
   @State private var isTweaksPopoverPresented = false
   @State private var launchOptionsStatusOverride: String?
@@ -680,17 +681,17 @@ public struct WebPreviewView: View {
     .accessibilityLabel(presentation.accessibilityLabel)
     .help("Tweak this design with live controls")
     .popover(isPresented: $isTweaksPopoverPresented, arrowEdge: .bottom) {
-      TweaksPanelView(
+      WebPreviewTweaksPanel(
         state: tweaksState,
-        agentState: tweaksAgentState,
-        defaultsSaveState: tweaksDefaultsSaveState,
+        agentState: $tweaksAgentState,
+        defaultsSaveState: $tweaksDefaultsSaveState,
+        generationStartedAt: tweakGenerationTimer.startedAt,
         onSubmitDescription: sendCustomTweaksPrompt,
         onIdeas: sendTweaksIdeasPrompt,
         onValueChange: handleTweakValueChange,
         onReset: resetTweakValues,
         onSaveDefaults: saveTweakDefaults
       )
-      .frame(width: 320)
     }
   }
 
@@ -1568,10 +1569,12 @@ public struct WebPreviewView: View {
       return
     }
 
+    tweakGenerationTimer.start()
     tweaksAgentState = .working
     let cliConfiguration = viewModel?.cliConfiguration(for: providerKind)
       ?? (providerKind == .claude ? .claudeDefault : .codexDefault)
     Task {
+      defer { tweakGenerationTimer.stop() }
       do {
         let result = try await tweakAgentService.runTweakAgent(
           prompt: prompt,
