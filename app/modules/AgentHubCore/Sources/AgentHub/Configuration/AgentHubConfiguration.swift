@@ -46,6 +46,9 @@ public struct AgentHubConfiguration: Sendable {
   /// Session provider to use (Claude or Codex)
   public var sessionProvider: SessionProviderKind
 
+  /// Enables Sierra-specific first-run defaults for the app target.
+  public var sierraDefaultsEnabled: Bool
+
   /// Creates a configuration with custom values
   public init(
     claudeDataPath: String = "~/.claude",
@@ -55,7 +58,8 @@ public struct AgentHubConfiguration: Sendable {
     statsDisplayMode: StatsDisplayMode = .menuBar,
     cliCommand: String = "claude",
     codexCommand: String = "codex",
-    sessionProvider: SessionProviderKind = .claude
+    sessionProvider: SessionProviderKind = .claude,
+    sierraDefaultsEnabled: Bool = false
   ) {
     let expanded = NSString(string: claudeDataPath).expandingTildeInPath
     self.claudeDataPath = expanded
@@ -66,6 +70,7 @@ public struct AgentHubConfiguration: Sendable {
     self.cliCommand = cliCommand
     self.codexCommand = codexCommand
     self.sessionProvider = sessionProvider
+    self.sierraDefaultsEnabled = sierraDefaultsEnabled
   }
 
   /// Default configuration with sensible defaults
@@ -87,6 +92,25 @@ public struct AgentHubConfiguration: Sendable {
         "\(homeDir)/.cargo/bin",
         "\(homeDir)/.local/bin"
       ]
+    )
+  }
+
+  /// Sierra-oriented local fork configuration.
+  public static var sierraLocal: AgentHubConfiguration {
+    let homeDir = NSHomeDirectory()
+    return AgentHubConfiguration(
+      additionalCLIPaths: [
+        "\(homeDir)/Library/Application Support/AgentHub/bin",
+        "\(homeDir)/.claude/local",
+        "\(homeDir)/.local/bin",
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "\(homeDir)/.bun/bin",
+        "\(homeDir)/.deno/bin",
+        "\(homeDir)/.cargo/bin"
+      ],
+      sierraDefaultsEnabled: true
     )
   }
 }

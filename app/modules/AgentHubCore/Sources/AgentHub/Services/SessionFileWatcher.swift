@@ -580,6 +580,7 @@ public actor SessionFileWatcher {
       gitBranch: result.gitBranch,
       pendingToolUse: pendingToolUse,
       recentActivities: result.recentActivities,
+      transcriptEntries: result.transcriptEntries,
       hasMermaidContent: result.hasMermaidContent,
       detectedResourceLinks: result.detectedResourceLinks,
       detectedMCPAppResources: result.detectedMCPAppResources,

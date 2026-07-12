@@ -218,6 +218,12 @@ public enum AgentHubDefaults {
   /// Type: String (default: "")
   public static let worktreeBranchPrefix = "\(keyPrefix)worktree.generatedBranchPrefix"
 
+  // MARK: - Sierra Defaults
+
+  /// Whether Sierra first-run defaults have completed.
+  /// Type: Bool (default: false)
+  public static let sierraDefaultsBootstrapped = "\(keyPrefix)sierra.defaultsBootstrapped"
+
   /// How worktree sessions are grouped in module-oriented UI.
   /// Type: String (default: WorktreeDisplayMode.parent.rawValue)
   public static let worktreeDisplayMode = "\(keyPrefix)worktree.displayMode"

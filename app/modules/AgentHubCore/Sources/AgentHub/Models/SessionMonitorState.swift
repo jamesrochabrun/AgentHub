@@ -36,6 +36,9 @@ public struct SessionMonitorState: Equatable, Sendable {
   // Recent activity log
   public var recentActivities: [ActivityEntry]
 
+  // Renderable user/assistant transcript extracted from provider JSONL.
+  public var transcriptEntries: [TranscriptEntry]
+
   // Mermaid diagram detection
   public var hasMermaidContent: Bool
 
@@ -67,6 +70,7 @@ public struct SessionMonitorState: Equatable, Sendable {
     gitBranch: String? = nil,
     pendingToolUse: PendingToolUse? = nil,
     recentActivities: [ActivityEntry] = [],
+    transcriptEntries: [TranscriptEntry] = [],
     hasMermaidContent: Bool = false,
     detectedResourceLinks: [ResourceLink] = [],
     detectedMCPAppResources: [MCPAppResourceDescriptor] = [],
@@ -87,6 +91,7 @@ public struct SessionMonitorState: Equatable, Sendable {
     self.gitBranch = gitBranch
     self.pendingToolUse = pendingToolUse
     self.recentActivities = recentActivities
+    self.transcriptEntries = transcriptEntries
     self.hasMermaidContent = hasMermaidContent
     self.detectedResourceLinks = detectedResourceLinks
     self.detectedMCPAppResources = detectedMCPAppResources

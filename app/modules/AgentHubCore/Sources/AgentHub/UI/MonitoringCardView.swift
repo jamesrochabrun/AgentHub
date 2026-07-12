@@ -75,7 +75,7 @@ public struct MonitoringCardView: View {
     initialInputText: String? = nil,
     terminalKey: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
-    contentMode: Binding<MonitoringCardContentMode> = .constant(.terminal),
+    contentMode: Binding<MonitoringCardContentMode> = .constant(.transcript),
     selectedEditorFilePath: Binding<String?> = .constant(nil),
     editorProjectPath: String? = nil,
     editorNavigationRequest: FileExplorerNavigationRequest? = nil,
@@ -879,12 +879,32 @@ public struct MonitoringCardView: View {
   @ViewBuilder
   private var monitorContent: some View {
     switch effectiveContentMode {
+    case .transcript:
+      transcriptContent
     case .terminal:
       terminalContent
     case .editor:
       editorContent
     case .diffs:
       diffContent
+    }
+  }
+
+  @ViewBuilder
+  private var transcriptContent: some View {
+    if let state, !state.transcriptEntries.isEmpty {
+      TranscriptView(entries: state.transcriptEntries)
+    } else {
+      terminalContent
+        .overlay(alignment: .topLeading) {
+          Text("Transcript will appear after the first parsed message.")
+            .font(.primaryCaption)
+            .foregroundStyle(.secondary)
+            .padding(DesignTokens.Spacing.sm)
+            .background(.thinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+            .padding(DesignTokens.Spacing.sm)
+        }
     }
   }
 

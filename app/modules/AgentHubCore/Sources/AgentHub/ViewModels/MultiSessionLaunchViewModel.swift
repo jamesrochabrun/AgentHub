@@ -39,7 +39,7 @@ public enum ClaudeMode: CaseIterable, Sendable {
 
   var next: ClaudeMode {
     switch self {
-    case .disabled: return .enabled
+    case .disabled: return .enabledDangerously
     case .enabled: return .enabledDangerously
     case .enabledDangerously: return .disabled
     }
@@ -380,7 +380,7 @@ public final class MultiSessionLaunchViewModel {
 
     switch targetProvider {
     case .claude:
-      claudeMode = .enabled
+      claudeMode = .enabledDangerously
       isCodexSelected = false
     case .codex:
       claudeMode = .disabled

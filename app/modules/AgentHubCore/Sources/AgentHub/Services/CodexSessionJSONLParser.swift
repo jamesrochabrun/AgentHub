@@ -54,6 +54,7 @@ public struct CodexSessionJSONLParser {
     public var messageCount: Int = 0
     public var pendingToolUses: [String: PendingToolInfo] = [:]
     public var recentActivities: [ActivityEntry] = []
+    public var transcriptEntries: [TranscriptEntry] = []
     public var lastActivityAt: Date?
     public var sessionStartedAt: Date?
     public var currentStatus: SessionStatus = .idle
@@ -263,12 +264,14 @@ public struct CodexSessionJSONLParser {
     case "user_message":
       result.messageCount += 1
       if let message = payload["message"] as? String, !message.isEmpty {
+        appendTranscriptEntry(role: .user, content: message, timestamp: timestamp, to: &result)
         addActivity(type: .userMessage, description: String(message.prefix(80)), timestamp: timestamp, to: &result)
       }
 
     case "agent_message":
       result.messageCount += 1
       if let message = payload["message"] as? String, !message.isEmpty {
+        appendTranscriptEntry(role: .assistant, content: message, timestamp: timestamp, to: &result)
         if message.contains("```mermaid") { result.hasMermaidContent = true }
         appendResourceLinks(extractResourceLinks(from: message, timestamp: timestamp), to: &result)
         appendMCPAppResources(MCPAppResourceExtractor.extract(from: message), to: &result)
@@ -310,6 +313,22 @@ public struct CodexSessionJSONLParser {
     default:
       break
     }
+  }
+
+  private static func appendTranscriptEntry(
+    role: TranscriptRole,
+    content: String,
+    timestamp: Date?,
+    to result: inout ParseResult
+  ) {
+    let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    result.transcriptEntries.append(TranscriptEntry(
+      timestamp: timestamp,
+      role: role,
+      content: trimmed,
+      provider: .codex
+    ))
   }
 
   /// Codex reports an MCP tool call as a single `mcp_tool_call_end` event carrying

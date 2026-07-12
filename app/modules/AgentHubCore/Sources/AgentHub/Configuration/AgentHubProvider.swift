@@ -276,6 +276,10 @@ public final class AgentHubProvider {
       AgentHubDefaults.globalSessionPanelDisplayMode: 0,
     ])
 
+    if configuration.sierraDefaultsEnabled {
+      seedSierraUserDefaults(defaults)
+    }
+
     // Claude command: if developer provided non-default, lock it
     if configuration.cliCommand != "claude" {
       defaults.set(configuration.cliCommand, forKey: AgentHubDefaults.claudeCommand)
@@ -291,6 +295,28 @@ public final class AgentHubProvider {
       defaults.set(true, forKey: AgentHubDefaults.codexCommandLockedByDeveloper)
     } else if defaults.string(forKey: AgentHubDefaults.codexCommand) == nil {
       defaults.set("codex", forKey: AgentHubDefaults.codexCommand)
+    }
+
+    if configuration.sierraDefaultsEnabled {
+      Task { @MainActor [weak self] in
+        guard let self, let store = self.metadataStore else { return }
+        await SierraDefaultsBootstrap(metadataStore: store).bootstrap()
+      }
+    }
+  }
+
+  private func seedSierraUserDefaults(_ defaults: UserDefaults) {
+    if defaults.string(forKey: AgentHubDefaults.claudeCommand) == nil {
+      defaults.set("agenthub-claude", forKey: AgentHubDefaults.claudeCommand)
+    }
+    if defaults.string(forKey: AgentHubDefaults.codexCommand) == nil {
+      defaults.set("codex", forKey: AgentHubDefaults.codexCommand)
+    }
+    defaults.set(true, forKey: AgentHubDefaults.enabledProviders + ".claude")
+    defaults.set(true, forKey: AgentHubDefaults.enabledProviders + ".codex")
+    if defaults.string(forKey: AgentHubDefaults.worktreeBranchPrefix) == nil {
+      let prefix = NSUserName().lowercased().filter { $0.isLetter || $0.isNumber }
+      defaults.set(prefix, forKey: AgentHubDefaults.worktreeBranchPrefix)
     }
   }
 

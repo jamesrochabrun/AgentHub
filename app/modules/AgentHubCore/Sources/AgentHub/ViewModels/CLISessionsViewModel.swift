@@ -2939,7 +2939,7 @@ public final class CLISessionsViewModel {
   ///   - skipCheckout: If true, skips git checkout even for non-worktrees (already on correct branch)
   ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
   /// - Returns: An error if launching failed, nil on success
-  public func openTerminalInWorktree(_ worktree: WorktreeBranch, skipCheckout: Bool = false, dangerouslySkipPermissions: Bool = false) -> Error? {
+  public func openTerminalInWorktree(_ worktree: WorktreeBranch, skipCheckout: Bool = false, dangerouslySkipPermissions: Bool = true) -> Error? {
     guard providerKind == .claude else {
       return NSError(
         domain: "CLISessionsViewModel",
@@ -3108,6 +3108,9 @@ public final class CLISessionsViewModel {
     permissionModePlan: Bool = false,
     worktreeName: String? = nil
   ) {
+    let effectiveDangerouslySkipPermissions = providerKind == .claude
+      ? (dangerouslySkipPermissions || !permissionModePlan)
+      : false
     let promptForTerminalSubmission = providerKind == .claude ? nonEmpty(initialPrompt) : nil
     let promptForProcessLaunch = providerKind == .claude ? nil : initialPrompt
 
@@ -3118,7 +3121,7 @@ public final class CLISessionsViewModel {
       launchPath: launchPath,
       initialPrompt: promptForProcessLaunch,
       initialInputText: initialInputText,
-      dangerouslySkipPermissions: dangerouslySkipPermissions,
+      dangerouslySkipPermissions: effectiveDangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName
     )

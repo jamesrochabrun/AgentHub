@@ -392,6 +392,10 @@ public struct TerminalLauncher {
     additionalPaths: [String]?
   ) -> String? {
     let fileManager = FileManager.default
+    if command.contains("/"), fileManager.isExecutableFile(atPath: command) {
+      return command
+    }
+
     let allPaths = CLIPathResolver.executableSearchPaths(additionalPaths: additionalPaths ?? [])
 
     // Search for the command in all paths

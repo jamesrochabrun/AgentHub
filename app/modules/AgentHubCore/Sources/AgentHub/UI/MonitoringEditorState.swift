@@ -26,6 +26,7 @@ public enum DiffDisplayMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum MonitoringCardContentMode: String, CaseIterable, Identifiable {
+  case transcript
   case terminal
   case editor
   case diffs
@@ -34,6 +35,7 @@ public enum MonitoringCardContentMode: String, CaseIterable, Identifiable {
 
   var label: String {
     switch self {
+    case .transcript: "Transcript"
     case .terminal: "Terminal"
     case .editor: "Files"
     case .diffs: "Diffs"
@@ -42,6 +44,7 @@ public enum MonitoringCardContentMode: String, CaseIterable, Identifiable {
 
   var systemImage: String {
     switch self {
+    case .transcript: "text.bubble"
     case .terminal: "terminal"
     case .editor: "doc.text"
     case .diffs: "arrow.left.arrow.right"
@@ -66,7 +69,7 @@ public struct FileExplorerNavigationRequest: Equatable {
 }
 
 struct MonitoringEditorState: Equatable {
-  var contentMode: MonitoringCardContentMode = .terminal
+  var contentMode: MonitoringCardContentMode = .transcript
   var projectPath: String
   var selectedFilePath: String?
   var navigationRequest: FileExplorerNavigationRequest?
@@ -82,7 +85,7 @@ enum MonitoringEditorStateStore {
     diffDisplayMode: DiffDisplayMode,
     diffAvailabilityStatus: DiffAvailabilityStatus?
   ) -> [MonitoringCardContentMode] {
-    var modes: [MonitoringCardContentMode] = [.terminal, .editor]
+    var modes: [MonitoringCardContentMode] = [.transcript, .terminal, .editor]
     if diffDisplayMode == .inline,
        diffAvailabilityStatus?.canShowDiffViewer == true {
       modes.append(.diffs)
@@ -94,7 +97,7 @@ enum MonitoringEditorStateStore {
     _ contentMode: MonitoringCardContentMode,
     availableModes: [MonitoringCardContentMode]
   ) -> MonitoringCardContentMode {
-    availableModes.contains(contentMode) ? contentMode : .terminal
+    availableModes.contains(contentMode) ? contentMode : (availableModes.first ?? .terminal)
   }
 
   static func nextContentMode(

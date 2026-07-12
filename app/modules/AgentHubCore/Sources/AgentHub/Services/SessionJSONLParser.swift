@@ -87,6 +87,7 @@ public struct SessionJSONLParser {
     public var messageCount: Int = 0
     public var pendingToolUses: [String: PendingToolInfo] = [:]  // toolUseId -> info
     public var recentActivities: [ActivityEntry] = []
+    public var transcriptEntries: [TranscriptEntry] = []
     public var lastActivityAt: Date?
     public var sessionStartedAt: Date?
     public var currentStatus: SessionStatus = .idle
@@ -205,6 +206,13 @@ public struct SessionJSONLParser {
       // Only add user message activity if there's actual text (not just tool results)
       let textPreview = extractTextPreview(from: entry.message?.content)
       if !textPreview.isEmpty {
+        appendTranscriptEntries(
+          from: entry.message?.content,
+          role: .user,
+          timestamp: timestamp,
+          provider: .claude,
+          to: &result
+        )
         addActivity(
           type: .userMessage,
           description: textPreview,
@@ -238,7 +246,12 @@ public struct SessionJSONLParser {
 
       // Process content blocks
       if let blocks = entry.message?.content {
-        processContentBlocks(blocks, timestamp: timestamp, into: &result)
+        processContentBlocks(
+          blocks,
+          timestamp: timestamp,
+          transcriptRole: .assistant,
+          into: &result
+        )
       }
 
     case "summary":
@@ -260,6 +273,7 @@ public struct SessionJSONLParser {
   private static func processContentBlocks(
     _ blocks: [ContentBlock],
     timestamp: Date?,
+    transcriptRole: TranscriptRole? = nil,
     into result: inout ParseResult
   ) {
     for block in blocks {
@@ -360,6 +374,15 @@ public struct SessionJSONLParser {
 
       case "text":
         if let text = block.text {
+          if let transcriptRole {
+            appendTranscriptEntry(
+              role: transcriptRole,
+              content: text,
+              timestamp: timestamp,
+              provider: .claude,
+              to: &result
+            )
+          }
           if text.contains("```mermaid") {
             result.hasMermaidContent = true
           }
@@ -382,6 +405,44 @@ public struct SessionJSONLParser {
         break
       }
     }
+  }
+
+  private static func appendTranscriptEntries(
+    from blocks: [ContentBlock]?,
+    role: TranscriptRole,
+    timestamp: Date?,
+    provider: SessionProviderKind,
+    to result: inout ParseResult
+  ) {
+    guard let blocks else { return }
+    for block in blocks where block.type == "text" {
+      if let text = block.text {
+        appendTranscriptEntry(
+          role: role,
+          content: text,
+          timestamp: timestamp,
+          provider: provider,
+          to: &result
+        )
+      }
+    }
+  }
+
+  private static func appendTranscriptEntry(
+    role: TranscriptRole,
+    content: String,
+    timestamp: Date?,
+    provider: SessionProviderKind,
+    to result: inout ParseResult
+  ) {
+    let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return }
+    result.transcriptEntries.append(TranscriptEntry(
+      timestamp: timestamp,
+      role: role,
+      content: trimmed,
+      provider: provider
+    ))
   }
 
   /// Re-evaluate current status based on time elapsed since last activity

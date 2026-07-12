@@ -289,6 +289,7 @@ public actor CodexSessionFileWatcher {
       // way to surface approval-window state. See plans/parsed-weaving-nebula.md.
       pendingToolUse: nil,
       recentActivities: result.recentActivities,
+      transcriptEntries: result.transcriptEntries,
       hasMermaidContent: result.hasMermaidContent,
       detectedResourceLinks: result.detectedResourceLinks,
       detectedMCPAppResources: result.detectedMCPAppResources,

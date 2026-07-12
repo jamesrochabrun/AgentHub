@@ -6,7 +6,7 @@ import Testing
 
 @Suite("MonitoringEditorState")
 struct MonitoringEditorStateTests {
-  @Test("Missing editor state defaults to terminal mode and the item project path")
+  @Test("Missing editor state defaults to transcript mode and the item project path")
   func defaultStateUsesItemProjectPath() {
     let state = MonitoringEditorStateStore.state(
       for: "claude-session-1",
@@ -14,7 +14,7 @@ struct MonitoringEditorStateTests {
       in: [:]
     )
 
-    #expect(state.contentMode == .terminal)
+    #expect(state.contentMode == .transcript)
     #expect(state.projectPath == "/tmp/repo")
     #expect(state.selectedFilePath == nil)
     #expect(state.navigationRequest == nil)
@@ -115,8 +115,8 @@ struct MonitoringEditorStateTests {
     #expect(state.contentMode == .diffs)
   }
 
-  @Test("Unavailable diff mode falls back to terminal")
-  func unavailableDiffModeFallsBackToTerminal() {
+  @Test("Unavailable diff mode falls back to first available mode")
+  func unavailableDiffModeFallsBackToFirstAvailableMode() {
     let mode = MonitoringEditorStateStore.coercedContentMode(
       .diffs,
       availableModes: [.terminal, .editor]
@@ -127,19 +127,20 @@ struct MonitoringEditorStateTests {
 
   @Test("Content shortcut cycles visible modes by index")
   func contentShortcutCyclesVisibleModesByIndex() {
-    let modes: [MonitoringCardContentMode] = [.terminal, .editor, .diffs]
+    let modes: [MonitoringCardContentMode] = [.transcript, .terminal, .editor, .diffs]
 
+    #expect(MonitoringEditorStateStore.nextContentMode(after: .transcript, availableModes: modes) == .terminal)
     #expect(MonitoringEditorStateStore.nextContentMode(after: .terminal, availableModes: modes) == .editor)
     #expect(MonitoringEditorStateStore.nextContentMode(after: .editor, availableModes: modes) == .diffs)
-    #expect(MonitoringEditorStateStore.nextContentMode(after: .diffs, availableModes: modes) == .terminal)
+    #expect(MonitoringEditorStateStore.nextContentMode(after: .diffs, availableModes: modes) == .transcript)
   }
 
   @Test("Content shortcut falls back to first visible mode when current mode disappears")
   func contentShortcutFallsBackToFirstVisibleMode() {
     #expect(MonitoringEditorStateStore.nextContentMode(
       after: .diffs,
-      availableModes: [.terminal, .editor]
-    ) == .terminal)
+      availableModes: [.transcript, .terminal, .editor]
+    ) == .transcript)
     #expect(MonitoringEditorStateStore.nextContentMode(
       after: .terminal,
       availableModes: []
@@ -165,9 +166,9 @@ struct MonitoringEditorStateTests {
       diffAvailabilityStatus: .available
     )
 
-    #expect(availableItems.map(\.value) == [.terminal, .editor, .diffs])
-    #expect(checkingItems.map(\.value) == [.terminal, .editor, .diffs])
-    #expect(unavailableItems.map(\.value) == [.terminal, .editor])
-    #expect(sidePanelItems.map(\.value) == [.terminal, .editor])
+    #expect(availableItems.map(\.value) == [.transcript, .terminal, .editor, .diffs])
+    #expect(checkingItems.map(\.value) == [.transcript, .terminal, .editor, .diffs])
+    #expect(unavailableItems.map(\.value) == [.transcript, .terminal, .editor])
+    #expect(sidePanelItems.map(\.value) == [.transcript, .terminal, .editor])
   }
 }

@@ -188,6 +188,9 @@ public enum EmbeddedTerminalLaunchBuilder {
     var environment = ProcessInfo.processInfo.environment
     environment["TERM"] = "xterm-256color"
     environment["COLORTERM"] = "truecolor"
+    environment["CLICOLOR"] = "1"
+    environment["CLICOLOR_FORCE"] = "1"
+    environment["FORCE_COLOR"] = "1"
     environment["LANG"] = "en_US.UTF-8"
     environment.removeValue(forKey: "TERM_PROGRAM")
     environment.removeValue(forKey: "AGENTHUB_CLI")

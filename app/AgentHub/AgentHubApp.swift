@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
   /// Wires the Ghostty-aware terminal surface factory; `AgentHubCore` falls back
   /// to the regular SwiftTerm surface when no provider is supplied.
   let provider = AgentHubProvider(
+    configuration: .sierraLocal,
     terminalSurfaceFactory: DefaultEmbeddedTerminalSurfaceFactory(
       ghosttyProvider: { AgentHubGhosttyTerminalSurface() }
     ),
