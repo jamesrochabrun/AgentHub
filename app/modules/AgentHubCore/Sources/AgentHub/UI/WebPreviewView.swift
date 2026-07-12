@@ -8,6 +8,7 @@
 //
 
 import AgentHubGitDiff
+import AgentHubSessionGraph
 import AppKit
 import SwiftUI
 import Canvas
@@ -119,6 +120,8 @@ public struct WebPreviewView: View {
   var onInspectSubmit: ((String, CLISession) -> Void)?
   var onQueuedSubmit: ((String, CLISession) -> Bool)?
   let viewModel: CLISessionsViewModel?
+  let providerKind: SessionProviderKind
+  private let tweakAgentService: any WebPreviewTweakAgentRunning = WebPreviewTweakAgentService()
   /// Which server this preview is targeting. `.app` honors the agent-detected localhost URL
   /// and the primary dev server. `.storybook` resolves only against the Storybook compound key.
   let mode: WebPreviewMode
@@ -155,6 +158,8 @@ public struct WebPreviewView: View {
   @State private var scrollRestorationCoordinator = WebPreviewScrollRestorationCoordinator()
   @State private var tweaksState = TweaksState()
   @State private var tweaksDefaultsWriteCoordinator = TweaksDefaultsWriteCoordinator()
+  @State private var tweaksAgentState: TweaksAgentState = .idle
+  @State private var tweaksDefaultsSaveState: TweaksDefaultsSaveState = .idle
   @State private var isTweaksPopoverPresented = false
   @State private var launchOptionsStatusOverride: String?
   @State private var askAgentReprobeTask: Task<Void, Never>?
@@ -193,6 +198,7 @@ public struct WebPreviewView: View {
     onInspectSubmit: ((String, CLISession) -> Void)? = nil,
     onQueuedSubmit: ((String, CLISession) -> Bool)? = nil,
     viewModel: CLISessionsViewModel? = nil,
+    providerKind: SessionProviderKind = .claude,
     mode: WebPreviewMode = .app,
     agentLocalhostURL: URL? = nil,
     monitorState: SessionMonitorState? = nil,
@@ -208,6 +214,7 @@ public struct WebPreviewView: View {
     self.onInspectSubmit = onInspectSubmit
     self.onQueuedSubmit = onQueuedSubmit
     self.viewModel = viewModel
+    self.providerKind = providerKind
     self.mode = mode
     self.agentLocalhostURL = agentLocalhostURL
     self.monitorState = monitorState
@@ -386,7 +393,6 @@ public struct WebPreviewView: View {
       deactivateInspector()
       Task {
         await inspectorViewModel.flushPendingWriteIfNeeded()
-        await tweaksDefaultsWriteCoordinator.cancelPendingWrite()
       }
       localhostReloadTask?.cancel()
       askAgentReprobeTask?.cancel()
@@ -655,21 +661,34 @@ public struct WebPreviewView: View {
   }
 
   private var tweaksButton: some View {
-    Button {
+    let presentation = TweaksButtonPresentation.resolve(agentState: tweaksAgentState)
+    return Button {
       isTweaksPopoverPresented.toggle()
     } label: {
-      Label("Tweaks", systemImage: "slider.horizontal.3")
-        .font(.caption)
+      HStack(spacing: 6) {
+        if presentation.isLoading {
+          ProgressView()
+            .controlSize(.mini)
+            .accessibilityHidden(true)
+        }
+        Text("Tweaks")
+      }
+      .font(.caption)
     }
     .webPreviewSecondaryButtonStyle()
     .controlSize(.small)
+    .accessibilityLabel(presentation.accessibilityLabel)
     .help("Tweak this design with live controls")
     .popover(isPresented: $isTweaksPopoverPresented, arrowEdge: .bottom) {
       TweaksPanelView(
         state: tweaksState,
+        agentState: tweaksAgentState,
+        defaultsSaveState: tweaksDefaultsSaveState,
         onSubmitDescription: sendCustomTweaksPrompt,
         onIdeas: sendTweaksIdeasPrompt,
-        onValueChange: handleTweakValueChange
+        onValueChange: handleTweakValueChange,
+        onReset: resetTweakValues,
+        onSaveDefaults: saveTweakDefaults
       )
       .frame(width: 320)
     }
@@ -1234,6 +1253,7 @@ public struct WebPreviewView: View {
     previewWebView = nil
     isLoading = false
     tweaksState.clear()
+    tweaksDefaultsSaveState = .idle
     syncReloadCoordinatorBaseline()
 
     switch newResolution {
@@ -1333,7 +1353,8 @@ public struct WebPreviewView: View {
           selectedElementId: inspectState.selectedElement?.id,
           selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady,
-          onTweakPropsChange: handleTweakPropsChange
+          onTweakPropsChange: handleTweakPropsChange,
+          onTweakSchemaAvailabilityChange: handleTweakSchemaAvailabilityChange
         )
         .overlay(alignment: .top) {
           if inspectState.isActive {
@@ -1414,7 +1435,8 @@ public struct WebPreviewView: View {
           selectedElementId: inspectState.selectedElement?.id,
           selectorToRestore: activeSelectorToRestore,
           onWebViewReady: handleWebViewReady,
-          onTweakPropsChange: handleTweakPropsChange
+          onTweakPropsChange: handleTweakPropsChange,
+          onTweakSchemaAvailabilityChange: handleTweakSchemaAvailabilityChange
         )
         .webInspectorOverlay(
           state: inspectState,
@@ -1487,66 +1509,131 @@ public struct WebPreviewView: View {
   }
 
   private var tweakPromptTargetName: String {
-    if let selectedFilePath {
-      return URL(fileURLWithPath: selectedFilePath).lastPathComponent
+    if let tweakTargetFilePath {
+      return URL(fileURLWithPath: tweakTargetFilePath).lastPathComponent
     }
     return "\(session.projectName)'s current preview"
   }
 
+  private var tweakTargetFilePath: String? {
+    if let previewURL = previewWebView?.url,
+       let resolvedPath = TweaksDefaultsWriteCoordinator.resolveFilePath(
+         previewURL: previewURL,
+         projectPath: projectPath
+       ) {
+      return resolvedPath
+    }
+    return selectedFilePath
+  }
+
   private func handleTweakPropsChange(_ props: [TweakProp]) {
     tweaksState.updateSchema(props)
+    tweaksDefaultsSaveState = .idle
   }
 
   private func handleTweakValueChange(prop: TweakProp, value: TweakPropValue) {
     tweaksState.updateValue(name: prop.name, value)
+    if case .failed = tweaksDefaultsSaveState {
+      tweaksDefaultsSaveState = .idle
+    }
     if let previewWebView {
       TweaksBridge.setProp(name: prop.name, value: value, in: previewWebView)
     }
-    persistTweakDefaultIfPossible(propName: prop.name, value: value)
   }
 
   private func sendTweaksIdeasPrompt() {
-    sendTweaksPrompt(TweaksPromptBuilder.ideasPrompt(fileName: tweakPromptTargetName))
+    runTweakAgent(
+      TweaksPromptBuilder.ideasPrompt(
+        fileName: tweakPromptTargetName,
+        existingProps: tweaksState.props
+      ),
+      policy: .additive
+    )
   }
 
   private func sendCustomTweaksPrompt(_ instruction: String) {
-    sendTweaksPrompt(TweaksPromptBuilder.customPrompt(
-      fileName: tweakPromptTargetName,
-      instruction: instruction
-    ))
+    runTweakAgent(
+      TweaksPromptBuilder.customPrompt(
+        fileName: tweakPromptTargetName,
+        instruction: instruction
+      ),
+      policy: .flexible
+    )
   }
 
-  private func sendTweaksPrompt(_ prompt: String) {
-    isTweaksPopoverPresented = false
-    queueSendFailureMessage = nil
-
-    if let onInspectSubmit {
-      onInspectSubmit(prompt, session)
-      onCollapseExpandedAfterSend?()
+  private func runTweakAgent(_ prompt: String, policy: InspectorTweakPolicy) {
+    guard tweaksAgentState != .working,
+          let tweakTargetFilePath else {
+      tweaksAgentState = .failed("The preview file could not be resolved.")
       return
     }
 
-    guard let onQueuedSubmit, onQueuedSubmit(prompt, session) else {
-      queueSendFailureMessage = "Could not find an active terminal for this session. Keep the preview open and try again when the terminal is ready."
-      return
-    }
-    onCollapseExpandedAfterSend?()
-  }
-
-  private func persistTweakDefaultIfPossible(propName: String, value: TweakPropValue) {
-    guard case .directFile = resolution,
-          let selectedFilePath else {
-      return
-    }
-
-    fileWatcher.suppressReloads(for: TweaksDefaultsWriteCoordinator.reloadSuppressionDuration)
+    tweaksAgentState = .working
+    let cliConfiguration = viewModel?.cliConfiguration(for: providerKind)
+      ?? (providerKind == .claude ? .claudeDefault : .codexDefault)
     Task {
-      await tweaksDefaultsWriteCoordinator.scheduleValueWrite(
-        propName: propName,
-        value: value,
-        filePath: selectedFilePath,
-        projectPath: projectPath
-      )
+      do {
+        let result = try await tweakAgentService.runTweakAgent(
+          prompt: prompt,
+          targetFileURL: URL(fileURLWithPath: tweakTargetFilePath),
+          policy: policy,
+          cliConfiguration: cliConfiguration
+        )
+        switch result {
+        case .applied:
+          tweaksAgentState = .idle
+        case .noChanges:
+          tweaksAgentState = .failed("The agent finished without changing the design file.")
+        case .conflict:
+          tweaksAgentState = .conflict
+        }
+      } catch {
+        tweaksAgentState = .failed(error.localizedDescription)
+      }
+    }
+  }
+
+  private func resetTweakValues() {
+    let resetProps = tweaksState.resetToDefaults()
+    tweaksDefaultsSaveState = .idle
+    guard let previewWebView else { return }
+    for prop in resetProps {
+      TweaksBridge.setProp(name: prop.name, value: prop.value, in: previewWebView)
+    }
+  }
+
+  private func saveTweakDefaults() {
+    guard tweaksState.hasUnsavedChanges,
+          tweaksDefaultsSaveState != .saving,
+          tweaksAgentState != .working,
+          let tweakTargetFilePath else {
+      if tweaksState.hasUnsavedChanges {
+        tweaksDefaultsSaveState = .failed("The preview file could not be resolved.")
+      }
+      return
+    }
+
+    let propsSnapshot = tweaksState.props
+    tweaksDefaultsSaveState = .saving
+    Task {
+      do {
+        fileWatcher.suppressReloads(for: TweaksDefaultsWriteCoordinator.reloadSuppressionDuration)
+        try await tweaksDefaultsWriteCoordinator.saveDefaults(
+          props: propsSnapshot,
+          filePath: tweakTargetFilePath,
+          projectPath: projectPath
+        )
+        fileWatcher.suppressReloads(for: TweaksDefaultsWriteCoordinator.reloadSuppressionDuration)
+        guard tweaksState.props == propsSnapshot else {
+          tweaksDefaultsSaveState = .idle
+          requestManualReload()
+          return
+        }
+        tweaksState.commitCurrentValuesAsDefaults()
+        tweaksDefaultsSaveState = .idle
+      } catch {
+        tweaksDefaultsSaveState = .failed(error.localizedDescription)
+      }
     }
   }
 
@@ -1660,10 +1747,7 @@ public struct WebPreviewView: View {
     isLoading = loading
     handleOverlayReloadingState(loading)
 
-    guard !loading else {
-      tweaksState.clear()
-      return
-    }
+    guard !loading else { return }
 
     restorePendingScrollPositionIfNeeded()
     lastSelectedSelector = nil
@@ -1671,6 +1755,13 @@ public struct WebPreviewView: View {
       installConsoleHook(in: previewWebView)
     }
     beginPendingReloadCaptureIfNeeded()
+  }
+
+  private func handleTweakSchemaAvailabilityChange(_ hasDeclaredProps: Bool) {
+    if !hasDeclaredProps {
+      tweaksState.clear()
+      tweaksDefaultsSaveState = .idle
+    }
   }
 
   private func handlePreviewURLChange(_ loadedURL: URL?) {
