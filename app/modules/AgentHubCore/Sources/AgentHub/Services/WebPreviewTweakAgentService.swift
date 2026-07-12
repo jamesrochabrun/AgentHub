@@ -19,7 +19,8 @@ protocol TweakAgentCommandRunning: Sendable {
     prompt: String,
     systemPrompt: String,
     workingDirectory: String,
-    cliConfiguration: CLICommandConfiguration
+    cliConfiguration: CLICommandConfiguration,
+    activityHandler: @Sendable @escaping () async -> Void
   ) async throws
 }
 
@@ -31,7 +32,7 @@ enum WebPreviewTweakAgentError: LocalizedError {
   var errorDescription: String? {
     switch self {
     case .timedOut:
-      return "The tweak agent did not finish within three minutes."
+      return "The tweak agent stopped making progress for five minutes."
     case .executableNotFound(let command):
       return "Could not find the configured \(command) command."
     case .commandFailed(let status):
@@ -55,16 +56,16 @@ actor WebPreviewTweakAgentService: WebPreviewTweakAgentRunning {
 
   private let workspaceCoordinator: any TweakWorkspaceCoordinating
   private let commandRunner: any TweakAgentCommandRunning
-  private let timeout: Duration
+  private let inactivityTimeout: Duration
 
   init(
     workspaceCoordinator: any TweakWorkspaceCoordinating = TweakWorkspaceCoordinator(),
     commandRunner: any TweakAgentCommandRunning = TweakAgentProcessRunner(),
-    timeout: Duration = .seconds(180)
+    inactivityTimeout: Duration = .seconds(300)
   ) {
     self.workspaceCoordinator = workspaceCoordinator
     self.commandRunner = commandRunner
-    self.timeout = timeout
+    self.inactivityTimeout = inactivityTimeout
   }
 
   func runTweakAgent(
@@ -94,22 +95,48 @@ actor WebPreviewTweakAgentService: WebPreviewTweakAgentRunning {
     cliConfiguration: CLICommandConfiguration
   ) async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
+      let progressMonitor = TweakAgentProgressMonitor(interval: inactivityTimeout)
       group.addTask { [commandRunner] in
         try await commandRunner.run(
           prompt: prompt,
           systemPrompt: Self.systemPrompt,
           workingDirectory: workingDirectory,
-          cliConfiguration: cliConfiguration
+          cliConfiguration: cliConfiguration,
+          activityHandler: {
+            await progressMonitor.markProgress()
+          }
         )
       }
-      group.addTask { [timeout] in
-        try await Task.sleep(for: timeout)
-        throw WebPreviewTweakAgentError.timedOut
+      group.addTask {
+        while true {
+          try await Task.sleep(for: .seconds(1))
+          if await progressMonitor.hasTimedOut() {
+            throw WebPreviewTweakAgentError.timedOut
+          }
+        }
       }
 
       _ = try await group.next()
       group.cancelAll()
     }
+  }
+}
+
+private actor TweakAgentProgressMonitor {
+  private var activityID = 0
+  private var progressTimeout: TweakAgentProgressTimeout<Int>
+
+  init(interval: Duration) {
+    progressTimeout = TweakAgentProgressTimeout(interval: interval, initialActivity: activityID)
+  }
+
+  func markProgress() {
+    activityID += 1
+    _ = progressTimeout.hasTimedOut(activity: activityID)
+  }
+
+  func hasTimedOut() -> Bool {
+    progressTimeout.hasTimedOut(activity: activityID)
   }
 }
 
@@ -121,7 +148,8 @@ final class TweakAgentProcessRunner: TweakAgentCommandRunning, @unchecked Sendab
     prompt: String,
     systemPrompt: String,
     workingDirectory: String,
-    cliConfiguration: CLICommandConfiguration
+    cliConfiguration: CLICommandConfiguration,
+    activityHandler: @Sendable @escaping () async -> Void
   ) async throws {
     let executablePath: String?
     switch cliConfiguration.mode {
@@ -153,8 +181,10 @@ final class TweakAgentProcessRunner: TweakAgentCommandRunning, @unchecked Sendab
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
         process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
 
         var environment = ProcessInfo.processInfo.environment
         let paths = CLIPathResolver.executableSearchPaths(
@@ -166,7 +196,20 @@ final class TweakAgentProcessRunner: TweakAgentCommandRunning, @unchecked Sendab
         environment.merge(CLIEnvironmentOverrides.environment) { _, new in new }
         process.environment = environment
 
+        let handleActivity: @Sendable (FileHandle) -> Void = { handle in
+          let data = handle.availableData
+          if !data.isEmpty {
+            Task {
+              await activityHandler()
+            }
+          }
+        }
+        outputPipe.fileHandleForReading.readabilityHandler = handleActivity
+        errorPipe.fileHandleForReading.readabilityHandler = handleActivity
+
         process.terminationHandler = { [weak self] process in
+          outputPipe.fileHandleForReading.readabilityHandler = nil
+          errorPipe.fileHandleForReading.readabilityHandler = nil
           self?.setRunningProcess(nil)
           if process.terminationReason == .exit, process.terminationStatus == 0 {
             continuation.resume()

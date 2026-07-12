@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import Canvas
 
 @testable import AgentHubCore
 
@@ -37,10 +38,12 @@ private actor TweakAgentMockCommandRunner: TweakAgentCommandRunning {
     prompt: String,
     systemPrompt: String,
     workingDirectory: String,
-    cliConfiguration: CLICommandConfiguration
+    cliConfiguration: CLICommandConfiguration,
+    activityHandler: @Sendable @escaping () async -> Void
   ) async throws {
     self.prompt = prompt
     self.workingDirectory = workingDirectory
+    await activityHandler()
   }
 }
 
@@ -53,7 +56,7 @@ struct WebPreviewTweakAgentServiceTests {
     let service = WebPreviewTweakAgentService(
       workspaceCoordinator: workspace,
       commandRunner: runner,
-      timeout: .seconds(1)
+      inactivityTimeout: .seconds(1)
     )
 
     let result = try await service.runTweakAgent(
@@ -68,6 +71,43 @@ struct WebPreviewTweakAgentServiceTests {
     #expect(await runner.workingDirectory == "/tmp/tweak-task")
     #expect(await workspace.finishedPolicy == .additive)
     #expect(await workspace.didDiscard == false)
+  }
+}
+
+@Suite("TweakAgentProgressTimeout")
+struct TweakAgentProgressTimeoutTests {
+  @Test("Times out only after the inactivity interval")
+  func timesOutAfterInactivity() {
+    let start = ContinuousClock.now
+    var timeout = TweakAgentProgressTimeout(
+      interval: .seconds(300),
+      initialActivity: 1,
+      now: start
+    )
+
+    let didTimeOutBeforeInterval = timeout.hasTimedOut(activity: 1, now: start.advanced(by: .seconds(299)))
+    let didTimeOutAtInterval = timeout.hasTimedOut(activity: 1, now: start.advanced(by: .seconds(300)))
+
+    #expect(!didTimeOutBeforeInterval)
+    #expect(didTimeOutAtInterval)
+  }
+
+  @Test("Progress resets the inactivity interval")
+  func progressResetsTimeout() {
+    let start = ContinuousClock.now
+    var timeout = TweakAgentProgressTimeout(
+      interval: .seconds(300),
+      initialActivity: 1,
+      now: start
+    )
+
+    let didTimeOutOnProgress = timeout.hasTimedOut(activity: 2, now: start.advanced(by: .seconds(290)))
+    let didTimeOutBeforeResetInterval = timeout.hasTimedOut(activity: 2, now: start.advanced(by: .seconds(589)))
+    let didTimeOutAtResetInterval = timeout.hasTimedOut(activity: 2, now: start.advanced(by: .seconds(590)))
+
+    #expect(!didTimeOutOnProgress)
+    #expect(!didTimeOutBeforeResetInterval)
+    #expect(didTimeOutAtResetInterval)
   }
 }
 
@@ -123,5 +163,66 @@ struct TweaksButtonPresentationTests {
     let presentation = TweaksButtonPresentation.resolve(agentState: .idle)
     #expect(!presentation.isLoading)
     #expect(presentation.accessibilityLabel == "Tweaks")
+  }
+}
+
+@Suite("TweakGenerationBanner")
+struct TweakGenerationBannerTests {
+  @Test("Explains that generation can take a few minutes")
+  func messageSetsTimingExpectation() {
+    #expect(TweakGenerationBanner.message == "Tweaks are being generated. This can take a few minutes.")
+  }
+
+  @Test("Formats elapsed generation time")
+  func formatsElapsedTime() {
+    let start = Date(timeIntervalSinceReferenceDate: 1_000)
+
+    #expect(TweakGenerationBanner.elapsedTime(from: start, to: start.addingTimeInterval(65)) == "1:05")
+    #expect(TweakGenerationBanner.elapsedTime(from: start, to: start.addingTimeInterval(3_661)) == "1:01:01")
+    #expect(TweakGenerationBanner.elapsedTime(from: start, to: start.addingTimeInterval(-1)) == "0:00")
+  }
+}
+
+@Suite("TweakGenerationTimer")
+struct TweakGenerationTimerTests {
+  @Test("Keeps the generation start time until work stops")
+  func lifecycle() {
+    let start = Date(timeIntervalSinceReferenceDate: 1_000)
+    var timer = TweakGenerationTimer()
+
+    timer.start(at: start)
+    #expect(timer.startedAt == start)
+
+    timer.stop()
+    #expect(timer.startedAt == nil)
+  }
+}
+
+@Suite("TweakPanelStatusRouting")
+struct TweakPanelStatusRoutingTests {
+  @Test("Canvas does not duplicate host agent status", arguments: [
+    TweaksAgentState.idle,
+    .working,
+    .failed("Failure"),
+    .conflict,
+  ])
+  func canvasAgentStatusIsIdle(state: TweaksAgentState) {
+    #expect(TweakPanelStatusRouting.canvasAgentState(for: state) == .idle)
+  }
+
+  @Test("Canvas retains only the defaults saving state")
+  func canvasDefaultsStatus() {
+    #expect(TweakPanelStatusRouting.canvasDefaultsState(for: .idle) == .idle)
+    #expect(TweakPanelStatusRouting.canvasDefaultsState(for: .saving) == .saving)
+    #expect(TweakPanelStatusRouting.canvasDefaultsState(for: .failed("Failure")) == .idle)
+  }
+
+  @Test("Host status appears only for visible status content")
+  func hostStatusVisibility() {
+    #expect(!TweakPanelStatusRouting.showsHostStatus(agentState: .idle, defaultsState: .idle))
+    #expect(!TweakPanelStatusRouting.showsHostStatus(agentState: .idle, defaultsState: .saving))
+    #expect(TweakPanelStatusRouting.showsHostStatus(agentState: .working, defaultsState: .idle))
+    #expect(TweakPanelStatusRouting.showsHostStatus(agentState: .failed("Failure"), defaultsState: .idle))
+    #expect(TweakPanelStatusRouting.showsHostStatus(agentState: .idle, defaultsState: .failed("Failure")))
   }
 }
