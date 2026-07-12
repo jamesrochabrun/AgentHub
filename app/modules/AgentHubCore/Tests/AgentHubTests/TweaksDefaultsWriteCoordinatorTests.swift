@@ -5,20 +5,18 @@ import Testing
 @testable import AgentHubCore
 
 private actor TweaksMockFileService: ProjectFileServiceProtocol {
-  struct WriteCall: Equatable, Sendable {
-    let path: String
-    let content: String
-  }
+  enum MockError: Error { case missingFile, writeFailed }
 
-  enum MockError: Error {
-    case missingFile
-  }
-
-  private var files: [String: String]
-  private var writes: [WriteCall] = []
+  private(set) var files: [String: String]
+  private(set) var writeCount = 0
+  private var shouldFailWrites = false
 
   init(files: [String: String]) {
     self.files = files
+  }
+
+  func failWrites() {
+    shouldFailWrites = true
   }
 
   func readFile(at path: String, projectPath: String) async throws -> String {
@@ -27,84 +25,144 @@ private actor TweaksMockFileService: ProjectFileServiceProtocol {
   }
 
   func writeFile(at path: String, content: String, projectPath: String) async throws {
+    guard !shouldFailWrites else { throw MockError.writeFailed }
     files[path] = content
-    writes.append(WriteCall(path: path, content: content))
+    writeCount += 1
   }
 
   func listTextFiles(in projectPath: String, extensions: Set<String>) async -> [String] {
     files.keys.sorted()
-  }
-
-  func recordedWrites() -> [WriteCall] {
-    writes
   }
 }
 
 @Suite("TweaksDefaultsWriteCoordinator")
 struct TweaksDefaultsWriteCoordinatorTests {
   private let filePath = "/project/index.html"
+  private let projectPath = "/project"
   private let html = """
   <script>
     dc_set_props({
-      "warmth": { "label": "Warmth", "type": "slider", "min": 0, "max": 100, "step": 1, "value": 60 },
-      "accent": { "label": "Accent", "type": "color", "value": "#ff6b35" }
+      "warmth": { "label": "Warmth", "type": "slider", "min": 0, "max": 100, "value": 60 },
+      "night": { "label": "Night", "type": "toggle", "value": false }
     });
   </script>
   """
 
-  @Test("Writes a declared prop value into the source")
-  func writesDeclaredPropValue() async throws {
-    let fileService = TweaksMockFileService(files: [filePath: html])
-    let coordinator = TweaksDefaultsWriteCoordinator(fileService: fileService)
+  @Test("Writes all changed defaults atomically")
+  func writesChangedDefaults() async throws {
+    let service = TweaksMockFileService(files: [filePath: html])
+    let coordinator = TweaksDefaultsWriteCoordinator(fileService: service)
 
-    let outcome = await coordinator.writeValue(
-      propName: "warmth",
-      value: .number(72),
+    try await coordinator.saveDefaults(
+      props: makeProps(warmth: .number(85), night: .boolean(true)),
       filePath: filePath,
-      projectPath: "/project"
+      projectPath: projectPath
     )
 
-    #expect(outcome == .written)
-    let writes = await fileService.recordedWrites()
-    #expect(writes.count == 1)
-    #expect(writes.first?.content.contains("\"value\": 72") == true)
-    #expect(writes.first?.content.contains(
-      "\"accent\": { \"label\": \"Accent\", \"type\": \"color\", \"value\": \"#ff6b35\" }"
-    ) == true)
+    #expect(await service.writeCount == 1)
+    let content = try #require(await service.files[filePath])
+    let props = try TweakPropsSourceEditor.parseProps(fromSource: content)
+    #expect(props.first(where: { $0.name == "warmth" })?.value == .number(85))
+    #expect(props.first(where: { $0.name == "night" })?.value == .boolean(true))
   }
 
-  @Test("Rejects undeclared prop names without writing")
-  func rejectsUndeclaredPropName() async throws {
-    let fileService = TweaksMockFileService(files: [filePath: html])
-    let coordinator = TweaksDefaultsWriteCoordinator(fileService: fileService)
+  @Test("Unchanged values do not write")
+  func unchangedValuesDoNotWrite() async throws {
+    let service = TweaksMockFileService(files: [filePath: html])
+    let coordinator = TweaksDefaultsWriteCoordinator(fileService: service)
 
-    let outcome = await coordinator.writeValue(
-      propName: "missing",
-      value: .string("retro"),
+    try await coordinator.saveDefaults(
+      props: makeProps(),
       filePath: filePath,
-      projectPath: "/project"
+      projectPath: projectPath
     )
 
-    #expect(outcome == .propNotDeclared)
-    let writes = await fileService.recordedWrites()
-    #expect(writes.isEmpty)
+    #expect(await service.writeCount == 0)
   }
 
-  @Test("Rejects unsafe prop names before parsing")
-  func rejectsUnsafePropName() async throws {
-    let fileService = TweaksMockFileService(files: [filePath: html])
-    let coordinator = TweaksDefaultsWriteCoordinator(fileService: fileService)
+  @Test("Rejects source or schema drift")
+  func rejectsSourceDrift() async throws {
+    let changedHTML = html.replacingOccurrences(of: "\"value\": 60", with: "\"value\": 70")
+    let service = TweaksMockFileService(files: [filePath: changedHTML])
+    let coordinator = TweaksDefaultsWriteCoordinator(fileService: service)
 
-    let outcome = await coordinator.writeValue(
-      propName: "warmth;alert(1)",
-      value: .number(72),
-      filePath: filePath,
-      projectPath: "/project"
+    await #expect(throws: TweaksDefaultsWriteError.sourceChanged) {
+      try await coordinator.saveDefaults(
+        props: makeProps(warmth: .number(85)),
+        filePath: filePath,
+        projectPath: projectPath
+      )
+    }
+    #expect(await service.writeCount == 0)
+  }
+
+  @Test("Reports read and write failures")
+  func reportsIOFailures() async throws {
+    let missingService = TweaksMockFileService(files: [:])
+    let missingCoordinator = TweaksDefaultsWriteCoordinator(fileService: missingService)
+    await #expect(throws: TweaksDefaultsWriteError.cannotReadFile) {
+      try await missingCoordinator.saveDefaults(
+        props: makeProps(warmth: .number(85)),
+        filePath: filePath,
+        projectPath: projectPath
+      )
+    }
+
+    let failingService = TweaksMockFileService(files: [filePath: html])
+    await failingService.failWrites()
+    let failingCoordinator = TweaksDefaultsWriteCoordinator(fileService: failingService)
+    do {
+      try await failingCoordinator.saveDefaults(
+        props: makeProps(warmth: .number(85)),
+        filePath: filePath,
+        projectPath: projectPath
+      )
+      Issue.record("Expected a write failure")
+    } catch let error as TweaksDefaultsWriteError {
+      guard case .writeFailed = error else {
+        Issue.record("Expected writeFailed, got \(error)")
+        return
+      }
+    }
+  }
+
+  @Test("Resolves file and dev-server preview URLs", arguments: [
+    (URL(fileURLWithPath: "/project/page.html"), "/project/page.html"),
+    (URL(string: "http://localhost:3000/")!, "/project/index.html"),
+    (URL(string: "http://localhost:3000/docs/")!, "/project/docs/index.html"),
+    (URL(string: "http://localhost:3000/about.html")!, "/project/about.html"),
+  ])
+  func resolvesPreviewURL(argument: (URL, String)) {
+    #expect(
+      TweaksDefaultsWriteCoordinator.resolveFilePath(
+        previewURL: argument.0,
+        projectPath: projectPath
+      ) == argument.1
     )
+  }
 
-    #expect(outcome == .invalidPropName)
-    let writes = await fileService.recordedWrites()
-    #expect(writes.isEmpty)
+  private func makeProps(
+    warmth: TweakPropValue = .number(60),
+    night: TweakPropValue = .boolean(false)
+  ) -> [TweakProp] {
+    [
+      TweakProp(
+        name: "warmth",
+        label: "Warmth",
+        type: .slider,
+        minimum: 0,
+        maximum: 100,
+        value: warmth,
+        defaultValue: .number(60)
+      ),
+      TweakProp(
+        name: "night",
+        label: "Night",
+        type: .toggle,
+        value: night,
+        defaultValue: .boolean(false)
+      ),
+    ]
   }
 }
 
@@ -120,7 +178,6 @@ struct WebPreviewFileWatcherSuppressionTests {
 
     #expect(watcher.isReloadSuppressed(at: now.addingTimeInterval(0.5)))
     #expect(watcher.isReloadSuppressed(at: now.addingTimeInterval(1.1)) == false)
-    #expect(watcher.isReloadSuppressed(at: now.addingTimeInterval(1.2)) == false)
   }
 
   @Test("Later suppression windows extend the active suppression")

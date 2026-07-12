@@ -1029,6 +1029,7 @@ public struct MultiProviderMonitoringPanelView: View {
           viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt)
         },
         viewModel: viewModel,
+        providerKind: payload.providerKind,
         mode: mode,
         agentLocalhostURL: viewModel.monitorStates[sessionId]?.detectedLocalhostURL,
         monitorState: viewModel.monitorStates[sessionId],

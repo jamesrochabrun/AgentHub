@@ -2,117 +2,111 @@
 //  TweaksDefaultsWriteCoordinator.swift
 //  AgentHub
 //
-//  Debounced persistence for Canvas tweakable-prop values. Live changes are
-//  applied in the WKWebView immediately; this coordinator makes direct-file
-//  HTML/SVG previews keep the latest value as the next declared default.
+//  Explicitly promotes live Canvas tweak values to source defaults after
+//  verifying that the source still matches the preview's loaded baseline.
 //
 
 import Canvas
 import Foundation
 
-enum TweaksDefaultsWriteOutcome: Equatable, Sendable {
-  case written
-  case noChange
-  case invalidPropName
-  case propNotDeclared
-  case editFailed(String)
+protocol TweaksDefaultsWriting: Sendable {
+  func saveDefaults(
+    props: [TweakProp],
+    filePath: String,
+    projectPath: String
+  ) async throws
 }
 
-actor TweaksDefaultsWriteCoordinator {
-  static let debounceDuration: Duration = .milliseconds(350)
+actor TweaksDefaultsWriteCoordinator: TweaksDefaultsWriting {
   static let reloadSuppressionDuration: TimeInterval = 1.5
 
   private let fileService: any ProjectFileServiceProtocol
-  private let debounceDuration: Duration
-  private var pendingWriteTask: Task<Void, Never>?
 
-  init(
-    fileService: any ProjectFileServiceProtocol = ProjectFileService.shared,
-    debounceDuration: Duration = TweaksDefaultsWriteCoordinator.debounceDuration
-  ) {
+  init(fileService: any ProjectFileServiceProtocol = ProjectFileService.shared) {
     self.fileService = fileService
-    self.debounceDuration = debounceDuration
   }
 
-  deinit {
-    pendingWriteTask?.cancel()
-  }
-
-  func scheduleValueWrite(
-    propName: String,
-    value: TweakPropValue,
-    filePath: String,
-    projectPath: String
-  ) {
-    pendingWriteTask?.cancel()
-    pendingWriteTask = Task { [debounceDuration] in
-      try? await Task.sleep(for: debounceDuration)
-      guard !Task.isCancelled else { return }
-      _ = await self.writeValue(
-        propName: propName,
-        value: value,
-        filePath: filePath,
-        projectPath: projectPath
-      )
+  static func resolveFilePath(previewURL: URL, projectPath: String) -> String? {
+    if previewURL.isFileURL {
+      return previewURL.standardizedFileURL.resolvingSymlinksInPath().path
     }
+    guard let scheme = previewURL.scheme?.lowercased(),
+          scheme == "http" || scheme == "https" else {
+      return nil
+    }
+
+    var relativePath = previewURL.path
+    if relativePath.isEmpty || relativePath == "/" {
+      relativePath = "/index.html"
+    } else if previewURL.hasDirectoryPath {
+      relativePath += "/index.html"
+    }
+    return (projectPath as NSString).appendingPathComponent(relativePath)
   }
 
-  func cancelPendingWrite() {
-    pendingWriteTask?.cancel()
-    pendingWriteTask = nil
-  }
-
-  func writeValue(
-    propName: String,
-    value: TweakPropValue,
+  func saveDefaults(
+    props: [TweakProp],
     filePath: String,
     projectPath: String
-  ) async -> TweaksDefaultsWriteOutcome {
-    guard Self.isValidPropName(propName) else { return .invalidPropName }
+  ) async throws {
+    let changedProps = props.filter { $0.value != $0.defaultValue }
+    guard !changedProps.isEmpty else { return }
 
     let source: String
     do {
       source = try await fileService.readFile(at: filePath, projectPath: projectPath)
     } catch {
-      return .editFailed("Could not read \(filePath): \(error.localizedDescription)")
+      throw TweaksDefaultsWriteError.cannotReadFile
     }
 
-    do {
-      let declaredNames = try TweakPropsSourceEditor.parsePropNames(fromSource: source)
-      guard declaredNames.contains(propName) else { return .propNotDeclared }
+    guard let diskNames = try? TweakPropsSourceEditor.parsePropNames(fromSource: source),
+          diskNames == props.map(\.name),
+          let diskProps = try? TweakPropsSourceEditor.parseProps(fromSource: source) else {
+      throw TweaksDefaultsWriteError.sourceChanged
+    }
 
-      let edited = try TweakPropsSourceEditor.applyingValueEdit(
-        propName: propName,
-        newValue: value,
-        toSource: source
-      )
-      guard edited != source else { return .noChange }
-
-      let verifiedProps = try TweakPropsSourceEditor.parseProps(fromSource: edited)
-      guard verifiedProps.contains(where: { $0.name == propName && $0.value == value }) else {
-        return .editFailed("Edited source failed tweak prop verification")
+    let diskPropsByName = Dictionary(uniqueKeysWithValues: diskProps.map { ($0.name, $0) })
+    for prop in props {
+      guard let diskProp = diskPropsByName[prop.name] else {
+        throw TweaksDefaultsWriteError.unsupportedValue(prop.name)
       }
+      guard diskProp == sourceBaseline(for: prop) else {
+        throw TweaksDefaultsWriteError.sourceChanged
+      }
+    }
 
+    var edited = source
+    for prop in changedProps {
+      do {
+        edited = try TweakPropsSourceEditor.applyingValueEdit(
+          propName: prop.name,
+          newValue: prop.value,
+          toSource: edited
+        )
+      } catch {
+        throw TweaksDefaultsWriteError.unsupportedValue(prop.name)
+      }
+    }
+    guard edited != source else { return }
+
+    do {
       try await fileService.writeFile(at: filePath, content: edited, projectPath: projectPath)
-      return .written
-    } catch TweakPropsSourceEditorError.propNotFound {
-      return .propNotDeclared
     } catch {
-      return .editFailed("Tweak default edit rejected: \(error)")
+      throw TweaksDefaultsWriteError.writeFailed(error.localizedDescription)
     }
   }
 
-  static func isValidPropName(_ name: String) -> Bool {
-    guard !name.isEmpty, name.count <= 80 else { return false }
-    return name.unicodeScalars.allSatisfy { scalar in
-      switch scalar.value {
-      case 48...57, 65...90, 97...122:
-        return true
-      case 36, 45, 95:
-        return true
-      default:
-        return false
-      }
-    }
+  private func sourceBaseline(for prop: TweakProp) -> TweakProp {
+    TweakProp(
+      name: prop.name,
+      label: prop.label,
+      type: prop.type,
+      minimum: prop.minimum,
+      maximum: prop.maximum,
+      step: prop.step,
+      options: prop.options,
+      value: prop.defaultValue,
+      defaultValue: prop.defaultValue
+    )
   }
 }
