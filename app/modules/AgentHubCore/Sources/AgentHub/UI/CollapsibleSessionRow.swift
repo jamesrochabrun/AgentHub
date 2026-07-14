@@ -11,7 +11,7 @@ struct CollapsibleSessionRow: View {
   let isPrimary: Bool
   let customName: String?
   let sessionStatus: SessionStatus?
-  var linkedPullRequestNumber: Int? = nil
+  var linkedPullRequests: [GitHubPullRequestURLReference] = []
   let colorScheme: ColorScheme
   let isPinned: Bool
   let onPin: (() -> Void)?
@@ -74,7 +74,7 @@ struct CollapsibleSessionRow: View {
     let repositoryKey = SessionGitHubQuickAccessViewModel.repositoryKey(
       projectPath: session.projectPath,
       branchName: session.branchName,
-      linkedPullRequestNumber: linkedPullRequestNumber
+      linkedPullRequests: linkedPullRequests
     )
     return "\(repositoryKey)|\(isPending)|\(agentHub != nil)"
   }
@@ -84,6 +84,17 @@ struct CollapsibleSessionRow: View {
       (partialResult + Int(scalar.value)) % 1_500
     }
     return 250 + bucket
+  }
+
+  private var shouldSuggestWorktreeCleanup: Bool {
+    WorktreeCleanupEligibility.shouldSuggestCleanup(
+      isWorktree: session.isWorktree,
+      isPendingSession: isPending,
+      isSessionActive: session.isActive,
+      sessionStatus: sessionStatus,
+      pullRequestState: sessionGitHubQuickAccessViewModel.currentBranchPR?.stateKind,
+      ciStatus: sessionGitHubQuickAccessViewModel.ciSummary.overallStatus
+    )
   }
 
   // MARK: - Body
@@ -153,7 +164,9 @@ struct CollapsibleSessionRow: View {
           GitHubSessionRowStatusLine(
             pullRequest: pullRequest,
             summary: sessionGitHubQuickAccessViewModel.ciSummary,
-            observationState: sessionGitHubQuickAccessViewModel.observationState
+            observationState: sessionGitHubQuickAccessViewModel.observationState,
+            lastRefreshedAt: sessionGitHubQuickAccessViewModel.lastRefreshedAt,
+            cleanupWorktreeAction: shouldSuggestWorktreeCleanup ? onDeleteWorktree : nil
           )
           .transition(.opacity)
         }
@@ -325,7 +338,7 @@ struct CollapsibleSessionRow: View {
       return
     }
 
-    if linkedPullRequestNumber == nil {
+    if linkedPullRequests.isEmpty {
       try? await Task.sleep(for: .milliseconds(observationStartupDelayMilliseconds))
       guard !Task.isCancelled else { return }
     }
@@ -333,11 +346,11 @@ struct CollapsibleSessionRow: View {
     await sessionGitHubQuickAccessViewModel.load(
       projectPath: session.projectPath,
       branchName: session.branchName,
-      linkedPullRequestNumber: linkedPullRequestNumber,
+      linkedPullRequests: linkedPullRequests,
       observationService: observationService,
       refreshOnSubscribe: false,
       recordInitialActivity: false,
-      forceRefreshLinkedPullRequest: linkedPullRequestNumber != nil
+      forceRefreshLinkedPullRequest: !linkedPullRequests.isEmpty
     )
     await sessionGitHubQuickAccessViewModel.notifySessionActivity(at: timestamp)
   }
@@ -349,6 +362,8 @@ private struct GitHubSessionRowStatusLine: View {
   let pullRequest: GitHubPullRequest
   let summary: GitHubCISummary
   let observationState: GitHubPRObservationState
+  let lastRefreshedAt: Date?
+  let cleanupWorktreeAction: (() -> Void)?
 
   var body: some View {
     HStack(spacing: 5) {
@@ -361,7 +376,13 @@ private struct GitHubSessionRowStatusLine: View {
         .font(.geist(size: 10, weight: .medium))
         .foregroundColor(.secondary.opacity(0.95))
 
-      if let secondaryText {
+      if let cleanupWorktreeAction {
+        Text("·")
+          .font(.secondaryCaption)
+          .foregroundColor(.secondary.opacity(0.55))
+
+        WorktreeCleanupSuggestionButton(action: cleanupWorktreeAction)
+      } else if let secondaryText {
         Text("·")
           .font(.secondaryCaption)
           .foregroundColor(.secondary.opacity(0.55))
@@ -401,6 +422,27 @@ private struct GitHubSessionRowStatusLine: View {
       return "Refreshing checks"
     }
 
+    if observationState.isUnavailable {
+      return lastRefreshedAt == nil
+        ? "GitHub unavailable"
+        : "Last known: \(statusText)"
+    }
+
+    return statusText
+  }
+
+  private var statusText: String {
+    let blockers = GitHubPRBlocker.blockers(
+      for: pullRequest,
+      ciSummary: summary
+    ).sorted { $0.rawValue < $1.rawValue }
+    if blockers.count == 1, let blocker = blockers.first {
+      return blocker.displayName
+    }
+    if blockers.count > 1 {
+      return "\(blockers.count) PR blockers"
+    }
+
     guard summary.total > 0 else {
       return "No CI checks"
     }
@@ -428,6 +470,9 @@ private struct GitHubSessionRowStatusLine: View {
     if observationState.isRefreshing && summary.total == 0 {
       return "arrow.clockwise"
     }
+    if observationState.isUnavailable || !blockers.isEmpty {
+      return "exclamationmark.triangle.fill"
+    }
     return summary.overallStatus.icon
   }
 
@@ -448,6 +493,8 @@ private struct GitHubSessionRowStatusLine: View {
     if observationState.isRefreshing && summary.total == 0 {
       return .orange
     }
+    if !blockers.isEmpty { return .red }
+    if observationState.isUnavailable { return .orange }
     switch summary.overallStatus {
     case .success:
       return .green
@@ -483,6 +530,25 @@ private struct GitHubSessionRowStatusLine: View {
       return "CI checks are refreshing."
     }
 
+    if observationState.isUnavailable {
+      let availability = lastRefreshedAt == nil
+        ? "GitHub status is unavailable."
+        : "GitHub status is unavailable; showing the last known result."
+      return "\(availability) \(currentGitHubHelpText)"
+    }
+
+    return currentGitHubHelpText
+  }
+
+  private var currentGitHubHelpText: String {
+    if !blockers.isEmpty {
+      let descriptions = blockers
+        .sorted { $0.rawValue < $1.rawValue }
+        .map(\.displayName)
+        .joined(separator: ", ")
+      return "Pull request blockers: \(descriptions)."
+    }
+
     guard summary.total > 0 else {
       return "No CI checks are reported."
     }
@@ -500,6 +566,10 @@ private struct GitHubSessionRowStatusLine: View {
       }
       return "No CI checks are reported."
     }
+  }
+
+  private var blockers: Set<GitHubPRBlocker> {
+    GitHubPRBlocker.blockers(for: pullRequest, ciSummary: summary)
   }
 }
 

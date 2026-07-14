@@ -703,7 +703,7 @@ private struct GlobalSessionControlPanelRow: View {
     let repositoryKey = SessionGitHubQuickAccessViewModel.repositoryKey(
       projectPath: item.session.projectPath,
       branchName: item.session.branchName,
-      linkedPullRequestNumber: item.linkedPullRequestNumber
+      linkedPullRequests: item.linkedPullRequests
     )
     return "\(item.id)|\(repositoryKey)|\(item.isPending)|\(agentHub != nil)"
   }
@@ -716,11 +716,14 @@ private struct GlobalSessionControlPanelRow: View {
       "\(prNumber)",
       pullRequest?.state ?? "",
       pullRequest?.mergeable ?? "",
+      pullRequest?.reviewDecision ?? "",
       "\(summary.overallStatus.rawValue)",
       "\(summary.passed)",
       "\(summary.failed)",
       "\(summary.pending)",
       "\(summary.total)",
+      gitHubViewModel.blockers.map(\.rawValue).sorted().map(String.init).joined(separator: ","),
+      "\(gitHubViewModel.observationState.isUnavailable)",
       "\(gitHubViewModel.observationState.isRefreshing)"
     ].joined(separator: "|")
   }
@@ -842,7 +845,7 @@ private struct GlobalSessionControlPanelRow: View {
   private var gitHubLine: some View {
     if let pullRequest = gitHubViewModel.currentBranchPR {
       HStack(spacing: 5) {
-        Image(systemName: gitHubViewModel.ciSummary.overallStatus.icon)
+        Image(systemName: gitHubStatusIcon)
           .font(.system(size: 10, weight: .semibold))
           .foregroundStyle(ciColor)
           .frame(width: 12, height: 12)
@@ -985,7 +988,7 @@ private struct GlobalSessionControlPanelRow: View {
   private var statusColor: Color {
     switch item.attention {
     case .awaitingApproval: return .yellow
-    case .ciFailure: return .red
+    case .gitHubBlocked: return .red
     case .working: return .blue
     case .pending: return .orange
     case .ready: return .green
@@ -994,6 +997,8 @@ private struct GlobalSessionControlPanelRow: View {
   }
 
   private var ciColor: Color {
+    if !gitHubViewModel.blockers.isEmpty { return .red }
+    if gitHubViewModel.observationState.isUnavailable { return .orange }
     switch gitHubViewModel.ciSummary.overallStatus {
     case .success: return .green
     case .failure: return .red
@@ -1003,6 +1008,23 @@ private struct GlobalSessionControlPanelRow: View {
   }
 
   private var ciText: String {
+    if gitHubViewModel.observationState.isUnavailable {
+      return gitHubViewModel.hasStaleObservation
+        ? "Last known: \(gitHubStatusText)"
+        : "GitHub unavailable"
+    }
+    return gitHubStatusText
+  }
+
+  private var gitHubStatusText: String {
+    let blockers = gitHubViewModel.blockers.sorted { $0.rawValue < $1.rawValue }
+    if blockers.count == 1, let blocker = blockers.first {
+      return blocker.displayName
+    }
+    if blockers.count > 1 {
+      return "\(blockers.count) PR blockers"
+    }
+
     let summary = gitHubViewModel.ciSummary
     switch summary.overallStatus {
     case .success:
@@ -1018,6 +1040,16 @@ private struct GlobalSessionControlPanelRow: View {
     }
   }
 
+  private var gitHubStatusIcon: String {
+    if !gitHubViewModel.blockers.isEmpty {
+      return "exclamationmark.triangle.fill"
+    }
+    if gitHubViewModel.observationState.isUnavailable {
+      return "exclamationmark.triangle.fill"
+    }
+    return gitHubViewModel.ciSummary.overallStatus.icon
+  }
+
   private func observeGitHubIfAvailable() async {
     guard !item.isPending, let observationService = agentHub?.gitHubPRObservationService else {
       gitHubViewModel.stopPolling()
@@ -1028,11 +1060,11 @@ private struct GlobalSessionControlPanelRow: View {
     await gitHubViewModel.load(
       projectPath: item.session.projectPath,
       branchName: item.session.branchName,
-      linkedPullRequestNumber: item.linkedPullRequestNumber,
+      linkedPullRequests: item.linkedPullRequests,
       observationService: observationService,
       refreshOnSubscribe: false,
       recordInitialActivity: false,
-      forceRefreshLinkedPullRequest: item.linkedPullRequestNumber != nil
+      forceRefreshLinkedPullRequest: !item.linkedPullRequests.isEmpty
     )
     await gitHubViewModel.notifySessionActivity(at: item.timestamp)
   }
@@ -1049,7 +1081,8 @@ private struct GlobalSessionControlPanelRow: View {
       isRefreshing: gitHubViewModel.observationState.isRefreshing,
       pullRequestNumber: pullRequest.number,
       pullRequestState: pullRequest.stateKind,
-      pullRequestMergeability: pullRequest.mergeabilityKind
+      pullRequestMergeability: pullRequest.mergeabilityKind,
+      blockers: gitHubViewModel.blockers
     ))
   }
 }

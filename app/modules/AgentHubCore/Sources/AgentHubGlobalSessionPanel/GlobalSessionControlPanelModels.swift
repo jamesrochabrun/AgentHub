@@ -15,6 +15,7 @@ public struct GlobalSessionControlPanelGitHubState: Equatable, Sendable {
   public let pullRequestState: GitHubPullRequestState?
   public let pullRequestMergeability: GitHubMergeability?
   public let ciStatus: CIStatus
+  public let blockers: Set<GitHubPRBlocker>
   public let isRefreshing: Bool
 
   public init(
@@ -23,13 +24,22 @@ public struct GlobalSessionControlPanelGitHubState: Equatable, Sendable {
     isRefreshing: Bool = false,
     pullRequestNumber: Int? = nil,
     pullRequestState: GitHubPullRequestState? = nil,
-    pullRequestMergeability: GitHubMergeability? = nil
+    pullRequestMergeability: GitHubMergeability? = nil,
+    blockers: Set<GitHubPRBlocker> = []
   ) {
     self.hasPullRequest = hasPullRequest
     self.pullRequestNumber = pullRequestNumber
     self.pullRequestState = pullRequestState
     self.pullRequestMergeability = pullRequestMergeability
     self.ciStatus = ciStatus
+    var resolvedBlockers = blockers
+    if ciStatus == .failure {
+      resolvedBlockers.insert(.ciFailure)
+    }
+    if pullRequestMergeability == .conflicting {
+      resolvedBlockers.insert(.mergeConflict)
+    }
+    self.blockers = resolvedBlockers
     self.isRefreshing = isRefreshing
   }
 }
@@ -38,7 +48,7 @@ public struct GlobalSessionControlPanelGitHubState: Equatable, Sendable {
 
 public enum GlobalSessionControlPanelAttention: Int, Equatable, Sendable {
   case awaitingApproval = 0
-  case ciFailure = 1
+  case gitHubBlocked = 1
   case working = 2
   case pending = 3
   case ready = 4
@@ -54,7 +64,7 @@ public struct GlobalSessionControlPanelItem: Identifiable, Equatable, Sendable {
   public let timestamp: Date
   public let isPending: Bool
   public let status: SessionStatus?
-  public let linkedPullRequestNumber: Int?
+  public let linkedPullRequests: [GitHubPullRequestURLReference]
   public let customName: String?
   public let gitHubState: GlobalSessionControlPanelGitHubState?
 
@@ -65,7 +75,7 @@ public struct GlobalSessionControlPanelItem: Identifiable, Equatable, Sendable {
     timestamp: Date,
     isPending: Bool,
     status: SessionStatus?,
-    linkedPullRequestNumber: Int?,
+    linkedPullRequests: [GitHubPullRequestURLReference],
     customName: String?,
     gitHubState: GlobalSessionControlPanelGitHubState? = nil
   ) {
@@ -75,7 +85,7 @@ public struct GlobalSessionControlPanelItem: Identifiable, Equatable, Sendable {
     self.timestamp = timestamp
     self.isPending = isPending
     self.status = status
-    self.linkedPullRequestNumber = linkedPullRequestNumber
+    self.linkedPullRequests = linkedPullRequests
     self.customName = customName
     self.gitHubState = gitHubState
   }
@@ -92,7 +102,7 @@ public struct GlobalSessionControlPanelItem: Identifiable, Equatable, Sendable {
       case .thinking, .executingTool:
         return .working
       case .waitingForUser:
-        if gitHubState?.ciStatus == .failure { return .ciFailure }
+        if gitHubState?.blockers.isEmpty == false { return .gitHubBlocked }
         if gitHubState?.ciStatus == .pending { return .pending }
         return .ready
       case .idle:
@@ -100,7 +110,7 @@ public struct GlobalSessionControlPanelItem: Identifiable, Equatable, Sendable {
       }
     }
 
-    if gitHubState?.ciStatus == .failure { return .ciFailure }
+    if gitHubState?.blockers.isEmpty == false { return .gitHubBlocked }
     if isPending || gitHubState?.ciStatus == .pending { return .pending }
     return .idle
   }
@@ -196,7 +206,7 @@ public enum GlobalSessionControlPanelSnapshotBuilder {
       timestamp: pending.startedAt,
       isPending: true,
       status: nil,
-      linkedPullRequestNumber: nil,
+      linkedPullRequests: [],
       customName: nil,
       gitHubState: gitHubStates[id]
     )
@@ -217,14 +227,14 @@ public enum GlobalSessionControlPanelSnapshotBuilder {
       timestamp: session.lastActivityAt,
       isPending: false,
       status: state?.status,
-      linkedPullRequestNumber: latestPullRequestNumber(in: state?.detectedResourceLinks ?? []),
+      linkedPullRequests: pullRequestReferences(in: state?.detectedResourceLinks ?? []),
       customName: customName,
       gitHubState: gitHubStates[id]
     )
   }
 
-  private static func latestPullRequestNumber(in links: [ResourceLink]) -> Int? {
-    GitHubPullRequestURLReference.latestNumber(in: links.map(\.url))
+  private static func pullRequestReferences(in links: [ResourceLink]) -> [GitHubPullRequestURLReference] {
+    links.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
   }
 }
 
@@ -291,7 +301,7 @@ public enum GlobalSessionCleanupSuggestionBuilder {
     let mergedPullRequestNumbers: [Int] = sortedUnique(
       items.compactMap { item in
         guard item.gitHubState?.pullRequestState == .merged else { return nil }
-        return item.gitHubState?.pullRequestNumber ?? item.linkedPullRequestNumber
+        return item.gitHubState?.pullRequestNumber ?? item.linkedPullRequests.last?.number
       }
     )
     guard !mergedPullRequestNumbers.isEmpty else { return nil }
@@ -331,10 +341,7 @@ public enum GlobalSessionCleanupSuggestionBuilder {
 
   private static func hasBlockingGitHubState(_ item: GlobalSessionControlPanelItem) -> Bool {
     guard let state = item.gitHubState else { return false }
-    if state.ciStatus == .failure || state.ciStatus == .pending {
-      return true
-    }
-    if state.pullRequestMergeability == .conflicting {
+    if !state.blockers.isEmpty || state.ciStatus == .pending {
       return true
     }
     guard state.hasPullRequest else { return false }

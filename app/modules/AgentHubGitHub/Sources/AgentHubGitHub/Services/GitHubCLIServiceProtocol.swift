@@ -40,8 +40,8 @@ public protocol GitHubCLIServiceProtocol: AnyObject, Sendable {
   /// Gets details of a specific pull request
   func getPullRequest(number: Int, at repoPath: String) async throws -> GitHubPullRequest
 
-  /// Gets the PR for the current branch (if any)
-  func getCurrentBranchPR(at repoPath: String) async throws -> GitHubPullRequest?
+  /// Gets the PR for an explicit branch, or the checkout's current branch when nil.
+  func getCurrentBranchPR(branchName: String?, at repoPath: String) async throws -> GitHubPullRequest?
 
   /// Gets the unified diff for a pull request
   func getPullRequestDiff(number: Int, at repoPath: String) async throws -> String
@@ -85,4 +85,10 @@ public protocol GitHubCLIServiceProtocol: AnyObject, Sendable {
 
   /// Lists recent workflow runs
   func listWorkflowRuns(at repoPath: String, limit: Int) async throws -> String
+}
+
+public extension GitHubCLIServiceProtocol {
+  func getCurrentBranchPR(at repoPath: String) async throws -> GitHubPullRequest? {
+    try await getCurrentBranchPR(branchName: nil, at: repoPath)
+  }
 }

@@ -7,7 +7,7 @@
 
 import Foundation
 
-public struct GitHubPullRequestURLReference: Equatable, Sendable {
+public struct GitHubPullRequestURLReference: Equatable, Hashable, Sendable {
   public let owner: String
   public let repository: String
   public let number: Int
@@ -42,5 +42,17 @@ public struct GitHubPullRequestURLReference: Equatable, Sendable {
 
   public static func latestNumber(in urls: [String]) -> Int? {
     latest(in: urls)?.number
+  }
+
+  public func belongs(to identity: GitHubRepositoryIdentity) -> Bool {
+    owner.caseInsensitiveCompare(identity.owner) == .orderedSame
+      && repository.caseInsensitiveCompare(identity.repository) == .orderedSame
+  }
+
+  public static func latest(
+    matching identity: GitHubRepositoryIdentity,
+    in references: [GitHubPullRequestURLReference]
+  ) -> GitHubPullRequestURLReference? {
+    references.last { $0.belongs(to: identity) }
   }
 }

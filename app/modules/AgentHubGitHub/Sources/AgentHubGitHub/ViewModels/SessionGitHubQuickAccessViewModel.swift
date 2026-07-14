@@ -20,6 +20,14 @@ public final class SessionGitHubQuickAccessViewModel {
     GitHubCISummary(checks: currentBranchChecks)
   }
 
+  public var blockers: Set<GitHubPRBlocker> {
+    GitHubPRBlocker.blockers(for: currentBranchPR, ciSummary: ciSummary)
+  }
+
+  public var hasStaleObservation: Bool {
+    observationState.isUnavailable && lastRefreshedAt != nil
+  }
+
   private var coordinator: (any SessionGitHubQuickAccessCoordinatorProtocol)?
   private var observationService: (any GitHubPRObservationServiceProtocol)?
   private let service: any GitHubCLIServiceProtocol
@@ -44,7 +52,7 @@ public final class SessionGitHubQuickAccessViewModel {
   public func load(
     projectPath: String,
     branchName: String?,
-    linkedPullRequestNumber: Int? = nil,
+    linkedPullRequests: [GitHubPullRequestURLReference] = [],
     coordinator: (any SessionGitHubQuickAccessCoordinatorProtocol)? = nil,
     observationService: (any GitHubPRObservationServiceProtocol)? = nil,
     refreshOnSubscribe: Bool = true,
@@ -54,7 +62,7 @@ public final class SessionGitHubQuickAccessViewModel {
     let repositoryKey = Self.repositoryKey(
       projectPath: projectPath,
       branchName: branchName,
-      linkedPullRequestNumber: linkedPullRequestNumber
+      linkedPullRequests: linkedPullRequests
     )
     if let coordinator {
       self.coordinator = coordinator
@@ -80,7 +88,7 @@ public final class SessionGitHubQuickAccessViewModel {
       let target = observationTarget(
         projectPath: projectPath,
         branchName: branchName,
-        linkedPullRequestNumber: linkedPullRequestNumber
+        linkedPullRequests: linkedPullRequests
       )
       currentObservationTarget = target
       let subscription = await observationService.subscribe(to: target, refreshOnSubscribe: refreshOnSubscribe)
@@ -94,7 +102,7 @@ public final class SessionGitHubQuickAccessViewModel {
       if recordInitialActivity {
         await observationService.recordActivity(for: target, at: .now)
       }
-      if linkedPullRequestNumber != nil, forceRefreshLinkedPullRequest {
+      if !linkedPullRequests.isEmpty, forceRefreshLinkedPullRequest {
         await observationService.refresh(target)
       }
       return
@@ -114,10 +122,18 @@ public final class SessionGitHubQuickAccessViewModel {
 
     do {
       let pullRequest: GitHubPullRequest?
-      if let linkedPullRequestNumber {
-        pullRequest = try await service.getPullRequest(number: linkedPullRequestNumber, at: projectPath)
+      if let linkedPullRequest = linkedPullRequests.last {
+        let candidate = try await service.getPullRequest(
+          number: linkedPullRequest.number,
+          at: projectPath
+        )
+        let resolvedReference = GitHubPullRequestURLReference(urlString: candidate.url)
+        pullRequest = resolvedReference?.owner.caseInsensitiveCompare(linkedPullRequest.owner) == .orderedSame
+          && resolvedReference?.repository.caseInsensitiveCompare(linkedPullRequest.repository) == .orderedSame
+          ? candidate
+          : try await service.getCurrentBranchPR(branchName: branchName, at: projectPath)
       } else {
-        pullRequest = try await service.getCurrentBranchPR(at: projectPath)
+        pullRequest = try await service.getCurrentBranchPR(branchName: branchName, at: projectPath)
       }
       guard !Task.isCancelled, loadedRepositoryKey == repositoryKey else { return }
       currentBranchPR = pullRequest
@@ -139,9 +155,6 @@ public final class SessionGitHubQuickAccessViewModel {
         for: target,
         at: activityDate
       )
-      if target.pullRequestNumber != nil {
-        await observationService.refresh(target)
-      }
     } else if let coordinator {
       await coordinator.recordActivity(
         projectPath: projectPath,
@@ -226,22 +239,24 @@ public final class SessionGitHubQuickAccessViewModel {
   private nonisolated func observationTarget(
     projectPath: String,
     branchName: String?,
-    linkedPullRequestNumber: Int?
+    linkedPullRequests: [GitHubPullRequestURLReference]
   ) -> GitHubPRObservationTarget {
-    if let linkedPullRequestNumber {
-      return .pullRequest(projectPath: projectPath, number: linkedPullRequestNumber)
-    }
-    return .currentBranch(projectPath: projectPath, branchName: branchName)
+    .session(
+      projectPath: projectPath,
+      branchName: branchName,
+      linkedPullRequests: linkedPullRequests
+    )
   }
 
   public nonisolated static func repositoryKey(
     projectPath: String,
     branchName: String?,
-    linkedPullRequestNumber: Int? = nil
+    linkedPullRequests: [GitHubPullRequestURLReference] = []
   ) -> String {
-    if let linkedPullRequestNumber {
-      return "\(projectPath)|\(branchName ?? "")|pr:\(linkedPullRequestNumber)"
+    guard !linkedPullRequests.isEmpty else {
+      return "\(projectPath)|\(branchName ?? "")"
     }
-    return "\(projectPath)|\(branchName ?? "")"
+    let links = linkedPullRequests.map(\.url).joined(separator: ",")
+    return "\(projectPath)|\(branchName ?? "")|\(links)"
   }
 }

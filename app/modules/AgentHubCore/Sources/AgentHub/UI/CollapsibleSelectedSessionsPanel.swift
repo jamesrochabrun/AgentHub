@@ -150,7 +150,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
             isPrimary: item.id == primarySessionId,
             customName: customName(for: item),
             sessionStatus: item.sessionStatus,
-            linkedPullRequestNumber: item.linkedPullRequestNumber,
+            linkedPullRequests: item.linkedPullRequests,
             colorScheme: colorScheme,
             isPinned: {
               switch item.providerKind {
@@ -202,7 +202,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
     let timestamp: Date
     let isPending: Bool
     let sessionStatus: SessionStatus?
-    let linkedPullRequestNumber: Int?
+    let linkedPullRequests: [GitHubPullRequestURLReference]
   }
 
   private var items: [SelectedSessionItem] {
@@ -216,7 +216,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
         timestamp: pending.startedAt,
         isPending: true,
         sessionStatus: nil,
-        linkedPullRequestNumber: nil
+        linkedPullRequests: []
       ))
     }
 
@@ -228,7 +228,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
         timestamp: pending.startedAt,
         isPending: true,
         sessionStatus: nil,
-        linkedPullRequestNumber: nil
+        linkedPullRequests: []
       ))
     }
 
@@ -240,7 +240,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
         timestamp: item.session.lastActivityAt,
         isPending: false,
         sessionStatus: item.state?.status,
-        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
+        linkedPullRequests: Self.pullRequestReferences(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -252,7 +252,7 @@ public struct CollapsibleSelectedSessionsPanel: View {
         timestamp: item.session.lastActivityAt,
         isPending: false,
         sessionStatus: item.state?.status,
-        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
+        linkedPullRequests: Self.pullRequestReferences(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -268,8 +268,8 @@ public struct CollapsibleSelectedSessionsPanel: View {
     }
   }
 
-  private static func latestPullRequestNumber(in links: [ResourceLink]) -> Int? {
-    GitHubPullRequestURLReference.latestNumber(in: links.map(\.url))
+  private static func pullRequestReferences(in links: [ResourceLink]) -> [GitHubPullRequestURLReference] {
+    links.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
   }
 
   private func ensurePrimarySelection() {
@@ -414,7 +414,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
             isPrimary: item.id == primarySessionId,
             customName: viewModel.sessionCustomNames[item.session.id],
             sessionStatus: item.sessionStatus,
-            linkedPullRequestNumber: item.linkedPullRequestNumber,
+            linkedPullRequests: item.linkedPullRequests,
             colorScheme: colorScheme,
             isPinned: viewModel.pinnedSessionIds.contains(item.session.id),
             onPin: {
@@ -450,7 +450,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     let timestamp: Date
     let isPending: Bool
     let sessionStatus: SessionStatus?
-    let linkedPullRequestNumber: Int?
+    let linkedPullRequests: [GitHubPullRequestURLReference]
   }
 
   private var items: [SelectedSessionItem] {
@@ -463,7 +463,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
         timestamp: pending.startedAt,
         isPending: true,
         sessionStatus: nil,
-        linkedPullRequestNumber: nil
+        linkedPullRequests: []
       ))
     }
 
@@ -474,7 +474,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
         timestamp: item.session.lastActivityAt,
         isPending: false,
         sessionStatus: item.state?.status,
-        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
+        linkedPullRequests: Self.pullRequestReferences(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -494,7 +494,7 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     primarySessionId = items.first?.id
   }
 
-  private static func latestPullRequestNumber(in links: [ResourceLink]) -> Int? {
-    GitHubPullRequestURLReference.latestNumber(in: links.map(\.url))
+  private static func pullRequestReferences(in links: [ResourceLink]) -> [GitHubPullRequestURLReference] {
+    links.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
   }
 }

@@ -439,7 +439,10 @@ public final class GitHubViewModel {
     }
 
     do {
-      currentBranchPR = try await service.getCurrentBranchPR(at: repoPath)
+      currentBranchPR = try await service.getCurrentBranchPR(
+        branchName: currentBranchName,
+        at: repoPath
+      )
     } catch {
       GitHubLogger.github.info("No PR for current branch: \(error.localizedDescription)")
     }
@@ -696,9 +699,10 @@ public final class GitHubViewModel {
 
   private func startCurrentBranchObservationIfAvailable() async {
     guard let observationService, let repoPath = currentRepoPath else { return }
-    let target = GitHubPRObservationTarget.currentBranch(
+    let target = GitHubPRObservationTarget.session(
       projectPath: repoPath,
-      branchName: currentBranchName
+      branchName: currentBranchName,
+      linkedPullRequests: []
     )
     let subscription = await observationService.subscribe(to: target)
     currentBranchSubscriptionID = subscription.id
@@ -713,9 +717,10 @@ public final class GitHubViewModel {
 
   private func refreshCurrentBranchObservation() async {
     guard let observationService, let repoPath = currentRepoPath else { return }
-    let target = GitHubPRObservationTarget.currentBranch(
+    let target = GitHubPRObservationTarget.session(
       projectPath: repoPath,
-      branchName: currentBranchName
+      branchName: currentBranchName,
+      linkedPullRequests: []
     )
     await observationService.recordActivity(for: target, at: .now)
     await observationService.refresh(target)

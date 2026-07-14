@@ -36,6 +36,51 @@ struct GitHubCLIServiceParsingTests {
     #expect(checks[0].statusDisplayName == "Pending")
   }
 
+  @Test("maps unfinished and non-failing terminal check states accurately")
+  func mapsExpandedCheckStates() {
+    #expect(GitHubCheckRun(name: "Waiting", status: "WAITING").ciStatus == .pending)
+    #expect(GitHubCheckRun(name: "Requested", status: "REQUESTED").ciStatus == .pending)
+    #expect(GitHubCheckRun(name: "Expected", status: "EXPECTED").ciStatus == .pending)
+    #expect(GitHubCheckRun(
+      name: "Neutral",
+      status: "COMPLETED",
+      conclusion: "NEUTRAL"
+    ).ciStatus == .none)
+    #expect(GitHubCheckRun(
+      name: "Skipped",
+      status: "COMPLETED",
+      conclusion: "SKIPPED"
+    ).ciStatus == .none)
+    #expect(GitHubCheckRun(
+      name: "Action",
+      status: "COMPLETED",
+      conclusion: "ACTION_REQUIRED"
+    ).ciStatus == .failure)
+  }
+
+  @Test("decodes workflow rollup metadata with stable check identity")
+  func decodesWorkflowRollupMetadata() throws {
+    let json = """
+    {
+      "name": "test",
+      "status": "COMPLETED",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/test/repo/actions/runs/1/job/2",
+      "workflowName": "Tests",
+      "startedAt": "2026-07-12T05:38:49Z",
+      "completedAt": "2026-07-12T05:40:03Z"
+    }
+    """
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let check = try decoder.decode(GitHubCheckRun.self, from: Data(json.utf8))
+
+    #expect(check.workflowName == "Tests")
+    #expect(check.startedAt != nil)
+    #expect(check.completedAt != nil)
+    #expect(check.id == "Tests|test|https://github.com/test/repo/actions/runs/1/job/2")
+  }
+
   @Test("current branch no-PR message is recognized")
   func currentBranchNoPRMessageIsRecognized() {
     #expect(GitHubCLIService.isNoCurrentBranchPRMessage(

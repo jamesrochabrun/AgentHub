@@ -147,6 +147,11 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
     }
 
     entry.lastActivityAt = at
+    if entry.currentBranchPR?.stateKind.isTerminal == true {
+      entries[repositoryKey] = entry
+      return
+    }
+
     guard !entry.subscribers.isEmpty else {
       entries[repositoryKey] = entry
       return
@@ -173,6 +178,7 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
 
   private func scheduleRefreshIfNeeded(for repositoryKey: String, forceImmediate: Bool) {
     guard var entry = entries[repositoryKey], !entry.subscribers.isEmpty else { return }
+    guard entry.currentBranchPR?.stateKind.isTerminal != true else { return }
 
     if entry.isRefreshing {
       entry.pendingPostRefreshEvaluation = true
@@ -243,7 +249,10 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
     entries[repositoryKey] = entry
     GitHubLogger.github.debug("[QuickAccess] refresh start key=\(repositoryKey, privacy: .public)")
 
-    let refreshResult = await refreshCurrentBranchPR(at: entry.projectPath)
+    let refreshResult = await refreshCurrentBranchPR(
+      branchName: entry.branchName,
+      at: entry.projectPath
+    )
 
     guard var refreshedEntry = entries[repositoryKey] else { return }
     refreshedEntry.isRefreshing = false
@@ -345,9 +354,15 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
 
   // MARK: - Refresh Helpers
 
-  private func refreshCurrentBranchPR(at projectPath: String) async -> Result<GitHubPullRequest?, Error> {
+  private func refreshCurrentBranchPR(
+    branchName: String?,
+    at projectPath: String
+  ) async -> Result<GitHubPullRequest?, Error> {
     do {
-      return .success(try await service.getCurrentBranchPR(at: projectPath))
+      return .success(try await service.getCurrentBranchPR(
+        branchName: branchName,
+        at: projectPath
+      ))
     } catch {
       return .failure(error)
     }
@@ -355,11 +370,13 @@ public actor SessionGitHubQuickAccessCoordinator: SessionGitHubQuickAccessCoordi
 
   private func canAutoRefresh(_ entry: Entry, now: Date) -> Bool {
     guard !entry.isTerminallyPaused, !entry.subscribers.isEmpty else { return false }
+    guard entry.currentBranchPR?.stateKind.isTerminal != true else { return false }
     guard let lastActivityAt = entry.lastActivityAt else { return false }
     return now.timeIntervalSince(lastActivityAt) <= configuration.idleTimeout
   }
 
   private func needsImmediateRefresh(_ entry: Entry, now: Date) -> Bool {
+    guard entry.currentBranchPR?.stateKind.isTerminal != true else { return false }
     guard let lastRefreshAt = entry.lastRefreshAt else { return true }
     return now.timeIntervalSince(lastRefreshAt) >= pollingInterval(for: entry)
   }

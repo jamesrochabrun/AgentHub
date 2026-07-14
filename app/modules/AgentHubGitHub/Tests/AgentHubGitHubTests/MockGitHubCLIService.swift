@@ -8,6 +8,24 @@
 import Foundation
 @testable import AgentHubGitHub
 
+private actor MockGitHubCallConcurrencyTracker {
+  private var activeCount = 0
+  private var peakCount = 0
+
+  func begin() {
+    activeCount += 1
+    peakCount = max(peakCount, activeCount)
+  }
+
+  func end() {
+    activeCount = max(0, activeCount - 1)
+  }
+
+  func peak() -> Int {
+    peakCount
+  }
+}
+
 /// Mock GitHub CLI service for testing ViewModels and other consumers.
 ///
 /// Configure return values and errors before each test, then assert on
@@ -21,6 +39,7 @@ import Foundation
 /// #expect(mock.listPullRequestsCalled)
 /// ```
 final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable {
+  private let currentBranchConcurrency = MockGitHubCallConcurrencyTracker()
 
   // MARK: - Configuration
 
@@ -126,25 +145,31 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
   var getCurrentBranchPRCalled = false
   var getCurrentBranchPRCallCount = 0
   var getCurrentBranchPRRepoPath: String?
+  var getCurrentBranchPRBranchName: String?
 
-  func getCurrentBranchPR(at repoPath: String) async throws -> GitHubPullRequest? {
+  func getCurrentBranchPR(branchName: String?, at repoPath: String) async throws -> GitHubPullRequest? {
+    await currentBranchConcurrency.begin()
     getCurrentBranchPRCalled = true
     getCurrentBranchPRCallCount += 1
     getCurrentBranchPRRepoPath = repoPath
+    getCurrentBranchPRBranchName = branchName
     if currentBranchPRDelay > 0 {
       try? await Task.sleep(for: .milliseconds(Int(currentBranchPRDelay * 1_000)))
     }
+    let result: Result<GitHubPullRequest?, Error>
     if !currentBranchPRResults.isEmpty {
-      let nextResult = currentBranchPRResults.removeFirst()
-      switch nextResult {
-      case .success(let result):
-        return result
-      case .failure(let error):
-        throw error
-      }
+      result = currentBranchPRResults.removeFirst()
+    } else if let error = errorToThrow {
+      result = .failure(error)
+    } else {
+      result = .success(currentBranchPRResult)
     }
-    if let error = errorToThrow { throw error }
-    return currentBranchPRResult
+    await currentBranchConcurrency.end()
+    return try result.get()
+  }
+
+  func peakCurrentBranchPRCallCount() async -> Int {
+    await currentBranchConcurrency.peak()
   }
 
   var pullRequestDiffResult = ""
@@ -331,6 +356,7 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     getCurrentBranchPRCalled = false
     getCurrentBranchPRCallCount = 0
     getCurrentBranchPRRepoPath = nil
+    getCurrentBranchPRBranchName = nil
     getPullRequestDiffCalled = false
     getPullRequestFilesCalled = false
     getPullRequestReviewCommentsCalled = false

@@ -32,4 +32,40 @@ struct GitHubPullRequestURLReferenceTests {
     #expect(GitHubPullRequestURLReference(urlString: "https://github.com/jamesrochabrun/AgentHub/issues/322") == nil)
     #expect(GitHubPullRequestURLReference(urlString: "https://avatars.githubusercontent.com/u/5378604") == nil)
   }
+
+  @Test("Normalizes HTTPS and SSH GitHub remotes")
+  func normalizesGitHubRemoteURLs() throws {
+    let https = try #require(GitHubRepositoryIdentity(
+      remoteURL: "https://github.com/JamesRochabrun/AgentHub.git"
+    ))
+    let scp = try #require(GitHubRepositoryIdentity(
+      remoteURL: "git@github.com:jamesrochabrun/AgentHub.git"
+    ))
+    let ssh = try #require(GitHubRepositoryIdentity(
+      remoteURL: "ssh://git@github.com/jamesrochabrun/AgentHub.git"
+    ))
+
+    #expect(https.owner == "JamesRochabrun")
+    #expect(https.repository == "AgentHub")
+    #expect(scp == GitHubRepositoryIdentity(owner: "jamesrochabrun", repository: "AgentHub"))
+    #expect(ssh == scp)
+    #expect(GitHubRepositoryIdentity(remoteURL: "https://gitlab.com/test/repo.git") == nil)
+    #expect(GitHubRepositoryIdentity(remoteURL: "git@evilgithub.com:test/repo.git") == nil)
+  }
+
+  @Test("Selects the latest pull request for the resolved repository")
+  func selectsLatestMatchingRepositoryReference() throws {
+    let references = [
+      "https://github.com/test/repo/pull/10",
+      "https://github.com/other/repo/pull/99",
+      "https://github.com/TEST/REPO/pull/11",
+    ].compactMap(GitHubPullRequestURLReference.init(urlString:))
+
+    let result = GitHubPullRequestURLReference.latest(
+      matching: GitHubRepositoryIdentity(owner: "test", repository: "repo"),
+      in: references
+    )
+
+    #expect(result?.number == 11)
+  }
 }
