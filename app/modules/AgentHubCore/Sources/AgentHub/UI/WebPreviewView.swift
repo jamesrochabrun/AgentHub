@@ -51,7 +51,7 @@ private enum WebPreviewInspectBehavior: String, CaseIterable, Identifiable {
     case .input: return "square.and.pencil"
     case .crop: return "crop"
     case .context: return "square.and.arrow.up"
-    case .edit: return "slider.horizontal.3"
+    case .edit: return "character.cursor.ibeam"
     }
   }
 
@@ -174,6 +174,7 @@ public struct WebPreviewView: View {
 
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.runtimeTheme) private var runtimeTheme
+  @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
   private var headerBackground: Color {
     Color.adaptiveExpandedContentBackground(for: colorScheme, theme: runtimeTheme)
@@ -340,9 +341,6 @@ public struct WebPreviewView: View {
     }
     .onChange(of: latestLocalhostReloadSignal) { _, newSignal in
       handleLocalhostReloadSignal(newSignal)
-    }
-    .onChange(of: reloadMode) { _, _ in
-      syncReloadCoordinatorBaseline()
     }
     .onChange(of: fileWatcher.reloadToken) { _, newToken in
       guard reloadMode == .directFileAutomatic else { return }
@@ -526,98 +524,100 @@ public struct WebPreviewView: View {
 
   @ViewBuilder
   private var headerControls: some View {
-    HStack(spacing: 12) {
-      WebPreviewToolbarIconButton(
-        title: "\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior.modeName) mode",
-        systemImage: "cursorarrow.rays",
-        isActive: inspectState.isActive,
-        width: 28,
-        height: 28,
-        font: .system(size: 14, weight: .medium),
-        activeColor: .accentColor,
-        action: toggleInspector
-      )
-      .help(
-        inspectState.isActive
-          ? "Stop \(inspectBehavior.modeName) mode. ⌘⇧I cycles modes."
-          : "Start inspect mode (⌘⇧I)"
-      )
+    HStack(spacing: 8) {
+      WebPreviewToolbarGroup {
+        WebPreviewToolbarIconButton(
+          title: "\(inspectState.isActive ? "Stop" : "Start") \(inspectBehavior.modeName) mode",
+          systemImage: "cursorarrow.rays",
+          isActive: inspectState.isActive,
+          activeColor: .primary,
+          activeForegroundColor: colorScheme == .dark ? .black : .white,
+          action: toggleInspector
+        )
+        .help(
+          inspectState.isActive
+            ? "Stop \(inspectBehavior.modeName) mode. ⌘⇧I cycles modes."
+            : "Start inspect mode (⌘⇧I)"
+        )
 
-      if inspectState.isActive {
-        let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
-        if availableModes.count > 1 {
-          WebPreviewToolbarGroup {
-            ForEach(availableModes) { behavior in
-              WebPreviewToolbarIconButton(
-                title: behavior.accessibilityLabel,
-                systemImage: behavior.icon,
-                isActive: inspectBehavior == behavior,
-                width: 32,
-                height: 28,
-                font: .system(size: 14, weight: .medium),
-                activeColor: .accentColor
-              ) {
-                inspectBehavior = behavior
+        if inspectState.isActive {
+          let availableModes = WebPreviewInspectBehavior.availableCases(advancedEditingEnabled: isAdvancedEditingEnabled)
+          if availableModes.count > 1 {
+            HStack(spacing: 6) {
+              WebPreviewToolbarDivider()
+
+              ForEach(availableModes) { behavior in
+                WebPreviewToolbarIconButton(
+                  title: behavior.accessibilityLabel,
+                  systemImage: behavior.icon,
+                  isActive: inspectBehavior == behavior,
+                  activeColor: Color.brandPrimary(from: runtimeTheme),
+                  activeForegroundColor: .white
+                ) {
+                  inspectBehavior = behavior
+                }
+                .help(behavior.helpText)
               }
-              .help(behavior.helpText)
             }
+            .transition(inspectorToolsTransition)
           }
         }
       }
 
       tweaksButton
 
-      if canRefreshCurrentPreview {
-        headerActionButton("Reload", systemImage: "arrow.clockwise", action: refreshPreview)
-          .help("Refresh preview (⌘R)")
-      }
-
-      switch resolution {
-      case .devServer:
-        if !isExternalServer {
-          if case .ready = serverState {
-            headerActionButton("Restart", systemImage: "arrow.triangle.2.circlepath") {
-              DevServerManager.shared.stopServer(for: serverKey)
-              Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
-            }
-            .help("Restart server")
-
-            headerActionButton("Stop", systemImage: "stop.circle") {
-              DevServerManager.shared.stopServer(for: serverKey)
-            }
-            .help("Stop server")
-          }
-
-          if case .failed = serverState {
-            headerActionButton("Retry", systemImage: "arrow.triangle.2.circlepath") {
-              Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
-            }
-            .help("Retry")
-          }
+      WebPreviewToolbarGroup {
+        if isEmbedded, let onToggleExpanded {
+          headerActionButton(
+            isExpanded ? "Collapse preview" : "Expand preview to full width",
+            systemImage: isExpanded
+              ? "arrow.down.right.and.arrow.up.left"
+              : "arrow.up.left.and.arrow.down.right",
+            action: onToggleExpanded
+          )
+          .help(isExpanded ? "Collapse preview (⌘⇧O)" : "Expand preview to full width (⌘⇧O)")
         }
 
-      default:
-        EmptyView()
-      }
-
-      if isEmbedded, let onToggleExpanded {
-        Button(action: onToggleExpanded) {
-          Image(systemName: isExpanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.secondary)
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
+        if canRefreshCurrentPreview {
+          headerActionButton("Reload", systemImage: "arrow.clockwise", action: refreshPreview)
+            .help("Refresh preview (⌘R)")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(isExpanded ? "Collapse preview" : "Expand preview to full width")
-        .help(isExpanded ? "Collapse preview (⌘⇧O)" : "Expand preview to full width (⌘⇧O)")
-      }
 
-      Button("Close") {
-        onDismiss()
+        switch resolution {
+        case .devServer:
+          if !isExternalServer {
+            if case .ready = serverState {
+              headerActionButton("Restart", systemImage: "arrow.triangle.2.circlepath") {
+                DevServerManager.shared.stopServer(for: serverKey)
+                Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
+              }
+              .help("Restart server")
+
+              headerActionButton("Stop", systemImage: "stop.circle") {
+                DevServerManager.shared.stopServer(for: serverKey)
+              }
+              .help("Stop server")
+            }
+
+            if case .failed = serverState {
+              headerActionButton("Retry", systemImage: "arrow.triangle.2.circlepath") {
+                Task { await DevServerManager.shared.startServer(for: serverKey, projectPath: projectPath) }
+              }
+              .help("Retry")
+            }
+          }
+
+        default:
+          EmptyView()
+        }
+
+        if isEmbedded || canRefreshCurrentPreview {
+          WebPreviewToolbarDivider()
+        }
+
+        headerActionButton("Close preview", systemImage: "xmark", action: onDismiss)
+          .help("Close preview (Esc)")
       }
-      .controlSize(.small)
-      .help("Close preview (Esc)")
     }
     .overlay {
       // Hidden keyboard shortcuts — kept outside HStack layout to avoid phantom spacing
@@ -645,7 +645,6 @@ public struct WebPreviewView: View {
       .hidden()
       .frame(width: 0, height: 0)
     }
-    .animation(.easeInOut(duration: 0.2), value: inspectBehavior)
   }
 
   private func headerActionButton(
@@ -653,32 +652,29 @@ public struct WebPreviewView: View {
     systemImage: String,
     action: @escaping () -> Void
   ) -> some View {
-    Button(action: action) {
-      Label(title, systemImage: systemImage)
-        .font(.caption)
-    }
-    .webPreviewSecondaryButtonStyle()
-    .controlSize(.small)
+    Button(title, systemImage: systemImage, action: action)
+      .labelStyle(.iconOnly)
+      .font(.system(size: 14, weight: .medium))
+      .foregroundStyle(.secondary)
+      .frame(width: 28, height: 28)
+      .contentShape(Rectangle())
+      .buttonStyle(.plain)
   }
 
   private var tweaksButton: some View {
     let presentation = TweaksButtonPresentation.resolve(agentState: tweaksAgentState)
-    return Button {
-      isTweaksPopoverPresented.toggle()
-    } label: {
-      HStack(spacing: 6) {
-        if presentation.isLoading {
-          ProgressView()
-            .controlSize(.mini)
-            .accessibilityHidden(true)
-        }
-        Text("Tweaks")
+    return WebPreviewToolbarGroup {
+      WebPreviewToolbarIconButton(
+        title: presentation.accessibilityLabel,
+        systemImage: "slider.horizontal.3",
+        isActive: isTweaksPopoverPresented,
+        isLoading: presentation.isLoading,
+        activeColor: Color.brandPrimary(from: runtimeTheme),
+        activeForegroundColor: .white
+      ) {
+        isTweaksPopoverPresented.toggle()
       }
-      .font(.caption)
     }
-    .webPreviewSecondaryButtonStyle()
-    .controlSize(.small)
-    .accessibilityLabel(presentation.accessibilityLabel)
     .help("Tweak this design with live controls")
     .popover(isPresented: $isTweaksPopoverPresented, arrowEdge: .bottom) {
       WebPreviewTweaksPanel(
@@ -1326,142 +1322,114 @@ public struct WebPreviewView: View {
     reloadToken: UUID? = nil,
     onError: ((String) -> Void)? = nil
   ) -> some View {
-    Group {
-      if isAdvancedEditingEnabled && inspectBehavior == .edit {
-        InspectableWebView(
-          url: url,
-          isFileURL: isFileURL,
-          inspectorDataLevel: .full,
-          allowingReadAccessTo: allowingReadAccessTo,
-          onLoadingChange: { loading in
-            handlePreviewLoadingChange(loading)
-          },
-          onURLChange: { loadedURL in
-            handlePreviewURLChange(loadedURL)
-          },
-          onError: onError,
-          reloadToken: reloadToken,
-          onElementSelected: { data in
-            handleElementSelection(data)
-          },
-          onSelectedElementDataChange: { data in
-            handleSelectedElementDataChange(data)
-          },
-          onSelectedElementViewportRectChange: { rect in
-            inspectState.updateSelectedElementViewportRect(rect)
-          },
-          isInspectModeActive: $inspectState.isActive,
-          selectedElementId: inspectState.selectedElement?.id,
-          selectorToRestore: activeSelectorToRestore,
-          onWebViewReady: handleWebViewReady,
-          onTweakPropsChange: handleTweakPropsChange,
-          onTweakSchemaAvailabilityChange: handleTweakSchemaAvailabilityChange
-        )
-        .overlay(alignment: .top) {
-          if inspectState.isActive {
-            VStack(spacing: 8) {
-              editModeBanner
-              if showsInlineDesignToolbar,
-                 let element = inspectorViewModel.selectedElement,
-                 let toolbarValues = inspectorViewModel.toolbarValues {
-                DesignToolbarContent(
-                  values: toolbarValues,
-                  element: element,
-                  isTextContentEditable: inspectorViewModel.canEditContent,
-                  onEdit: inspectorViewModel.apply
-                )
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
-                .contentShape(RoundedRectangle(cornerRadius: 12))
-                .inspectOverlayCursor(label: "inlineDesignToolbar") { hovering in
-                  handleInspectOverlayHover(hovering)
-                }
-              }
-              if inspectBehavior == .edit, inspectorViewModel.pendingEditCount > 0 {
-                WebPreviewPendingEditsBar(
-                  count: inspectorViewModel.pendingEditCount,
-                  tierLabel: inspectorViewModel.persistenceTierLabel,
-                  onApply: applyPendingDesignEdits
-                )
-                .inspectOverlayCursor(label: "pendingEditsBar") { hovering in
-                  handleInspectOverlayHover(hovering)
-                }
-              }
-              if inspectBehavior == .edit, let offer = inspectorViewModel.tokenPromotionOffer {
-                WebPreviewTokenPromotionBar(
-                  offer: offer,
-                  onPromote: { Task { await inspectorViewModel.promoteTokenDetachment() } },
-                  onDismiss: inspectorViewModel.dismissTokenPromotionOffer
-                )
-                .inspectOverlayCursor(label: "tokenPromotionBar") { hovering in
-                  handleInspectOverlayHover(hovering)
-                }
-              }
+    InspectableWebView(
+      url: url,
+      isFileURL: isFileURL,
+      inspectorDataLevel: isAdvancedEditingEnabled ? .full : configuredInspectorDataLevel,
+      allowingReadAccessTo: allowingReadAccessTo,
+      onLoadingChange: { loading in
+        handlePreviewLoadingChange(loading)
+      },
+      onURLChange: { loadedURL in
+        handlePreviewURLChange(loadedURL)
+      },
+      onError: onError,
+      reloadToken: reloadToken,
+      onElementSelected: { data in
+        handleElementSelection(data)
+      },
+      onSelectedElementDataChange: { data in
+        handleSelectedElementDataChange(data)
+      },
+      onSelectedElementViewportRectChange: { rect in
+        inspectState.updateSelectedElementViewportRect(rect)
+      },
+      onCropRectSelected: { rect, elements in
+        inspectState.selectCropRect(rect, elements: elements)
+      },
+      onCropRectViewportChange: { rect in
+        inspectState.updateCropRect(rect)
+      },
+      isInspectModeActive: $inspectState.isActive,
+      inspectMode: inspectBehavior.canvasMode,
+      selectedElementId: inspectState.selectedElement?.id,
+      selectorToRestore: activeSelectorToRestore,
+      onWebViewReady: handleWebViewReady,
+      onTweakPropsChange: handleTweakPropsChange,
+      onTweakSchemaAvailabilityChange: handleTweakSchemaAvailabilityChange
+    )
+    .overlay {
+      if inspectBehavior != .edit {
+        Color.clear
+          .allowsHitTesting(false)
+          .webInspectorOverlay(
+            state: inspectState,
+            inputPlacement: .selectionAnchored,
+            onSubmit: { element, instruction in
+              handleInspectUpdateSubmit(element: element, instruction: instruction)
+            },
+            onSubmitAndSend: { element, instruction in
+              handleInspectUpdateSubmitAndSend(element: element, instruction: instruction)
+            },
+            onContextSelection: { element in
+              handleContextSelection(element)
+            },
+            onCropSubmit: { rect, elements, instruction in
+              handleCropSubmit(rect: rect, elements: elements, instruction: instruction)
+            },
+            onCropSubmitAndSend: { rect, elements, instruction in
+              handleCropSubmitAndSend(rect: rect, elements: elements, instruction: instruction)
+            },
+            onOverlayHoverChange: { hovering in
+              handleInspectOverlayHover(hovering)
+            },
+            deactivateOnSubmit: false
+          )
+      }
+    }
+    .overlay(alignment: .top) {
+      if inspectState.isActive && inspectBehavior == .edit {
+        VStack(spacing: 8) {
+          editModeBanner
+          if showsInlineDesignToolbar,
+             let element = inspectorViewModel.selectedElement,
+             let toolbarValues = inspectorViewModel.toolbarValues {
+            DesignToolbarContent(
+              values: toolbarValues,
+              element: element,
+              isTextContentEditable: inspectorViewModel.canEditContent,
+              onEdit: inspectorViewModel.apply
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .inspectOverlayCursor(label: "inlineDesignToolbar") { hovering in
+              handleInspectOverlayHover(hovering)
+            }
+          }
+          if inspectorViewModel.pendingEditCount > 0 {
+            WebPreviewPendingEditsBar(
+              count: inspectorViewModel.pendingEditCount,
+              tierLabel: inspectorViewModel.persistenceTierLabel,
+              onApply: applyPendingDesignEdits
+            )
+            .inspectOverlayCursor(label: "pendingEditsBar") { hovering in
+              handleInspectOverlayHover(hovering)
+            }
+          }
+          if let offer = inspectorViewModel.tokenPromotionOffer {
+            WebPreviewTokenPromotionBar(
+              offer: offer,
+              onPromote: { Task { await inspectorViewModel.promoteTokenDetachment() } },
+              onDismiss: inspectorViewModel.dismissTokenPromotionOffer
+            )
+            .inspectOverlayCursor(label: "tokenPromotionBar") { hovering in
+              handleInspectOverlayHover(hovering)
             }
           }
         }
-      } else {
-        InspectableWebView(
-          url: url,
-          isFileURL: isFileURL,
-          inspectorDataLevel: configuredInspectorDataLevel,
-          allowingReadAccessTo: allowingReadAccessTo,
-          onLoadingChange: { loading in
-            handlePreviewLoadingChange(loading)
-          },
-          onURLChange: { loadedURL in
-            handlePreviewURLChange(loadedURL)
-          },
-          onError: onError,
-          reloadToken: reloadToken,
-          onElementSelected: { data in
-            handleElementSelection(data)
-          },
-          onSelectedElementDataChange: { data in
-            handleSelectedElementDataChange(data)
-          },
-          onSelectedElementViewportRectChange: { rect in
-            inspectState.updateSelectedElementViewportRect(rect)
-          },
-          onCropRectSelected: { rect, elements in
-            inspectState.selectCropRect(rect, elements: elements)
-          },
-          onCropRectViewportChange: { rect in
-            inspectState.updateCropRect(rect)
-          },
-          isInspectModeActive: $inspectState.isActive,
-          inspectMode: inspectBehavior.canvasMode,
-          selectedElementId: inspectState.selectedElement?.id,
-          selectorToRestore: activeSelectorToRestore,
-          onWebViewReady: handleWebViewReady,
-          onTweakPropsChange: handleTweakPropsChange,
-          onTweakSchemaAvailabilityChange: handleTweakSchemaAvailabilityChange
-        )
-        .webInspectorOverlay(
-          state: inspectState,
-          inputPlacement: .selectionAnchored,
-          onSubmit: { element, instruction in
-            handleInspectUpdateSubmit(element: element, instruction: instruction)
-          },
-          onSubmitAndSend: { element, instruction in
-            handleInspectUpdateSubmitAndSend(element: element, instruction: instruction)
-          },
-          onContextSelection: { element in
-            handleContextSelection(element)
-          },
-          onCropSubmit: { rect, elements, instruction in
-            handleCropSubmit(rect: rect, elements: elements, instruction: instruction)
-          },
-          onCropSubmitAndSend: { rect, elements, instruction in
-            handleCropSubmitAndSend(rect: rect, elements: elements, instruction: instruction)
-          },
-          onOverlayHoverChange: { hovering in
-            handleInspectOverlayHover(hovering)
-          },
-          deactivateOnSubmit: false
-        )
       }
     }
   }
@@ -1670,7 +1638,7 @@ public struct WebPreviewView: View {
     if inspectState.isActive {
       deactivateInspector()
     } else {
-      inspectState.activate(mode: inspectBehavior.canvasMode)
+      activateInspector(using: inspectBehavior)
     }
   }
 
@@ -1680,7 +1648,7 @@ public struct WebPreviewView: View {
 
     guard inspectState.isActive else {
       inspectBehavior = firstMode
-      inspectState.activate(mode: firstMode.canvasMode)
+      activateInspector(using: firstMode)
       return
     }
 
@@ -1700,10 +1668,30 @@ public struct WebPreviewView: View {
 
   private func deactivateInspector() {
     flushPendingDesignEditsToQueue()
-    inspectState.deactivate()
+    withAnimation(inspectorToolsAnimation) {
+      inspectState.deactivate()
+    }
     Task {
       await inspectorViewModel.closePanel()
     }
+  }
+
+  private func activateInspector(using behavior: WebPreviewInspectBehavior) {
+    withAnimation(inspectorToolsAnimation) {
+      inspectState.activate(mode: behavior.canvasMode)
+    }
+  }
+
+  private var inspectorToolsAnimation: Animation {
+    accessibilityReduceMotion
+      ? .easeOut(duration: 0.1)
+      : .spring(response: 0.28, dampingFraction: 0.9)
+  }
+
+  private var inspectorToolsTransition: AnyTransition {
+    accessibilityReduceMotion
+      ? .opacity
+      : .move(edge: .leading).combined(with: .opacity)
   }
 
   private func closeEditRail() {
@@ -2248,17 +2236,25 @@ private struct WebPreviewToolbarGroup<Content: View>: View {
   }
 }
 
+private struct WebPreviewToolbarDivider: View {
+  var body: some View {
+    Divider()
+      .frame(height: 18)
+      .accessibilityHidden(true)
+  }
+}
+
 private struct WebPreviewToolbarIconButton: View {
   let title: String
   let systemImage: String
   let isActive: Bool
-  let width: CGFloat
-  let height: CGFloat
-  let font: Font
+  var isLoading = false
+  var width: CGFloat = 28
+  var height: CGFloat = 28
+  var font: Font = .system(size: 14, weight: .medium)
   let activeColor: Color
+  let activeForegroundColor: Color
   let action: () -> Void
-
-  @Environment(\.colorScheme) private var colorScheme
 
   var body: some View {
     Button(action: action) {
@@ -2266,34 +2262,39 @@ private struct WebPreviewToolbarIconButton: View {
         RoundedRectangle(cornerRadius: 8)
           .fill(backgroundColor)
 
-        Image(systemName: systemImage)
-          .font(font)
-          .foregroundStyle(iconColor)
+        if isLoading {
+          ProgressView()
+            .controlSize(.mini)
+            .tint(iconColor)
+            .accessibilityHidden(true)
+        } else {
+          Image(systemName: systemImage)
+            .font(font)
+            .foregroundStyle(iconColor)
+        }
       }
       .frame(width: width, height: height)
       .overlay {
         RoundedRectangle(cornerRadius: 8)
-          .stroke(borderColor, lineWidth: isActive ? 1 : 0)
+          .strokeBorder(borderColor, lineWidth: isActive ? 1 : 0)
       }
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
     .accessibilityLabel(title)
-    .accessibilityValue(isActive ? "On" : "Off")
+    .accessibilityValue(isActive ? "Selected" : "Not selected")
   }
 
   private var iconColor: Color {
-    isActive ? activeColor : .secondary
+    isActive ? activeForegroundColor : .secondary
   }
 
   private var backgroundColor: Color {
-    guard isActive else { return .clear }
-    return activeColor.opacity(colorScheme == .dark ? 0.16 : 0.12)
+    isActive ? activeColor : .clear
   }
 
   private var borderColor: Color {
-    guard isActive else { return .clear }
-    return activeColor.opacity(colorScheme == .dark ? 0.32 : 0.22)
+    isActive ? Color.primary.opacity(0.16) : .clear
   }
 }
 
