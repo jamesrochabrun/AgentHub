@@ -9,6 +9,7 @@ struct WebPreviewTweaksPanel: View {
   let onSubmitDescription: (String) -> Void
   let onIdeas: () -> Void
   let onValueChange: (TweakProp, TweakPropValue) -> Void
+  let onDeleteAll: () -> Void
   let onReset: () -> Void
   let onSaveDefaults: () -> Void
 
@@ -21,6 +22,7 @@ struct WebPreviewTweaksPanel: View {
         onSubmitDescription: onSubmitDescription,
         onIdeas: onIdeas,
         onValueChange: onValueChange,
+        onDeleteAll: onDeleteAll,
         onReset: onReset,
         onSaveDefaults: onSaveDefaults
       )

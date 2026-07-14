@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/Canvas",
       "state" : {
-        "revision" : "7c489d3ef4910c32a4cecb33a0c91cc5e20e58e9",
-        "version" : "1.3.2"
+        "revision" : "1c246e294b615bdd2cea822366facbfc579dd03c",
+        "version" : "1.3.3"
       }
     },
     {
