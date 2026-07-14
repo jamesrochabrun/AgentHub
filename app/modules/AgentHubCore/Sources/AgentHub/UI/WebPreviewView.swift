@@ -685,6 +685,7 @@ public struct WebPreviewView: View {
         onSubmitDescription: sendCustomTweaksPrompt,
         onIdeas: sendTweaksIdeasPrompt,
         onValueChange: handleTweakValueChange,
+        onDeleteAll: sendDeleteAllTweaksPrompt,
         onReset: resetTweakValues,
         onSaveDefaults: saveTweakDefaults
       )
@@ -1526,6 +1527,13 @@ public struct WebPreviewView: View {
         fileName: tweakPromptTargetName,
         instruction: instruction
       ),
+      policy: .flexible
+    )
+  }
+
+  private func sendDeleteAllTweaksPrompt() {
+    runTweakAgent(
+      TweaksPromptBuilder.deleteAllPrompt(fileName: tweakPromptTargetName),
       policy: .flexible
     )
   }
