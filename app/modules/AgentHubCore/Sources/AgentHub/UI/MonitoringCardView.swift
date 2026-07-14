@@ -220,8 +220,8 @@ public struct MonitoringCardView: View {
     mcpAppResourceCount == 1 ? "Open 1 MCP app" : "Open \(mcpAppResourceCount) MCP apps"
   }
 
-  private var linkedPullRequestNumber: Int? {
-    GitHubPullRequestURLReference.latestNumber(in: resourceLinks.map(\.url))
+  private var linkedPullRequests: [GitHubPullRequestURLReference] {
+    resourceLinks.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
   }
 
   private var localDiffSummary: LocalDiffSummary? {
@@ -316,14 +316,14 @@ public struct MonitoringCardView: View {
       await viewModel?.ensureMCPAppRenderItems(for: session, state: state)
     }
     .task(id: gitHubObservationTaskID) {
-      if linkedPullRequestNumber == nil {
+      if linkedPullRequests.isEmpty {
         try? await Task.sleep(for: .seconds(2))
         guard !Task.isCancelled else { return }
       }
       await sessionGitHubQuickAccessViewModel.load(
         projectPath: session.projectPath,
         branchName: session.branchName,
-        linkedPullRequestNumber: linkedPullRequestNumber,
+        linkedPullRequests: linkedPullRequests,
         coordinator: gitHubQuickAccessCoordinator,
         observationService: gitHubPRObservationService
       )
@@ -620,7 +620,7 @@ public struct MonitoringCardView: View {
     SessionGitHubQuickAccessViewModel.repositoryKey(
       projectPath: session.projectPath,
       branchName: session.branchName,
-      linkedPullRequestNumber: linkedPullRequestNumber
+      linkedPullRequests: linkedPullRequests
     )
   }
 

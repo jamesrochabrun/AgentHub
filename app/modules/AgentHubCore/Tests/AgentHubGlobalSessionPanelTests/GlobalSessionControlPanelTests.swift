@@ -225,7 +225,7 @@ struct GlobalSessionControlPanelTests {
         timestamp: base.addingTimeInterval(original.seconds),
         isPending: false,
         status: original.status,
-        linkedPullRequestNumber: nil,
+        linkedPullRequests: [],
         customName: nil,
         gitHubState: original.ciStatus.map {
           GlobalSessionControlPanelGitHubState(hasPullRequest: true, ciStatus: $0)
@@ -243,6 +243,39 @@ struct GlobalSessionControlPanelTests {
       "ready",
       "idle-new",
     ])
+  }
+
+  @Test("Review and merge blockers raise idle sessions without displacing active work")
+  func pullRequestBlockersRaiseIdleSessions() {
+    let changesRequested = GlobalSessionControlPanelGitHubState(
+      hasPullRequest: true,
+      ciStatus: .success,
+      blockers: [.changesRequested]
+    )
+    let mergeConflict = GlobalSessionControlPanelGitHubState(
+      hasPullRequest: true,
+      ciStatus: .success,
+      pullRequestMergeability: .conflicting
+    )
+    let blockedIdle = panelItem(
+      id: "blocked-idle",
+      seconds: 10,
+      status: .idle,
+      gitHubState: changesRequested
+    )
+    let blockedWorking = panelItem(
+      id: "blocked-working",
+      seconds: 20,
+      status: .thinking,
+      gitHubState: mergeConflict
+    )
+
+    #expect(blockedIdle.attention == .gitHubBlocked)
+    #expect(blockedWorking.attention == .working)
+    #expect(GlobalSessionControlPanelSnapshotBuilder.sorted([
+      blockedWorking,
+      blockedIdle,
+    ]).map(\.id) == ["blocked-idle", "blocked-working"])
   }
 
   @Test("Compact selector uses most recent active row")
@@ -457,7 +490,8 @@ struct GlobalSessionControlPanelTests {
     status: SessionStatus?,
     isActive: Bool = false,
     isPending: Bool = false,
-    providerKind: SessionProviderKind = .claude
+    providerKind: SessionProviderKind = .claude,
+    gitHubState: GlobalSessionControlPanelGitHubState? = nil
   ) -> GlobalSessionControlPanelItem {
     let timestamp = Date(timeIntervalSince1970: 1_000 + seconds)
     return GlobalSessionControlPanelItem(
@@ -473,8 +507,9 @@ struct GlobalSessionControlPanelTests {
       timestamp: timestamp,
       isPending: isPending,
       status: status,
-      linkedPullRequestNumber: nil,
-      customName: nil
+      linkedPullRequests: [],
+      customName: nil,
+      gitHubState: gitHubState
     )
   }
 
@@ -503,7 +538,9 @@ struct GlobalSessionControlPanelTests {
       timestamp: Date(timeIntervalSince1970: 1_000),
       isPending: isPending,
       status: status,
-      linkedPullRequestNumber: linkedPullRequestNumber,
+      linkedPullRequests: linkedPullRequestNumber.map {
+        Self.pullRequestReferences(number: $0)
+      } ?? [],
       customName: nil,
       gitHubState: gitHubState
     )
@@ -522,6 +559,12 @@ struct GlobalSessionControlPanelTests {
       pullRequestState: state,
       pullRequestMergeability: mergeability
     )
+  }
+
+  private static func pullRequestReferences(number: Int) -> [GitHubPullRequestURLReference] {
+    [GitHubPullRequestURLReference(
+      urlString: "https://github.com/test/repo/pull/\(number)"
+    )].compactMap { $0 }
   }
 
   private func makeDefaults() -> UserDefaults {

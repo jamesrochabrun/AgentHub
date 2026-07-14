@@ -44,7 +44,7 @@ public enum GitHubCLIError: LocalizedError, Sendable {
 public actor GitHubCLIService {
 
   private static let commandTimeout: TimeInterval = 30.0
-  static let checksJSONFields = "name,state,link,bucket"
+  static let checksJSONFields = "name,state,link,bucket,workflow,startedAt,completedAt"
   static let noPullRequestsFoundMessageFragment = "no pull requests found"
   static let noChecksReportedMessageFragment = "no checks reported"
 
@@ -154,7 +154,7 @@ public actor GitHubCLIService {
     authoredByMe: Bool = false,
     labels: [String] = []
   ) async throws -> [GitHubPullRequest] {
-    let fields = "number,title,body,state,url,headRefName,baseRefName,author,createdAt,updatedAt,isDraft,mergeable,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,labels,reviewRequests"
+    let fields = "number,title,body,state,url,headRefName,headRefOid,baseRefName,author,createdAt,updatedAt,isDraft,mergeable,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,labels,reviewRequests"
 
     let effectiveLimit = authoredByMe ? 200 : limit
     GitHubLogger.github.debug("[PR list] fetching state=\(state) limit=\(effectiveLimit) authoredByMe=\(authoredByMe) labels=\(labels) repoPath=\(repoPath)")
@@ -200,7 +200,7 @@ public actor GitHubCLIService {
     number: Int,
     at repoPath: String
   ) async throws -> GitHubPullRequest {
-    let fields = "number,title,body,state,url,headRefName,baseRefName,author,createdAt,updatedAt,isDraft,mergeable,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,labels,reviewRequests,comments"
+    let fields = "number,title,body,state,url,headRefName,headRefOid,baseRefName,author,createdAt,updatedAt,isDraft,mergeable,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,labels,reviewRequests"
 
     let json = try await runGH(
       ["pr", "view", "\(number)", "--json", fields],
@@ -211,12 +211,20 @@ public actor GitHubCLIService {
   }
 
   /// Gets the PR for the current branch (if any)
-  public func getCurrentBranchPR(at repoPath: String) async throws -> GitHubPullRequest? {
-    let fields = "number,title,body,state,url,headRefName,baseRefName,author,createdAt,updatedAt,isDraft,mergeable,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,labels,reviewRequests,comments"
+  public func getCurrentBranchPR(
+    branchName: String?,
+    at repoPath: String
+  ) async throws -> GitHubPullRequest? {
+    let fields = "number,title,body,state,url,headRefName,headRefOid,baseRefName,author,createdAt,updatedAt,isDraft,mergeable,additions,deletions,changedFiles,reviewDecision,statusCheckRollup,labels,reviewRequests"
+    var arguments = ["pr", "view"]
+    if let branchName, !branchName.isEmpty {
+      arguments.append(branchName)
+    }
+    arguments.append(contentsOf: ["--json", fields])
 
     do {
       let json = try await runGH(
-        ["pr", "view", "--json", fields],
+        arguments,
         at: repoPath,
         quietFailureMessages: [Self.noPullRequestsFoundMessageFragment]
       )
@@ -703,16 +711,23 @@ public actor GitHubCLIService {
       let state: String
       let bucket: String?
       let link: String?
+      let workflow: String?
+      let startedAt: Date?
+      let completedAt: Date?
     }
 
     do {
+      decoder.dateDecodingStrategy = .iso8601
       let rawChecks = try decoder.decode([RawCheck].self, from: data)
       return rawChecks.map { raw in
         GitHubCheckRun(
           name: raw.name,
           status: raw.state,
           bucket: raw.bucket,
-          detailsUrl: raw.link
+          detailsUrl: raw.link,
+          workflowName: raw.workflow,
+          startedAt: raw.startedAt,
+          completedAt: raw.completedAt
         )
       }
     } catch {

@@ -250,15 +250,22 @@ struct SessionGitHubQuickAccessViewModelTests {
 
   @Test("linked pull request subscribes to explicit PR observation")
   @MainActor
-  func linkedPullRequestSubscribesToExplicitPRObservation() async {
+  func linkedPullRequestSubscribesToExplicitPRObservation() async throws {
     let observer = MockSessionGitHubPRObservationService()
     let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
-    let target = GitHubPRObservationTarget.pullRequest(projectPath: "/tmp/repo", number: 322)
+    let reference = try #require(GitHubPullRequestURLReference(
+      urlString: "https://github.com/test/repo/pull/322"
+    ))
+    let target = GitHubPRObservationTarget.session(
+      projectPath: "/tmp/repo",
+      branchName: "feature/github",
+      linkedPullRequests: [reference]
+    )
 
     await viewModel.load(
       projectPath: "/tmp/repo",
       branchName: "feature/github",
-      linkedPullRequestNumber: 322
+      linkedPullRequests: [reference]
     )
     await observer.publish(GitHubPRObservationSnapshot(
       target: target,
@@ -276,17 +283,24 @@ struct SessionGitHubQuickAccessViewModelTests {
     #expect(await observer.refreshedTargets == [target])
   }
 
-  @Test("linked pull request activity force refreshes and applies state changes")
+  @Test("linked pull request activity is coalesced by the observation service")
   @MainActor
-  func linkedPullRequestActivityForceRefreshesAndAppliesStateChanges() async {
+  func linkedPullRequestActivityForceRefreshesAndAppliesStateChanges() async throws {
     let observer = MockSessionGitHubPRObservationService()
     let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
-    let target = GitHubPRObservationTarget.pullRequest(projectPath: "/tmp/repo", number: 322)
+    let reference = try #require(GitHubPullRequestURLReference(
+      urlString: "https://github.com/test/repo/pull/322"
+    ))
+    let target = GitHubPRObservationTarget.session(
+      projectPath: "/tmp/repo",
+      branchName: "feature/github",
+      linkedPullRequests: [reference]
+    )
 
     await viewModel.load(
       projectPath: "/tmp/repo",
       branchName: "feature/github",
-      linkedPullRequestNumber: 322
+      linkedPullRequests: [reference]
     )
     await observer.publish(GitHubPRObservationSnapshot(
       target: target,
@@ -306,20 +320,28 @@ struct SessionGitHubQuickAccessViewModelTests {
     try? await Task.sleep(for: .milliseconds(10))
 
     #expect(viewModel.currentBranchPR?.isDraft == false)
-    #expect(await observer.refreshedTargets == [target, target])
+    #expect(await observer.refreshedTargets == [target])
+    #expect(await observer.recordedActivityTargets == [target, target])
   }
 
   @Test("linked merged pull request remains visible")
   @MainActor
-  func linkedMergedPullRequestRemainsVisible() async {
+  func linkedMergedPullRequestRemainsVisible() async throws {
     let observer = MockSessionGitHubPRObservationService()
     let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
-    let target = GitHubPRObservationTarget.pullRequest(projectPath: "/tmp/repo", number: 322)
+    let reference = try #require(GitHubPullRequestURLReference(
+      urlString: "https://github.com/test/repo/pull/322"
+    ))
+    let target = GitHubPRObservationTarget.session(
+      projectPath: "/tmp/repo",
+      branchName: "feature/github",
+      linkedPullRequests: [reference]
+    )
 
     await viewModel.load(
       projectPath: "/tmp/repo",
       branchName: "feature/github",
-      linkedPullRequestNumber: 322
+      linkedPullRequests: [reference]
     )
     await observer.publish(GitHubPRObservationSnapshot(
       target: target,

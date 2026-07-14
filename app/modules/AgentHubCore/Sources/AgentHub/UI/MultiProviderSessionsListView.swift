@@ -807,7 +807,7 @@ public struct MultiProviderSessionsListView: View {
     let timestamp: Date
     let isPending: Bool
     let sessionStatus: SessionStatus?
-    let linkedPullRequestNumber: Int?
+    let linkedPullRequests: [GitHubPullRequestURLReference]
   }
 
   private var selectedSessionItems: [SelectedSessionItem] {
@@ -821,7 +821,7 @@ public struct MultiProviderSessionsListView: View {
         timestamp: pending.startedAt,
         isPending: true,
         sessionStatus: nil,
-        linkedPullRequestNumber: nil
+        linkedPullRequests: []
       ))
     }
 
@@ -833,7 +833,7 @@ public struct MultiProviderSessionsListView: View {
         timestamp: pending.startedAt,
         isPending: true,
         sessionStatus: nil,
-        linkedPullRequestNumber: nil
+        linkedPullRequests: []
       ))
     }
 
@@ -845,7 +845,7 @@ public struct MultiProviderSessionsListView: View {
         timestamp: item.session.lastActivityAt,
         isPending: false,
         sessionStatus: item.state?.status,
-        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
+        linkedPullRequests: Self.pullRequestReferences(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -857,7 +857,7 @@ public struct MultiProviderSessionsListView: View {
         timestamp: item.session.lastActivityAt,
         isPending: false,
         sessionStatus: item.state?.status,
-        linkedPullRequestNumber: Self.latestPullRequestNumber(in: item.state?.detectedResourceLinks ?? [])
+        linkedPullRequests: Self.pullRequestReferences(in: item.state?.detectedResourceLinks ?? [])
       ))
     }
 
@@ -1251,7 +1251,7 @@ public struct MultiProviderSessionsListView: View {
           isPrimary: item.id == primarySessionId,
           customName: selectedSessionCustomName(for: item),
           sessionStatus: item.sessionStatus,
-          linkedPullRequestNumber: item.linkedPullRequestNumber,
+          linkedPullRequests: item.linkedPullRequests,
           colorScheme: colorScheme,
           isPinned: isPinned(item),
           onPin: item.isPending ? nil : {
@@ -1638,8 +1638,8 @@ public struct MultiProviderSessionsListView: View {
       ?? codexViewModel.agentHubProvider?.gitHubPRObservationService
   }
 
-  private static func latestPullRequestNumber(in links: [ResourceLink]) -> Int? {
-    GitHubPullRequestURLReference.latestNumber(in: links.map(\.url))
+  private static func pullRequestReferences(in links: [ResourceLink]) -> [GitHubPullRequestURLReference] {
+    links.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
   }
 
   private var gitHubRefreshTargets: [GitHubPRObservationTarget] {
@@ -1647,9 +1647,10 @@ public struct MultiProviderSessionsListView: View {
     var targets: [GitHubPRObservationTarget] = []
 
     for item in selectedSessionItems where !item.isPending {
-      let target = GitHubPRObservationTarget.currentBranch(
+      let target = GitHubPRObservationTarget.session(
         projectPath: item.session.projectPath,
-        branchName: item.session.branchName
+        branchName: item.session.branchName,
+        linkedPullRequests: item.linkedPullRequests
       )
       guard seen.insert(target).inserted else { continue }
       targets.append(target)

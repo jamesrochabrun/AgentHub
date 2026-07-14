@@ -32,6 +32,15 @@ public enum GitHubPullRequestState: Equatable, Sendable {
     case .unknown(let value): value
     }
   }
+
+  public var isTerminal: Bool {
+    switch self {
+    case .closed, .merged:
+      true
+    case .open, .unknown:
+      false
+    }
+  }
 }
 
 public enum GitHubIssueState: Equatable, Sendable {
@@ -107,7 +116,10 @@ public enum GitHubCheckStatus: Equatable, Sendable {
   case completed
   case inProgress
   case queued
+  case requested
+  case waiting
   case pending
+  case expected
   case pass
   case fail
   case skipping
@@ -119,7 +131,10 @@ public enum GitHubCheckStatus: Equatable, Sendable {
     case "COMPLETED": self = .completed
     case "IN_PROGRESS": self = .inProgress
     case "QUEUED": self = .queued
+    case "REQUESTED": self = .requested
+    case "WAITING": self = .waiting
     case "PENDING": self = .pending
+    case "EXPECTED": self = .expected
     case "PASS": self = .pass
     case "FAIL": self = .fail
     case "SKIPPING": self = .skipping
@@ -136,7 +151,10 @@ public enum GitHubCheckStatus: Equatable, Sendable {
     case .completed: "Completed"
     case .inProgress: "In Progress"
     case .queued: "Queued"
+    case .requested: "Requested"
+    case .waiting: "Waiting"
     case .pending: "Pending"
+    case .expected: "Expected"
     case .pass: "Pass"
     case .fail: "Fail"
     case .skipping: "Skipping"
@@ -233,6 +251,7 @@ public struct GitHubPullRequest: Identifiable, Equatable, Sendable, Decodable {
   public let state: String
   public let url: String
   public let headRefName: String
+  public let headRefOid: String?
   public let baseRefName: String
   public let author: GitHubAuthor?
   public let createdAt: Date?
@@ -255,6 +274,7 @@ public struct GitHubPullRequest: Identifiable, Equatable, Sendable, Decodable {
     state: String,
     url: String,
     headRefName: String,
+    headRefOid: String? = nil,
     baseRefName: String,
     author: GitHubAuthor?,
     createdAt: Date?,
@@ -276,6 +296,7 @@ public struct GitHubPullRequest: Identifiable, Equatable, Sendable, Decodable {
     self.state = state
     self.url = url
     self.headRefName = headRefName
+    self.headRefOid = headRefOid
     self.baseRefName = baseRefName
     self.author = author
     self.createdAt = createdAt
@@ -333,13 +354,14 @@ public struct GitHubPullRequest: Identifiable, Equatable, Sendable, Decodable {
     guard let checks = statusCheckRollup, !checks.isEmpty else {
       return .none
     }
-    if checks.contains(where: { $0.ciStatus == .pending }) {
-      return .pending
-    }
     if checks.contains(where: { $0.ciStatus == .failure }) {
       return .failure
     }
-    if checks.allSatisfy({ $0.ciStatus == .success || $0.ciStatus == .none }) {
+    if checks.contains(where: { $0.ciStatus == .pending }) {
+      return .pending
+    }
+    if checks.contains(where: { $0.ciStatus == .success })
+        && checks.allSatisfy({ $0.ciStatus == .success || $0.ciStatus == .none }) {
       return .success
     }
     return .none
@@ -347,7 +369,7 @@ public struct GitHubPullRequest: Identifiable, Equatable, Sendable, Decodable {
 
   enum CodingKeys: String, CodingKey {
     case number, title, body, state, url
-    case headRefName, baseRefName
+    case headRefName, headRefOid, baseRefName
     case author, createdAt, updatedAt
     case isDraft, mergeable
     case additions, deletions, changedFiles
@@ -429,8 +451,13 @@ public struct GitHubCheckRun: Identifiable, Equatable, Sendable, Decodable {
   public let conclusion: String?
   public let bucket: String?
   public let detailsUrl: String?
+  public let workflowName: String?
+  public let startedAt: Date?
+  public let completedAt: Date?
 
-  public var id: String { name }
+  public var id: String {
+    [workflowName ?? "", name, detailsUrl ?? ""].joined(separator: "|")
+  }
 
   public init(from decoder: any Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -447,10 +474,13 @@ public struct GitHubCheckRun: Identifiable, Equatable, Sendable, Decodable {
     // CheckRun uses `detailsUrl`; StatusContext uses `targetUrl`
     detailsUrl = try c.decodeIfPresent(String.self, forKey: .detailsUrl)
       ?? c.decodeIfPresent(String.self, forKey: .targetUrl)
+    workflowName = try c.decodeIfPresent(String.self, forKey: .workflowName)
+    startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
+    completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
   }
 
   private enum CodingKeys: String, CodingKey {
-    case name, status, conclusion, bucket, detailsUrl
+    case name, status, conclusion, bucket, detailsUrl, workflowName, startedAt, completedAt
     case context, state, targetUrl
   }
 
@@ -478,7 +508,8 @@ public struct GitHubCheckRun: Identifiable, Equatable, Sendable, Decodable {
 
     if let conclusionKind {
       switch conclusionKind {
-      case .success, .neutral, .skipped: return .success
+      case .success: return .success
+      case .neutral, .skipped: return .none
       case .failure, .error, .timedOut, .actionRequired, .cancelled, .startupFailure, .stale:
         return .failure
       case .unknown:
@@ -487,7 +518,7 @@ public struct GitHubCheckRun: Identifiable, Equatable, Sendable, Decodable {
     }
 
     switch statusKind {
-    case .inProgress, .queued, .pending: return .pending
+    case .inProgress, .queued, .requested, .waiting, .pending, .expected: return .pending
     case .pass: return .success
     case .fail, .cancel: return .failure
     case .skipping, .completed, .unknown: return .none
@@ -528,7 +559,7 @@ public struct GitHubCheckRun: Identifiable, Equatable, Sendable, Decodable {
     }
 
     switch statusKind {
-    case .inProgress, .queued, .pending: return "clock.fill"
+    case .inProgress, .queued, .requested, .waiting, .pending, .expected: return "clock.fill"
     case .pass: return "checkmark.circle.fill"
     case .fail, .cancel: return "xmark.circle.fill"
     case .skipping: return "minus.circle.fill"
@@ -541,13 +572,19 @@ public struct GitHubCheckRun: Identifiable, Equatable, Sendable, Decodable {
     status: String,
     conclusion: String? = nil,
     bucket: String? = nil,
-    detailsUrl: String? = nil
+    detailsUrl: String? = nil,
+    workflowName: String? = nil,
+    startedAt: Date? = nil,
+    completedAt: Date? = nil
   ) {
     self.name = name
     self.status = status
     self.conclusion = conclusion
     self.bucket = bucket
     self.detailsUrl = detailsUrl
+    self.workflowName = workflowName
+    self.startedAt = startedAt
+    self.completedAt = completedAt
   }
 }
 
