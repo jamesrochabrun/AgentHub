@@ -14,8 +14,11 @@ struct AgentHubGhosttyTerminalSplitView: View {
   let node: TerminalSplitLayout.Node
   let session: TerminalSession
   let maximizedPanelID: TerminalPanelID?
+  let nodePath: String
+  let splitRatiosByPath: [String: [Double]]
   let canClosePanel: (TerminalPanel) -> Bool
   let canCloseTab: (TerminalPanel, TerminalTab) -> Bool
+  let canSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Bool
   let onActivatePanel: (TerminalPanel) -> Void
   let onSelectTab: (TerminalPanel, TerminalTab) -> Void
   let onClosePanel: (TerminalPanel) -> Void
@@ -23,6 +26,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
   let onOpenTab: (TerminalPanel) -> Void
   let onSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Void
   let onToggleMaximizedPanel: (TerminalPanel) -> Void
+  let onSplitRatiosChanged: (String, [Double]) -> Void
   let activityForPanel: (TerminalPanelID) -> AgentHubGhosttyTerminalPaneActivity?
 
   var body: some View {
@@ -42,6 +46,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
           canMaximize: session.visiblePanels.count > 1,
           canClosePanel: canClosePanel,
           canCloseTab: canCloseTab,
+          canSplitPanel: canSplitPanel,
           onActivatePanel: onActivatePanel,
           onSelectTab: onSelectTab,
           onClosePanel: onClosePanel,
@@ -103,8 +108,11 @@ struct AgentHubGhosttyTerminalSplitView: View {
           node: child,
           session: session,
           maximizedPanelID: maximizedPanelID,
+          nodePath: "\(nodePath).\(offset)",
+          splitRatiosByPath: splitRatiosByPath,
           canClosePanel: canClosePanel,
           canCloseTab: canCloseTab,
+          canSplitPanel: canSplitPanel,
           onActivatePanel: onActivatePanel,
           onSelectTab: onSelectTab,
           onClosePanel: onClosePanel,
@@ -112,6 +120,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
           onToggleMaximizedPanel: onToggleMaximizedPanel,
+          onSplitRatiosChanged: onSplitRatiosChanged,
           activityForPanel: activityForPanel
         )
         .frame(width: childDimension(childWidths, at: offset), height: size.height)
@@ -123,6 +132,9 @@ struct AgentHubGhosttyTerminalSplitView: View {
     }
     .onChange(of: children.count) { _, childCount in
       reconcileRatios(childCount: childCount)
+    }
+    .onChange(of: splitRatiosByPath[nodePath]) { _, _ in
+      restoreSavedRatios(childCount: children.count)
     }
   }
 
@@ -152,8 +164,11 @@ struct AgentHubGhosttyTerminalSplitView: View {
           node: child,
           session: session,
           maximizedPanelID: maximizedPanelID,
+          nodePath: "\(nodePath).\(offset)",
+          splitRatiosByPath: splitRatiosByPath,
           canClosePanel: canClosePanel,
           canCloseTab: canCloseTab,
+          canSplitPanel: canSplitPanel,
           onActivatePanel: onActivatePanel,
           onSelectTab: onSelectTab,
           onClosePanel: onClosePanel,
@@ -161,6 +176,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
           onToggleMaximizedPanel: onToggleMaximizedPanel,
+          onSplitRatiosChanged: onSplitRatiosChanged,
           activityForPanel: activityForPanel
         )
         .frame(width: size.width, height: childDimension(childHeights, at: offset))
@@ -172,6 +188,9 @@ struct AgentHubGhosttyTerminalSplitView: View {
     }
     .onChange(of: children.count) { _, childCount in
       reconcileRatios(childCount: childCount)
+    }
+    .onChange(of: splitRatiosByPath[nodePath]) { _, _ in
+      restoreSavedRatios(childCount: children.count)
     }
   }
 
@@ -211,8 +230,19 @@ struct AgentHubGhosttyTerminalSplitView: View {
   }
 
   private func reconcileRatios(childCount: Int) {
+    if childRatios.isEmpty {
+      restoreSavedRatios(childCount: childCount)
+    } else {
+      childRatios = TerminalPanelKit.SplitSizing.normalizedRatios(
+        childRatios,
+        childCount: childCount
+      )
+    }
+  }
+
+  private func restoreSavedRatios(childCount: Int) {
     childRatios = TerminalPanelKit.SplitSizing.normalizedRatios(
-      childRatios,
+      (splitRatiosByPath[nodePath] ?? []).map { CGFloat($0) },
       childCount: childCount
     )
   }
@@ -255,6 +285,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
       containerLength: containerLength,
       minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: axis)
     )
+    onSplitRatiosChanged(nodePath, childRatios.map { Double($0) })
   }
 }
 

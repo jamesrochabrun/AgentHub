@@ -11,8 +11,10 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
   let session: TerminalSession
   let splitRoot: TerminalSplitLayout.Node?
   let maximizedPanelID: TerminalPanelID?
+  let splitRatiosByPath: [String: [Double]]
   let canClosePanel: (TerminalPanel) -> Bool
   let canCloseTab: (TerminalPanel, TerminalTab) -> Bool
+  let canSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Bool
   let onActivatePanel: (TerminalPanel) -> Void
   let onSelectTab: (TerminalPanel, TerminalTab) -> Void
   let onClosePanel: (TerminalPanel) -> Void
@@ -20,6 +22,7 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
   let onOpenTab: (TerminalPanel) -> Void
   let onSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Void
   let onToggleMaximizedPanel: (TerminalPanel) -> Void
+  let onSplitRatiosChanged: (String, [Double]) -> Void
   let activityForPanel: (TerminalPanelID) -> AgentHubGhosttyTerminalPaneActivity?
 
   var body: some View {
@@ -32,8 +35,11 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
         node: resolvedSplitRoot,
         session: session,
         maximizedPanelID: effectiveMaximizedPanelID,
+        nodePath: "root",
+        splitRatiosByPath: splitRatiosByPath,
         canClosePanel: canClosePanel,
         canCloseTab: canCloseTab,
+        canSplitPanel: canSplitPanel,
         onActivatePanel: onActivatePanel,
         onSelectTab: onSelectTab,
         onClosePanel: onClosePanel,
@@ -41,6 +47,7 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
         onOpenTab: onOpenTab,
         onSplitPanel: onSplitPanel,
         onToggleMaximizedPanel: onToggleMaximizedPanel,
+        onSplitRatiosChanged: onSplitRatiosChanged,
         activityForPanel: activityForPanel
       )
     }

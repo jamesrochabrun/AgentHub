@@ -11,6 +11,7 @@ import SwiftUI
 
 public enum CommandPaletteAction: Identifiable {
   case newSession
+  case newWorkspace
   case switchToSession(id: String, name: String, provider: SessionProviderKind, firstMessage: String?)
   case selectRepository(path: String, name: String)
   case openSettings
@@ -20,6 +21,7 @@ public enum CommandPaletteAction: Identifiable {
   public var id: String {
     switch self {
     case .newSession: return "new-session"
+    case .newWorkspace: return "new-workspace"
     case .switchToSession(let id, _, _, _): return "session-\(id)"
     case .selectRepository(let path, _): return "repo-\(path)"
     case .openSettings: return "settings"
@@ -31,6 +33,7 @@ public enum CommandPaletteAction: Identifiable {
   var title: String {
     switch self {
     case .newSession: return "New Session"
+    case .newWorkspace: return "New Workspace"
     case .switchToSession(_, let name, _, _): return name
     case .selectRepository(_, let name): return name
     case .openSettings: return "Open Settings"
@@ -42,6 +45,7 @@ public enum CommandPaletteAction: Identifiable {
   var subtitle: String? {
     switch self {
     case .newSession: return "Start from the focused session's worktree"
+    case .newWorkspace: return "Open a multi-panel terminal in the focused project"
     case .switchToSession(_, _, let provider, let firstMessage):
       if let firstMessage {
         let trimmed = firstMessage.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -60,6 +64,7 @@ public enum CommandPaletteAction: Identifiable {
   var icon: String {
     switch self {
     case .newSession: return "plus.circle.fill"
+    case .newWorkspace: return "rectangle.3.group"
     case .switchToSession: return "arrow.right.circle"
     case .selectRepository: return "folder"
     case .openSettings: return "gear"
@@ -71,6 +76,7 @@ public enum CommandPaletteAction: Identifiable {
   var shortcut: String? {
     switch self {
     case .newSession: return "⌘N"
+    case .newWorkspace: return "⌘⇧N"
     case .toggleSidebar: return "⌘B"
     case .openSettings: return "⌘,"
     case .toggleTerminalEditor: return "⌥`"
@@ -137,6 +143,7 @@ public struct CommandPaletteView: View {
   private var quickActions: [CommandPaletteAction] {
     [
       .newSession,
+      .newWorkspace,
       .toggleTerminalEditor,
       .openSettings,
       .toggleSidebar,

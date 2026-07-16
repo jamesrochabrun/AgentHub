@@ -108,7 +108,7 @@ struct ProjectSimulatorPreferenceTests {
 
     try await dbQueue.write { db in
       try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
-      for identifier in SessionMetadataStore.migrationIdentifiers.dropLast() {
+      for identifier in SessionMetadataStore.migrationIdentifiers.dropLast(2) {
         try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [identifier])
       }
 

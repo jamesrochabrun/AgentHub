@@ -224,6 +224,24 @@ public final class AgentHubProvider {
   /// Codex sessions view model - created lazily and cached
   public private(set) lazy var codexSessionsViewModel: CLISessionsViewModel = makeSessionsViewModel(providerKind: .codex)
 
+  /// Bridges provider-neutral workspaces to Claude and Codex monitoring.
+  public private(set) lazy var agentWorkspaceSessionCoordinator: any AgentWorkspaceSessionCoordinating = AgentWorkspaceSessionCoordinator(
+    claudeViewModel: claudeSessionsViewModel,
+    codexViewModel: codexSessionsViewModel
+  )
+
+  /// Provider-neutral, lazily mounted Ghostty workspaces.
+  public private(set) lazy var agentWorkspacesViewModel: AgentWorkspacesViewModel = AgentWorkspacesViewModel(
+    store: metadataStore,
+    metadataStore: metadataStore,
+    terminalSurfaceFactory: terminalSurfaceFactory,
+    sessionCoordinator: agentWorkspaceSessionCoordinator,
+    detectionService: AccessorySessionDetectionService(
+      claudeDataPath: configuration.claudeDataPath,
+      codexDataPath: configuration.codexDataPath
+    )
+  )
+
   /// Backwards-compatible default sessions view model (Claude)
   public private(set) lazy var sessionsViewModel: CLISessionsViewModel = claudeSessionsViewModel
 
@@ -558,6 +576,7 @@ public final class AgentHubProvider {
       AppLogger.session.info("Terminating terminal for key: \(key)")
       terminal.terminateProcess()
     }
+    agentWorkspacesViewModel.terminateAllTerminals()
   }
 
   public func recreateEmbeddedTerminalsForSelectedBackend() {

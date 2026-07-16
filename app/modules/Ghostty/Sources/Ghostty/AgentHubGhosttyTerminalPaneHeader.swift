@@ -11,7 +11,8 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
   let panel: TerminalPanel
   let isMaximized: Bool
   let canMaximize: Bool
-  let canSplit: Bool
+  let canSplitRight: Bool
+  let canSplitBelow: Bool
   let canClosePanel: Bool
   let canCloseTab: (TerminalTab) -> Bool
   let onSelectTab: (TerminalTab) -> Void
@@ -66,7 +67,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
             title: "Split Right",
             systemImage: "rectangle.split.2x1",
             help: "Split terminal to the right",
-            isDisabled: !canSplit,
+            isDisabled: !canSplitRight,
             action: onSplitRight
           )
 
@@ -74,7 +75,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
             title: "Split Below",
             systemImage: "rectangle.split.1x2",
             help: "Split terminal below",
-            isDisabled: !canSplit,
+            isDisabled: !canSplitBelow,
             action: onSplitBelow
           )
 

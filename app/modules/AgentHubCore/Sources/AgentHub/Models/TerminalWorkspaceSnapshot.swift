@@ -5,6 +5,7 @@
 //  Persisted structure for restoring embedded terminal workspaces.
 //
 
+import AgentHubSessionGraph
 import Foundation
 
 public struct TerminalWorkspaceSnapshot: Codable, Equatable, Sendable {
@@ -12,17 +13,64 @@ public struct TerminalWorkspaceSnapshot: Codable, Equatable, Sendable {
   public var panels: [TerminalWorkspacePanelSnapshot]
   public var activePanelIndex: Int
   public var splitLayout: TerminalWorkspaceSplitNode?
+  public var splitRatiosByPath: [String: [Double]]
 
   public init(
-    schemaVersion: Int = 3,
+    schemaVersion: Int = 4,
     panels: [TerminalWorkspacePanelSnapshot],
     activePanelIndex: Int = 0,
-    splitLayout: TerminalWorkspaceSplitNode? = nil
+    splitLayout: TerminalWorkspaceSplitNode? = nil,
+    splitRatiosByPath: [String: [Double]] = [:]
   ) {
     self.schemaVersion = schemaVersion
     self.panels = panels
     self.activePanelIndex = activePanelIndex
     self.splitLayout = splitLayout
+    self.splitRatiosByPath = splitRatiosByPath
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion
+    case panels
+    case activePanelIndex
+    case splitLayout
+    case splitRatiosByPath
+  }
+
+  public init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+    panels = try container.decode([TerminalWorkspacePanelSnapshot].self, forKey: .panels)
+    activePanelIndex = try container.decodeIfPresent(Int.self, forKey: .activePanelIndex) ?? 0
+    splitLayout = try container.decodeIfPresent(TerminalWorkspaceSplitNode.self, forKey: .splitLayout)
+    splitRatiosByPath = try container.decodeIfPresent(
+      [String: [Double]].self,
+      forKey: .splitRatiosByPath
+    ) ?? [:]
+  }
+
+  public func normalizedSplitRatios() -> [String: [Double]] {
+    guard let splitLayout else { return [:] }
+    var childCounts: [String: Int] = [:]
+    splitLayout.collectSplitChildCounts(path: "root", into: &childCounts)
+
+    return Dictionary(uniqueKeysWithValues: childCounts.compactMap { path, childCount in
+      guard let ratios = splitRatiosByPath[path] else { return nil }
+      return (path, Self.normalized(ratios: ratios, childCount: childCount))
+    })
+  }
+
+  private static func normalized(ratios: [Double], childCount: Int) -> [Double] {
+    guard childCount > 0 else { return [] }
+    guard ratios.count == childCount,
+          ratios.allSatisfy({ $0.isFinite && $0 >= 0 }) else {
+      return Array(repeating: 1 / Double(childCount), count: childCount)
+    }
+    let total = ratios.reduce(0, +)
+    guard total > 0 else {
+      return Array(repeating: 1 / Double(childCount), count: childCount)
+    }
+    return ratios.map { $0 / total }
   }
 }
 
@@ -60,6 +108,21 @@ public indirect enum TerminalWorkspaceSplitNode: Equatable, Sendable {
       }
       guard !remappedChildren.isEmpty else { return nil }
       return .split(axis: axis, children: remappedChildren)
+    }
+  }
+
+  fileprivate func collectSplitChildCounts(
+    path: String,
+    into result: inout [String: Int]
+  ) {
+    switch self {
+    case .panel:
+      return
+    case .split(_, let children):
+      result[path] = children.count
+      for (index, child) in children.enumerated() {
+        child.collectSplitChildCounts(path: "\(path).\(index)", into: &result)
+      }
     }
   }
 }

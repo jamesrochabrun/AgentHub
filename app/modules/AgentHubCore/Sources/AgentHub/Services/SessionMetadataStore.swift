@@ -10,7 +10,7 @@ import GRDB
 
 /// Actor-based service for persisting session metadata to SQLite
 /// Uses GRDB for database operations with async/await support
-public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
+public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspaceStoreProtocol {
 
   // MARK: - Properties
 
@@ -26,6 +26,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     static let addOwnedWorktreePaths = "v9_add_owned_worktree_paths"
     static let createSessionRelationships = "v10_create_session_relationships"
     static let createProjectSimulatorPreferences = "v11_create_project_simulator_preferences"
+    static let createAgentWorkspaces = "v12_create_agent_workspaces"
   }
 
   static let migrationIdentifiers = [
@@ -39,7 +40,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
     MigrationID.createClaudeHookInstallations,
     MigrationID.addOwnedWorktreePaths,
     MigrationID.createSessionRelationships,
-    MigrationID.createProjectSimulatorPreferences
+    MigrationID.createProjectSimulatorPreferences,
+    MigrationID.createAgentWorkspaces
   ]
 
   private let dbQueue: DatabaseQueue
@@ -202,6 +204,36 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
       }
     }
 
+    migrator.registerMigration(MigrationID.createAgentWorkspaces) { db in
+      try db.create(table: "agent_workspaces") { t in
+        t.column("id", .text).primaryKey()
+        t.column("projectPath", .text).notNull().indexed()
+        t.column("customName", .text)
+        t.column("backend", .integer).notNull()
+        t.column("snapshotData", .blob).notNull()
+        t.column("createdAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+      }
+
+      try db.create(table: "workspace_session_links") { t in
+        t.column("workspaceId", .text)
+          .notNull()
+          .references("agent_workspaces", onDelete: .cascade)
+        t.column("provider", .text).notNull()
+        t.column("sessionId", .text).notNull()
+        t.column("origin", .text).notNull()
+        t.column("createdAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+        t.primaryKey(["workspaceId", "provider", "sessionId"], onConflict: .replace)
+        t.uniqueKey(["provider", "sessionId"])
+      }
+      try db.create(
+        index: "idx_workspace_session_links_workspace",
+        on: "workspace_session_links",
+        columns: ["workspaceId"]
+      )
+    }
+
     return migrator
   }
 
@@ -297,6 +329,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
   /// Clears all metadata (for testing/reset)
   public func clearAll() throws {
     try dbQueue.write { db in
+      _ = try AgentWorkspaceSessionLink.deleteAll(db)
+      _ = try AgentWorkspaceRecord.deleteAll(db)
       _ = try TerminalWorkspaceRecord.deleteAll(db)
       _ = try SessionWorkspaceStateRecord.deleteAll(db)
       _ = try ClaudeHookInstallationRecord.deleteAll(db)
@@ -447,6 +481,48 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol {
         .deleteAll(db)
     }
   }
+
+  // MARK: - Agent Workspaces
+
+  public func loadAgentWorkspaces() async throws -> [AgentWorkspaceRecord] {
+    try await dbQueue.read { db in
+      try AgentWorkspaceRecord
+        .order(Column("createdAt").desc)
+        .fetchAll(db)
+    }
+  }
+
+  public func loadAgentWorkspaceSessionLinks() async throws -> [AgentWorkspaceSessionLink] {
+    try await dbQueue.read { db in
+      try AgentWorkspaceSessionLink
+        .order(Column("createdAt"))
+        .fetchAll(db)
+    }
+  }
+
+  public func saveAgentWorkspace(
+    _ workspace: AgentWorkspaceRecord,
+    links: [AgentWorkspaceSessionLink]
+  ) async throws {
+    try await dbQueue.write { db in
+      try workspace.save(db)
+      _ = try AgentWorkspaceSessionLink
+        .filter(Column("workspaceId") == workspace.id)
+        .deleteAll(db)
+      for link in links {
+        try link.save(db)
+      }
+    }
+  }
+
+  public func deleteAgentWorkspace(id: String) async throws {
+    try await dbQueue.write { db in
+      _ = try AgentWorkspaceSessionLink
+        .filter(Column("workspaceId") == id)
+        .deleteAll(db)
+      _ = try AgentWorkspaceRecord.deleteOne(db, key: id)
+    }
+  }
 }
 
 extension SessionMetadataStore: ManagedProcessStoreProtocol {
@@ -480,11 +556,12 @@ extension SessionMetadataStore: ManagedProcessStoreProtocol {
 
 extension SessionMetadataStore: SessionRelationshipStoreProtocol {
   public func saveSessionRelationship(_ relationship: SessionRelationshipRecord) async throws {
-    var record = relationship
+    var updatedRecord = relationship
     let now = Date()
-    record.updatedAt = now
+    updatedRecord.updatedAt = now
 
     try await dbQueue.write { db in
+      var record = updatedRecord
       if let existing = try SessionRelationshipRecord
         .filter(Column("sourceProvider") == record.sourceProvider)
         .filter(Column("sourceSessionId") == record.sourceSessionId)

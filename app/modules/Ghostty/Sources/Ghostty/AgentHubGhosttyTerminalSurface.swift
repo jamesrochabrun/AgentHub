@@ -26,6 +26,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var accessoryAgentProvidersByTabID: [TerminalTabID: SessionProviderKind] = [:]
   private var linkedSessionsByTabID: [TerminalTabID: TerminalWorkspaceLinkedSessionSnapshot] = [:]
   private var splitRoot: TerminalSplitLayout.Node?
+  private var splitRatiosByPath: [String: [Double]] = [:]
   private var maximizedPanelID: TerminalPanelID?
   private var pendingMount: PendingMount?
   private var pendingMountTask: Task<Void, Never>?
@@ -49,7 +50,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var configuredProcessProvider: SessionProviderKind?
   private var configuredExpectedExecutable: String?
   private var metadataStore: SessionMetadataStore?
-  private static let terminalPaneDividerSize: CGFloat = 1
+  private static let terminalPaneDividerSize = TerminalPanelKit.SplitSizing.dividerDimension
   private static let terminalTabStripHeight = AgentHubGhosttyTerminalTabChrome.stripHeight
   private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
   private static let pendingPaneRenderDelay: Duration = .milliseconds(16)
@@ -58,6 +59,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   public var onRequestShowEditor: (() -> Void)?
   public var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)?
   public var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)?
+  public var workspaceCLIConfigurationProvider: ((SessionProviderKind) -> CLICommandConfiguration)?
   private var terminalSessionKey: String?
   private weak var sessionViewModel: CLISessionsViewModel?
   var terminateProcessCallCount = 0
@@ -202,6 +204,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     accessoryAgentProvidersByTabID.removeAll()
     linkedSessionsByTabID.removeAll()
     splitRoot = nil
+    splitRatiosByPath.removeAll()
     maximizedPanelID = nil
     resetPaneActivities()
     isConfigured = false
@@ -331,7 +334,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     if let metadataStore {
       self.metadataStore = metadataStore
     }
-    guard let terminalSession, terminalSession.canOpenPanel else { return nil }
+    guard let terminalSession,
+          canSplitPanel(
+            terminalSession.panel(for: terminalSession.activePanelID),
+            axis: .horizontal
+          ) else { return nil }
     let workingDirectory = resolvedExistingDirectory(projectPath)
     let startedAt = Date()
     guard let configuration = accessoryAgentConfiguration(
@@ -389,6 +396,53 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     return true
   }
 
+  public func openWorkspaceSurface(
+    kind: WorkspaceTerminalLaunchKind,
+    placement: WorkspaceSurfacePlacement,
+    cliConfiguration: CLICommandConfiguration?,
+    projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> WorkspaceSurfaceLaunchContext? {
+    if let metadataStore {
+      self.metadataStore = metadataStore
+    }
+    guard terminalSession != nil else { return nil }
+
+    let workingDirectory = resolvedExistingDirectory(
+      activeWorkingDirectory() ?? projectPath
+    )
+    let startedAt = Date.now
+    let didOpen: Bool
+
+    switch kind {
+    case .shell:
+      didOpen = openWorkspaceShell(
+        placement: placement,
+        workingDirectory: workingDirectory
+      )
+    case .agent(let provider):
+      guard let cliConfiguration else { return nil }
+      didOpen = openWorkspaceAgent(
+        provider: provider,
+        placement: placement,
+        cliConfiguration: cliConfiguration,
+        workingDirectory: workingDirectory
+      )
+    }
+
+    guard didOpen else { return nil }
+    let provider: SessionProviderKind? = if case .agent(let provider) = kind {
+      provider
+    } else {
+      nil
+    }
+    return WorkspaceSurfaceLaunchContext(
+      provider: provider,
+      projectPath: workingDirectory,
+      startedAt: startedAt
+    )
+  }
+
   public func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot? {
     guard let terminalSession else { return nil }
 
@@ -417,7 +471,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       )
     }
 
-    return TerminalWorkspaceSnapshot(
+    var snapshot = TerminalWorkspaceSnapshot(
       panels: panels,
       activePanelIndex: terminalSession.panels.firstIndex { $0.id == terminalSession.activePanelID } ?? 0,
       splitLayout: currentSplitRoot().flatMap {
@@ -425,8 +479,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
           from: $0,
           panelIDs: terminalSession.panels.map(\.id)
         )
-      }
+      },
+      splitRatiosByPath: splitRatiosByPath
     )
+    snapshot.splitRatiosByPath = snapshot.normalizedSplitRatios()
+    return snapshot
   }
 
   public func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot) {
@@ -438,6 +495,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
     isRestoringWorkspace = true
     maximizedPanelID = nil
+    splitRatiosByPath = snapshot.normalizedSplitRatios()
     defer {
       isRestoringWorkspace = false
       lastWorkspaceSnapshot = captureWorkspaceSnapshot()
@@ -461,12 +519,12 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       restoredTabIDs[0] = restoreShellTabs(
         from: primarySnapshot,
         in: terminalSession.primaryPanelID,
-        existingTabIDs: restoredTabIDs[0]
+        existingTabIDs: restoredTabIDs[0],
+        skippingFirstShellTab: protectedAgentTabID == nil
       )
     }
 
     for (panelIndex, panelSnapshot) in panelSnapshots.enumerated().dropFirst() {
-      guard terminalSession.canOpenPanel else { break }
       guard let firstAccessoryTab = firstRestorableAccessoryTab(in: panelSnapshot) else { continue }
       guard let configuration = configurationForRestoredAccessoryTab(firstAccessoryTab) else { continue }
 
@@ -644,11 +702,15 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       session: session,
       splitRoot: splitRoot,
       maximizedPanelID: maximizedPanelID,
+      splitRatiosByPath: splitRatiosByPath,
       canClosePanel: { [weak self] panel in
         self?.canCloseGhosttyPanel(panel) ?? false
       },
       canCloseTab: { [weak self] panel, tab in
         self?.canCloseGhosttyTab(tab, in: panel) ?? false
+      },
+      canSplitPanel: { [weak self] panel, axis in
+        self?.canSplitPanel(panel, axis: axis) ?? false
       },
       onActivatePanel: { [weak self] panel in
         self?.activateGhosttyPanel(panel)
@@ -670,6 +732,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       },
       onToggleMaximizedPanel: { [weak self] panel in
         self?.toggleMaximizedPanel(panel)
+      },
+      onSplitRatiosChanged: { [weak self] path, ratios in
+        guard let self else { return }
+        self.splitRatiosByPath[path] = ratios
+        self.notifyWorkspaceChanged()
       },
       activityForPanel: { [weak self] panelID in
         self?.paneActivityRegistry.activity(for: panelID)
@@ -791,6 +858,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     initialSize: GhosttySurfaceInitialSize? = nil
   ) -> GhosttySurfaceConfiguration? {
     let cliConfiguration = cliConfigurationOverride
+      ?? workspaceCLIConfigurationProvider?(provider)
       ?? sessionViewModel?.cliConfiguration(for: provider)
       ?? (provider == .claude ? .claudeDefault : .codexDefault)
     let launch = EmbeddedTerminalLaunchBuilder.cliLaunch(
@@ -816,7 +884,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   private func expectedExecutable(for provider: SessionProviderKind?) -> String? {
     guard let provider else { return configuredExpectedExecutable }
-    return sessionViewModel?.cliConfiguration(for: provider).executableName
+    return workspaceCLIConfigurationProvider?(provider).executableName
+      ?? sessionViewModel?.cliConfiguration(for: provider).executableName
       ?? (provider == .claude
         ? CLICommandConfiguration.claudeDefault.executableName
         : CLICommandConfiguration.codexDefault.executableName)
@@ -896,7 +965,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     let auxiliaries = panels.enumerated()
       .filter { $0.element.role == .auxiliary && $0.offset != primaryIndex }
       .map { (originalIndex: $0.offset, snapshot: $0.element) }
-    return Array(([primaryEntry].compactMap { $0 } + auxiliaries).prefix(4))
+    return [primaryEntry].compactMap { $0 } + auxiliaries
   }
 
   private func resetToPrimaryAgentTab(in terminalSession: TerminalSession) {
@@ -905,12 +974,18 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       _ = terminalSession.closePanel(panel.id)
     }
 
-    for tab in terminalSession.primaryPanel.tabs where !isProtectedAgentTab(tab, in: terminalSession.primaryPanelID) {
+    let retainedTabID = protectedAgentTabID ?? terminalSession.primaryPanel.tabs.first?.id
+    for tab in terminalSession.primaryPanel.tabs where tab.id != retainedTabID {
       requestClose(tab)
       _ = terminalSession.closeTab(tab.id, in: terminalSession.primaryPanelID)
     }
 
-    focusProtectedAgentTab()
+    if let retainedTabID {
+      accessoryAgentTabIDs.remove(retainedTabID)
+      accessoryAgentProvidersByTabID.removeValue(forKey: retainedTabID)
+      linkedSessionsByTabID.removeValue(forKey: retainedTabID)
+      _ = terminalSession.selectTab(retainedTabID, in: terminalSession.primaryPanelID)
+    }
     splitRoot = .panel(terminalSession.primaryPanelID)
     maximizedPanelID = nil
   }
@@ -1147,8 +1222,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         toggleMaximizedPanel(activePanel)
       }
     case .focusPanel(let direction):
-      if maximizedPanelID == nil,
-         terminalSession?.focusPanel(direction: direction) == true {
+      if maximizedPanelID == nil, focusPanel(direction: direction) {
         notifyWorkspaceChanged()
       }
     case .selectTab(let direction):
@@ -1158,8 +1232,127 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
   }
 
-  private func openShellTab(in panelID: TerminalPanelID? = nil) {
-    guard let terminalSession else { return }
+  private func openWorkspaceShell(
+    placement: WorkspaceSurfacePlacement,
+    workingDirectory: String
+  ) -> Bool {
+    switch placement {
+    case .tab:
+      guard let terminalSession else { return false }
+      do {
+        let panelID = terminalSession.activePanelID
+        let tab = try terminalSession.openTab(
+          in: panelID,
+          named: "Shell",
+          configuration: shellConfiguration(
+            forRestoredWorkingDirectory: workingDirectory,
+            in: panelID
+          )
+        )
+        configureControllerHooks(for: tab.controller)
+        markPaneStarting(panelID)
+        refreshWorkspaceRootView()
+        notifyWorkspaceChanged()
+        return true
+      } catch {
+        AppLogger.session.error("Failed to open Ghostty workspace shell tab: \(error.localizedDescription)")
+        return false
+      }
+
+    case .splitRight:
+      return openShellPane(axis: .horizontal)
+    case .splitDown:
+      return openShellPane(axis: .vertical)
+    }
+  }
+
+  private func openWorkspaceAgent(
+    provider: SessionProviderKind,
+    placement: WorkspaceSurfacePlacement,
+    cliConfiguration: CLICommandConfiguration,
+    workingDirectory: String
+  ) -> Bool {
+    guard let terminalSession else { return false }
+
+    switch placement {
+    case .tab:
+      let panelID = terminalSession.activePanelID
+      guard let configuration = accessoryAgentConfiguration(
+        provider: provider,
+        sessionId: nil,
+        workingDirectory: workingDirectory,
+        cliConfigurationOverride: cliConfiguration,
+        initialSize: predictedInitialSizeForNewTerminal(in: panelID)
+      ) else {
+        return false
+      }
+      do {
+        let tab = try terminalSession.openTab(
+          in: panelID,
+          named: provider.rawValue,
+          configuration: configuration
+        )
+        accessoryAgentTabIDs.insert(tab.id)
+        accessoryAgentProvidersByTabID[tab.id] = provider
+        configureControllerHooks(for: tab.controller)
+        markPaneStarting(panelID)
+        refreshWorkspaceRootView()
+        notifyWorkspaceChanged()
+        tab.controller.focusTerminal()
+        return true
+      } catch {
+        AppLogger.session.error("Failed to open Ghostty workspace agent tab: \(error.localizedDescription)")
+        return false
+      }
+
+    case .splitRight, .splitDown:
+      let axis: TerminalSplitAxis = placement == .splitRight ? .horizontal : .vertical
+      guard canSplitPanel(
+        terminalSession.panel(for: terminalSession.activePanelID),
+        axis: axis
+      ) else {
+        return false
+      }
+      guard let configuration = accessoryAgentConfiguration(
+        provider: provider,
+        sessionId: nil,
+        workingDirectory: workingDirectory,
+        cliConfigurationOverride: cliConfiguration,
+        initialSize: predictedInitialSizeForNewTerminal(
+          splitAxis: axis,
+          anchorPanelID: terminalSession.activePanelID
+        )
+      ) else {
+        return false
+      }
+      do {
+        let panel = try terminalSession.openPanel(
+          named: provider.rawValue,
+          configuration: configuration,
+          axis: axis
+        )
+        if let tab = panel.activeTab {
+          accessoryAgentTabIDs.insert(tab.id)
+          accessoryAgentProvidersByTabID[tab.id] = provider
+        }
+        configureControllerHooks(for: panel.activeTab?.controller)
+        markPaneStarting(panel.id)
+        splitRoot = terminalSession.splitLayout?.root ?? .panel(terminalSession.primaryPanelID)
+        maximizedPanelID = nil
+        refreshWorkspaceRootView()
+        notifyWorkspaceChanged()
+        panel.activeTab?.controller.focusTerminal()
+        return true
+      } catch {
+        AppLogger.session.error("Failed to open Ghostty workspace agent pane: \(error.localizedDescription)")
+        return false
+      }
+    }
+  }
+
+  @discardableResult
+  private func openShellTab(in panelID: TerminalPanelID? = nil) -> Bool {
+    guard let terminalSession else { return false }
     do {
       let tab = try terminalSession.openTab(
         in: panelID,
@@ -1170,18 +1363,27 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       markPaneStarting(panelID ?? terminalSession.activePanelID)
       refreshWorkspaceRootView()
       notifyWorkspaceChanged()
+      return true
     } catch {
       AppLogger.session.error("Failed to open Ghostty shell tab: \(error.localizedDescription)")
+      return false
     }
   }
 
+  @discardableResult
   private func openShellPane(
     axis: TerminalSplitAxis = .horizontal,
     anchorPanelID: TerminalPanelID? = nil
-  ) {
-    guard let terminalSession, terminalSession.canOpenPanel else { return }
+  ) -> Bool {
+    guard let terminalSession else { return false }
     maximizedPanelID = nil
     let resolvedAnchorPanelID = anchorPanelID ?? terminalSession.activePanelID
+    guard canSplitPanel(
+      terminalSession.panel(for: resolvedAnchorPanelID),
+      axis: axis
+    ) else {
+      return false
+    }
     let projectedPlaceholderID = TerminalPanelID()
     let projectedRoot = projectedSplitRoot(
       adding: projectedPlaceholderID,
@@ -1205,6 +1407,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         projectedRoot: projectedRoot
       )
     }
+    return true
   }
 
   private func finishOpeningShellPane(
@@ -1213,7 +1416,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     placeholderPanelID: TerminalPanelID,
     projectedRoot: TerminalSplitLayout.Node
   ) {
-    guard let terminalSession, terminalSession.canOpenPanel else {
+    guard let terminalSession else {
       removePendingShellPane(placeholderPanelID)
       return
     }
@@ -1256,6 +1459,49 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private func canCloseGhosttyPanel(_ panel: TerminalPanel) -> Bool {
     guard let terminalSession else { return false }
     return panel.id != terminalSession.primaryPanelID
+  }
+
+  private func focusPanel(direction: TerminalPanelNavigationDirection) -> Bool {
+    guard let terminalSession, let root = currentSplitRoot() else { return false }
+    let frames = Self.panelFrames(
+      for: root,
+      in: CGRect(origin: .zero, size: bounds.size),
+      splitRatiosByPath: splitRatiosByPath
+    )
+    let mappedDirection: TerminalFocusDirection = switch direction {
+    case .left: .left
+    case .right: .right
+    case .up: .up
+    case .down: .down
+    }
+    guard let targetID = TerminalDirectionalFocusResolver.target(
+      from: terminalSession.activePanelID,
+      frames: frames,
+      direction: mappedDirection
+    ), terminalSession.focusPanel(targetID) else {
+      return false
+    }
+    terminalSession.panel(for: targetID)?.activeTab?.controller.focusTerminal()
+    return true
+  }
+
+  private func canSplitPanel(
+    _ panel: TerminalPanel?,
+    axis: TerminalSplitAxis
+  ) -> Bool {
+    guard let panel, let root = currentSplitRoot(), bounds.width > 0, bounds.height > 0 else {
+      return false
+    }
+    let frames = Self.panelFrames(
+      for: root,
+      in: CGRect(origin: .zero, size: bounds.size),
+      splitRatiosByPath: splitRatiosByPath
+    )
+    guard let frame = frames[panel.id] else { return false }
+    let sizingAxis: TerminalPanelKit.SplitAxis = axis == .horizontal ? .horizontal : .vertical
+    let length = axis == .horizontal ? frame.width : frame.height
+    let minimum = TerminalPanelKit.SplitSizing.minimumChildDimension(for: sizingAxis)
+    return length >= (minimum * 2) + Self.terminalPaneDividerSize
   }
 
   private func canCloseGhosttyTab(_ tab: TerminalTab, in panel: TerminalPanel) -> Bool {
@@ -1435,56 +1681,80 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   private static func panelFrames(
     for node: TerminalSplitLayout.Node,
-    in rect: CGRect
+    in rect: CGRect,
+    splitRatiosByPath: [String: [Double]] = [:],
+    nodePath: String = "root"
   ) -> [TerminalPanelID: CGRect] {
     switch node {
     case .panel(let panelID):
       return [panelID: rect]
     case .split(let axis, let children):
-      return splitPanelFrames(axis: axis, children: children, in: rect)
+      return splitPanelFrames(
+        axis: axis,
+        children: children,
+        in: rect,
+        ratios: splitRatiosByPath,
+        nodePath: nodePath
+      )
     }
   }
 
   private static func splitPanelFrames(
     axis: TerminalSplitAxis,
     children: [TerminalSplitLayout.Node],
-    in rect: CGRect
+    in rect: CGRect,
+    ratios: [String: [Double]],
+    nodePath: String
   ) -> [TerminalPanelID: CGRect] {
     guard !children.isEmpty else { return [:] }
 
     var result: [TerminalPanelID: CGRect] = [:]
-    let childCount = CGFloat(children.count)
+    let sizingAxis: TerminalPanelKit.SplitAxis = axis == .horizontal ? .horizontal : .vertical
+    let childDimensions = TerminalPanelKit.SplitSizing.childDimensions(
+      ratios: (ratios[nodePath] ?? []).map { CGFloat($0) },
+      childCount: children.count,
+      containerLength: axis == .horizontal ? rect.width : rect.height,
+      minimumChildDimension: TerminalPanelKit.SplitSizing.minimumChildDimension(for: sizingAxis)
+    )
 
     switch axis {
     case .horizontal:
-      let totalDividerWidth = terminalPaneDividerSize * CGFloat(max(children.count - 1, 0))
-      let childWidth = max(0, rect.width - totalDividerWidth) / childCount
       var nextX = rect.minX
 
       for (index, child) in children.enumerated() {
         if index > 0 {
           nextX += terminalPaneDividerSize
         }
+        let childWidth = childDimensions.indices.contains(index) ? childDimensions[index] : 0
         let childRect = CGRect(x: nextX, y: rect.minY, width: childWidth, height: rect.height)
         result.merge(
-          panelFrames(for: child, in: childRect),
+          panelFrames(
+            for: child,
+            in: childRect,
+            splitRatiosByPath: ratios,
+            nodePath: "\(nodePath).\(index)"
+          ),
           uniquingKeysWith: { current, _ in current }
         )
         nextX += childWidth
       }
 
     case .vertical:
-      let totalDividerHeight = terminalPaneDividerSize * CGFloat(max(children.count - 1, 0))
-      let childHeight = max(0, rect.height - totalDividerHeight) / childCount
       var nextY = rect.minY
 
       for (index, child) in children.enumerated() {
         if index > 0 {
           nextY += terminalPaneDividerSize
         }
+        let childHeight = childDimensions.indices.contains(index) ? childDimensions[index] : 0
         let childRect = CGRect(x: rect.minX, y: nextY, width: rect.width, height: childHeight)
         result.merge(
-          panelFrames(for: child, in: childRect),
+          panelFrames(
+            for: child,
+            in: childRect,
+            splitRatiosByPath: ratios,
+            nodePath: "\(nodePath).\(index)"
+          ),
           uniquingKeysWith: { current, _ in current }
         )
         nextY += childHeight

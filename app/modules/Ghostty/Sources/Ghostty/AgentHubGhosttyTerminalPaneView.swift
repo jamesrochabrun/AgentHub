@@ -17,6 +17,7 @@ struct AgentHubGhosttyTerminalPaneView: View {
   let canMaximize: Bool
   let canClosePanel: (TerminalPanel) -> Bool
   let canCloseTab: (TerminalPanel, TerminalTab) -> Bool
+  let canSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Bool
   let onActivatePanel: (TerminalPanel) -> Void
   let onSelectTab: (TerminalPanel, TerminalTab) -> Void
   let onClosePanel: (TerminalPanel) -> Void
@@ -32,7 +33,8 @@ struct AgentHubGhosttyTerminalPaneView: View {
         panel: panel,
         isMaximized: isMaximized,
         canMaximize: canMaximize,
-        canSplit: session.canOpenPanel,
+        canSplitRight: canSplitPanel(panel, .horizontal),
+        canSplitBelow: canSplitPanel(panel, .vertical),
         canClosePanel: canClosePanel(panel),
         canCloseTab: { tab in canCloseTab(panel, tab) },
         onSelectTab: { tab in onSelectTab(panel, tab) },
