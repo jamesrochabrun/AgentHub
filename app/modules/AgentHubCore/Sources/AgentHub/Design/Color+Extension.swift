@@ -3,8 +3,8 @@
 //
 //  Created by James Rochabrun on 6/8/25.
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 // MARK: - Design Tokens
 
@@ -110,6 +110,21 @@ extension Color {
     self.init(red: Int(r), green: Int(g), blue: Int(b), alpha: alpha)
   }
 
+  static func appearanceAdaptive(lightHex: String, darkHex: String) -> Color {
+    guard lightHex != darkHex else {
+      return Color(hex: lightHex)
+    }
+
+    let lightColor = NSColor.fromHex(lightHex)
+    let darkColor = NSColor.fromHex(darkHex)
+    let dynamicColor = NSColor(name: nil) { appearance in
+      appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        ? darkColor
+        : lightColor
+    }
+    return Color(nsColor: dynamicColor)
+  }
+
   // MARK: - Named Colors (Legacy - use brand colors instead)
 
   static let bookCloth = Color(hex: "#CC785C")
@@ -176,9 +191,24 @@ extension Color {
       let yamlSecondary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlSecondaryHex) ?? "#D4A27F"
       let yamlTertiary = UserDefaults.standard.string(forKey: AgentHubDefaults.yamlTertiaryHex) ?? "#EBDBBC"
       return ThemeColors(
-        brandPrimary: Color(hex: yamlPrimary),
-        brandSecondary: Color(hex: yamlSecondary),
-        brandTertiary: Color(hex: yamlTertiary)
+        brandPrimary: appearanceAdaptive(
+          lightHex: UserDefaults.standard.string(forKey: AgentHubDefaults.yamlLightPrimaryHex)
+            ?? yamlPrimary,
+          darkHex: UserDefaults.standard.string(forKey: AgentHubDefaults.yamlDarkPrimaryHex)
+            ?? yamlPrimary
+        ),
+        brandSecondary: appearanceAdaptive(
+          lightHex: UserDefaults.standard.string(forKey: AgentHubDefaults.yamlLightSecondaryHex)
+            ?? yamlSecondary,
+          darkHex: UserDefaults.standard.string(forKey: AgentHubDefaults.yamlDarkSecondaryHex)
+            ?? yamlSecondary
+        ),
+        brandTertiary: appearanceAdaptive(
+          lightHex: UserDefaults.standard.string(forKey: AgentHubDefaults.yamlLightTertiaryHex)
+            ?? yamlTertiary,
+          darkHex: UserDefaults.standard.string(forKey: AgentHubDefaults.yamlDarkTertiaryHex)
+            ?? yamlTertiary
+        )
       )
     }
 

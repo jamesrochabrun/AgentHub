@@ -102,21 +102,27 @@ struct ThemeSelectionPolicyTests {
     let parser = YAMLThemeParser()
     let theme = try parser.parse(fileURL: ghosttyThemeURL())
     let runtime = RuntimeTheme(from: theme, sourceFileName: "ghostty.yaml")
-    let primaryHex = try hexString(from: runtime.brandPrimary)
-    let secondaryHex = try hexString(from: runtime.brandSecondary)
-    let tertiaryHex = try hexString(from: runtime.brandTertiary)
+    let primaryDarkHex = try hexString(from: runtime.brandPrimary, appearance: .darkAqua)
+    let secondaryDarkHex = try hexString(from: runtime.brandSecondary, appearance: .darkAqua)
+    let tertiaryDarkHex = try hexString(from: runtime.brandTertiary, appearance: .darkAqua)
+    let primaryLightHex = try hexString(from: runtime.brandPrimary, appearance: .aqua)
+    let secondaryLightHex = try hexString(from: runtime.brandSecondary, appearance: .aqua)
+    let tertiaryLightHex = try hexString(from: runtime.brandTertiary, appearance: .aqua)
     let backgroundDarkHex = try hexString(from: #require(runtime.backgroundDark))
     let backgroundLightHex = try hexString(from: #require(runtime.backgroundLight))
     let terminalBackgroundHex = try Color.hexString(from: #require(runtime.terminalBackground))
 
-    #expect(primaryHex == "#A0AEC0")
-    #expect(secondaryHex == "#2D3748")
-    #expect(tertiaryHex == "#CBD5E0")
+    #expect(primaryDarkHex == "#A0AEC0")
+    #expect(secondaryDarkHex == "#2D3748")
+    #expect(tertiaryDarkHex == "#CBD5E0")
+    #expect(primaryLightHex == "#4A5568")
+    #expect(secondaryLightHex == "#2D3748")
+    #expect(tertiaryLightHex == "#64748B")
     #expect(runtime.hasCustomBackgrounds == true)
-    #expect(backgroundDarkHex == "#040F16")
+    #expect(backgroundDarkHex == "#252627")
     #expect(backgroundLightHex == "#FBFBFF")
     #expect(runtime.expandedContentBackgroundDark == nil)
-    #expect(terminalBackgroundHex == "#040F16")
+    #expect(terminalBackgroundHex == "#252627")
     #expect(runtime.terminalAnsiColors?.count == 16)
   }
 
@@ -138,8 +144,19 @@ struct ThemeSelectionPolicyTests {
       .deletingLastPathComponent()
   }
 
-  private func hexString(from color: Color) throws -> String {
-    let nsColor = try #require(NSColor(color).usingColorSpace(.sRGB))
-    return Color.hexString(from: nsColor)
+  private func hexString(
+    from color: Color,
+    appearance appearanceName: NSAppearance.Name? = nil
+  ) throws -> String {
+    guard let appearanceName else {
+      return Color.hexString(from: try #require(NSColor(color).usingColorSpace(.sRGB)))
+    }
+
+    let appearance = try #require(NSAppearance(named: appearanceName))
+    var resolvedColor: NSColor?
+    appearance.performAsCurrentDrawingAppearance {
+      resolvedColor = NSColor(color).usingColorSpace(.sRGB)
+    }
+    return Color.hexString(from: try #require(resolvedColor))
   }
 }

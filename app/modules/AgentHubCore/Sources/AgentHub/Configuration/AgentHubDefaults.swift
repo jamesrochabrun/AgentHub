@@ -256,6 +256,30 @@ public enum AgentHubDefaults {
   /// Type: String (default: unset)
   public static let yamlTertiaryHex = "\(keyPrefix)theme.yamlTertiaryHex"
 
+  /// Active YAML theme light appearance primary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlLightPrimaryHex = "\(keyPrefix)theme.yamlLightPrimaryHex"
+
+  /// Active YAML theme light appearance secondary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlLightSecondaryHex = "\(keyPrefix)theme.yamlLightSecondaryHex"
+
+  /// Active YAML theme light appearance tertiary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlLightTertiaryHex = "\(keyPrefix)theme.yamlLightTertiaryHex"
+
+  /// Active YAML theme dark appearance primary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlDarkPrimaryHex = "\(keyPrefix)theme.yamlDarkPrimaryHex"
+
+  /// Active YAML theme dark appearance secondary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlDarkSecondaryHex = "\(keyPrefix)theme.yamlDarkSecondaryHex"
+
+  /// Active YAML theme dark appearance tertiary color hex value cache
+  /// Type: String (default: unset)
+  public static let yamlDarkTertiaryHex = "\(keyPrefix)theme.yamlDarkTertiaryHex"
+
   /// Installed bundled theme version for a given theme name
   /// Type: String (default: unset)
   /// Usage: `UserDefaults.standard.string(forKey: AgentHubDefaults.installedBundledThemeVersion(for: "sentry"))`

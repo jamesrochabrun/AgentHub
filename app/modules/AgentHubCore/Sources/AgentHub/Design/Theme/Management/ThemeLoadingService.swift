@@ -6,9 +6,31 @@
 import Foundation
 
 struct ThemePalette: Equatable, Sendable {
+  struct Variant: Equatable, Sendable {
+    let primary: String
+    let secondary: String
+    let tertiary: String
+  }
+
   let primary: String
   let secondary: String
   let tertiary: String
+  let light: Variant?
+  let dark: Variant?
+
+  init(
+    primary: String,
+    secondary: String,
+    tertiary: String,
+    light: Variant? = nil,
+    dark: Variant? = nil
+  ) {
+    self.primary = primary
+    self.secondary = secondary
+    self.tertiary = tertiary
+    self.light = light
+    self.dark = dark
+  }
 }
 
 struct DiscoveredYAMLTheme: Equatable, Sendable {
@@ -79,8 +101,20 @@ actor ThemeLoadingService: ThemeLoadingServiceProtocol {
       palette: ThemePalette(
         primary: theme.colors.brand.primary,
         secondary: theme.colors.brand.secondary,
-        tertiary: theme.colors.brand.tertiary
+        tertiary: theme.colors.brand.tertiary,
+        light: theme.colors.brand.light.map { Self.paletteVariant(from: $0) },
+        dark: theme.colors.brand.dark.map { Self.paletteVariant(from: $0) }
       )
+    )
+  }
+
+  private nonisolated static func paletteVariant(
+    from variant: YAMLTheme.BrandColorVariant
+  ) -> ThemePalette.Variant {
+    ThemePalette.Variant(
+      primary: variant.primary,
+      secondary: variant.secondary,
+      tertiary: variant.tertiary
     )
   }
 
@@ -100,9 +134,23 @@ actor ThemePreferenceWriter: ThemePreferenceWriting {
     defaults.set(palette.primary, forKey: AgentHubDefaults.yamlPrimaryHex)
     defaults.set(palette.secondary, forKey: AgentHubDefaults.yamlSecondaryHex)
     defaults.set(palette.tertiary, forKey: AgentHubDefaults.yamlTertiaryHex)
+    persist(palette.light?.primary, forKey: AgentHubDefaults.yamlLightPrimaryHex)
+    persist(palette.light?.secondary, forKey: AgentHubDefaults.yamlLightSecondaryHex)
+    persist(palette.light?.tertiary, forKey: AgentHubDefaults.yamlLightTertiaryHex)
+    persist(palette.dark?.primary, forKey: AgentHubDefaults.yamlDarkPrimaryHex)
+    persist(palette.dark?.secondary, forKey: AgentHubDefaults.yamlDarkSecondaryHex)
+    persist(palette.dark?.tertiary, forKey: AgentHubDefaults.yamlDarkTertiaryHex)
   }
 
   func persistThemeSelection(_ themeId: String, backend: EmbeddedTerminalBackend) async {
     ThemeSelectionPolicy.persistThemeSelection(themeId, defaults: defaults, backend: backend)
+  }
+
+  private func persist(_ value: String?, forKey key: String) {
+    if let value {
+      defaults.set(value, forKey: key)
+    } else {
+      defaults.removeObject(forKey: key)
+    }
   }
 }

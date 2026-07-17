@@ -52,6 +52,14 @@ public struct YAMLTheme: Codable, Sendable {
     public let primary: String    // Hex color
     public let secondary: String
     public let tertiary: String
+    public let light: BrandColorVariant?
+    public let dark: BrandColorVariant?
+  }
+
+  public struct BrandColorVariant: Codable, Sendable {
+    public let primary: String
+    public let secondary: String
+    public let tertiary: String
   }
 
   public struct BackgroundColors: Codable, Sendable {

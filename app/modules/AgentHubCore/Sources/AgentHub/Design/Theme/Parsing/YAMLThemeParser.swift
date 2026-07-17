@@ -60,6 +60,12 @@ public struct YAMLThemeParser {
     try validateColor(theme.colors.brand.primary, field: "colors.brand.primary")
     try validateColor(theme.colors.brand.secondary, field: "colors.brand.secondary")
     try validateColor(theme.colors.brand.tertiary, field: "colors.brand.tertiary")
+    if let light = theme.colors.brand.light {
+      try validateBrandVariant(light, field: "colors.brand.light")
+    }
+    if let dark = theme.colors.brand.dark {
+      try validateBrandVariant(dark, field: "colors.brand.dark")
+    }
 
     // Validate optional background colors
     if let bg = theme.colors.backgrounds {
@@ -93,5 +99,14 @@ public struct YAMLThemeParser {
     guard regex.firstMatch(in: hex, range: range) != nil else {
       throw ThemeError.invalidColorFormat(hex, field)
     }
+  }
+
+  private func validateBrandVariant(
+    _ variant: YAMLTheme.BrandColorVariant,
+    field: String
+  ) throws {
+    try validateColor(variant.primary, field: "\(field).primary")
+    try validateColor(variant.secondary, field: "\(field).secondary")
+    try validateColor(variant.tertiary, field: "\(field).tertiary")
   }
 }
