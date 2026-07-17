@@ -1198,6 +1198,45 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     return true
   }
 
+  public func workspaceSessionDetectionContexts() -> [WorkspaceSessionDetectionContext] {
+    allTabs.compactMap { tab in
+      guard !isProtectedAgentTab(tab), tab.linkedSession == nil else { return nil }
+      return WorkspaceSessionDetectionContext(
+        id: workspaceDetectionContextID(for: tab),
+        provider: inferredProvider(for: tab),
+        projectPath: resolvedExistingDirectory(tab.workingDirectory),
+        foregroundProcessID: tab.terminalView.currentProcessId
+      )
+    }
+  }
+
+  public func markWorkspaceSession(
+    contextID: String,
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool {
+    guard let tab = allTabs.first(where: {
+      workspaceDetectionContextID(for: $0) == contextID
+    }) else {
+      return false
+    }
+    guard !isProtectedAgentTab(tab), tab.linkedSession == nil else { return false }
+
+    tab.role = .agent
+    tab.name = provider.rawValue
+    tab.linkedSession = TerminalWorkspaceLinkedSessionSnapshot(
+      provider: provider,
+      sessionId: sessionId,
+      relationshipKind: .accessoryChild
+    )
+    tab.workingDirectory = resolvedExistingDirectory(projectPath)
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
+    return true
+  }
+
   private func candidateAccessoryTab(for workingDirectory: String) -> RegularTerminalTab? {
     let candidates = allTabs.filter { tab in
       !isProtectedAgentTab(tab)
@@ -1205,6 +1244,24 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
         && resolvedExistingDirectory(tab.workingDirectory) == workingDirectory
     }
     return candidates.first { $0.role == .agent } ?? candidates.first { $0.role == .shell }
+  }
+
+  private func workspaceDetectionContextID(for tab: RegularTerminalTab) -> String {
+    "regular-\(tab.id.rawValue.uuidString)"
+  }
+
+  private func inferredProvider(for tab: RegularTerminalTab) -> SessionProviderKind? {
+    let label = [tab.name, tab.title]
+      .compactMap(Self.nonEmpty)
+      .joined(separator: " ")
+      .lowercased()
+    if label.contains("claude") {
+      return .claude
+    }
+    if label.contains("codex") {
+      return .codex
+    }
+    return nil
   }
 
   private func canCloseRegularPanel(_ panel: RegularTerminalPanel) -> Bool {

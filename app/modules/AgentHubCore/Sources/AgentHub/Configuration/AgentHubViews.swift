@@ -53,6 +53,7 @@ public struct AgentHubSessionsView: View {
     MultiProviderSessionsListView(
       claudeViewModel: provider.claudeSessionsViewModel,
       codexViewModel: provider.codexSessionsViewModel,
+      workspaceViewModel: provider.agentWorkspacesViewModel,
       columnVisibility: $columnVisibility,
       intelligenceViewModel: provider.intelligenceViewModel,
       worktreeBranchNamingService: provider.worktreeBranchNamingService,

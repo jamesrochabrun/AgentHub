@@ -79,6 +79,6 @@ struct TerminalWorkspaceLinkedSessionSnapshotTests {
     let decoded = try JSONDecoder().decode(TerminalWorkspaceSnapshot.self, from: data)
 
     #expect(decoded == snapshot)
-    #expect(decoded.schemaVersion == 3)
+    #expect(decoded.schemaVersion == 4)
   }
 }

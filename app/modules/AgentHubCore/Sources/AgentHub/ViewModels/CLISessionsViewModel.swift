@@ -2317,6 +2317,116 @@ public final class CLISessionsViewModel {
     persistWorkspaceState()
   }
 
+  /// Adopts a newly detected session launched from a provider-neutral workspace.
+  /// The repository must be part of this provider's persisted workspace state
+  /// before the monitored ID is saved, otherwise launch restoration has no
+  /// project root from which to rebuild the session.
+  func registerWorkspaceSession(_ session: CLISession) async {
+    unrestoredSessionIds.insert(session.id)
+    syncFocusedSessionIdsToMonitor(extraSessionIds: [session.id])
+
+    await ensureWorkspaceSessionRepository(at: session.projectPath)
+
+    pendingRestorationSessionIds.remove(session.id)
+    unrestoredSessionIds.remove(session.id)
+    monitoredSessionBackup[session.id] = session
+
+    if monitoredSessionIds.contains(session.id) {
+      ensureLiveMonitoring(sessionId: session.id)
+      persistMonitoredSessions()
+    } else {
+      startMonitoring(session: session)
+    }
+
+    refresh()
+  }
+
+  /// Reconciles workspace-owned session IDs with the normal provider launch
+  /// restoration flow without mounting any terminal surfaces.
+  func restoreWorkspaceSessions(_ references: [AgentWorkspaceSessionReference]) async {
+    let references = Array(Set(references.filter { $0.provider == providerKind }))
+    guard !references.isEmpty else { return }
+
+    let sessionIds = Set(references.map(\.sessionId))
+    pendingRestorationSessionIds.formUnion(sessionIds)
+    unrestoredSessionIds.formUnion(sessionIds)
+    syncFocusedSessionIdsToMonitor(extraSessionIds: sessionIds)
+
+    let projectPaths = Set(references.map {
+      WorktreeModuleResolver.normalizedDirectoryPath($0.projectPath)
+    })
+    for projectPath in projectPaths.sorted() {
+      await ensureWorkspaceSessionRepository(at: projectPath)
+    }
+
+    materializeWorkspaceSessionReferences(references)
+
+    let sessions = await monitorService.loadSessions(ids: sessionIds)
+    restoreLoadedMonitoredSessions(
+      sessions,
+      allowedProjectRoots: projectRoots(from: selectedRepositories)
+    )
+
+    let unresolvedIds = sessionIds.intersection(pendingRestorationSessionIds)
+    pendingRestorationSessionIds.formUnion(unresolvedIds)
+    unrestoredSessionIds.formUnion(unresolvedIds)
+    persistMonitoredSessions()
+  }
+
+  /// Workspace links are durable session identities, so they must appear in the
+  /// normal Sessions list even while their JSONL file is still being located.
+  /// The targeted load below replaces these lightweight entries with parsed
+  /// session metadata as soon as it succeeds.
+  private func materializeWorkspaceSessionReferences(
+    _ references: [AgentWorkspaceSessionReference]
+  ) {
+    var materializedSessions: [CLISession] = []
+
+    for reference in references {
+      monitoredSessionIds.insert(reference.sessionId)
+
+      if let session = findSession(byId: reference.sessionId) {
+        monitoredSessionBackup[reference.sessionId] = session
+        materializedSessions.append(session)
+        continue
+      }
+
+      if let session = monitoredSessionBackup[reference.sessionId] {
+        materializedSessions.append(session)
+        continue
+      }
+
+      let session = CLISession(
+        id: reference.sessionId,
+        projectPath: WorktreeModuleResolver.normalizedDirectoryPath(reference.projectPath),
+        lastActivityAt: .now,
+        isActive: false
+      )
+      monitoredSessionBackup[reference.sessionId] = session
+      materializedSessions.append(session)
+    }
+
+    expandItemsContainingLoadedSessions(materializedSessions)
+    loadCustomNames()
+    loadPinnedSessions()
+  }
+
+  private func ensureWorkspaceSessionRepository(at projectPath: String) async {
+    await focusWorktreeIfNeeded(at: projectPath)
+    let addedRepository = await monitorService.addRepository(projectPath)
+    if addedRepository != nil {
+      browseSessionsLoadState = .loaded
+    }
+
+    let repositories = await monitorService.getSelectedRepositories()
+    selectedRepositories = mergePreservingExpandedState(
+      current: selectedRepositories,
+      updated: repositories
+    )
+    persistSelectedRepositories()
+    syncClaudeHookInstalls()
+  }
+
   /// Syncs the backup store with latest session data from allSessions.
   /// Called after repositories are updated to keep backup fresh for monitored sessions.
   /// Also cleans up any orphaned entries not in monitoredSessionIds.

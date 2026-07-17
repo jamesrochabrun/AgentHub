@@ -173,6 +173,7 @@ public struct MultiProviderMonitoringPanelView: View {
   let onEmbeddedSidePanelVisibilityChange: (Bool) -> Void
   let onAddFolder: () -> Void
   let onRequestStartSession: (String?) -> Void
+  let onRequestCreateWorkspace: (String) -> Void
   let onRequestForkSession: (CLISession, SessionProviderKind) -> Void
 
   @State private var sessionFileSheetItem: SessionFileSheetItem?
@@ -235,6 +236,7 @@ public struct MultiProviderMonitoringPanelView: View {
     onEmbeddedSidePanelVisibilityChange: @escaping (Bool) -> Void = { _ in },
     onAddFolder: @escaping () -> Void,
     onRequestStartSession: @escaping (String?) -> Void,
+    onRequestCreateWorkspace: @escaping (String) -> Void = { _ in },
     onRequestForkSession: @escaping (CLISession, SessionProviderKind) -> Void = { _, _ in }
   ) {
     self.claudeViewModel = claudeViewModel
@@ -244,6 +246,7 @@ public struct MultiProviderMonitoringPanelView: View {
     self.onEmbeddedSidePanelVisibilityChange = onEmbeddedSidePanelVisibilityChange
     self.onAddFolder = onAddFolder
     self.onRequestStartSession = onRequestStartSession
+    self.onRequestCreateWorkspace = onRequestCreateWorkspace
     self.onRequestForkSession = onRequestForkSession
   }
 
@@ -456,7 +459,8 @@ public struct MultiProviderMonitoringPanelView: View {
       ModuleLandingView(
         modulePath: modulePath,
         rootRepositoryPath: rootRepositoryPath(for: modulePath),
-        onStartSession: { onRequestStartSession(modulePath) }
+        onStartSession: { onRequestStartSession(modulePath) },
+        onCreateWorkspace: { onRequestCreateWorkspace(modulePath) }
       )
     } else if !snapshot.allItems.isEmpty {
       monitoredSessionsList(snapshot: snapshot)
@@ -1514,6 +1518,7 @@ private struct ModuleLandingView: View {
   let modulePath: String
   let rootRepositoryPath: String
   let onStartSession: () -> Void
+  let onCreateWorkspace: () -> Void
 
   @Environment(\.colorScheme) private var colorScheme
 
@@ -1538,23 +1543,30 @@ private struct ModuleLandingView: View {
         .truncationMode(.middle)
         .frame(maxWidth: .infinity)
 
-      Button(action: onStartSession) {
-        HStack(spacing: 8) {
-          Image(systemName: "plus.circle.fill")
-            .font(.system(size: 13))
-          Text("Start Session")
-            .font(.system(size: 13, weight: .semibold))
+      HStack(spacing: 10) {
+        Button(action: onStartSession) {
+          HStack(spacing: 8) {
+            Image(systemName: "plus.circle.fill")
+              .font(.system(size: 13))
+            Text("Start Session")
+              .font(.system(size: 13, weight: .semibold))
+          }
+          .foregroundStyle(colorScheme == .dark ? .black : .white)
+          .frame(height: 36)
+          .padding(.horizontal, 18)
+          .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+              .fill(Color.primary)
+          )
         }
-        .foregroundStyle(colorScheme == .dark ? .black : .white)
-        .frame(height: 36)
-        .padding(.horizontal, 18)
-        .background(
-          RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(Color.primary)
-        )
+        .buttonStyle(.plain)
+        .help("Start a session in \(moduleName)")
+
+        Button("New Workspace", systemImage: "rectangle.3.group", action: onCreateWorkspace)
+          .buttonStyle(.bordered)
+          .controlSize(.large)
+          .help("Open a multi-panel terminal in \(moduleName)")
       }
-      .buttonStyle(.plain)
-      .help("Start a session in \(moduleName)")
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .padding(.horizontal, 48)

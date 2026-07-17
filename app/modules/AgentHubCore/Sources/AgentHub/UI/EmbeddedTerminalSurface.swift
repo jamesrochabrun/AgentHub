@@ -26,6 +26,7 @@ public protocol EmbeddedTerminalSurface: AnyObject {
   var onRequestShowEditor: (() -> Void)? { get set }
   var consumeQueuedWebPreviewContextOnSubmit: (() -> String?)? { get set }
   var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)? { get set }
+  var workspaceCLIConfigurationProvider: ((SessionProviderKind) -> CLICommandConfiguration)? { get set }
 
   func updateContext(terminalSessionKey: String?, sessionViewModel: CLISessionsViewModel?)
   func configure(
@@ -63,12 +64,37 @@ public protocol EmbeddedTerminalSurface: AnyObject {
     projectPath: String,
     origin: SessionRelationshipOrigin
   ) -> Bool
+  func workspaceSessionDetectionContexts() -> [WorkspaceSessionDetectionContext]
+  func markWorkspaceSession(
+    contextID: String,
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool
+  func openWorkspaceSurface(
+    kind: WorkspaceTerminalLaunchKind,
+    placement: WorkspaceSurfacePlacement,
+    cliConfiguration: CLICommandConfiguration?,
+    projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> WorkspaceSurfaceLaunchContext?
+  @discardableResult
+  func focusWorkspaceSession(
+    provider: SessionProviderKind,
+    sessionId: String
+  ) -> Bool
   func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot?
   func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot)
 }
 
 public extension EmbeddedTerminalSurface {
   var onWorkspaceChanged: ((TerminalWorkspaceSnapshot) -> Void)? {
+    get { nil }
+    set {}
+  }
+
+  var workspaceCLIConfigurationProvider: ((SessionProviderKind) -> CLICommandConfiguration)? {
     get { nil }
     set {}
   }
@@ -97,6 +123,43 @@ public extension EmbeddedTerminalSurface {
     sessionId: String,
     projectPath: String,
     origin: SessionRelationshipOrigin
+  ) -> Bool {
+    false
+  }
+
+  func workspaceSessionDetectionContexts() -> [WorkspaceSessionDetectionContext] {
+    []
+  }
+
+  func markWorkspaceSession(
+    contextID: String,
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool {
+    markAccessorySession(
+      provider: provider,
+      sessionId: sessionId,
+      projectPath: projectPath,
+      origin: origin
+    )
+  }
+
+  func openWorkspaceSurface(
+    kind: WorkspaceTerminalLaunchKind,
+    placement: WorkspaceSurfacePlacement,
+    cliConfiguration: CLICommandConfiguration?,
+    projectPath: String,
+    metadataStore: SessionMetadataStore?
+  ) -> WorkspaceSurfaceLaunchContext? {
+    nil
+  }
+
+  @discardableResult
+  func focusWorkspaceSession(
+    provider: SessionProviderKind,
+    sessionId: String
   ) -> Bool {
     false
   }
