@@ -90,24 +90,9 @@ public enum GhosttyLayeredConfigComposer {
     environment: [String: String],
     homeDirectoryURL: URL
   ) -> [String] {
-    let xdgBase: URL
-    if let xdgConfigHome = environment["XDG_CONFIG_HOME"], !xdgConfigHome.isEmpty {
-      xdgBase = URL(fileURLWithPath: (xdgConfigHome as NSString).expandingTildeInPath, isDirectory: true)
-    } else {
-      xdgBase = homeDirectoryURL.appendingPathComponent(".config", isDirectory: true)
-    }
-
-    return [
-      xdgBase
-        .appendingPathComponent("ghostty", isDirectory: true)
-        .appendingPathComponent("config", isDirectory: false)
-        .path,
-      homeDirectoryURL
-        .appendingPathComponent("Library", isDirectory: true)
-        .appendingPathComponent("Application Support", isDirectory: true)
-        .appendingPathComponent("com.mitchellh.ghostty", isDirectory: true)
-        .appendingPathComponent("config", isDirectory: false)
-        .path,
-    ]
+    GhosttyConfigLocations.defaultConfigPaths(
+      environment: environment,
+      homeDirectoryURL: homeDirectoryURL
+    )
   }
 }
