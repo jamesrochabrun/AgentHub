@@ -69,8 +69,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/GhosttySwift",
       "state" : {
-        "revision" : "f7286937278044fcfa0d6385b1264fe9cc8195b3",
-        "version" : "1.0.4"
+        "revision" : "98c553a64e518f32ab311278d5471ed9439f86bc",
+        "version" : "1.0.8"
       }
     },
     {

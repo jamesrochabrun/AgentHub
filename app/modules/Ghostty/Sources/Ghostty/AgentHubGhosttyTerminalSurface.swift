@@ -56,6 +56,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var configuredProcessProvider: SessionProviderKind?
   private var configuredExpectedExecutable: String?
   private var metadataStore: SessionMetadataStore?
+  private var currentIsDark = true
   private static let terminalPaneDividerSize = TerminalPanelKit.SplitSizing.dividerDimension
   private static let terminalTabStripHeight = AgentHubGhosttyTerminalTabChrome.stripHeight
   private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
@@ -140,6 +141,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   ) {
     guard !isConfigured else { return }
     isConfigured = true
+    currentIsDark = isDark
     self.projectPath = projectPath
     configuredSessionId = sessionId
     configuredProcessProvider = SessionProviderKind(cliMode: cliConfiguration.mode)
@@ -176,6 +178,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   public func configureShell(projectPath: String, isDark: Bool, shellPath: String?) {
     guard !isConfigured else { return }
     isConfigured = true
+    currentIsDark = isDark
     self.projectPath = projectPath
     configuredSessionId = nil
     configuredProcessProvider = sessionViewModel?.providerKind
@@ -223,7 +226,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       cliConfiguration: cliConfiguration,
       initialPrompt: nil,
       initialInputText: nil,
-      isDark: true,
+      isDark: currentIsDark,
       dangerouslySkipPermissions: false,
       permissionModePlan: false,
       worktreeName: nil,
@@ -318,7 +321,35 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {
-    // Ghostty owns live appearance through its config. Font size is applied at surface creation.
+    currentIsDark = isDark
+    guard let configurationPath = AgentHubGhosttyAppearanceConfiguration.path(isDark: isDark) else {
+      AppLogger.session.error("Unable to locate the bundled Ghostty appearance configuration.")
+      return
+    }
+
+    let controllers = allTabs().map(\.controller)
+    if let runtime = controllers.first?.runtime {
+      do {
+        _ = try runtime.applyConfigurationOverlay(at: configurationPath)
+      } catch {
+        AppLogger.session.error(
+          "Failed to update Ghostty appearance: \(error.localizedDescription)"
+        )
+      }
+    }
+
+    let colorScheme = AgentHubGhosttyAppearanceConfiguration.colorScheme(isDark: isDark)
+    for controller in controllers {
+      _ = controller.setColorScheme(colorScheme)
+      guard controller.configurationOverlayPath != configurationPath else { continue }
+      do {
+        _ = try controller.applyConfigurationOverlay(at: configurationPath)
+      } catch {
+        AppLogger.session.error(
+          "Failed to update Ghostty surface appearance: \(error.localizedDescription)"
+        )
+      }
+    }
   }
 
   public func focus() {
@@ -712,6 +743,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       // which is the bulk of the per-mount cold-start cost.
       let runtime = try await AgentHubSharedGhosttyRuntime.acquire()
       guard !Task.isCancelled else { return }
+      if let configurationPath = AgentHubGhosttyAppearanceConfiguration.path(
+        isDark: currentIsDark
+      ) {
+        _ = try runtime.applyConfigurationOverlay(at: configurationPath)
+      }
       let session = try TerminalSession(
         runtime: runtime,
         primaryConfiguration: primaryConfiguration,
@@ -908,7 +944,13 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       environment: environment,
       initialInput: initialInput,
       fontSize: resolvedFontSize(),
-      initialSize: initialSize
+      initialSize: initialSize,
+      configurationOverlayPath: AgentHubGhosttyAppearanceConfiguration.path(
+        isDark: currentIsDark
+      ),
+      colorScheme: AgentHubGhosttyAppearanceConfiguration.colorScheme(
+        isDark: currentIsDark
+      )
     )
   }
 

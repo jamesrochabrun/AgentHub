@@ -95,7 +95,7 @@ public final class ThemeManager {
 
   private static let bundledGhosttyYAML = """
   name: "Ghostty"
-  version: "1.2"
+  version: "1.4"
   author: "AgentHub"
   description: "Ghostty-only theme with Singularity highlights and soft app backgrounds"
 
@@ -104,13 +104,17 @@ public final class ThemeManager {
       primary: "#A0AEC0"
       secondary: "#2D3748"
       tertiary: "#CBD5E0"
+      light:
+        primary: "#4A5568"
+        secondary: "#2D3748"
+        tertiary: "#64748B"
 
     backgrounds:
-      dark: "#040F16"
+      dark: "#252627"
       light: "#FBFBFF"
 
     terminal:
-      background: "#040F16"
+      background: "#252627"
       foreground: "#E2E8F0"
       cursor: "#A0AEC0"
       ansi:
@@ -320,11 +324,11 @@ public final class ThemeManager {
   ) async throws {
     let cacheKey = fileURL.lastPathComponent
     if !forceReload, let cached = themeCache[cacheKey] {
+      await persistYAMLPalette(for: cacheKey)
       guard isCurrentGeneration(generation) else { return }
       stopWatchingInactiveThemeFile(nextThemeURL: fileURL)
       self.currentTheme = cached
       setupHotReload(for: fileURL)
-      await persistYAMLPalette(for: cacheKey)
       await saveCurrentThemeSelection(cacheKey, backend: backend)
       return
     }
@@ -332,15 +336,16 @@ public final class ThemeManager {
     let loaded = try await loadingService.loadTheme(fileURL: fileURL)
     guard isCurrentGeneration(generation) else { return }
 
-    stopWatchingInactiveThemeFile(nextThemeURL: fileURL)
     let runtime = RuntimeTheme(from: loaded.theme, sourceFileName: cacheKey)
     themeCache[cacheKey] = runtime
     yamlColorCache[cacheKey] = loaded.palette
-    self.currentTheme = runtime
 
-    // Setup hot-reload
-    setupHotReload(for: fileURL)
     await persistYAMLPalette(for: cacheKey)
+    guard isCurrentGeneration(generation) else { return }
+
+    stopWatchingInactiveThemeFile(nextThemeURL: fileURL)
+    self.currentTheme = runtime
+    setupHotReload(for: fileURL)
     await saveCurrentThemeSelection(cacheKey, backend: backend)
   }
 

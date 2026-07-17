@@ -15,7 +15,7 @@ let package = Package(
   ],
   dependencies: [
     .package(path: "../AgentHubCore"),
-    .package(url: "https://github.com/jamesrochabrun/GhosttySwift", exact: "1.0.4"),
+    .package(url: "https://github.com/jamesrochabrun/GhosttySwift", exact: "1.0.8"),
   ],
   targets: [
     .target(
@@ -25,6 +25,9 @@ let package = Package(
         .product(name: "GhosttySwift", package: "GhosttySwift"),
       ],
       path: "Sources/Ghostty",
+      resources: [
+        .process("Resources"),
+      ],
       swiftSettings: [
         .swiftLanguageMode(.v5)
       ]

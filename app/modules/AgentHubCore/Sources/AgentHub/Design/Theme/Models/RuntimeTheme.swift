@@ -54,10 +54,21 @@ public struct RuntimeTheme: Identifiable {
     self.sourceFileName = sourceFileName
     self.version = yaml.version
 
-    // Resolve brand colors
-    self.brandPrimary = Color(hex: yaml.colors.brand.primary)
-    self.brandSecondary = Color(hex: yaml.colors.brand.secondary)
-    self.brandTertiary = Color(hex: yaml.colors.brand.tertiary)
+    // Resolve brand colors, preserving legacy single-palette themes while
+    // allowing appearance-specific contrast where a theme provides it.
+    let brand = yaml.colors.brand
+    self.brandPrimary = Color.appearanceAdaptive(
+      lightHex: brand.light?.primary ?? brand.primary,
+      darkHex: brand.dark?.primary ?? brand.primary
+    )
+    self.brandSecondary = Color.appearanceAdaptive(
+      lightHex: brand.light?.secondary ?? brand.secondary,
+      darkHex: brand.dark?.secondary ?? brand.secondary
+    )
+    self.brandTertiary = Color.appearanceAdaptive(
+      lightHex: brand.light?.tertiary ?? brand.tertiary,
+      darkHex: brand.dark?.tertiary ?? brand.tertiary
+    )
 
     // Resolve optional backgrounds
     if let bg = yaml.colors.backgrounds {

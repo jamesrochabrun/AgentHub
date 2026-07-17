@@ -1,5 +1,5 @@
 name: "Ghostty"
-version: "1.3"
+version: "1.4"
 author: "AgentHub"
 description: "Ghostty-only theme with Singularity highlights and soft app backgrounds"
 
@@ -8,6 +8,10 @@ colors:
     primary: "#A0AEC0"
     secondary: "#2D3748"
     tertiary: "#CBD5E0"
+    light:
+      primary: "#4A5568"
+      secondary: "#2D3748"
+      tertiary: "#64748B"
 
   backgrounds:
     dark: "#252627"

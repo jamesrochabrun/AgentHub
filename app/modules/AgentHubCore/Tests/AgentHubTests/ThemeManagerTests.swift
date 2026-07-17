@@ -97,6 +97,31 @@ private actor DelayedThemeLoadingService: ThemeLoadingServiceProtocol {
   }
 }
 
+private actor DelayedThemePreferenceWriter: ThemePreferenceWriting {
+  private var paletteContinuation: CheckedContinuation<Void, Never>?
+  private var paletteWriteStarted = false
+
+  func persistYAMLPalette(_ palette: ThemePalette) async {
+    paletteWriteStarted = true
+    await withCheckedContinuation { continuation in
+      paletteContinuation = continuation
+    }
+  }
+
+  func persistThemeSelection(_ themeId: String, backend: EmbeddedTerminalBackend) async {}
+
+  func waitUntilPaletteWriteStarts() async {
+    while !paletteWriteStarted || paletteContinuation == nil {
+      await Task.yield()
+    }
+  }
+
+  func finishPaletteWrite() {
+    paletteContinuation?.resume()
+    paletteContinuation = nil
+  }
+}
+
 @Suite("Theme manager", .serialized)
 struct ThemeManagerTests {
 
@@ -205,6 +230,30 @@ struct ThemeManagerTests {
     #expect(fixture.defaults.string(forKey: AgentHubDefaults.yamlTertiaryHex) == "#778899")
   }
 
+  @MainActor
+  @Test("A YAML theme is published only after its palette is persisted")
+  func yamlThemePublishesAfterPalettePersistence() async throws {
+    let fixture = try Fixture()
+    defer { fixture.teardown() }
+    let loader = RecordingThemeLoadingService(loadedThemes: [
+      "adaptive.yaml": try loadedTheme(name: "Adaptive")
+    ])
+    let writer = DelayedThemePreferenceWriter()
+    let manager = fixture.makeManager(loader: loader, preferenceWriter: writer)
+
+    let selection = Task { @MainActor in
+      await manager.applySelection("adaptive.yaml", backend: .regular)
+    }
+    await writer.waitUntilPaletteWriteStarts()
+
+    #expect(manager.currentTheme.id == AppTheme.neutral.rawValue)
+
+    await writer.finishPaletteWrite()
+    _ = await selection.value
+
+    #expect(manager.currentTheme.sourceFileName == "adaptive.yaml")
+  }
+
   private final class Fixture {
     let themesDirectory: URL
     let suiteName: String
@@ -224,11 +273,15 @@ struct ThemeManagerTests {
     }
 
     @MainActor
-    func makeManager(loader: any ThemeLoadingServiceProtocol) -> ThemeManager {
+    func makeManager(
+      loader: any ThemeLoadingServiceProtocol,
+      preferenceWriter: (any ThemePreferenceWriting)? = nil
+    ) -> ThemeManager {
       ThemeManager(
         defaults: defaults,
         themesDirectory: themesDirectory,
         loadingService: loader,
+        preferenceWriter: preferenceWriter,
         fileWatcher: NoOpThemeFileWatcher(),
         installBundledThemes: false,
         loadSavedThemeAsync: false
