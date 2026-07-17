@@ -12,14 +12,18 @@ struct GhosttyConfigPathResolverTests {
 
   @Test("Returns nil when no config path is saved")
   func emptyConfigPath() {
-    let defaults = makeDefaults()
+    let store = GhosttyTestDefaults()
+    defer { store.cleanUp() }
+    let defaults = store.defaults
 
     #expect(GhosttyConfigPathResolver.configuredPath(defaults: defaults) == nil)
   }
 
   @Test("Returns saved file path when it exists")
   func existingConfigPath() throws {
-    let defaults = makeDefaults()
+    let store = GhosttyTestDefaults()
+    defer { store.cleanUp() }
+    let defaults = store.defaults
     let configURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("ghostty-\(UUID().uuidString).conf")
     try "font-size = 14\n".write(to: configURL, atomically: true, encoding: .utf8)
@@ -32,7 +36,9 @@ struct GhosttyConfigPathResolverTests {
 
   @Test("Ignores missing files and directories")
   func ignoresInvalidPaths() throws {
-    let defaults = makeDefaults()
+    let store = GhosttyTestDefaults()
+    defer { store.cleanUp() }
+    let defaults = store.defaults
     let directoryURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("ghostty-config-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
@@ -48,7 +54,9 @@ struct GhosttyConfigPathResolverTests {
   #if canImport(Darwin)
   @Test("Ignores non-regular files")
   func ignoresNonRegularFiles() throws {
-    let defaults = makeDefaults()
+    let store = GhosttyTestDefaults()
+    defer { store.cleanUp() }
+    let defaults = store.defaults
     let fifoURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("ghostty-config-\(UUID().uuidString).fifo")
     let created = fifoURL.path.withCString { mkfifo($0, mode_t(0o600)) }
@@ -60,11 +68,4 @@ struct GhosttyConfigPathResolverTests {
     #expect(GhosttyConfigPathResolver.configuredPath(defaults: defaults) == nil)
   }
   #endif
-}
-
-private func makeDefaults() -> UserDefaults {
-  let suiteName = "com.agenthub.tests.ghostty-config.\(UUID().uuidString)"
-  let defaults = UserDefaults(suiteName: suiteName)!
-  defaults.removePersistentDomain(forName: suiteName)
-  return defaults
 }

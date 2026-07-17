@@ -668,10 +668,29 @@ public struct SettingsView: View {
         .disabled(terminalGhosttyConfigPath.isEmpty)
       }
 
-      Text("Applied when creating new Ghostty terminal sessions.")
+      if ghosttyConfigPathIsInvalid {
+        Label("File not found or not readable — the setting is ignored.", systemImage: "exclamationmark.triangle")
+          .font(.caption)
+          .foregroundColor(.orange)
+      }
+
+      Text("Layered on top of your Ghostty configuration, for AgentHub terminals only. Relaunch AgentHub to apply changes.")
         .font(.caption)
         .foregroundColor(.secondary)
     }
+  }
+
+  private var ghosttyConfigPathIsInvalid: Bool {
+    let trimmed = terminalGhosttyConfigPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    let expandedPath = (trimmed as NSString).expandingTildeInPath
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory),
+          !isDirectory.boolValue,
+          FileManager.default.isReadableFile(atPath: expandedPath) else {
+      return true
+    }
+    return false
   }
 
   private func chooseGhosttyConfigFile() {

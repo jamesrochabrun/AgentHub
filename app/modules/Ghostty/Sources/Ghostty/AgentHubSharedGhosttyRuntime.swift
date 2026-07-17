@@ -32,7 +32,7 @@ public enum AgentHubSharedGhosttyRuntime {
     }
 
     AgentHubGhosttyRuntimeLogging.applyQuietDefault()
-    let configPath = GhosttyConfigPathResolver.configuredPath()
+    let configPath = GhosttyLayeredConfigComposer.effectiveConfigPath()
     let task = Task { @MainActor in
       try await GhosttyRuntime.make(configPath: configPath)
     }
