@@ -18,6 +18,11 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     let protectsPrimaryTab: Bool
   }
 
+  private struct PendingLinkedSessionFocus {
+    let provider: SessionProviderKind
+    let sessionId: String
+  }
+
   private var terminalSession: TerminalSession?
   private var hostingView: NSHostingView<AgentHubGhosttyTerminalWorkspaceView>?
   private var protectedAgentPanelID: TerminalPanelID?
@@ -31,6 +36,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var pendingMount: PendingMount?
   private var pendingMountTask: Task<Void, Never>?
   private var pendingWorkspaceSnapshot: TerminalWorkspaceSnapshot?
+  private var pendingLinkedSessionFocus: PendingLinkedSessionFocus?
   private var pendingInitialPrompt: String?
   private var isConfigured = false
   private var hasDeliveredInitialPrompt = false
@@ -396,6 +402,92 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     return true
   }
 
+  public func workspaceSessionDetectionContexts() -> [WorkspaceSessionDetectionContext] {
+    allTabs().compactMap { tab in
+      guard let located = locateTab(tab) else { return nil }
+      guard !isProtectedAgentTab(tab, in: located.panel.id) else { return nil }
+      guard linkedSessionsByTabID[tab.id] == nil else { return nil }
+      return WorkspaceSessionDetectionContext(
+        id: workspaceDetectionContextID(for: tab),
+        provider: inferredProvider(for: tab),
+        projectPath: resolvedExistingDirectory(
+          tab.controller.workingDirectory
+            ?? tab.controller.configuration.workingDirectory
+        ),
+        foregroundProcessID: tab.controller.foregroundProcessID
+      )
+    }
+  }
+
+  public func markWorkspaceSession(
+    contextID: String,
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool {
+    guard let located = allTabs().compactMap({ locateTab($0) }).first(where: {
+      workspaceDetectionContextID(for: $0.tab) == contextID
+    }) else {
+      return false
+    }
+    guard !isProtectedAgentTab(located.tab, in: located.panel.id) else { return false }
+    guard linkedSessionsByTabID[located.tab.id] == nil else { return false }
+
+    let linkedSession = TerminalWorkspaceLinkedSessionSnapshot(
+      provider: provider,
+      sessionId: sessionId,
+      relationshipKind: .accessoryChild
+    )
+    accessoryAgentTabIDs.insert(located.tab.id)
+    accessoryAgentProvidersByTabID[located.tab.id] = provider
+    linkedSessionsByTabID[located.tab.id] = linkedSession
+    refreshWorkspaceRootView()
+    notifyWorkspaceChanged()
+    return true
+  }
+
+  @discardableResult
+  public func focusWorkspaceSession(
+    provider: SessionProviderKind,
+    sessionId: String
+  ) -> Bool {
+    guard terminalSession != nil, pendingWorkspaceSnapshot == nil else {
+      // The surface hasn't mounted or applied its snapshot yet; retry once
+      // the linked tabs exist.
+      pendingLinkedSessionFocus = PendingLinkedSessionFocus(
+        provider: provider,
+        sessionId: sessionId
+      )
+      return true
+    }
+    guard let located = allTabs().compactMap({ locateTab($0) }).first(where: { located in
+      guard let linkedSession = linkedSessionsByTabID[located.tab.id] else { return false }
+      return linkedSession.provider == provider && linkedSession.sessionId == sessionId
+    }) else {
+      return false
+    }
+    focusRestorableTab(located)
+    return true
+  }
+
+  private func focusRestorableTab(_ located: (panel: TerminalPanel, tab: TerminalTab)) {
+    guard let terminalSession else { return }
+    if let maximizedPanelID, maximizedPanelID != located.panel.id {
+      self.maximizedPanelID = nil
+      refreshWorkspaceRootView()
+    }
+    _ = terminalSession.selectTab(located.tab.id, in: located.panel.id)
+    _ = terminalSession.focusPanel(located.panel.id)
+    located.tab.controller.focusTerminal()
+  }
+
+  private func consumePendingLinkedSessionFocus() {
+    guard let pending = pendingLinkedSessionFocus else { return }
+    pendingLinkedSessionFocus = nil
+    _ = focusWorkspaceSession(provider: pending.provider, sessionId: pending.sessionId)
+  }
+
   public func openWorkspaceSurface(
     kind: WorkspaceTerminalLaunchKind,
     placement: WorkspaceSurfacePlacement,
@@ -412,6 +504,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       activeWorkingDirectory() ?? projectPath
     )
     let startedAt = Date.now
+    let existingTabIDs = Set(allTabs().map(\.id))
     let didOpen: Bool
 
     switch kind {
@@ -431,6 +524,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     guard didOpen else { return nil }
+    let openedTab = allTabs().first { !existingTabIDs.contains($0.id) }
     let provider: SessionProviderKind? = if case .agent(let provider) = kind {
       provider
     } else {
@@ -439,7 +533,8 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     return WorkspaceSurfaceLaunchContext(
       provider: provider,
       projectPath: workingDirectory,
-      startedAt: startedAt
+      startedAt: startedAt,
+      detectionContextID: openedTab.map(workspaceDetectionContextID(for:))
     )
   }
 
@@ -516,24 +611,30 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     var restoredTabIDs: [[TerminalTabID]] = [[protectedAgentTabID ?? terminalSession.primaryPanel.activeTabID]]
 
     if let primarySnapshot = panelSnapshots.first {
-      restoredTabIDs[0] = restoreShellTabs(
-        from: primarySnapshot,
-        in: terminalSession.primaryPanelID,
-        existingTabIDs: restoredTabIDs[0],
-        skippingFirstShellTab: protectedAgentTabID == nil
+      let plan = AgentHubGhosttyWorkspaceRestorePlanner.primaryPlan(
+        for: primarySnapshot,
+        hasProtectedAgentTab: protectedAgentTabID != nil
       )
+      restoredTabIDs[0] = openRestoredTabs(
+        plan.tabsToOpen,
+        in: terminalSession.primaryPanelID,
+        existingTabIDs: restoredTabIDs[0]
+      )
+      if !plan.reusesExistingTab {
+        closeRedundantPrimaryPlaceholderTab(in: terminalSession, restoredTabIDs: &restoredTabIDs[0])
+      }
     }
 
     for (panelIndex, panelSnapshot) in panelSnapshots.enumerated().dropFirst() {
-      guard let firstAccessoryTab = firstRestorableAccessoryTab(in: panelSnapshot) else { continue }
-      guard let configuration = configurationForRestoredAccessoryTab(firstAccessoryTab) else { continue }
+      guard let plan = AgentHubGhosttyWorkspaceRestorePlanner.auxiliaryPlan(for: panelSnapshot) else { continue }
+      guard let configuration = configurationForRestoredAccessoryTab(plan.anchorTab) else { continue }
 
       do {
         let panel = try terminalSession.openPanel(
-          named: restoredTabName(for: firstAccessoryTab),
+          named: restoredTabName(for: plan.anchorTab),
           configuration: configuration
         )
-        if let tab = panel.activeTab, let linkedSession = firstAccessoryTab.linkedSession {
+        if let tab = panel.activeTab, let linkedSession = plan.anchorTab.linkedSession {
           accessoryAgentTabIDs.insert(tab.id)
           accessoryAgentProvidersByTabID[tab.id] = linkedSession.provider
           linkedSessionsByTabID[tab.id] = linkedSession
@@ -543,11 +644,10 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
         restoredPanelIDByIndex[panelIndex] = panel.id
 
         var tabIDs = panel.activeTab.map { [$0.id] } ?? []
-        tabIDs = restoreShellTabs(
-          from: panelSnapshot,
+        tabIDs = openRestoredTabs(
+          plan.additionalTabs,
           in: panel.id,
-          existingTabIDs: tabIDs,
-          skippingFirstShellTab: true
+          existingTabIDs: tabIDs
         )
         restoredTabIDs.append(tabIDs)
       } catch {
@@ -573,6 +673,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       panelIDs: restoredPanelIDs,
       tabIDs: restoredTabIDs
     )
+    consumePendingLinkedSessionFocus()
   }
 
   private var resolvedProjectPath: String {
@@ -626,6 +727,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       mount(session)
       terminalSession = session
       restorePendingWorkspaceSnapshotIfNeeded()
+      consumePendingLinkedSessionFocus()
       installInteractionMonitorIfNeeded()
       deliverPendingInitialPromptIfNeeded()
     } catch {
@@ -990,22 +1092,15 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     maximizedPanelID = nil
   }
 
-  private func restoreShellTabs(
-    from panelSnapshot: TerminalWorkspacePanelSnapshot,
+  private func openRestoredTabs(
+    _ tabSnapshots: [TerminalWorkspaceTabSnapshot],
     in panelID: TerminalPanelID,
-    existingTabIDs: [TerminalTabID],
-    skippingFirstShellTab: Bool = false
+    existingTabIDs: [TerminalTabID]
   ) -> [TerminalTabID] {
     guard let terminalSession else { return existingTabIDs }
     var restoredTabIDs = existingTabIDs
-    var hasSkippedFirstShellTab = false
 
-    for tabSnapshot in panelSnapshot.tabs where tabSnapshot.role == .shell || tabSnapshot.linkedSession != nil {
-      if skippingFirstShellTab && !hasSkippedFirstShellTab {
-        hasSkippedFirstShellTab = true
-        continue
-      }
-
+    for tabSnapshot in tabSnapshots {
       do {
         guard let configuration = configurationForRestoredAccessoryTab(tabSnapshot, in: panelID) else {
           continue
@@ -1030,10 +1125,21 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     return restoredTabIDs
   }
 
-  private func firstRestorableAccessoryTab(
-    in panelSnapshot: TerminalWorkspacePanelSnapshot
-  ) -> TerminalWorkspaceTabSnapshot? {
-    panelSnapshot.tabs.first { $0.linkedSession != nil || $0.role == .shell }
+  /// Closes the placeholder shell the surface pre-spawned when the snapshot's
+  /// primary panel does not begin with a plain shell tab, so a restored agent
+  /// tab is not displaced by an empty shell.
+  private func closeRedundantPrimaryPlaceholderTab(
+    in terminalSession: TerminalSession,
+    restoredTabIDs: inout [TerminalTabID]
+  ) {
+    guard protectedAgentTabID == nil,
+          restoredTabIDs.count > 1,
+          let placeholderID = restoredTabIDs.first,
+          let placeholderTab = terminalSession.primaryPanel.tabs.first(where: { $0.id == placeholderID })
+    else { return }
+    requestClose(placeholderTab)
+    _ = terminalSession.closeTab(placeholderID, in: terminalSession.primaryPanelID)
+    restoredTabIDs.removeFirst()
   }
 
   private func configurationForRestoredAccessoryTab(
@@ -1078,8 +1184,13 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func restoredTabName(for tab: TerminalWorkspaceTabSnapshot) -> String? {
+    if let linkedSession = tab.linkedSession {
+      return linkedSession.provider.rawValue
+    }
     if tab.role == .agent {
-      return protectedAgentTabName
+      // No linked session to resume — the tab restores as a plain shell, so
+      // an agent-flavored name would mislead provider inference.
+      return "Shell"
     }
     return Self.nonEmpty(tab.name) ?? Self.nonEmpty(tab.title) ?? "Shell"
   }
@@ -1912,6 +2023,28 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     return candidates.first { accessoryAgentTabIDs.contains($0.tab.id) } ?? candidates.first
+  }
+
+  private func workspaceDetectionContextID(for tab: TerminalTab) -> String {
+    "ghostty-\(tab.id.id.uuidString)"
+  }
+
+  private func inferredProvider(for tab: TerminalTab) -> SessionProviderKind? {
+    if let provider = accessoryAgentProvidersByTabID[tab.id] {
+      return provider
+    }
+
+    let label = [tab.name, tab.title, tab.controller.title]
+      .compactMap(Self.nonEmpty)
+      .joined(separator: " ")
+      .lowercased()
+    if label.contains("claude") {
+      return .claude
+    }
+    if label.contains("codex") {
+      return .codex
+    }
+    return nil
   }
 
   private func allTabs() -> [TerminalTab] {

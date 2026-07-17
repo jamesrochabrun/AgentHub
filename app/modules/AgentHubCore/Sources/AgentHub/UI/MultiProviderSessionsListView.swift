@@ -143,6 +143,7 @@ public struct MultiProviderSessionsListView: View {
   @State private var sessionToDeleteWorktree: CLISession? = nil
   @State private var showCommandPalette = false
   @State private var collapsedProjectGroups: Set<String> = []
+  @State private var expandedWorkspaceSessionGroups: Set<String> = []
   @State private var sidebarGroupMode: SidebarGroupMode = .repo
   @State private var collapsedStatusGroups: Set<StatusGroupCategory> = []
   @State private var isPinnedSectionCollapsed: Bool = false
@@ -614,8 +615,9 @@ public struct MultiProviderSessionsListView: View {
         }
         .onChange(of: scrollToSessionId) { _, newId in
           guard let newId else { return }
+          let targetId = resolvedScrollTargetID(for: newId)
           withAnimation(.easeInOut(duration: 0.25)) {
-            proxy.scrollTo(newId, anchor: .top)
+            proxy.scrollTo(targetId, anchor: .top)
           }
           scrollToSessionId = nil
         }
@@ -943,7 +945,7 @@ public struct MultiProviderSessionsListView: View {
 
   private var pinnedSessionItems: [SelectedSessionItem] {
     SidebarSessionOrdering.pinnedItems(
-      from: selectedSessionItems,
+      from: selectedSessionItems.filter { !isWorkspaceOwned($0) },
       isPinned: isPinned,
       timestamp: { $0.timestamp },
       id: { $0.id }
@@ -1130,7 +1132,7 @@ public struct MultiProviderSessionsListView: View {
 
   private var navigableSessionItems: [SelectedSessionItem] {
     SidebarSessionOrdering.flattenedItems(
-      from: selectedSessionItems,
+      from: selectedSessionItems.filter { !isWorkspaceOwned($0) },
       repositories: Array(orderedTrackedRepos),
       groupMode: sidebarGroupMode,
       worktreeDisplayMode: worktreeDisplayMode,
@@ -1269,7 +1271,7 @@ public struct MultiProviderSessionsListView: View {
 
               if isExpanded {
                 workspaceRows(for: groupWorkspaces)
-                sessionRows(for: group.items)
+                sessionRows(for: group.items.filter { !isWorkspaceOwned($0) })
               }
             }
 
@@ -1291,7 +1293,7 @@ public struct MultiProviderSessionsListView: View {
         }
         let grouped = statusGroupedSessions
         ForEach(StatusGroupCategory.allCases) { category in
-          let items = grouped[category] ?? []
+          let items = (grouped[category] ?? []).filter { !isWorkspaceOwned($0) }
           if !items.isEmpty {
             let isExpanded = !collapsedStatusGroups.contains(category)
 
@@ -1322,14 +1324,65 @@ public struct MultiProviderSessionsListView: View {
 
   // MARK: - Per-Provider Content
 
+  /// Sessions owned by a workspace render nested under its row instead of as
+  /// top-level siblings; they stay registered for monitoring (approvals,
+  /// notifications, activity rollups) — only the presentation is grouped.
+  private var workspaceOwnedItemsByWorkspaceID: [String: [SelectedSessionItem]] {
+    var owned: [String: [SelectedSessionItem]] = [:]
+    for item in selectedSessionItems where !item.isPending {
+      if let workspaceID = workspaceViewModel.workspaceID(
+        owningSession: item.session.id,
+        provider: item.providerKind
+      ) {
+        owned[workspaceID, default: []].append(item)
+      }
+    }
+    return owned
+  }
+
+  private func isWorkspaceOwned(_ item: SelectedSessionItem) -> Bool {
+    !item.isPending && workspaceViewModel.workspaceID(
+      owningSession: item.session.id,
+      provider: item.providerKind
+    ) != nil
+  }
+
+  /// Workspace-owned sessions render as nested rows with a prefixed scroll ID;
+  /// expand their group so the scroll target exists.
+  private func resolvedScrollTargetID(for itemID: String) -> String {
+    guard let item = selectedSessionItems.first(where: { $0.id == itemID }),
+          !item.isPending,
+          let workspaceID = workspaceViewModel.workspaceID(
+            owningSession: item.session.id,
+            provider: item.providerKind
+          )
+    else { return itemID }
+    expandedWorkspaceSessionGroups.insert(workspaceID)
+    return "workspace-session-\(itemID)"
+  }
+
   @ViewBuilder
   private func workspaceRows(for workspaces: [AgentWorkspaceRecord]) -> some View {
+    let ownedItems = workspaceOwnedItemsByWorkspaceID
     VStack(spacing: 2) {
       ForEach(workspaces) { workspace in
+        let sessionItems = ownedItems[workspace.id] ?? []
+        let isSessionsExpanded = expandedWorkspaceSessionGroups.contains(workspace.id)
+
         AgentWorkspaceRow(
           workspace: workspace,
           viewModel: workspaceViewModel,
           isSelected: workspace.id == selectedWorkspaceID,
+          isSessionsExpanded: isSessionsExpanded,
+          onToggleSessions: sessionItems.isEmpty ? nil : {
+            withAnimation(.easeInOut(duration: 0.25)) {
+              if isSessionsExpanded {
+                expandedWorkspaceSessionGroups.remove(workspace.id)
+              } else {
+                expandedWorkspaceSessionGroups.insert(workspace.id)
+              }
+            }
+          },
           onSelect: {
             selectedModuleLandingPath = nil
             primarySessionId = nil
@@ -1346,9 +1399,55 @@ public struct MultiProviderSessionsListView: View {
           }
         )
         .id("workspace-\(workspace.id)")
+
+        if isSessionsExpanded, !sessionItems.isEmpty {
+          workspaceSessionRows(for: sessionItems)
+        }
       }
     }
     .padding(.top, 2)
+  }
+
+  /// Nested rows for workspace-owned sessions. Selecting one focuses the pane
+  /// that hosts the session inside the workspace — never a standalone card,
+  /// which could attach a second PTY to the same session.
+  @ViewBuilder
+  private func workspaceSessionRows(for items: [SelectedSessionItem]) -> some View {
+    VStack(spacing: 2) {
+      ForEach(items) { item in
+        CollapsibleSessionRow(
+          session: item.session,
+          providerKind: item.providerKind,
+          timestamp: item.timestamp,
+          isPending: item.isPending,
+          isPrimary: false,
+          customName: selectedSessionCustomName(for: item),
+          sessionStatus: item.sessionStatus,
+          linkedPullRequests: item.linkedPullRequests,
+          colorScheme: colorScheme,
+          isPinned: isPinned(item),
+          onPin: nil,
+          onArchive: nil,
+          onDeleteWorktree: nil,
+          onSelect: {
+            selectedModuleLandingPath = nil
+            primarySessionId = nil
+            let workspaceID = workspaceViewModel.focusWorkspaceSession(
+              provider: item.providerKind,
+              sessionId: item.session.id,
+              isDark: colorScheme == .dark
+            )
+            if let workspaceID {
+              selectedWorkspaceID = workspaceID
+              setAuxiliaryShellVisible(false)
+            }
+          }
+        )
+        .padding(.leading, 16)
+        .transition(.opacity)
+        .id("workspace-session-\(item.id)")
+      }
+    }
   }
 
   @ViewBuilder
@@ -1849,7 +1948,9 @@ public struct MultiProviderSessionsListView: View {
       return
     }
 
-    let items = selectedSessionItems
+    // Workspace-owned sessions never auto-select as the primary standalone
+    // card; their PTY lives inside the workspace surface.
+    let items = selectedSessionItems.filter { !isWorkspaceOwned($0) }
     guard !items.isEmpty else {
       primarySessionId = nil
       return
@@ -1866,14 +1967,26 @@ public struct MultiProviderSessionsListView: View {
       return
     }
 
-    guard selectedSessionItems.contains(where: { $0.id == request.itemId }) else {
+    guard let item = selectedSessionItems.first(where: { $0.id == request.itemId }) else {
       return
     }
 
     selectedModuleLandingPath = nil
-    selectedWorkspaceID = nil
     selectedProviderRaw = request.providerKind.rawValue
-    primarySessionId = request.itemId
+    if !item.isPending,
+       let workspaceID = workspaceViewModel.focusWorkspaceSession(
+         provider: item.providerKind,
+         sessionId: item.session.id,
+         isDark: colorScheme == .dark
+       ) {
+      // Workspace-owned sessions open inside their workspace pane.
+      primarySessionId = nil
+      selectedWorkspaceID = workspaceID
+      setAuxiliaryShellVisible(false)
+    } else {
+      selectedWorkspaceID = nil
+      primarySessionId = request.itemId
+    }
     scrollToSessionId = request.itemId
     router.markConsumed(request)
   }
@@ -1987,9 +2100,21 @@ public struct MultiProviderSessionsListView: View {
 
     case .switchToSession(let id, _, _, _):
       if let item = selectedSessionItems.first(where: { $0.id == id }) {
-        selectedWorkspaceID = nil
         selectedModuleLandingPath = nil
-        primarySessionId = item.id
+        if !item.isPending,
+           let workspaceID = workspaceViewModel.focusWorkspaceSession(
+             provider: item.providerKind,
+             sessionId: item.session.id,
+             isDark: colorScheme == .dark
+           ) {
+          // Workspace-owned sessions open inside their workspace pane.
+          primarySessionId = nil
+          selectedWorkspaceID = workspaceID
+          setAuxiliaryShellVisible(false)
+        } else {
+          selectedWorkspaceID = nil
+          primarySessionId = item.id
+        }
         scrollToSessionId = item.id
       }
 

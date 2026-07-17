@@ -22,7 +22,7 @@ public final class AgentWorkspaceSessionCoordinator: AgentWorkspaceSessionCoordi
     viewModel(for: provider).cliConfiguration(for: provider)
   }
 
-  public func monitorDetectedSession(_ result: AccessorySessionDetectionResult) {
+  public func monitorDetectedSession(_ result: AccessorySessionDetectionResult) async {
     let viewModel = viewModel(for: result.provider)
     let session = CLISession(
       id: result.sessionId,
@@ -32,8 +32,15 @@ public final class AgentWorkspaceSessionCoordinator: AgentWorkspaceSessionCoordi
       isActive: true,
       sessionFilePath: result.sessionFilePath
     )
-    viewModel.startMonitoring(session: session)
-    viewModel.refresh()
+    await viewModel.registerWorkspaceSession(session)
+  }
+
+  public func restorePersistedSessions(_ references: [AgentWorkspaceSessionReference]) async {
+    for provider in SessionProviderKind.allCases {
+      let providerReferences = references.filter { $0.provider == provider }
+      guard !providerReferences.isEmpty else { continue }
+      await viewModel(for: provider).restoreWorkspaceSessions(providerReferences)
+    }
   }
 
   public func activity(for links: [AgentWorkspaceSessionLink]) -> AgentWorkspaceActivity {

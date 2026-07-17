@@ -20,6 +20,7 @@ public final class AgentWorkspacesViewModel {
   private struct PendingDetection: Sendable {
     let workspaceID: String
     let provider: SessionProviderKind
+    let surfaceContextID: String?
     let projectPath: String
     let startedAt: Date
     let baseline: AccessorySessionDetectionBaseline
@@ -36,6 +37,7 @@ public final class AgentWorkspacesViewModel {
   private let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
   private let sessionCoordinator: any AgentWorkspaceSessionCoordinating
   private let detectionService: any AccessorySessionDetectionServiceProtocol
+  private let processProviderResolver: any WorkspaceSessionProcessProviderResolving
   private let detectionPollInterval: Duration
 
   @ObservationIgnored private var activeSurfaces: [String: any EmbeddedTerminalSurface] = [:]
@@ -54,6 +56,7 @@ public final class AgentWorkspacesViewModel {
     terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory,
     sessionCoordinator: any AgentWorkspaceSessionCoordinating,
     detectionService: any AccessorySessionDetectionServiceProtocol = AccessorySessionDetectionService(),
+    processProviderResolver: any WorkspaceSessionProcessProviderResolving = WorkspaceSessionProcessProviderResolver(),
     detectionPollInterval: Duration = .seconds(1)
   ) {
     self.store = store
@@ -61,6 +64,7 @@ public final class AgentWorkspacesViewModel {
     self.terminalSurfaceFactory = terminalSurfaceFactory
     self.sessionCoordinator = sessionCoordinator
     self.detectionService = detectionService
+    self.processProviderResolver = processProviderResolver
     self.detectionPollInterval = detectionPollInterval
   }
 
@@ -86,6 +90,7 @@ public final class AgentWorkspacesViewModel {
       for workspace in workspaces where linksByWorkspaceID[workspace.id] == nil {
         linksByWorkspaceID[workspace.id] = []
       }
+      await sessionCoordinator.restorePersistedSessions(persistedSessionReferences())
     } catch {
       errorMessage = "Could not restore workspaces: \(error.localizedDescription)"
     }
@@ -167,6 +172,32 @@ public final class AgentWorkspacesViewModel {
 
   public func linkedAgentCount(for workspaceID: String) -> Int {
     linksByWorkspaceID[workspaceID]?.count ?? 0
+  }
+
+  public func workspaceID(
+    owningSession sessionId: String,
+    provider: SessionProviderKind
+  ) -> String? {
+    linksByWorkspaceID.first { _, links in
+      links.contains { $0.providerKind == provider && $0.sessionId == sessionId }
+    }?.key
+  }
+
+  /// Routes a sidebar selection of a workspace-owned session to the pane that
+  /// hosts it. Returns the owning workspace ID so the caller can select the
+  /// workspace, or nil when no workspace owns the session.
+  @discardableResult
+  public func focusWorkspaceSession(
+    provider: SessionProviderKind,
+    sessionId: String,
+    isDark: Bool
+  ) -> String? {
+    guard let workspaceID = workspaceID(owningSession: sessionId, provider: provider) else {
+      return nil
+    }
+    terminalSurface(for: workspaceID, isDark: isDark)?
+      .focusWorkspaceSession(provider: provider, sessionId: sessionId)
+    return workspaceID
   }
 
   public func paneCount(for workspace: AgentWorkspaceRecord) -> Int {
@@ -255,17 +286,24 @@ public final class AgentWorkspacesViewModel {
 
     errorMessage = nil
     guard let provider, let baseline else { return }
-    cancelPassiveDetection(workspaceID: workspaceID, provider: provider)
+    if let detectionContextID = context.detectionContextID {
+      cancelDetection(
+        workspaceID: workspaceID,
+        surfaceContextID: detectionContextID
+      )
+    }
     startDetection(
       PendingDetection(
         workspaceID: workspaceID,
         provider: provider,
+        surfaceContextID: context.detectionContextID,
         projectPath: context.projectPath,
         startedAt: context.startedAt,
         baseline: baseline,
         origin: .explicit
       ),
-      contextID: "explicit-\(UUID().uuidString)"
+      contextID: context.detectionContextID.map { "explicit-\($0)" }
+        ?? "explicit-\(UUID().uuidString)"
     )
   }
 
@@ -315,22 +353,17 @@ public final class AgentWorkspacesViewModel {
   }
 
   private func syncPassiveDetectionContexts(
-    _ snapshot: TerminalWorkspaceSnapshot,
+    _: TerminalWorkspaceSnapshot,
     workspaceID: String
   ) {
-    let shells = snapshot.panels.enumerated().flatMap { panelIndex, panel in
-      panel.tabs.enumerated().compactMap { tabIndex, tab -> (Int, Int, String)? in
-        guard tab.role == .shell, tab.linkedSession == nil,
-              let path = tab.workingDirectory else { return nil }
-        return (panelIndex, tabIndex, Self.normalizedPath(path))
-      }
-    }
-    let countsByPath = Dictionary(grouping: shells, by: { $0.2 }).mapValues(\.count)
+    guard let surface = activeSurfaces[workspaceID] else { return }
+    let contexts = surface.workspaceSessionDetectionContexts()
     var currentKeys: Set<DetectionKey> = []
 
-    for (panelIndex, tabIndex, path) in shells where countsByPath[path] == 1 {
+    for context in contexts {
+      let path = Self.normalizedPath(context.projectPath)
       for provider in SessionProviderKind.allCases {
-        let contextID = "passive-\(panelIndex)-\(tabIndex)-\(path)"
+        let contextID = "passive-\(context.id)"
         let key = DetectionKey(
           workspaceID: workspaceID,
           provider: provider,
@@ -343,6 +376,7 @@ public final class AgentWorkspacesViewModel {
           PendingDetection(
             workspaceID: workspaceID,
             provider: provider,
+            surfaceContextID: context.id,
             projectPath: path,
             startedAt: startedAt,
             baseline: detectionService.makeBaseline(
@@ -374,12 +408,34 @@ public final class AgentWorkspacesViewModel {
       provider: pending.provider,
       contextID: contextID
     )
+    let pollInterval = detectionPollInterval
+    let processProviderResolver = processProviderResolver
+    let executableNames = executableNamesByProvider()
     detectionTasks[key]?.cancel()
     detectionTasks[key] = Task { [weak self, pending, key] in
       while !Task.isCancelled {
-        try? await Task.sleep(for: detectionPollInterval)
+        try? await Task.sleep(for: pollInterval)
         guard !Task.isCancelled, let self else { return }
-        guard let result = detectionService.detectNewSession(
+        if let surfaceContextID = pending.surfaceContextID {
+          guard let context = self.activeSurfaces[pending.workspaceID]?
+            .workspaceSessionDetectionContexts()
+            .first(where: { $0.id == surfaceContextID }) else {
+            self.detectionTasks[key] = nil
+            return
+          }
+          let provider: SessionProviderKind? = if let provider = context.provider {
+            provider
+          } else if let processID = context.foregroundProcessID {
+            await processProviderResolver.provider(
+              for: processID,
+              executableNames: executableNames
+            )
+          } else {
+            nil
+          }
+          guard provider == pending.provider else { continue }
+        }
+        guard let result = self.detectionService.detectNewSession(
           provider: pending.provider,
           projectPath: pending.projectPath,
           startedAt: pending.startedAt,
@@ -387,8 +443,8 @@ public final class AgentWorkspacesViewModel {
         ) else {
           continue
         }
-        detectionTasks[key] = nil
-        resolveDetection(pending, result: result)
+        self.detectionTasks[key] = nil
+        await self.resolveDetection(pending, result: result)
         return
       }
     }
@@ -397,14 +453,32 @@ public final class AgentWorkspacesViewModel {
   private func resolveDetection(
     _ pending: PendingDetection,
     result: AccessorySessionDetectionResult
-  ) {
+  ) async {
+    let isAlreadyLinked = (linksByWorkspaceID[pending.workspaceID] ?? []).contains {
+      $0.providerKind == result.provider && $0.sessionId == result.sessionId
+    }
+    guard !isAlreadyLinked else {
+      rebaselineDetection(pending)
+      return
+    }
     guard let surface = activeSurfaces[pending.workspaceID] else { return }
-    guard surface.markAccessorySession(
-      provider: result.provider,
-      sessionId: result.sessionId,
-      projectPath: result.projectPath,
-      origin: pending.origin
-    ) else {
+    let didMarkSession = if let surfaceContextID = pending.surfaceContextID {
+      surface.markWorkspaceSession(
+        contextID: surfaceContextID,
+        provider: result.provider,
+        sessionId: result.sessionId,
+        projectPath: result.projectPath,
+        origin: pending.origin
+      )
+    } else {
+      surface.markAccessorySession(
+        provider: result.provider,
+        sessionId: result.sessionId,
+        projectPath: result.projectPath,
+        origin: pending.origin
+      )
+    }
+    guard didMarkSession else {
       return
     }
 
@@ -421,11 +495,17 @@ public final class AgentWorkspacesViewModel {
       )
     )
     linksByWorkspaceID[pending.workspaceID] = links
-    sessionCoordinator.monitorDetectedSession(result)
 
     if let snapshot = surface.captureWorkspaceSnapshot() {
       handleWorkspaceChanged(snapshot, workspaceID: pending.workspaceID)
     }
+    await persistWorkspaceImmediately(id: pending.workspaceID)
+    refreshPassiveDetectionBaselines(
+      workspaceID: pending.workspaceID,
+      provider: pending.provider,
+      excludingSurfaceContextID: pending.surfaceContextID
+    )
+    await sessionCoordinator.monitorDetectedSession(result)
   }
 
   private func scheduleSave(workspaceID: String) {
@@ -451,6 +531,57 @@ public final class AgentWorkspacesViewModel {
     }
   }
 
+  private func persistWorkspaceImmediately(id: String) async {
+    saveTasks[id]?.cancel()
+    saveTasks[id] = nil
+    await persistWorkspace(id: id)
+  }
+
+  private func persistedSessionReferences() -> [AgentWorkspaceSessionReference] {
+    var referencesByIdentity: [SessionIdentity: AgentWorkspaceSessionReference] = [:]
+
+    for workspace in workspaces {
+      var projectPathByIdentity: [SessionIdentity: String] = [:]
+      if let snapshot = try? workspace.decodedSnapshot() {
+        for tab in snapshot.panels.flatMap(\.tabs) {
+          guard let linkedSession = tab.linkedSession else { continue }
+          let identity = SessionIdentity(
+            provider: linkedSession.provider,
+            sessionID: linkedSession.sessionId
+          )
+          let projectPath = tab.workingDirectory
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty ? nil : Self.normalizedPath($0) }
+            ?? Self.normalizedPath(workspace.projectPath)
+          projectPathByIdentity[identity] = projectPath
+          referencesByIdentity[identity] = AgentWorkspaceSessionReference(
+            provider: identity.provider,
+            sessionId: identity.sessionID,
+            projectPath: projectPath
+          )
+        }
+      }
+
+      for link in linksByWorkspaceID[workspace.id] ?? [] {
+        guard let provider = link.providerKind else { continue }
+        let identity = SessionIdentity(provider: provider, sessionID: link.sessionId)
+        referencesByIdentity[identity] = AgentWorkspaceSessionReference(
+          provider: provider,
+          sessionId: link.sessionId,
+          projectPath: projectPathByIdentity[identity]
+            ?? Self.normalizedPath(workspace.projectPath)
+        )
+      }
+    }
+
+    return referencesByIdentity.values.sorted {
+      if $0.provider != $1.provider {
+        return $0.provider.rawValue < $1.provider.rawValue
+      }
+      return $0.sessionId < $1.sessionId
+    }
+  }
+
   private func cancelDetection(for workspaceID: String) {
     let keys = detectionTasks.keys.filter { $0.workspaceID == workspaceID }
     for key in keys {
@@ -460,20 +591,86 @@ public final class AgentWorkspacesViewModel {
     activeDetectionKeysByWorkspace[workspaceID] = nil
   }
 
-  private func cancelPassiveDetection(
+  private func cancelDetection(
     workspaceID: String,
-    provider: SessionProviderKind
+    surfaceContextID: String
   ) {
     let keys = detectionTasks.keys.filter {
       $0.workspaceID == workspaceID
-        && $0.provider == provider
-        && $0.contextID.hasPrefix("passive-")
+        && ($0.contextID == "passive-\(surfaceContextID)"
+          || $0.contextID == "explicit-\(surfaceContextID)")
     }
     for key in keys {
       detectionTasks[key]?.cancel()
       detectionTasks[key] = nil
       activeDetectionKeysByWorkspace[workspaceID]?.remove(key)
     }
+  }
+
+  private func refreshPassiveDetectionBaselines(
+    workspaceID: String,
+    provider: SessionProviderKind,
+    excludingSurfaceContextID: String?
+  ) {
+    let excludedKey = excludingSurfaceContextID.map { "passive-\($0)" }
+    let keys = detectionTasks.keys.filter {
+      $0.workspaceID == workspaceID
+        && $0.provider == provider
+        && $0.contextID.hasPrefix("passive-")
+        && $0.contextID != excludedKey
+    }
+    for key in keys {
+      detectionTasks[key]?.cancel()
+      detectionTasks[key] = nil
+      activeDetectionKeysByWorkspace[workspaceID]?.remove(key)
+    }
+    guard let surface = activeSurfaces[workspaceID],
+          let snapshot = surface.captureWorkspaceSnapshot() else { return }
+    syncPassiveDetectionContexts(snapshot, workspaceID: workspaceID)
+  }
+
+  private func rebaselineDetection(_ pending: PendingDetection) {
+    guard let surfaceContextID = pending.surfaceContextID,
+          let context = activeSurfaces[pending.workspaceID]?
+            .workspaceSessionDetectionContexts()
+            .first(where: { $0.id == surfaceContextID }) else {
+      return
+    }
+    let startedAt = Date.now
+    let projectPath = Self.normalizedPath(context.projectPath)
+    let contextID = "\(pending.origin == .explicit ? "explicit" : "passive")-\(surfaceContextID)"
+    let key = DetectionKey(
+      workspaceID: pending.workspaceID,
+      provider: pending.provider,
+      contextID: contextID
+    )
+    if pending.origin == .detected {
+      activeDetectionKeysByWorkspace[pending.workspaceID, default: []].insert(key)
+    }
+    startDetection(
+      PendingDetection(
+        workspaceID: pending.workspaceID,
+        provider: pending.provider,
+        surfaceContextID: surfaceContextID,
+        projectPath: projectPath,
+        startedAt: startedAt,
+        baseline: detectionService.makeBaseline(
+          provider: pending.provider,
+          projectPath: projectPath,
+          startedAt: startedAt
+        ),
+        origin: pending.origin
+      ),
+      contextID: contextID
+    )
+  }
+
+  private func executableNamesByProvider() -> [SessionProviderKind: String] {
+    Dictionary(
+      uniqueKeysWithValues: SessionProviderKind.allCases.map { provider in
+        (provider, sessionCoordinator.cliConfiguration(for: provider).executableName)
+      }
+    )
   }
 
   private static func initialSnapshot(projectPath: String) -> TerminalWorkspaceSnapshot {

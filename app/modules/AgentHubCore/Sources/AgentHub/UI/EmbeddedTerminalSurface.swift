@@ -64,6 +64,14 @@ public protocol EmbeddedTerminalSurface: AnyObject {
     projectPath: String,
     origin: SessionRelationshipOrigin
   ) -> Bool
+  func workspaceSessionDetectionContexts() -> [WorkspaceSessionDetectionContext]
+  func markWorkspaceSession(
+    contextID: String,
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool
   func openWorkspaceSurface(
     kind: WorkspaceTerminalLaunchKind,
     placement: WorkspaceSurfacePlacement,
@@ -71,6 +79,11 @@ public protocol EmbeddedTerminalSurface: AnyObject {
     projectPath: String,
     metadataStore: SessionMetadataStore?
   ) -> WorkspaceSurfaceLaunchContext?
+  @discardableResult
+  func focusWorkspaceSession(
+    provider: SessionProviderKind,
+    sessionId: String
+  ) -> Bool
   func captureWorkspaceSnapshot() -> TerminalWorkspaceSnapshot?
   func restoreWorkspaceSnapshot(_ snapshot: TerminalWorkspaceSnapshot)
 }
@@ -114,6 +127,25 @@ public extension EmbeddedTerminalSurface {
     false
   }
 
+  func workspaceSessionDetectionContexts() -> [WorkspaceSessionDetectionContext] {
+    []
+  }
+
+  func markWorkspaceSession(
+    contextID: String,
+    provider: SessionProviderKind,
+    sessionId: String,
+    projectPath: String,
+    origin: SessionRelationshipOrigin
+  ) -> Bool {
+    markAccessorySession(
+      provider: provider,
+      sessionId: sessionId,
+      projectPath: projectPath,
+      origin: origin
+    )
+  }
+
   func openWorkspaceSurface(
     kind: WorkspaceTerminalLaunchKind,
     placement: WorkspaceSurfacePlacement,
@@ -122,6 +154,14 @@ public extension EmbeddedTerminalSurface {
     metadataStore: SessionMetadataStore?
   ) -> WorkspaceSurfaceLaunchContext? {
     nil
+  }
+
+  @discardableResult
+  func focusWorkspaceSession(
+    provider: SessionProviderKind,
+    sessionId: String
+  ) -> Bool {
+    false
   }
 }
 
