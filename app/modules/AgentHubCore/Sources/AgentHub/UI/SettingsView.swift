@@ -387,33 +387,35 @@ public struct SettingsView: View {
         ghosttyConfigFileSetting
         #endif
 
-        Picker("Font", selection: $terminalFontFamily) {
-          ForEach(terminalFontFamilies, id: \.self) { family in
-            Text(family)
-              .font(.custom(family, size: 13))
-              .tag(family)
+        if activeTerminalBackend != .ghostty {
+          Picker("Font", selection: $terminalFontFamily) {
+            ForEach(terminalFontFamilies, id: \.self) { family in
+              Text(family)
+                .font(.custom(family, size: 13))
+                .tag(family)
+            }
           }
-        }
 
-        Stepper(value: $terminalFontSize, in: 8...24, step: 1) {
-          HStack {
-            Text("Font size")
-            Spacer()
-            Text("\(Int(terminalFontSize)) pt")
-              .foregroundColor(.secondary)
-              .monospacedDigit()
+          Stepper(value: $terminalFontSize, in: 8...24, step: 1) {
+            HStack {
+              Text("Font size")
+              Spacer()
+              Text("\(Int(terminalFontSize)) pt")
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+            }
+          }
+
+          Picker("Open files with", selection: $fileOpenEditorRawValue) {
+            ForEach(FileOpenEditor.allCases, id: \.rawValue) { editor in
+              Text(editor.label).tag(editor.rawValue)
+            }
           }
         }
 
         Picker("Newline shortcut", selection: $newlineShortcutRawValue) {
           ForEach(NewlineShortcut.allCases, id: \.rawValue) { shortcut in
             Text(shortcut.label).tag(shortcut.rawValue)
-          }
-        }
-
-        Picker("Open files with", selection: $fileOpenEditorRawValue) {
-          ForEach(FileOpenEditor.allCases, id: \.rawValue) { editor in
-            Text(editor.label).tag(editor.rawValue)
           }
         }
       }
