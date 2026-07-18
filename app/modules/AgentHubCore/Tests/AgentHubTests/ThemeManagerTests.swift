@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 
 @testable import AgentHubCore
@@ -252,6 +253,31 @@ struct ThemeManagerTests {
     _ = await selection.value
 
     #expect(manager.currentTheme.sourceFileName == "adaptive.yaml")
+  }
+
+  @MainActor
+  @Test("Refreshing Ghostty user background re-adopts custom config background")
+  func refreshGhosttyUserBackgroundReAdoptsCustomConfigBackground() async throws {
+    let fixture = try Fixture()
+    defer { fixture.teardown() }
+    let loader = RecordingThemeLoadingService(loadedThemes: [
+      "ghostty.yaml": try loadedTheme(name: "Ghostty")
+    ])
+    let initialConfigURL = fixture.themesDirectory.appendingPathComponent("initial-dark")
+    try "background = #1e1e2e\n".write(to: initialConfigURL, atomically: true, encoding: .utf8)
+    fixture.defaults.set(initialConfigURL.path, forKey: AgentHubDefaults.terminalGhosttyConfigPath)
+    let manager = fixture.makeManager(loader: loader)
+
+    await manager.applySelection("ghostty.yaml", backend: .ghostty)
+    #expect(manager.currentTheme.backgroundDark == Color(hex: "#1e1e2e"))
+
+    let configURL = fixture.themesDirectory.appendingPathComponent("solarized-dark")
+    try "background = #002b36\n".write(to: configURL, atomically: true, encoding: .utf8)
+    fixture.defaults.set(configURL.path, forKey: AgentHubDefaults.terminalGhosttyConfigPath)
+
+    manager.refreshGhosttyUserBackground(backend: .ghostty)
+
+    #expect(manager.currentTheme.backgroundDark == Color(hex: "#002b36"))
   }
 
   private final class Fixture {

@@ -28,6 +28,7 @@ struct AgentHubGhosttyTerminalSplitView: View {
   let onToggleMaximizedPanel: (TerminalPanel) -> Void
   let onSplitRatiosChanged: (String, [Double]) -> Void
   let activityForPanel: (TerminalPanelID) -> AgentHubGhosttyTerminalPaneActivity?
+  let chromeStyle: AgentHubGhosttyTerminalTabChrome.Style
 
   var body: some View {
     content(for: node)
@@ -54,10 +55,11 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onOpenTab: onOpenTab,
           onSplitPanel: onSplitPanel,
           onToggleMaximizedPanel: onToggleMaximizedPanel,
-          activity: activityForPanel(panel.id)
+          activity: activityForPanel(panel.id),
+          chromeStyle: chromeStyle
         )
       } else if let activity = activityForPanel(panelID) {
-        AgentHubGhosttyPendingTerminalPaneView(activity: activity)
+        AgentHubGhosttyPendingTerminalPaneView(activity: activity, chromeStyle: chromeStyle)
       } else {
         EmptyView()
       }
@@ -121,7 +123,8 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onSplitPanel: onSplitPanel,
           onToggleMaximizedPanel: onToggleMaximizedPanel,
           onSplitRatiosChanged: onSplitRatiosChanged,
-          activityForPanel: activityForPanel
+          activityForPanel: activityForPanel,
+          chromeStyle: chromeStyle
         )
         .frame(width: childDimension(childWidths, at: offset), height: size.height)
         .zIndex(0)
@@ -177,7 +180,8 @@ struct AgentHubGhosttyTerminalSplitView: View {
           onSplitPanel: onSplitPanel,
           onToggleMaximizedPanel: onToggleMaximizedPanel,
           onSplitRatiosChanged: onSplitRatiosChanged,
-          activityForPanel: activityForPanel
+          activityForPanel: activityForPanel,
+          chromeStyle: chromeStyle
         )
         .frame(width: size.width, height: childDimension(childHeights, at: offset))
         .zIndex(0)

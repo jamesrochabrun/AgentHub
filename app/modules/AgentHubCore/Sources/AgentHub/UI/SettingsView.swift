@@ -175,6 +175,9 @@ public struct SettingsView: View {
     .onChange(of: cliEnvironmentVariables) { _, newValue in
       CLIEnvironmentOverrides.save(newValue)
     }
+    .onChange(of: terminalGhosttyConfigPath) { _, _ in
+      themeManager.refreshGhosttyUserBackground(backend: activeTerminalBackend)
+    }
     .onDisappear {
       themeSelectionTask?.cancel()
       themeSelectionTask = nil
@@ -674,7 +677,7 @@ public struct SettingsView: View {
           .foregroundColor(.orange)
       }
 
-      Text("Layered on top of your Ghostty configuration, for AgentHub terminals only. Relaunch AgentHub to apply changes.")
+      Text("Layered on top of your Ghostty configuration, for AgentHub terminals only. The app backdrop updates immediately; fresh terminal processes may require relaunch.")
         .font(.caption)
         .foregroundColor(.secondary)
     }

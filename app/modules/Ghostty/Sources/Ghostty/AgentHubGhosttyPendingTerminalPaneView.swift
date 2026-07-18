@@ -8,14 +8,15 @@ import SwiftUI
 @MainActor
 struct AgentHubGhosttyPendingTerminalPaneView: View {
   let activity: AgentHubGhosttyTerminalPaneActivity
+  let chromeStyle: AgentHubGhosttyTerminalTabChrome.Style
 
   var body: some View {
     VStack(spacing: 0) {
       ZStack(alignment: .bottom) {
-        AgentHubGhosttyTerminalTabChrome.stripBackground
+        chromeStyle.stripBackgroundColor
 
         Rectangle()
-          .fill(AgentHubGhosttyTerminalTabChrome.divider)
+          .fill(chromeStyle.dividerColor)
           .frame(height: 1)
 
         HStack(spacing: 0) {
@@ -24,6 +25,7 @@ struct AgentHubGhosttyPendingTerminalPaneView: View {
             isActive: true,
             isFirst: true,
             canClose: false,
+            chromeStyle: chromeStyle,
             onSelect: {},
             onClose: {}
           )

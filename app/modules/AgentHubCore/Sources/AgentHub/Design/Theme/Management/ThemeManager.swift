@@ -361,6 +361,13 @@ public final class ThemeManager {
     )
   }
 
+  public func refreshGhosttyUserBackground(backend: EmbeddedTerminalBackend = .storedPreference) {
+    guard backend == .ghostty,
+          currentTheme.sourceFileName == ThemeSelectionPolicy.ghosttyThemeId else { return }
+    let pristineTheme = themeCache[ThemeSelectionPolicy.ghosttyThemeId] ?? currentTheme
+    currentTheme = adoptingGhosttyUserBackgroundIfNeeded(pristineTheme)
+  }
+
   public func loadBuiltInTheme(_ theme: AppTheme) {
     beginThemeSelection()
     let backend = EmbeddedTerminalBackend.storedPreference(in: defaults)
