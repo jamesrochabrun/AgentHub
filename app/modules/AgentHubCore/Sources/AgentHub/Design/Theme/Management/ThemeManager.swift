@@ -327,7 +327,7 @@ public final class ThemeManager {
       await persistYAMLPalette(for: cacheKey)
       guard isCurrentGeneration(generation) else { return }
       stopWatchingInactiveThemeFile(nextThemeURL: fileURL)
-      self.currentTheme = cached
+      self.currentTheme = adoptingGhosttyUserBackgroundIfNeeded(cached)
       setupHotReload(for: fileURL)
       await saveCurrentThemeSelection(cacheKey, backend: backend)
       return
@@ -344,9 +344,28 @@ public final class ThemeManager {
     guard isCurrentGeneration(generation) else { return }
 
     stopWatchingInactiveThemeFile(nextThemeURL: fileURL)
-    self.currentTheme = runtime
+    self.currentTheme = adoptingGhosttyUserBackgroundIfNeeded(runtime)
     setupHotReload(for: fileURL)
     await saveCurrentThemeSelection(cacheKey, backend: backend)
+  }
+
+  /// With the Ghostty backend the app theme is forced to `ghostty.yaml`
+  /// (see `ThemeSelectionPolicy`); its backdrop adopts the user's own
+  /// Ghostty background colors when they resolve for the appearance. The
+  /// cache keeps the pristine theme so each publish re-resolves the user's
+  /// current config.
+  private func adoptingGhosttyUserBackgroundIfNeeded(_ theme: RuntimeTheme) -> RuntimeTheme {
+    guard theme.sourceFileName == ThemeSelectionPolicy.ghosttyThemeId else { return theme }
+    return theme.applyingGhosttyUserBackground(
+      GhosttyUserThemeScanner.resolveBackground(defaults: defaults)
+    )
+  }
+
+  public func refreshGhosttyUserBackground(backend: EmbeddedTerminalBackend = .storedPreference) {
+    guard backend == .ghostty,
+          currentTheme.sourceFileName == ThemeSelectionPolicy.ghosttyThemeId else { return }
+    let pristineTheme = themeCache[ThemeSelectionPolicy.ghosttyThemeId] ?? currentTheme
+    currentTheme = adoptingGhosttyUserBackgroundIfNeeded(pristineTheme)
   }
 
   public func loadBuiltInTheme(_ theme: AppTheme) {

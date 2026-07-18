@@ -11,6 +11,7 @@ struct AgentHubGhosttyTerminalTabItem: View {
   let isActive: Bool
   let isFirst: Bool
   let canClose: Bool
+  let chromeStyle: AgentHubGhosttyTerminalTabChrome.Style
   let onSelect: () -> Void
   let onClose: () -> Void
 
@@ -44,7 +45,7 @@ struct AgentHubGhosttyTerminalTabItem: View {
         .foregroundStyle(Color.secondary)
         .background {
           RoundedRectangle(cornerRadius: 3, style: .continuous)
-            .fill(isCloseHovered ? AgentHubGhosttyTerminalTabChrome.closeHoverBackground : Color.clear)
+            .fill(isCloseHovered ? chromeStyle.closeHoverBackgroundColor : Color.clear)
         }
         .opacity(closeButtonOpacity)
         .accessibilityHidden(!showsCloseButton)
@@ -76,13 +77,13 @@ struct AgentHubGhosttyTerminalTabItem: View {
     .overlay(alignment: .leading) {
       if isActive {
         Rectangle()
-          .fill(AgentHubGhosttyTerminalTabChrome.tabEdge)
+          .fill(chromeStyle.tabEdgeColor)
           .frame(width: 1)
       }
     }
     .overlay(alignment: .trailing) {
       Rectangle()
-        .fill(isActive ? AgentHubGhosttyTerminalTabChrome.tabEdge : AgentHubGhosttyTerminalTabChrome.divider)
+        .fill(isActive ? chromeStyle.tabEdgeColor : chromeStyle.dividerColor)
         .frame(width: 1)
     }
     .clipShape(tabShape)
@@ -98,9 +99,9 @@ struct AgentHubGhosttyTerminalTabItem: View {
 
   private var tabBackground: Color {
     if isActive {
-      return AgentHubGhosttyTerminalTabChrome.activeBackground
+      return chromeStyle.activeBackgroundColor
     }
-    return isHovered ? AgentHubGhosttyTerminalTabChrome.hoverBackground : Color.clear
+    return isHovered ? chromeStyle.hoverBackgroundColor : Color.clear
   }
 
   private var closeButtonOpacity: Double {

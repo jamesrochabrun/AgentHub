@@ -20,6 +20,9 @@ runners. Two defenses keep the gate reliable:
    - `AgentHubGitHub` → `SessionGitHubQuickAccessCoordinator` suite — wall-clock cadence timing
      (tight ms `Task.sleep`s vs poll intervals, exact poll-count asserts). Failed PR #384 on a
      run that was green on `main`. (Does not change observation logic — see `GitHubMonitor.md`.)
+   - `AgentHubGitHub` → `GitHubPRObservationService` pending/discovery cadence tests — wall-clock
+     cadence timing (tight ms `Task.sleep`s vs poll intervals, exact poll-count asserts). Failed
+     PR #427 after #428 merged. (Does not change observation logic — see `GitHubMonitor.md`.)
    - `AgentHubCLI` → `WorktreeManagementService creation queue` suite — asserts exact ordering of
      concurrent async events; interleaves differently on slow runners.
    - `AgentHubCLI` → `WorktreeManagementService … "Cancels in-flight worktree creation…"` (single

@@ -175,6 +175,9 @@ public struct SettingsView: View {
     .onChange(of: cliEnvironmentVariables) { _, newValue in
       CLIEnvironmentOverrides.save(newValue)
     }
+    .onChange(of: terminalGhosttyConfigPath) { _, _ in
+      themeManager.refreshGhosttyUserBackground(backend: activeTerminalBackend)
+    }
     .onDisappear {
       themeSelectionTask?.cancel()
       themeSelectionTask = nil
@@ -381,36 +384,40 @@ public struct SettingsView: View {
           }
         }
 
-        ghosttyConfigFileSetting
+        if activeTerminalBackend == .ghostty {
+          ghosttyConfigFileSetting
+        }
         #endif
 
-        Picker("Font", selection: $terminalFontFamily) {
-          ForEach(terminalFontFamilies, id: \.self) { family in
-            Text(family)
-              .font(.custom(family, size: 13))
-              .tag(family)
+        if activeTerminalBackend != .ghostty {
+          Picker("Font", selection: $terminalFontFamily) {
+            ForEach(terminalFontFamilies, id: \.self) { family in
+              Text(family)
+                .font(.custom(family, size: 13))
+                .tag(family)
+            }
           }
-        }
 
-        Stepper(value: $terminalFontSize, in: 8...24, step: 1) {
-          HStack {
-            Text("Font size")
-            Spacer()
-            Text("\(Int(terminalFontSize)) pt")
-              .foregroundColor(.secondary)
-              .monospacedDigit()
+          Stepper(value: $terminalFontSize, in: 8...24, step: 1) {
+            HStack {
+              Text("Font size")
+              Spacer()
+              Text("\(Int(terminalFontSize)) pt")
+                .foregroundColor(.secondary)
+                .monospacedDigit()
+            }
+          }
+
+          Picker("Open files with", selection: $fileOpenEditorRawValue) {
+            ForEach(FileOpenEditor.allCases, id: \.rawValue) { editor in
+              Text(editor.label).tag(editor.rawValue)
+            }
           }
         }
 
         Picker("Newline shortcut", selection: $newlineShortcutRawValue) {
           ForEach(NewlineShortcut.allCases, id: \.rawValue) { shortcut in
             Text(shortcut.label).tag(shortcut.rawValue)
-          }
-        }
-
-        Picker("Open files with", selection: $fileOpenEditorRawValue) {
-          ForEach(FileOpenEditor.allCases, id: \.rawValue) { editor in
-            Text(editor.label).tag(editor.rawValue)
           }
         }
       }
@@ -429,39 +436,41 @@ public struct SettingsView: View {
         )
       }
 
-      Section {
-        HStack(spacing: 10) {
-          Picker("Theme", selection: themeSelectionBinding) {
-            ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
-              Text(yamlThemeDisplayName(fileId)).tag(fileId)
+      if activeTerminalBackend != .ghostty {
+        Section {
+          HStack(spacing: 10) {
+            Picker("Theme", selection: themeSelectionBinding) {
+              ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
+                Text(yamlThemeDisplayName(fileId)).tag(fileId)
+              }
+            }
+
+            if applyingThemeSelectionId != nil {
+              HStack(spacing: 6) {
+                ProgressView()
+                  .controlSize(.small)
+                Text("Applying...")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+              .transition(.opacity)
             }
           }
 
-          if applyingThemeSelectionId != nil {
-            HStack(spacing: 6) {
-              ProgressView()
-                .controlSize(.small)
-              Text("Applying...")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .transition(.opacity)
+          Button {
+            Task { await themeManager.discoverThemes() }
+          } label: {
+            Label("Refresh themes", systemImage: "arrow.clockwise")
           }
-        }
-
-        Button {
-          Task { await themeManager.discoverThemes() }
-        } label: {
-          Label("Refresh themes", systemImage: "arrow.clockwise")
-        }
-        .buttonStyle(.link)
-        .disabled(applyingThemeSelectionId != nil)
-      } header: {
-        Text("Theme")
-      } footer: {
-        if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-          Text("AgentHub v\(appVersion)")
-            .font(.caption)
+          .buttonStyle(.link)
+          .disabled(applyingThemeSelectionId != nil)
+        } header: {
+          Text("Theme")
+        } footer: {
+          if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+            Text("AgentHub v\(appVersion)")
+              .font(.caption)
+          }
         }
       }
     }
@@ -668,10 +677,29 @@ public struct SettingsView: View {
         .disabled(terminalGhosttyConfigPath.isEmpty)
       }
 
-      Text("Applied when creating new Ghostty terminal sessions.")
+      if ghosttyConfigPathIsInvalid {
+        Label("File not found or not readable — the setting is ignored.", systemImage: "exclamationmark.triangle")
+          .font(.caption)
+          .foregroundColor(.orange)
+      }
+
+      Text("Layered on top of your Ghostty configuration, for AgentHub terminals only. The app backdrop updates immediately; fresh terminal processes may require relaunch.")
         .font(.caption)
         .foregroundColor(.secondary)
     }
+  }
+
+  private var ghosttyConfigPathIsInvalid: Bool {
+    let trimmed = terminalGhosttyConfigPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    let expandedPath = (trimmed as NSString).expandingTildeInPath
+    var isDirectory: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: expandedPath, isDirectory: &isDirectory),
+          !isDirectory.boolValue,
+          FileManager.default.isReadableFile(atPath: expandedPath) else {
+      return true
+    }
+    return false
   }
 
   private func chooseGhosttyConfigFile() {

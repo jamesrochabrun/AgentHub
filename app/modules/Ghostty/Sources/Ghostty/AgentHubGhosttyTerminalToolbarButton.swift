@@ -11,6 +11,7 @@ struct AgentHubGhosttyTerminalToolbarButton: View {
   let systemImage: String
   let help: String
   let isDisabled: Bool
+  let chromeStyle: AgentHubGhosttyTerminalTabChrome.Style
   let action: () -> Void
 
   @State private var isHovered = false
@@ -20,12 +21,14 @@ struct AgentHubGhosttyTerminalToolbarButton: View {
     systemImage: String,
     help: String,
     isDisabled: Bool = false,
+    chromeStyle: AgentHubGhosttyTerminalTabChrome.Style,
     action: @escaping () -> Void
   ) {
     self.title = title
     self.systemImage = systemImage
     self.help = help
     self.isDisabled = isDisabled
+    self.chromeStyle = chromeStyle
     self.action = action
   }
 
@@ -38,7 +41,7 @@ struct AgentHubGhosttyTerminalToolbarButton: View {
       .frame(width: 28, height: 28)
       .background {
         RoundedRectangle(cornerRadius: 4, style: .continuous)
-          .fill(isHovered && !isDisabled ? AgentHubGhosttyTerminalTabChrome.hoverBackground : Color.clear)
+          .fill(isHovered && !isDisabled ? chromeStyle.hoverBackgroundColor : Color.clear)
       }
       .contentShape(Rectangle())
       .disabled(isDisabled)

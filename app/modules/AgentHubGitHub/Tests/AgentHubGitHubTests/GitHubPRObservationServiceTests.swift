@@ -245,7 +245,10 @@ struct GitHubPRObservationServiceTests {
     await observer.unsubscribe(subscriptionID: subscription.id)
   }
 
-  @Test("continues pending checks after idle and stops at the pending deadline")
+  @Test(
+    "continues pending checks after idle and stops at the pending deadline",
+    .disabled("headless-quarantine: wall-clock cadence timing — flaky on CI; see TestQuarantine.md")
+  )
   func pendingChecksOutliveIdleButRespectDeadline() async {
     let service = MockGitHubCLIService()
     service.currentBranchPRResult = makeObservedPR(
@@ -291,7 +294,10 @@ struct GitHubPRObservationServiceTests {
     await observer.unsubscribe(subscriptionID: subscription.id)
   }
 
-  @Test("bounds pull request discovery after session activity")
+  @Test(
+    "bounds pull request discovery after session activity",
+    .disabled("headless-quarantine: wall-clock cadence timing — flaky on CI; see TestQuarantine.md")
+  )
   func boundsPullRequestDiscovery() async {
     let service = MockGitHubCLIService()
     service.currentBranchPRResult = nil
