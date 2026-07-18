@@ -432,39 +432,41 @@ public struct SettingsView: View {
         )
       }
 
-      Section {
-        HStack(spacing: 10) {
-          Picker("Theme", selection: themeSelectionBinding) {
-            ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
-              Text(yamlThemeDisplayName(fileId)).tag(fileId)
+      if activeTerminalBackend != .ghostty {
+        Section {
+          HStack(spacing: 10) {
+            Picker("Theme", selection: themeSelectionBinding) {
+              ForEach(bundledYAMLThemeFileIds, id: \.self) { fileId in
+                Text(yamlThemeDisplayName(fileId)).tag(fileId)
+              }
+            }
+
+            if applyingThemeSelectionId != nil {
+              HStack(spacing: 6) {
+                ProgressView()
+                  .controlSize(.small)
+                Text("Applying...")
+                  .font(.caption)
+                  .foregroundStyle(.secondary)
+              }
+              .transition(.opacity)
             }
           }
 
-          if applyingThemeSelectionId != nil {
-            HStack(spacing: 6) {
-              ProgressView()
-                .controlSize(.small)
-              Text("Applying...")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .transition(.opacity)
+          Button {
+            Task { await themeManager.discoverThemes() }
+          } label: {
+            Label("Refresh themes", systemImage: "arrow.clockwise")
           }
-        }
-
-        Button {
-          Task { await themeManager.discoverThemes() }
-        } label: {
-          Label("Refresh themes", systemImage: "arrow.clockwise")
-        }
-        .buttonStyle(.link)
-        .disabled(applyingThemeSelectionId != nil)
-      } header: {
-        Text("Theme")
-      } footer: {
-        if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
-          Text("AgentHub v\(appVersion)")
-            .font(.caption)
+          .buttonStyle(.link)
+          .disabled(applyingThemeSelectionId != nil)
+        } header: {
+          Text("Theme")
+        } footer: {
+          if let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+            Text("AgentHub v\(appVersion)")
+              .font(.caption)
+          }
         }
       }
     }
