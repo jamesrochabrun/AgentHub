@@ -62,12 +62,20 @@ struct AgentWorkspaceDetailView: View {
         theme: runtimeTheme
       )
       .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .background(terminalBackdropColor)
     }
     .alert("Rename Workspace", isPresented: $isRenaming) {
       TextField("Workspace name", text: $renameText)
       Button("Cancel", role: .cancel) {}
       Button("Rename", action: commitRename)
     }
+  }
+
+  /// The embedded Ghostty surface is transparent; this backdrop is what the
+  /// terminal visually sits on (same pattern as `MonitoringPanelView`).
+  private var terminalBackdropColor: Color {
+    guard runtimeTheme?.hasCustomBackgrounds == true else { return .clear }
+    return Color.adaptiveBackground(for: colorScheme, theme: runtimeTheme)
   }
 
   private func beginRename() {

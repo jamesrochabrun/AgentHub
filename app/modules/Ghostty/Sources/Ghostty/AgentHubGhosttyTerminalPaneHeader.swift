@@ -15,6 +15,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
   let canSplitBelow: Bool
   let canClosePanel: Bool
   let canCloseTab: (TerminalTab) -> Bool
+  let chromeStyle: AgentHubGhosttyTerminalTabChrome.Style
   let onSelectTab: (TerminalTab) -> Void
   let onCloseTab: (TerminalTab) -> Void
   let onOpenTab: () -> Void
@@ -25,10 +26,10 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
 
   var body: some View {
     ZStack(alignment: .bottom) {
-      AgentHubGhosttyTerminalTabChrome.stripBackground
+      chromeStyle.stripBackgroundColor
 
       Rectangle()
-        .fill(AgentHubGhosttyTerminalTabChrome.divider)
+        .fill(chromeStyle.dividerColor)
         .frame(height: 1)
 
       HStack(spacing: 0) {
@@ -47,6 +48,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
             title: "New Tab",
             systemImage: "plus",
             help: "New terminal tab",
+            chromeStyle: chromeStyle,
             action: onOpenTab
           )
 
@@ -59,6 +61,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
               help: isMaximized
                 ? "Restore terminal panes (Cmd+Shift+M)"
                 : "Maximize terminal pane (Cmd+Shift+M)",
+              chromeStyle: chromeStyle,
               action: onToggleMaximizedPanel
             )
           }
@@ -68,6 +71,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
             systemImage: "rectangle.split.2x1",
             help: "Split terminal to the right",
             isDisabled: !canSplitRight,
+            chromeStyle: chromeStyle,
             action: onSplitRight
           )
 
@@ -76,6 +80,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
             systemImage: "rectangle.split.1x2",
             help: "Split terminal below",
             isDisabled: !canSplitBelow,
+            chromeStyle: chromeStyle,
             action: onSplitBelow
           )
 
@@ -84,6 +89,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
               title: "Close Pane",
               systemImage: "xmark",
               help: "Close terminal pane",
+              chromeStyle: chromeStyle,
               action: onClosePanel
             )
           }
@@ -104,6 +110,7 @@ struct AgentHubGhosttyTerminalPaneHeader: View {
       isActive: isActive,
       isFirst: index == 0,
       canClose: canCloseTab(tab),
+      chromeStyle: chromeStyle,
       onSelect: { onSelectTab(tab) },
       onClose: { onCloseTab(tab) }
     )

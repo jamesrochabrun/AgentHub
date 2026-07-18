@@ -57,6 +57,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var configuredExpectedExecutable: String?
   private var metadataStore: SessionMetadataStore?
   private var currentIsDark = true
+  private var currentChromeStyle = AgentHubGhosttyTerminalTabChrome.systemStyle
   private static let terminalPaneDividerSize = TerminalPanelKit.SplitSizing.dividerDimension
   private static let terminalTabStripHeight = AgentHubGhosttyTerminalTabChrome.stripHeight
   private static let shellStartupFallbackDelay: Duration = .milliseconds(900)
@@ -322,6 +323,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {
     currentIsDark = isDark
+    updateChromeStyle(isDark: isDark, theme: theme)
     guard let configurationPath = AgentHubGhosttyAppearanceConfiguration.path(isDark: isDark) else {
       AppLogger.session.error("Unable to locate the bundled Ghostty appearance configuration.")
       return
@@ -878,8 +880,16 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       },
       activityForPanel: { [weak self] panelID in
         self?.paneActivityRegistry.activity(for: panelID)
-      }
+      },
+      chromeStyle: currentChromeStyle
     )
+  }
+
+  private func updateChromeStyle(isDark: Bool, theme: RuntimeTheme?) {
+    let nextStyle = AgentHubGhosttyTerminalTabChrome.style(isDark: isDark, theme: theme)
+    guard nextStyle != currentChromeStyle else { return }
+    currentChromeStyle = nextStyle
+    refreshWorkspaceRootView()
   }
 
   private func refreshWorkspaceRootView() {

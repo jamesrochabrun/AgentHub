@@ -26,6 +26,7 @@ struct AgentHubGhosttyTerminalPaneView: View {
   let onSplitPanel: (TerminalPanel, TerminalSplitAxis) -> Void
   let onToggleMaximizedPanel: (TerminalPanel) -> Void
   let activity: AgentHubGhosttyTerminalPaneActivity?
+  let chromeStyle: AgentHubGhosttyTerminalTabChrome.Style
 
   var body: some View {
     VStack(spacing: 0) {
@@ -37,6 +38,7 @@ struct AgentHubGhosttyTerminalPaneView: View {
         canSplitBelow: canSplitPanel(panel, .vertical),
         canClosePanel: canClosePanel(panel),
         canCloseTab: { tab in canCloseTab(panel, tab) },
+        chromeStyle: chromeStyle,
         onSelectTab: { tab in onSelectTab(panel, tab) },
         onCloseTab: closeTab,
         onOpenTab: { onOpenTab(panel) },

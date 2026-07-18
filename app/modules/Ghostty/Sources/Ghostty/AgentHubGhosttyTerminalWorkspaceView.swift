@@ -24,6 +24,7 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
   let onToggleMaximizedPanel: (TerminalPanel) -> Void
   let onSplitRatiosChanged: (String, [Double]) -> Void
   let activityForPanel: (TerminalPanelID) -> AgentHubGhosttyTerminalPaneActivity?
+  let chromeStyle: AgentHubGhosttyTerminalTabChrome.Style
 
   var body: some View {
     if session.visiblePanels.isEmpty {
@@ -48,7 +49,8 @@ struct AgentHubGhosttyTerminalWorkspaceView: View {
         onSplitPanel: onSplitPanel,
         onToggleMaximizedPanel: onToggleMaximizedPanel,
         onSplitRatiosChanged: onSplitRatiosChanged,
-        activityForPanel: activityForPanel
+        activityForPanel: activityForPanel,
+        chromeStyle: chromeStyle
       )
     }
   }

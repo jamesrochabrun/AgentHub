@@ -20,9 +20,11 @@ public struct RuntimeTheme: Identifiable {
   public let brandSecondary: Color
   public let brandTertiary: Color
 
-  // Background colors (optional)
-  public let backgroundDark: Color?
-  public let backgroundLight: Color?
+  // Background colors (optional). The main pair is mutable so the Ghostty
+  // backend can adopt the user's own Ghostty background (see
+  // `applyingGhosttyUserBackground`).
+  public var backgroundDark: Color?
+  public var backgroundLight: Color?
   public let expandedContentBackgroundDark: Color?
   public let expandedContentBackgroundLight: Color?
 
@@ -44,6 +46,21 @@ public struct RuntimeTheme: Identifiable {
   /// Whether this theme provides custom background colors
   public var hasCustomBackgrounds: Bool {
     backgroundDark != nil || backgroundLight != nil
+  }
+
+  /// Returns a copy whose app backdrop adopts the user's Ghostty background
+  /// where an appearance-matched color resolved (dark color for dark mode,
+  /// light for light — mismatches keep the theme's own backdrop so the
+  /// terminal overlay's text colors stay legible).
+  public func applyingGhosttyUserBackground(_ background: GhosttyUserBackground) -> RuntimeTheme {
+    var theme = self
+    if let dark = background.adoptableHex(isDark: true) {
+      theme.backgroundDark = Color(hex: dark)
+    }
+    if let light = background.adoptableHex(isDark: false) {
+      theme.backgroundLight = Color(hex: light)
+    }
+    return theme
   }
 
   public init(from yaml: YAMLTheme, sourceFileName: String? = nil) {
