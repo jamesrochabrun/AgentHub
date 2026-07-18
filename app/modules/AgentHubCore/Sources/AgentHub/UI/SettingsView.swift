@@ -384,7 +384,9 @@ public struct SettingsView: View {
           }
         }
 
-        ghosttyConfigFileSetting
+        if activeTerminalBackend == .ghostty {
+          ghosttyConfigFileSetting
+        }
         #endif
 
         if activeTerminalBackend != .ghostty {
