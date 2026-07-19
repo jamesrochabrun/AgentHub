@@ -39,7 +39,14 @@ extension EnvironmentValues {
 // MARK: - View Modifier
 
 /// View modifier that injects AgentHub provider into the environment
-private struct AgentHubModifier: ViewModifier {
+///
+/// Intentionally not `private`: this modifier is part of the window's root view
+/// type, and SwiftUI derives the `NSWindow Frame` / `NSSplitView Subview Frames`
+/// autosave defaults keys from that type's name. A `private` type's runtime name
+/// embeds an ASLR-dependent `(unknown context at $…)` discriminator, which mints
+/// a new dead defaults key every launch and bloats the app's defaults domain
+/// until CFPrefs work hangs the main thread.
+struct AgentHubModifier: ViewModifier {
   let provider: AgentHubProvider
   let themeManager: ThemeManager
 

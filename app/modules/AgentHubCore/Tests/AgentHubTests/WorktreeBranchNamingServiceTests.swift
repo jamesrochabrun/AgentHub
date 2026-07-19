@@ -8,6 +8,12 @@ import ClaudeCodeClient
 @Suite("ClaudeWorktreeBranchNamingService")
 struct WorktreeBranchNamingServiceTests {
 
+  private let defaultsPool = DefaultsSuitePool()
+
+  private func makeDefaults(prefix: String = "") -> UserDefaults {
+    defaultsPool.makeDefaults(prefix: prefix)
+  }
+
   @Test("AI result is sanitized, prefixed, and suffixed")
   func aiResultUsesSanitizedStem() async throws {
     let defaults = makeDefaults(prefix: "feature/")
@@ -313,6 +319,12 @@ struct WorktreeBranchNamingServiceTests {
 @Suite("WorktreeBranchNamingSettings")
 struct WorktreeBranchNamingSettingsTests {
 
+  private let defaultsPool = DefaultsSuitePool()
+
+  private func makeDefaults(prefix: String = "") -> UserDefaults {
+    defaultsPool.makeDefaults(prefix: prefix)
+  }
+
   @Test("Default prefix is empty")
   func defaultPrefixIsEmpty() {
     let defaults = makeDefaults()
@@ -382,13 +394,28 @@ private func makeSequencedService(
   )
 }
 
-private func makeDefaults(prefix: String = "") -> UserDefaults {
-  let suiteName = "com.agenthub.tests.worktree-branch-\(UUID().uuidString)"
-  let defaults = UserDefaults(suiteName: suiteName)!
-  defaults.removePersistentDomain(forName: suiteName)
-  defaults.set(prefix, forKey: AgentHubDefaults.worktreeBranchPrefix)
-  defaults.set("claude", forKey: AgentHubDefaults.claudeCommand)
-  return defaults
+/// Hands out ephemeral defaults suites and cleans all of them up when the
+/// per-test suite instance holding the pool is released, so test runs stop
+/// accumulating plists under ~/Library/Preferences.
+private final class DefaultsSuitePool {
+  private var suites: [EphemeralDefaultsSuite] = []
+  private let lock = NSLock()
+
+  func makeDefaults(prefix: String = "") -> UserDefaults {
+    let suite = EphemeralDefaultsSuite(prefix: "com.agenthub.tests.worktree-branch")
+    suite.defaults.set(prefix, forKey: AgentHubDefaults.worktreeBranchPrefix)
+    suite.defaults.set("claude", forKey: AgentHubDefaults.claudeCommand)
+    lock.lock()
+    suites.append(suite)
+    lock.unlock()
+    return suite.defaults
+  }
+
+  deinit {
+    for suite in suites {
+      suite.cleanUp()
+    }
+  }
 }
 
 private func chunkPublisher(_ chunks: [StreamJSONChunk]) -> AnyPublisher<StreamJSONChunk, Error> {

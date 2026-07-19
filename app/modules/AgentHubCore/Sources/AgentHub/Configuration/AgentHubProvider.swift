@@ -425,6 +425,19 @@ public final class AgentHubProvider {
     }
   }
 
+  /// Purges window/split-view autosave defaults keys that earlier builds
+  /// minted with per-launch-unique names (see `StaleWindowAutosaveDefaultsCleaner`).
+  /// Call this on app launch; the scan runs off the main thread because its
+  /// cost is proportional to the size of the defaults domain being cleaned.
+  public func purgeStaleWindowAutosaveDefaults() {
+    Task.detached(priority: .utility) {
+      let removed = StaleWindowAutosaveDefaultsCleaner().purgeStaleAutosaveKeys()
+      if removed > 0 {
+        AppLogger.ui.info("Removed \(removed) stale window autosave defaults keys")
+      }
+    }
+  }
+
   public func shutdownMCPAppDiscoveryService() {
     let service = mcpAppDiscoveryService
     let semaphore = DispatchSemaphore(value: 0)

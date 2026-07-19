@@ -9,9 +9,9 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
 
   @Test("CLI environment variables are empty by default")
   func cliEnvironmentVariablesAreEmptyByDefault() {
-    let suiteName = "AgentHubTests.CLIEnvironment.\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suiteName)!
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let suite = EphemeralDefaultsSuite(prefix: "AgentHubTests.CLIEnvironment")
+    defer { suite.cleanUp() }
+    let defaults = suite.defaults
 
     #expect(CLIEnvironmentOverrides.variables(defaults: defaults).isEmpty)
     #expect(CLIEnvironmentOverrides.environment(from: CLIEnvironmentOverrides.variables(defaults: defaults)).isEmpty)
@@ -33,9 +33,9 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
 
   @Test("CLI environment variable values persist through UserDefaults")
   func cliEnvironmentVariablesPersistThroughUserDefaults() {
-    let suiteName = "AgentHubTests.CLIEnvironment.\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suiteName)!
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let suite = EphemeralDefaultsSuite(prefix: "AgentHubTests.CLIEnvironment")
+    defer { suite.cleanUp() }
+    let defaults = suite.defaults
 
     let variables = [
       CLIEnvironmentVariable(id: UUID(), name: "ONE", value: "1"),

@@ -40,6 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // session begins monitoring.
     provider.reconcileClaudeHooksOnLaunch()
     provider.cleanupOrphanedProcesses()
+    provider.purgeStaleWindowAutosaveDefaults()
     provider.startWorktreeLaunchRequestMonitoring()
     provider.globalSessionControlPanelCoordinator.start()
   }

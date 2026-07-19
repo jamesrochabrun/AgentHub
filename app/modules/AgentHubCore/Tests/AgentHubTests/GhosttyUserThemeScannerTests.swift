@@ -131,7 +131,7 @@ struct GhosttyUserThemeScannerTests {
 private struct ScannerEnvironment {
   let home: URL
   let defaults: UserDefaults
-  private let suiteName: String
+  private let suite: EphemeralDefaultsSuite
   private let bundledThemesURL: URL
 
   init() throws {
@@ -139,13 +139,12 @@ private struct ScannerEnvironment {
       .appendingPathComponent("ghostty-scanner-\(UUID().uuidString)", isDirectory: true)
     bundledThemesURL = home.appendingPathComponent("bundled-themes", isDirectory: true)
     try FileManager.default.createDirectory(at: bundledThemesURL, withIntermediateDirectories: true)
-    suiteName = "com.agenthub.tests.ghostty-scanner.\(UUID().uuidString)"
-    defaults = UserDefaults(suiteName: suiteName)!
-    defaults.removePersistentDomain(forName: suiteName)
+    suite = EphemeralDefaultsSuite(prefix: "com.agenthub.tests.ghostty-scanner")
+    defaults = suite.defaults
   }
 
   func cleanUp() {
-    defaults.removePersistentDomain(forName: suiteName)
+    suite.cleanUp()
     try? FileManager.default.removeItem(at: home)
   }
 
