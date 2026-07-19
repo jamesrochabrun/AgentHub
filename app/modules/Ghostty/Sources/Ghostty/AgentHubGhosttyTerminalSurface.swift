@@ -44,6 +44,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var registeredPIDs: [ObjectIdentifier: pid_t] = [:]
   private var pidRegistrationTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
   private var paneActivityRegistry = AgentHubGhosttyPaneActivityRegistry()
+  private let fontSizeSynchronizer = AgentHubGhosttyFontSizeSynchronizer()
   private var paneActivityTasks: [TerminalPanelID: Task<Void, Never>] = [:]
   private var pendingPaneOpenTasks: [TerminalPanelID: Task<Void, Never>] = [:]
   private var pendingPaneCloseTasks: [TerminalPanelID: Task<Void, Never>] = [:]
@@ -326,12 +327,13 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     currentIsDark = isDark
     currentTheme = theme
     updateChromeStyle(isDark: isDark, theme: theme)
+    let controllers = allTabs().map(\.controller)
     guard let configurationPath = appearanceOverlayPath(isDark: isDark) else {
       AppLogger.session.error("Unable to locate the bundled Ghostty appearance configuration.")
+      fontSizeSynchronizer.sync(fontSize: fontSize, controllers: controllers)
       return
     }
 
-    let controllers = allTabs().map(\.controller)
     if let runtime = controllers.first?.runtime {
       do {
         _ = try runtime.applyConfigurationOverlay(at: configurationPath)
@@ -343,17 +345,25 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     }
 
     let colorScheme = AgentHubGhosttyAppearanceConfiguration.colorScheme(isDark: isDark)
+    var updatedControllerIDs: Set<ObjectIdentifier> = []
     for controller in controllers {
       _ = controller.setColorScheme(colorScheme)
       guard controller.configurationOverlayPath != configurationPath else { continue }
       do {
-        _ = try controller.applyConfigurationOverlay(at: configurationPath)
+        if try controller.applyConfigurationOverlay(at: configurationPath) {
+          updatedControllerIDs.insert(ObjectIdentifier(controller))
+        }
       } catch {
         AppLogger.session.error(
           "Failed to update Ghostty surface appearance: \(error.localizedDescription)"
         )
       }
     }
+    fontSizeSynchronizer.sync(
+      fontSize: fontSize,
+      controllers: controllers,
+      forceControllerIDs: updatedControllerIDs
+    )
   }
 
   public func focus() {
@@ -1272,6 +1282,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   }
 
   private func resolvedFontSize() -> Float {
+    if let fontSize = fontSizeSynchronizer.fontSize {
+      return fontSize
+    }
     let fontSize = Float(UserDefaults.standard.double(forKey: AgentHubDefaults.terminalFontSize))
     return fontSize > 0 ? fontSize : 12
   }
