@@ -57,6 +57,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
   private var configuredExpectedExecutable: String?
   private var metadataStore: SessionMetadataStore?
   private var currentIsDark = true
+  private var currentTheme: RuntimeTheme?
   private var currentChromeStyle = AgentHubGhosttyTerminalTabChrome.systemStyle
   private static let terminalPaneDividerSize = TerminalPanelKit.SplitSizing.dividerDimension
   private static let terminalTabStripHeight = AgentHubGhosttyTerminalTabChrome.stripHeight
@@ -323,8 +324,9 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
 
   public func syncAppearance(isDark: Bool, fontSize: CGFloat, fontFamily: String, theme: RuntimeTheme?) {
     currentIsDark = isDark
+    currentTheme = theme
     updateChromeStyle(isDark: isDark, theme: theme)
-    guard let configurationPath = AgentHubGhosttyAppearanceConfiguration.path(isDark: isDark) else {
+    guard let configurationPath = appearanceOverlayPath(isDark: isDark) else {
       AppLogger.session.error("Unable to locate the bundled Ghostty appearance configuration.")
       return
     }
@@ -745,9 +747,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       // which is the bulk of the per-mount cold-start cost.
       let runtime = try await AgentHubSharedGhosttyRuntime.acquire()
       guard !Task.isCancelled else { return }
-      if let configurationPath = AgentHubGhosttyAppearanceConfiguration.path(
-        isDark: currentIsDark
-      ) {
+      if let configurationPath = appearanceOverlayPath(isDark: currentIsDark) {
         _ = try runtime.applyConfigurationOverlay(at: configurationPath)
       }
       let session = try TerminalSession(
@@ -885,6 +885,32 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     )
   }
 
+  /// The appearance overlay keeping the terminal's configured colors in step
+  /// with the app backdrop behind the transparent surface.
+  ///
+  /// When the backdrop is the user's own adopted Ghostty background, a
+  /// passthrough overlay lets their full theme (foreground, palette,
+  /// selection, cursor — and the OSC 11 background reply TUIs like Codex
+  /// blend highlight bands from) apply, matching standalone Ghostty.
+  /// Otherwise the bundled legibility overlay is used, rewritten so its
+  /// configured `background` still matches the painted backdrop.
+  private func appearanceOverlayPath(isDark: Bool) -> String? {
+    let backdrop = isDark ? currentTheme?.backgroundDark : currentTheme?.backgroundLight
+    let backdropHex = backdrop.map {
+      AgentHubGhosttyTerminalTabChrome.hexString(from: NSColor($0))
+    }
+    let backdropIsUserAdopted = isDark
+      ? currentTheme?.ghosttyUserBackgroundAdoptedDark == true
+      : currentTheme?.ghosttyUserBackgroundAdoptedLight == true
+    if backdropIsUserAdopted,
+       let passthrough = AgentHubGhosttyAppearanceConfiguration.userThemePassthroughPath(
+        backdropHex: backdropHex
+       ) {
+      return passthrough
+    }
+    return AgentHubGhosttyAppearanceConfiguration.path(isDark: isDark, backdropHex: backdropHex)
+  }
+
   private func updateChromeStyle(isDark: Bool, theme: RuntimeTheme?) {
     let nextStyle = AgentHubGhosttyTerminalTabChrome.style(isDark: isDark, theme: theme)
     guard nextStyle != currentChromeStyle else { return }
@@ -955,9 +981,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       initialInput: initialInput,
       fontSize: resolvedFontSize(),
       initialSize: initialSize,
-      configurationOverlayPath: AgentHubGhosttyAppearanceConfiguration.path(
-        isDark: currentIsDark
-      ),
+      configurationOverlayPath: appearanceOverlayPath(isDark: currentIsDark),
       colorScheme: AgentHubGhosttyAppearanceConfiguration.colorScheme(
         isDark: currentIsDark
       )
