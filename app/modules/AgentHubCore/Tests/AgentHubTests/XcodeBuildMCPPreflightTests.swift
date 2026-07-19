@@ -76,9 +76,9 @@ struct XcodeBuildMCPPreflightTests {
 
   @Test("Bootstrap setting defaults to enabled and honors an explicit opt-out")
   func settingDefaultsToEnabledAndHonorsOptOut() throws {
-    let suiteName = "AgentHubTests.XcodeBuildMCPPreflight.\(UUID().uuidString)"
-    let defaults = try #require(UserDefaults(suiteName: suiteName))
-    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let suite = EphemeralDefaultsSuite(prefix: "AgentHubTests.XcodeBuildMCPPreflight")
+    defer { suite.cleanUp() }
+    let defaults = suite.defaults
 
     #expect(XcodeBuildMCPPreflight.isEnabled(defaults: defaults))
 
