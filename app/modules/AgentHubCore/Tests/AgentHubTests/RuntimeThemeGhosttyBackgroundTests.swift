@@ -18,6 +18,8 @@ struct RuntimeThemeGhosttyBackgroundTests {
     #expect(adopted.backgroundDark == Color(hex: "#1e1e2e"))
     #expect(adopted.backgroundLight == Color(hex: "#eff1f5"))
     #expect(adopted.hasCustomBackgrounds)
+    #expect(adopted.ghosttyUserBackgroundAdoptedDark)
+    #expect(adopted.ghosttyUserBackgroundAdoptedLight)
   }
 
   @Test("Keeps the theme backdrop when luminance mismatches the appearance")
@@ -31,6 +33,8 @@ struct RuntimeThemeGhosttyBackgroundTests {
 
     #expect(adopted.backgroundDark == theme.backgroundDark)
     #expect(adopted.backgroundLight == theme.backgroundLight)
+    #expect(!adopted.ghosttyUserBackgroundAdoptedDark)
+    #expect(!adopted.ghosttyUserBackgroundAdoptedLight)
   }
 
   @Test("No resolved background leaves the theme untouched")
@@ -40,6 +44,8 @@ struct RuntimeThemeGhosttyBackgroundTests {
 
     #expect(adopted.backgroundDark == theme.backgroundDark)
     #expect(adopted.backgroundLight == theme.backgroundLight)
+    #expect(!adopted.ghosttyUserBackgroundAdoptedDark)
+    #expect(!adopted.ghosttyUserBackgroundAdoptedLight)
   }
 
   @Test("Partial resolution adopts only the matching side")
@@ -51,6 +57,8 @@ struct RuntimeThemeGhosttyBackgroundTests {
 
     #expect(adopted.backgroundDark == Color(hex: "#101015"))
     #expect(adopted.backgroundLight == theme.backgroundLight)
+    #expect(adopted.ghosttyUserBackgroundAdoptedDark)
+    #expect(!adopted.ghosttyUserBackgroundAdoptedLight)
   }
 
   private func ghosttyLikeTheme() throws -> RuntimeTheme {

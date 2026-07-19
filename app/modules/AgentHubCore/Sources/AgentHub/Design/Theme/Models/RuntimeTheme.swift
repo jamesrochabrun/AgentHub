@@ -25,6 +25,14 @@ public struct RuntimeTheme: Identifiable {
   // `applyingGhosttyUserBackground`).
   public var backgroundDark: Color?
   public var backgroundLight: Color?
+
+  // Whether the corresponding backdrop was adopted from the user's own
+  // Ghostty config. When true, the app paints the user's background behind
+  // the embedded terminal, so the appearance overlay can pass the user's
+  // full color theme through instead of overriding it for legibility.
+  public var ghosttyUserBackgroundAdoptedDark = false
+  public var ghosttyUserBackgroundAdoptedLight = false
+
   public let expandedContentBackgroundDark: Color?
   public let expandedContentBackgroundLight: Color?
 
@@ -56,9 +64,11 @@ public struct RuntimeTheme: Identifiable {
     var theme = self
     if let dark = background.adoptableHex(isDark: true) {
       theme.backgroundDark = Color(hex: dark)
+      theme.ghosttyUserBackgroundAdoptedDark = true
     }
     if let light = background.adoptableHex(isDark: false) {
       theme.backgroundLight = Color(hex: light)
+      theme.ghosttyUserBackgroundAdoptedLight = true
     }
     return theme
   }
