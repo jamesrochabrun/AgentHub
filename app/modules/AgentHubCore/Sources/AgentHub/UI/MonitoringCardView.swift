@@ -220,8 +220,9 @@ public struct MonitoringCardView: View {
     mcpAppResourceCount == 1 ? "Open 1 MCP app" : "Open \(mcpAppResourceCount) MCP apps"
   }
 
+  /// Memoized: read from `body`, so it re-parsed every detected link on each render.
   private var linkedPullRequests: [GitHubPullRequestURLReference] {
-    resourceLinks.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
+    GitHubPullRequestURLReferenceCache.references(in: resourceLinks.map(\.url))
   }
 
   private var localDiffSummary: LocalDiffSummary? {

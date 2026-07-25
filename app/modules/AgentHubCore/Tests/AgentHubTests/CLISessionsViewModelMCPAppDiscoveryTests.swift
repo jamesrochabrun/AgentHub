@@ -309,6 +309,67 @@ struct CLISessionsViewModelMCPAppDiscoveryTests {
     #expect(item?.invocation?.id == "tu-1")
   }
 
+  /// The title derivation JSON-decodes the invocation payload and is read from
+  /// SwiftUI body getters, so it is memoized by tool_use id. Repeated reads must
+  /// keep returning the derived title — including for distinct invocations that
+  /// share nothing but the cache.
+  @Test("Memoized titles stay correct across repeated render-item reads")
+  @MainActor
+  func memoizedTitlesStayCorrectAcrossReads() async {
+    let viewModel = makeViewModel(provider: .claude, service: RecordingMCPAppDiscoveryService())
+    let session = CLISession(id: "session-1", projectPath: "/tmp/agenthub-mcp-project")
+    let state = SessionMonitorState(detectedMCPAppInvocations: [
+      MCPAppInvocation(
+        id: "tu-1",
+        serverName: "excalidraw",
+        toolName: "create_view",
+        arguments: .object([
+          "elements": .string("[{\"type\":\"text\",\"text\":\"Login Flow\"}]")
+        ])
+      ),
+      MCPAppInvocation(
+        id: "tu-2",
+        serverName: "excalidraw",
+        toolName: "create_view",
+        arguments: .object([
+          "elements": .array([
+            .object(["type": .string("rectangle"), "label": .object(["text": .string("Start")])])
+          ])
+        ])
+      )
+    ])
+
+    await viewModel.ensureMCPAppRenderItems(for: session, state: state)
+
+    // Mirrors a card header, which reads these getters several times per render.
+    for _ in 0..<5 {
+      let titles = viewModel.mcpAppRenderItems(for: session, state: state).map(\.resource.title)
+      #expect(titles == ["Login Flow", "Start"])
+    }
+  }
+
+  @Test("An invocation with no derivable title still falls back to the tool title")
+  @MainActor
+  func fallsBackToToolTitleWhenNoneDerivable() async {
+    let viewModel = makeViewModel(provider: .claude, service: RecordingMCPAppDiscoveryService())
+    let session = CLISession(id: "session-1", projectPath: "/tmp/agenthub-mcp-project")
+    let state = SessionMonitorState(detectedMCPAppInvocations: [
+      MCPAppInvocation(
+        id: "tu-blank",
+        serverName: "excalidraw",
+        toolName: "create_view",
+        arguments: .object(["elements": .array([])])
+      )
+    ])
+
+    await viewModel.ensureMCPAppRenderItems(for: session, state: state)
+
+    // The cached `nil` must not shadow the template title on later reads.
+    for _ in 0..<3 {
+      #expect(viewModel.mcpAppRenderItems(for: session, state: state).first?.resource.title == "Draw Diagram")
+    }
+  }
+
   @Test("Derives a diagram title from the drawing's first text element")
   @MainActor
   func derivesTitleFromDiagramContent() {

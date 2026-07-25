@@ -268,8 +268,10 @@ public struct CollapsibleSelectedSessionsPanel: View {
     }
   }
 
+  /// Memoized — see `GitHubPullRequestURLReferenceCache`.
+  @MainActor
   private static func pullRequestReferences(in links: [ResourceLink]) -> [GitHubPullRequestURLReference] {
-    links.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
+    GitHubPullRequestURLReferenceCache.references(in: links.map(\.url))
   }
 
   private func ensurePrimarySelection() {
@@ -494,7 +496,9 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
     primarySessionId = items.first?.id
   }
 
+  /// Memoized — see `GitHubPullRequestURLReferenceCache`.
+  @MainActor
   private static func pullRequestReferences(in links: [ResourceLink]) -> [GitHubPullRequestURLReference] {
-    links.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
+    GitHubPullRequestURLReferenceCache.references(in: links.map(\.url))
   }
 }

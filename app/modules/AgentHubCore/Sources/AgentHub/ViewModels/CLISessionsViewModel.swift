@@ -6,6 +6,7 @@
 //
 
 import AgentHubGitDiff
+import AgentHubGitHub
 import AgentHubMCPUI
 import Foundation
 import Combine
@@ -282,6 +283,33 @@ public final class CLISessionsViewModel {
   /// Fetched app shells keyed by "serverName|projectPath|resourceUri".
   private var mcpAppShellsByKey: [String: AgentHubMCPUIResource] = [:]
 
+  /// Derived app titles keyed by tool_use id. `mcpAppRenderItems` is read from
+  /// SwiftUI `body` getters (several times per card header render) and the
+  /// derivation JSON-decodes the invocation's element payload, so the decode ran
+  /// once per access per frame. A tool_use id is unique and its arguments never
+  /// change, so the derived title is stable for the invocation's lifetime.
+  ///
+  /// `@ObservationIgnored` is required, not incidental: this is written from a
+  /// read that happens during view evaluation, and an observable write there
+  /// would invalidate the view that is mid-render.
+  @ObservationIgnored private var mcpAppTitlesByInvocationID: [String: String?] = [:]
+
+  /// Long-lived sessions keep emitting invocations; flush wholesale rather than
+  /// tracking an LRU, since a miss only costs one decode.
+  @ObservationIgnored private static let mcpAppTitleCacheCapacity = 512
+
+  private func cachedMCPAppTitle(for invocation: MCPAppInvocation) -> String? {
+    if let cached = mcpAppTitlesByInvocationID[invocation.id] {
+      return cached
+    }
+    if mcpAppTitlesByInvocationID.count >= Self.mcpAppTitleCacheCapacity {
+      mcpAppTitlesByInvocationID.removeAll(keepingCapacity: true)
+    }
+    let derived = Self.deriveMCPAppTitle(from: invocation)
+    mcpAppTitlesByInvocationID[invocation.id] = derived
+    return derived
+  }
+
   private func mcpAppShellCacheKey(serverName: String, projectPath: String, uri: String) -> String {
     [providerKind.rawValue, projectPath, serverName, uri].joined(separator: "|")
   }
@@ -403,7 +431,7 @@ public final class CLISessionsViewModel {
         uri: template.resourceUri
       )
       guard let shell = mcpAppShellsByKey[shellKey] else { return nil }
-      let title = Self.deriveMCPAppTitle(from: invocation)
+      let title = cachedMCPAppTitle(for: invocation)
         ?? template.title
         ?? shell.metadata.title
         ?? invocation.toolName
@@ -1647,6 +1675,38 @@ public final class CLISessionsViewModel {
 
   /// Per-session state models keyed by session ID.
   private var monitorStateModels: [String: SessionMonitorStateModel] = [:]
+
+  // MARK: Sidebar projections
+  //
+  // `monitorStates` carries ~15 fields that move on nearly every JSONL append —
+  // token counts, activity feed, current tool. The session list renders only a
+  // status dot and PR links, but reading `monitorStates` subscribed it to all of
+  // it, so a token counter ticking re-created every row. These two projections
+  // are written only when their value actually changes, so an append that moves
+  // nothing the sidebar can see invalidates nothing.
+
+  /// Per-session status, the only part of `SessionMonitorState` the session list
+  /// renders directly (and the only part status-mode grouping needs).
+  public private(set) var sessionStatuses: [String: SessionStatus] = [:]
+
+  /// PR references detected in a session's output.
+  ///
+  /// Deliberately the *derived* references rather than the raw `ResourceLink`s:
+  /// `ResourceLink` defaults its `id` to a fresh `UUID()` per parse, so a link
+  /// array never compares equal across publishes and would defeat the
+  /// write-on-change guard. A `GitHubPullRequestURLReference` is a pure function
+  /// of the URL string, so it compares stably.
+  public private(set) var sessionPullRequestReferences: [String: [GitHubPullRequestURLReference]] = [:]
+
+  /// Status for a monitored session, or `nil` if it has not reported yet.
+  public func sessionStatus(for sessionId: String) -> SessionStatus? {
+    sessionStatuses[sessionId]
+  }
+
+  /// PR references detected for a monitored session.
+  public func pullRequestReferences(for sessionId: String) -> [GitHubPullRequestURLReference] {
+    sessionPullRequestReferences[sessionId] ?? []
+  }
 
   /// Cached project-level preview eligibility keyed by normalized project path.
   public private(set) var webPreviewCandidates: [String: WebPreviewCandidateStatus] = [:]
@@ -3929,6 +3989,23 @@ public final class CLISessionsViewModel {
     monitoredSessionIds.contains(sessionId)
   }
 
+  /// Monitored sessions *without* their monitor state.
+  ///
+  /// The session list renders from this plus the narrow projections above, so it
+  /// never touches `monitorStates` and is not invalidated by publishes that only
+  /// move token counts. Use `monitoredSessions` when you genuinely need state.
+  public var monitoredCLISessions: [CLISession] {
+    var sessionsById: [String: CLISession] = [:]
+    for session in allSessions where monitoredSessionIds.contains(session.id) {
+      if sessionsById[session.id] == nil {
+        sessionsById[session.id] = session
+      }
+    }
+    return monitoredSessionIds.compactMap { sessionId in
+      sessionsById[sessionId] ?? monitoredSessionBackup[sessionId]
+    }
+  }
+
   /// Get all currently monitored sessions with their states.
   /// Uses a backup store to preserve sessions that may not yet be in history.jsonl.
   public var monitoredSessions: [(session: CLISession, state: SessionMonitorState?)] {
@@ -3984,11 +4061,26 @@ public final class CLISessionsViewModel {
 
   private func updateMonitorState(_ state: SessionMonitorState, for sessionId: String) {
     monitorStates[sessionId] = state
+
+    // Write-on-change: see the projection declarations. Cards that need the full
+    // state observe `monitorStateModels`; the session list observes only these.
+    if sessionStatuses[sessionId] != state.status {
+      sessionStatuses[sessionId] = state.status
+    }
+    let references = GitHubPullRequestURLReferenceCache.references(
+      in: state.detectedResourceLinks.map(\.url)
+    )
+    if sessionPullRequestReferences[sessionId] != references {
+      sessionPullRequestReferences[sessionId] = references
+    }
+
     monitorStateModels[sessionId]?.update(state)
   }
 
   private func removeMonitorState(for sessionId: String) {
     monitorStates.removeValue(forKey: sessionId)
+    sessionStatuses.removeValue(forKey: sessionId)
+    sessionPullRequestReferences.removeValue(forKey: sessionId)
     monitorStateModels[sessionId]?.update(nil)
     monitorStateModels.removeValue(forKey: sessionId)
   }

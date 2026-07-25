@@ -28,6 +28,7 @@ struct CollapsibleSessionRow: View {
   @State private var isPulseAnimating = false
   @State private var sessionGitHubQuickAccessViewModel = SessionGitHubQuickAccessViewModel()
   @Environment(\.agentHub) private var agentHub
+  @Environment(\.appVisibility) private var appVisibility
 
   // MARK: - Computed
 
@@ -54,7 +55,16 @@ struct CollapsibleSessionRow: View {
     }
   }
 
-  private var shouldPulse: Bool { isActiveStatus }
+  /// A `repeatForever` animation keeps the SwiftUI display link — and the
+  /// per-frame CoreAnimation commit — alive for as long as it runs, so it stops
+  /// while the app is occluded. There is always at least one active session in
+  /// a working hub, which is exactly when this would otherwise never idle.
+  private var shouldPulse: Bool {
+    StatusPulsePolicy.shouldPulse(
+      isActiveStatus: isActiveStatus,
+      isAppVisible: appVisibility?.isVisible ?? true
+    )
+  }
 
   private func statusDisplayText(_ status: SessionStatus) -> String {
     switch status {
@@ -196,6 +206,7 @@ struct CollapsibleSessionRow: View {
     .onAppear { startPulseAnimation() }
     .onChange(of: sessionStatus) { _, _ in startPulseAnimation() }
     .onChange(of: isPending) { _, _ in startPulseAnimation() }
+    .onChange(of: appVisibility?.isVisible ?? true) { _, _ in startPulseAnimation() }
     .task(id: gitHubObservationTaskID) {
       await observeGitHubIfAvailable()
     }

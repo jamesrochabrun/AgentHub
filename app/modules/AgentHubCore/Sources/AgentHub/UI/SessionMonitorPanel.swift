@@ -121,6 +121,16 @@ public struct SessionMonitorPanel: View {
 private struct StatusBadge: View {
   let status: SessionStatus
   @State private var pulse = false
+  @Environment(\.appVisibility) private var appVisibility
+
+  /// See `CollapsibleSessionRow.shouldPulse` — a `repeatForever` animation
+  /// pins the display link, so it stops while the app is occluded.
+  private var shouldPulse: Bool {
+    StatusPulsePolicy.shouldPulse(
+      isActiveStatus: isActiveStatus,
+      isAppVisible: appVisibility?.isVisible ?? true
+    )
+  }
 
   var body: some View {
     HStack(spacing: 6) {
@@ -155,21 +165,17 @@ private struct StatusBadge: View {
       Capsule()
         .stroke(statusColor.opacity(0.25), lineWidth: 1)
     )
-    .onAppear {
-      if isActiveStatus {
-        withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) {
-          pulse = true
-        }
-      }
+    .onAppear { syncPulseAnimation() }
+    .onChange(of: shouldPulse) { _, _ in syncPulseAnimation() }
+  }
+
+  private func syncPulseAnimation() {
+    guard shouldPulse else {
+      pulse = false
+      return
     }
-    .onChange(of: isActiveStatus) { _, newValue in
-      if newValue {
-        withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) {
-          pulse = true
-        }
-      } else {
-        pulse = false
-      }
+    withAnimation(.easeInOut(duration: 1.5).repeatForever(autoreverses: false)) {
+      pulse = true
     }
   }
 

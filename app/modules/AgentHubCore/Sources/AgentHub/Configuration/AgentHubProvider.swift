@@ -63,6 +63,10 @@ public final class AgentHubProvider {
   /// Git worktree service for branch/worktree operations
   public private(set) lazy var gitService: GitWorktreeService = .init()
 
+  /// App-level occlusion state; views use it to stop repeating animations when
+  /// no window is on screen.
+  public private(set) lazy var appVisibilityMonitor: AppVisibilityMonitor = .init()
+
   /// Global stats service for Claude usage metrics
   public private(set) lazy var statsService: GlobalStatsService = .init(claudePath: configuration.claudeDataPath)
 

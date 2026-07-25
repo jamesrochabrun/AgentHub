@@ -13,6 +13,10 @@ private struct AgentHubProviderKey: EnvironmentKey {
   static let defaultValue: AgentHubProvider? = nil
 }
 
+private struct AppVisibilityKey: EnvironmentKey {
+  static let defaultValue: AppVisibilityMonitor? = nil
+}
+
 extension EnvironmentValues {
   /// Access to the AgentHub provider from the environment
   ///
@@ -34,6 +38,13 @@ extension EnvironmentValues {
     get { self[AgentHubProviderKey.self] }
     set { self[AgentHubProviderKey.self] = newValue }
   }
+
+  /// App-level occlusion state. `nil` outside an `agentHub(_:)` hierarchy
+  /// (previews, isolated tests), which callers treat as "visible".
+  public var appVisibility: AppVisibilityMonitor? {
+    get { self[AppVisibilityKey.self] }
+    set { self[AppVisibilityKey.self] = newValue }
+  }
 }
 
 // MARK: - View Modifier
@@ -49,10 +60,12 @@ extension EnvironmentValues {
 struct AgentHubModifier: ViewModifier {
   let provider: AgentHubProvider
   let themeManager: ThemeManager
+  let appVisibilityMonitor: AppVisibilityMonitor
 
   init(provider: AgentHubProvider) {
     self.provider = provider
     self.themeManager = provider.themeManager
+    self.appVisibilityMonitor = provider.appVisibilityMonitor
   }
 
   func body(content: Content) -> some View {
@@ -63,6 +76,7 @@ struct AgentHubModifier: ViewModifier {
       .environment(provider.worktreeGenerationProgressCoordinator)
       .environment(themeManager)
       .environment(\.runtimeTheme, themeManager.currentTheme)
+      .environment(\.appVisibility, appVisibilityMonitor)
   }
 }
 

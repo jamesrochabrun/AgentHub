@@ -252,19 +252,21 @@ public struct MultiProviderSessionsListView: View {
     .onChange(of: claudeViewModel.lastCreatedPendingId) { _, newId in
       guard let newId else { return }
       selectedWorkspaceID = nil
-      primarySessionId = "pending-claude-\(newId.uuidString)"
+      primarySessionId = Self.pendingItemID(.claude, newId)
       claudeViewModel.lastCreatedPendingId = nil
     }
     .onChange(of: codexViewModel.lastCreatedPendingId) { _, newId in
       guard let newId else { return }
       selectedWorkspaceID = nil
-      primarySessionId = "pending-codex-\(newId.uuidString)"
+      primarySessionId = Self.pendingItemID(.codex, newId)
       codexViewModel.lastCreatedPendingId = nil
     }
-    .onChange(of: selectedSessionItems.map(\.id)) { _, _ in
-      syncModuleLandingSelection()
-      ensurePrimarySelection()
-      if selectedSessionItems.isEmpty {
+    .onChange(of: selectedSessionItemIDs) { _, _ in
+      // Build once and share: each of these used to re-derive the full list.
+      let items = selectedSessionItems
+      syncModuleLandingSelection(items: items)
+      ensurePrimarySelection(items: items)
+      if items.isEmpty {
         setAuxiliaryShellVisible(false)
       }
       scheduleInitialGitHubStateRefreshIfNeeded()
@@ -590,7 +592,7 @@ public struct MultiProviderSessionsListView: View {
       inlineSelectedSessions
     }
     .animation(.easeInOut(duration: 0.2), value: isSearchExpanded)
-    .animation(.easeInOut(duration: 0.22), value: selectedSessionItems.count)
+    .animation(.easeInOut(duration: 0.22), value: selectedSessionItemIDs.count)
     .onChange(of: currentViewModel.hasPerformedSearch) { oldValue, newValue in
       if oldValue && !newValue && isSearchExpanded {
         withAnimation(.easeInOut(duration: 0.25)) {
@@ -852,12 +854,47 @@ public struct MultiProviderSessionsListView: View {
     let linkedPullRequests: [GitHubPullRequestURLReference]
   }
 
+  /// Identity of a sidebar row. Shared by the full build and the cheap token
+  /// below so the two can never disagree about what a row is called.
+  private static func pendingItemID(_ providerKind: SessionProviderKind, _ pendingID: UUID) -> String {
+    "pending-\(providerKind.rawValue.lowercased())-\(pendingID.uuidString)"
+  }
+
+  private static func monitoredItemID(_ providerKind: SessionProviderKind, _ sessionID: String) -> String {
+    "\(providerKind.rawValue.lowercased())-\(sessionID)"
+  }
+
+  /// The ordered ids of `selectedSessionItems`, derived without building the
+  /// items. `.onChange`/`.animation` re-evaluate their `value:` on every render
+  /// pass, and the full build allocates a struct per session and re-derives
+  /// every session's PR links — measured at 3–4 rebuilds per state publish.
+  /// Ordering and identity match the full build exactly, so the modifiers below
+  /// keep their existing semantics.
+  private var selectedSessionItemIDs: [String] {
+    var entries: [(id: String, timestamp: Date)] = []
+
+    for pending in claudeViewModel.pendingHubSessions {
+      entries.append((Self.pendingItemID(.claude, pending.id), pending.startedAt))
+    }
+    for pending in codexViewModel.pendingHubSessions {
+      entries.append((Self.pendingItemID(.codex, pending.id), pending.startedAt))
+    }
+    for session in claudeViewModel.monitoredCLISessions {
+      entries.append((Self.monitoredItemID(.claude, session.id), session.lastActivityAt))
+    }
+    for session in codexViewModel.monitoredCLISessions {
+      entries.append((Self.monitoredItemID(.codex, session.id), session.lastActivityAt))
+    }
+
+    return entries.sorted { $0.timestamp > $1.timestamp }.map(\.id)
+  }
+
   private var selectedSessionItems: [SelectedSessionItem] {
     var results: [SelectedSessionItem] = []
 
     for pending in claudeViewModel.pendingHubSessions {
       results.append(SelectedSessionItem(
-        id: "pending-claude-\(pending.id.uuidString)",
+        id: Self.pendingItemID(.claude, pending.id),
         session: pending.placeholderSession,
         providerKind: .claude,
         timestamp: pending.startedAt,
@@ -869,7 +906,7 @@ public struct MultiProviderSessionsListView: View {
 
     for pending in codexViewModel.pendingHubSessions {
       results.append(SelectedSessionItem(
-        id: "pending-codex-\(pending.id.uuidString)",
+        id: Self.pendingItemID(.codex, pending.id),
         session: pending.placeholderSession,
         providerKind: .codex,
         timestamp: pending.startedAt,
@@ -879,27 +916,30 @@ public struct MultiProviderSessionsListView: View {
       ))
     }
 
-    for item in claudeViewModel.monitoredSessions {
+    // Reads the narrow `sessionStatus`/`pullRequestReferences` projections rather
+    // than `monitorStates`, so a publish that only moves token counts or the
+    // activity feed no longer rebuilds this list or re-creates every row.
+    for session in claudeViewModel.monitoredCLISessions {
       results.append(SelectedSessionItem(
-        id: "claude-\(item.session.id)",
-        session: item.session,
+        id: Self.monitoredItemID(.claude, session.id),
+        session: session,
         providerKind: .claude,
-        timestamp: item.session.lastActivityAt,
+        timestamp: session.lastActivityAt,
         isPending: false,
-        sessionStatus: item.state?.status,
-        linkedPullRequests: Self.pullRequestReferences(in: item.state?.detectedResourceLinks ?? [])
+        sessionStatus: claudeViewModel.sessionStatus(for: session.id),
+        linkedPullRequests: claudeViewModel.pullRequestReferences(for: session.id)
       ))
     }
 
-    for item in codexViewModel.monitoredSessions {
+    for session in codexViewModel.monitoredCLISessions {
       results.append(SelectedSessionItem(
-        id: "codex-\(item.session.id)",
-        session: item.session,
+        id: Self.monitoredItemID(.codex, session.id),
+        session: session,
         providerKind: .codex,
-        timestamp: item.session.lastActivityAt,
+        timestamp: session.lastActivityAt,
         isPending: false,
-        sessionStatus: item.state?.status,
-        linkedPullRequests: Self.pullRequestReferences(in: item.state?.detectedResourceLinks ?? [])
+        sessionStatus: codexViewModel.sessionStatus(for: session.id),
+        linkedPullRequests: codexViewModel.pullRequestReferences(for: session.id)
       ))
     }
 
@@ -943,18 +983,20 @@ public struct MultiProviderSessionsListView: View {
     )
   }
 
-  private var pinnedSessionItems: [SelectedSessionItem] {
+  private func pinnedSessionItems(from items: [SelectedSessionItem]) -> [SelectedSessionItem] {
     SidebarSessionOrdering.pinnedItems(
-      from: selectedSessionItems.filter { !isWorkspaceOwned($0) },
+      from: items.filter { !isWorkspaceOwned($0) },
       isPinned: isPinned,
       timestamp: { $0.timestamp },
       id: { $0.id }
     )
   }
 
-  private var groupedSelectedSessionSections: [SidebarRepositoryModuleSection<SelectedSessionItem>] {
+  private func groupedSelectedSessionSections(
+    from items: [SelectedSessionItem]
+  ) -> [SidebarRepositoryModuleSection<SelectedSessionItem>] {
     SidebarSessionOrdering.repositoryModuleSections(
-      from: selectedSessionItems,
+      from: items,
       repositories: Array(orderedTrackedRepos),
       worktreeDisplayMode: worktreeDisplayMode,
       isPinned: isPinned,
@@ -1120,9 +1162,11 @@ public struct MultiProviderSessionsListView: View {
   }
 
   /// Sessions grouped by status category (Working / Needs Attention / Idle).
-  private var statusGroupedSessions: [StatusGroupCategory: [SelectedSessionItem]] {
+  private func statusGroupedSessions(
+    from items: [SelectedSessionItem]
+  ) -> [StatusGroupCategory: [SelectedSessionItem]] {
     SidebarSessionOrdering.statusGroups(
-      from: selectedSessionItems,
+      from: items,
       isPinned: isPinned,
       status: { $0.sessionStatus },
       timestamp: { $0.timestamp },
@@ -1149,7 +1193,14 @@ public struct MultiProviderSessionsListView: View {
 
   @ViewBuilder
   private var inlineSelectedSessions: some View {
-    VStack(alignment: .leading, spacing: 0) {
+    // Built once per render pass and threaded through every grouping helper.
+    // These derivations used to each re-read `selectedSessionItems`, and
+    // `workspaceRows` did so once per repository group — turning one render into
+    // O(groups) full rebuilds of the session list.
+    let allItems = selectedSessionItems
+    let workspaceOwnedItems = workspaceOwnedItemsByWorkspaceID(from: allItems)
+
+    return VStack(alignment: .leading, spacing: 0) {
       SessionsSectionHeader(
         groupMode: $sidebarGroupMode,
         repos: orderedTrackedRepos,
@@ -1174,7 +1225,7 @@ public struct MultiProviderSessionsListView: View {
       }
 
       // Pinned sessions section
-      let pinned = pinnedSessionItems
+      let pinned = pinnedSessionItems(from: allItems)
       if !pinned.isEmpty {
         PinnedSectionHeader(
           count: pinned.count,
@@ -1194,7 +1245,7 @@ public struct MultiProviderSessionsListView: View {
 
       switch sidebarGroupMode {
       case .repo:
-        let sections = groupedSelectedSessionSections
+        let sections = groupedSelectedSessionSections(from: allItems)
         if !sections.isEmpty {
           ForEach(sections) { section in
             ForEach(section.groups) { group in
@@ -1270,7 +1321,7 @@ public struct MultiProviderSessionsListView: View {
               )
 
               if isExpanded {
-                workspaceRows(for: groupWorkspaces)
+                workspaceRows(for: groupWorkspaces, ownedItems: workspaceOwnedItems)
                 sessionRows(for: group.items.filter { !isWorkspaceOwned($0) })
               }
             }
@@ -1288,10 +1339,10 @@ public struct MultiProviderSessionsListView: View {
               .font(.caption.weight(.semibold))
               .foregroundStyle(.secondary)
               .padding(.top, 6)
-            workspaceRows(for: workspaceViewModel.workspaces)
+            workspaceRows(for: workspaceViewModel.workspaces, ownedItems: workspaceOwnedItems)
           }
         }
-        let grouped = statusGroupedSessions
+        let grouped = statusGroupedSessions(from: allItems)
         ForEach(StatusGroupCategory.allCases) { category in
           let items = (grouped[category] ?? []).filter { !isWorkspaceOwned($0) }
           if !items.isEmpty {
@@ -1327,9 +1378,11 @@ public struct MultiProviderSessionsListView: View {
   /// Sessions owned by a workspace render nested under its row instead of as
   /// top-level siblings; they stay registered for monitoring (approvals,
   /// notifications, activity rollups) — only the presentation is grouped.
-  private var workspaceOwnedItemsByWorkspaceID: [String: [SelectedSessionItem]] {
+  private func workspaceOwnedItemsByWorkspaceID(
+    from items: [SelectedSessionItem]
+  ) -> [String: [SelectedSessionItem]] {
     var owned: [String: [SelectedSessionItem]] = [:]
-    for item in selectedSessionItems where !item.isPending {
+    for item in items where !item.isPending {
       if let workspaceID = workspaceViewModel.workspaceID(
         owningSession: item.session.id,
         provider: item.providerKind
@@ -1362,8 +1415,10 @@ public struct MultiProviderSessionsListView: View {
   }
 
   @ViewBuilder
-  private func workspaceRows(for workspaces: [AgentWorkspaceRecord]) -> some View {
-    let ownedItems = workspaceOwnedItemsByWorkspaceID
+  private func workspaceRows(
+    for workspaces: [AgentWorkspaceRecord],
+    ownedItems: [String: [SelectedSessionItem]]
+  ) -> some View {
     VStack(spacing: 2) {
       ForEach(workspaces) { workspace in
         let sessionItems = ownedItems[workspace.id] ?? []
@@ -1850,8 +1905,10 @@ public struct MultiProviderSessionsListView: View {
       ?? codexViewModel.agentHubProvider?.gitHubPRObservationService
   }
 
+  /// Memoized: this runs for every session on every rebuild of
+  /// `selectedSessionItems`, which SwiftUI drives from monitor-state publishes.
   private static func pullRequestReferences(in links: [ResourceLink]) -> [GitHubPullRequestURLReference] {
-    links.compactMap { GitHubPullRequestURLReference(urlString: $0.url) }
+    GitHubPullRequestURLReferenceCache.references(in: links.map(\.url))
   }
 
   private var gitHubRefreshTargets: [GitHubPRObservationTarget] {
@@ -1871,8 +1928,17 @@ public struct MultiProviderSessionsListView: View {
     return targets
   }
 
+  /// Read from `inlineSelectedSessions` on every render, so it must not touch
+  /// `gitHubRefreshTargets` — that builds the full item list *and* a deduped
+  /// target set just to test emptiness. Targets come only from non-pending
+  /// items, which are exactly the monitored sessions, so an id count answers it.
+  ///
+  /// Slight widening: an id whose session cannot be resolved yet now leaves the
+  /// control enabled where it used to be disabled. That is transient, and the
+  /// refresh itself is already a no-op when there is nothing to refresh.
   private var canRefreshGitHubStates: Bool {
-    gitHubPRObservationService != nil && !gitHubRefreshTargets.isEmpty
+    gitHubPRObservationService != nil
+      && !(claudeViewModel.monitoredSessionIds.isEmpty && codexViewModel.monitoredSessionIds.isEmpty)
   }
 
   private var hasCurrentProviderRepositories: Bool {
@@ -1942,7 +2008,10 @@ public struct MultiProviderSessionsListView: View {
     viewModel.resolvedPendingSessions.removeValue(forKey: pendingUUID)
   }
 
-  private func ensurePrimarySelection() {
+  /// - Parameter items: Prebuilt list, when the caller already has one. Deriving
+  ///   it is not free, so callers that need several of these helpers build once
+  ///   and pass it down.
+  private func ensurePrimarySelection(items prebuiltItems: [SelectedSessionItem]? = nil) {
     guard selectedModuleLandingPath == nil, selectedWorkspaceID == nil else {
       primarySessionId = nil
       return
@@ -1950,7 +2019,7 @@ public struct MultiProviderSessionsListView: View {
 
     // Workspace-owned sessions never auto-select as the primary standalone
     // card; their PTY lives inside the workspace surface.
-    let items = selectedSessionItems.filter { !isWorkspaceOwned($0) }
+    let items = (prebuiltItems ?? selectedSessionItems).filter { !isWorkspaceOwned($0) }
     guard !items.isEmpty else {
       primarySessionId = nil
       return
@@ -1998,7 +2067,8 @@ public struct MultiProviderSessionsListView: View {
     setAuxiliaryShellVisible(false)
   }
 
-  private func syncModuleLandingSelection() {
+  /// - Parameter items: See `ensurePrimarySelection(items:)`.
+  private func syncModuleLandingSelection(items prebuiltItems: [SelectedSessionItem]? = nil) {
     if let selectedModuleLandingPath,
        pendingModulePaths.contains(selectedModuleLandingPath) {
       return
@@ -2007,7 +2077,7 @@ public struct MultiProviderSessionsListView: View {
     let activePath = ModuleLandingSelection.activeModulePath(
       selectedPath: selectedModuleLandingPath,
       repositories: orderedTrackedRepos,
-      itemProjectPaths: selectedSessionItems.map { $0.session.projectPath },
+      itemProjectPaths: (prebuiltItems ?? selectedSessionItems).map { $0.session.projectPath },
       mode: worktreeDisplayMode
     )
 
