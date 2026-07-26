@@ -337,10 +337,10 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(!launch.shellCommand.contains("developer_instructions="))
   }
 
-  @Test("Resume launch installs naming skill without reinstalling worktree skill")
-  func resumeLaunchInstallsNamingSkillWithoutReinstallingWorktreeSkill() throws {
+  @Test("Resume launch sweeps the legacy naming skill without reinstalling worktree skill")
+  func resumeLaunchSweepsLegacyNamingSkillWithoutReinstallingWorktreeSkill() throws {
     var worktreeInstallCount = 0
-    var namingInstallCount = 0
+    var namingSkillSweepCount = 0
     let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
       sessionId: "session-123",
       projectPath: "/tmp",
@@ -352,7 +352,7 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       metadataStore: nil,
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: { worktreeInstallCount += 1 },
-      installAgentHubSessionNamingSkill: { namingInstallCount += 1 }
+      removeLegacyAgentHubSessionNamingSkill: { namingSkillSweepCount += 1 }
     )
 
     guard case .success = result else {
@@ -361,7 +361,60 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     }
 
     #expect(worktreeInstallCount == 0)
-    #expect(namingInstallCount == 1)
+    #expect(namingSkillSweepCount == 1)
+  }
+
+  @Test("Session naming context is baked into the AgentHub MCP server command", arguments: [CLICommandMode.claude, .codex])
+  func sessionNamingContextIsBakedIntoMCPServerCommand(mode: CLICommandMode) throws {
+    let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: "session-123",
+      projectPath: "/tmp/project",
+      cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: mode),
+      initialPrompt: nil,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: nil,
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: {}
+    )
+
+    guard case .success(let launch) = result else {
+      Issue.record("Expected launch builder success")
+      return
+    }
+
+    // The MCP server must not depend on the provider forwarding our environment:
+    // without AGENTHUB_PROVIDER, agenthub_name_session refuses to run. Values are
+    // asserted at argument level in AIConfigSettingsTests (here they're re-escaped
+    // for the shell), so this only checks the exports reach the launch command.
+    #expect(launch.shellCommand.contains("export AGENTHUB_PROVIDER"))
+    #expect(launch.shellCommand.contains("export AGENTHUB_PROJECT_PATH"))
+    #expect(launch.shellCommand.contains("export AGENTHUB_SESSION_ID"))
+  }
+
+  @Test("Pending session ids are not baked into the AgentHub MCP server command")
+  func pendingSessionIdsAreNotBakedIntoMCPServerCommand() throws {
+    let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: "pending-abc",
+      projectPath: "/tmp/project",
+      cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: .codex),
+      initialPrompt: nil,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: nil,
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: {}
+    )
+
+    guard case .success(let launch) = result else {
+      Issue.record("Expected launch builder success")
+      return
+    }
+
+    #expect(!launch.shellCommand.contains("AGENTHUB_SESSION_ID"))
+    #expect(launch.shellCommand.contains("export AGENTHUB_PROVIDER"))
   }
 
   @Test("Task manager skill installer writes Claude and Codex skill files")

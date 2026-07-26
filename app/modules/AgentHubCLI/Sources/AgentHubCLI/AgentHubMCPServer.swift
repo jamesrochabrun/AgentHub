@@ -7,7 +7,6 @@ struct AgentHubMCPServer {
   private let queue = WorktreeLaunchRequestQueue()
   private let deletionQueue = WorktreeDeletionRequestQueue()
   private let sessionNameQueue = SessionNameRequestQueue()
-  private let sessionNamingContextProvider = SessionNamingContextProvider()
   private let progressQueue = WorktreeProgressQueue()
 
   /// Hard ceiling on any single `tools/call`. Worktree creation normally
@@ -162,7 +161,7 @@ struct AgentHubMCPServer {
       let plan = try await buildDelegationPlan(arguments: arguments)
       return toolResult(text: planSummary(plan), structuredContent: planJSONObject(plan))
 
-    case "name_session":
+    case "agenthub_name_session":
       return try nameSession(arguments: arguments)
 
     default:
@@ -170,56 +169,26 @@ struct AgentHubMCPServer {
     }
   }
 
+  /// Applies a session name in a single call.
+  ///
+  /// Deliberately one round trip: the calling agent already holds the
+  /// conversation this session is about, so a "fetch context first" phase buys
+  /// nothing and every extra hop is another place the model can stop short of
+  /// actually renaming. `name` is required for the same reason — a tool that
+  /// can be called with no arguments invites a call that renames nothing.
   private func nameSession(arguments: [String: Any]) throws -> [String: Any] {
     guard let provider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
       .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
     else {
       throw MCPError.invalidRequest(
-        "name_session is only available inside an AgentHub-managed Claude or Codex session."
+        "agenthub_name_session is only available inside an AgentHub-managed Claude or Codex session."
       )
     }
 
-    guard let name = optionalString("name", in: arguments) else {
-      let projectPath = ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
-        ?? FileManager.default.currentDirectoryPath
-      let context = sessionNamingContextProvider.context(
-        provider: provider,
-        projectPath: projectPath,
-        sessionId: ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"]
-      )
-      var structuredContext: [String: Any] = [
-        "provider": provider.commandLineValue,
-        "worktreeName": context.worktreeName,
-      ]
-      if let branchName = context.branchName {
-        structuredContext["branchName"] = branchName
-      }
-      if let claudeSessionName = context.claudeSessionName {
-        structuredContext["claudeSessionName"] = claudeSessionName
-        if let recommendedName = SessionNameFormatter.format(claudeSessionName) {
-          structuredContext["recommendedName"] = recommendedName
-        }
-      } else if let branchName = context.branchName,
-                !["main", "master"].contains(branchName.lowercased()) {
-        if let recommendedName = SessionNameFormatter.format(branchName) {
-          structuredContext["recommendedName"] = recommendedName
-        }
-      }
-
-      return toolResult(
-        text: "Use this fast context to suggest session names. Consider only the first 3 user messages; do not scan the full conversation or inspect repository files. For Claude, recommend claudeSessionName when present, or the current session name if Claude already exposes it in context. Otherwise prefer a descriptive branch name. Present exactly 3 concise lowercase kebab-case choices using 2-5 words and no spaces, wait for the user's selection, then immediately call name_session again with the selected name.",
-        structuredContent: [
-          "phase": "suggest",
-          "context": structuredContext,
-          "maxUserMessages": 3,
-          "suggestionCount": 3,
-        ]
-      )
-    }
-
+    let name = try requiredString("name", in: arguments)
     guard let formattedName = SessionNameFormatter.format(name) else {
       throw MCPError.invalidRequest(
-        "The selected session name must contain at least one letter or number."
+        "The session name must contain at least one letter or number."
       )
     }
 
@@ -232,7 +201,7 @@ struct AgentHubMCPServer {
     try sessionNameQueue.enqueue(request)
 
     return toolResult(
-      text: "AgentHub queued the selected session name: \(formattedName)",
+      text: "AgentHub accepted the session name: \(formattedName). It appears in the session list momentarily.",
       structuredContent: [
         "queued": true,
         "name": formattedName,
@@ -834,17 +803,26 @@ struct AgentHubMCPServer {
 
   private func nameSessionToolSchema() -> [String: Any] {
     [
-      "name": "name_session",
-      "description": "Fast two-step AgentHub session naming. When the user asks to name or rename the current session, CALL THIS TOOL IMMEDIATELY with no arguments; do not analyze the conversation first. It returns the worktree, branch, and Claude session name when available plus a strict three-message suggestion budget. After the user chooses, you MUST call this tool again with name before replying that the rename is complete.",
+      "name": "agenthub_name_session",
+      "description": """
+        Renames the current session in AgentHub's session list. Call this whenever the user asks \
+        to name, rename, retitle, or suggest a name for this session — including bare requests \
+        like "name this session", "rename the session", or "give this session a better name". \
+        Base the name on what this session has already been working on: do not read files, run \
+        git, or re-scan the conversation first. If the user did not state a name, propose 3 short \
+        candidates in your reply, then call this once with the one they pick. Renaming only \
+        happens through this call, so never say the session was renamed without calling it.
+        """,
       "inputSchema": [
         "type": "object",
         "properties": [
           "name": [
             "type": "string",
             "minLength": 1,
-            "description": "The final selected name. AgentHub normalizes it to a short lowercase kebab-case name with no spaces.",
+            "description": "Short kebab-case name for this session, ideally 2-4 words (for example, fix-session-naming). AgentHub normalizes it to lowercase kebab-case.",
           ],
         ],
+        "required": ["name"],
         "additionalProperties": false,
       ],
     ]

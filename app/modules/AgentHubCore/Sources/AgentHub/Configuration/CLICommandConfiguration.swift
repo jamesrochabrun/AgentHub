@@ -116,6 +116,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
     sessionId: String?,
     prompt: String?,
     agentHubMCPServerPath: String? = nil,
+    agentHubMCPEnvironment: [String: String] = [:],
     dangerouslySkipPermissions: Bool = false,
     worktreeName: String? = nil,
     permissionModePlan: Bool = false,
@@ -140,6 +141,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
           "--mcp-config",
           claudeMCPConfig(
             agentHubCLIPath: agentHubMCPServerPath,
+            agentHubEnvironment: agentHubMCPEnvironment,
             xcodeBuildMCP: xcodeBuildMCPBootstrap
           )
         ]
@@ -201,6 +203,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
         if shouldConfigureMCP(agentHubCLIPath: agentHubMCPServerPath, xcodeBuildMCP: xcodeBuildMCPBootstrap) {
           providerArgs += codexMCPConfigArgs(
             agentHubCLIPath: agentHubMCPServerPath,
+            agentHubEnvironment: agentHubMCPEnvironment,
             xcodeBuildMCP: xcodeBuildMCPBootstrap
           )
         }
@@ -212,6 +215,7 @@ public struct CLICommandConfiguration: Codable, Sendable {
       if shouldConfigureMCP(agentHubCLIPath: agentHubMCPServerPath, xcodeBuildMCP: xcodeBuildMCPBootstrap) {
         providerArgs += codexMCPConfigArgs(
           agentHubCLIPath: agentHubMCPServerPath,
+          agentHubEnvironment: agentHubMCPEnvironment,
           xcodeBuildMCP: xcodeBuildMCPBootstrap
         )
       }
@@ -353,13 +357,20 @@ public struct CLICommandConfiguration: Codable, Sendable {
 
   private func claudeMCPConfig(
     agentHubCLIPath: String?,
+    agentHubEnvironment: [String: String],
     xcodeBuildMCP: XcodeBuildMCPBootstrap?
   ) -> String {
     var servers: [String: Any] = [:]
     if let agentHubCLIPath, !agentHubCLIPath.isEmpty {
       servers["agenthub"] = [
         "command": "/bin/sh",
-        "args": ["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]
+        "args": [
+          "-lc",
+          mcpServerShellScript(
+            agentHubCLIPath: agentHubCLIPath,
+            environment: agentHubEnvironment
+          )
+        ]
       ]
     }
     if let xcodeBuildMCP {
@@ -376,13 +387,18 @@ public struct CLICommandConfiguration: Codable, Sendable {
 
   private func codexMCPConfigArgs(
     agentHubCLIPath: String?,
+    agentHubEnvironment: [String: String],
     xcodeBuildMCP: XcodeBuildMCPBootstrap?
   ) -> [String] {
     var args: [String] = []
     if let agentHubCLIPath, !agentHubCLIPath.isEmpty {
+      let script = mcpServerShellScript(
+        agentHubCLIPath: agentHubCLIPath,
+        environment: agentHubEnvironment
+      )
       args += [
         "-c", "mcp_servers.agenthub.command=\(tomlStringLiteral("/bin/sh"))",
-        "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", mcpServerShellScript(agentHubCLIPath: agentHubCLIPath)]))"
+        "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", script]))"
       ]
     }
     if let xcodeBuildMCP {
@@ -398,13 +414,25 @@ public struct CLICommandConfiguration: Codable, Sendable {
     return args
   }
 
-  private func mcpServerShellScript(agentHubCLIPath: String) -> String {
+  /// Command that starts the bundled `agenthub` MCP server.
+  ///
+  /// The session's `AGENTHUB_*` variables are exported by the script itself
+  /// instead of being inherited: Claude and Codex each decide what environment
+  /// an MCP server is spawned with, and session-scoped tools such as
+  /// `agenthub_name_session` refuse to run without `AGENTHUB_PROVIDER`.
+  private func mcpServerShellScript(
+    agentHubCLIPath: String,
+    environment: [String: String]
+  ) -> String {
     let escapedCLIPath = shellSingleQuoted(agentHubCLIPath)
-    return """
-    if [ -n "${AGENTHUB_CLI:-}" ] && [ -x "${AGENTHUB_CLI:-}" ]; then exec "$AGENTHUB_CLI" mcp-server; fi
-    if [ -x \(escapedCLIPath) ]; then exec \(escapedCLIPath) mcp-server; fi
-    exec agenthub mcp-server
-    """
+    let exports = environment
+      .sorted { $0.key < $1.key }
+      .map { "\($0.key)=\(shellSingleQuoted($0.value)); export \($0.key)" }
+    return (exports + [
+      "if [ -n \"${AGENTHUB_CLI:-}\" ] && [ -x \"${AGENTHUB_CLI:-}\" ]; then exec \"$AGENTHUB_CLI\" mcp-server; fi",
+      "if [ -x \(escapedCLIPath) ]; then exec \(escapedCLIPath) mcp-server; fi",
+      "exec agenthub mcp-server",
+    ]).joined(separator: "\n")
   }
 
   private func xcodeBuildMCPServerConfig(_ bootstrap: XcodeBuildMCPBootstrap) -> [String: Any] {

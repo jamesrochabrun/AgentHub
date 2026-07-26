@@ -179,6 +179,59 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(!codexArgs.contains { $0.contains("mcp_servers.agenthub.") })
   }
 
+  @Test("AgentHub MCP server command exports the session context it is given")
+  func agentHubMCPServerCommandExportsSessionContext() {
+    let environment = [
+      "AGENTHUB_PROVIDER": "Codex",
+      "AGENTHUB_PROJECT_PATH": "/repo/my project",
+      "AGENTHUB_SESSION_ID": "session-123"
+    ]
+
+    let claudeArgs = CLICommandConfiguration.claudeDefault.argumentsForSession(
+      sessionId: "session-123",
+      prompt: nil,
+      agentHubMCPServerPath: "/Applications/AgentHub.app/Contents/Helpers/agenthub",
+      agentHubMCPEnvironment: environment
+    )
+    guard let claudeConfig = claudeArgs.first(where: { $0.contains("mcpServers") }) else {
+      Issue.record("Expected an --mcp-config payload")
+      return
+    }
+    // Paths are asserted on the Codex side only: the Claude payload goes through
+    // JSONSerialization, whose forward-slash escaping varies by OS version.
+    #expect(claudeConfig.contains("AGENTHUB_PROVIDER='Codex'; export AGENTHUB_PROVIDER"))
+    #expect(claudeConfig.contains("AGENTHUB_SESSION_ID='session-123'; export AGENTHUB_SESSION_ID"))
+
+    let codexArgs = CLICommandConfiguration.codexDefault.argumentsForSession(
+      sessionId: "session-123",
+      prompt: nil,
+      agentHubMCPServerPath: "/Applications/AgentHub.app/Contents/Helpers/agenthub",
+      agentHubMCPEnvironment: environment
+    )
+    guard let codexServerArgs = codexArgs.first(where: { $0.hasPrefix("mcp_servers.agenthub.args=") }) else {
+      Issue.record("Expected a codex agenthub MCP server argument list")
+      return
+    }
+    // Sorted keys keep the generated command stable across launches.
+    #expect(codexServerArgs.contains(
+      "AGENTHUB_PROJECT_PATH='/repo/my project'; export AGENTHUB_PROJECT_PATH\\nAGENTHUB_PROVIDER='Codex'; export AGENTHUB_PROVIDER"
+    ))
+    #expect(codexServerArgs.contains("AGENTHUB_SESSION_ID='session-123'; export AGENTHUB_SESSION_ID"))
+    #expect(codexServerArgs.contains("mcp-server"))
+  }
+
+  @Test("AgentHub MCP server command omits exports when no session context is given")
+  func agentHubMCPServerCommandOmitsExportsWithoutSessionContext() {
+    let args = CLICommandConfiguration.codexDefault.argumentsForSession(
+      sessionId: nil,
+      prompt: nil,
+      agentHubMCPServerPath: "/Applications/AgentHub.app/Contents/Helpers/agenthub"
+    )
+
+    #expect(args.contains { $0.hasPrefix("mcp_servers.agenthub.args=") })
+    #expect(!args.contains { $0.contains("export AGENTHUB_") })
+  }
+
   @Test("Any non-native wrapper executable gets the direct-argument separator")
   func arbitraryWrapperUsesDirectArgumentSeparator() {
     let config = CLICommandConfiguration(
