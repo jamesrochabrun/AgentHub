@@ -40,8 +40,7 @@ public final class SessionNameRequestHandler: SessionNameRequestHandlingProtocol
   }
 
   public func handle(_ request: SessionNameRequest) async throws {
-    let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !name.isEmpty else {
+    guard let name = SessionNameFormatter.format(request.name) else {
       throw SessionNameRequestHandlingError.emptyName
     }
 
@@ -53,7 +52,10 @@ public final class SessionNameRequestHandler: SessionNameRequestHandlingProtocol
       target = codexTarget
     }
 
-    let sessionId = request.sourceSessionId
+    let explicitSessionId = request.sourceSessionId.flatMap { sessionId in
+      sessionId.hasPrefix("pending-") ? nil : sessionId
+    }
+    let sessionId = explicitSessionId
       ?? target.activeSessionId(forProcessId: request.sourceProcessId)
     guard let sessionId, !sessionId.hasPrefix("pending-") else {
       throw SessionNameRequestHandlingError.sessionUnavailable
@@ -64,3 +66,27 @@ public final class SessionNameRequestHandler: SessionNameRequestHandlingProtocol
 }
 
 extension CLISessionsViewModel: SessionNameRequestTarget {}
+
+enum SessionProcessGroupMatcher {
+  struct Candidate {
+    let sessionId: String
+    let processId: Int32
+  }
+
+  static func sessionId(
+    for sourceProcessId: Int32,
+    candidates: [Candidate],
+    processGroupId: (Int32) -> Int32?
+  ) -> String? {
+    if let exact = candidates.first(where: { $0.processId == sourceProcessId }) {
+      return exact.sessionId
+    }
+
+    guard let sourceProcessGroupId = processGroupId(sourceProcessId) else {
+      return nil
+    }
+    return candidates.first { candidate in
+      processGroupId(candidate.processId) == sourceProcessGroupId
+    }?.sessionId
+  }
+}

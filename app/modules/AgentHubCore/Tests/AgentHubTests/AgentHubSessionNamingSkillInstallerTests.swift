@@ -61,6 +61,7 @@ struct AgentHubSessionNamingSkillInstallerTests {
     )
 
     #expect(skill.contains("at most the first three user messages"))
+    #expect(skill.contains("lowercase kebab-case with no spaces"))
     #expect(skill.contains("mcp__agenthub__name_session"))
     #expect(skill.contains("immediately call `name_session` again"))
     #expect(metadata.contains("allow_implicit_invocation: true"))

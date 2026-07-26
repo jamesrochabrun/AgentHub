@@ -14,7 +14,7 @@ public actor SessionNameRequestMonitor: SessionNameRequestMonitorProtocol {
 
   public init(
     queue: SessionNameRequestQueue = SessionNameRequestQueue(),
-    pollInterval: Duration = .seconds(1)
+    pollInterval: Duration = .milliseconds(200)
   ) {
     self.queue = queue
     self.pollInterval = pollInterval
@@ -59,6 +59,9 @@ public actor SessionNameRequestMonitor: SessionNameRequestMonitorProtocol {
         try await handler(queued)
         try queue.remove(queued)
       } catch {
+        if shouldRetry(error, request: queued.request) {
+          continue
+        }
         AppLogger.session.error("Failed to handle AgentHub session name request: \(error.localizedDescription)")
         do {
           try queue.markFailed(queued)
@@ -67,5 +70,14 @@ public actor SessionNameRequestMonitor: SessionNameRequestMonitorProtocol {
         }
       }
     }
+  }
+
+  private func shouldRetry(_ error: Error, request: SessionNameRequest) -> Bool {
+    guard let handlingError = error as? SessionNameRequestHandlingError,
+          case .sessionUnavailable = handlingError
+    else {
+      return false
+    }
+    return Date.now.timeIntervalSince(request.createdAt) < 10
   }
 }

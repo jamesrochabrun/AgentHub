@@ -20,7 +20,7 @@ struct SessionNameRequestHandlerTests {
     ))
 
     #expect(claude.updates.isEmpty)
-    #expect(codex.updates == [.init(name: "Naming Tools", sessionId: "codex-session")])
+    #expect(codex.updates == [.init(name: "naming-tools", sessionId: "codex-session")])
   }
 
   @Test("Resolves new sessions by embedded process ID")
@@ -36,8 +36,47 @@ struct SessionNameRequestHandlerTests {
       sourceProcessId: 84
     ))
 
-    #expect(claude.updates == [.init(name: "New Session Name", sessionId: "resolved-session")])
+    #expect(claude.updates == [.init(name: "new-session-name", sessionId: "resolved-session")])
     #expect(codex.updates.isEmpty)
+  }
+
+  @Test("Falls back from a pending session ID to process resolution")
+  func resolvesPendingSessionByProcessId() async throws {
+    let claude = SessionNameRequestTargetMock(sessionIdsByProcessId: [84: "resolved-session"])
+    let handler = SessionNameRequestHandler(
+      claudeTarget: claude,
+      codexTarget: SessionNameRequestTargetMock()
+    )
+
+    try await handler.handle(SessionNameRequest(
+      name: "Fresh Claude Session",
+      sourceProvider: .claude,
+      sourceSessionId: "pending-launch",
+      sourceProcessId: 84
+    ))
+
+    #expect(claude.updates == [.init(name: "fresh-claude-session", sessionId: "resolved-session")])
+  }
+
+  @Test("Matches a CLI child process to its terminal process group")
+  func matchesProcessGroup() {
+    let candidates = [
+      SessionProcessGroupMatcher.Candidate(sessionId: "other", processId: 10),
+      SessionProcessGroupMatcher.Candidate(sessionId: "claude-session", processId: 20),
+    ]
+    let processGroups: [Int32: Int32] = [
+      10: 10,
+      20: 20,
+      21: 20,
+    ]
+
+    let sessionId = SessionProcessGroupMatcher.sessionId(
+      for: 21,
+      candidates: candidates,
+      processGroupId: { processGroups[$0] }
+    )
+
+    #expect(sessionId == "claude-session")
   }
 
   @Test("Rejects unresolved and empty session names")

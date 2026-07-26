@@ -42,6 +42,7 @@ struct SessionNameRequestMonitorTests {
     let queue = SessionNameRequestQueue(directoryURL: directory)
     let queued = try queue.enqueue(SessionNameRequest(
       id: "name-1",
+      createdAt: Date.now.addingTimeInterval(-11),
       name: "Session Naming",
       sourceProvider: .claude,
       sourceSessionId: nil,
@@ -60,6 +61,36 @@ struct SessionNameRequestMonitorTests {
     }
     await monitor.stop()
   }
+
+  @Test("Monitor retries a fresh request while its session is being discovered")
+  func monitorRetriesFreshUnavailableSession() async throws {
+    let directory = try temporarySessionNameMonitorRequestDirectory()
+    defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+
+    let queue = SessionNameRequestQueue(directoryURL: directory)
+    try queue.enqueue(SessionNameRequest(
+      id: "name-1",
+      name: "Session Naming",
+      sourceProvider: .claude,
+      sourceSessionId: nil,
+      sourceProcessId: 42
+    ))
+
+    let recorder = SessionNameRequestRetryRecorder()
+    let monitor = SessionNameRequestMonitor(queue: queue, pollInterval: .milliseconds(20))
+    await monitor.start { _ in
+      let attempt = await recorder.recordAttempt()
+      if attempt == 1 {
+        throw SessionNameRequestHandlingError.sessionUnavailable
+      }
+    }
+
+    await waitForSessionNameMonitorCondition {
+      await recorder.attemptCount() == 2
+        && ((try? queue.pendingRequests().isEmpty) == true)
+    }
+    await monitor.stop()
+  }
 }
 
 private actor SessionNameRequestRecorder {
@@ -71,6 +102,19 @@ private actor SessionNameRequestRecorder {
 
   func requests() -> [SessionNameRequest] {
     recordedRequests
+  }
+}
+
+private actor SessionNameRequestRetryRecorder {
+  private var attempts = 0
+
+  func recordAttempt() -> Int {
+    attempts += 1
+    return attempts
+  }
+
+  func attemptCount() -> Int {
+    attempts
   }
 }
 

@@ -196,14 +196,18 @@ struct AgentHubMCPServer {
       }
       if let claudeSessionName = context.claudeSessionName {
         structuredContext["claudeSessionName"] = claudeSessionName
-        structuredContext["recommendedName"] = claudeSessionName
+        if let recommendedName = SessionNameFormatter.format(claudeSessionName) {
+          structuredContext["recommendedName"] = recommendedName
+        }
       } else if let branchName = context.branchName,
                 !["main", "master"].contains(branchName.lowercased()) {
-        structuredContext["recommendedName"] = branchName
+        if let recommendedName = SessionNameFormatter.format(branchName) {
+          structuredContext["recommendedName"] = recommendedName
+        }
       }
 
       return toolResult(
-        text: "Use this fast context to suggest session names. Consider only the first 3 user messages; do not scan the full conversation or inspect repository files. For Claude, recommend claudeSessionName when present, or the current session name if Claude already exposes it in context. Otherwise prefer a descriptive branch name. Present 3 concise choices, wait for the user's selection, then immediately call name_session again with the selected name.",
+        text: "Use this fast context to suggest session names. Consider only the first 3 user messages; do not scan the full conversation or inspect repository files. For Claude, recommend claudeSessionName when present, or the current session name if Claude already exposes it in context. Otherwise prefer a descriptive branch name. Present exactly 3 concise lowercase kebab-case choices using 2-5 words and no spaces, wait for the user's selection, then immediately call name_session again with the selected name.",
         structuredContent: [
           "phase": "suggest",
           "context": structuredContext,
@@ -213,8 +217,14 @@ struct AgentHubMCPServer {
       )
     }
 
+    guard let formattedName = SessionNameFormatter.format(name) else {
+      throw MCPError.invalidRequest(
+        "The selected session name must contain at least one letter or number."
+      )
+    }
+
     let request = SessionNameRequest(
-      name: name,
+      name: formattedName,
       sourceProvider: provider,
       sourceSessionId: ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"],
       sourceProcessId: getppid()
@@ -222,10 +232,10 @@ struct AgentHubMCPServer {
     try sessionNameQueue.enqueue(request)
 
     return toolResult(
-      text: "AgentHub queued the selected session name: \(name)",
+      text: "AgentHub queued the selected session name: \(formattedName)",
       structuredContent: [
         "queued": true,
-        "name": name,
+        "name": formattedName,
         "provider": provider.commandLineValue,
       ]
     )
@@ -832,7 +842,7 @@ struct AgentHubMCPServer {
           "name": [
             "type": "string",
             "minLength": 1,
-            "description": "The final session name explicitly selected or supplied by the user.",
+            "description": "The final selected name. AgentHub normalizes it to a short lowercase kebab-case name with no spaces.",
           ],
         ],
         "additionalProperties": false,

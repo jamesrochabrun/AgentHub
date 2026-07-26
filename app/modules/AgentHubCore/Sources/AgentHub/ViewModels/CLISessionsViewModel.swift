@@ -8,6 +8,7 @@
 import AgentHubGitDiff
 import AgentHubGitHub
 import AgentHubMCPUI
+import Darwin
 import Foundation
 import Combine
 import Canvas
@@ -1862,9 +1863,23 @@ public final class CLISessionsViewModel {
 
   /// Resolves the real session currently hosted by an embedded CLI process.
   public func activeSessionId(forProcessId processId: Int32) -> String? {
-    activeTerminals.first { sessionId, terminal in
-      !sessionId.hasPrefix("pending-") && terminal.currentProcessPID == processId
-    }?.key
+    let candidates = activeTerminals.compactMap { sessionId, terminal -> SessionProcessGroupMatcher.Candidate? in
+      guard !sessionId.hasPrefix("pending-"), let terminalProcessId = terminal.currentProcessPID else {
+        return nil
+      }
+      return SessionProcessGroupMatcher.Candidate(
+        sessionId: sessionId,
+        processId: terminalProcessId
+      )
+    }
+    return SessionProcessGroupMatcher.sessionId(
+      for: processId,
+      candidates: candidates,
+      processGroupId: { candidateProcessId in
+        let groupId = getpgid(candidateProcessId)
+        return groupId > 0 ? groupId : nil
+      }
+    )
   }
 
   /// Loads custom names for all monitored sessions

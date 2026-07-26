@@ -10,7 +10,7 @@ allowed-tools:
 # AgentHub Session Naming
 
 1. Immediately call `name_session` with no arguments. Do not inspect files, run git, or analyze the full conversation first.
-2. Use the returned metadata and at most the first three user messages to create exactly three concise options.
+2. Use the returned metadata and at most the first three user messages to create exactly three concise options. Every option must be lowercase kebab-case with no spaces, ideally 2-5 words and no longer than needed (for example, `fix-session-naming`).
 3. For Claude, make `claudeSessionName` the recommended first option when present. If Claude already exposes the current session name in its own context, use that the same way. Otherwise prefer a descriptive branch name over the worktree directory name.
 4. Ask the user to choose, using an interactive choice UI when available and allowing a custom answer.
-5. After the user chooses, immediately call `name_session` again with `name` set to that exact choice. Do not claim the session was renamed until this call succeeds.
+5. After the user chooses, immediately call `name_session` again with `name` set to that choice. The tool normalizes custom answers into lowercase kebab-case. Do not claim the session was renamed until this call succeeds.
