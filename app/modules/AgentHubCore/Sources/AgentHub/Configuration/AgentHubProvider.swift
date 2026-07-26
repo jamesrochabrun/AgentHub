@@ -51,6 +51,7 @@ public final class AgentHubProvider {
   private let metadataStoreOverride: SessionMetadataStore?
   private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
   private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
+  private let sessionNameRequestMonitorOverride: (any SessionNameRequestMonitorProtocol)?
 
   // MARK: - Lazy Services
 
@@ -162,6 +163,9 @@ public final class AgentHubProvider {
   /// Watches worktree deletion cleanup requests written by the bundled `agenthub` helper.
   public private(set) lazy var worktreeDeletionRequestMonitor: any WorktreeDeletionRequestMonitorProtocol = worktreeDeletionRequestMonitorOverride ?? WorktreeDeletionRequestMonitor()
 
+  /// Watches session-name requests written by the bundled `agenthub` MCP server.
+  public private(set) lazy var sessionNameRequestMonitor: any SessionNameRequestMonitorProtocol = sessionNameRequestMonitorOverride ?? SessionNameRequestMonitor()
+
   public private(set) lazy var worktreeLaunchRequestHandler: any WorktreeLaunchRequestHandlingProtocol = WorktreeLaunchRequestHandler(
     claudeViewModel: claudeSessionsViewModel,
     codexViewModel: codexSessionsViewModel
@@ -170,6 +174,11 @@ public final class AgentHubProvider {
   public private(set) lazy var worktreeDeletionRequestHandler: any WorktreeDeletionRequestHandlingProtocol = WorktreeDeletionRequestHandler(
     claudeViewModel: claudeSessionsViewModel,
     codexViewModel: codexSessionsViewModel
+  )
+
+  public private(set) lazy var sessionNameRequestHandler: any SessionNameRequestHandlingProtocol = SessionNameRequestHandler(
+    claudeTarget: claudeSessionsViewModel,
+    codexTarget: codexSessionsViewModel
   )
 
   /// Watches the worktree-progress sidecar directory the `agenthub` CLI writes
@@ -188,6 +197,7 @@ public final class AgentHubProvider {
 
   private var isWorktreeLaunchRequestMonitoringStarted = false
   private var isWorktreeDeletionRequestMonitoringStarted = false
+  private var isSessionNameRequestMonitoringStarted = false
   private var isWorktreeProgressMonitoringStarted = false
 
   // MARK: - GitHub Integration
@@ -269,7 +279,8 @@ public final class AgentHubProvider {
     },
     metadataStore: SessionMetadataStore? = nil,
     worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
-    worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil
+    worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil,
+    sessionNameRequestMonitor: (any SessionNameRequestMonitorProtocol)? = nil
   ) {
     self.configuration = configuration
     terminalBackend = .storedPreference
@@ -278,6 +289,7 @@ public final class AgentHubProvider {
     metadataStoreOverride = metadataStore
     worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
     worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
+    sessionNameRequestMonitorOverride = sessionNameRequestMonitor
     if let metadataStore {
       Task {
         await TerminalProcessRegistry.shared.configure(store: metadataStore)
@@ -455,6 +467,7 @@ public final class AgentHubProvider {
   public func startWorktreeLaunchRequestMonitoring() {
     startWorktreeLaunchQueueMonitoring()
     startWorktreeDeletionQueueMonitoring()
+    startSessionNameQueueMonitoring()
     startWorktreeProgressMonitoring()
   }
 
@@ -505,6 +518,21 @@ public final class AgentHubProvider {
     }
   }
 
+  private func startSessionNameQueueMonitoring() {
+    guard !isSessionNameRequestMonitoringStarted else { return }
+    isSessionNameRequestMonitoringStarted = true
+
+    let monitor = sessionNameRequestMonitor
+    Task {
+      await monitor.start { [weak self] queued in
+        guard let self else {
+          throw SessionNameRequestHandlingError.sessionUnavailable
+        }
+        try await self.sessionNameRequestHandler.handle(queued.request)
+      }
+    }
+  }
+
   public func stopWorktreeLaunchRequestMonitoring() {
     if isWorktreeLaunchRequestMonitoringStarted {
       isWorktreeLaunchRequestMonitoringStarted = false
@@ -519,6 +547,15 @@ public final class AgentHubProvider {
       isWorktreeDeletionRequestMonitoringStarted = false
 
       let monitor = worktreeDeletionRequestMonitor
+      Task {
+        await monitor.stop()
+      }
+    }
+
+    if isSessionNameRequestMonitoringStarted {
+      isSessionNameRequestMonitoringStarted = false
+
+      let monitor = sessionNameRequestMonitor
       Task {
         await monitor.stop()
       }

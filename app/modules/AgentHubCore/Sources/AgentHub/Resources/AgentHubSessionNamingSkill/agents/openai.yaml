@@ -1,0 +1,7 @@
+interface:
+  display_name: "AgentHub Session Naming"
+  short_description: "Quickly suggest and apply a name for the current session"
+  default_prompt: "Name this AgentHub session"
+
+policy:
+  allow_implicit_invocation: true

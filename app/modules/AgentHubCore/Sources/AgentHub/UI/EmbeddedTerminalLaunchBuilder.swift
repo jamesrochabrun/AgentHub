@@ -67,6 +67,7 @@ public enum EmbeddedTerminalLaunchBuilder {
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: {
         AgentHubWorktreeSkillInstaller.installBundledSkillForAllProvidersBestEffort()
+        AgentHubSessionNamingSkillInstaller.installBundledSkillForAllProvidersBestEffort()
       }
     )
   }

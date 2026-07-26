@@ -1,10 +1,13 @@
 import AgentHubCLIKit
+import Darwin
 import Foundation
 
 struct AgentHubMCPServer {
   private let service = WorktreeManagementService()
   private let queue = WorktreeLaunchRequestQueue()
   private let deletionQueue = WorktreeDeletionRequestQueue()
+  private let sessionNameQueue = SessionNameRequestQueue()
+  private let sessionNamingContextProvider = SessionNamingContextProvider()
   private let progressQueue = WorktreeProgressQueue()
 
   /// Hard ceiling on any single `tools/call`. Worktree creation normally
@@ -63,6 +66,7 @@ struct AgentHubMCPServer {
             listWorktreesToolSchema(),
             deleteWorktreeToolSchema(),
             planningToolSchema(),
+            nameSessionToolSchema(),
           ],
         ])
 
@@ -158,9 +162,73 @@ struct AgentHubMCPServer {
       let plan = try await buildDelegationPlan(arguments: arguments)
       return toolResult(text: planSummary(plan), structuredContent: planJSONObject(plan))
 
+    case "name_session":
+      return try nameSession(arguments: arguments)
+
     default:
       throw MCPError.invalidRequest("Unknown AgentHub tool: \(name).")
     }
+  }
+
+  private func nameSession(arguments: [String: Any]) throws -> [String: Any] {
+    guard let provider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
+      .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
+    else {
+      throw MCPError.invalidRequest(
+        "name_session is only available inside an AgentHub-managed Claude or Codex session."
+      )
+    }
+
+    guard let name = optionalString("name", in: arguments) else {
+      let projectPath = ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
+        ?? FileManager.default.currentDirectoryPath
+      let context = sessionNamingContextProvider.context(
+        provider: provider,
+        projectPath: projectPath,
+        sessionId: ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"]
+      )
+      var structuredContext: [String: Any] = [
+        "provider": provider.commandLineValue,
+        "worktreeName": context.worktreeName,
+      ]
+      if let branchName = context.branchName {
+        structuredContext["branchName"] = branchName
+      }
+      if let claudeSessionName = context.claudeSessionName {
+        structuredContext["claudeSessionName"] = claudeSessionName
+        structuredContext["recommendedName"] = claudeSessionName
+      } else if let branchName = context.branchName,
+                !["main", "master"].contains(branchName.lowercased()) {
+        structuredContext["recommendedName"] = branchName
+      }
+
+      return toolResult(
+        text: "Use this fast context to suggest session names. Consider only the first 3 user messages; do not scan the full conversation or inspect repository files. For Claude, recommend claudeSessionName when present, or the current session name if Claude already exposes it in context. Otherwise prefer a descriptive branch name. Present 3 concise choices, wait for the user's selection, then immediately call name_session again with the selected name.",
+        structuredContent: [
+          "phase": "suggest",
+          "context": structuredContext,
+          "maxUserMessages": 3,
+          "suggestionCount": 3,
+        ]
+      )
+    }
+
+    let request = SessionNameRequest(
+      name: name,
+      sourceProvider: provider,
+      sourceSessionId: ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"],
+      sourceProcessId: getppid()
+    )
+    try sessionNameQueue.enqueue(request)
+
+    return toolResult(
+      text: "AgentHub queued the selected session name: \(name)",
+      structuredContent: [
+        "queued": true,
+        "name": name,
+        "provider": provider.commandLineValue,
+      ]
+    )
   }
 
   private func createWorktreeSession(arguments: [String: Any]) async throws -> MCPWorktreeLaunchResult {
@@ -749,6 +817,24 @@ struct AgentHubMCPServer {
           ],
         ],
         "required": ["prompt"],
+        "additionalProperties": false,
+      ],
+    ]
+  }
+
+  private func nameSessionToolSchema() -> [String: Any] {
+    [
+      "name": "name_session",
+      "description": "Fast two-step AgentHub session naming. When the user asks to name or rename the current session, CALL THIS TOOL IMMEDIATELY with no arguments; do not analyze the conversation first. It returns the worktree, branch, and Claude session name when available plus a strict three-message suggestion budget. After the user chooses, you MUST call this tool again with name before replying that the rename is complete.",
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "name": [
+            "type": "string",
+            "minLength": 1,
+            "description": "The final session name explicitly selected or supplied by the user.",
+          ],
+        ],
         "additionalProperties": false,
       ],
     ]

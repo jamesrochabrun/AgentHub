@@ -1838,24 +1838,33 @@ public final class CLISessionsViewModel {
 
   /// Sets a custom name for a session
   public func setCustomName(_ name: String?, for session: CLISession) {
+    setCustomName(name, forSessionId: session.id)
+  }
+
+  /// Sets a custom name using the shared persistence path used by session UI actions.
+  public func setCustomName(_ name: String?, forSessionId sessionId: String) {
     guard let store = metadataStore else { return }
 
     Task {
       do {
-        try await store.setCustomName(name, for: session.id)
+        try await store.setCustomName(name, for: sessionId)
 
-        // Update cache on main actor
-        await MainActor.run {
-          if let name = name, !name.isEmpty {
-            sessionCustomNames[session.id] = name
-          } else {
-            sessionCustomNames.removeValue(forKey: session.id)
-          }
+        if let name = name, !name.isEmpty {
+          sessionCustomNames[sessionId] = name
+        } else {
+          sessionCustomNames.removeValue(forKey: sessionId)
         }
       } catch {
         AppLogger.session.error("Failed to save custom name: \(error.localizedDescription)")
       }
     }
+  }
+
+  /// Resolves the real session currently hosted by an embedded CLI process.
+  public func activeSessionId(forProcessId processId: Int32) -> String? {
+    activeTerminals.first { sessionId, terminal in
+      !sessionId.hasPrefix("pending-") && terminal.currentProcessPID == processId
+    }?.key
   }
 
   /// Loads custom names for all monitored sessions
