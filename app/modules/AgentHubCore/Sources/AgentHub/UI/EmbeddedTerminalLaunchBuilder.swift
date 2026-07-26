@@ -67,6 +67,8 @@ public enum EmbeddedTerminalLaunchBuilder {
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: {
         AgentHubWorktreeSkillInstaller.installBundledSkillForAllProvidersBestEffort()
+      },
+      installAgentHubSessionNamingSkill: {
         AgentHubSessionNamingSkillInstaller.installBundledSkillForAllProvidersBestEffort()
       }
     )
@@ -83,6 +85,7 @@ public enum EmbeddedTerminalLaunchBuilder {
     metadataStore: SessionMetadataStore?,
     agentHubCLIPath: String? = nil,
     installAgentHubWorktreeSkill: () -> Void,
+    installAgentHubSessionNamingSkill: () -> Void = {},
     xcodeBuildMCPEnabled: Bool = XcodeBuildMCPPreflight.isEnabled(),
     xcodeBuildMCPToolingAvailable: () -> Bool = { XcodeBuildMCPPreflight.nodeToolingAvailable() },
     notifyXcodeBuildMCPToolingMissing: () -> Void = { Task { @MainActor in XcodeBuildMCPNodeNotice.notifyOnce() } }
@@ -104,6 +107,8 @@ public enum EmbeddedTerminalLaunchBuilder {
     guard let executablePath else {
       return .failure(.executableNotFound(cliConfiguration.command))
     }
+
+    installAgentHubSessionNamingSkill()
 
     let isNewSession = sessionId == nil || sessionId?.isEmpty == true || sessionId?.hasPrefix("pending-") == true
     if isNewSession {

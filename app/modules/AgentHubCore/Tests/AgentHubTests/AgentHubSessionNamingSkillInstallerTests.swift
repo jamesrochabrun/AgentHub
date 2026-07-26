@@ -30,9 +30,9 @@ struct AgentHubSessionNamingSkillInstallerTests {
     let claudeSkillURL = temporaryDirectory
       .appendingPathComponent(".claude/skills/agenthub-session-naming/SKILL.md")
     let codexSkillURL = temporaryDirectory
-      .appendingPathComponent(".codex/skills/agenthub-session-naming/SKILL.md")
+      .appendingPathComponent(".agents/skills/agenthub-session-naming/SKILL.md")
     let codexMetadataURL = temporaryDirectory
-      .appendingPathComponent(".codex/skills/agenthub-session-naming/agents/openai.yaml")
+      .appendingPathComponent(".agents/skills/agenthub-session-naming/agents/openai.yaml")
 
     #expect(try String(contentsOf: claudeSkillURL, encoding: .utf8) == skillMarkdown)
     #expect(try String(contentsOf: codexSkillURL, encoding: .utf8) == skillMarkdown)
@@ -51,12 +51,12 @@ struct AgentHubSessionNamingSkillInstallerTests {
 
     let skill = try String(
       contentsOf: temporaryDirectory
-        .appendingPathComponent(".codex/skills/agenthub-session-naming/SKILL.md"),
+        .appendingPathComponent(".agents/skills/agenthub-session-naming/SKILL.md"),
       encoding: .utf8
     )
     let metadata = try String(
       contentsOf: temporaryDirectory
-        .appendingPathComponent(".codex/skills/agenthub-session-naming/agents/openai.yaml"),
+        .appendingPathComponent(".agents/skills/agenthub-session-naming/agents/openai.yaml"),
       encoding: .utf8
     )
 
@@ -64,5 +64,6 @@ struct AgentHubSessionNamingSkillInstallerTests {
     #expect(skill.contains("mcp__agenthub__name_session"))
     #expect(skill.contains("immediately call `name_session` again"))
     #expect(metadata.contains("allow_implicit_invocation: true"))
+    #expect(metadata.contains("value: \"agenthub\""))
   }
 }

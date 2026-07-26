@@ -84,7 +84,7 @@ enum AgentHubSessionNamingSkillInstaller {
       .appendingPathComponent("skills", isDirectory: true)
       .appendingPathComponent(skillName, isDirectory: true)
     let codexSkillDirectory = homeDirectory
-      .appendingPathComponent(".codex", isDirectory: true)
+      .appendingPathComponent(".agents", isDirectory: true)
       .appendingPathComponent("skills", isDirectory: true)
       .appendingPathComponent(skillName, isDirectory: true)
 

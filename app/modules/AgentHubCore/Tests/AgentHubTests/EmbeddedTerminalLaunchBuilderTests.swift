@@ -337,9 +337,10 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     #expect(!launch.shellCommand.contains("developer_instructions="))
   }
 
-  @Test("Resume launch does not reinstall worktree skill")
-  func resumeLaunchDoesNotReinstallWorktreeSkill() throws {
-    var installCount = 0
+  @Test("Resume launch installs naming skill without reinstalling worktree skill")
+  func resumeLaunchInstallsNamingSkillWithoutReinstallingWorktreeSkill() throws {
+    var worktreeInstallCount = 0
+    var namingInstallCount = 0
     let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
       sessionId: "session-123",
       projectPath: "/tmp",
@@ -350,7 +351,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       worktreeName: nil,
       metadataStore: nil,
       agentHubCLIPath: agentHubCLIPath,
-      installAgentHubWorktreeSkill: { installCount += 1 }
+      installAgentHubWorktreeSkill: { worktreeInstallCount += 1 },
+      installAgentHubSessionNamingSkill: { namingInstallCount += 1 }
     )
 
     guard case .success = result else {
@@ -358,7 +360,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       return
     }
 
-    #expect(installCount == 0)
+    #expect(worktreeInstallCount == 0)
+    #expect(namingInstallCount == 1)
   }
 
   @Test("Task manager skill installer writes Claude and Codex skill files")

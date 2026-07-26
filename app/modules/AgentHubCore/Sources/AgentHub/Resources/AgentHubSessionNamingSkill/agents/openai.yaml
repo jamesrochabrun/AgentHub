@@ -5,3 +5,9 @@ interface:
 
 policy:
   allow_implicit_invocation: true
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "agenthub"
+      description: "AgentHub session management MCP server"
