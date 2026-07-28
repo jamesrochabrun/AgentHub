@@ -173,6 +173,7 @@ public final class GlobalStatsService: @unchecked Sendable {
   }
 
   private func startWatching() {
+    guard fileWatcher == nil else { return }
     guard FileManager.default.fileExists(atPath: statsFilePath) else {
       // Try again later when file might exist
       DispatchQueue.global().asyncAfter(deadline: .now() + 5) { [weak self] in
@@ -197,10 +198,13 @@ public final class GlobalStatsService: @unchecked Sendable {
       self?.scheduleDebouncedReload()
     }
 
-    source.setCancelHandler { [weak self] in
-      if let fd = self?.fileDescriptor, fd >= 0 {
-        close(fd)
-      }
+    // Capture the fd by value: the handler runs async on the source's queue,
+    // where `self` may already be gone (deinit-driven cancel would leak the
+    // fd) or `fileDescriptor` may already refer to a NEWER descriptor
+    // (closing it would kill an unrelated live fd once the number recycles).
+    let watchedFd = fileDescriptor
+    source.setCancelHandler {
+      close(watchedFd)
     }
 
     source.resume()

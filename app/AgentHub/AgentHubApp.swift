@@ -130,6 +130,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 struct AgentHubApp: App {
   @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+  init() {
+    // Must run before any terminal/watcher/subprocess spawns: Finder-launched
+    // apps inherit a 256 open-file soft limit, which a busy hub exhausts.
+    FileDescriptorLimits.raiseSoftLimit()
+  }
+
   var body: some Scene {
     WindowGroup {
       AgentHubSessionsView()

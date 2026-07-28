@@ -26,6 +26,10 @@ public actor SessionFileWatcher {
   // MARK: - Properties
 
   private var watchedSessions: [String: FileWatcherInfo] = [:]
+  /// Sessions whose `startMonitoring` is between its duplicate-guard and its
+  /// `watchedSessions` store (the call suspends in between); used to reject
+  /// concurrent duplicate starts that would orphan the first watcher.
+  private var startingSessions: Set<String> = []
   private var hookCancellables: [String: AnyCancellable] = [:]
   private nonisolated let stateSubject = PassthroughSubject<StateUpdate, Never>()
   private let claudePath: String
@@ -86,6 +90,18 @@ public actor SessionFileWatcher {
       return
     }
 
+    // Reserve before the first suspension point: two concurrent starts for
+    // the same session both pass the guard above (the store into
+    // watchedSessions happens only after several awaits), and the second
+    // store would overwrite — and thereby orphan — the first watcher's
+    // dispatch source, leaking its descriptors and status timer.
+    guard !startingSessions.contains(sessionId) else {
+      AppLogger.watcher.info("[Polling] Start already in flight for: \(sessionId.prefix(8), privacy: .public)")
+      return
+    }
+    startingSessions.insert(sessionId)
+    defer { startingSessions.remove(sessionId) }
+
     // Find session file
     let resolvedFilePath = sessionFilePath ?? findSessionFile(sessionId: sessionId, projectPath: projectPath)
     guard let filePath = resolvedFilePath else {
@@ -117,7 +133,10 @@ public actor SessionFileWatcher {
     // Set up file watching
     let fileDescriptor = open(filePath, O_EVTONLY)
     guard fileDescriptor >= 0 else {
-      AppLogger.watcher.error("Could not open file for watching: \(filePath)")
+      let openErrno = errno
+      AppLogger.watcher.error(
+        "Could not open file for watching: \(filePath) errno=\(openErrno) (\(String(cString: strerror(openErrno)), privacy: .public))"
+      )
       return
     }
 

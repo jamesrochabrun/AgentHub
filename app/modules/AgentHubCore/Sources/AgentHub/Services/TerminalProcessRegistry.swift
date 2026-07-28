@@ -62,12 +62,14 @@ struct DarwinProcessInspector: ProcessInspecting {
 
     let pipe = Pipe()
     task.standardOutput = pipe
-    task.standardError = Pipe()
+    task.standardError = FileHandle.nullDevice
 
     do {
       try task.run()
-      task.waitUntilExit()
+      // Read to EOF before waiting: output larger than the 64KB pipe buffer
+      // otherwise deadlocks the child against waitUntilExit().
       let data = pipe.fileHandleForReading.readDataToEndOfFile()
+      task.waitUntilExit()
       let command = String(data: data, encoding: .utf8)?
         .trimmingCharacters(in: .whitespacesAndNewlines)
       return command?.isEmpty == false ? command : nil

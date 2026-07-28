@@ -89,60 +89,81 @@ public class GitWorktreeDetector {
   /// Gets the current branch name for the given directory
   private static func getCurrentBranch(at path: String) async -> String? {
     AppLogger.git.info("[WorktreeDetector] getCurrentBranch start path=\(path, privacy: .public)")
+    guard let output = await runGitCommand(arguments: ["branch", "--show-current"], at: path) else {
+      return nil
+    }
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+  }
+
+  /// Runs a short git command and returns its stdout, or nil on launch
+  /// failure or timeout.
+  private static func runGitCommand(arguments: [String], at path: String) async -> String? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    process.arguments = ["branch", "--show-current"]
+    process.arguments = arguments
     process.currentDirectoryURL = URL(fileURLWithPath: path)
 
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = Pipe()
+    let outputPipe = Pipe()
+    process.standardOutput = outputPipe
+    process.standardError = FileHandle.nullDevice
+
+    // The exit notifier must be wired BEFORE run(): these git commands exit in
+    // milliseconds, and a terminationHandler installed after the exit never
+    // fires, stranding the wait (and the pipe descriptors) forever.
+    let exitNotifier = GitProcessExitNotifier()
+    process.terminationHandler = { process in
+      exitNotifier.complete(status: process.terminationStatus)
+    }
 
     do {
       try process.run()
-
-      // Wait for process with timeout using async terminationHandler (non-blocking)
-      let didTimeout = await withTaskGroup(of: Bool.self) { group in
-        // Task 1: Wait for process completion via terminationHandler
-        group.addTask {
-          await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            process.terminationHandler = { _ in
-              continuation.resume(returning: false)
-            }
-          }
-        }
-
-        // Task 2: Timeout
-        group.addTask {
-          do {
-            try await Task.sleep(for: .seconds(Self.gitCommandTimeout))
-            if process.isRunning {
-              process.terminate()
-              AppLogger.git.warning("Git branch command timed out")
-            }
-            return true
-          } catch {
-            return false
-          }
-        }
-
-        let result = await group.next() ?? false
-        group.cancelAll()
-        return result
-      }
-
-      // Check if process was terminated due to timeout
-      if didTimeout || process.terminationStatus == SIGTERM {
-        return nil
-      }
-
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      let output = String(data: data, encoding: .utf8)?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-
-      return output?.isEmpty == false ? output : nil
     } catch {
       return nil
+    }
+
+    // Drain stdout while the process runs so a full pipe can never block exit.
+    async let outputData = readHandleToEnd(outputPipe.fileHandleForReading)
+
+    let timedOut = await withTaskGroup(of: Bool.self) { group in
+      group.addTask {
+        _ = await exitNotifier.wait()
+        return false
+      }
+
+      group.addTask {
+        do {
+          try await Task.sleep(for: .seconds(Self.gitCommandTimeout))
+          if process.isRunning {
+            process.terminate()
+            AppLogger.git.warning(
+              "Git command timed out args=\(arguments.joined(separator: " "), privacy: .public)"
+            )
+          }
+          return true
+        } catch {
+          return false
+        }
+      }
+
+      let result = await group.next() ?? false
+      group.cancelAll()
+      return result
+    }
+
+    let data = await outputData
+    if timedOut {
+      return nil
+    }
+    return String(data: data, encoding: .utf8)
+  }
+
+  private static func readHandleToEnd(_ handle: FileHandle) async -> Data {
+    await withCheckedContinuation { continuation in
+      DispatchQueue.global(qos: .utility).async {
+        let data = handle.readDataToEndOfFile()
+        continuation.resume(returning: data)
+      }
     }
   }
 
@@ -191,71 +212,17 @@ public class GitWorktreeDetector {
   public static func listWorktrees(at repoPath: String) async -> [GitWorktreeInfo] {
     let start = ContinuousClock.now
     AppLogger.git.info("[WorktreeDetector] listWorktrees start path=\(repoPath, privacy: .public)")
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    process.arguments = ["worktree", "list", "--porcelain"]
-    process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
 
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = Pipe()
-
-    do {
-      try process.run()
-
-      // Wait for process with timeout using async terminationHandler (non-blocking)
-      let didTimeout = await withTaskGroup(of: Bool.self) { group in
-        // Task 1: Wait for process completion via terminationHandler
-        group.addTask {
-          await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-            process.terminationHandler = { _ in
-              continuation.resume(returning: false)
-            }
-          }
-        }
-
-        // Task 2: Timeout
-        group.addTask {
-          do {
-            try await Task.sleep(for: .seconds(Self.gitCommandTimeout))
-            if process.isRunning {
-              process.terminate()
-              AppLogger.git.warning("Git worktree list command timed out")
-            }
-            return true
-          } catch {
-            return false
-          }
-        }
-
-        let result = await group.next() ?? false
-        group.cancelAll()
-        return result
-      }
-
-      // Check if process was terminated due to timeout
-      if didTimeout || process.terminationStatus == SIGTERM {
-        let elapsed = ContinuousClock.now - start
-        AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) result=[] (timeout) elapsed=\(elapsed, privacy: .public)")
-        return []
-      }
-
-      let data = pipe.fileHandleForReading.readDataToEndOfFile()
-      guard let output = String(data: data, encoding: .utf8) else {
-        let elapsed = ContinuousClock.now - start
-        AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) result=[] (no output) elapsed=\(elapsed, privacy: .public)")
-        return []
-      }
-
-      let result = parseWorktreeList(output, mainRepoPath: repoPath)
+    guard let output = await runGitCommand(arguments: ["worktree", "list", "--porcelain"], at: repoPath) else {
       let elapsed = ContinuousClock.now - start
-      AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) count=\(result.count) elapsed=\(elapsed, privacy: .public)")
-      return result
-    } catch {
-      let elapsed = ContinuousClock.now - start
-      AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) result=[] (error) elapsed=\(elapsed, privacy: .public)")
+      AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) result=[] (timeout or error) elapsed=\(elapsed, privacy: .public)")
       return []
     }
+
+    let result = parseWorktreeList(output, mainRepoPath: repoPath)
+    let elapsed = ContinuousClock.now - start
+    AppLogger.git.info("[WorktreeDetector] listWorktrees end path=\(repoPath, privacy: .public) count=\(result.count) elapsed=\(elapsed, privacy: .public)")
+    return result
   }
 
   /// Parses the output of `git worktree list --porcelain`
@@ -316,5 +283,41 @@ public class GitWorktreeDetector {
     let fileManager = FileManager.default
     let gitPath = (path as NSString).appendingPathComponent(".git")
     return fileManager.fileExists(atPath: gitPath)
+  }
+}
+
+/// Latches a process exit so waiters registered before OR after the exit both
+/// resume. A raw terminationHandler-in-continuation cannot make that
+/// guarantee, which previously stranded task groups when git exited quickly.
+private final class GitProcessExitNotifier: @unchecked Sendable {
+  private let lock = NSLock()
+  private var status: Int32?
+  private var continuations: [CheckedContinuation<Int32, Never>] = []
+
+  func complete(status: Int32) {
+    lock.lock()
+    if self.status == nil {
+      self.status = status
+    }
+    let continuations = self.continuations
+    self.continuations = []
+    lock.unlock()
+
+    for continuation in continuations {
+      continuation.resume(returning: status)
+    }
+  }
+
+  func wait() async -> Int32 {
+    await withCheckedContinuation { continuation in
+      lock.lock()
+      if let status {
+        lock.unlock()
+        continuation.resume(returning: status)
+      } else {
+        continuations.append(continuation)
+        lock.unlock()
+      }
+    }
   }
 }

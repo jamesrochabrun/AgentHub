@@ -45,8 +45,8 @@ final class ScreenshotPoller {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
     process.arguments = ["simctl", "io", udid, "screenshot", "--type=png", tempURL.path]
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
     do {
       try process.run()
     } catch {

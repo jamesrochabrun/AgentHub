@@ -789,8 +789,10 @@ public final class SimulatorService {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: xcrun)
     process.arguments = ["simctl", "bootstatus", udid, "-b"]
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
+    // bootstatus streams progress nobody reads; an unread Pipe fills its 64KB
+    // buffer on slow boots and wedges the child past the timeout.
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
     guard (try? process.run()) != nil else { return false }
 
     let timeoutItem = DispatchWorkItem { process.terminate() }
@@ -819,8 +821,8 @@ public final class SimulatorService {
       process.environment = ProcessInfo.processInfo.environment
         .merging(environment) { _, override in override }
     }
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
     do {
       try process.run()
       process.waitUntilExit()
@@ -852,7 +854,6 @@ public final class SimulatorService {
 
     do {
       try process.run()
-      process.waitUntilExit()
     } catch {
       AppLogger.simulator.error("Failed to run xcrun devicectl: \(error.localizedDescription)")
       return ProcessExecutionResult(
@@ -862,10 +863,23 @@ public final class SimulatorService {
       )
     }
 
+    // Drain both pipes to EOF before waiting: a child that fills either 64KB
+    // pipe buffer would otherwise block on write while we block on wait.
+    var errorData = Data()
+    let errorDrain = DispatchGroup()
+    errorDrain.enter()
+    DispatchQueue.global().async {
+      errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+      errorDrain.leave()
+    }
+    let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+    errorDrain.wait()
+    process.waitUntilExit()
+
     return ProcessExecutionResult(
       exitCode: process.terminationStatus,
-      outputText: String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
-      errorText: String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      outputText: String(data: outputData, encoding: .utf8) ?? "",
+      errorText: String(data: errorData, encoding: .utf8) ?? ""
     )
   }
 
@@ -875,8 +889,8 @@ public final class SimulatorService {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: open)
     process.arguments = ["-a", name]
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
     try? process.run()
   }
 
@@ -886,8 +900,8 @@ public final class SimulatorService {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: open)
     process.arguments = [path]
-    process.standardOutput = Pipe()
-    process.standardError = Pipe()
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
     try? process.run()
   }
 
@@ -1381,14 +1395,16 @@ public final class SimulatorService {
     process.arguments = args
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    process.standardError = FileHandle.nullDevice
 
     do {
       try process.run()
-      process.waitUntilExit()
     } catch { return nil }
 
+    // Read to EOF before waiting: output larger than the 64KB pipe buffer
+    // otherwise deadlocks the child against waitUntilExit().
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
       return nil
     }
@@ -1616,16 +1632,18 @@ public final class SimulatorService {
 
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    process.standardError = FileHandle.nullDevice
 
     do {
       try process.run()
-      process.waitUntilExit()
     } catch {
       return .failure(error)
     }
 
+    // Read to EOF before waiting: `simctl list --json` routinely exceeds the
+    // 64KB pipe buffer and would deadlock against waitUntilExit().
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
 
     do {
       let runtimes = try parseDeviceList(from: data)
@@ -1663,19 +1681,23 @@ public final class SimulatorService {
       "--json-output", outputURL.path
     ]
 
-    process.standardOutput = Pipe()
+    process.standardOutput = FileHandle.nullDevice
     let errorPipe = Pipe()
     process.standardError = errorPipe
 
     do {
       try process.run()
-      process.waitUntilExit()
     } catch {
       return .failure(error)
     }
 
+    // Drain stderr to EOF before waiting so a chatty failure can't fill the
+    // 64KB pipe buffer and deadlock against waitUntilExit().
+    let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+
     guard process.terminationStatus == 0 else {
-      let errorText = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+      let errorText = String(data: errorData, encoding: .utf8) ?? ""
       return .failure(NSError(domain: "SimulatorService", code: Int(process.terminationStatus),
                               userInfo: [NSLocalizedDescriptionKey: errorText.isEmpty ? "devicectl list devices failed" : errorText]))
     }
@@ -1700,21 +1722,24 @@ public final class SimulatorService {
 
     let pipe = Pipe()
     process.standardOutput = pipe
-    process.standardError = Pipe()
+    process.standardError = FileHandle.nullDevice
 
     do {
       try process.run()
-      process.waitUntilExit()
     } catch {
       return .failure(error)
     }
+
+    // Read to EOF before waiting: output larger than the 64KB pipe buffer
+    // otherwise deadlocks the child against waitUntilExit().
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
 
     guard process.terminationStatus == 0 else {
       return .failure(NSError(domain: "SimulatorService", code: Int(process.terminationStatus),
                               userInfo: [NSLocalizedDescriptionKey: "xcdevice list failed"]))
     }
 
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
     do {
       return .success(try parsePhysicalDeviceList(from: data))
     } catch {

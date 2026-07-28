@@ -57,6 +57,14 @@ public final class CLISessionsViewModel {
   @ObservationIgnored private var isRefreshing = false
   @ObservationIgnored private var pendingRefreshRequested = false
   @ObservationIgnored private var accessoryDetectionTasks: [AccessoryDetectionContextKey: Task<Void, Never>] = [:]
+  /// Live kqueue watchers for pending Hub sessions, keyed by pending id, so
+  /// cancellation/resolution can release their directory descriptors.
+  @ObservationIgnored private var pendingSessionWatchers: [UUID: PendingSessionDirectoryWatcher] = [:]
+  /// Per-session FIFO for file-watcher start/stop operations. Unordered
+  /// fire-and-forget Tasks let a stop overtake an in-flight start (the start
+  /// hops through the claim store first), which orphaned a live watcher whose
+  /// session-file and sidecar descriptors were then never released.
+  @ObservationIgnored private var watcherLifecycleTasks: [String: (token: UUID, task: Task<Void, Never>)] = [:]
   @ObservationIgnored private var activeAccessoryDetectionKeysByParent: [String: Set<AccessoryDetectionContextKey>] = [:]
   @ObservationIgnored private var activeAccessoryRelationshipsByParent: [String: Set<AccessoryRelationshipIdentity>] = [:]
   @ObservationIgnored private var pendingResolvedAccessoryRelationships: [String: [SessionRelationshipRecord]] = [:]
@@ -638,6 +646,26 @@ public final class CLISessionsViewModel {
     }
   }
 
+  /// Runs `operation` after every previously enqueued watcher operation for
+  /// the same session has finished, so starts and stops reach the watcher
+  /// actor in the order they were issued.
+  private func enqueueWatcherLifecycleOperation(
+    for sessionId: String,
+    _ operation: @escaping () async -> Void
+  ) {
+    let previous = watcherLifecycleTasks[sessionId]?.task
+    let token = UUID()
+    let task = Task { [weak self] in
+      await previous?.value
+      await operation()
+      guard let self else { return }
+      if self.watcherLifecycleTasks[sessionId]?.token == token {
+        self.watcherLifecycleTasks.removeValue(forKey: sessionId)
+      }
+    }
+    watcherLifecycleTasks[sessionId] = (token, task)
+  }
+
   /// Start polling for a session
   private func startPolling(session: CLISession) {
     AppLogger.session.info("[Polling] startPolling called for session: \(session.id.prefix(8), privacy: .public)")
@@ -668,13 +696,14 @@ public final class CLISessionsViewModel {
     let claimStore = approvalClaimStore
     let sessionId = session.id
     let projectPath = session.projectPath
+    let sessionFilePath = session.sessionFilePath
 
-    Task {
+    enqueueWatcherLifecycleOperation(for: sessionId) { [fileWatcher] in
       await claimStore?.claim(sessionId: sessionId)
       await fileWatcher.startMonitoring(
         sessionId: sessionId,
         projectPath: projectPath,
-        sessionFilePath: session.sessionFilePath
+        sessionFilePath: sessionFilePath
       )
     }
     AppLogger.session.info("[Polling] Started polling for session: \(session.id.prefix(8), privacy: .public)")
@@ -689,7 +718,7 @@ public final class CLISessionsViewModel {
 
     let claimStore = approvalClaimStore
 
-    Task {
+    enqueueWatcherLifecycleOperation(for: sessionId) { [fileWatcher] in
       await fileWatcher.stopMonitoring(sessionId: sessionId)
       await claimStore?.release(sessionId: sessionId)
     }
@@ -3294,6 +3323,7 @@ public final class CLISessionsViewModel {
     let pendingKey = "pending-\(pending.id.uuidString)"
     removeTerminal(forKey: pendingKey)
     removeAuxiliaryShellTerminal(forKey: pendingKey)
+    pendingSessionWatchers.removeValue(forKey: pending.id)?.cancel()
     pendingHubSessions.removeAll { $0.id == pending.id }
     resolvedPendingSessions.removeValue(forKey: pending.id)
   }
@@ -3358,9 +3388,35 @@ public final class CLISessionsViewModel {
       return
     }
 
-    // Open directory for watching
-    let dirFd = open(projectDir, O_EVTONLY)
-    guard dirFd >= 0 else {
+    // Watch the directory for a new session file. The watcher owns the
+    // directory fd and releases it on every exit path; it waits indefinitely
+    // until a file appears or the pending card is cancelled/resolved.
+    let watcher = PendingSessionDirectoryWatcher()
+    pendingSessionWatchers[pending.id] = watcher
+    let outcome = await watcher.waitForNewJSONLFile(
+      inDirectory: projectDir,
+      excluding: existingFiles
+    )
+    if pendingSessionWatchers[pending.id] === watcher {
+      pendingSessionWatchers.removeValue(forKey: pending.id)
+    }
+
+    switch outcome {
+    case .found(let newFile):
+      let sessionId = String(newFile.dropLast(6)) // Remove ".jsonl"
+#if DEBUG
+      AppLogger.watcher.debug(
+        "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) found new session file \(newFile, privacy: .public)"
+      )
+#endif
+      handleNewSessionFound(sessionId: sessionId, pending: pending, worktree: worktree)
+    case .cancelled:
+#if DEBUG
+      AppLogger.watcher.debug(
+        "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) watch cancelled"
+      )
+#endif
+    case .unableToWatch:
 #if DEBUG
       AppLogger.watcher.debug(
         "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) open failed, falling back to poll"
@@ -3368,53 +3424,6 @@ public final class CLISessionsViewModel {
 #endif
       // Directory doesn't exist yet - poll until it does
       await pollForNewClaudeSessionFallback(pending: pending, worktree: worktree)
-      return
-    }
-
-    let source = DispatchSource.makeFileSystemObjectSource(
-      fileDescriptor: dirFd,
-      eventMask: [.write, .link, .attrib],
-      queue: DispatchQueue.global(qos: .utility)
-    )
-
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-      var didFind = false
-
-      source.setEventHandler { [weak self] in
-        guard !didFind else { return }
-
-        // Check for new .jsonl files
-        guard let currentFiles = try? FileManager.default.contentsOfDirectory(atPath: projectDir) else { return }
-        let newFiles = Set(currentFiles).subtracting(existingFiles)
-        let newJsonlFiles = newFiles.filter { $0.hasSuffix(".jsonl") }
-#if DEBUG
-        if !newFiles.isEmpty {
-          AppLogger.watcher.debug(
-            "[WatchNewSession] pendingId=\(pending.id.uuidString, privacy: .public) event newFiles=\(newFiles.count) newJsonl=\(newJsonlFiles.count)"
-          )
-        }
-#endif
-
-        if let newFile = newJsonlFiles.first {
-          didFind = true
-          let sessionId = String(newFile.dropLast(6)) // Remove ".jsonl"
-
-          Task { @MainActor in
-            self?.handleNewSessionFound(sessionId: sessionId, pending: pending, worktree: worktree)
-          }
-          source.cancel()
-          continuation.resume()
-        }
-      }
-
-      source.setCancelHandler {
-        close(dirFd)
-      }
-
-      source.resume()
-
-      // No timeout: watcher waits indefinitely until user sends a message
-      // or closes the pending session card manually
     }
   }
 
@@ -3455,6 +3464,9 @@ public final class CLISessionsViewModel {
     worktree: WorktreeBranch,
     sessionFilePath: String? = nil
   ) {
+    // A competing resolution path (accessory detection, history polling) can
+    // win while the kqueue watch is still armed; release its directory fd.
+    pendingSessionWatchers.removeValue(forKey: pending.id)?.cancel()
 #if DEBUG
     AppLogger.session.debug(
       "[HandleNewSession] pendingId=\(pending.id.uuidString, privacy: .public) sessionId=\(sessionId, privacy: .public) worktreePath=\(worktree.path, privacy: .public) start"
@@ -3976,7 +3988,7 @@ public final class CLISessionsViewModel {
     syncFocusedSessionIdsToMonitor()
     persistMonitoredSessions()
 
-    Task {
+    enqueueWatcherLifecycleOperation(for: sessionId) { [fileWatcher] in
       await fileWatcher.stopMonitoring(sessionId: sessionId)
     }
   }

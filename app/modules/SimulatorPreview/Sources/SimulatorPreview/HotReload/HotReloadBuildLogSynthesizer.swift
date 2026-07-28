@@ -54,8 +54,13 @@ public enum HotReloadBuildLogSynthesizer {
     process.standardOutput = output
     try process.run()
 
-    input.fileHandleForWriting.write(data)
-    try input.fileHandleForWriting.close()
+    // Feed stdin on a background queue while draining stdout here: writing
+    // the whole input first deadlocks once gzip's output fills the 64KB pipe
+    // buffer with no reader on the other end.
+    DispatchQueue.global().async {
+      input.fileHandleForWriting.write(data)
+      try? input.fileHandleForWriting.close()
+    }
     let compressed = output.fileHandleForReading.readDataToEndOfFile()
     process.waitUntilExit()
 

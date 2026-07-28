@@ -414,14 +414,16 @@ public struct TerminalLauncher {
 
     let pipe = Pipe()
     task.standardOutput = pipe
-    task.standardError = Pipe()
+    task.standardError = FileHandle.nullDevice
 
     do {
       try task.run()
+      // Read to EOF before waiting: output larger than the 64KB pipe buffer
+      // otherwise deadlocks the child against waitUntilExit().
+      let data = pipe.fileHandleForReading.readDataToEndOfFile()
       task.waitUntilExit()
 
       if task.terminationStatus == 0 {
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         if let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty {
           return path

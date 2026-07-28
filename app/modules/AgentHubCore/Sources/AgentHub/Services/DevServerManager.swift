@@ -612,9 +612,15 @@ public final class DevServerManager {
   }
 
   private func cleanupPipeHandlers(for key: String) {
+    // Keep draining after readiness: with no reader the child fills the 64KB
+    // pipe buffer and blocks on write, freezing the dev server. Handlers are
+    // only truly nil-ed in disposeManagedServer when the server stops.
     if let pipes = outputPipes[key] {
-      pipes.stdout.fileHandleForReading.readabilityHandler = nil
-      pipes.stderr.fileHandleForReading.readabilityHandler = nil
+      let drain: @Sendable (FileHandle) -> Void = { handle in
+        _ = handle.availableData
+      }
+      pipes.stdout.fileHandleForReading.readabilityHandler = drain
+      pipes.stderr.fileHandleForReading.readabilityHandler = drain
     }
   }
 }

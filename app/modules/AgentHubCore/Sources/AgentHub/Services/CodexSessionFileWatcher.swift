@@ -54,7 +54,10 @@ public actor CodexSessionFileWatcher {
 
     let fileDescriptor = open(filePath, O_EVTONLY)
     guard fileDescriptor >= 0 else {
-      AppLogger.watcher.error("[Codex] Could not open file for watching: \(filePath)")
+      let openErrno = errno
+      AppLogger.watcher.error(
+        "[Codex] Could not open file for watching: \(filePath) errno=\(openErrno) (\(String(cString: strerror(openErrno)), privacy: .public))"
+      )
       return
     }
 
