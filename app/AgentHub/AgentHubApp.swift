@@ -34,6 +34,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     UNUserNotificationCenter.current().delegate = self
+    UNUserNotificationCenter.current().setNotificationCategories([
+      GitHubCIFailureNotification.category()
+    ])
     registerBundledFonts()
     // Sweep any approval hooks left installed by a previous crash/force-quit
     // before sessions start restoring. Re-installs happen naturally as each
@@ -91,8 +94,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     didReceive response: UNNotificationResponse,
     withCompletionHandler completionHandler: @escaping () -> Void
   ) {
+    let ciFailurePayload = GitHubCIFailureNotificationPayload(
+      userInfo: response.notification.request.content.userInfo
+    )
+    let isFixCIAction = response.actionIdentifier == GitHubCIFailureNotification.fixActionIdentifier
     Task { @MainActor in
       NSApp.activate(ignoringOtherApps: true)
+      if let ciFailurePayload, let providerKind = ciFailurePayload.providerKind {
+        provider.globalSessionSelectionRouter.select(
+          providerKind: providerKind,
+          sessionId: ciFailurePayload.sessionId,
+          projectPath: ciFailurePayload.projectPath
+        )
+        provider.gitHubCIFailureActionRouter.request(
+          payload: ciFailurePayload,
+          action: isFixCIAction ? .fixCI : .openGitHubPanel
+        )
+      }
     }
     completionHandler()
   }

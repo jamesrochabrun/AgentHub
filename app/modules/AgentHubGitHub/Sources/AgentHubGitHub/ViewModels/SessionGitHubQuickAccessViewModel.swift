@@ -28,6 +28,11 @@ public final class SessionGitHubQuickAccessViewModel {
     observationState.isUnavailable && lastRefreshedAt != nil
   }
 
+  /// Called with every applied observation snapshot. Session surfaces use this
+  /// to feed shared per-session consumers (e.g. CI failure notifications).
+  @ObservationIgnored
+  public var onSnapshotApplied: (@MainActor (GitHubPRObservationSnapshot) -> Void)?
+
   private var coordinator: (any SessionGitHubQuickAccessCoordinatorProtocol)?
   private var observationService: (any GitHubPRObservationServiceProtocol)?
   private let service: any GitHubCLIServiceProtocol
@@ -226,6 +231,7 @@ public final class SessionGitHubQuickAccessViewModel {
     currentBranchChecks = snapshot.checks
     observationState = snapshot.state
     lastRefreshedAt = snapshot.lastRefreshedAt
+    onSnapshotApplied?(snapshot)
   }
 
   private func clearState(state: GitHubPRObservationState = .idle) {

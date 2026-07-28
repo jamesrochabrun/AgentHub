@@ -211,6 +211,15 @@ public final class AgentHubProvider {
   /// Shared GitHub PR/check observation service for panels and session rows
   public private(set) lazy var gitHubPRObservationService: any GitHubPRObservationServiceProtocol = GitHubPRObservationService(service: gitHubService)
 
+  /// Fetches failing CI logs and composes the "Fix CI" agent prompt
+  public private(set) lazy var gitHubCIFixService: any GitHubCIFixServiceProtocol = GitHubCIFixService(service: gitHubService)
+
+  /// Posts macOS notifications when an observed PR's CI starts failing
+  public private(set) lazy var gitHubCIFailureNotifier: any GitHubCIFailureNotifierProtocol = GitHubCIFailureNotifier()
+
+  /// Routes CI-failure notification taps into the monitoring UI
+  public private(set) lazy var gitHubCIFailureActionRouter: GitHubCIFailureActionRouter = .init()
+
   // MARK: - Global Session Control Panel
 
   /// Routes global-panel session selections into the main sessions UI.

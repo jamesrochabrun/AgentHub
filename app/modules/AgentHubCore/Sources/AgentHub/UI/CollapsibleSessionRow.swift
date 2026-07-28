@@ -354,6 +354,18 @@ struct CollapsibleSessionRow: View {
       guard !Task.isCancelled else { return }
     }
 
+    if let notifier = agentHub?.gitHubCIFailureNotifier {
+      let context = GitHubCIFailureSessionContext(
+        sessionId: session.id,
+        providerKind: providerKind,
+        projectPath: session.projectPath,
+        branchName: session.branchName
+      )
+      sessionGitHubQuickAccessViewModel.onSnapshotApplied = { snapshot in
+        notifier.evaluate(snapshot: snapshot, context: context)
+      }
+    }
+
     await sessionGitHubQuickAccessViewModel.load(
       projectPath: session.projectPath,
       branchName: session.branchName,

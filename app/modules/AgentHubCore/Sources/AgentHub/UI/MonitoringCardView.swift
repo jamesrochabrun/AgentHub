@@ -321,6 +321,17 @@ public struct MonitoringCardView: View {
         try? await Task.sleep(for: .seconds(2))
         guard !Task.isCancelled else { return }
       }
+      if let notifier = viewModel?.agentHubProvider?.gitHubCIFailureNotifier ?? agentHub?.gitHubCIFailureNotifier {
+        let context = GitHubCIFailureSessionContext(
+          sessionId: session.id,
+          providerKind: providerKind,
+          projectPath: session.projectPath,
+          branchName: session.branchName
+        )
+        sessionGitHubQuickAccessViewModel.onSnapshotApplied = { snapshot in
+          notifier.evaluate(snapshot: snapshot, context: context)
+        }
+      }
       await sessionGitHubQuickAccessViewModel.load(
         projectPath: session.projectPath,
         branchName: session.branchName,

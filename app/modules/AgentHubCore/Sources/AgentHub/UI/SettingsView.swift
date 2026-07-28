@@ -57,6 +57,9 @@ public struct SettingsView: View {
   @AppStorage(AgentHubDefaults.pushNotificationsEnabled)
   private var pushNotificationsEnabled: Bool = true
 
+  @AppStorage(AgentHubDefaults.ciFailureNotificationsEnabled)
+  private var ciFailureNotificationsEnabled: Bool = true
+
   @AppStorage(AgentHubDefaults.globalSessionPanelEnabled)
   private var globalSessionPanelEnabled: Bool = true
 
@@ -225,6 +228,12 @@ public struct SettingsView: View {
           title: "Push notifications",
           description: "Show a notification banner when tools require approval",
           isOn: $pushNotificationsEnabled
+        )
+
+        settingsToggle(
+          title: "CI failure notifications",
+          description: "Notify when a monitored session's pull request starts failing CI, with a Fix CI action",
+          isOn: $ciFailureNotificationsEnabled
         )
       }
 

@@ -7,7 +7,8 @@ AgentHub observes GitHub pull request state and CI checks through a shared servi
 - GitHub monitoring is optional and only works when the GitHub CLI (`gh`) is installed, authenticated, and the session project is a GitHub repository.
 - Session rows show GitHub status only when the current session branch has a pull request. Branches with no PR stay visually quiet.
 - When a PR exists, the side-panel session row shows a compact bottom line with PR state and CI summary, for example `Draft PR #20 - CI passing 1/1`.
-- CI failures, requested changes, and merge conflicts are in-app attention states. They affect compact row styling and idle-session ordering, but do not produce macOS notifications.
+- CI failures, requested changes, and merge conflicts are in-app attention states. They affect compact row styling and idle-session ordering.
+- A newly failing CI run on an observed open PR additionally posts one macOS notification per PR head commit (gated by the Settings toggles for push and CI-failure notifications). Tapping it selects the session and opens its GitHub side panel; the notification's **Fix CI** action instead fetches the failed-run logs (`gh run view <runId> --log-failed`) and injects a fix prompt into the session's agent terminal. Requested changes and merge conflicts still do not notify.
 - If a refresh fails after a PR has been observed, the row keeps safe last-known data and marks it unavailable instead of replacing useful state with an empty result.
 - Monitoring cards can expose the current branch PR as quick access.
 - The GitHub panel observes the current branch PR and the selected PR detail/check state.
@@ -112,6 +113,13 @@ The selected PR observation keeps PR metadata and CI checks fresh without reload
 
 The global session panel derives GitHub attention from the same observation snapshots. Idle sessions with CI failure, requested changes, or merge conflicts are raised above ordinary idle work without displacing actively working sessions.
 
+## CI Failure Notifications And Fix CI
+
+- `SessionGitHubQuickAccessViewModel.onSnapshotApplied` is the per-session snapshot hook. `CollapsibleSessionRow` and `MonitoringCardView` set it with their session identity and forward snapshots to `GitHubCIFailureNotifier` (AgentHubCore).
+- `GitHubCIFailureNotifier` posts one notification per `(projectPath, PR number, head commit)` per app run, only for `.ready` non-stale snapshots of open PRs with failed checks. The notification carries a `GitHubCIFailureNotificationPayload` (session id, provider, project path, branch, PR, failed checks) in `userInfo` and uses the `GitHubCIFailureNotification` category, whose single action is **Fix CI**.
+- The app delegate registers the category, and on response routes through `GlobalSessionSelectionRouter` (session selection) plus `GitHubCIFailureActionRouter` (panel action). `MultiProviderMonitoringPanelView` consumes the action request: default tap opens the `.gitHub` side panel for the session; **Fix CI** switches the card to terminal mode and injects the prompt built by `GitHubCIFixService`.
+- `GitHubCIFixService` (AgentHubGitHub) parses Actions run ids from failed checks' `detailsUrl` (`GitHubActionsRunReference`), fetches `gh run view <runId> --log-failed` via `GitHubCLIServiceProtocol.getFailedRunLogs`, truncates to the log tail, and composes the prompt with `GitHubCIFixPromptBuilder`. Log fetch failures degrade to a prompt that tells the agent which `gh` commands to run itself.
+
 ## Testing
 
 Tests cover:
@@ -140,6 +148,8 @@ Relevant test files:
 - `app/modules/AgentHubGitHub/Tests/AgentHubGitHubTests/SessionGitHubQuickAccessViewModelTests.swift`
 - `app/modules/AgentHubGitHub/Tests/AgentHubGitHubTests/GitHubViewModelObservationTests.swift`
 - `app/modules/AgentHubGitHub/Tests/AgentHubGitHubTests/GitHubCLIServiceTests.swift`
+- `app/modules/AgentHubGitHub/Tests/AgentHubGitHubTests/GitHubCIFixTests.swift`
+- `app/modules/AgentHubCore/Tests/AgentHubTests/GitHubCIFailureNotifierTests.swift`
 
 ## Editing Guidelines
 

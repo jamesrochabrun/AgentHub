@@ -465,6 +465,20 @@ public actor GitHubCLIService {
     )
   }
 
+  /// Fetches failed-step logs for a workflow run.
+  /// Logs can be large and slow to assemble server-side, so this uses a
+  /// longer timeout than regular metadata calls.
+  public func getFailedRunLogs(
+    runId: String,
+    at repoPath: String
+  ) async throws -> String {
+    try await runGH(
+      ["run", "view", runId, "--log-failed"],
+      at: repoPath,
+      timeout: 60
+    )
+  }
+
   // MARK: - Private Helpers
 
   /// Runs a gh command and returns stdout

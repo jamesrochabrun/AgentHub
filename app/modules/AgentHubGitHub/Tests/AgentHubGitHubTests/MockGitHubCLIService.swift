@@ -335,6 +335,23 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     return workflowRunsResult
   }
 
+  var failedRunLogsResult = ""
+  var failedRunLogsResultsByRunId: [String: Result<String, Error>] = [:]
+  var getFailedRunLogsCallCount = 0
+  var getFailedRunLogsRunIds: [String] = []
+  var getFailedRunLogsRepoPath: String?
+
+  func getFailedRunLogs(runId: String, at repoPath: String) async throws -> String {
+    getFailedRunLogsCallCount += 1
+    getFailedRunLogsRunIds.append(runId)
+    getFailedRunLogsRepoPath = repoPath
+    if let result = failedRunLogsResultsByRunId[runId] {
+      return try result.get()
+    }
+    if let error = errorToThrow { throw error }
+    return failedRunLogsResult
+  }
+
   // MARK: - Reset
 
   /// Resets all recorded call state (but keeps configured results)
@@ -386,5 +403,8 @@ final class MockGitHubCLIService: GitHubCLIServiceProtocol, @unchecked Sendable 
     getChecksCallCount = 0
     getChecksPRNumber = nil
     listWorkflowRunsCalled = false
+    getFailedRunLogsCallCount = 0
+    getFailedRunLogsRunIds = []
+    getFailedRunLogsRepoPath = nil
   }
 }

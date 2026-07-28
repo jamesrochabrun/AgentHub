@@ -85,6 +85,9 @@ public protocol GitHubCLIServiceProtocol: AnyObject, Sendable {
 
   /// Lists recent workflow runs
   func listWorkflowRuns(at repoPath: String, limit: Int) async throws -> String
+
+  /// Fetches failed-step logs for a workflow run (`gh run view <runId> --log-failed`)
+  func getFailedRunLogs(runId: String, at repoPath: String) async throws -> String
 }
 
 public extension GitHubCLIServiceProtocol {

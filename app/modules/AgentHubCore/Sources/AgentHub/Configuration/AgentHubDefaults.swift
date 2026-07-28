@@ -44,6 +44,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: true)
   public static let pushNotificationsEnabled = "\(keyPrefix)notifications.pushEnabled"
 
+  /// Whether notifications are posted when an observed PR's CI starts failing
+  /// Type: Bool (default: true)
+  public static let ciFailureNotificationsEnabled = "\(keyPrefix)notifications.ciFailureEnabled"
+
   // MARK: - Provider Settings
 
   /// Base key for enabled providers

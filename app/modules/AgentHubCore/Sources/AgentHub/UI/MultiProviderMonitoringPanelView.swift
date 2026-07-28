@@ -310,6 +310,9 @@ public struct MultiProviderMonitoringPanelView: View {
     .onChange(of: autoOpenCandidate?.key) { _, _ in
       openAutoSidePanelIfNeeded()
     }
+    .task(id: pendingCIFailureRequestID) {
+      await consumeCIFailureActionRequestIfNeeded()
+    }
     .overlay {
       Group {
         Button("") { showQuickFilePicker = true }
@@ -1464,6 +1467,98 @@ public struct MultiProviderMonitoringPanelView: View {
       diffDisplayMode: diffDisplayMode,
       diffAvailabilityStatus: item.viewModel.diffAvailabilityStatus(for: item.projectPath)
     )
+  }
+
+  // MARK: - CI Failure Notification Actions
+
+  private var ciFailureActionRouter: GitHubCIFailureActionRouter? {
+    claudeViewModel.agentHubProvider?.gitHubCIFailureActionRouter
+  }
+
+  private var pendingCIFailureRequestID: UUID? {
+    ciFailureActionRouter?.pendingRequest?.id
+  }
+
+  private func consumeCIFailureActionRequestIfNeeded() async {
+    guard let router = ciFailureActionRouter, let request = router.pendingRequest else { return }
+    guard let providerKind = request.payload.providerKind else {
+      router.markConsumed(request)
+      return
+    }
+    let itemID = GlobalSessionSelectionRequest.itemId(
+      providerKind: providerKind,
+      sessionId: request.payload.sessionId
+    )
+    // The notification can arrive with the app closed or the session not yet
+    // selected, so wait briefly for the session card to exist before acting.
+    for _ in 0..<40 {
+      guard router.pendingRequest?.id == request.id else { return }
+      if let item = allItems.first(where: { $0.id == itemID }) {
+        router.markConsumed(request)
+        handleCIFailureAction(request, item: item)
+        return
+      }
+      do {
+        try await Task.sleep(for: .milliseconds(250))
+      } catch {
+        return
+      }
+    }
+    router.markConsumed(request)
+  }
+
+  private func handleCIFailureAction(_ request: GitHubCIFailureActionRequest, item: ProviderMonitoringItem) {
+    guard case .monitored(_, let viewModel, let session, _) = item else { return }
+    switch request.action {
+    case .openGitHubPanel:
+      openCIFailureGitHubPanel(item: item, session: session)
+    case .fixCI:
+      startCIFixFlow(request.payload, item: item, session: session, viewModel: viewModel)
+    }
+  }
+
+  private func openCIFailureGitHubPanel(item: ProviderMonitoringItem, session: CLISession) {
+    let payload = SidePanelPayload(
+      itemID: item.id,
+      providerKind: item.providerKind,
+      content: .gitHub(sessionId: session.id, session: session, projectPath: item.projectPath)
+    )
+    performWithoutAnimation {
+      if primarySessionId != item.id {
+        primarySessionId = item.id
+      }
+    }
+    guard sidePanelPresentation.currentPayload != payload else { return }
+    openEmbeddedSidePanel(payload)
+  }
+
+  private func startCIFixFlow(
+    _ payload: GitHubCIFailureNotificationPayload,
+    item: ProviderMonitoringItem,
+    session: CLISession,
+    viewModel: CLISessionsViewModel
+  ) {
+    guard let fixService = viewModel.agentHubProvider?.gitHubCIFixService else { return }
+    setContentMode(.terminal, for: item)
+    Task {
+      let prompt = await fixService.buildFixPrompt(
+        projectPath: payload.projectPath,
+        prNumber: payload.prNumber,
+        prTitle: payload.prTitle,
+        branchName: payload.branchName,
+        failedChecks: payload.failedChecks.map {
+          GitHubCIFixPromptBuilder.FailedCheck(
+            name: $0.name,
+            workflowName: $0.workflowName,
+            detailsUrl: $0.detailsUrl
+          )
+        }
+      )
+      if !viewModel.sendPromptToActiveTerminal(forKey: session.id, prompt: prompt) {
+        viewModel.showTerminalWithPrompt(for: session, prompt: prompt)
+      }
+      viewModel.focusTerminal(forKey: session.id)
+    }
   }
 
   private func showTerminalWithPrompt(

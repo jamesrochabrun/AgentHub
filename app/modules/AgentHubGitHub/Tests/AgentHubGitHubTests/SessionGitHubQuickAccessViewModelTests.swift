@@ -248,6 +248,30 @@ struct SessionGitHubQuickAccessViewModelTests {
     #expect(await observer.recordedActivityTargets == [target])
   }
 
+  @Test("notifies onSnapshotApplied for every applied observation snapshot")
+  @MainActor
+  func notifiesOnSnapshotApplied() async {
+    let observer = MockSessionGitHubPRObservationService()
+    let viewModel = SessionGitHubQuickAccessViewModel(observationService: observer)
+    let target = GitHubPRObservationTarget.currentBranch(projectPath: "/tmp/repo", branchName: "feature/github")
+    var appliedSnapshots: [GitHubPRObservationSnapshot] = []
+    viewModel.onSnapshotApplied = { appliedSnapshots.append($0) }
+
+    await viewModel.load(projectPath: "/tmp/repo", branchName: "feature/github")
+    await observer.publish(GitHubPRObservationSnapshot(
+      target: target,
+      pullRequest: makeQuickAccessPR(number: 12),
+      checks: [makeQuickAccessCheck(name: "Tests", conclusion: "FAILURE")],
+      state: .ready,
+      lastRefreshedAt: .now
+    ))
+    try? await Task.sleep(for: .milliseconds(10))
+
+    #expect(appliedSnapshots.count >= 1)
+    #expect(appliedSnapshots.last?.pullRequest?.number == 12)
+    #expect(appliedSnapshots.last?.ciSummary.failed == 1)
+  }
+
   @Test("linked pull request subscribes to explicit PR observation")
   @MainActor
   func linkedPullRequestSubscribesToExplicitPRObservation() async throws {
