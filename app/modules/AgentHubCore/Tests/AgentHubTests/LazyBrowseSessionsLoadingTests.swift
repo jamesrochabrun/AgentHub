@@ -589,7 +589,11 @@ struct LazyBrowseSessionsLoadingTests {
     }
 
     #expect(viewModel.findSession(byId: sessionId)?.projectPath == projectURL.path)
-    #expect((await watcher.startedSessionIds()).contains(sessionId))
+    // The watcher starts asynchronously after the session lands in
+    // monitoredSessions, so poll instead of asserting immediately.
+    await waitUntilAsync {
+      (await watcher.startedSessionIds()).contains(sessionId)
+    }
   }
 }
 
