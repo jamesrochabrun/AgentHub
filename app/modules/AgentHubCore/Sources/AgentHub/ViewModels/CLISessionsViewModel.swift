@@ -2166,6 +2166,11 @@ public final class CLISessionsViewModel {
 
       // Store persisted session IDs for progressive restoration
       let persistedSessionIds = Set(workspaceState.monitoredSessionIds)
+      // Pinned sessions are durable anchors: attempt to restore them even when
+      // a past sweep or failed launch dropped them from the persisted monitored
+      // set. IDs that fail to load (other provider, transcript deleted) stay
+      // out of the persisted set and are retried on a future launch.
+      let sessionIdsToRestore = persistedSessionIds.union(pinnedSessionIds)
       if !persistedSessionIds.isEmpty {
         pendingRestorationSessionIds = persistedSessionIds
       }
@@ -2178,8 +2183,8 @@ public final class CLISessionsViewModel {
           restoredOwnedWorktreePaths.insert(normalizedPath)
         }
       }
-      if !persistedSessionIds.isEmpty,
-         let mappings = try? await metadataStore?.getRepoMappings(for: Array(persistedSessionIds)) {
+      if !sessionIdsToRestore.isEmpty,
+         let mappings = try? await metadataStore?.getRepoMappings(for: Array(sessionIdsToRestore)) {
         var restoredRepositoryPaths = Set(paths.map { WorktreeModuleResolver.normalizedDirectoryPath($0) })
         for path in paths {
           let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
@@ -2201,7 +2206,7 @@ public final class CLISessionsViewModel {
       }
       restoredOwnedWorktreePaths.formUnion(ownedWorktreePaths)
       await setOwnedWorktreePaths(restoredOwnedWorktreePaths)
-      await monitorService.setFocusedSessionIds(persistedSessionIds)
+      await monitorService.setFocusedSessionIds(sessionIdsToRestore)
 
       // Restore repository/worktree shells first. Full all-session scanning is
       // deferred until the Browse panel is opened.
@@ -2222,10 +2227,10 @@ public final class CLISessionsViewModel {
       persistSelectedRepositories()
       syncClaudeHookInstalls(paths: claudeHookInstallPaths(from: selectedRepositories))
 
-      if !persistedSessionIds.isEmpty {
+      if !sessionIdsToRestore.isEmpty {
         loadingState = .restoringMonitoredSessions
         let restorableProjectRoots = projectRoots(from: selectedRepositories)
-        let sessions = await monitorService.loadSessions(ids: persistedSessionIds)
+        let sessions = await monitorService.loadSessions(ids: sessionIdsToRestore)
         restoreLoadedMonitoredSessions(sessions, allowedProjectRoots: restorableProjectRoots)
       }
 
@@ -2246,8 +2251,12 @@ public final class CLISessionsViewModel {
   private func restoreLoadedMonitoredSessions(_ sessions: [CLISession], allowedProjectRoots: [String]) {
     guard !sessions.isEmpty else { return }
 
+    // Pinned sessions restore even when their project directory vanished
+    // (deleted worktree): the transcript still exists and the pinned section
+    // is where the user expects to keep finding them.
     let restorableSessions = sessions.filter {
-      isProjectPath($0.projectPath, containedInAnyOf: allowedProjectRoots)
+      pinnedSessionIds.contains($0.id) ||
+        isProjectPath($0.projectPath, containedInAnyOf: allowedProjectRoots)
     }
     let rejectedIds = Set(sessions.map(\.id)).subtracting(restorableSessions.map(\.id))
     if !rejectedIds.isEmpty {
@@ -2276,6 +2285,9 @@ public final class CLISessionsViewModel {
 
     pendingRestorationSessionIds.subtract(restoredIds)
     unrestoredSessionIds.subtract(restoredIds)
+    // Restored pinned sessions may be absent from the persisted monitored set;
+    // persist now so they survive a crash before the launch-timeout persist.
+    persistMonitoredSessions()
     expandItemsContainingLoadedSessions(restorableSessions)
     loadCustomNames()
     loadPinnedSessions()
@@ -3923,7 +3935,12 @@ public final class CLISessionsViewModel {
   }
 
   public func archiveMonitoredSessions(inWorktreePath worktreePath: String) {
-    let sessionIds = monitoredSessions(inWorktreePath: worktreePath).map(\.id)
+    // Bulk sweeps (worktree deletion, cleanup suggestions, stop-focusing a
+    // module) must not silently drop sessions the user pinned. Only an
+    // explicit per-session archive removes a pinned session.
+    let sessionIds = monitoredSessions(inWorktreePath: worktreePath)
+      .map(\.id)
+      .filter { !pinnedSessionIds.contains($0) }
     for sessionId in sessionIds {
       stopMonitoring(sessionId: sessionId)
     }
@@ -3931,6 +3948,20 @@ public final class CLISessionsViewModel {
 
   /// Stop monitoring by session ID
   public func stopMonitoring(sessionId: String) {
+    if pinnedSessionIds.contains(sessionId) {
+      // Archiving a pinned session is an explicit choice to let it go; clear
+      // the pin so launch restore does not resurrect it as a durable anchor.
+      pinnedSessionIds.remove(sessionId)
+      if let store = metadataStore {
+        Task {
+          do {
+            try await store.setPinned(false, for: sessionId)
+          } catch {
+            AppLogger.session.error("Failed to unpin archived session: \(error.localizedDescription)")
+          }
+        }
+      }
+    }
     monitoredSessionIds.remove(sessionId)
     unrestoredSessionIds.remove(sessionId)
     pendingRestorationSessionIds.remove(sessionId)
