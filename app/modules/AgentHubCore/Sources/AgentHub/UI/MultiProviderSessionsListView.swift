@@ -147,6 +147,12 @@ public struct MultiProviderSessionsListView: View {
   @State private var sidebarGroupMode: SidebarGroupMode = .repo
   @State private var collapsedStatusGroups: Set<StatusGroupCategory> = []
   @State private var isPinnedSectionCollapsed: Bool = false
+  /// Manual drag order for the pinned section, `itemId -> position`. Seeded
+  /// synchronously from SQLite on first render so the user's arrangement is
+  /// there on the first frame rather than snapping into place after a load.
+  @State private var pinnedSessionOrder: [String: Int] = [:]
+  @State private var didLoadPinnedSessionOrder = false
+  @State private var pinnedSessionOrderPersistenceTask: Task<Void, Never>?
   @State private var scrollToSessionId: String?
   @State private var launchExpandRequestID = 0
   @State private var createWorktreeContext: WorktreeCreateContext?
@@ -233,6 +239,7 @@ public struct MultiProviderSessionsListView: View {
       if multiLaunchViewModel == nil {
         multiLaunchViewModel = makeLaunchViewModel()
       }
+      loadPinnedSessionOrderIfNeeded()
       ensurePrimarySelection()
       scheduleInitialGitHubStateRefreshIfNeeded()
       consumeGlobalSessionSelectionIfNeeded()
@@ -857,11 +864,11 @@ public struct MultiProviderSessionsListView: View {
   /// Identity of a sidebar row. Shared by the full build and the cheap token
   /// below so the two can never disagree about what a row is called.
   private static func pendingItemID(_ providerKind: SessionProviderKind, _ pendingID: UUID) -> String {
-    "pending-\(providerKind.rawValue.lowercased())-\(pendingID.uuidString)"
+    SidebarSessionItemID.pending(provider: providerKind, pendingId: pendingID)
   }
 
   private static func monitoredItemID(_ providerKind: SessionProviderKind, _ sessionID: String) -> String {
-    "\(providerKind.rawValue.lowercased())-\(sessionID)"
+    SidebarSessionItemID.monitored(provider: providerKind, sessionId: sessionID)
   }
 
   /// The ordered ids of `selectedSessionItems`, derived without building the
@@ -988,8 +995,84 @@ public struct MultiProviderSessionsListView: View {
       from: items.filter { !isWorkspaceOwned($0) },
       isPinned: isPinned,
       timestamp: { $0.timestamp },
-      id: { $0.id }
+      id: { $0.id },
+      manualOrder: { pinnedSessionOrder[$0.id] }
     )
+  }
+
+  // MARK: - Pinned Section Reordering
+
+  private func loadPinnedSessionOrderIfNeeded() {
+    guard !didLoadPinnedSessionOrder else { return }
+    didLoadPinnedSessionOrder = true
+    guard let store = agentHub?.metadataStore else { return }
+    pinnedSessionOrder = store.getPinnedSessionOrderSync()
+  }
+
+  /// Applies the placement chosen by the row under the pointer. The parent
+  /// resolves IDs against the current order, so a stale drop-delegate snapshot
+  /// can never move the wrong row.
+  private func movePinnedItem(
+    _ movingID: String,
+    relativeTo targetID: String,
+    placement: PinnedSessionDropPlacement
+  ) {
+    let currentIDs = pinnedSessionItems(from: selectedSessionItems).map(\.id)
+    guard let reordered = SidebarSessionOrdering.reorderedIDs(
+      currentIDs,
+      movingID: movingID,
+      targetID: targetID,
+      placement: placement
+    ) else { return }
+
+    withAnimation(accessibilityReduceMotion ? nil : .snappy(duration: 0.18)) {
+      pinnedSessionOrder = Dictionary(
+        uniqueKeysWithValues: reordered.enumerated().map { ($1, $0) }
+      )
+    }
+
+    schedulePinnedSessionOrderPersistence(reordered)
+  }
+
+  /// Coalesces the rapid updates emitted while the pointer moves through the
+  /// list. This prevents a queue of obsolete SQLite writes from outliving the
+  /// animation. A drop inside the list flushes immediately; a drag abandoned
+  /// outside still persists its last visible order after the short debounce.
+  private func schedulePinnedSessionOrderPersistence(_ orderedIDs: [String]) {
+    pinnedSessionOrderPersistenceTask?.cancel()
+    guard let store = agentHub?.metadataStore else { return }
+
+    pinnedSessionOrderPersistenceTask = Task {
+      do {
+        try await Task.sleep(for: .milliseconds(180))
+        try Task.checkCancellation()
+        try await store.setPinnedSessionOrder(orderedIDs)
+      } catch is CancellationError {
+        return
+      } catch {
+        AppLogger.session.error(
+          "Failed to persist pinned session order: \(error.localizedDescription)"
+        )
+      }
+    }
+  }
+
+  private func finishMovingPinnedItems() {
+    pinnedSessionOrderPersistenceTask?.cancel()
+    pinnedSessionOrderPersistenceTask = nil
+
+    let orderedIDs = pinnedSessionItems(from: selectedSessionItems).map(\.id)
+    guard let store = agentHub?.metadataStore else { return }
+
+    Task {
+      do {
+        try await store.setPinnedSessionOrder(orderedIDs)
+      } catch {
+        AppLogger.session.error(
+          "Failed to persist pinned session order: \(error.localizedDescription)"
+        )
+      }
+    }
   }
 
   private func groupedSelectedSessionSections(
@@ -1187,7 +1270,8 @@ public struct MultiProviderSessionsListView: View {
       projectPath: { $0.session.projectPath },
       status: { $0.sessionStatus },
       timestamp: { $0.timestamp },
-      id: { $0.id }
+      id: { $0.id },
+      manualOrder: { pinnedSessionOrder[$0.id] }
     )
   }
 
@@ -1239,7 +1323,14 @@ public struct MultiProviderSessionsListView: View {
         .transition(.opacity)
 
         if !isPinnedSectionCollapsed {
-          sessionRows(for: pinned)
+          PinnedReorderableList(
+            items: pinned,
+            onMove: movePinnedItem,
+            onDrop: finishMovingPinnedItems
+          ) { item in
+            sessionRow(for: item)
+          }
+          .padding(.top, 2)
         }
       }
 
@@ -1509,55 +1600,62 @@ public struct MultiProviderSessionsListView: View {
   private func sessionRows(for items: [SelectedSessionItem]) -> some View {
     VStack(spacing: 2) {
       ForEach(items) { item in
-        CollapsibleSessionRow(
-          session: item.session,
-          providerKind: item.providerKind,
-          timestamp: item.timestamp,
-          isPending: item.isPending,
-          isPrimary: item.id == primarySessionId,
-          customName: selectedSessionCustomName(for: item),
-          sessionStatus: item.sessionStatus,
-          linkedPullRequests: item.linkedPullRequests,
-          colorScheme: colorScheme,
-          isPinned: isPinned(item),
-          onPin: item.isPending ? nil : {
-            withAnimation(.easeInOut(duration: 0.3)) {
-              switch item.providerKind {
-              case .claude: claudeViewModel.togglePin(for: item.session)
-              case .codex: codexViewModel.togglePin(for: item.session)
-              }
-            }
-          },
-          onArchive: item.isPending ? nil : {
-            withAnimation(.easeInOut(duration: 0.25)) {
-              switch item.providerKind {
-              case .claude: claudeViewModel.stopMonitoring(session: item.session)
-              case .codex: codexViewModel.stopMonitoring(session: item.session)
-              }
-            }
-          },
-          onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-            sessionToDeleteWorktree = item.session
-            showDeleteWorktreeAlert = true
-          } : nil,
-          isDeletingWorktree: item.session.isWorktree && {
-            switch item.providerKind {
-            case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-            case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-            }
-          }(),
-          onSelect: {
-            selectedWorkspaceID = nil
-            selectedModuleLandingPath = nil
-            primarySessionId = item.id
-          }
-        )
-        .transition(.opacity)
-        .id(item.id)
+        sessionRow(for: item)
+          .transition(.opacity)
+          .id(item.id)
       }
     }
     .padding(.top, 2)
     .animation(.easeInOut(duration: 0.25), value: pinnedSessionSnapshot)
+  }
+
+  /// One sidebar session row. Shared by the plain stacked sections and by the
+  /// reorderable pinned list, so a row looks and behaves the same either way.
+  @ViewBuilder
+  private func sessionRow(for item: SelectedSessionItem) -> some View {
+    CollapsibleSessionRow(
+      session: item.session,
+      providerKind: item.providerKind,
+      timestamp: item.timestamp,
+      isPending: item.isPending,
+      isPrimary: item.id == primarySessionId,
+      customName: selectedSessionCustomName(for: item),
+      sessionStatus: item.sessionStatus,
+      linkedPullRequests: item.linkedPullRequests,
+      colorScheme: colorScheme,
+      isPinned: isPinned(item),
+      onPin: item.isPending ? nil : {
+        withAnimation(.easeInOut(duration: 0.3)) {
+          switch item.providerKind {
+          case .claude: claudeViewModel.togglePin(for: item.session)
+          case .codex: codexViewModel.togglePin(for: item.session)
+          }
+        }
+      },
+      onArchive: item.isPending ? nil : {
+        withAnimation(.easeInOut(duration: 0.25)) {
+          switch item.providerKind {
+          case .claude: claudeViewModel.stopMonitoring(session: item.session)
+          case .codex: codexViewModel.stopMonitoring(session: item.session)
+          }
+        }
+      },
+      onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
+        sessionToDeleteWorktree = item.session
+        showDeleteWorktreeAlert = true
+      } : nil,
+      isDeletingWorktree: item.session.isWorktree && {
+        switch item.providerKind {
+        case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
+        case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
+        }
+      }(),
+      onSelect: {
+        selectedWorkspaceID = nil
+        selectedModuleLandingPath = nil
+        primarySessionId = item.id
+      }
+    )
   }
 
   @ViewBuilder

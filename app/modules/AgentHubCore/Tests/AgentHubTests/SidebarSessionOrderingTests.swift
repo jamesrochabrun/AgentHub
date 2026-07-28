@@ -138,6 +138,167 @@ struct SidebarSessionOrderingTests {
     #expect(ids == ["b"])
   }
 
+  // MARK: - Manual pinned order
+
+  @Test("Manual pinned order overrides the activity sort")
+  func manualPinnedOrderOverridesActivitySort() {
+    let items = [
+      item("newest", timestamp: 500, isPinned: true),
+      item("middle", timestamp: 300, isPinned: true),
+      item("oldest", timestamp: 100, isPinned: true)
+    ]
+
+    let ids = pinnedIDs(items, manualOrder: ["oldest": 0, "newest": 1, "middle": 2])
+
+    #expect(ids == ["oldest", "newest", "middle"])
+  }
+
+  @Test("Freshly pinned sessions sort after arranged ones, by activity")
+  func unorderedPinnedItemsFallInAfterArrangedOnes() {
+    let items = [
+      item("arranged-second", timestamp: 100, isPinned: true),
+      item("just-pinned-old", timestamp: 200, isPinned: true),
+      item("arranged-first", timestamp: 300, isPinned: true),
+      item("just-pinned-new", timestamp: 400, isPinned: true)
+    ]
+
+    let ids = pinnedIDs(items, manualOrder: ["arranged-first": 0, "arranged-second": 1])
+
+    #expect(ids == ["arranged-first", "arranged-second", "just-pinned-new", "just-pinned-old"])
+  }
+
+  @Test("Keyboard navigation order follows the manual pinned order")
+  func flattenedOrderFollowsManualPinnedOrder() {
+    let items = [
+      item("pinned-newest", timestamp: 500, isPinned: true),
+      item("pinned-oldest", timestamp: 100, isPinned: true),
+      item("unpinned", timestamp: 400)
+    ]
+
+    let ids = flattenedIDs(
+      items,
+      groupMode: .repo,
+      manualOrder: ["pinned-oldest": 0, "pinned-newest": 1]
+    )
+
+    #expect(ids == ["pinned-oldest", "pinned-newest", "unpinned"])
+  }
+
+  @Test("Manual order is ignored for sessions that are not pinned")
+  func manualOrderDoesNotPromoteUnpinnedSessions() {
+    let items = [
+      item("pinned", timestamp: 100, isPinned: true),
+      item("unpinned", timestamp: 500)
+    ]
+
+    let ids = pinnedIDs(items, manualOrder: ["unpinned": 0, "pinned": 1])
+
+    #expect(ids == ["pinned"])
+  }
+
+  // MARK: - Reorder math
+
+  @Test("Dropping in a row's lower half inserts the dragged row after it")
+  func dropPlacementMovesRowDown() {
+    let result = SidebarSessionOrdering.reorderedIDs(
+      ["a", "b", "c"],
+      movingID: "a",
+      targetID: "b",
+      placement: .after
+    )
+
+    #expect(result == ["b", "a", "c"])
+  }
+
+  @Test("Dropping in the first row's upper half moves the dragged row to the top")
+  func dropPlacementMovesRowToTop() {
+    let result = SidebarSessionOrdering.reorderedIDs(
+      ["a", "b", "c"],
+      movingID: "c",
+      targetID: "a",
+      placement: .before
+    )
+
+    #expect(result == ["c", "a", "b"])
+  }
+
+  @Test("Dropping in the last row's lower half moves the dragged row to the end")
+  func dropPlacementMovesRowToEnd() {
+    let result = SidebarSessionOrdering.reorderedIDs(
+      ["a", "b", "c"],
+      movingID: "a",
+      targetID: "c",
+      placement: .after
+    )
+
+    #expect(result == ["b", "c", "a"])
+  }
+
+  @Test("A placement that resolves to the current slot is a no-op")
+  func unchangedDropPlacementReturnsNil() {
+    #expect(SidebarSessionOrdering.reorderedIDs(
+      ["a", "b", "c"],
+      movingID: "b",
+      targetID: "a",
+      placement: .after
+    ) == nil)
+  }
+
+  @Test("Reorder rejects unknown rows and self-targeting")
+  func reorderRejectsInvalidInput() {
+    #expect(SidebarSessionOrdering.reorderedIDs(
+      ["a", "b"],
+      movingID: "missing",
+      targetID: "a",
+      placement: .before
+    ) == nil)
+
+    #expect(SidebarSessionOrdering.reorderedIDs(
+      ["a", "b"],
+      movingID: "a",
+      targetID: "missing",
+      placement: .after
+    ) == nil)
+
+    #expect(SidebarSessionOrdering.reorderedIDs(
+      ["a", "b"],
+      movingID: "a",
+      targetID: "a",
+      placement: .after
+    ) == nil)
+  }
+
+  @Test("The same target placement stays stable after rows animate around it")
+  func reorderDoesNotOscillateAfterLayoutUpdate() {
+    let firstResult = SidebarSessionOrdering.reorderedIDs(
+      ["a", "b", "c"],
+      movingID: "a",
+      targetID: "b",
+      placement: .after
+    )
+    #expect(firstResult == ["b", "a", "c"])
+
+    let settledResult = SidebarSessionOrdering.reorderedIDs(
+      firstResult ?? [],
+      movingID: "a",
+      targetID: "b",
+      placement: .after
+    )
+    #expect(settledResult == nil)
+  }
+
+  @Test("Crossing back over a target midpoint reverses the previous move")
+  func reorderCanReverseDirection() {
+    let result = SidebarSessionOrdering.reorderedIDs(
+      ["b", "a", "c"],
+      movingID: "a",
+      targetID: "b",
+      placement: .before
+    )
+
+    #expect(result == ["a", "b", "c"])
+  }
+
   @Test("Next ID indexes through the flattened order without wrapping")
   func nextIDIndexesThroughFlattenedOrder() {
     let ids = ["first", "second", "third"]
@@ -180,7 +341,8 @@ private func flattenedIDs(
   worktreeDisplayMode: WorktreeDisplayMode = .parent,
   collapsedProjectGroups: Set<String> = [],
   collapsedStatusGroups: Set<StatusGroupCategory> = [],
-  isPinnedSectionCollapsed: Bool = false
+  isPinnedSectionCollapsed: Bool = false,
+  manualOrder: [String: Int] = [:]
 ) -> [String] {
   SidebarSessionOrdering.flattenedItems(
     from: items,
@@ -194,7 +356,22 @@ private func flattenedIDs(
     projectPath: { $0.projectPath },
     status: { $0.status },
     timestamp: { $0.timestamp },
-    id: { $0.id }
+    id: { $0.id },
+    manualOrder: { manualOrder[$0.id] }
+  )
+  .map(\.id)
+}
+
+private func pinnedIDs(
+  _ items: [SidebarTestItem],
+  manualOrder: [String: Int] = [:]
+) -> [String] {
+  SidebarSessionOrdering.pinnedItems(
+    from: items,
+    isPinned: { $0.isPinned },
+    timestamp: { $0.timestamp },
+    id: { $0.id },
+    manualOrder: { manualOrder[$0.id] }
   )
   .map(\.id)
 }

@@ -50,15 +50,35 @@ struct SidebarRepositoryModuleSection<Item>: Identifiable {
 }
 
 enum SidebarSessionOrdering {
+  /// The pinned section, in the order the user sees it.
+  ///
+  /// Pinned rows are the only ones the user can drag, so they are the only ones
+  /// with a manual order. Rows the user has positioned come first in that
+  /// order; rows that have never been positioned (a freshly pinned session)
+  /// keep the activity sort and land after them, so pinning something new never
+  /// disturbs an arrangement the user built by hand.
   static func pinnedItems<Item>(
     from items: [Item],
     isPinned: (Item) -> Bool,
     timestamp: (Item) -> Date,
-    id: (Item) -> String
+    id: (Item) -> String,
+    manualOrder: (Item) -> Int? = { _ in nil }
   ) -> [Item] {
     items
       .filter(isPinned)
-      .sorted { orderedByActivity($0, $1, timestamp: timestamp, id: id) }
+      .sorted { lhs, rhs in
+        switch (manualOrder(lhs), manualOrder(rhs)) {
+        case let (lhsIndex?, rhsIndex?):
+          if lhsIndex != rhsIndex { return lhsIndex < rhsIndex }
+          return orderedByActivity(lhs, rhs, timestamp: timestamp, id: id)
+        case (.some, .none):
+          return true
+        case (.none, .some):
+          return false
+        case (.none, .none):
+          return orderedByActivity(lhs, rhs, timestamp: timestamp, id: id)
+        }
+      }
   }
 
   static func moduleGroups<Item>(
@@ -193,7 +213,8 @@ enum SidebarSessionOrdering {
     projectPath: (Item) -> String,
     status: (Item) -> SessionStatus?,
     timestamp: (Item) -> Date,
-    id: (Item) -> String
+    id: (Item) -> String,
+    manualOrder: (Item) -> Int? = { _ in nil }
   ) -> [Item] {
     var result: [Item] = []
 
@@ -202,7 +223,8 @@ enum SidebarSessionOrdering {
         from: items,
         isPinned: isPinned,
         timestamp: timestamp,
-        id: id
+        id: id,
+        manualOrder: manualOrder
       ))
     }
 
@@ -237,6 +259,34 @@ enum SidebarSessionOrdering {
     }
 
     return result
+  }
+
+  /// Repositions one pinned row before or after the row under the pointer.
+  ///
+  /// The dragged row is removed before the target index is calculated, so the
+  /// operation remains correct regardless of which direction the row moves.
+  /// Returns `nil` for invalid inputs and unchanged placements.
+  static func reorderedIDs(
+    _ ids: [String],
+    movingID: String,
+    targetID: String,
+    placement: PinnedSessionDropPlacement
+  ) -> [String]? {
+    guard movingID != targetID,
+          ids.contains(movingID),
+          ids.contains(targetID)
+    else { return nil }
+
+    let remainingIDs = ids.filter { $0 != movingID }
+    guard let targetIndex = remainingIDs.firstIndex(of: targetID) else {
+      return nil
+    }
+
+    var reorderedIDs = remainingIDs
+    let insertionIndex = placement == .before ? targetIndex : targetIndex + 1
+    reorderedIDs.insert(movingID, at: insertionIndex)
+
+    return reorderedIDs == ids ? nil : reorderedIDs
   }
 
   static func nextID(

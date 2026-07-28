@@ -27,6 +27,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     static let createSessionRelationships = "v10_create_session_relationships"
     static let createProjectSimulatorPreferences = "v11_create_project_simulator_preferences"
     static let createAgentWorkspaces = "v12_create_agent_workspaces"
+    static let createPinnedSessionOrder = "v13_create_pinned_session_order"
   }
 
   static let migrationIdentifiers = [
@@ -41,7 +42,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     MigrationID.addOwnedWorktreePaths,
     MigrationID.createSessionRelationships,
     MigrationID.createProjectSimulatorPreferences,
-    MigrationID.createAgentWorkspaces
+    MigrationID.createAgentWorkspaces,
+    MigrationID.createPinnedSessionOrder
   ]
 
   private let dbQueue: DatabaseQueue
@@ -234,6 +236,17 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
       )
     }
 
+    // Manual drag order for the sidebar's pinned section. Keyed by the
+    // provider-scoped sidebar item id ("claude-<sessionId>") rather than the
+    // bare session id, because the pinned list is a union across providers.
+    migrator.registerMigration(MigrationID.createPinnedSessionOrder) { db in
+      try db.create(table: "pinned_session_order") { t in
+        t.column("itemId", .text).primaryKey()
+        t.column("sortIndex", .integer).notNull()
+        t.column("updatedAt", .datetime).notNull()
+      }
+    }
+
     return migrator
   }
 
@@ -305,6 +318,62 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     }) ?? []
   }
 
+  // MARK: - Pinned Section Manual Order
+
+  /// Replaces the pinned section's manual order with `orderedItemIds`.
+  ///
+  /// Positions are rewritten as a dense `0..<count` range in one transaction so
+  /// a partial write can never leave two rows fighting for the same slot. Rows
+  /// for items not in the list are left alone — unpinning a session keeps its
+  /// slot, so re-pinning it restores the position the user chose.
+  public func setPinnedSessionOrder(_ orderedItemIds: [String]) throws {
+    try dbQueue.write { db in
+      let now = Date()
+      for (index, itemId) in orderedItemIds.enumerated() {
+        try PinnedSessionOrderRecord(
+          itemId: itemId,
+          sortIndex: index,
+          updatedAt: now
+        ).save(db)
+      }
+    }
+  }
+
+  /// Gets the manual pinned order as `itemId -> sortIndex`
+  public func getPinnedSessionOrder() throws -> [String: Int] {
+    try dbQueue.read { db in
+      try Self.readPinnedSessionOrder(db)
+    }
+  }
+
+  /// Synchronous read for the manual pinned order — safe to call from
+  /// non-async contexts. Mirrors `getPinnedSessionIdsSync()` so the sidebar can
+  /// render the user's order on the first frame instead of flashing the
+  /// activity sort and then resorting.
+  public nonisolated func getPinnedSessionOrderSync() -> [String: Int] {
+    (try? dbQueue.read { db in
+      try Self.readPinnedSessionOrder(db)
+    }) ?? [:]
+  }
+
+  /// Removes any stored pinned position for a sidebar item
+  public func deletePinnedSessionOrder(forItemIds itemIds: [String]) throws {
+    guard !itemIds.isEmpty else { return }
+    _ = try dbQueue.write { db in
+      try PinnedSessionOrderRecord
+        .filter(itemIds.contains(Column("itemId")))
+        .deleteAll(db)
+    }
+  }
+
+  private static func readPinnedSessionOrder(_ db: Database) throws -> [String: Int] {
+    let records = try PinnedSessionOrderRecord.fetchAll(db)
+    return Dictionary(
+      records.map { ($0.itemId, $0.sortIndex) },
+      uniquingKeysWith: { first, _ in first }
+    )
+  }
+
   /// Gets all metadata for multiple sessions at once (batch fetch)
   public func getMetadata(for sessionIds: [String]) throws -> [String: SessionMetadata] {
     try dbQueue.read { db in
@@ -323,6 +392,14 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
         .filter(Column("sessionId") == sessionId)
         .deleteAll(db)
       _ = try SessionMetadata.deleteOne(db, key: sessionId)
+      // Pinned positions are keyed by provider-scoped item id, so clear the
+      // slot this session could hold under either provider.
+      let itemIds = SessionProviderKind.allCases.map {
+        SidebarSessionItemID.monitored(provider: $0, sessionId: sessionId)
+      }
+      _ = try PinnedSessionOrderRecord
+        .filter(itemIds.contains(Column("itemId")))
+        .deleteAll(db)
     }
   }
 
@@ -339,6 +416,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
       _ = try ProjectSimulatorPreference.deleteAll(db)
       _ = try AIConfigRecord.deleteAll(db)
       _ = try SessionRepoMapping.deleteAll(db)
+      _ = try PinnedSessionOrderRecord.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
     }
   }

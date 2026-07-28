@@ -59,6 +59,16 @@ struct SessionMetadataMigrationSafetyTests {
     #expect(try await store.getManagedProcesses() == [seed.managedProcess])
     #expect(try await store.loadClaudeHookInstalledPaths().isEmpty)
     #expect(try await store.sessionRelationships(from: .claude, sessionId: seed.sessionId, kind: nil).isEmpty)
+
+    // v13 adds the pinned drag order. A database seeded before it has no
+    // positions, and must migrate into an empty — not missing — table.
+    #expect(try await store.getPinnedSessionOrder().isEmpty)
+    try await store.setPinnedSessionOrder(["claude-\(seed.sessionId)"])
+    #expect(try await store.getPinnedSessionOrder() == ["claude-\(seed.sessionId)": 0])
+
+    // The pre-existing pin flag must survive alongside the new order table.
+    #expect(try await store.getPinnedSessionIds() == Set([seed.sessionId]))
+    #expect(try await store.getCustomName(for: seed.sessionId) == "Important session")
   }
 }
 
