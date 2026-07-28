@@ -16,8 +16,6 @@ struct CollapsibleSessionRow: View {
   let isPinned: Bool
   let onPin: (() -> Void)?
   let onArchive: (() -> Void)?
-  let onDeleteWorktree: (() -> Void)?
-  var isDeletingWorktree: Bool = false
   let onSelect: () -> Void
 
   private static let statusLabelMaxWidth: CGFloat = 96
@@ -77,7 +75,7 @@ struct CollapsibleSessionRow: View {
   }
 
   private var showActions: Bool {
-    isHovered && !isPending && (onPin != nil || onArchive != nil || onDeleteWorktree != nil)
+    isHovered && !isPending && (onPin != nil || onArchive != nil)
   }
 
   private var gitHubObservationTaskID: String {
@@ -94,17 +92,6 @@ struct CollapsibleSessionRow: View {
       (partialResult + Int(scalar.value)) % 1_500
     }
     return 250 + bucket
-  }
-
-  private var shouldSuggestWorktreeCleanup: Bool {
-    WorktreeCleanupEligibility.shouldSuggestCleanup(
-      isWorktree: session.isWorktree,
-      isPendingSession: isPending,
-      isSessionActive: session.isActive,
-      sessionStatus: sessionStatus,
-      pullRequestState: sessionGitHubQuickAccessViewModel.currentBranchPR?.stateKind,
-      ciStatus: sessionGitHubQuickAccessViewModel.ciSummary.overallStatus
-    )
   }
 
   // MARK: - Body
@@ -175,8 +162,7 @@ struct CollapsibleSessionRow: View {
             pullRequest: pullRequest,
             summary: sessionGitHubQuickAccessViewModel.ciSummary,
             observationState: sessionGitHubQuickAccessViewModel.observationState,
-            lastRefreshedAt: sessionGitHubQuickAccessViewModel.lastRefreshedAt,
-            cleanupWorktreeAction: shouldSuggestWorktreeCleanup ? onDeleteWorktree : nil
+            lastRefreshedAt: sessionGitHubQuickAccessViewModel.lastRefreshedAt
           )
           .transition(.opacity)
         }
@@ -297,25 +283,6 @@ struct CollapsibleSessionRow: View {
           .help("Archive session")
         }
       }
-
-      if let onDeleteWorktree {
-        if isDeletingWorktree {
-          ProgressView()
-            .controlSize(.mini)
-            .frame(width: 18, height: 18)
-        } else {
-          Button {
-            onDeleteWorktree()
-          } label: {
-            Image(systemName: "trash")
-              .font(.system(size: 10))
-              .foregroundColor(.secondary)
-              .frame(width: 18, height: 18)
-          }
-          .buttonStyle(.plain)
-          .help("Delete worktree")
-        }
-      }
     }
   }
 
@@ -386,7 +353,6 @@ private struct GitHubSessionRowStatusLine: View {
   let summary: GitHubCISummary
   let observationState: GitHubPRObservationState
   let lastRefreshedAt: Date?
-  let cleanupWorktreeAction: (() -> Void)?
 
   var body: some View {
     HStack(spacing: 5) {
@@ -399,13 +365,7 @@ private struct GitHubSessionRowStatusLine: View {
         .font(.geist(size: 10, weight: .medium))
         .foregroundColor(.secondary.opacity(0.95))
 
-      if let cleanupWorktreeAction {
-        Text("·")
-          .font(.secondaryCaption)
-          .foregroundColor(.secondary.opacity(0.55))
-
-        WorktreeCleanupSuggestionButton(action: cleanupWorktreeAction)
-      } else if let secondaryText {
+      if let secondaryText {
         Text("·")
           .font(.secondaryCaption)
           .foregroundColor(.secondary.opacity(0.55))
@@ -669,9 +629,7 @@ private struct GitHubSessionRowStatusLine: View {
             colorScheme: .dark,
             isPinned: idx == 0,
             onPin: {},
-            onArchive: state.1 ? nil : {},
-            onDeleteWorktree: nil,
-            onSelect: {}
+            onArchive: state.1 ? nil : {},            onSelect: {}
           )
         }
       }
@@ -693,9 +651,7 @@ private struct GitHubSessionRowStatusLine: View {
             colorScheme: .dark,
             isPinned: false,
             onPin: {},
-            onArchive: {},
-            onDeleteWorktree: nil,
-            onSelect: {}
+            onArchive: {},            onSelect: {}
           )
         }
       }
@@ -716,9 +672,7 @@ private struct GitHubSessionRowStatusLine: View {
           colorScheme: .light,
           isPinned: false,
           onPin: {},
-          onArchive: {},
-          onDeleteWorktree: nil,
-          onSelect: {}
+          onArchive: {},          onSelect: {}
         )
         .environment(\.colorScheme, .light)
 
@@ -733,9 +687,7 @@ private struct GitHubSessionRowStatusLine: View {
           colorScheme: .light,
           isPinned: false,
           onPin: {},
-          onArchive: {},
-          onDeleteWorktree: nil,
-          onSelect: {}
+          onArchive: {},          onSelect: {}
         )
         .environment(\.colorScheme, .light)
 
@@ -750,9 +702,7 @@ private struct GitHubSessionRowStatusLine: View {
           colorScheme: .light,
           isPinned: false,
           onPin: {},
-          onArchive: {},
-          onDeleteWorktree: nil,
-          onSelect: {}
+          onArchive: {},          onSelect: {}
         )
         .environment(\.colorScheme, .light)
       }

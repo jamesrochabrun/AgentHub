@@ -104,7 +104,6 @@ or resolve fixture temp paths). Decide whether product code *should* canonicaliz
 
 - `GitDiffServiceTests` → "branch changes are scoped to the selected worktree"
 - `SpotlightProjectFileSearchServiceTests` → "Ranks Spotlight paths and filters directories and paths outside the project"
-- `WorktreeSettingsInventoryTests` → "Delete worktree for nested session removes the worktree root" (may overlap with B)
 
 ## D. Deterministic product-vs-test drift / latent bugs (decide which side is right)
 

@@ -2817,24 +2817,6 @@ public final class CLISessionsViewModel {
     return nil
   }
 
-  private func worktreeDeletionTarget(for session: CLISession) -> (worktree: WorktreeBranch, parentRepoPath: String?) {
-    if let match = WorktreeModuleResolver.bestMatch(
-      for: session.projectPath,
-      repositories: selectedRepositories
-    ), match.worktree.isWorktree {
-      return (match.worktree, match.repository.path)
-    }
-
-    return (
-      WorktreeBranch(
-        name: session.branchName ?? URL(fileURLWithPath: session.projectPath).lastPathComponent,
-        path: WorktreeModuleResolver.normalizedDirectoryPath(session.projectPath),
-        isWorktree: true
-      ),
-      nil
-    )
-  }
-
   /// Deletes a worktree
   /// - Parameters:
   ///   - worktree: The worktree to delete
@@ -2925,46 +2907,6 @@ public final class CLISessionsViewModel {
     clearWorktreeDeletionError()
     Task {
       _ = await deleteOrphanedWorktree(worktree, parentRepoPath: parentRepoPath)
-    }
-  }
-
-  /// Deletes the worktree for a monitored session
-  /// - Parameters:
-  ///   - session: The session whose worktree to delete
-  ///   - force: When true, uses double `--force` to remove worktrees with untracked files
-  @discardableResult
-  public func deleteWorktreeForSession(_ session: CLISession, force: Bool = false) async -> Bool {
-    let target = worktreeDeletionTarget(for: session)
-    let worktree = target.worktree
-    deletingWorktreePath = worktree.path
-    do {
-      if let parentRepoPath = target.parentRepoPath {
-        try await worktreeRemovalService.removeWorktree(at: worktree.path, relativeTo: parentRepoPath, force: force)
-      } else {
-        try await worktreeRemovalService.removeWorktree(at: worktree.path, force: force)
-      }
-      archiveMonitoredSessions(inWorktreePath: worktree.path)
-      removeOwnedWorktreePath(worktree.path)
-      deletingWorktreePath = nil
-      refresh()
-      return true
-    } catch {
-      deletingWorktreePath = nil
-      if let orphanInfo = worktreeRemovalService.checkIfOrphaned(at: worktree.path),
-         orphanInfo.isOrphaned {
-        worktreeDeletionError = WorktreeDeletionError(
-          worktree: worktree,
-          message: error.localizedDescription,
-          isOrphaned: true,
-          parentRepoPath: orphanInfo.parentRepoPath
-        )
-      } else {
-        worktreeDeletionError = WorktreeDeletionError(
-          worktree: worktree,
-          message: error.localizedDescription
-        )
-      }
-      return false
     }
   }
 

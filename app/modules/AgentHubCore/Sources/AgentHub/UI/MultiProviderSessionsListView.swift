@@ -139,8 +139,6 @@ public struct MultiProviderSessionsListView: View {
   @State private var isBrowseExpanded: Bool = false
   @State private var multiLaunchViewModel: MultiSessionLaunchViewModel?
   @State private var primarySessionId: String?
-  @State private var showDeleteWorktreeAlert = false
-  @State private var sessionToDeleteWorktree: CLISession? = nil
   @State private var showCommandPalette = false
   @State private var collapsedProjectGroups: Set<String> = []
   @State private var expandedWorkspaceSessionGroups: Set<String> = []
@@ -344,29 +342,6 @@ public struct MultiProviderSessionsListView: View {
           Text("\(error.message)\n\n\"Force Delete\" will remove the worktree even if it contains untracked files.")
         }
       }
-    }
-    .alert("Delete Worktree?", isPresented: $showDeleteWorktreeAlert) {
-      Button("Cancel", role: .cancel) {
-        sessionToDeleteWorktree = nil
-      }
-      Button("Delete", role: .destructive) {
-        if let session = sessionToDeleteWorktree {
-          let providerKind = selectedSessionItems.first(where: { $0.session.id == session.id })?.providerKind
-          Task {
-            switch providerKind {
-            case .claude:
-              await claudeViewModel.deleteWorktreeForSession(session)
-            case .codex:
-              await codexViewModel.deleteWorktreeForSession(session)
-            case .none:
-              break
-            }
-          }
-          sessionToDeleteWorktree = nil
-        }
-      }
-    } message: {
-      Text("You are about to delete this worktree. This cannot be recovered.")
     }
     .alert(
       "Delete Worktree?",
@@ -1578,7 +1553,6 @@ public struct MultiProviderSessionsListView: View {
           isPinned: isPinned(item),
           onPin: nil,
           onArchive: nil,
-          onDeleteWorktree: nil,
           onSelect: {
             selectedModuleLandingPath = nil
             primarySessionId = nil
@@ -1644,16 +1618,6 @@ public struct MultiProviderSessionsListView: View {
           }
         }
       },
-      onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-        sessionToDeleteWorktree = item.session
-        showDeleteWorktreeAlert = true
-      } : nil,
-      isDeletingWorktree: item.session.isWorktree && {
-        switch item.providerKind {
-        case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-        case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-        }
-      }(),
       onSelect: {
         selectedWorkspaceID = nil
         selectedModuleLandingPath = nil

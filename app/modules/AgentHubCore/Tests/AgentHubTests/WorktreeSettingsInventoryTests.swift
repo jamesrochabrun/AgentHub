@@ -239,41 +239,6 @@ struct WorktreeSettingsDeletionHelperTests {
     #expect(viewModel.monitoredSessionIds == Set(["session-1"]))
   }
 
-  @Test("Delete worktree for nested session removes the worktree root", .disabled("headless-quarantine: symlink/async path matching; see TestQuarantine.md"))
-  func deleteWorktreeForNestedSessionRemovesWorktreeRoot() async throws {
-    let remover = RecordingWorktreeRemovalService()
-    let repoPath = try temporaryDirectory(name: "delete-nested-repo")
-    let worktreePath = try temporaryDirectory(name: "delete-nested-worktree")
-    let nestedSession = session("nested-session", path: worktreePath + "/app")
-    let rootSession = session("root-session", path: worktreePath)
-    let repository = SelectedRepository(
-      path: repoPath,
-      worktrees: [
-        WorktreeBranch(name: "main", path: repoPath, isWorktree: false),
-        WorktreeBranch(
-          name: "feature",
-          path: worktreePath,
-          isWorktree: true,
-          sessions: [nestedSession, rootSession]
-        ),
-      ]
-    )
-    let monitor = WorktreeDeletionMonitorService(repositories: [repository])
-    let viewModel = makeDeletionViewModel(remover: remover, monitor: monitor)
-    await waitForDeletionViewModel {
-      !viewModel.selectedRepositories.isEmpty
-    }
-    viewModel.startMonitoring(session: nestedSession)
-    viewModel.startMonitoring(session: rootSession)
-
-    let succeeded = await viewModel.deleteWorktreeForSession(nestedSession)
-
-    #expect(succeeded)
-    #expect(viewModel.monitoredSessionIds.isEmpty)
-    #expect(await remover.relativeRemovals() == [
-      WorktreeRelativeRemoval(path: worktreePath, parentRepoPath: repoPath, force: false)
-    ])
-  }
 }
 
 private func session(_ id: String, path: String, isActive: Bool = false) -> CLISession {
@@ -400,14 +365,4 @@ private func temporaryDirectory(name: String) throws -> String {
     .appendingPathComponent("\(name)-\(UUID().uuidString)")
   try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
   return url.path
-}
-
-@MainActor
-private func waitForDeletionViewModel(
-  condition: @escaping @MainActor () -> Bool
-) async {
-  for _ in 0..<20 {
-    if condition() { return }
-    await Task.yield()
-  }
 }

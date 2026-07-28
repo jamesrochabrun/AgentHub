@@ -20,9 +20,6 @@ public struct CollapsibleSelectedSessionsPanel: View {
   @AppStorage(AgentHubDefaults.selectedSessionsPanelSizeMode)
   private var sizeModeRawValue: Int = PanelSizeMode.small.rawValue
 
-  @State private var showDeleteWorktreeAlert = false
-  @State private var sessionToDeleteWorktree: CLISession? = nil
-
   private let headerHeight: CGFloat = 40
 
   private var sizeMode: PanelSizeMode {
@@ -77,29 +74,6 @@ public struct CollapsibleSelectedSessionsPanel: View {
       }
       .onChange(of: items.map(\.id)) { _, _ in
         ensurePrimarySelection()
-      }
-      .alert("Delete Worktree?", isPresented: $showDeleteWorktreeAlert) {
-        Button("Cancel", role: .cancel) {
-          sessionToDeleteWorktree = nil
-        }
-        Button("Delete", role: .destructive) {
-          if let session = sessionToDeleteWorktree {
-            let providerKind = items.first(where: { $0.session.id == session.id })?.providerKind
-            Task {
-              switch providerKind {
-              case .claude:
-                await claudeViewModel.deleteWorktreeForSession(session)
-              case .codex:
-                await codexViewModel.deleteWorktreeForSession(session)
-              case .none:
-                break
-              }
-            }
-            sessionToDeleteWorktree = nil
-          }
-        }
-      } message: {
-        Text("You are about to delete this worktree. This cannot be recovered.")
       }
     }
   }
@@ -172,16 +146,6 @@ public struct CollapsibleSelectedSessionsPanel: View {
               case .codex: codexViewModel.stopMonitoring(session: item.session)
               }
             },
-            onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-              sessionToDeleteWorktree = item.session
-              showDeleteWorktreeAlert = true
-            } : nil,
-            isDeletingWorktree: item.session.isWorktree && {
-              switch item.providerKind {
-              case .claude: return claudeViewModel.deletingWorktreePath == item.session.projectPath
-              case .codex: return codexViewModel.deletingWorktreePath == item.session.projectPath
-              }
-            }(),
             onSelect: {
               primarySessionId = item.id
             }
@@ -299,9 +263,6 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
   @AppStorage(AgentHubDefaults.selectedSessionsPanelSizeMode)
   private var sizeModeRawValue: Int = PanelSizeMode.small.rawValue
 
-  @State private var showDeleteWorktreeAlert = false
-  @State private var sessionToDeleteWorktree: CLISession? = nil
-
   private let headerHeight: CGFloat = 40
 
   private var sizeMode: PanelSizeMode {
@@ -351,21 +312,6 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
       }
       .onChange(of: items.map(\.id)) { _, _ in
         ensurePrimarySelection()
-      }
-      .alert("Delete Worktree?", isPresented: $showDeleteWorktreeAlert) {
-        Button("Cancel", role: .cancel) {
-          sessionToDeleteWorktree = nil
-        }
-        Button("Delete", role: .destructive) {
-          if let session = sessionToDeleteWorktree {
-            Task {
-              await viewModel.deleteWorktreeForSession(session)
-            }
-            sessionToDeleteWorktree = nil
-          }
-        }
-      } message: {
-        Text("You are about to delete this worktree. This cannot be recovered.")
       }
     }
   }
@@ -427,12 +373,6 @@ public struct SingleProviderCollapsibleSelectedSessionsPanel: View {
             onArchive: item.isPending ? nil : {
               viewModel.stopMonitoring(session: item.session)
             },
-            onDeleteWorktree: (!item.isPending && item.session.isWorktree) ? {
-              sessionToDeleteWorktree = item.session
-              showDeleteWorktreeAlert = true
-            } : nil,
-            isDeletingWorktree: item.session.isWorktree
-              && viewModel.deletingWorktreePath == item.session.projectPath,
             onSelect: {
               primarySessionId = item.id
             }
