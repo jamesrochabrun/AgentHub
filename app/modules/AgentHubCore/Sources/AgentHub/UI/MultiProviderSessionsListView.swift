@@ -536,6 +536,10 @@ public struct MultiProviderSessionsListView: View {
         .keyboardShortcut("j", modifiers: .command)
         .hidden()
 
+      Button("") { revealPrimarySessionInSidebar() }
+        .keyboardShortcut("j", modifiers: [.command, .shift])
+        .hidden()
+
       Button("") { navigateSessionHistory(direction: .backward) }
         .keyboardShortcut("[", modifiers: .command)
         .hidden()
@@ -2490,6 +2494,58 @@ public struct MultiProviderSessionsListView: View {
     selectedModuleLandingPath = nil
     primarySessionId = nextID
     scrollToSessionId = nextID
+  }
+
+  /// Scrolls the sidebar to the session currently open in the detail view.
+  ///
+  /// The row has to exist in the view tree before `ScrollViewReader` can find
+  /// it, so this first reveals whatever is hiding it — a hidden sidebar, the
+  /// collapsed pinned section, a collapsed repo group, or a collapsed status
+  /// group — and only then asks for the scroll.
+  private func revealPrimarySessionInSidebar() {
+    guard let targetID = primarySessionId,
+          let item = selectedSessionItems.first(where: { $0.id == targetID })
+    else { return }
+
+    var didReveal = false
+
+    withAnimation(accessibilityReduceMotion ? nil : .easeInOut(duration: 0.25)) {
+      if columnVisibility == .detailOnly {
+        columnVisibility = .all
+        didReveal = true
+      }
+
+      if isPinned(item) {
+        if isPinnedSectionCollapsed {
+          isPinnedSectionCollapsed = false
+          didReveal = true
+        }
+      } else {
+        switch sidebarGroupMode {
+        case .repo:
+          let modulePath = WorktreeModuleResolver.modulePath(
+            for: item.session.projectPath,
+            repositories: Array(orderedTrackedRepos),
+            mode: worktreeDisplayMode
+          )
+          didReveal = collapsedProjectGroups.remove(modulePath) != nil || didReveal
+        case .status:
+          let category = StatusGroupCategory.category(for: item.sessionStatus)
+          didReveal = collapsedStatusGroups.remove(category) != nil || didReveal
+        }
+      }
+    }
+
+    guard didReveal else {
+      scrollToSessionId = targetID
+      return
+    }
+
+    // The row only enters the view tree on the update that applies the reveal
+    // above, so give SwiftUI that pass before asking to scroll to it.
+    Task { @MainActor in
+      scrollToSessionId = targetID
+    }
   }
 }
 
