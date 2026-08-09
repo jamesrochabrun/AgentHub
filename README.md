@@ -26,6 +26,7 @@ rom session rows, and send GitHub context back into a session
 - **Git worktree management** — Create and delete sibling worktrees from the UI, launch sessions on new branches, and choose whether AgentHub-owned worktree sessions appear under the parent module or as separate modules
 - **Remix with provider picker** — Branch any session into an isolated git worktree and continue it in Claude or Codex; the original session's transcript is passed as context to the new session
 - **Multi-session launcher** — Launch parallel sessions across Claude and Codex with manual prompts or AI-planned orchestration (Smart mode)
+- **Measurements** — Agents record measurements they produce (a claim, the chart behind it, the query, and caveats) into a per-project panel; re-run any of them later to refresh the numbers and build up a history
 - **Mermaid diagrams** — Detects Mermaid diagram syntax in session output and renders it natively; diagrams can be exported as images
 - **Web preview** — Prefers agent-started localhost servers, recovers recent localhost URLs from session files when needed, and falls back to static HTML (`index.html` first) when no live preview is available
 - **Web preview batch updates** — Inspect elements or crop regions in the live web preview, queue multiple requested updates with structured context, and attach the batch to your next terminal message — no copy-paste needed
@@ -96,6 +97,21 @@ Notes & current limitations:
 - Codex host rendering requires the MCP server to be in `~/.codex/config.toml` (capture works regardless).
 
 See **[`MCPApps.md`](MCPApps.md)** for the architecture, data flow, key files, invariants, current state, and the tracked list of remaining work. The known-good build path is `xcodebuild -workspace app/AgentHub.xcodeproj/project.xcworkspace -scheme AgentHub build`.
+
+## Measurements
+
+When an agent finishes an analysis that produces numbers — a `git log` aggregation, a test-timing run, a SQL query through an MCP server — it records the result with the bundled `agenthub_record_measurement` tool, and AgentHub renders it as a card in a dedicated side panel. A session-card **Measurements** button appears once the project has at least one.
+
+Each card carries the claim in plain English, the chart, an optional table, the caveats, and the query that produced it. **The agent sends data, never markup**: it supplies a chart specification (series of `{x, y}` points) and AgentHub draws it with Swift Charts, so no agent-authored HTML reaches the panel and every card follows the app theme. A measurement with no numbers behind it is rejected outright.
+
+- **Scoped to the project, not the session.** Measurements outlive the conversation that produced them and are shared by every session in that project — Claude and Codex alike. Worktrees roll up to their parent repo.
+- **Re-runnable.** `↻` on a card asks the session to run the stored query again, verbatim, and re-file it under the same id. AgentHub never executes the query itself; it goes back through the agent, which is already the thing allowed to run commands.
+- **Accumulates history.** Each re-run pushes the previous numbers onto the card instead of overwriting them, so a metric tracked weekly shows its trend and every earlier claim.
+- **Agent-addressable.** `agenthub_list_measurements` lets a session see what is already tracked, so "re-run the build-time measurement" refreshes the existing card rather than creating a near-duplicate computed a slightly different way.
+
+Data sources are whatever the agent can already reach — local files, a CLI, or any MCP server configured in the user's own agent. AgentHub builds no connectors, never sees credentials, and never moves rows: it reads a JSON file written by the CLI helper and draws a chart.
+
+See **[`Measurements.md`](Measurements.md)** for the architecture, data flow, key files, invariants, and remaining work.
 
 ## Storybook
 

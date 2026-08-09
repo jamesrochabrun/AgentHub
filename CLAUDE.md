@@ -274,6 +274,14 @@ Agent sessions use XcodeBuildMCP for simulator build/run, screenshots, and UI au
 [InjectionLite]: https://github.com/johnno1962/InjectionLite
 [SnapshotPreviews]: https://github.com/getsentry/SnapshotPreviews
 
+### Measurements Panel
+
+Measurements an agent produced during a session (a claim, the chart/table behind it, the query, and caveats) render in a dedicated side panel. The agent files them with the bundled `agenthub_record_measurement` MCP tool and discovers existing ones with `agenthub_list_measurements`; AgentHub draws the chart from a data spec with Swift Charts — agent-authored markup never reaches the panel.
+
+Measurements are scoped to the **project**, not the session: they outlive the conversation that produced them and are shared across every session and both providers, with worktrees rolling up to their parent repo. `↻` re-runs a measurement's stored query *through the agent* (AgentHub never executes it) and accumulates each run into a capped history so a tracked metric shows its trend. The CLI reads measurements through a JSON index the app republishes (`MeasurementIndexStore`) and must not open the app's SQLite database.
+
+Read **`Measurements.md`** before editing anything named `Measurement*`, the `SidePanelContent.measurements` case, `agenthub_record_measurement` / `agenthub_list_measurements`, or the `session_measurements` table.
+
 ### Command Palette
 
 `CommandPaletteView` — Cmd+K for quick session/repository/action access.

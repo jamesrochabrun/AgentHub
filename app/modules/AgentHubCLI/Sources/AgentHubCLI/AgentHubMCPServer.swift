@@ -8,6 +8,8 @@ struct AgentHubMCPServer {
   private let deletionQueue = WorktreeDeletionRequestQueue()
   private let sessionNameQueue = SessionNameRequestQueue()
   private let progressQueue = WorktreeProgressQueue()
+  private let measurementQueue = MeasurementRecordQueue()
+  private let measurementIndex = MeasurementIndexStore()
 
   /// Hard ceiling on any single `tools/call`. Worktree creation normally
   /// completes in seconds and each underlying `git` invocation has its own
@@ -66,6 +68,8 @@ struct AgentHubMCPServer {
             deleteWorktreeToolSchema(),
             planningToolSchema(),
             nameSessionToolSchema(),
+            recordMeasurementToolSchema(),
+            listMeasurementsToolSchema(),
           ],
         ])
 
@@ -164,6 +168,12 @@ struct AgentHubMCPServer {
     case "agenthub_name_session":
       return try nameSession(arguments: arguments)
 
+    case "agenthub_record_measurement":
+      return try recordMeasurement(arguments: arguments)
+
+    case "agenthub_list_measurements":
+      return listMeasurements(arguments: arguments)
+
     default:
       throw MCPError.invalidRequest("Unknown AgentHub tool: \(name).")
     }
@@ -208,6 +218,236 @@ struct AgentHubMCPServer {
         "provider": provider.commandLineValue,
       ]
     )
+  }
+
+  /// Files one measurement into the session's Measurements panel.
+  ///
+  /// Requires a chart or a table: the point of the panel is that a claim arrives
+  /// with the numbers behind it, so a text-only "measurement" is rejected rather
+  /// than rendered as an unfalsifiable assertion.
+  private func recordMeasurement(arguments: [String: Any]) throws -> [String: Any] {
+    guard let provider = ProcessInfo.processInfo.environment["AGENTHUB_PROVIDER"]
+      .flatMap(WorktreeLaunchProvider.init(commandLineValue:))
+    else {
+      throw MCPError.invalidRequest(
+        "agenthub_record_measurement is only available inside an AgentHub-managed Claude or Codex session."
+      )
+    }
+
+    let title = try requiredString("title", in: arguments)
+    let claim = try requiredString("claim", in: arguments)
+    let chart = try parseMeasurementChart(arguments["chart"])
+    let table = try parseMeasurementTable(arguments["table"])
+
+    guard chart != nil || table != nil else {
+      throw MCPError.invalidRequest(
+        "agenthub_record_measurement needs a chart or a table. A claim with no numbers behind it is an assertion, not a measurement — pass the aggregated result you derived the claim from."
+      )
+    }
+
+    let caveats = Array(
+      (try optionalStringArray("caveats", in: arguments) ?? [])
+        .prefix(MeasurementRecord.Limits.maxCaveats)
+    )
+
+    // An explicit id means this is a re-run of a card that already exists: the
+    // app upserts on id, so the existing card refreshes in place instead of a
+    // near-duplicate piling up beneath it.
+    let record = MeasurementRecord(
+      id: optionalString("id", in: arguments).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString,
+      title: title,
+      claim: claim,
+      question: optionalString("question", in: arguments),
+      query: optionalString("query", in: arguments),
+      source: optionalString("source", in: arguments),
+      caveats: caveats,
+      chart: chart,
+      table: table,
+      sourceProvider: provider,
+      sourceSessionId: ProcessInfo.processInfo.environment["AGENTHUB_SESSION_ID"],
+      sourceProjectPath: ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"],
+      sourceProcessId: getppid()
+    )
+    try measurementQueue.enqueue(record)
+
+    return toolResult(
+      text: "AgentHub recorded the measurement \"\(title)\". It appears in this session's Measurements panel momentarily.",
+      structuredContent: [
+        "queued": true,
+        "id": record.id,
+        "title": title,
+        "hasChart": chart != nil,
+        "hasTable": table != nil,
+      ]
+    )
+  }
+
+  /// Lists the measurements already tracked for this project.
+  ///
+  /// Without this, an agent asked to "refresh the build-time measurement" has no
+  /// way to learn that measurement's id or its stored query, so it files a fresh
+  /// card computed a slightly different way — the exact drift the panel exists
+  /// to prevent.
+  private func listMeasurements(arguments: [String: Any]) -> [String: Any] {
+    let projectPath = optionalString("projectPath", in: arguments)
+      ?? ProcessInfo.processInfo.environment["AGENTHUB_PROJECT_PATH"]
+      ?? FileManager.default.currentDirectoryPath
+
+    guard let index = measurementIndex.read(projectPath: projectPath) else {
+      return toolResult(
+        text: "No measurements recorded for this project yet.",
+        structuredContent: ["projectPath": projectPath, "measurements": []]
+      )
+    }
+
+    let entries = index.measurements.map { entry -> [String: Any] in
+      var object: [String: Any] = [
+        "id": entry.id,
+        "title": entry.title,
+        "latestClaim": entry.latestClaim,
+        "lastRunAt": ISO8601DateFormatter().string(from: entry.lastRunAt),
+        "runCount": entry.runCount,
+      ]
+      if let question = entry.question { object["question"] = question }
+      if let query = entry.query { object["query"] = query }
+      if let source = entry.source { object["source"] = source }
+      return object
+    }
+
+    let summary = index.measurements.isEmpty
+      ? "No measurements recorded for this project yet."
+      : index.measurements
+        .map { "• \($0.title) — \($0.latestClaim) (\($0.runCount) run(s), id \($0.id))" }
+        .joined(separator: "\n")
+
+    return toolResult(
+      text: summary,
+      structuredContent: ["projectPath": index.projectPath, "measurements": entries]
+    )
+  }
+
+  private func parseMeasurementChart(_ raw: Any?) throws -> MeasurementChart? {
+    guard let raw, !(raw is NSNull) else { return nil }
+    guard let object = raw as? [String: Any] else {
+      throw MCPError.invalidRequest("Expected chart to be an object.")
+    }
+
+    let rawKind = (object["kind"] as? String)?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+      .lowercased() ?? MeasurementChart.Kind.bar.rawValue
+    guard let kind = MeasurementChart.Kind(rawValue: rawKind) else {
+      let supported = MeasurementChart.Kind.allCases.map(\.rawValue).joined(separator: ", ")
+      throw MCPError.invalidRequest("Unsupported chart kind '\(rawKind)'. Use one of: \(supported).")
+    }
+
+    guard let rawSeries = object["series"] as? [[String: Any]], !rawSeries.isEmpty else {
+      throw MCPError.invalidRequest(
+        "chart.series must be a non-empty array of { name, points } objects."
+      )
+    }
+    guard rawSeries.count <= MeasurementRecord.Limits.maxSeries else {
+      throw MCPError.invalidRequest(
+        "chart.series has \(rawSeries.count) series but the limit is \(MeasurementRecord.Limits.maxSeries). Aggregate to fewer groups before charting."
+      )
+    }
+
+    let series = try rawSeries.map { entry -> MeasurementSeries in
+      guard let name = (entry["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !name.isEmpty
+      else {
+        throw MCPError.invalidRequest("Every chart series needs a non-empty name.")
+      }
+      guard let rawPoints = entry["points"] as? [[String: Any]], !rawPoints.isEmpty else {
+        throw MCPError.invalidRequest("Series '\(name)' needs a non-empty points array.")
+      }
+      guard rawPoints.count <= MeasurementRecord.Limits.maxPointsPerSeries else {
+        throw MCPError.invalidRequest(
+          "Series '\(name)' has \(rawPoints.count) points but the limit is \(MeasurementRecord.Limits.maxPointsPerSeries). Bucket the data before charting."
+        )
+      }
+
+      let points = try rawPoints.map { point -> MeasurementPoint in
+        guard let x = measurementLabel(point["x"]), !x.isEmpty else {
+          throw MCPError.invalidRequest("Every point in series '\(name)' needs an x label.")
+        }
+        guard let y = measurementNumber(point["y"]) else {
+          throw MCPError.invalidRequest("Point '\(x)' in series '\(name)' needs a numeric y value.")
+        }
+        return MeasurementPoint(x: x, y: y)
+      }
+      return MeasurementSeries(name: name, points: points)
+    }
+
+    return MeasurementChart(
+      kind: kind,
+      xLabel: optionalString("xLabel", in: object),
+      yLabel: optionalString("yLabel", in: object),
+      series: series
+    )
+  }
+
+  private func parseMeasurementTable(_ raw: Any?) throws -> MeasurementTable? {
+    guard let raw, !(raw is NSNull) else { return nil }
+    guard let object = raw as? [String: Any] else {
+      throw MCPError.invalidRequest("Expected table to be an object.")
+    }
+    guard let columns = (object["columns"] as? [String])?
+      .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }),
+      !columns.isEmpty
+    else {
+      throw MCPError.invalidRequest("table.columns must be a non-empty array of strings.")
+    }
+    guard columns.count <= MeasurementRecord.Limits.maxTableColumns else {
+      throw MCPError.invalidRequest(
+        "table.columns has \(columns.count) columns but the limit is \(MeasurementRecord.Limits.maxTableColumns)."
+      )
+    }
+
+    let rawRows = object["rows"] as? [[Any]] ?? []
+    guard rawRows.count <= MeasurementRecord.Limits.maxTableRows else {
+      throw MCPError.invalidRequest(
+        "table.rows has \(rawRows.count) rows but the limit is \(MeasurementRecord.Limits.maxTableRows). Aggregate or take a top-N slice, and say which in caveats."
+      )
+    }
+
+    let rows = try rawRows.map { row -> [String] in
+      guard row.count == columns.count else {
+        throw MCPError.invalidRequest(
+          "Every table row must have \(columns.count) cells to match table.columns; found a row with \(row.count)."
+        )
+      }
+      return row.map { measurementLabel($0) ?? "" }
+    }
+
+    return MeasurementTable(columns: columns, rows: rows)
+  }
+
+  /// Coerces a JSON scalar to a display label. Numbers arrive as `NSNumber`
+  /// from `JSONSerialization`, and integral values must not render as "5.0".
+  private func measurementLabel(_ raw: Any?) -> String? {
+    switch raw {
+    case let value as String:
+      return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    case let value as NSNumber:
+      let doubleValue = value.doubleValue
+      if doubleValue == doubleValue.rounded(), abs(doubleValue) < 1e15 {
+        return String(value.int64Value)
+      }
+      return String(doubleValue)
+    default:
+      return nil
+    }
+  }
+
+  private func measurementNumber(_ raw: Any?) -> Double? {
+    switch raw {
+    case let value as NSNumber:
+      return value.doubleValue
+    case let value as String:
+      return Double(value.trimmingCharacters(in: .whitespacesAndNewlines))
+    default:
+      return nil
+    }
   }
 
   private func createWorktreeSession(arguments: [String: Any]) async throws -> MCPWorktreeLaunchResult {
@@ -823,6 +1063,152 @@ struct AgentHubMCPServer {
           ],
         ],
         "required": ["name"],
+        "additionalProperties": false,
+      ],
+    ]
+  }
+
+  private func recordMeasurementToolSchema() -> [String: Any] {
+    [
+      "name": "agenthub_record_measurement",
+      "description": """
+        Files a measurement into this session's Measurements panel in AgentHub, where it renders as a \
+        chart or table with the query behind it. Call this whenever you finish an analysis that \
+        produces numbers the user will make a decision on — querying a database, aggregating a \
+        CSV or log file, counting events, comparing cohorts, sizing an opportunity — including \
+        when the user did not explicitly ask you to record anything. One call per distinct \
+        measurement; do not batch unrelated results into one card. Write `claim` the way you would \
+        say it out loud to a product review: the conclusion and its size, not a description of \
+        what you did. Always pass `query` when a query or script produced the numbers, so the \
+        claim can be checked rather than trusted. Use `caveats` for anything that would change \
+        how the number should be read — partial time windows, excluded rows, small samples, \
+        top-N truncation, a metric you defined yourself rather than one that already existed. \
+        Prefer a chart; add a table only when exact values matter. Do not call this for code \
+        changes, file edits, or work that produced no measurement. Before filing a new measurement, \
+        call agenthub_list_measurements: if one already measures this, run its stored query instead \
+        of writing a fresh one and pass its id here, so the card updates and its history builds \
+        up rather than a near-duplicate appearing next to it.
+        """,
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "id": [
+            "type": "string",
+            "description": "Only when re-running an existing measurement: pass that measurement's id so its card refreshes in place. Omit for a new measurement.",
+          ],
+          "title": [
+            "type": "string",
+            "minLength": 1,
+            "description": "Short headline for the card, e.g. 'Week-2 retention by signup channel'.",
+          ],
+          "claim": [
+            "type": "string",
+            "minLength": 1,
+            "description": "The measurement in plain English, stated as a conclusion with its magnitude. Example: 'Referral signups retain at 41% in week 2 versus 22% for paid — roughly double, on 3.1k users.'",
+          ],
+          "question": [
+            "type": "string",
+            "description": "The question this analysis set out to answer, if there was an explicit one.",
+          ],
+          "query": [
+            "type": "string",
+            "description": "The SQL, script, or command that produced these numbers. Shown collapsed under the chart.",
+          ],
+          "source": [
+            "type": "string",
+            "description": "Where the data came from — table name, file path, or endpoint.",
+          ],
+          "caveats": [
+            "type": "array",
+            "items": ["type": "string"],
+            "description": "Limitations that change how the number should be read (partial windows, excluded segments, small samples, self-defined metrics).",
+          ],
+          "chart": [
+            "type": "object",
+            "description": "The data to plot. AgentHub draws the chart — send values, never HTML or image markup.",
+            "properties": [
+              "kind": [
+                "type": "string",
+                "enum": MeasurementChart.Kind.allCases.map(\.rawValue),
+                "description": "bar for comparisons across categories, line/area for a value over time, point for correlation.",
+              ],
+              "xLabel": ["type": "string", "description": "Label for the x axis."],
+              "yLabel": ["type": "string", "description": "Label for the y axis."],
+              "series": [
+                "type": "array",
+                "minItems": 1,
+                "maxItems": MeasurementRecord.Limits.maxSeries,
+                "description": "One entry per plotted group. Use several series to compare segments on the same axes.",
+                "items": [
+                  "type": "object",
+                  "properties": [
+                    "name": ["type": "string", "description": "Series name, shown in the legend."],
+                    "points": [
+                      "type": "array",
+                      "minItems": 1,
+                      "maxItems": MeasurementRecord.Limits.maxPointsPerSeries,
+                      "items": [
+                        "type": "object",
+                        "properties": [
+                          "x": ["type": "string", "description": "Category, bucket, or date label. Send points already sorted."],
+                          "y": ["type": "number", "description": "The measured value."],
+                        ],
+                        "required": ["x", "y"],
+                      ],
+                    ],
+                  ],
+                  "required": ["name", "points"],
+                ],
+              ],
+            ],
+            "required": ["kind", "series"],
+          ],
+          "table": [
+            "type": "object",
+            "description": "Optional exact values, aggregated or top-N — not a raw row dump.",
+            "properties": [
+              "columns": [
+                "type": "array",
+                "items": ["type": "string"],
+                "maxItems": MeasurementRecord.Limits.maxTableColumns,
+              ],
+              "rows": [
+                "type": "array",
+                "maxItems": MeasurementRecord.Limits.maxTableRows,
+                "items": ["type": "array", "description": "One cell per column, in column order."],
+              ],
+            ],
+            "required": ["columns", "rows"],
+          ],
+        ],
+        "required": ["title", "claim"],
+        "additionalProperties": false,
+      ],
+    ]
+  }
+
+  private func listMeasurementsToolSchema() -> [String: Any] {
+    [
+      "name": "agenthub_list_measurements",
+      "description": """
+        Lists the measurements already recorded for this project in AgentHub, with each one's id, \
+        title, latest claim, and the query that produced it. Call this before recording a new \
+        measurement, so an existing measurement gets refreshed instead of a near-duplicate card \
+        appearing beside it. Also call it whenever the user asks to re-run, refresh, or update \
+        a measurement, or asks what is already being tracked or measured: match their words against \
+        the titles, run that measurement's stored query exactly as written, then call \
+        agenthub_record_measurement with its id. Measurements are shared across every session in the \
+        project, Claude and Codex alike, so this will list work done in conversations other \
+        than this one.
+        """,
+      "inputSchema": [
+        "type": "object",
+        "properties": [
+          "projectPath": [
+            "type": "string",
+            "description": "Project to list measurements for. Defaults to the current AgentHub session's project, which is almost always what you want.",
+          ],
+        ],
         "additionalProperties": false,
       ],
     ]

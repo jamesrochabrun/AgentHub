@@ -127,6 +127,19 @@ AgentHub has MCP UI support wired through the reusable `AgentHubMCPUI` Swift mod
 
 AgentHub renders MCP app UIs an agent produces during a Claude or Codex session in a dedicated side panel, driven by the agent's tool calls (no proactive server discovery). Read **`MCPApps.md`** before editing MCP app detection (`detectedMCPAppInvocations`/`detectedMCPAppResources` in the parsers), resolution (`CLISessionsViewModel.ensureMCPAppRenderItems`), rendering (`MCPAppSidePanelView`), the on-demand gateway (`MCPAppDiscoveryService`), or the bridge push in `AgentHubMCPUIResourceView`. `MCPApps.md` documents the current state and remaining gaps.
 
+### Measurements (agent-recorded measurements)
+
+Measurements an agent produced during a session render in a dedicated side panel. Read **`Measurements.md`** before editing anything named `Measurement*`, the `SidePanelContent.measurements` case, `agenthub_record_measurement` / `agenthub_list_measurements`, or the `session_measurements` table.
+
+- **The agent sends data, never markup.** `agenthub_record_measurement` takes a chart *specification*; AgentHub draws it with Swift Charts. Never add an HTML/SVG/image passthrough.
+- **A measurement needs numbers.** The tool rejects a call with neither `chart` nor `table`.
+- **Scoped to the project, never to a session.** `sessionId` is provenance only and must not decide what the panel shows; worktrees roll up to their parent repo via `MeasurementProjectScope`.
+- **Re-run goes through the agent, never through AgentHub.** `↻` sends the stored query back into the session terminal; AgentHub must never execute a stored query itself.
+- **Re-run accumulates.** `replacing(_:)` pushes superseded values onto `history` (capped) rather than overwriting them.
+- **Every run records its branch**, stamped by the app from the session. The trend splits one series per branch — measurements roll up to the repo, so unsplit runs from `main` and a worktree interleave and a stable metric reads as thrashing.
+- **Never colour the delta red/green** — nothing tells AgentHub whether up is good.
+- The CLI reads measurements through a JSON index the app republishes (`MeasurementIndexStore`); it must not open the app's SQLite database.
+
 ### Storybook Mode
 
 Storybook-enabled projects swap the Preview button for a Storybook button (never both). `WebPreviewMode { .app, .storybook }` routes the preview pane; the storybook server runs at compound key `"{sessionId}:storybook"` in `DevServerManager` so it coexists with the primary app server. Read **Storybook** in `README.md` before editing this area.

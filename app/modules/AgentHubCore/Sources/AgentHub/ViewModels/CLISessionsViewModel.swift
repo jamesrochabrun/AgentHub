@@ -5,6 +5,7 @@
 //  Created by Assistant on 1/9/26.
 //
 
+import AgentHubCLIKit
 import AgentHubGitDiff
 import AgentHubGitHub
 import AgentHubMCPUI
@@ -75,6 +76,8 @@ public final class CLISessionsViewModel {
   // MARK: - State
 
   public private(set) var selectedRepositories: [SelectedRepository] = []
+  public private(set) var lastFocusedSessionId: String?
+  public private(set) var lastFocusedSessionAt: Date?
   public private(set) var loadingState: CLILoadingState = .idle
   public private(set) var browseSessionsLoadState: BrowseSessionsLoadState = .notLoaded
   public private(set) var error: Error?
@@ -730,6 +733,7 @@ public final class CLISessionsViewModel {
   /// Stores the prompt temporarily so that when the terminal view renders,
   /// it can pass the prompt to EmbeddedTerminalView for the resume command.
   public func showTerminalWithPrompt(for session: CLISession, prompt: String) {
+    markSessionFocused(session.id)
     // Start monitoring if not already
     if !monitoredSessionIds.contains(session.id) {
       startMonitoring(session: session)
@@ -768,7 +772,22 @@ public final class CLISessionsViewModel {
     guard let terminal = activeTerminals[key] else {
       return false
     }
-    return terminal.submitPromptImmediately(prompt)
+    let didSubmit = terminal.submitPromptImmediately(prompt)
+    if didSubmit {
+      markSessionFocused(key)
+    }
+    return didSubmit
+  }
+
+  /// Types text into an already-mounted session terminal without submitting it.
+  @discardableResult
+  public func typeTextInActiveTerminal(forKey key: String, text: String) -> Bool {
+    guard !text.isEmpty, let terminal = activeTerminals[key] else {
+      return false
+    }
+    terminal.typeText(text)
+    markSessionFocused(key)
+    return true
   }
 
   public func queueWebPreviewContext(_ element: ElementInspectorData, for sessionID: String) {
@@ -1642,6 +1661,7 @@ public final class CLISessionsViewModel {
   /// Focuses the terminal for a given key so it receives keyboard input.
   /// Uses a short delay to let SwiftUI layout settle before requesting AppKit first responder.
   public func focusTerminal(forKey key: String) {
+    markSessionFocused(key)
     guard activeTerminals[key] != nil else { return }
     guard scheduledTerminalFocusKeys.insert(key).inserted else { return }
     Task { @MainActor in
@@ -1649,6 +1669,11 @@ public final class CLISessionsViewModel {
       scheduledTerminalFocusKeys.remove(key)
       activeTerminals[key]?.focus()
     }
+  }
+
+  private func markSessionFocused(_ sessionId: String) {
+    lastFocusedSessionId = sessionId
+    lastFocusedSessionAt = Date()
   }
 
   /// Focuses the auxiliary shell terminal for a given key so it receives keyboard input.
@@ -1909,6 +1934,254 @@ public final class CLISessionsViewModel {
         return groupId > 0 ? groupId : nil
       }
     )
+  }
+
+  // MARK: - Measurement
+
+  /// Measurements keyed by **project**, newest first — the Measurements panel's model.
+  ///
+  /// Not keyed by session: a measurement about a repo or a database outlives
+  /// the conversation that produced it, and every session working on that
+  /// project sees the same set (including across Claude and Codex).
+  public private(set) var measurementCards: [String: [MeasurementRecord]] = [:]
+
+  /// Resolved project key per session, so views can look up measurements
+  /// synchronously without touching the database on every redraw.
+  private var measurementProjectKeys: [String: String] = [:]
+
+  /// Projects whose persisted measurements have already been read back from SQLite,
+  /// so reopening the panel doesn't re-query on every appearance.
+  private var loadedMeasurementProjectKeys: Set<String> = []
+
+  /// The project bucket a session's measurements live in.
+  ///
+  /// Falls back to the raw project path until the repo mapping has been read;
+  /// the cached value takes over once `loadMeasurements` has resolved it.
+  public func measurementProjectKey(for session: CLISession) -> String {
+    measurementProjectKeys[session.id]
+      ?? MeasurementProjectScope.key(projectPath: session.projectPath, parentRepoPath: nil)
+  }
+
+  public func measurements(for session: CLISession) -> [MeasurementRecord] {
+    measurementCards[measurementProjectKey(for: session)] ?? []
+  }
+
+  public func hasMeasurements(for session: CLISession) -> Bool {
+    !measurements(for: session).isEmpty
+  }
+
+  /// Resolves a session's project bucket, rolling worktrees up to their parent
+  /// repository so a worktree's measurements join the repo's history rather than
+  /// forming an isolated set.
+  private func resolveMeasurementProjectKey(for sessionId: String, projectPath: String) async -> String {
+    if let cached = measurementProjectKeys[sessionId] {
+      return cached
+    }
+
+    var parentRepoPath: String?
+    if let store = metadataStore {
+      parentRepoPath = try? await store.getRepoMapping(for: sessionId)?.parentRepoPath
+    }
+
+    let key = MeasurementProjectScope.key(projectPath: projectPath, parentRepoPath: parentRepoPath)
+    measurementProjectKeys[sessionId] = key
+    return key
+  }
+
+  /// Takes a measurement filed by the CLI.
+  ///
+  /// The project bucket is resolved first — a card shown under the wrong key
+  /// for even a moment would split a metric's history in two, which is the one
+  /// thing this feature exists to prevent.
+  public func storeMeasurement(_ measurement: MeasurementRecord, forSessionId sessionId: String) {
+    let session = monitoredSession(withId: sessionId)
+    let projectPath = session?.projectPath
+      ?? measurement.sourceProjectPath
+      ?? ""
+    guard !projectPath.isEmpty else {
+      AppLogger.session.error("Dropping measurement \(measurement.id): no project path to file it under.")
+      return
+    }
+
+    Task {
+      let key = await resolveMeasurementProjectKey(for: sessionId, projectPath: projectPath)
+
+      // Stamp the branch before merging, so the values being superseded carry
+      // the branch they were measured on into the history. Measurements roll up
+      // to the repo, so without this a `main` run and a feature-worktree run are
+      // indistinguishable and the trend reads as one thrashing series.
+      let stamped = measurement.stamped(
+        branchName: session?.branchName,
+        worktreePath: session?.isWorktree == true ? session?.projectPath : nil
+      )
+
+      // A measurement filed under an id we already hold is a re-run: keep the
+      // original filing date so the refreshed card holds its position, push the
+      // superseded values onto its history, and stamp it as updated.
+      let existing = measurementCards[key] ?? []
+      let resolved = Self.resolvingRerun(incoming: stamped, against: existing)
+
+      measurementCards[key] = Self.mergedMeasurements(existing: existing, incoming: [resolved])
+      rerunningMeasurementIds.remove(resolved.id)
+      publishMeasurementIndex(forKey: key)
+
+      guard let store = metadataStore else { return }
+      do {
+        let record = try SessionMeasurementRecord(
+          measurement: resolved,
+          projectPath: key,
+          sessionId: sessionId
+        )
+        try await store.saveMeasurement(record)
+      } catch {
+        AppLogger.session.error("Failed to save measurement record: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  /// The monitored session with this id, across whichever provider owns it.
+  private func monitoredSession(withId sessionId: String) -> CLISession? {
+    monitoredSessions.first { $0.session.id == sessionId }?.session
+  }
+
+  /// Republishes the agent-readable index for a project.
+  ///
+  /// This is how `agenthub_list_measurements` sees anything: the CLI is a separate
+  /// process that deliberately never opens the app's database, so the app keeps
+  /// a small JSON summary in sync instead. Mirrored to every session path that
+  /// resolves to this project (worktrees included) so the CLI can find it from
+  /// `AGENTHUB_PROJECT_PATH` without knowing about rollup.
+  private func publishMeasurementIndex(forKey key: String) {
+    let entries = (measurementCards[key] ?? []).map(MeasurementIndexEntry.init(measurement:))
+    let aliases = measurementProjectKeys
+      .filter { $0.value == key }
+      .compactMap { monitoredSession(withId: $0.key)?.projectPath }
+      .map(MeasurementProjectScope.normalized)
+
+    let index = MeasurementIndex(projectPath: key, updatedAt: .now, measurements: entries)
+    Task.detached(priority: .utility) {
+      do {
+        try MeasurementIndexStore().write(index, aliasPaths: aliases)
+      } catch {
+        AppLogger.session.error("Failed to publish measurement index: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  // MARK: Re-running a measurement
+
+  /// Measurements whose refresh has been handed to a session and not yet come back.
+  public private(set) var rerunningMeasurementIds: Set<String> = []
+
+  /// How long a refresh may stay pending before the spinner gives up.
+  ///
+  /// The agent may simply never call the tool back — it can decide the command
+  /// failed, or get distracted by other work — and a spinner with no terminal
+  /// state would misreport that as "still working" forever.
+  static let rerunTimeout: Duration = .seconds(180)
+
+  public func isRerunning(measurementId: String) -> Bool {
+    rerunningMeasurementIds.contains(measurementId)
+  }
+
+  /// Whether ↻ can do anything: the measurement needs a stored query, and the
+  /// session needs a live terminal to run it in.
+  ///
+  /// Note this is the *viewing* session, not the one that filed the measurement —
+  /// a card from last month can be refreshed by whatever session is open in
+  /// that project today, which is the point of scoping by project.
+  public func canRerunMeasurement(_ measurement: MeasurementRecord, sessionId: String) -> Bool {
+    MeasurementRerunPromptBuilder.canRerun(measurement) && activeTerminals[sessionId] != nil
+  }
+
+  /// Asks the session to re-run a measurement and re-file it under the same id.
+  @discardableResult
+  public func rerunMeasurement(id: String, in session: CLISession) -> Bool {
+    let key = measurementProjectKey(for: session)
+    guard let measurement = measurementCards[key]?.first(where: { $0.id == id }),
+          let prompt = MeasurementRerunPromptBuilder.prompt(for: measurement),
+          sendPromptToActiveTerminal(forKey: session.id, prompt: prompt)
+    else {
+      return false
+    }
+
+    rerunningMeasurementIds.insert(id)
+    Task { [weak self] in
+      try? await Task.sleep(for: Self.rerunTimeout)
+      self?.rerunningMeasurementIds.remove(id)
+    }
+    return true
+  }
+
+  /// Reads a session's persisted measurement back once.
+  ///
+  /// Merges rather than replaces: a record can arrive from the CLI queue before
+  /// this load completes, and the newly filed card must not be dropped by the
+  /// older snapshot landing second.
+  public func loadMeasurements(for session: CLISession) {
+    guard let store = metadataStore, !session.id.hasPrefix("pending-") else { return }
+
+    Task {
+      let key = await resolveMeasurementProjectKey(for: session.id, projectPath: session.projectPath)
+      guard loadedMeasurementProjectKeys.insert(key).inserted else { return }
+
+      do {
+        let records = try await store.getMeasurements(forProjectPath: key)
+        let decoded = records.compactMap { try? $0.decodedMeasurement() }
+        guard !decoded.isEmpty else { return }
+        measurementCards[key] = Self.mergedMeasurements(
+          existing: measurementCards[key] ?? [],
+          incoming: decoded
+        )
+        publishMeasurementIndex(forKey: key)
+      } catch {
+        loadedMeasurementProjectKeys.remove(key)
+        AppLogger.session.error("Failed to load measurement records: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  public func deleteMeasurement(id: String, in session: CLISession) {
+    let key = measurementProjectKey(for: session)
+    measurementCards[key]?.removeAll { $0.id == id }
+    if measurementCards[key]?.isEmpty == true {
+      measurementCards.removeValue(forKey: key)
+    }
+    publishMeasurementIndex(forKey: key)
+
+    guard let store = metadataStore else { return }
+    Task {
+      do {
+        try await store.deleteMeasurement(id: id)
+      } catch {
+        AppLogger.session.error("Failed to delete measurement record: \(error.localizedDescription)")
+      }
+    }
+  }
+
+  /// Re-anchors a measurement onto the card it replaces, if one exists.
+  static func resolvingRerun(
+    incoming: MeasurementRecord,
+    against existing: [MeasurementRecord]
+  ) -> MeasurementRecord {
+    existing.first { $0.id == incoming.id }
+      .map { incoming.replacing($0) } ?? incoming
+  }
+
+  /// Union by id, newest first. Incoming wins on collision so a re-filed card
+  /// reflects the latest version.
+  static func mergedMeasurements(
+    existing: [MeasurementRecord],
+    incoming: [MeasurementRecord]
+  ) -> [MeasurementRecord] {
+    let incomingIds = Set(incoming.map(\.id))
+    return (incoming + existing.filter { !incomingIds.contains($0.id) })
+      .sorted {
+        if $0.createdAt == $1.createdAt {
+          return $0.id > $1.id
+        }
+        return $0.createdAt > $1.createdAt
+      }
   }
 
   /// Loads custom names for all monitored sessions

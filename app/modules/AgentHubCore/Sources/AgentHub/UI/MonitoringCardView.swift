@@ -41,6 +41,7 @@ public struct MonitoringCardView: View {
   let onShowGitHub: ((CLISession, String) -> Void)?
   let onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)?
   let onShowMCPApp: ((CLISession, String) -> Void)?
+  let onShowMeasurement: ((CLISession) -> Void)?
   let onShowSimulatorPreview: ((CLISession, String) -> Void)?
   let onFork: ((CLISession, SessionProviderKind) -> Void)?
   let onPromptConsumed: (() -> Void)?
@@ -95,6 +96,7 @@ public struct MonitoringCardView: View {
     onShowGitHub: ((CLISession, String) -> Void)? = nil,
     onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)? = nil,
     onShowMCPApp: ((CLISession, String) -> Void)? = nil,
+    onShowMeasurement: ((CLISession) -> Void)? = nil,
     onShowSimulatorPreview: ((CLISession, String) -> Void)? = nil,
     onFork: ((CLISession, SessionProviderKind) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
@@ -133,6 +135,7 @@ public struct MonitoringCardView: View {
     self.onShowGitHub = onShowGitHub
     self.onShowPendingChanges = onShowPendingChanges
     self.onShowMCPApp = onShowMCPApp
+    self.onShowMeasurement = onShowMeasurement
     self.onShowSimulatorPreview = onShowSimulatorPreview
     self.onFork = onFork
     self.onPromptConsumed = onPromptConsumed
@@ -212,6 +215,14 @@ public struct MonitoringCardView: View {
 
   /// Key that changes when the set of detected MCP tool invocations changes, so
   /// host-app resolution re-runs only when the agent makes a new app-bearing call.
+  private var measurementCount: Int {
+    viewModel?.measurements(for: session).count ?? 0
+  }
+
+  private var measurementButtonAccessibilityLabel: String {
+    measurementCount == 1 ? "Open 1 recorded measurement" : "Open \(measurementCount) recorded measurements"
+  }
+
   private var mcpAppInvocationResolutionKey: String {
     (state?.detectedMCPAppInvocations ?? []).map(\.id).joined(separator: ",")
   }
@@ -315,6 +326,11 @@ public struct MonitoringCardView: View {
     }
     .task(id: mcpAppInvocationResolutionKey) {
       await viewModel?.ensureMCPAppRenderItems(for: session, state: state)
+    }
+    // Measurements outlive the session that filed them, so the button has to reflect
+    // what this project already holds — not just what this session produced.
+    .task(id: session.projectPath) {
+      viewModel?.loadMeasurements(for: session)
     }
     .task(id: gitHubObservationTaskID) {
       if linkedPullRequests.isEmpty {
@@ -763,6 +779,26 @@ public struct MonitoringCardView: View {
           .buttonStyle(.agentHubOutlined)
           .help("Open MCP app resources")
           .accessibilityLabel(mcpAppButtonAccessibilityLabel)
+        }
+
+        // Measurements button — appears only once the agent has actually filed a
+        // measurement, so a session that never analyzed anything stays uncluttered.
+        if measurementCount > 0 {
+          Button(action: {
+            onShowMeasurement?(session)
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "chart.bar.doc.horizontal")
+                .font(.caption2)
+              Text("Measurements")
+              Text("\(measurementCount)")
+                .font(.system(.caption2, design: .monospaced))
+                .foregroundStyle(.secondary)
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("Open measurements recorded in this session")
+          .accessibilityLabel(measurementButtonAccessibilityLabel)
         }
 
         // Mermaid diagram button (only visible when mermaid content is detected)

@@ -28,6 +28,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     static let createProjectSimulatorPreferences = "v11_create_project_simulator_preferences"
     static let createAgentWorkspaces = "v12_create_agent_workspaces"
     static let createPinnedSessionOrder = "v13_create_pinned_session_order"
+    static let createSessionMeasurements = "v14_create_session_measurements"
+    static let addMeasurementProjectPath = "v15_add_measurement_project_path"
   }
 
   static let migrationIdentifiers = [
@@ -43,7 +45,9 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     MigrationID.createSessionRelationships,
     MigrationID.createProjectSimulatorPreferences,
     MigrationID.createAgentWorkspaces,
-    MigrationID.createPinnedSessionOrder
+    MigrationID.createPinnedSessionOrder,
+    MigrationID.createSessionMeasurements,
+    MigrationID.addMeasurementProjectPath
   ]
 
   private let dbQueue: DatabaseQueue
@@ -247,6 +251,52 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
       }
     }
 
+    // Measurements an agent filed into a session's Measurements panel. Keyed by the
+    // measurement id the CLI generated so a queue entry drained twice (app restart
+    // mid-drain) replaces rather than duplicates.
+    migrator.registerMigration(MigrationID.createSessionMeasurements) { db in
+      try db.create(table: "session_measurements") { t in
+        t.column("id", .text).primaryKey(onConflict: .replace)
+        t.column("sessionId", .text).notNull().indexed()
+        t.column("provider", .text).notNull()
+        t.column("createdAt", .datetime).notNull()
+        t.column("payloadVersion", .integer).notNull()
+        t.column("payloadData", .blob).notNull()
+      }
+    }
+
+    // Measurements are scoped to a project, not a session: a measurement about a
+    // repo or a database outlives the conversation that produced it, and
+    // keying it to a session hides last month's number from this month's work.
+    // Existing rows are backfilled from the payload they already carry, so no
+    // measurement is lost.
+    migrator.registerMigration(MigrationID.addMeasurementProjectPath) { db in
+      try db.alter(table: "session_measurements") { t in
+        t.add(column: "projectPath", .text).notNull().defaults(to: "")
+      }
+
+      let rows = try Row.fetchAll(db, sql: "SELECT id, payloadData FROM session_measurements")
+      for row in rows {
+        guard let payload: Data = row["payloadData"],
+              let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+              let sourceProjectPath = object["sourceProjectPath"] as? String,
+              !sourceProjectPath.isEmpty
+        else {
+          continue
+        }
+        try db.execute(
+          sql: "UPDATE session_measurements SET projectPath = ? WHERE id = ?",
+          arguments: [MeasurementProjectScope.normalized(sourceProjectPath), row["id"] as String?]
+        )
+      }
+
+      try db.create(
+        index: "idx_session_measurements_project",
+        on: "session_measurements",
+        columns: ["projectPath"]
+      )
+    }
+
     return migrator
   }
 
@@ -417,6 +467,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
       _ = try AIConfigRecord.deleteAll(db)
       _ = try SessionRepoMapping.deleteAll(db)
       _ = try PinnedSessionOrderRecord.deleteAll(db)
+      _ = try SessionMeasurementRecord.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
     }
   }
@@ -735,6 +786,70 @@ extension SessionMetadataStore: SessionRelationshipStoreProtocol {
   public func deleteProjectSimulatorPreference(projectPath: String) throws {
     try dbQueue.write { db in
       _ = try ProjectSimulatorPreference.deleteOne(db, key: projectPath)
+    }
+  }
+}
+
+// MARK: - Session Measurement
+
+extension SessionMetadataStore {
+  /// Stores one measurement card. `save` (upsert) rather than `insert` so a queue
+  /// entry drained twice is idempotent.
+  public func saveMeasurement(_ record: SessionMeasurementRecord) throws {
+    try dbQueue.write { db in
+      try record.save(db)
+    }
+  }
+
+  /// Measurements for a project, newest first — the order the panel renders.
+  ///
+  /// Spans every session and both providers: Claude and Codex sessions in the
+  /// same repo contribute to one shared set.
+  public func getMeasurements(forProjectPath projectPath: String) throws -> [SessionMeasurementRecord] {
+    let key = MeasurementProjectScope.normalized(projectPath)
+    return try dbQueue.read { db in
+      try SessionMeasurementRecord
+        .filter(Column("projectPath") == key)
+        .order(Column("createdAt").desc, Column("id").desc)
+        .fetchAll(db)
+    }
+  }
+
+  /// Projects that have at least one card, so the card button can gate without
+  /// loading every payload.
+  public func getProjectPathsWithMeasurements() throws -> Set<String> {
+    try dbQueue.read { db in
+      let paths = try String.fetchAll(
+        db,
+        sql: "SELECT DISTINCT projectPath FROM \(SessionMeasurementRecord.databaseTableName)"
+      )
+      return Set(paths.filter { !$0.isEmpty })
+    }
+  }
+
+  public func deleteMeasurement(id: String) throws {
+    _ = try dbQueue.write { db in
+      try SessionMeasurementRecord.deleteOne(db, key: id)
+    }
+  }
+
+  public func deleteAllMeasurements(forProjectPath projectPath: String) throws {
+    let key = MeasurementProjectScope.normalized(projectPath)
+    _ = try dbQueue.write { db in
+      try SessionMeasurementRecord
+        .filter(Column("projectPath") == key)
+        .deleteAll(db)
+    }
+  }
+
+  /// Drops rows that could never be shown again — measurements whose project was
+  /// never resolved. Without this they accumulate invisibly forever.
+  @discardableResult
+  public func deleteUnscopedMeasurements() throws -> Int {
+    try dbQueue.write { db in
+      try SessionMeasurementRecord
+        .filter(Column("projectPath") == "")
+        .deleteAll(db)
     }
   }
 }

@@ -52,6 +52,7 @@ public final class AgentHubProvider {
   private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
   private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
   private let sessionNameRequestMonitorOverride: (any SessionNameRequestMonitorProtocol)?
+  private let measurementRecordMonitorOverride: (any MeasurementRecordMonitorProtocol)?
 
   // MARK: - Lazy Services
 
@@ -181,6 +182,14 @@ public final class AgentHubProvider {
     codexTarget: codexSessionsViewModel
   )
 
+  /// Watches measurement records written by the bundled `agenthub` MCP server.
+  public private(set) lazy var measurementRecordMonitor: any MeasurementRecordMonitorProtocol = measurementRecordMonitorOverride ?? MeasurementRecordMonitor()
+
+  public private(set) lazy var measurementRecordHandler: any MeasurementRecordHandlingProtocol = MeasurementRecordHandler(
+    claudeTarget: claudeSessionsViewModel,
+    codexTarget: codexSessionsViewModel
+  )
+
   /// Watches the worktree-progress sidecar directory the `agenthub` CLI writes
   /// during MCP-initiated creations, so the app can surface live git progress.
   public private(set) lazy var worktreeProgressSidecarWatcher: any WorktreeProgressSidecarWatcherProtocol = WorktreeProgressSidecarWatcher()
@@ -198,6 +207,7 @@ public final class AgentHubProvider {
   private var isWorktreeLaunchRequestMonitoringStarted = false
   private var isWorktreeDeletionRequestMonitoringStarted = false
   private var isSessionNameRequestMonitoringStarted = false
+  private var isMeasurementRecordMonitoringStarted = false
   private var isWorktreeProgressMonitoringStarted = false
 
   // MARK: - GitHub Integration
@@ -289,7 +299,8 @@ public final class AgentHubProvider {
     metadataStore: SessionMetadataStore? = nil,
     worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
     worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil,
-    sessionNameRequestMonitor: (any SessionNameRequestMonitorProtocol)? = nil
+    sessionNameRequestMonitor: (any SessionNameRequestMonitorProtocol)? = nil,
+    measurementRecordMonitor: (any MeasurementRecordMonitorProtocol)? = nil
   ) {
     self.configuration = configuration
     terminalBackend = .storedPreference
@@ -299,6 +310,7 @@ public final class AgentHubProvider {
     worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
     worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
     sessionNameRequestMonitorOverride = sessionNameRequestMonitor
+    measurementRecordMonitorOverride = measurementRecordMonitor
     if let metadataStore {
       Task {
         await TerminalProcessRegistry.shared.configure(store: metadataStore)
@@ -477,6 +489,7 @@ public final class AgentHubProvider {
     startWorktreeLaunchQueueMonitoring()
     startWorktreeDeletionQueueMonitoring()
     startSessionNameQueueMonitoring()
+    startMeasurementRecordMonitoring()
     startWorktreeProgressMonitoring()
   }
 
@@ -542,6 +555,21 @@ public final class AgentHubProvider {
     }
   }
 
+  private func startMeasurementRecordMonitoring() {
+    guard !isMeasurementRecordMonitoringStarted else { return }
+    isMeasurementRecordMonitoringStarted = true
+
+    let monitor = measurementRecordMonitor
+    Task {
+      await monitor.start { [weak self] queued in
+        guard let self else {
+          throw MeasurementRecordHandlingError.sessionUnavailable
+        }
+        try await self.measurementRecordHandler.handle(queued.record)
+      }
+    }
+  }
+
   public func stopWorktreeLaunchRequestMonitoring() {
     if isWorktreeLaunchRequestMonitoringStarted {
       isWorktreeLaunchRequestMonitoringStarted = false
@@ -565,6 +593,15 @@ public final class AgentHubProvider {
       isSessionNameRequestMonitoringStarted = false
 
       let monitor = sessionNameRequestMonitor
+      Task {
+        await monitor.stop()
+      }
+    }
+
+    if isMeasurementRecordMonitoringStarted {
+      isMeasurementRecordMonitoringStarted = false
+
+      let monitor = measurementRecordMonitor
       Task {
         await monitor.stop()
       }

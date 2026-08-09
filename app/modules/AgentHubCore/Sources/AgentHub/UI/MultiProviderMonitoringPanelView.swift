@@ -22,6 +22,7 @@ enum SidePanelContent: Equatable {
   case edits(sessionId: String, session: CLISession)
   case mcpApp(sessionId: String, session: CLISession, projectPath: String)
   case simulator(sessionId: String, session: CLISession, projectPath: String)
+  case measurements(sessionId: String, session: CLISession)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -41,6 +42,8 @@ enum SidePanelContent: Equatable {
       return id1 == id2 && p1 == p2
     case (.simulator(let id1, _, let p1), .simulator(let id2, _, let p2)):
       return id1 == id2 && p1 == p2
+    case (.measurements(let id1, _), .measurements(let id2, _)):
+      return id1 == id2
     default: return false
     }
   }
@@ -596,6 +599,12 @@ public struct MultiProviderMonitoringPanelView: View {
                 forItemID: item.id
               )
             },
+            onShowMeasurement: { session in
+              toggleSidePanel(
+                .measurements(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
+            },
             onShowSimulatorPreview: { session, projectPath in
               toggleSidePanel(
                 .simulator(sessionId: session.id, session: session, projectPath: projectPath),
@@ -687,6 +696,12 @@ public struct MultiProviderMonitoringPanelView: View {
             onShowMCPApp: { session, projectPath in
               toggleSidePanel(
                 .mcpApp(sessionId: session.id, session: session, projectPath: projectPath),
+                forItemID: item.id
+              )
+            },
+            onShowMeasurement: { session in
+              toggleSidePanel(
+                .measurements(sessionId: session.id, session: session),
                 forItemID: item.id
               )
             },
@@ -879,7 +894,7 @@ public struct MultiProviderMonitoringPanelView: View {
     switch content {
     case .edits, .plan:
       return true
-    case .diff, .webPreview, .mermaid, .gitHub, .mcpApp, .simulator:
+    case .diff, .webPreview, .mermaid, .gitHub, .mcpApp, .simulator, .measurements:
       return false
     }
   }
@@ -1118,6 +1133,13 @@ public struct MultiProviderMonitoringPanelView: View {
         openEditorFilePath: editorStates[payload.itemID]?.selectedFilePath
       )
       .id("\(sessionId)|\(projectPath)")
+    case .measurements(_, let session):
+      MeasurementsSidePanelView(
+        session: session,
+        viewModel: viewModel,
+        onDismiss: closeEmbeddedSidePanel,
+        isEmbedded: true
+      )
     }
   }
 
