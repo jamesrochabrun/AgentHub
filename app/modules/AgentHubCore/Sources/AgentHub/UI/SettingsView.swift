@@ -157,6 +157,11 @@ public struct SettingsView: View {
           Label("Worktrees", systemImage: "arrow.triangle.branch")
         }
 
+      MeasurementsSettingsView()
+        .tabItem {
+          Label("Measurements", systemImage: "chart.bar.doc.horizontal")
+        }
+
       appearanceSettingsForm
         .tabItem {
           Label("Appearance", systemImage: "paintpalette")

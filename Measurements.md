@@ -58,6 +58,7 @@ agent calls agenthub_record_measurement(title, claim, chart|table, query, caveat
 | Re-run prompt | `AgentHubCore/.../Services/MeasurementRerunPromptBuilder.swift` |
 | Project bucket + worktree rollup | `AgentHubCore/.../Services/MeasurementProjectScope.swift` |
 | Branch-split trend | `AgentHubCore/.../Services/MeasurementTrendBuilder.swift` |
+| Settings management tab | `AgentHubCore/.../UI/MeasurementsSettingsView.swift`, `ViewModels/MeasurementsSettingsViewModel.swift` |
 | Agent-readable index (list tool) | `AgentHubCLI/Sources/AgentHubCLIKit/MeasurementIndexStore.swift` |
 | Axis label rule | `MeasurementAxisLabelLayout` in `MeasurementChartView.swift` |
 
@@ -76,6 +77,7 @@ agent calls agenthub_record_measurement(title, claim, chart|table, query, caveat
 - **Index file names are percent-encoded, not separator-substituted.** Turning `/` into `-` makes `/a/b-c` and `/a-b/c` collide, silently merging two projects' measurements.
 - **Every run records the branch it measured.** Measurements roll up to the repository, so a `main` run and a feature-worktree run land on the same card. Plotted as one series they interleave — 214, 163, 211, 160 — and two perfectly stable branches read as a metric thrashing. The branch is stamped by the app from the recording session (never by the CLI shelling out to `git`, which is wrong in a detached or mid-rebase checkout), carried into history with the values it measured, and split into one trend series per branch. The delta likewise compares against the previous run *on the same branch*.
 - **A category axis needs an explicit order when series cover different categories.** Swift Charts derives the axis from first-appearance order, which groups one branch's dates before the other's and renders them out of chronology. `MeasurementChart.xOrder` states the order; the trend builder sorts it by run date.
+- **Management UI groups by project, never by worktree.** Worktrees roll up to their parent repo, so there is no per-worktree set to delete; offering one would let a user delete a worktree's measurements and still find the card there. Settings exists for what the panel cannot reach — the panel only shows the project of a session you currently have open, so measurements for a deleted repository are otherwise permanent and invisible.
 - **No auto-open.** The panel is button-only.
 - **Re-run goes through the agent, never through AgentHub.** `↻` sends `MeasurementRerunPromptBuilder.prompt(for:)` into the session terminal and the agent re-files the measurement. AgentHub must not execute a stored query itself: the query is arbitrary shell/SQL an agent wrote, and running it from a click would turn a saved card into a code-execution surface. Clicking `↻` can do nothing the session could not already do.
 - **A re-run must re-file under the same `id`.** That is what upserts the card in place instead of stacking a near-duplicate. `resolvingRerun` then keeps the original `createdAt` (so the refreshed card holds its position and does not jump under the user's cursor) and stamps `updatedAt`.
@@ -90,6 +92,7 @@ agent calls agenthub_record_measurement(title, claim, chart|table, query, caveat
 - SQLite persistence with the v14 migration; cards survive relaunch; per-card delete.
 - Panel with claim, chart, table, caveats block, collapsible query with copy, source footer.
 - Project scoping with worktree rollup, cross-provider sharing, and a v15 backfill for pre-existing rows.
+- Settings tab for reviewing and deleting stored measurements, including those from projects no longer open.
 - Branch-aware runs: history rows name their branch (only when runs actually span branches), and the trend splits into one series per branch so a branch comparison reads as a comparison.
 - Run history per card (capped), with a trend chart for scalar metrics and every earlier claim retained.
 - `agenthub_list_measurements`, so an agent can refresh an existing measurement by name instead of filing a near-duplicate.
@@ -109,7 +112,7 @@ agent calls agenthub_record_measurement(title, claim, chart|table, query, caveat
 - [ ] **Chart x axis is categorical only.** Dates are labels, so spacing is even regardless of real gaps. Fine for cohorts/buckets, wrong for irregular time series.
 - [ ] **Single-number measurements render badly.** "Build time is 163s" draws as one lone bar, and with history the card then shows that same number twice — once as a bar, once as the trend. A scalar wants a big-number layout plus the trend, not a bar chart.
 - [ ] **Direction-of-good is unknown.** The delta is uncoloured because nothing tells AgentHub whether up is good. A `higherIsBetter` flag on the tool would let the card say so safely.
-- [ ] **Measurements are not deleted when a project is removed.** `deleteAllMeasurements(forProjectPath:)` and `deleteUnscopedMeasurements()` exist but nothing calls them — deliberately, since removing a repo from the sidebar is reversible and should not destroy its history. Needs an explicit user-facing action instead.
+- [x] **Manual deletion.** Settings › Measurements lists every stored measurement grouped by project, with per-measurement delete, per-project delete (confirmed, and the dialog says how many recorded runs go with it), and a sweep for unscoped rows. Removing a repo from the sidebar still never deletes anything on its own — that is reversible and must not destroy history.
 - [ ] **No panel-level tests.** UI is covered indirectly (view model + store); `MeasurementsSidePanelView` itself has no snapshot/behavior test.
 
 ## Verification

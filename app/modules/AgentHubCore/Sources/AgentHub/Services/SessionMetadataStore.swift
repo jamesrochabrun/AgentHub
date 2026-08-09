@@ -815,6 +815,20 @@ extension SessionMetadataStore {
     }
   }
 
+  /// Every stored measurement, for the Settings management view.
+  ///
+  /// Loads whole payloads rather than a summary query because the counts here
+  /// are small (tens per project) and the view needs each card's title and last
+  /// run — deriving those from a `GROUP BY` would mean a second round trip per
+  /// project anyway.
+  public func getAllMeasurements() throws -> [SessionMeasurementRecord] {
+    try dbQueue.read { db in
+      try SessionMeasurementRecord
+        .order(Column("createdAt").desc, Column("id").desc)
+        .fetchAll(db)
+    }
+  }
+
   /// Projects that have at least one card, so the card button can gate without
   /// loading every payload.
   public func getProjectPathsWithMeasurements() throws -> Set<String> {
