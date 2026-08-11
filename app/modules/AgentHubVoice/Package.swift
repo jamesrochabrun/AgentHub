@@ -18,12 +18,12 @@ let package = Package(
     ),
   ],
   dependencies: [
-    // Pinned to the fork revision with the realtime audio-graph fixes.
+    // 4.5.1 carries the realtime audio-graph fixes this package depends on.
     // For local SwiftOpenAI iteration, temporarily swap in:
     //   .package(path: "../../../../SwiftOpenAI")
     .package(
       url: "https://github.com/jamesrochabrun/SwiftOpenAI.git",
-      revision: "9bac840febf58a294afd2761d012e793c3490c75"
+      exact: "4.5.1"
     )
   ],
   targets: [

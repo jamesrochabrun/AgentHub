@@ -1,5 +1,5 @@
 {
-  "originHash" : "2d2d2321c2ac0a7c46f5fa99d06aae903bedc895514d2eec2de5cc910d43d4f6",
+  "originHash" : "caf9ff5c70609b635e3ac813e0af1368307d4b07a517e8bdd33ebf0c7546e559",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -204,7 +204,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jamesrochabrun/SwiftOpenAI.git",
       "state" : {
-        "revision" : "9bac840febf58a294afd2761d012e793c3490c75"
+        "revision" : "15250281d2b072d27e54405fb40275c83ac354a4",
+        "version" : "4.5.1"
       }
     }
   ],
