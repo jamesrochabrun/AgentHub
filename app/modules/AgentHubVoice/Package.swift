@@ -41,6 +41,9 @@ let package = Package(
       name: "AgentHubVoicePanel",
       dependencies: ["AgentHubVoice"],
       path: "Sources/AgentHubVoicePanel",
+      resources: [
+        .process("Shaders")
+      ],
       swiftSettings: [
         .swiftLanguageMode(.v5)
       ]

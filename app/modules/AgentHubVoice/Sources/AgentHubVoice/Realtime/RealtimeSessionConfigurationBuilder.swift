@@ -33,6 +33,16 @@ public enum RealtimeSessionConfigurationBuilder {
     display_index. Use the region parameter when they point at a specific area.
     """
 
+  public static let worktreeTaskInstructions = """
+    When the user asks to create a worktree, create worktree tasks, or run tasks in parallel —
+    even a single one — call create_worktree_tasks. launch_session never creates a worktree;
+    only use it when the user asks to start a session in an existing repository or worktree.
+    When calling create_worktree_tasks, omit repository_path unless the user explicitly names
+    a repository or path — omitted, it defaults to the repository of the session the user is
+    working in, which is what they usually mean. Never guess a repository or reuse one from an
+    earlier answer. After the tool returns, tell the user which repository was used.
+    """
+
   public static func instructions(
     for tools: VoiceToolRegistry,
     language: String? = nil
@@ -54,6 +64,10 @@ public enum RealtimeSessionConfigurationBuilder {
     let hasScreenCapture = tools.tools.contains { $0.name == "capture_screen" }
     if hasScreenCapture {
       combined += "\n" + screenCaptureInstructions
+    }
+    let hasWorktreeTasks = tools.tools.contains { $0.name == "create_worktree_tasks" }
+    if hasWorktreeTasks {
+      combined += "\n" + worktreeTaskInstructions
     }
     return combined
   }

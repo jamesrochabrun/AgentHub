@@ -166,6 +166,127 @@ public struct VoiceLatestResponse: Codable, Equatable, Sendable {
   }
 }
 
+public struct VoiceWorktreeSummary: Codable, Equatable, Sendable {
+  public let name: String
+  public let path: String
+  public let isWorktree: Bool
+  public let sessionCount: Int
+
+  public init(
+    name: String,
+    path: String,
+    isWorktree: Bool,
+    sessionCount: Int
+  ) {
+    self.name = name
+    self.path = path
+    self.isWorktree = isWorktree
+    self.sessionCount = sessionCount
+  }
+}
+
+public struct VoiceRepositorySummary: Codable, Equatable, Sendable {
+  public let name: String
+  public let path: String
+  public let worktrees: [VoiceWorktreeSummary]
+
+  public init(name: String, path: String, worktrees: [VoiceWorktreeSummary]) {
+    self.name = name
+    self.path = path
+    self.worktrees = worktrees
+  }
+}
+
+public struct VoiceWorktreeInventory: Codable, Equatable, Sendable {
+  public let repositories: [VoiceRepositorySummary]
+
+  public init(repositories: [VoiceRepositorySummary]) {
+    self.repositories = repositories
+  }
+}
+
+public struct VoiceWorktreeTaskSpec: Equatable, Sendable {
+  public let branch: String
+  public let prompt: String
+  public let provider: SessionProviderKind
+
+  public init(branch: String, prompt: String, provider: SessionProviderKind) {
+    self.branch = branch
+    self.prompt = prompt
+    self.provider = provider
+  }
+}
+
+public struct VoiceCreatedWorktree: Equatable, Sendable {
+  public let repositoryPath: String
+  public let branchName: String
+  public let worktreePath: String
+  public let launchPath: String?
+
+  public init(
+    repositoryPath: String,
+    branchName: String,
+    worktreePath: String,
+    launchPath: String?
+  ) {
+    self.repositoryPath = repositoryPath
+    self.branchName = branchName
+    self.worktreePath = worktreePath
+    self.launchPath = launchPath
+  }
+}
+
+public struct VoiceWorktreeTaskLaunch: Codable, Equatable, Sendable {
+  public let branch: String
+  public let provider: SessionProviderKind
+  public let worktreePath: String
+  public let pendingSessionId: String?
+
+  public init(
+    branch: String,
+    provider: SessionProviderKind,
+    worktreePath: String,
+    pendingSessionId: String?
+  ) {
+    self.branch = branch
+    self.provider = provider
+    self.worktreePath = worktreePath
+    self.pendingSessionId = pendingSessionId
+  }
+}
+
+public struct VoiceWorktreeTaskFailure: Codable, Equatable, Sendable {
+  public let branch: String
+  public let message: String
+
+  public init(branch: String, message: String) {
+    self.branch = branch
+    self.message = message
+  }
+}
+
+public struct VoiceWorktreeTaskBatchResult: Codable, Equatable, Sendable {
+  public let status: String
+  public let message: String?
+  public let repositoryPath: String
+  public let launched: [VoiceWorktreeTaskLaunch]
+  public let failures: [VoiceWorktreeTaskFailure]
+
+  public init(
+    status: String,
+    message: String?,
+    repositoryPath: String,
+    launched: [VoiceWorktreeTaskLaunch],
+    failures: [VoiceWorktreeTaskFailure]
+  ) {
+    self.status = status
+    self.message = message
+    self.repositoryPath = repositoryPath
+    self.launched = launched
+    self.failures = failures
+  }
+}
+
 public struct VoiceSessionTarget: Codable, Equatable, Sendable, Identifiable {
   public let sessionId: String
   public let provider: SessionProviderKind

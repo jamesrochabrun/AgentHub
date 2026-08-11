@@ -43,6 +43,29 @@ private final class MockVoiceToolExecutor: VoiceAgentToolExecuting {
     )
   }
 
+  var inventory = VoiceWorktreeInventory(repositories: [])
+
+  func listWorktrees() -> VoiceWorktreeInventory {
+    inventory
+  }
+
+  var taskBatchResult = VoiceWorktreeTaskBatchResult(
+    status: "accepted",
+    message: nil,
+    repositoryPath: "/repo",
+    launched: [],
+    failures: []
+  )
+  private(set) var createdTaskRequests: [(String?, [VoiceWorktreeTaskSpec])] = []
+
+  func createWorktreeTasks(
+    repositoryPath: String?,
+    tasks: [VoiceWorktreeTaskSpec]
+  ) async -> VoiceWorktreeTaskBatchResult {
+    createdTaskRequests.append((repositoryPath, tasks))
+    return taskBatchResult
+  }
+
   func pendingApproval(sessionId: String) -> VoicePendingApproval? {
     pending[sessionId]
   }
@@ -117,7 +140,9 @@ struct VoiceToolCatalogTests {
         "read_session_response",
         "send_prompt",
         "focus_session",
+        "list_worktrees",
         "launch_session",
+        "create_worktree_tasks",
         "approve_pending_tool",
         "list_displays",
         "capture_screen",
@@ -125,6 +150,10 @@ struct VoiceToolCatalogTests {
     )
     #expect(
       tools.first(where: { $0.name == "approve_pending_tool" })?
+        .allowsAutomaticRetry == false
+    )
+    #expect(
+      tools.first(where: { $0.name == "create_worktree_tasks" })?
         .allowsAutomaticRetry == false
     )
     #expect(tools.allSatisfy { $0.parameters["type"] != nil })
@@ -315,6 +344,132 @@ struct VoiceToolCatalogTests {
       arguments: #"{"session_id":"codex-1","decision":"approve"}"#
     )
     #expect(try status(codex) == "rejected")
+  }
+
+  @Test
+  func listWorktreesEncodesInventory() async {
+    let executor = MockVoiceToolExecutor()
+    executor.inventory = VoiceWorktreeInventory(repositories: [
+      VoiceRepositorySummary(
+        name: "Repo",
+        path: "/repo",
+        worktrees: [
+          VoiceWorktreeSummary(
+            name: "main",
+            path: "/repo",
+            isWorktree: false,
+            sessionCount: 2
+          ),
+        ]
+      ),
+    ])
+    let catalog = VoiceToolCatalog(
+      executor: executor,
+      onBackgroundUpdate: { _ in }
+    )
+    let registry = VoiceToolRegistry(tools: catalog.makeTools())
+
+    let result = await registry.execute(
+      name: "list_worktrees",
+      arguments: "{}"
+    )
+    #expect(result.contains(#""path":"\/repo""#) || result.contains(#""path":"/repo""#))
+    #expect(result.contains(#""session_count":2"#))
+  }
+
+  @Test
+  func createWorktreeTasksAppliesDefaultProviderAndWatchesLaunches() async throws {
+    let executor = MockVoiceToolExecutor()
+    executor.taskBatchResult = VoiceWorktreeTaskBatchResult(
+      status: "accepted",
+      message: nil,
+      repositoryPath: "/repo",
+      launched: [
+        VoiceWorktreeTaskLaunch(
+          branch: "task-a",
+          provider: .codex,
+          worktreePath: "/repo-task-a",
+          pendingSessionId: "pending-1"
+        ),
+        VoiceWorktreeTaskLaunch(
+          branch: "task-b",
+          provider: .claude,
+          worktreePath: "/repo-task-b",
+          pendingSessionId: nil
+        ),
+      ],
+      failures: []
+    )
+    let catalog = VoiceToolCatalog(
+      executor: executor,
+      onBackgroundUpdate: { _ in }
+    )
+    let registry = VoiceToolRegistry(tools: catalog.makeTools())
+
+    let result = await registry.execute(
+      name: "create_worktree_tasks",
+      arguments: """
+        {"repository_path":"/repo","provider":"codex","tasks":[\
+        {"branch":"task-a","prompt":"Do A"},\
+        {"branch":"task-b","prompt":"Do B","provider":"claude"}]}
+        """
+    )
+
+    #expect(try status(result) == "accepted")
+    let request = try #require(executor.createdTaskRequests.first)
+    #expect(request.0 == "/repo")
+    #expect(request.1.map(\.branch) == ["task-a", "task-b"])
+    #expect(request.1.map(\.provider) == [.codex, .claude])
+    #expect(executor.completionStreamSessionIds == ["pending-1"])
+  }
+
+  @Test
+  func createWorktreeTasksOmittedRepositoryDefaultsToTargetSession() async throws {
+    let executor = MockVoiceToolExecutor()
+    let catalog = VoiceToolCatalog(
+      executor: executor,
+      onBackgroundUpdate: { _ in }
+    )
+    let registry = VoiceToolRegistry(tools: catalog.makeTools())
+
+    let result = await registry.execute(
+      name: "create_worktree_tasks",
+      arguments: #"{"tasks":[{"branch":"task-a","prompt":"Do A"}]}"#
+    )
+
+    #expect(try status(result) == "accepted")
+    let request = try #require(executor.createdTaskRequests.first)
+    #expect(request.0 == nil)
+    #expect(request.1.map(\.provider) == [.claude])
+  }
+
+  @Test
+  func createWorktreeTasksRejectsInvalidArguments() async throws {
+    let executor = MockVoiceToolExecutor()
+    let catalog = VoiceToolCatalog(
+      executor: executor,
+      onBackgroundUpdate: { _ in }
+    )
+    let registry = VoiceToolRegistry(tools: catalog.makeTools())
+
+    let emptyTasks = await registry.execute(
+      name: "create_worktree_tasks",
+      arguments: #"{"repository_path":"/repo","tasks":[]}"#
+    )
+    #expect(try status(emptyTasks) == "error")
+
+    let blankPrompt = await registry.execute(
+      name: "create_worktree_tasks",
+      arguments: #"{"repository_path":"/repo","tasks":[{"branch":"a","prompt":"  "}]}"#
+    )
+    #expect(try status(blankPrompt) == "error")
+
+    let badProvider = await registry.execute(
+      name: "create_worktree_tasks",
+      arguments: #"{"repository_path":"/repo","tasks":[{"branch":"a","prompt":"Do","provider":"gpt"}]}"#
+    )
+    #expect(try status(badProvider) == "error")
+    #expect(executor.createdTaskRequests.isEmpty)
   }
 
   @Test

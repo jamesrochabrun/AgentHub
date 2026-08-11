@@ -18,8 +18,29 @@ struct VoiceConversationOrb: View {
   @State private var isBreathing = false
   @State private var isSpeakingPulse = false
 
+  /// Only assistant audio swells the orb — user speech should not bounce it;
+  /// listening is communicated by a subtle opacity dip instead.
   private var level: CGFloat {
-    CGFloat(max(microphoneLevel, assistantLevel))
+    CGFloat(assistantLevel)
+  }
+
+  private var isListening: Bool {
+    state == .userSpeaking
+  }
+
+  private var orbActivity: LiquidOrbActivity {
+    var activity = LiquidOrbActivity.resolve(
+      state: state,
+      isAssistantSpeaking: isAssistantSpeaking,
+      microphoneLevel: microphoneLevel,
+      assistantLevel: assistantLevel
+    )
+    // Reduce Motion: freeze the liquid flow; intensity still communicates
+    // listening/speaking as a static brightness change.
+    if reduceMotion {
+      activity.speed = 0
+    }
+    return activity
   }
 
   private var isConnected: Bool {
@@ -39,38 +60,36 @@ struct VoiceConversationOrb: View {
             colors: [voice.gradient.first?.opacity(0.45) ?? .clear, .clear],
             center: .center,
             startRadius: 10,
-            endRadius: 90
+            endRadius: 101
           )
         )
-        .frame(width: 180, height: 180)
+        .frame(width: 202, height: 202)
         .scaleEffect(haloScale)
 
-      Circle()
-        .fill(
-          LinearGradient(
-            colors: voice.gradient,
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-          )
-        )
-        .frame(width: 104, height: 104)
-        .overlay {
-          Circle()
-            .fill(
-              RadialGradient(
-                colors: [Color.white.opacity(0.35), .clear],
-                center: .init(x: 0.3, y: 0.25),
-                startRadius: 2,
-                endRadius: 60
-              )
+      LiquidVoiceOrb(
+        activity: orbActivity,
+        colors: voice.gradient,
+        diameter: 124
+      )
+      .overlay {
+        Circle()
+          .fill(
+            RadialGradient(
+              colors: [Color.white.opacity(0.2), .clear],
+              center: .init(x: 0.3, y: 0.25),
+              startRadius: 2,
+              endRadius: 70
             )
-        }
-        .scaleEffect(coreScale)
-        .opacity(isConnected ? 1 : 0.45)
+          )
+      }
+      .shadow(color: .black.opacity(0.45), radius: 8, x: 0, y: 3)
+      .scaleEffect(coreScale)
+      .opacity(coreOpacity)
     }
     .frame(maxWidth: .infinity, maxHeight: .infinity)
     .animation(.smooth(duration: 0.15), value: level)
     .animation(.smooth(duration: 0.3), value: isConnected)
+    .animation(.smooth(duration: 0.25), value: isListening)
     .onAppear {
       guard !reduceMotion else { return }
       withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
@@ -108,6 +127,11 @@ struct VoiceConversationOrb: View {
       return isAssistantSpeaking ? 0.08 : 0.0
     }
     return isSpeakingPulse ? 0.1 : 0.0
+  }
+
+  private var coreOpacity: Double {
+    guard isConnected else { return 0.45 }
+    return isListening ? 0.82 : 1
   }
 
   private var coreScale: CGFloat {

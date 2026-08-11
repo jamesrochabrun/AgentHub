@@ -127,4 +127,35 @@ struct RealtimeSessionConfigurationBuilderTests {
     )
     #expect(!withoutCapture.contains("capture_screen"))
   }
+
+  @Test
+  func worktreeTaskInstructionsOnlyAppearWithTheTaskTool() {
+    let taskTool = VoiceTool(
+      name: "create_worktree_tasks",
+      description: "Creates worktree tasks",
+      parameters: ["type": "object"]
+    ) { _ in
+      "{}"
+    }
+    let otherTool = VoiceTool(
+      name: "list_sessions",
+      description: "Lists sessions",
+      parameters: ["type": "object"]
+    ) { _ in
+      "{}"
+    }
+
+    let withTasks = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [otherTool, taskTool])
+    )
+    #expect(withTasks.contains("call create_worktree_tasks"))
+    #expect(withTasks.contains("launch_session never creates a worktree"))
+    #expect(withTasks.contains("omit repository_path"))
+    #expect(withTasks.contains("Never guess a repository"))
+
+    let withoutTasks = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [otherTool])
+    )
+    #expect(!withoutTasks.contains("repository_path"))
+  }
 }

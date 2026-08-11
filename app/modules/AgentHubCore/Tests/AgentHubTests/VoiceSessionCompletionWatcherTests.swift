@@ -59,6 +59,23 @@ private final class CompletionWatcherExecutor: VoiceAgentToolExecuting {
     )
   }
 
+  func listWorktrees() -> VoiceWorktreeInventory {
+    .init(repositories: [])
+  }
+
+  func createWorktreeTasks(
+    repositoryPath: String?,
+    tasks: [VoiceWorktreeTaskSpec]
+  ) async -> VoiceWorktreeTaskBatchResult {
+    .init(
+      status: "accepted",
+      message: nil,
+      repositoryPath: repositoryPath ?? "",
+      launched: [],
+      failures: []
+    )
+  }
+
   func pendingApproval(sessionId: String) -> VoicePendingApproval? {
     nil
   }

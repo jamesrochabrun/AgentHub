@@ -1,3 +1,4 @@
+import AgentHubCLIKit
 import Foundation
 
 @MainActor
@@ -50,6 +51,11 @@ public protocol VoiceAgentToolExecuting: AnyObject {
     provider: SessionProviderKind,
     prompt: String?
   ) -> VoiceLaunchResult
+  func listWorktrees() -> VoiceWorktreeInventory
+  func createWorktreeTasks(
+    repositoryPath: String?,
+    tasks: [VoiceWorktreeTaskSpec]
+  ) async -> VoiceWorktreeTaskBatchResult
   func pendingApproval(sessionId: String) -> VoicePendingApproval?
   func respondToApproval(
     sessionId: String,
@@ -66,6 +72,8 @@ public final class VoiceAgentToolExecutor: VoiceAgentToolExecuting {
   private let selectionRouter: GlobalSessionSelectionRouter
   private let targetResolver: any VoiceSessionTargetResolving
   private let transcriptReader: any VoiceSessionTranscriptReading
+  private let worktreeCreator: (any VoiceWorktreeCreating)?
+  private let launchRequestHandler: (any WorktreeLaunchRequestHandlingProtocol)?
   private let snapshotProvider: (@MainActor () -> SessionInvestigationSnapshot)?
 
   public init(
@@ -73,13 +81,20 @@ public final class VoiceAgentToolExecutor: VoiceAgentToolExecuting {
     codexViewModel: CLISessionsViewModel,
     selectionRouter: GlobalSessionSelectionRouter,
     targetResolver: any VoiceSessionTargetResolving,
-    transcriptReader: any VoiceSessionTranscriptReading = VoiceSessionTranscriptReader()
+    transcriptReader: any VoiceSessionTranscriptReading = VoiceSessionTranscriptReader(),
+    worktreeCreator: (any VoiceWorktreeCreating)? = nil,
+    launchRequestHandler: (any WorktreeLaunchRequestHandlingProtocol)? = nil
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self.selectionRouter = selectionRouter
     self.targetResolver = targetResolver
     self.transcriptReader = transcriptReader
+    self.worktreeCreator = worktreeCreator ?? VoiceWorktreeCreator()
+    self.launchRequestHandler = launchRequestHandler ?? WorktreeLaunchRequestHandler(
+      claudeViewModel: claudeViewModel,
+      codexViewModel: codexViewModel
+    )
     snapshotProvider = {
       SessionInvestigationSnapshotBuilder.make(
         claudeViewModel: claudeViewModel,
@@ -93,13 +108,17 @@ public final class VoiceAgentToolExecutor: VoiceAgentToolExecuting {
     codexViewModel: any VoiceSessionManaging,
     selectionRouter: GlobalSessionSelectionRouter,
     targetResolver: any VoiceSessionTargetResolving,
-    transcriptReader: any VoiceSessionTranscriptReading = VoiceSessionTranscriptReader()
+    transcriptReader: any VoiceSessionTranscriptReading = VoiceSessionTranscriptReader(),
+    worktreeCreator: (any VoiceWorktreeCreating)? = nil,
+    launchRequestHandler: (any WorktreeLaunchRequestHandlingProtocol)? = nil
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
     self.selectionRouter = selectionRouter
     self.targetResolver = targetResolver
     self.transcriptReader = transcriptReader
+    self.worktreeCreator = worktreeCreator
+    self.launchRequestHandler = launchRequestHandler
     snapshotProvider = nil
   }
 
@@ -249,6 +268,114 @@ public final class VoiceAgentToolExecutor: VoiceAgentToolExecuting {
     )
   }
 
+  public func listWorktrees() -> VoiceWorktreeInventory {
+    var repositories: [VoiceRepositorySummary] = []
+    var seenRepositoryPaths = Set<String>()
+    for viewModel in [claudeViewModel, codexViewModel] {
+      for repository in viewModel.selectedRepositories
+        where seenRepositoryPaths.insert(repository.path).inserted {
+        var worktrees: [VoiceWorktreeSummary] = []
+        var seenWorktreePaths = Set<String>()
+        if !repository.worktrees.contains(where: { $0.path == repository.path }) {
+          seenWorktreePaths.insert(repository.path)
+          worktrees.append(VoiceWorktreeSummary(
+            name: repository.name,
+            path: repository.path,
+            isWorktree: false,
+            sessionCount: sessionCount(forPath: repository.path)
+          ))
+        }
+        for worktree in repository.worktrees
+          where seenWorktreePaths.insert(worktree.path).inserted {
+          worktrees.append(VoiceWorktreeSummary(
+            name: worktree.name,
+            path: worktree.path,
+            isWorktree: worktree.isWorktree,
+            sessionCount: sessionCount(forPath: worktree.path)
+          ))
+        }
+        repositories.append(VoiceRepositorySummary(
+          name: repository.name,
+          path: repository.path,
+          worktrees: worktrees
+        ))
+      }
+    }
+    return VoiceWorktreeInventory(repositories: repositories)
+  }
+
+  public func createWorktreeTasks(
+    repositoryPath: String?,
+    tasks: [VoiceWorktreeTaskSpec]
+  ) async -> VoiceWorktreeTaskBatchResult {
+    guard let worktreeCreator, let launchRequestHandler else {
+      return VoiceWorktreeTaskBatchResult(
+        status: "unavailable",
+        message: "Worktree task creation is unavailable.",
+        repositoryPath: repositoryPath ?? "",
+        launched: [],
+        failures: []
+      )
+    }
+    guard let requestedPath = repositoryPath
+      ?? targetResolver.resolve(manualSessionId: nil)?.projectPath else {
+      return VoiceWorktreeTaskBatchResult(
+        status: "not_found",
+        message: "There is no focused session to infer the repository from. Say which repository to use, or call list_worktrees.",
+        repositoryPath: "",
+        launched: [],
+        failures: []
+      )
+    }
+    guard let repository = registeredRepository(containing: requestedPath) else {
+      return VoiceWorktreeTaskBatchResult(
+        status: "not_found",
+        message: "No registered repository matches that path. Call list_worktrees for exact paths.",
+        repositoryPath: requestedPath,
+        launched: [],
+        failures: []
+      )
+    }
+
+    var launched: [VoiceWorktreeTaskLaunch] = []
+    var failures: [VoiceWorktreeTaskFailure] = []
+    for task in tasks {
+      do {
+        let created = try await worktreeCreator.createWorktree(
+          repositoryPath: repository.path,
+          branch: task.branch
+        )
+        try await launchRequestHandler.handle(WorktreeLaunchRequest(
+          provider: task.provider == .claude ? .claude : .codex,
+          repositoryPath: created.repositoryPath,
+          worktreePath: created.worktreePath,
+          launchPath: created.launchPath,
+          branchName: created.branchName,
+          prompt: task.prompt
+        ))
+        launched.append(VoiceWorktreeTaskLaunch(
+          branch: created.branchName,
+          provider: task.provider,
+          worktreePath: created.worktreePath,
+          pendingSessionId: viewModel(for: task.provider)
+            .lastCreatedPendingId?.uuidString
+        ))
+      } catch {
+        failures.append(VoiceWorktreeTaskFailure(
+          branch: task.branch,
+          message: error.localizedDescription
+        ))
+      }
+    }
+    return VoiceWorktreeTaskBatchResult(
+      status: "accepted",
+      message: nil,
+      repositoryPath: repository.path,
+      launched: launched,
+      failures: failures
+    )
+  }
+
   public func pendingApproval(sessionId: String) -> VoicePendingApproval? {
     guard let record = record(sessionId: sessionId),
           record.provider == .claude,
@@ -387,6 +514,26 @@ public final class VoiceAgentToolExecutor: VoiceAgentToolExecuting {
         || viewModel.resolvedPendingSessions[pendingID] != nil
         || viewModel.lastCreatedPendingId == pendingID
     }
+  }
+
+  private func sessionCount(forPath path: String) -> Int {
+    [claudeViewModel, codexViewModel].reduce(0) { count, viewModel in
+      count + viewModel.voiceSessions.filter { $0.projectPath == path }.count
+    }
+  }
+
+  private func registeredRepository(
+    containing path: String
+  ) -> SelectedRepository? {
+    for viewModel in [claudeViewModel, codexViewModel] {
+      if let match = WorktreeModuleResolver.bestMatch(
+        for: path,
+        repositories: viewModel.selectedRepositories
+      ) {
+        return match.repository
+      }
+    }
+    return nil
   }
 
   private func resolveWorktree(

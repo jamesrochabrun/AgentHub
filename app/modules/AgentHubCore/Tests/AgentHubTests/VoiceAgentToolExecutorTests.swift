@@ -1,3 +1,4 @@
+import AgentHubCLIKit
 import Foundation
 import Observation
 import Testing
@@ -60,6 +61,32 @@ private struct StubTranscriptReader: VoiceSessionTranscriptReading {
     provider: SessionProviderKind
   ) async -> String? {
     textsByPath[path]
+  }
+}
+
+private enum TestWorktreeError: Error {
+  case creationFailed
+}
+
+private struct MockWorktreeCreator: VoiceWorktreeCreating {
+  let onCreate: @Sendable (String, String) async throws -> VoiceCreatedWorktree
+
+  func createWorktree(
+    repositoryPath: String,
+    branch: String
+  ) async throws -> VoiceCreatedWorktree {
+    try await onCreate(repositoryPath, branch)
+  }
+}
+
+@MainActor
+private final class MockLaunchRequestHandler: WorktreeLaunchRequestHandlingProtocol {
+  var onHandle: (@MainActor (WorktreeLaunchRequest) throws -> Void)?
+  private(set) var requests: [WorktreeLaunchRequest] = []
+
+  func handle(_ request: WorktreeLaunchRequest) async throws {
+    requests.append(request)
+    try onHandle?(request)
   }
 }
 
@@ -285,6 +312,231 @@ struct VoiceAgentToolExecutorTests {
     #expect(await executor.latestResponse(sessionId: nil) == nil)
   }
 
+  @Test
+  func listWorktreesMergesRepositoriesAndSynthesizesRootEntry() throws {
+    let (executor, claude, codex) = makeExecutor()
+    claude.selectedRepositories = [
+      SelectedRepository(
+        path: "/repo",
+        name: "Repo",
+        worktrees: [
+          WorktreeBranch(
+            name: "feature-a",
+            path: "/repo-feature-a",
+            isWorktree: true
+          ),
+        ]
+      ),
+    ]
+    codex.selectedRepositories = [
+      SelectedRepository(path: "/repo", name: "Repo"),
+      SelectedRepository(path: "/other", name: "Other"),
+    ]
+    claude.voiceSessions = [session(id: "s1")]
+    codex.voiceSessions = [session(id: "s2")]
+
+    let inventory = executor.listWorktrees()
+    let encoded = try JSONEncoder().encode(inventory)
+    let decoded = try JSONDecoder().decode(
+      VoiceWorktreeInventory.self,
+      from: encoded
+    )
+
+    #expect(decoded == inventory)
+    #expect(inventory.repositories.map(\.path) == ["/repo", "/other"])
+    let repo = try #require(inventory.repositories.first)
+    #expect(repo.worktrees.map(\.path) == ["/repo", "/repo-feature-a"])
+    #expect(repo.worktrees.first?.isWorktree == false)
+    #expect(repo.worktrees.first?.sessionCount == 2)
+    #expect(repo.worktrees.last?.sessionCount == 0)
+  }
+
+  @Test
+  func createWorktreeTasksCreatesLaunchesAndIsolatesFailures() async throws {
+    let creator = MockWorktreeCreator { repositoryPath, branch in
+      guard branch != "boom" else {
+        throw TestWorktreeError.creationFailed
+      }
+      return VoiceCreatedWorktree(
+        repositoryPath: repositoryPath,
+        branchName: "\(branch)-2",
+        worktreePath: "\(repositoryPath)-\(branch)",
+        launchPath: nil
+      )
+    }
+    let handler = MockLaunchRequestHandler()
+    let (executor, claude, _) = makeExecutor(
+      target: nil,
+      worktreeCreator: creator,
+      launchRequestHandler: handler
+    )
+    claude.selectedRepositories = [
+      SelectedRepository(path: "/repo", name: "Repo"),
+    ]
+    handler.onHandle = { request in
+      claude.voiceStartNewSessionInHub(
+        WorktreeBranch(
+          name: request.branchName,
+          path: request.worktreePath,
+          isWorktree: true
+        ),
+        initialPrompt: request.prompt
+      )
+    }
+
+    let result = await executor.createWorktreeTasks(
+      repositoryPath: "/repo",
+      tasks: [
+        VoiceWorktreeTaskSpec(branch: "task-a", prompt: "Do A", provider: .claude),
+        VoiceWorktreeTaskSpec(branch: "boom", prompt: "Do B", provider: .claude),
+      ]
+    )
+
+    #expect(result.status == "accepted")
+    #expect(result.repositoryPath == "/repo")
+    let launch = try #require(result.launched.first)
+    #expect(result.launched.count == 1)
+    #expect(launch.branch == "task-a-2")
+    #expect(launch.worktreePath == "/repo-task-a")
+    #expect(launch.pendingSessionId == claude.lastCreatedPendingId?.uuidString)
+    #expect(result.failures.map(\.branch) == ["boom"])
+    #expect(handler.requests.count == 1)
+    #expect(handler.requests.first?.branchName == "task-a-2")
+    #expect(handler.requests.first?.prompt == "Do A")
+  }
+
+  @Test
+  func createWorktreeTasksDefaultsToTargetSessionParentRepository() async throws {
+    let creator = MockWorktreeCreator { repositoryPath, branch in
+      VoiceCreatedWorktree(
+        repositoryPath: repositoryPath,
+        branchName: branch,
+        worktreePath: "\(repositoryPath)-\(branch)",
+        launchPath: nil
+      )
+    }
+    let handler = MockLaunchRequestHandler()
+    let target = VoiceSessionTarget(
+      sessionId: "s1",
+      provider: .claude,
+      name: "Focused",
+      projectPath: "/repo-feature-a/ios/app",
+      lastActivityAt: Date()
+    )
+    let (executor, claude, _) = makeExecutor(
+      target: target,
+      worktreeCreator: creator,
+      launchRequestHandler: handler
+    )
+    claude.selectedRepositories = [
+      SelectedRepository(
+        path: "/repo",
+        name: "Repo",
+        worktrees: [
+          WorktreeBranch(
+            name: "feature-a",
+            path: "/repo-feature-a",
+            isWorktree: true
+          ),
+        ]
+      ),
+    ]
+
+    let result = await executor.createWorktreeTasks(
+      repositoryPath: nil,
+      tasks: [
+        VoiceWorktreeTaskSpec(branch: "task-a", prompt: "Do A", provider: .claude),
+      ]
+    )
+
+    #expect(result.status == "accepted")
+    #expect(result.repositoryPath == "/repo")
+    #expect(handler.requests.count == 1)
+    let created = try #require(result.launched.first)
+    #expect(created.worktreePath == "/repo-task-a")
+  }
+
+  @Test
+  func createWorktreeTasksWithoutRepositoryOrTargetIsNotFound() async {
+    let creator = MockWorktreeCreator { repositoryPath, branch in
+      VoiceCreatedWorktree(
+        repositoryPath: repositoryPath,
+        branchName: branch,
+        worktreePath: "\(repositoryPath)-\(branch)",
+        launchPath: nil
+      )
+    }
+    let handler = MockLaunchRequestHandler()
+    let (executor, claude, _) = makeExecutor(
+      target: nil,
+      worktreeCreator: creator,
+      launchRequestHandler: handler
+    )
+    claude.selectedRepositories = [
+      SelectedRepository(path: "/repo", name: "Repo"),
+    ]
+
+    let result = await executor.createWorktreeTasks(
+      repositoryPath: nil,
+      tasks: [
+        VoiceWorktreeTaskSpec(branch: "task-a", prompt: "Do A", provider: .claude),
+      ]
+    )
+
+    #expect(result.status == "not_found")
+    #expect(handler.requests.isEmpty)
+  }
+
+  @Test
+  func createWorktreeTasksRejectsUnregisteredRepository() async {
+    let creator = MockWorktreeCreator { repositoryPath, branch in
+      VoiceCreatedWorktree(
+        repositoryPath: repositoryPath,
+        branchName: branch,
+        worktreePath: "\(repositoryPath)-\(branch)",
+        launchPath: nil
+      )
+    }
+    let handler = MockLaunchRequestHandler()
+    let (executor, claude, _) = makeExecutor(
+      target: nil,
+      worktreeCreator: creator,
+      launchRequestHandler: handler
+    )
+    claude.selectedRepositories = [
+      SelectedRepository(path: "/repo", name: "Repo"),
+    ]
+
+    let result = await executor.createWorktreeTasks(
+      repositoryPath: "/nope",
+      tasks: [
+        VoiceWorktreeTaskSpec(branch: "task-a", prompt: "Do A", provider: .claude),
+      ]
+    )
+
+    #expect(result.status == "not_found")
+    #expect(result.launched.isEmpty)
+    #expect(handler.requests.isEmpty)
+  }
+
+  @Test
+  func createWorktreeTasksIsUnavailableWithoutDependencies() async {
+    let (executor, claude, _) = makeExecutor()
+    claude.selectedRepositories = [
+      SelectedRepository(path: "/repo", name: "Repo"),
+    ]
+
+    let result = await executor.createWorktreeTasks(
+      repositoryPath: "/repo",
+      tasks: [
+        VoiceWorktreeTaskSpec(branch: "task-a", prompt: "Do A", provider: .claude),
+      ]
+    )
+
+    #expect(result.status == "unavailable")
+    #expect(result.launched.isEmpty)
+  }
+
   private func makeExecutor() -> (
     VoiceAgentToolExecutor,
     MockVoiceSessionManager,
@@ -296,7 +548,9 @@ struct VoiceAgentToolExecutorTests {
   private func makeExecutor(
     target: VoiceSessionTarget?,
     transcriptReader: any VoiceSessionTranscriptReading =
-      StubTranscriptReader(textsByPath: [:])
+      StubTranscriptReader(textsByPath: [:]),
+    worktreeCreator: (any VoiceWorktreeCreating)? = nil,
+    launchRequestHandler: (any WorktreeLaunchRequestHandlingProtocol)? = nil
   ) -> (
     VoiceAgentToolExecutor,
     MockVoiceSessionManager,
@@ -312,7 +566,9 @@ struct VoiceAgentToolExecutorTests {
         codexViewModel: codex,
         selectionRouter: GlobalSessionSelectionRouter(),
         targetResolver: resolver,
-        transcriptReader: transcriptReader
+        transcriptReader: transcriptReader,
+        worktreeCreator: worktreeCreator,
+        launchRequestHandler: launchRequestHandler
       ),
       claude,
       codex

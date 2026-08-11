@@ -46,7 +46,9 @@ public final class VoiceToolCatalog: VoiceToolCataloging {
       readResponseTool(),
       sendPromptTool(),
       focusSessionTool(),
+      listWorktreesTool(),
       launchSessionTool(),
+      createWorktreeTasksTool(),
       approvalTool(),
     ]
     if isScreenCaptureEnabled() {
@@ -236,10 +238,127 @@ public final class VoiceToolCatalog: VoiceToolCataloging {
     }
   }
 
+  private func listWorktreesTool() -> VoiceTool {
+    VoiceTool(
+      name: "list_worktrees",
+      description: """
+        List registered repositories and their worktrees with exact paths and
+        session counts. Call this before launch_session or
+        create_worktree_tasks so you pass an exact registered path.
+        """,
+      parameters: objectSchema(properties: [:])
+    ) { [weak self] _ in
+      guard let self else { return Self.unavailableJSON }
+      return Self.encode(executor.listWorktrees())
+    }
+  }
+
+  private func createWorktreeTasksTool() -> VoiceTool {
+    VoiceTool(
+      name: "create_worktree_tasks",
+      description: """
+        Create NEW git worktrees — one per task, a single task is fine — and
+        launch an agent session in each with its prompt. Use this whenever the
+        user asks to create a worktree, spin up worktree tasks, or run work in
+        parallel; never launch_session for those requests. Omit
+        repository_path to use the current target session's repository. Read
+        the task list back to the user before calling. Branch names are
+        adjusted automatically when they collide.
+        """,
+      parameters: objectSchema(
+        properties: [
+          "repository_path": [
+            "type": "string",
+            "description": """
+              Only pass this when the user explicitly names a repository or
+              path; use the exact registered path from list_worktrees. When
+              the user does not name one, OMIT this field entirely — it
+              defaults to the repository of the session the user is working
+              in. Never guess.
+              """,
+          ],
+          "provider": [
+            "type": "string",
+            "enum": ["claude", "codex"],
+            "description": "Provider for tasks that do not set one. Defaults to claude.",
+          ],
+          "tasks": .object([
+            "type": "array",
+            "minItems": 1,
+            "items": .object([
+              "type": "object",
+              "properties": .object([
+                "branch": [
+                  "type": "string",
+                  "description": "Short kebab-case branch name for the task.",
+                ],
+                "prompt": [
+                  "type": "string",
+                  "description": "Prompt for the agent launched in this task's worktree.",
+                ],
+                "provider": [
+                  "type": "string",
+                  "enum": ["claude", "codex"],
+                ],
+              ]),
+              "required": .array(["branch", "prompt"]),
+              "additionalProperties": false,
+            ]),
+          ]),
+        ],
+        required: ["tasks"]
+      ),
+      allowsAutomaticRetry: false
+    ) { [weak self] data in
+      guard let self else { return Self.unavailableJSON }
+      guard let arguments = Self.decode(
+        CreateWorktreeTasksArguments.self,
+        from: data
+      ), !arguments.tasks.isEmpty else {
+        return Self.invalidArgumentsJSON
+      }
+      var specs: [VoiceWorktreeTaskSpec] = []
+      for task in arguments.tasks {
+        let provider: SessionProviderKind
+        if let rawProvider = task.provider ?? arguments.provider {
+          guard let kind = Self.providerKind(rawProvider) else {
+            return Self.invalidArgumentsJSON
+          }
+          provider = kind
+        } else {
+          provider = .claude
+        }
+        let branch = task.branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prompt = task.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !branch.isEmpty, !prompt.isEmpty else {
+          return Self.invalidArgumentsJSON
+        }
+        specs.append(VoiceWorktreeTaskSpec(
+          branch: branch,
+          prompt: prompt,
+          provider: provider
+        ))
+      }
+      let result = await executor.createWorktreeTasks(
+        repositoryPath: arguments.repositoryPath,
+        tasks: specs
+      )
+      for launch in result.launched {
+        guard let pendingSessionId = launch.pendingSessionId else { continue }
+        completionWatcher.watch(sessionId: pendingSessionId, name: launch.branch)
+      }
+      return Self.encode(result)
+    }
+  }
+
   private func launchSessionTool() -> VoiceTool {
     VoiceTool(
       name: "launch_session",
-      description: "Launch a new Claude or Codex session in a registered worktree.",
+      description: """
+        Start a new agent session in an EXISTING registered repository or
+        worktree path, without creating anything on disk. Never use this when
+        the user asks to create a worktree — that is create_worktree_tasks.
+        """,
       parameters: objectSchema(
         properties: [
           "worktree_path": [
@@ -448,6 +567,18 @@ private struct LaunchArguments: Decodable {
   let worktreePath: String
   let provider: String
   let prompt: String?
+}
+
+private struct CreateWorktreeTasksArguments: Decodable {
+  struct TaskArgument: Decodable {
+    let branch: String
+    let prompt: String
+    let provider: String?
+  }
+
+  let repositoryPath: String?
+  let provider: String?
+  let tasks: [TaskArgument]
 }
 
 private struct ApprovalArguments: Decodable {
