@@ -130,7 +130,11 @@ public final class AppKitVoiceHUDPresenter: VoiceHUDPresenting {
     self.viewModel = viewModel
     newPanel.orderFrontRegardless()
     newPanel.makeKey()
-    viewModel.toggleMicrophone()
+    // Deliberately no auto-start: the mic button is the single start/stop
+    // control. Auto-starting here made the user's first tap on the mic button
+    // STOP the just-started session (a ~1s start/teardown cycle that looks
+    // like "voice doesn't work the first time"), and raced the onboarding
+    // sheet's own start button the same way.
     #endif
   }
 

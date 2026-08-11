@@ -16,9 +16,17 @@ public enum RealtimeAudioControllerFactory {
   }
 
   static func make(
-    controllerFactory: @escaping SwiftOpenAIAudioControllerFactory
+    controllerFactory: @escaping SwiftOpenAIAudioControllerFactory,
+    liveAudioDeadline: Duration = .seconds(2)
   ) async throws -> any RealtimeAudioControlling {
     let controller = try await controllerFactory([.record, .playback])
-    return LiveRealtimeAudioController(sharedController: controller)
+    // The first voice-processing session after app launch can come up with a
+    // dead capture stream (AUVPAggregate timeout); the wrapper rebuilds the
+    // controller once when the microphone stays digitally silent.
+    return SelfHealingRealtimeAudioController(
+      initialController: controller,
+      rebuildController: { try await controllerFactory([.record, .playback]) },
+      liveAudioDeadline: liveAudioDeadline
+    )
   }
 }
