@@ -46,12 +46,7 @@ public struct VoiceHUDView: View {
     }
     .padding(16)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(.regularMaterial)
-    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-    .overlay {
-      RoundedRectangle(cornerRadius: 18, style: .continuous)
-        .stroke(.secondary.opacity(0.2))
-    }
+    .voiceHUDChrome()
     .onChange(of: viewModel.mode) { _, _ in
       viewModel.handleModeChange()
     }
