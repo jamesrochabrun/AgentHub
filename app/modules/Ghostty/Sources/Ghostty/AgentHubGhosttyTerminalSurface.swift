@@ -1306,7 +1306,17 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     _ text: String,
     to controller: GhosttyTerminalController?
   ) {
-    controller?.sendBytes(TerminalPromptSubmissionPayload.bracketedPasteTextBytes(prompt: text))
+    guard let controller else { return }
+    // Never send bracketed-paste markers through sendText/sendBytes: that is
+    // the IME text-input path, which drops the ESC byte and types "[200~"
+    // into the child app as literal text (see AgentHubGhosttyPromptTextAction).
+    if controller.performBindingAction(
+      AgentHubGhosttyPromptTextAction.bracketedPaste(text)
+    ) {
+      return
+    }
+    // Degrade to plain typed text without markers.
+    controller.sendText(text)
   }
 
   private func installInteractionMonitorIfNeeded() {
