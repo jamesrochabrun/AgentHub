@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: macos-14
+    runs-on: macos-26
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -21,7 +21,7 @@ jobs:
       - name: Setup Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: '26.4.1'
 
       # Caches resolved SwiftPM dependencies (clones/resolution). The package
       # builds themselves are fast.
@@ -36,9 +36,8 @@ jobs:
       # Gate on the fast, stable `swift test` module packages only.
       #
       # The AgentHubCore suite is intentionally NOT run in CI: it costs ~20 min
-      # just to compile, has a flaky timing tail on slow runners, and the runner's
-      # Xcode (16.2, capped by macOS 14) differs from local dev (newer beta), so
-      # its CI results diverge from what developers see. It runs LOCALLY instead —
+      # just to compile and has a flaky timing tail on slow runners, so its CI
+      # results diverge from what developers see. It runs LOCALLY instead —
       # agents run the targeted tests for any code they change (see CLAUDE.md /
       # AGENTS.md), and `./scripts/test.sh` (or `/test`) runs the full suite on
       # demand where it's fast and matches the dev toolchain.
