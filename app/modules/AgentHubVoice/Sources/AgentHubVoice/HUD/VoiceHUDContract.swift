@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import SwiftUI
 
 // MARK: - Presenting
 
@@ -122,9 +123,17 @@ public struct VoiceHUDConfiguration: Sendable {
   /// Product name used in HUD and onboarding copy (e.g. "AgentHub").
   public let productName: String
   public let settings: VoiceHUDSettingsKeys
+  /// Host brand color for selected/emphasized HUD controls. When nil the HUD
+  /// falls back to the system accent color.
+  public let accentColor: Color?
 
-  public init(productName: String, settings: VoiceHUDSettingsKeys) {
+  public init(
+    productName: String,
+    settings: VoiceHUDSettingsKeys,
+    accentColor: Color? = nil
+  ) {
     self.productName = productName
     self.settings = settings
+    self.accentColor = accentColor
   }
 }

@@ -9,23 +9,29 @@
 
 import AgentHubVoice
 import Foundation
+import SwiftUI
 
 extension VoiceHUDConfiguration {
-  public static let agentHub = VoiceHUDConfiguration(
-    productName: "AgentHub",
-    settings: VoiceHUDSettingsKeys(
-      mode: AgentHubDefaults.voiceMode,
-      realtimeModel: AgentHubDefaults.voiceRealtimeModel,
-      voiceName: AgentHubDefaults.voiceName,
-      vadEagerness: AgentHubDefaults.voiceVADEagerness,
-      dictationModel: AgentHubDefaults.voiceDictationModel,
-      language: AgentHubDefaults.voiceLanguage,
-      allowBargeIn: AgentHubDefaults.voiceAllowBargeIn,
-      hudFrame: AgentHubDefaults.voiceHUDFrame,
-      screenCaptureEnabled: AgentHubDefaults.voiceScreenCaptureEnabled,
-      onboardingCompleted: AgentHubDefaults.voiceOnboardingCompleted
+  // Computed (not a stored `let`) so the brand color re-resolves against the
+  // active theme each time a HUD is created.
+  public static var agentHub: VoiceHUDConfiguration {
+    VoiceHUDConfiguration(
+      productName: "AgentHub",
+      settings: VoiceHUDSettingsKeys(
+        mode: AgentHubDefaults.voiceMode,
+        realtimeModel: AgentHubDefaults.voiceRealtimeModel,
+        voiceName: AgentHubDefaults.voiceName,
+        vadEagerness: AgentHubDefaults.voiceVADEagerness,
+        dictationModel: AgentHubDefaults.voiceDictationModel,
+        language: AgentHubDefaults.voiceLanguage,
+        allowBargeIn: AgentHubDefaults.voiceAllowBargeIn,
+        hudFrame: AgentHubDefaults.voiceHUDFrame,
+        screenCaptureEnabled: AgentHubDefaults.voiceScreenCaptureEnabled,
+        onboardingCompleted: AgentHubDefaults.voiceOnboardingCompleted
+      ),
+      accentColor: .brandSecondary
     )
-  )
+  }
 }
 
 @MainActor

@@ -22,7 +22,10 @@ public struct VoiceHUDView: View {
         onClose: onClose
       )
 
-      VoiceModeToggle(mode: $viewModel.mode)
+      VoiceModeToggle(
+        mode: $viewModel.mode,
+        accentColor: viewModel.configuration.accentColor
+      )
 
       VoiceTargetChip(
         target: viewModel.target,
