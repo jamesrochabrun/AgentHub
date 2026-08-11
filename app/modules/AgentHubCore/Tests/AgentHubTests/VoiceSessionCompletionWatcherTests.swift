@@ -1,0 +1,195 @@
+import Foundation
+import Testing
+@testable import AgentHubCore
+
+@MainActor
+private final class CompletionWatcherExecutor: VoiceAgentToolExecuting {
+  private let stream: AsyncStream<SessionStatus>
+  private let continuation: AsyncStream<SessionStatus>.Continuation
+  var currentStatus: SessionStatus?
+
+  init() {
+    (stream, continuation) = AsyncStream.makeStream()
+  }
+
+  func yield(_ status: SessionStatus) {
+    currentStatus = status
+    continuation.yield(status)
+  }
+
+  func listSessions() -> VoiceSessionsSummary {
+    .init(sessions: [], targetSessionId: nil)
+  }
+
+  func sessionStatus(sessionId: String) -> VoiceSessionStatusDetail? {
+    guard let currentStatus else { return nil }
+    return .init(
+      sessionId: sessionId,
+      provider: .claude,
+      name: "Test",
+      status: currentStatus.displayName,
+      currentTool: nil,
+      contextUsagePercent: nil,
+      pendingApproval: nil,
+      recentActivities: []
+    )
+  }
+
+  func sendPrompt(
+    sessionId: String,
+    prompt: String
+  ) -> VoicePromptDeliveryResult {
+    .init(status: "accepted", sessionId: sessionId, usedExistingTerminal: true)
+  }
+
+  func focusSession(sessionId: String) -> Bool {
+    true
+  }
+
+  func launchSession(
+    worktreePath: String,
+    provider: SessionProviderKind,
+    prompt: String?
+  ) -> VoiceLaunchResult {
+    .init(
+      status: "accepted",
+      provider: provider,
+      worktreePath: worktreePath,
+      pendingSessionId: nil
+    )
+  }
+
+  func pendingApproval(sessionId: String) -> VoicePendingApproval? {
+    nil
+  }
+
+  func respondToApproval(
+    sessionId: String,
+    approve: Bool
+  ) -> VoiceApprovalResponseResult {
+    .init(
+      status: "accepted",
+      sessionId: sessionId,
+      decision: approve ? "approve" : "deny"
+    )
+  }
+
+  func completionStream(sessionId: String) -> AsyncStream<SessionStatus> {
+    stream
+  }
+
+  var latestResponseText: String?
+
+  func latestResponse(sessionId: String?) async -> VoiceLatestResponse? {
+    guard let latestResponseText, let sessionId else { return nil }
+    return .init(
+      sessionId: sessionId,
+      provider: .claude,
+      name: "Test",
+      text: latestResponseText
+    )
+  }
+}
+
+@MainActor
+struct VoiceSessionCompletionWatcherTests {
+  @Test
+  func armsOnWorkingStatusAndDebouncesCompletion() async {
+    let executor = CompletionWatcherExecutor()
+    var updates: [String] = []
+    let watcher = VoiceSessionCompletionWatcher(
+      executor: executor,
+      armingDelay: .seconds(1),
+      completionDebounce: .milliseconds(5),
+      maximumDuration: .seconds(1)
+    ) {
+      updates.append($0)
+    }
+
+    watcher.watch(sessionId: "session-1", name: "Build")
+    executor.yield(.thinking)
+    executor.yield(.idle)
+    await waitUntil { !updates.isEmpty }
+
+    #expect(updates == ["Build finished and is ready for you."])
+  }
+
+  @Test
+  func completionAnnouncementIncludesLatestResponse() async {
+    let executor = CompletionWatcherExecutor()
+    executor.latestResponseText = "All 23 tests passed."
+    var updates: [String] = []
+    let watcher = VoiceSessionCompletionWatcher(
+      executor: executor,
+      armingDelay: .seconds(1),
+      completionDebounce: .milliseconds(5),
+      maximumDuration: .seconds(1)
+    ) {
+      updates.append($0)
+    }
+
+    watcher.watch(sessionId: "session-1", name: "Build")
+    executor.yield(.thinking)
+    executor.yield(.idle)
+    await waitUntil { !updates.isEmpty }
+
+    #expect(updates.count == 1)
+    #expect(updates[0].contains("Build finished."))
+    #expect(updates[0].contains("All 23 tests passed."))
+  }
+
+  @Test
+  func reportsApprovalImmediately() async {
+    let executor = CompletionWatcherExecutor()
+    var updates: [String] = []
+    let watcher = VoiceSessionCompletionWatcher(
+      executor: executor,
+      armingDelay: .seconds(1),
+      completionDebounce: .seconds(1),
+      maximumDuration: .seconds(1)
+    ) {
+      updates.append($0)
+    }
+
+    watcher.watch(sessionId: "session-1", name: "Build")
+    executor.yield(.awaitingApproval(tool: "Bash"))
+    await waitUntil { !updates.isEmpty }
+
+    #expect(updates == ["Build is awaiting approval for Bash."])
+  }
+
+  @Test
+  func keepsWatchingWhenDebouncedStatusIsNoLongerStable() async {
+    let executor = CompletionWatcherExecutor()
+    var updates: [String] = []
+    let watcher = VoiceSessionCompletionWatcher(
+      executor: executor,
+      armingDelay: .seconds(1),
+      completionDebounce: .milliseconds(20),
+      maximumDuration: .seconds(1)
+    ) {
+      updates.append($0)
+    }
+
+    watcher.watch(sessionId: "session-1", name: "Build")
+    executor.yield(.thinking)
+    executor.yield(.idle)
+    executor.currentStatus = .thinking
+    try? await Task.sleep(for: .milliseconds(30))
+    executor.yield(.waitingForUser)
+    await waitUntil { !updates.isEmpty }
+
+    #expect(updates == ["Build finished and is ready for you."])
+  }
+
+  private func waitUntil(
+    _ predicate: @escaping @MainActor () -> Bool
+  ) async {
+    for _ in 0..<200 {
+      if predicate() {
+        return
+      }
+      try? await Task.sleep(for: .milliseconds(1))
+    }
+  }
+}

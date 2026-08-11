@@ -28,6 +28,20 @@
             buildForAnalyzing = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AgentHubVoicePanelTests"
+               BuildableName = "AgentHubVoicePanelTests"
+               BlueprintName = "AgentHubVoicePanelTests"
+               ReferencedContainer = "container:">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "AgentHubMCPUITests"
                BuildableName = "AgentHubMCPUITests"
                BlueprintName = "AgentHubMCPUITests"
@@ -127,6 +141,16 @@
                BlueprintIdentifier = "AgentHubGlobalSessionPanelTests"
                BuildableName = "AgentHubGlobalSessionPanelTests"
                BlueprintName = "AgentHubGlobalSessionPanelTests"
+               ReferencedContainer = "container:">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "AgentHubVoicePanelTests"
+               BuildableName = "AgentHubVoicePanelTests"
+               BlueprintName = "AgentHubVoicePanelTests"
                ReferencedContainer = "container:">
             </BuildableReference>
          </TestableReference>

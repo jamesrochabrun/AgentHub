@@ -8,6 +8,7 @@
 import AgentHubCLIKit
 import AgentHubGitDiff
 import AgentHubGitHub
+import AgentHubVoice
 import ClaudeCodeClient
 import Foundation
 import os
@@ -48,6 +49,7 @@ public final class AgentHubProvider {
   /// SwiftTerm surface when `.ghostty` is selected.
   public let terminalSurfaceFactory: any EmbeddedTerminalSurfaceFactory
   private let globalSessionControlPanelPresenterFactory: GlobalSessionControlPanelPresenterFactory
+  private let voiceHUDPresenterFactory: VoiceHUDPresenterFactory
   private let metadataStoreOverride: SessionMetadataStore?
   private let worktreeLaunchRequestMonitorOverride: (any WorktreeLaunchRequestMonitorProtocol)?
   private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
@@ -244,6 +246,46 @@ public final class AgentHubProvider {
     globalSessionControlPanelPresenterFactory(self, defaults)
   }
 
+  // MARK: - Voice
+
+  public private(set) lazy var secretsStore: any SecretsStoring =
+    KeychainSecretsStore()
+
+  public private(set) lazy var openAIKeyProvider: any OpenAIKeyProviding =
+    OpenAIKeyProvider(store: secretsStore)
+
+  public private(set) lazy var realtimeVoiceEngine: RealtimeVoiceEngine = .init()
+
+  public private(set) lazy var voiceSessionTargetResolver:
+    VoiceSessionTargetResolver = .init(
+      claudeViewModel: claudeSessionsViewModel,
+      codexViewModel: codexSessionsViewModel,
+      selectionRouter: globalSessionSelectionRouter
+    )
+
+  public private(set) lazy var voiceToolExecutor: VoiceAgentToolExecutor = .init(
+    claudeViewModel: claudeSessionsViewModel,
+    codexViewModel: codexSessionsViewModel,
+    selectionRouter: globalSessionSelectionRouter,
+    targetResolver: voiceSessionTargetResolver
+  )
+
+  public private(set) lazy var voiceToolCatalog: any VoiceToolCataloging =
+    VoiceToolCatalog(
+      executor: voiceToolExecutor
+    ) { [weak self] update in
+      self?.realtimeVoiceEngine.pushBackgroundUpdate(update)
+    }
+
+  public private(set) lazy var voiceControlCoordinator:
+    VoiceControlCoordinator = .init(provider: self)
+
+  public func makeVoiceHUDPresenter(
+    defaults: UserDefaults = .standard
+  ) -> any VoiceHUDPresenting {
+    voiceHUDPresenterFactory(self, defaults)
+  }
+
   // MARK: - Theme Management
 
   /// Theme manager for YAML and built-in themes
@@ -296,6 +338,9 @@ public final class AgentHubProvider {
     globalSessionControlPanelPresenterFactory: @escaping GlobalSessionControlPanelPresenterFactory = { _, _ in
       NoOpGlobalSessionControlPanelPresenter()
     },
+    voiceHUDPresenterFactory: @escaping VoiceHUDPresenterFactory = { _, _ in
+      NoOpVoiceHUDPresenter()
+    },
     metadataStore: SessionMetadataStore? = nil,
     worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
     worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil,
@@ -306,6 +351,7 @@ public final class AgentHubProvider {
     terminalBackend = .storedPreference
     self.terminalSurfaceFactory = terminalSurfaceFactory
     self.globalSessionControlPanelPresenterFactory = globalSessionControlPanelPresenterFactory
+    self.voiceHUDPresenterFactory = voiceHUDPresenterFactory
     metadataStoreOverride = metadataStore
     worktreeLaunchRequestMonitorOverride = worktreeLaunchRequestMonitor
     worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
@@ -329,6 +375,13 @@ public final class AgentHubProvider {
     defaults.register(defaults: [
       AgentHubDefaults.globalSessionPanelEnabled: true,
       AgentHubDefaults.globalSessionPanelDisplayMode: 0,
+      AgentHubDefaults.voiceEnabled: true,
+      AgentHubDefaults.voiceAutoSubmitDictation: true,
+      AgentHubDefaults.voiceMode: "dictate",
+      AgentHubDefaults.voiceRealtimeModel: "gpt-realtime",
+      AgentHubDefaults.voiceName: "marin",
+      AgentHubDefaults.voiceVADEagerness: "medium",
+      AgentHubDefaults.voiceDictationModel: "whisper-1",
     ])
 
     // Claude command: if developer provided non-default, lock it

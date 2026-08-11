@@ -163,6 +163,57 @@ public enum AgentHubDefaults {
   /// Type: Int (default: 0 = regular, 1 = compact)
   public static let globalSessionPanelDisplayMode = "\(keyPrefix)globalSessionPanel.displayMode"
 
+  // MARK: - Voice Settings
+
+  /// Whether the Command-Option-V voice HUD hotkey is enabled.
+  /// Type: Bool (default: true)
+  public static let voiceEnabled = "\(keyPrefix)voice.enabled"
+
+  /// Whether completed dictation is immediately submitted to the target session.
+  /// Type: Bool (default: true)
+  public static let voiceAutoSubmitDictation = "\(keyPrefix)voice.autoSubmitDictation"
+
+  /// Selected voice mode (`dictate` or `converse`).
+  /// Type: String (default: "dictate")
+  public static let voiceMode = "\(keyPrefix)voice.mode"
+
+  /// OpenAI Realtime API model.
+  /// Type: String (default: "gpt-realtime")
+  public static let voiceRealtimeModel = "\(keyPrefix)voice.realtimeModel"
+
+  /// Realtime API voice name.
+  /// Type: String (default: "marin")
+  public static let voiceName = "\(keyPrefix)voice.voiceName"
+
+  /// Semantic VAD eagerness.
+  /// Type: String (default: "medium")
+  public static let voiceVADEagerness = "\(keyPrefix)voice.vadEagerness"
+
+  /// Speech-to-text model.
+  /// Type: String (default: "whisper-1")
+  public static let voiceDictationModel = "\(keyPrefix)voice.dictationModel"
+
+  /// Last frame for the floating voice HUD.
+  /// Type: String (NSStringFromRect, default: unset)
+  public static let voiceHUDFrame = "\(keyPrefix)voice.hudFrame"
+
+  /// Whether voice conversations may capture screenshots for coding sessions.
+  /// Type: Bool (default: true)
+  public static let voiceScreenCaptureEnabled = "\(keyPrefix)voice.screenCaptureEnabled"
+
+  /// Pinned conversation language as an ISO-639-1 code, or "auto".
+  /// Type: String (default: "auto")
+  public static let voiceLanguage = "\(keyPrefix)voice.language"
+
+  /// Whether the user can interrupt the assistant while it is speaking.
+  /// Off keeps the microphone gated during playback so speaker echo cannot
+  /// cut replies short. Type: Bool (default: false)
+  public static let voiceAllowBargeIn = "\(keyPrefix)voice.allowBargeIn"
+
+  /// Whether the voice onboarding flow has been completed or dismissed.
+  /// Type: Bool (default: false)
+  public static let voiceOnboardingCompleted = "\(keyPrefix)voice.onboardingCompleted"
+
   // MARK: - Feature Flags
 
   /// Whether smart mode (AI-powered orchestration planning) is enabled

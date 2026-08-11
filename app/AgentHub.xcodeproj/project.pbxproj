@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		7B03D9422F14D66700C36AA3 /* AgentHubCore in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03D9412F14D66700C36AA3 /* AgentHubCore */; };
 		7B03DB102F30000000C36AA3 /* AgentHubGlobalSessionPanel in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03DB0F2F30000000C36AA3 /* AgentHubGlobalSessionPanel */; };
+		7B03DB132F30000000C36AA3 /* AgentHubVoicePanel in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03DB122F30000000C36AA3 /* AgentHubVoicePanel */; };
 		7B03D9502F18A00000C36AA3 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03D94F2F18A00000C36AA3 /* Sparkle */; };
 		7B03DA022F18A10000C36AA3 /* Ghostty in Frameworks */ = {isa = PBXBuildFile; productRef = 7B03DA012F18A10000C36AA3 /* Ghostty */; };
 /* End PBXBuildFile section */
@@ -61,6 +62,7 @@
 			files = (
 				7B03D9422F14D66700C36AA3 /* AgentHubCore in Frameworks */,
 				7B03DB102F30000000C36AA3 /* AgentHubGlobalSessionPanel in Frameworks */,
+				7B03DB132F30000000C36AA3 /* AgentHubVoicePanel in Frameworks */,
 				7B03DA022F18A10000C36AA3 /* Ghostty in Frameworks */,
 				7B03D9502F18A00000C36AA3 /* Sparkle in Frameworks */,
 			);
@@ -127,6 +129,7 @@
 			packageProductDependencies = (
 				7B03D9412F14D66700C36AA3 /* AgentHubCore */,
 				7B03DB0F2F30000000C36AA3 /* AgentHubGlobalSessionPanel */,
+				7B03DB122F30000000C36AA3 /* AgentHubVoicePanel */,
 				7B03DA012F18A10000C36AA3 /* Ghostty */,
 				7B03D94F2F18A00000C36AA3 /* Sparkle */,
 			);
@@ -214,6 +217,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference "modules/AgentHubCore" */,
+				7B03DB202F30100000C36AA3 /* XCLocalSwiftPackageReference "modules/AgentHubVoice" */,
 				7B03DA002F18A10000C36AA3 /* XCLocalSwiftPackageReference "modules/Ghostty" */,
 				7B03D94E2F18A00000C36AA3 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
@@ -458,6 +462,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = AgentHub/AgentHub.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CQ45U4X9K3;
@@ -491,6 +496,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = AgentHub/AgentHub.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CQ45U4X9K3;
@@ -648,6 +654,10 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = modules/Ghostty;
 		};
+		7B03DB202F30100000C36AA3 /* XCLocalSwiftPackageReference "modules/AgentHubVoice" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = modules/AgentHubVoice;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -670,6 +680,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 7B03D9402F14D66700C36AA3 /* XCLocalSwiftPackageReference "modules/AgentHubCore" */;
 			productName = AgentHubGlobalSessionPanel;
+		};
+		7B03DB122F30000000C36AA3 /* AgentHubVoicePanel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7B03DB202F30100000C36AA3 /* XCLocalSwiftPackageReference "modules/AgentHubVoice" */;
+			productName = AgentHubVoicePanel;
 		};
 		7B03D94F2F18A00000C36AA3 /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;

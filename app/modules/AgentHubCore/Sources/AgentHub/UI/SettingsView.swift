@@ -157,6 +157,11 @@ public struct SettingsView: View {
           Label("Worktrees", systemImage: "arrow.triangle.branch")
         }
 
+      VoiceSettingsView()
+        .tabItem {
+          Label("Voice", systemImage: "waveform")
+        }
+
       MeasurementsSettingsView()
         .tabItem {
           Label("Measurements", systemImage: "chart.bar.doc.horizontal")

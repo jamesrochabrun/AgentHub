@@ -23,6 +23,7 @@ MODULES="$ROOT/app/modules"
 
 # Packages that build & test cleanly under the SPM CLI (no heavy GUI deps).
 SWIFT_TEST_PACKAGES=(
+  AgentHubVoice
   AgentHubCLI
   AgentHubGitHub
   SimulatorPreview

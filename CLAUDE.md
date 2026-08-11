@@ -246,6 +246,16 @@ The floating global Sessions panel is modularized in `AgentHubGlobalSessionPanel
 - Do not make `AgentHubCore` import `AgentHubGlobalSessionPanel`; that creates a dependency cycle.
 - Put panel behavior tests in `AgentHubGlobalSessionPanelTests`.
 
+### Voice (reusable modules)
+
+The voice stack is designed to be droppable into another app. Layering, strictly one-directional:
+
+- **`AgentHubVoice` package** (`app/modules/AgentHubVoice`) — app-agnostic voice infrastructure: `RealtimeVoiceEngine`, audio capture/playback, dictation/STT, `VoiceTool`/`VoiceToolRegistry`, realtime session config builder, OpenAI key handling, `VoiceScreenCaptureService` (+ `VoiceScreenCaptureTools` factory for `list_displays`/`capture_screen`), and the HUD contract (`VoiceHUDHost`, `VoiceHUDConfiguration`, `VoiceHUDPresenting`). Depends only on SwiftOpenAI. Never import AgentHub types here.
+- **`AgentHubVoicePanel` target** (same package) — reusable SwiftUI HUD + onboarding (`VoiceOnboardingView`, `VoiceOption`) + `AppKitVoiceHUDPresenter`. Depends only on `AgentHubVoice`; branding and UserDefaults keys arrive via `VoiceHUDConfiguration` — never hardcode an app's name or preference keys in this target.
+- **`AgentHubCore`** — the AgentHub-specific glue: `VoiceAgentToolExecutor`, `VoiceToolCatalog` (session tools; appends the capture tools from the factory), target resolver, completion watcher, transcript reader, `VoiceControlCoordinator`, settings UI, and `AgentHubVoiceHUDHost` (the `VoiceHUDHost` adapter) plus `VoiceHUDConfiguration.agentHub`. Core imports both voice products; the voice package must never import core.
+
+To reuse voice in another app: depend on the `AgentHubVoice` package, implement `VoiceHUDHost`, supply a `VoiceHUDConfiguration`, and present `AppKitVoiceHUDPresenter` — plus your own tool catalog for app-specific tools.
+
 ### MCP UI
 
 `AgentHubMCPUI` (`app/modules/AgentHubCore/Sources/AgentHubMCPUI`) is the reusable MCP UI layer — the `AgentHubMCPUIResource` model and the WKWebView renderer/bridge.

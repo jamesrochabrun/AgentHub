@@ -8,6 +8,7 @@
 import SwiftUI
 import AgentHubCore
 import AgentHubGlobalSessionPanel
+import AgentHubVoicePanel
 import Ghostty
 import UserNotifications
 import CoreText
@@ -26,6 +27,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     ),
     globalSessionControlPanelPresenterFactory: { provider, defaults in
       AppKitGlobalSessionControlPanelPresenter(provider: provider, defaults: defaults)
+    },
+    voiceHUDPresenterFactory: { provider, defaults in
+      AppKitVoiceHUDPresenter(
+        host: AgentHubVoiceHUDHost(provider: provider, defaults: defaults),
+        engine: provider.realtimeVoiceEngine,
+        configuration: .agentHub,
+        defaults: defaults
+      )
     }
   )
 
@@ -46,6 +55,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     provider.purgeStaleWindowAutosaveDefaults()
     provider.startWorktreeLaunchRequestMonitoring()
     provider.globalSessionControlPanelCoordinator.start()
+    provider.voiceControlCoordinator.start()
   }
 
   /// Register all bundled fonts (Geist, GeistMono, JetBrains Mono)
@@ -76,6 +86,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
   func applicationWillTerminate(_ notification: Notification) {
     provider.stopWorktreeLaunchRequestMonitoring()
     provider.globalSessionControlPanelCoordinator.stop()
+    provider.voiceControlCoordinator.stop()
     // Terminate all active terminal processes on app quit
     provider.terminateAllTerminals()
     // Stop all dev servers spawned for web preview

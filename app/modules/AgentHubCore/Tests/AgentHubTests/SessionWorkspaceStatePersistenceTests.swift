@@ -35,10 +35,10 @@ struct SessionWorkspaceStatePersistenceTests {
     let expansionStateData = try JSONEncoder().encode(["repo:/tmp/project": true])
 
     try await dbQueue.write { db in
-      try db.execute(sql: "CREATE TABLE grdb_migrations (identifier TEXT NOT NULL PRIMARY KEY)")
-      for identifier in SessionMetadataStore.migrationIdentifiers.dropLast() {
-        try db.execute(sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)", arguments: [identifier])
-      }
+      try seedMigrationBaseline(
+        before: SessionMetadataStore.MigrationID.addOwnedWorktreePaths,
+        in: db
+      )
 
       try db.create(table: "session_workspace_state") { t in
         t.column("provider", .text).primaryKey()
