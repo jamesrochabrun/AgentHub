@@ -416,13 +416,23 @@ public final class RealtimeVoiceEngine {
       || lowercase.contains("invalid api key")
   }
 
-  private nonisolated static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
+  nonisolated static func rms(_ buffer: AVAudioPCMBuffer) -> Float {
     let count = Int(buffer.frameLength)
     guard count > 0 else { return 0 }
     if let values = buffer.floatChannelData?[0] {
       var sum: Float = 0
       for index in 0..<count {
         sum += values[index] * values[index]
+      }
+      return min(1, sqrt(sum / Float(count)) * 5)
+    }
+    // The microphone vendor delivers PCM16 buffers, which expose only
+    // int16ChannelData — without this branch the level meter reads 0.
+    if let values = buffer.int16ChannelData?[0] {
+      var sum: Float = 0
+      for index in 0..<count {
+        let sample = Float(values[index]) / Float(Int16.max)
+        sum += sample * sample
       }
       return min(1, sqrt(sum / Float(count)) * 5)
     }

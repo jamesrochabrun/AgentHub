@@ -36,6 +36,9 @@ public struct VoiceSettingsView: View {
   @AppStorage(AgentHubDefaults.voiceAllowBargeIn)
   private var allowBargeIn = false
 
+  @AppStorage(AgentHubDefaults.voiceShowTranscript)
+  private var showTranscript = false
+
   @State private var showsOnboarding = false
 
   public init() {}
@@ -55,6 +58,7 @@ public struct VoiceSettingsView: View {
         autoSubmitDictation: $autoSubmitDictation,
         screenCaptureEnabled: $screenCaptureEnabled,
         allowBargeIn: $allowBargeIn,
+        showTranscript: $showTranscript,
         registrationError: agentHub?
           .voiceControlCoordinator
           .registrationErrorMessage,

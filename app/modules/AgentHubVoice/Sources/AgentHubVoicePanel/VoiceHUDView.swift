@@ -4,6 +4,8 @@ import SwiftUI
 public struct VoiceHUDView: View {
   @State private var viewModel: VoiceHUDViewModel
   @State private var showsOnboarding = false
+  @AppStorage private var showsTranscript: Bool
+  @AppStorage private var selectedVoiceId: String
 
   let onClose: () -> Void
 
@@ -12,6 +14,14 @@ public struct VoiceHUDView: View {
     onClose: @escaping () -> Void = {}
   ) {
     _viewModel = State(initialValue: viewModel)
+    _showsTranscript = AppStorage(
+      wrappedValue: false,
+      viewModel.configuration.settings.showTranscript
+    )
+    _selectedVoiceId = AppStorage(
+      wrappedValue: VoiceOption.all[0].id,
+      viewModel.configuration.settings.voiceName
+    )
     self.onClose = onClose
   }
 
@@ -33,7 +43,19 @@ public struct VoiceHUDView: View {
         onSelect: viewModel.selectTarget
       )
 
-      VoiceTranscriptList(entries: viewModel.transcripts)
+      if showsTranscript {
+        VoiceTranscriptList(entries: viewModel.transcripts)
+      } else {
+        VoiceActivityVisualizer(
+          mode: viewModel.mode,
+          voiceId: selectedVoiceId,
+          realtimeState: viewModel.realtimeState,
+          dictationState: viewModel.dictationState,
+          microphoneLevel: viewModel.microphoneLevel,
+          assistantLevel: viewModel.assistantLevel,
+          accentColor: viewModel.configuration.accentColor
+        )
+      }
 
       if let errorMessage = viewModel.errorMessage {
         VoiceHUDErrorBanner(message: errorMessage)

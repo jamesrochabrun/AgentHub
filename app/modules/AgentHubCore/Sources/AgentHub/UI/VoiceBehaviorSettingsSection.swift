@@ -5,6 +5,7 @@ struct VoiceBehaviorSettingsSection: View {
   @Binding var autoSubmitDictation: Bool
   @Binding var screenCaptureEnabled: Bool
   @Binding var allowBargeIn: Bool
+  @Binding var showTranscript: Bool
   let registrationError: String?
   let onShowOnboarding: () -> Void
 
@@ -27,6 +28,15 @@ struct VoiceBehaviorSettingsSection: View {
         VStack(alignment: .leading, spacing: 2) {
           Text("Allow interrupting the assistant")
           Text("Keeps the mic live while the assistant speaks. Without headphones, speaker echo can cut replies short — leave this off on open speakers.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+
+      Toggle(isOn: $showTranscript) {
+        VStack(alignment: .leading, spacing: 2) {
+          Text("Show transcript text")
+          Text("Show live conversation text in the voice panel instead of the voice visualizer")
             .font(.caption)
             .foregroundStyle(.secondary)
         }

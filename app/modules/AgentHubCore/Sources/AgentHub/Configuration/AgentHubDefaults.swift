@@ -214,6 +214,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let voiceOnboardingCompleted = "\(keyPrefix)voice.onboardingCompleted"
 
+  /// Whether the voice HUD shows live transcript text instead of the voice
+  /// visualizer. Type: Bool (default: false)
+  public static let voiceShowTranscript = "\(keyPrefix)voice.showTranscript"
+
   // MARK: - Feature Flags
 
   /// Whether smart mode (AI-powered orchestration planning) is enabled

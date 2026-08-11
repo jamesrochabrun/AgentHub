@@ -27,7 +27,8 @@ extension VoiceHUDConfiguration {
         allowBargeIn: AgentHubDefaults.voiceAllowBargeIn,
         hudFrame: AgentHubDefaults.voiceHUDFrame,
         screenCaptureEnabled: AgentHubDefaults.voiceScreenCaptureEnabled,
-        onboardingCompleted: AgentHubDefaults.voiceOnboardingCompleted
+        onboardingCompleted: AgentHubDefaults.voiceOnboardingCompleted,
+        showTranscript: AgentHubDefaults.voiceShowTranscript
       ),
       accentColor: .brandSecondary
     )
