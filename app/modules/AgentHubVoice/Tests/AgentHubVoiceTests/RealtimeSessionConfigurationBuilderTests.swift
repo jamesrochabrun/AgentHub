@@ -77,6 +77,15 @@ struct RealtimeSessionConfigurationBuilderTests {
     #expect(turnDetection["interrupt_response"] as? Bool == false)
     #expect(instructions.contains("Always speak and respond in Spanish"))
     #expect(instructions.contains("Never switch languages"))
+    // The pin must REPLACE the follow-the-user's-language directive — sending
+    // both contradictory rules lets background audio flip the reply language.
+    #expect(
+      !instructions.contains("Reply in the language the user is currently speaking")
+    )
+    #expect(!instructions.contains("If the language is unclear, use English."))
+    // Pinning must not drop the session/approval discipline rules.
+    #expect(instructions.contains("call list_sessions"))
+    #expect(instructions.contains("explicit confirmation"))
   }
 
   @Test

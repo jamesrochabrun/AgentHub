@@ -2,10 +2,16 @@ import Foundation
 import SwiftOpenAI
 
 public enum RealtimeSessionConfigurationBuilder {
-  public static let instructions = """
+  private static let persona = """
     You are AgentHub's concise voice controller. Keep spoken responses brief and natural.
+    """
+
+  private static let followUserLanguage = """
     Reply in the language the user is currently speaking. If the language is unclear, use English.
     Do not switch languages because of background audio or your own spoken response.
+    """
+
+  private static let sessionDiscipline = """
     Before referring to a session, call list_sessions and use only session IDs returned by tools.
     Never invent or guess a session ID.
     For Claude approval requests, you must call approve_pending_tool without confirmed first,
@@ -16,6 +22,9 @@ public enum RealtimeSessionConfigurationBuilder {
     read_session_response and answer with a concise spoken summary of its content. Never tell
     the user that results are displayed in the panel, workspace, or screen instead of answering.
     """
+
+  public static let instructions = [persona, followUserLanguage, sessionDiscipline]
+    .joined(separator: "\n")
 
   public static let screenCaptureInstructions = """
     When the user asks about something on their screen, call capture_screen and include the
@@ -28,14 +37,19 @@ public enum RealtimeSessionConfigurationBuilder {
     for tools: VoiceToolRegistry,
     language: String? = nil
   ) -> String {
-    var combined = instructions
+    var combined: String
     if let language, let name = languageName(for: language) {
-      // Replaces the follow-the-user's-language behavior: a pinned language
-      // keeps replies stable when echo or noise distorts transcription.
-      combined += """
-        \nAlways speak and respond in \(name), regardless of the language the \
+      // A pinned language must REPLACE the follow-the-user's-language
+      // directive, not join it: sending both contradictory rules lets
+      // background audio or distorted transcription flip the reply language.
+      let pinnedLanguage = """
+        Always speak and respond in \(name), regardless of the language the \
         user's audio appears to be in. Never switch languages mid-conversation.
         """
+      combined = [persona, pinnedLanguage, sessionDiscipline]
+        .joined(separator: "\n")
+    } else {
+      combined = instructions
     }
     let hasScreenCapture = tools.tools.contains { $0.name == "capture_screen" }
     if hasScreenCapture {
