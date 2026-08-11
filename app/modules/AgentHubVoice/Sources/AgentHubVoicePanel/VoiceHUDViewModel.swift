@@ -76,6 +76,10 @@ public final class VoiceHUDViewModel {
     }
   }
 
+  public var isAssistantSpeaking: Bool {
+    mode == .converse && engine.isAssistantSpeaking
+  }
+
   public var dictationState: DictationState {
     dictationController?.state ?? .idle
   }

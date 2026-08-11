@@ -425,6 +425,42 @@ struct RealtimeVoiceEngineTests {
     #expect(sentAfterPlayback)
   }
 
+  @Test
+  func assistantSpeakingFollowsAudiblePlaybackNotDeltaArrival() async {
+    let transport = await FakeRealtimeTransport()
+    let audio = await FakeRealtimeAudioController()
+    let engine = makeEngine(transport: transport, audio: audio)
+
+    await engine.start(
+      service: OpenAIServiceFactory.service(apiKey: "test"),
+      settings: VoiceEngineSettings(),
+      tools: VoiceToolRegistry(tools: [])
+    )
+    transport.yield(.sessionUpdated)
+    await waitUntil { engine.state == .idle }
+
+    // A delta starts speaking immediately, without waiting for a mic tick.
+    await audio.setPlaybackActive(true)
+    transport.yield(
+      .responseAudioDelta(itemID: "item-1", responseID: "resp-1", delta: "")
+    )
+    await waitUntil { engine.isAssistantSpeaking }
+    #expect(engine.isAssistantSpeaking)
+
+    // Deltas stop arriving (network done) while audio is still audibly
+    // playing — the orb must keep animating through the whole response.
+    transport.yield(.responseAudioDone(itemID: "item-1", responseID: "resp-1"))
+    await audio.yieldMicrophoneBuffer()
+    await waitUntil { engine.assistantLevel == 0 }
+    #expect(engine.isAssistantSpeaking)
+
+    // The playback queue drains; the next mic tick flips speaking off.
+    await audio.setPlaybackActive(false)
+    await audio.yieldMicrophoneBuffer()
+    await waitUntil { !engine.isAssistantSpeaking }
+    #expect(!engine.isAssistantSpeaking)
+  }
+
   private func makeEngine(
     transport: FakeRealtimeTransport,
     audio: FakeRealtimeAudioController

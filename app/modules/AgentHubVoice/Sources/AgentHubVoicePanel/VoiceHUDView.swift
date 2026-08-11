@@ -51,6 +51,7 @@ public struct VoiceHUDView: View {
           voiceId: selectedVoiceId,
           realtimeState: viewModel.realtimeState,
           dictationState: viewModel.dictationState,
+          isAssistantSpeaking: viewModel.isAssistantSpeaking,
           microphoneLevel: viewModel.microphoneLevel,
           assistantLevel: viewModel.assistantLevel,
           accentColor: viewModel.configuration.accentColor

@@ -7,11 +7,16 @@ import SwiftUI
 struct VoiceConversationOrb: View {
   let voice: VoiceOption
   let state: VoiceEngineState
+  /// True while assistant audio is audibly playing — drives a continuous
+  /// pulse for the whole spoken response, because the levels only track
+  /// network delta arrival and go quiet while audio is still playing.
+  let isAssistantSpeaking: Bool
   let microphoneLevel: Float
   let assistantLevel: Float
 
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var isBreathing = false
+  @State private var isSpeakingPulse = false
 
   private var level: CGFloat {
     CGFloat(max(microphoneLevel, assistantLevel))
@@ -71,22 +76,47 @@ struct VoiceConversationOrb: View {
       withAnimation(.easeInOut(duration: 2.4).repeatForever(autoreverses: true)) {
         isBreathing = true
       }
+      updateSpeakingPulse(isAssistantSpeaking)
+    }
+    .onChange(of: isAssistantSpeaking) { _, speaking in
+      updateSpeakingPulse(speaking)
     }
     .accessibilityElement()
     .accessibilityLabel("\(voice.title) voice activity")
+  }
+
+  private func updateSpeakingPulse(_ speaking: Bool) {
+    guard !reduceMotion else { return }
+    if speaking {
+      withAnimation(.easeInOut(duration: 0.45).repeatForever(autoreverses: true)) {
+        isSpeakingPulse = true
+      }
+    } else {
+      withAnimation(.smooth(duration: 0.3)) {
+        isSpeakingPulse = false
+      }
+    }
   }
 
   private var breathScale: CGFloat {
     isBreathing ? 1.04 : 1.0
   }
 
+  private var speakingBoost: CGFloat {
+    // Reduce Motion still gets a static swell so "speaking" stays visible.
+    if reduceMotion {
+      return isAssistantSpeaking ? 0.08 : 0.0
+    }
+    return isSpeakingPulse ? 0.1 : 0.0
+  }
+
   private var coreScale: CGFloat {
     guard isConnected else { return 1 }
-    return breathScale + level * 0.22
+    return breathScale + speakingBoost + level * 0.22
   }
 
   private var haloScale: CGFloat {
     guard isConnected else { return 0.9 }
-    return breathScale + level * 0.5
+    return breathScale + speakingBoost * 1.6 + level * 0.5
   }
 }

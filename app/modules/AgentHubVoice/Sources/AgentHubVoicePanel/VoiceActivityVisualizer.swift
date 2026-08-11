@@ -8,6 +8,7 @@ struct VoiceActivityVisualizer: View {
   let voiceId: String
   let realtimeState: VoiceEngineState
   let dictationState: DictationState
+  let isAssistantSpeaking: Bool
   let microphoneLevel: Float
   let assistantLevel: Float
   var accentColor: Color?
@@ -23,6 +24,7 @@ struct VoiceActivityVisualizer: View {
         VoiceConversationOrb(
           voice: voice,
           state: realtimeState,
+          isAssistantSpeaking: isAssistantSpeaking,
           microphoneLevel: microphoneLevel,
           assistantLevel: assistantLevel
         )

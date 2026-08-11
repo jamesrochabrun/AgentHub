@@ -32,6 +32,11 @@ public final class RealtimeVoiceEngine {
   public private(set) var transcripts: [VoiceTranscriptEntry] = []
   public private(set) var microphoneLevel: Float = 0
   public private(set) var assistantLevel: Float = 0
+  /// True while assistant audio is audibly playing. Unlike `assistantLevel`,
+  /// which tracks network delta arrival (OpenAI streams audio much faster
+  /// than realtime), this follows actual playback so UI stays animated for
+  /// the full spoken response.
+  public private(set) var isAssistantSpeaking = false
   public private(set) var errorMessage: String?
   public private(set) var isMicrophoneMuted = false
 
@@ -145,6 +150,7 @@ public final class RealtimeVoiceEngine {
     backgroundUpdates.removeAll()
     microphoneLevel = 0
     assistantLevel = 0
+    isAssistantSpeaking = false
     isMicrophoneMuted = false
   }
 
@@ -181,9 +187,13 @@ public final class RealtimeVoiceEngine {
           // Half-duplex echo gate: while assistant audio is audibly playing,
           // drop mic frames so speaker echo can't trigger turn detection or
           // pollute transcription. Barge-in opts back into full duplex.
-          let gatedByPlayback = !allowBargeIn && audio.isPlaybackActive()
+          let playbackActive = audio.isPlaybackActive()
+          let gatedByPlayback = !allowBargeIn && playbackActive
           let level = gatedByPlayback ? 0 : Self.rms(buffer)
-          let muted = await self?.updateMicrophoneLevel(level) ?? true
+          let muted = await self?.updateAudioActivity(
+            microphoneLevel: level,
+            playbackActive: playbackActive
+          ) ?? true
           if !muted,
              !gatedByPlayback,
              await readyState.get(),
@@ -230,6 +240,7 @@ public final class RealtimeVoiceEngine {
       currentAudioItemID = itemID
       await audio.play(base64Audio: delta, itemID: itemID)
       assistantLevel = Self.pcm16Level(base64: delta)
+      isAssistantSpeaking = true
       state = .speaking
     case .responseAudioDone:
       assistantLevel = 0
@@ -242,6 +253,7 @@ public final class RealtimeVoiceEngine {
       }
       currentAudioItemID = nil
       assistantLevel = 0
+      isAssistantSpeaking = false
       state = .userSpeaking
     case .responseTranscriptDelta(_, _, let delta),
          .responseTextDelta(_, _, let delta):
@@ -337,8 +349,14 @@ public final class RealtimeVoiceEngine {
     transcripts = reducer.entries
   }
 
-  private func updateMicrophoneLevel(_ level: Float) -> Bool {
-    microphoneLevel = level
+  private func updateAudioActivity(
+    microphoneLevel: Float,
+    playbackActive: Bool
+  ) -> Bool {
+    self.microphoneLevel = microphoneLevel
+    // Mic buffers are the heartbeat (~50ms): they keep this true for the
+    // whole audible response and flip it off when the playback queue drains.
+    isAssistantSpeaking = playbackActive
     return isMicrophoneMuted
   }
 
