@@ -666,8 +666,39 @@ public struct MonitoringCardView: View {
 
   // MARK: - Header
 
+  /// Parent module for the header label: repo name plus whether the session
+  /// runs in a worktree, resolved via the selected repositories.
+  private var sessionModulePreview: SessionHoverPreview {
+    SessionHoverPreview.make(
+      session: session,
+      customName: nil,
+      repositories: WorktreeModuleResolver.mergedRepositories(
+        (agentHub?.claudeSessionsViewModel.selectedRepositories ?? [])
+          + (agentHub?.codexSessionsViewModel.selectedRepositories ?? [])
+      )
+    )
+  }
+
+  private var isWorktreeSession: Bool {
+    sessionModulePreview.worktreePath != nil
+  }
+
   private var header: some View {
     HStack(spacing: 8) {
+      // Parent module: folder + repo name, only for worktree sessions — the
+      // path row already identifies root-repo sessions.
+      if isWorktreeSession {
+        Image(systemName: "folder")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .layoutPriority(1)
+        Text(sessionModulePreview.repositoryName)
+          .font(.primaryDefault)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .layoutPriority(1)
+      }
+
       // Activity indicator circle - shows when session is working
       Circle()
         .fill(isHighlighted ? Color.brandPrimary(for: providerKind) : .gray.opacity(0.3))
@@ -917,6 +948,7 @@ public struct MonitoringCardView: View {
     MonitoringCardPathRow(
       session: session,
       providerKind: providerKind,
+      isWorktree: isWorktreeSession,
       contentMode: $contentMode,
       availableContentModes: availableContentModes
     )
@@ -1030,6 +1062,7 @@ enum MonitoringCardContentModeItems {
 private struct MonitoringCardPathRow: View {
   let session: CLISession
   let providerKind: SessionProviderKind
+  let isWorktree: Bool
   @Binding var contentMode: MonitoringCardContentMode
   let availableContentModes: [MonitoringCardContentMode]
 
@@ -1086,7 +1119,7 @@ private struct MonitoringCardPathRow: View {
 
   private var projectPathLabel: some View {
     HStack(spacing: 4) {
-      Image(systemName: "folder")
+      Image(systemName: isWorktree ? "arrow.triangle.branch" : "folder")
         .font(.caption)
         .foregroundStyle(.secondary)
 
