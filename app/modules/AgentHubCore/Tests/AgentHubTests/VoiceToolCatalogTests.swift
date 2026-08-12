@@ -159,6 +159,8 @@ struct VoiceToolCatalogTests {
         "read_session_response",
         "read_session_history",
         "send_prompt",
+        "watch_session",
+        "stop_watching",
         "focus_session",
         "list_worktrees",
         "launch_session",
@@ -360,6 +362,40 @@ struct VoiceToolCatalogTests {
     )
     let statusToolRequests = executor.statusRequests.filter { $0.0 == "claude-1" }
     #expect(statusToolRequests.map(\.1) == [3, 12])
+  }
+
+  @Test
+  func watchSessionArmsAWatcherWithoutSendingAnything() async throws {
+    let executor = MockVoiceToolExecutor()
+    executor.details["claude-1"] = detail(
+      sessionId: "claude-1",
+      provider: .claude
+    )
+    let catalog = VoiceToolCatalog(
+      executor: executor,
+      onBackgroundUpdate: { _ in }
+    )
+    let registry = VoiceToolRegistry(tools: catalog.makeTools())
+
+    let missing = await registry.execute(
+      name: "watch_session",
+      arguments: #"{"session_id":"unknown"}"#
+    )
+    #expect(try status(missing) == "not_found")
+    #expect(executor.completionStreamSessionIds.isEmpty)
+
+    let watching = await registry.execute(
+      name: "watch_session",
+      arguments: #"{"session_id":"claude-1"}"#
+    )
+    #expect(try status(watching) == "watching")
+    #expect(executor.completionStreamSessionIds == ["claude-1"])
+
+    let stopped = await registry.execute(
+      name: "stop_watching",
+      arguments: "{}"
+    )
+    #expect(try status(stopped) == "stopped")
   }
 
   @Test

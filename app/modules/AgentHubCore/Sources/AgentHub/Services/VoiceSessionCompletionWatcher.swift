@@ -2,9 +2,15 @@ import Foundation
 
 @MainActor
 public protocol VoiceSessionCompletionWatching: AnyObject {
-  func watch(sessionId: String, name: String)
+  func watch(sessionId: String, name: String, announceTimeout: Bool)
   func cancel(sessionId: String)
   func cancelAll()
+}
+
+extension VoiceSessionCompletionWatching {
+  public func watch(sessionId: String, name: String) {
+    watch(sessionId: sessionId, name: name, announceTimeout: false)
+  }
 }
 
 @MainActor
@@ -33,7 +39,11 @@ public final class VoiceSessionCompletionWatcher: VoiceSessionCompletionWatching
     self.onUpdate = onUpdate
   }
 
-  public func watch(sessionId: String, name: String) {
+  public func watch(
+    sessionId: String,
+    name: String,
+    announceTimeout: Bool
+  ) {
     cancel(sessionId: sessionId)
     let stream = executor.completionStream(sessionId: sessionId)
     let armingDelay = self.armingDelay
@@ -104,6 +114,11 @@ public final class VoiceSessionCompletionWatcher: VoiceSessionCompletionWatching
           }
         }
       }
+      // Reached only when the maximum-duration cap finished the stream —
+      // every completion/approval report returns from inside the loop. An
+      // explicitly requested watch must not end silently.
+      guard announceTimeout, !Task.isCancelled else { return }
+      onUpdate("\(name) is still running — I've stopped watching it.")
     }
     onActiveCountChanged?(tasks.count)
   }

@@ -51,6 +51,8 @@ public final class VoiceToolCatalog: VoiceToolCataloging {
       readResponseTool(),
       readHistoryTool(),
       sendPromptTool(),
+      watchSessionTool(),
+      stopWatchingTool(),
       focusSessionTool(),
       listWorktreesTool(),
       launchSessionTool(),
@@ -274,6 +276,83 @@ public final class VoiceToolCatalog: VoiceToolCataloging {
         completionWatcher.watch(sessionId: arguments.sessionId, name: name)
       }
       return Self.encode(result)
+    }
+  }
+
+  private func watchSessionTool() -> VoiceTool {
+    VoiceTool(
+      name: "watch_session",
+      description: """
+        Watch a session without sending it anything, and announce when it
+        finishes or needs approval. Use when the user asks to observe a
+        session, keep an eye on it, or be told when it's done — typically
+        while they work in a different session. If the watch times out,
+        AgentHub announces the session is still running.
+        """,
+      parameters: objectSchema(
+        properties: [
+          "session_id": [
+            "type": "string",
+            "description": "Exact ID returned by list_sessions.",
+          ],
+        ],
+        required: ["session_id"]
+      )
+    ) { [weak self] data in
+      guard let self else { return Self.unavailableJSON }
+      guard let arguments = Self.decode(SessionArguments.self, from: data) else {
+        return Self.invalidArgumentsJSON
+      }
+      guard let detail = executor.sessionStatus(
+        sessionId: arguments.sessionId
+      ) else {
+        return Self.encode(
+          BasicToolResult(
+            status: "not_found",
+            message: "No session has that ID."
+          )
+        )
+      }
+      completionWatcher.watch(
+        sessionId: arguments.sessionId,
+        name: detail.name,
+        announceTimeout: true
+      )
+      return Self.encode(
+        BasicToolResult(
+          status: "watching",
+          message: "Watching \(detail.name)."
+        )
+      )
+    }
+  }
+
+  private func stopWatchingTool() -> VoiceTool {
+    VoiceTool(
+      name: "stop_watching",
+      description: """
+        Stop watching a session the user asked to observe. Omit session_id
+        to stop every active watch.
+        """,
+      parameters: objectSchema(
+        properties: [
+          "session_id": [
+            "type": "string",
+            "description": """
+              Exact ID returned by list_sessions. Omit to stop all watches.
+              """,
+          ],
+        ]
+      )
+    ) { [weak self] data in
+      guard let self else { return Self.unavailableJSON }
+      let arguments = Self.decode(OptionalSessionArguments.self, from: data)
+      if let sessionId = arguments?.sessionId {
+        completionWatcher.cancel(sessionId: sessionId)
+      } else {
+        completionWatcher.cancelAll()
+      }
+      return Self.encode(BasicToolResult(status: "stopped", message: nil))
     }
   }
 

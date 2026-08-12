@@ -211,6 +211,48 @@ struct VoiceSessionCompletionWatcherTests {
   }
 
   @Test
+  func explicitWatchAnnouncesTimeoutInsteadOfEndingSilently() async {
+    let executor = CompletionWatcherExecutor()
+    var updates: [String] = []
+    let watcher = VoiceSessionCompletionWatcher(
+      executor: executor,
+      armingDelay: .seconds(1),
+      completionDebounce: .seconds(1),
+      maximumDuration: .milliseconds(20)
+    ) {
+      updates.append($0)
+    }
+
+    watcher.watch(sessionId: "session-1", name: "Build", announceTimeout: true)
+    executor.yield(.thinking)
+    await waitUntil { !updates.isEmpty }
+
+    #expect(updates == ["Build is still running — I've stopped watching it."])
+  }
+
+  @Test
+  func implicitWatchStillTimesOutSilently() async {
+    let executor = CompletionWatcherExecutor()
+    var updates: [String] = []
+    var counts: [Int] = []
+    let watcher = VoiceSessionCompletionWatcher(
+      executor: executor,
+      armingDelay: .seconds(1),
+      completionDebounce: .seconds(1),
+      maximumDuration: .milliseconds(20),
+      onActiveCountChanged: { counts.append($0) }
+    ) {
+      updates.append($0)
+    }
+
+    watcher.watch(sessionId: "session-1", name: "Build")
+    executor.yield(.thinking)
+    await waitUntil { counts.last == 0 }
+
+    #expect(updates.isEmpty)
+  }
+
+  @Test
   func reportsApprovalImmediately() async {
     let executor = CompletionWatcherExecutor()
     var updates: [String] = []
