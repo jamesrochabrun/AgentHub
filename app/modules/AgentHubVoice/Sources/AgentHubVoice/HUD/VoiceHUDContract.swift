@@ -56,6 +56,12 @@ public enum VoiceDictationOutcome: Equatable, Sendable {
   case failed(String)
 }
 
+extension VoiceHUDHost {
+  public func makeSessionContext() -> String? {
+    nil
+  }
+}
+
 /// Implemented by the host app to back the voice HUD.
 @MainActor
 public protocol VoiceHUDHost: AnyObject {
@@ -67,6 +73,11 @@ public protocol VoiceHUDHost: AnyObject {
 
   /// Tools exposed to the realtime conversation.
   func makeToolRegistry() -> VoiceToolRegistry
+
+  /// Compact, human-readable snapshot of the host's current sessions,
+  /// injected once into the realtime instructions at connect time. Keep it
+  /// short — it is paid model context. Return nil to omit.
+  func makeSessionContext() -> String?
 
   /// The OpenAI API key, or nil when not configured yet.
   func resolveAPIKey() async throws -> String?

@@ -62,13 +62,13 @@ public struct VoiceHUDView: View {
         VoiceHUDErrorBanner(message: errorMessage)
       }
 
-      VoiceMicButton(
-        mode: viewModel.mode,
-        state: viewModel.realtimeState,
-        isActive: viewModel.isActive,
-        level: viewModel.microphoneLevel,
-        action: viewModel.toggleMicrophone
-      )
+      if viewModel.mode == .converse, viewModel.isActive {
+        Text(converseStatusCaption)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
+
+      controlBar
     }
     .padding(16)
     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -95,6 +95,59 @@ public struct VoiceHUDView: View {
           showsOnboarding = false
         }
       )
+    }
+  }
+
+  /// Primary start/end control centered, with the mute toggle beside it
+  /// while a conversation is live.
+  private var controlBar: some View {
+    ZStack {
+      VoiceMicButton(
+        mode: viewModel.mode,
+        state: viewModel.realtimeState,
+        isActive: viewModel.isActive,
+        level: viewModel.microphoneLevel,
+        productName: viewModel.configuration.productName,
+        action: viewModel.toggleMicrophone
+      )
+
+      if viewModel.mode == .converse, viewModel.isActive {
+        HStack {
+          Spacer()
+          VoiceMuteButton(
+            isMuted: viewModel.isMicrophoneMuted,
+            isGated: viewModel.isMicrophoneGated,
+            isStandby: viewModel.isMicrophoneStandbyMuted,
+            action: viewModel.toggleMicrophoneMute
+          )
+        }
+        .padding(.trailing, 24)
+      }
+    }
+  }
+
+  private var converseStatusCaption: String {
+    if viewModel.isMicrophoneGated {
+      return "Sharing an update…"
+    }
+    if viewModel.isMicrophoneStandbyMuted {
+      return "Muted while waiting — tap the mic to talk"
+    }
+    switch viewModel.realtimeState {
+    case .connecting:
+      return "Connecting…"
+    case .idle:
+      return viewModel.isMicrophoneMuted ? "Muted" : "Listening"
+    case .userSpeaking:
+      return "You're speaking"
+    case .thinking:
+      return "Thinking…"
+    case .speaking:
+      return "\(viewModel.configuration.productName) is speaking"
+    case .executingTool(let name):
+      return "Running \(name)"
+    case .disconnected, .failed:
+      return ""
     }
   }
 }

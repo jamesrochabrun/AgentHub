@@ -129,6 +129,75 @@ struct RealtimeSessionConfigurationBuilderTests {
   }
 
   @Test
+  func sessionHistoryInstructionsOnlyAppearWithTheHistoryTool() {
+    let historyTool = VoiceTool(
+      name: "read_session_history",
+      description: "Reads history",
+      parameters: ["type": "object"]
+    ) { _ in
+      "{}"
+    }
+    let otherTool = VoiceTool(
+      name: "list_sessions",
+      description: "Lists sessions",
+      parameters: ["type": "object"]
+    ) { _ in
+      "{}"
+    }
+
+    let withHistory = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [otherTool, historyTool])
+    )
+    #expect(withHistory.contains("read_session_history"))
+
+    let withoutHistory = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [otherTool])
+    )
+    #expect(!withoutHistory.contains("read_session_history"))
+  }
+
+  @Test
+  func sessionContextIsAppendedWithStalenessWarningWhenPresent() {
+    let context = "2 sessions:\n- Fix login (claude, agenthub, Thinking)"
+
+    let withContext = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: []),
+      sessionContext: context
+    )
+    #expect(withContext.contains("Session snapshot"))
+    #expect(withContext.contains("may be stale"))
+    #expect(withContext.contains("Fix login (claude, agenthub, Thinking)"))
+    #expect(withContext.hasSuffix(context))
+
+    let withoutContext = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: []),
+      sessionContext: "   \n"
+    )
+    #expect(!withoutContext.contains("Session snapshot"))
+
+    let nilContext = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [])
+    )
+    #expect(!nilContext.contains("Session snapshot"))
+  }
+
+  @Test
+  func makeThreadsSessionContextIntoConfigurationInstructions() throws {
+    let configuration = RealtimeSessionConfigurationBuilder.make(
+      settings: VoiceEngineSettings(),
+      tools: VoiceToolRegistry(tools: []),
+      sessionContext: "1 session:\n- Build (codex, repo, Idle)"
+    )
+
+    let data = try JSONEncoder().encode(configuration)
+    let object = try #require(
+      JSONSerialization.jsonObject(with: data) as? [String: Any]
+    )
+    let instructions = try #require(object["instructions"] as? String)
+    #expect(instructions.contains("- Build (codex, repo, Idle)"))
+  }
+
+  @Test
   func worktreeTaskInstructionsOnlyAppearWithTheTaskTool() {
     let taskTool = VoiceTool(
       name: "create_worktree_tasks",

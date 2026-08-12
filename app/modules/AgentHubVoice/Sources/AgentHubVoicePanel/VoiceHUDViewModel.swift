@@ -80,6 +80,28 @@ public final class VoiceHUDViewModel {
     mode == .converse && engine.isAssistantSpeaking
   }
 
+  public var isMicrophoneMuted: Bool {
+    engine.isMicrophoneMuted
+  }
+
+  public var isMicrophoneGated: Bool {
+    mode == .converse && engine.isMicrophoneGated
+  }
+
+  public var isMicrophoneStandbyMuted: Bool {
+    mode == .converse && engine.isStandbyMuted
+  }
+
+  public func toggleMicrophoneMute() {
+    // A standby-muted mic looks muted, so the tap must unmute — releasing
+    // standby for this wait — not engage the user mute on top of it.
+    if engine.isStandbyMuted, !engine.isMicrophoneMuted {
+      engine.overrideStandbyMute()
+      return
+    }
+    engine.setMicrophoneMuted(!engine.isMicrophoneMuted)
+  }
+
   public var dictationState: DictationState {
     dictationController?.state ?? .idle
   }
@@ -198,7 +220,8 @@ public final class VoiceHUDViewModel {
       await service.startRealtime(
         engine: engine,
         settings: settings,
-        tools: host.makeToolRegistry()
+        tools: host.makeToolRegistry(),
+        sessionContext: host.makeSessionContext()
       )
     default:
       engine.stop()

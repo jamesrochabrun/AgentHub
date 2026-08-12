@@ -68,6 +68,13 @@ public final class AgentHubVoiceHUDHost: VoiceHUDHost {
     )
   }
 
+  public func makeSessionContext() -> String? {
+    guard let provider else { return nil }
+    return VoiceSessionContextBuilder.make(
+      summary: provider.voiceToolExecutor.listSessions()
+    )
+  }
+
   public func resolveAPIKey() async throws -> String? {
     guard let provider else { return nil }
     return try await provider.openAIKeyProvider.resolve()?.key

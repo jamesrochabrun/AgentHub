@@ -272,7 +272,10 @@ public final class AgentHubProvider {
 
   public private(set) lazy var voiceToolCatalog: any VoiceToolCataloging =
     VoiceToolCatalog(
-      executor: voiceToolExecutor
+      executor: voiceToolExecutor,
+      onBackgroundWaitCountChanged: { [weak self] count in
+        self?.realtimeVoiceEngine.setAwaitingBackgroundWork(count > 0)
+      }
     ) { [weak self] update in
       self?.realtimeVoiceEngine.pushBackgroundUpdate(update)
     }

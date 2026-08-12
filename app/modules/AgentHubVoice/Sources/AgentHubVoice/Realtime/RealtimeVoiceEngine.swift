@@ -39,6 +39,16 @@ public final class RealtimeVoiceEngine {
   public private(set) var isAssistantSpeaking = false
   public private(set) var errorMessage: String?
   public private(set) var isMicrophoneMuted = false
+  /// True while the delivery gate is dropping microphone frames (a session
+  /// announcement is in flight). The UI should render the microphone as
+  /// paused — showing a hot mic here would misstate what the engine hears.
+  public var isMicrophoneGated: Bool { isDeliveringBackgroundUpdate }
+  /// True while the engine auto-muted the microphone because a session
+  /// completion is being awaited: background noise during a long wait would
+  /// otherwise reach the model as phantom turns. Unlike the delivery gate
+  /// this is user-overridable — tapping unmute releases it for the current
+  /// wait.
+  public private(set) var isStandbyMuted = false
 
   private let transportFactory: RealtimeTransportFactory
   private let audioFactory: RealtimeAudioFactory
@@ -52,6 +62,15 @@ public final class RealtimeVoiceEngine {
   private var currentAudioItemID: String?
   private var isResponseCreatePending = false
   private var backgroundUpdates: [String] = []
+  private var allowBargeIn = false
+  /// Gates the microphone while a background update is being delivered —
+  /// from flush until the announcement's turn settles. In that window the
+  /// engine is between responses, so background noise would either interrupt
+  /// the pending announcement or be committed as a phantom user turn.
+  /// Deliberately separate from `isMicrophoneMuted`, which is the user's
+  /// manual mute and must never be clobbered by this transient gate.
+  private var isDeliveringBackgroundUpdate = false
+  private var isAwaitingBackgroundWork = false
 
   public init(
     transportFactory: @escaping RealtimeTransportFactory = {
@@ -79,7 +98,8 @@ public final class RealtimeVoiceEngine {
   public func start(
     service: any OpenAIService,
     settings: VoiceEngineSettings,
-    tools: VoiceToolRegistry
+    tools: VoiceToolRegistry,
+    sessionContext: String? = nil
   ) async {
     stop()
     state = .connecting
@@ -89,11 +109,13 @@ public final class RealtimeVoiceEngine {
       fail("Microphone permission is required for conversation mode.")
       return
     }
+    allowBargeIn = settings.allowBargeIn
 
     do {
       let configuration = RealtimeSessionConfigurationBuilder.make(
         settings: settings,
-        tools: tools
+        tools: tools,
+        sessionContext: sessionContext
       )
       let pair = try await Task { @RealtimeActor in
         let transport = try await transportFactory(
@@ -147,6 +169,10 @@ public final class RealtimeVoiceEngine {
     activeResponseID = nil
     currentAudioItemID = nil
     isResponseCreatePending = false
+    isDeliveringBackgroundUpdate = false
+    isAwaitingBackgroundWork = false
+    isStandbyMuted = false
+    allowBargeIn = false
     backgroundUpdates.removeAll()
     microphoneLevel = 0
     assistantLevel = 0
@@ -155,10 +181,33 @@ public final class RealtimeVoiceEngine {
   }
 
   public func setMicrophoneMuted(_ isMuted: Bool) {
+    // The user took control of the microphone; standby yields either way.
+    isStandbyMuted = false
     isMicrophoneMuted = isMuted
     if isMuted {
       microphoneLevel = 0
     }
+  }
+
+  /// Signals whether any session completion is being awaited (watchers
+  /// active). Engages standby mute on the false→true transition only, so a
+  /// user who unmuted mid-wait is not re-muted by repeated signals.
+  public func setAwaitingBackgroundWork(_ awaiting: Bool) {
+    let wasAwaiting = isAwaitingBackgroundWork
+    isAwaitingBackgroundWork = awaiting
+    if awaiting, !wasAwaiting, !isMicrophoneMuted {
+      isStandbyMuted = true
+      microphoneLevel = 0
+    }
+    if !awaiting {
+      isStandbyMuted = false
+    }
+  }
+
+  /// Releases standby for the current wait without touching the user mute —
+  /// the unmute affordance while the engine is standby-muted.
+  public func overrideStandbyMute() {
+    isStandbyMuted = false
   }
 
   public func pushBackgroundUpdate(_ update: String) {
@@ -245,6 +294,10 @@ public final class RealtimeVoiceEngine {
     case .responseAudioDone:
       assistantLevel = 0
     case .inputAudioBufferSpeechStarted:
+      // Unreachable while the delivery gate holds (no frames reach the
+      // server), but if speech was detected the microphone is demonstrably
+      // live — never leave the gate stuck on.
+      isDeliveringBackgroundUpdate = false
       let audioEndMS = await audio.interruptPlayback()
       if let currentAudioItemID, let audioEndMS {
         await transport.send(
@@ -303,6 +356,10 @@ public final class RealtimeVoiceEngine {
       if activeResponseID != nil || isResponseCreatePending {
         break
       }
+      // The turn is fully settled (tool-call continuations included), so an
+      // announcement in flight has finished — reopen the microphone before
+      // the next queued update re-gates it.
+      isDeliveringBackgroundUpdate = false
       state = .idle
       flushBackgroundUpdateIfPossible()
     case .error(let message):
@@ -353,11 +410,12 @@ public final class RealtimeVoiceEngine {
     microphoneLevel: Float,
     playbackActive: Bool
   ) -> Bool {
-    self.microphoneLevel = microphoneLevel
+    let silenced = isDeliveringBackgroundUpdate || isStandbyMuted
+    self.microphoneLevel = silenced ? 0 : microphoneLevel
     // Mic buffers are the heartbeat (~50ms): they keep this true for the
     // whole audible response and flip it off when the playback queue drains.
     isAssistantSpeaking = playbackActive
-    return isMicrophoneMuted
+    return isMicrophoneMuted || silenced
   }
 
   private func flushBackgroundUpdateIfPossible() {
@@ -368,6 +426,11 @@ public final class RealtimeVoiceEngine {
       return
     }
     let update = backgroundUpdates.removeFirst()
+    // Barge-in users opted into interrupting the assistant, and that
+    // includes cutting off an announcement — only gate for everyone else.
+    if !allowBargeIn {
+      isDeliveringBackgroundUpdate = true
+    }
     state = .thinking
     isResponseCreatePending = true
     Task { @RealtimeActor in
@@ -379,6 +442,7 @@ public final class RealtimeVoiceEngine {
   private func fail(_ message: String) {
     errorMessage = message
     state = .failed(message)
+    isDeliveringBackgroundUpdate = false
   }
 
   private func handleStreamFailure(_ error: any Error) {

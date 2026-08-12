@@ -55,12 +55,21 @@ private final class MockVoiceSessionManager: VoiceSessionManaging {
 
 private struct StubTranscriptReader: VoiceSessionTranscriptReading {
   let textsByPath: [String: String]
+  var turnsByPath: [String: [VoiceTranscriptTurn]] = [:]
 
   func latestAssistantText(
     atPath path: String,
     provider: SessionProviderKind
   ) async -> String? {
     textsByPath[path]
+  }
+
+  func recentTurns(
+    atPath path: String,
+    provider: SessionProviderKind,
+    turnLimit: Int
+  ) async -> [VoiceTranscriptTurn] {
+    Array((turnsByPath[path] ?? []).suffix(turnLimit))
   }
 }
 
@@ -310,6 +319,87 @@ struct VoiceAgentToolExecutorTests {
     #expect(await executor.latestResponse(sessionId: "s1") == nil)
     #expect(await executor.latestResponse(sessionId: "missing") == nil)
     #expect(await executor.latestResponse(sessionId: nil) == nil)
+  }
+
+  @Test
+  func sessionHistoryReadsTurnsAndFallsBackToTargetSession() async {
+    let turns = [
+      VoiceTranscriptTurn(role: "user", text: "run the tests"),
+      VoiceTranscriptTurn(role: "assistant", text: "All 23 passed."),
+    ]
+    let reader = StubTranscriptReader(
+      textsByPath: [:],
+      turnsByPath: ["/tmp/s1.jsonl": turns]
+    )
+    let target = VoiceSessionTarget(
+      sessionId: "s1",
+      provider: .claude,
+      name: "Build",
+      projectPath: "/repo",
+      lastActivityAt: Date()
+    )
+    let (executor, claude, _) = makeExecutor(
+      target: target,
+      transcriptReader: reader
+    )
+    claude.voiceSessions = [
+      session(id: "s1", sessionFilePath: "/tmp/s1.jsonl")
+    ]
+    claude.sessionCustomNames["s1"] = "Build"
+
+    let explicit = await executor.sessionHistory(sessionId: "s1", turnLimit: 6)
+    #expect(explicit?.sessionId == "s1")
+    #expect(explicit?.name == "Build")
+    #expect(explicit?.turns == turns)
+
+    let limited = await executor.sessionHistory(sessionId: "s1", turnLimit: 1)
+    #expect(limited?.turns == [turns[1]])
+
+    let defaulted = await executor.sessionHistory(sessionId: nil, turnLimit: 6)
+    #expect(defaulted?.sessionId == "s1")
+
+    #expect(await executor.sessionHistory(sessionId: "missing", turnLimit: 6) == nil)
+  }
+
+  @Test
+  func sessionHistoryIsNilWithoutTurns() async {
+    let (executor, claude, _) = makeExecutor(target: nil)
+    claude.voiceSessions = [
+      session(id: "s1", sessionFilePath: "/tmp/s1.jsonl")
+    ]
+
+    #expect(await executor.sessionHistory(sessionId: "s1", turnLimit: 6) == nil)
+  }
+
+  @Test
+  func sessionStatusHonorsActivityLimitAndClampsIt() {
+    let (executor, claude, _) = makeExecutor()
+    claude.voiceSessions = [session(id: "s1")]
+    let activities = (1...30).map { index in
+      ActivityEntry(
+        timestamp: Date(),
+        type: .toolUse(name: "Bash"),
+        description: "activity \(index)"
+      )
+    }
+    claude.monitorStates["s1"] = SessionMonitorState(
+      status: .thinking,
+      recentActivities: activities
+    )
+
+    let defaulted = executor.sessionStatus(sessionId: "s1")
+    #expect(defaulted?.recentActivities.count == 3)
+    #expect(defaulted?.recentActivities.last?.description == "activity 30")
+
+    let expanded = executor.sessionStatus(sessionId: "s1", activityLimit: 10)
+    #expect(expanded?.recentActivities.count == 10)
+    #expect(expanded?.recentActivities.first?.description == "activity 21")
+
+    let clamped = executor.sessionStatus(sessionId: "s1", activityLimit: 500)
+    #expect(
+      clamped?.recentActivities.count
+        == VoiceSessionStatusLimits.maximumActivityCount
+    )
   }
 
   @Test

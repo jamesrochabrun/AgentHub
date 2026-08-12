@@ -43,9 +43,16 @@ public enum RealtimeSessionConfigurationBuilder {
     earlier answer. After the tool returns, tell the user which repository was used.
     """
 
+  public static let sessionHistoryInstructions = """
+    read_session_response only returns a session's latest answer. When the user asks about
+    earlier prompts, or what a session has been working on over time, call
+    read_session_history instead.
+    """
+
   public static func instructions(
     for tools: VoiceToolRegistry,
-    language: String? = nil
+    language: String? = nil,
+    sessionContext: String? = nil
   ) -> String {
     var combined: String
     if let language, let name = languageName(for: language) {
@@ -69,12 +76,27 @@ public enum RealtimeSessionConfigurationBuilder {
     if hasWorktreeTasks {
       combined += "\n" + worktreeTaskInstructions
     }
+    let hasSessionHistory = tools.tools.contains { $0.name == "read_session_history" }
+    if hasSessionHistory {
+      combined += "\n" + sessionHistoryInstructions
+    }
+    if let sessionContext = sessionContext?.trimmingCharacters(
+      in: .whitespacesAndNewlines
+    ), !sessionContext.isEmpty {
+      combined += """
+        \nSession snapshot from when this conversation connected — it may be \
+        stale and has no IDs. Use it for awareness only; always call \
+        list_sessions before acting on a session.
+        \(sessionContext)
+        """
+    }
     return combined
   }
 
   public static func make(
     settings: VoiceEngineSettings,
-    tools: VoiceToolRegistry
+    tools: VoiceToolRegistry,
+    sessionContext: String? = nil
   ) -> OpenAIRealtimeSessionConfiguration {
     let eagerness =
       OpenAIRealtimeSessionConfiguration.TurnDetection.DetectionType.Eagerness(
@@ -87,7 +109,11 @@ public enum RealtimeSessionConfigurationBuilder {
         model: settings.dictationModel,
         language: settings.language
       ),
-      instructions: instructions(for: tools, language: settings.language),
+      instructions: instructions(
+        for: tools,
+        language: settings.language,
+        sessionContext: sessionContext
+      ),
       modalities: [.audio],
       outputAudioFormat: .pcm16,
       tools: tools.functionTools,

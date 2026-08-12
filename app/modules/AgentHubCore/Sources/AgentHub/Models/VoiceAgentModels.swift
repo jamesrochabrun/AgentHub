@@ -147,6 +147,36 @@ public struct VoiceApprovalResponseResult: Codable, Equatable, Sendable {
   }
 }
 
+public struct VoiceTranscriptTurn: Codable, Equatable, Sendable {
+  public let role: String
+  public let text: String
+
+  public init(role: String, text: String) {
+    self.role = role
+    self.text = text
+  }
+}
+
+public struct VoiceSessionHistory: Codable, Equatable, Sendable {
+  public let sessionId: String
+  public let provider: SessionProviderKind
+  public let name: String
+  /// Oldest first, so reading top to bottom matches conversation order.
+  public let turns: [VoiceTranscriptTurn]
+
+  public init(
+    sessionId: String,
+    provider: SessionProviderKind,
+    name: String,
+    turns: [VoiceTranscriptTurn]
+  ) {
+    self.sessionId = sessionId
+    self.provider = provider
+    self.name = name
+    self.turns = turns
+  }
+}
+
 public struct VoiceLatestResponse: Codable, Equatable, Sendable {
   public let sessionId: String
   public let provider: SessionProviderKind

@@ -15,8 +15,27 @@ private final class MockVoiceToolExecutor: VoiceAgentToolExecuting {
     sessions
   }
 
-  func sessionStatus(sessionId: String) -> VoiceSessionStatusDetail? {
-    details[sessionId]
+  private(set) var statusRequests: [(String, Int)] = []
+
+  func sessionStatus(
+    sessionId: String,
+    activityLimit: Int
+  ) -> VoiceSessionStatusDetail? {
+    statusRequests.append((sessionId, activityLimit))
+    return details[sessionId]
+  }
+
+  var histories: [String: VoiceSessionHistory] = [:]
+  var defaultHistory: VoiceSessionHistory?
+  private(set) var historyRequests: [(String?, Int)] = []
+
+  func sessionHistory(
+    sessionId: String?,
+    turnLimit: Int
+  ) async -> VoiceSessionHistory? {
+    historyRequests.append((sessionId, turnLimit))
+    guard let sessionId else { return defaultHistory }
+    return histories[sessionId]
   }
 
   func sendPrompt(
@@ -138,6 +157,7 @@ struct VoiceToolCatalogTests {
         "list_sessions",
         "get_session_status",
         "read_session_response",
+        "read_session_history",
         "send_prompt",
         "focus_session",
         "list_worktrees",
@@ -268,6 +288,78 @@ struct VoiceToolCatalogTests {
       arguments: "{}"
     )
     #expect(try status(missing) == "not_found")
+  }
+
+  @Test
+  func readSessionHistoryDefaultsToTargetAndSixTurns() async throws {
+    let executor = MockVoiceToolExecutor()
+    executor.histories["claude-1"] = VoiceSessionHistory(
+      sessionId: "claude-1",
+      provider: .claude,
+      name: "Build",
+      turns: [
+        VoiceTranscriptTurn(role: "user", text: "run the tests"),
+        VoiceTranscriptTurn(role: "assistant", text: "All 23 passed."),
+      ]
+    )
+    executor.defaultHistory = VoiceSessionHistory(
+      sessionId: "target-1",
+      provider: .codex,
+      name: "Target",
+      turns: [VoiceTranscriptTurn(role: "assistant", text: "Target turn.")]
+    )
+    let catalog = VoiceToolCatalog(
+      executor: executor,
+      onBackgroundUpdate: { _ in }
+    )
+    let registry = VoiceToolRegistry(tools: catalog.makeTools())
+
+    let explicit = await registry.execute(
+      name: "read_session_history",
+      arguments: #"{"session_id":"claude-1","turn_limit":10}"#
+    )
+    #expect(explicit.contains("run the tests"))
+    #expect(explicit.contains("All 23 passed."))
+
+    let defaulted = await registry.execute(
+      name: "read_session_history",
+      arguments: "{}"
+    )
+    #expect(defaulted.contains("Target turn."))
+    #expect(executor.historyRequests.map(\.0) == ["claude-1", nil])
+    #expect(executor.historyRequests.map(\.1) == [10, 6])
+
+    executor.defaultHistory = nil
+    let missing = await registry.execute(
+      name: "read_session_history",
+      arguments: "{}"
+    )
+    #expect(try status(missing) == "not_found")
+  }
+
+  @Test
+  func sessionStatusPassesActivityLimitAndDefaultsToThree() async throws {
+    let executor = MockVoiceToolExecutor()
+    executor.details["claude-1"] = detail(
+      sessionId: "claude-1",
+      provider: .claude
+    )
+    let catalog = VoiceToolCatalog(
+      executor: executor,
+      onBackgroundUpdate: { _ in }
+    )
+    let registry = VoiceToolRegistry(tools: catalog.makeTools())
+
+    _ = await registry.execute(
+      name: "get_session_status",
+      arguments: #"{"session_id":"claude-1"}"#
+    )
+    _ = await registry.execute(
+      name: "get_session_status",
+      arguments: #"{"session_id":"claude-1","activity_limit":12}"#
+    )
+    let statusToolRequests = executor.statusRequests.filter { $0.0 == "claude-1" }
+    #expect(statusToolRequests.map(\.1) == [3, 12])
   }
 
   @Test

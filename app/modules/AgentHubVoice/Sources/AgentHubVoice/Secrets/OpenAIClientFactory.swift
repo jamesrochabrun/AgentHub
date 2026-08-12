@@ -21,8 +21,14 @@ public final class OpenAIClient: @unchecked Sendable {
   public func startRealtime(
     engine: RealtimeVoiceEngine,
     settings: VoiceEngineSettings,
-    tools: VoiceToolRegistry
+    tools: VoiceToolRegistry,
+    sessionContext: String? = nil
   ) async {
-    await engine.start(service: service, settings: settings, tools: tools)
+    await engine.start(
+      service: service,
+      settings: settings,
+      tools: tools,
+      sessionContext: sessionContext
+    )
   }
 }

@@ -40,10 +40,26 @@ extension CLISessionsViewModel: VoiceSessionManaging {
   }
 }
 
+public enum VoiceSessionStatusLimits {
+  public static let defaultActivityCount = 3
+  public static let maximumActivityCount = 20
+}
+
+public enum VoiceSessionHistoryLimits {
+  public static let defaultTurnCount = 6
+}
+
 @MainActor
 public protocol VoiceAgentToolExecuting: AnyObject {
   func listSessions() -> VoiceSessionsSummary
-  func sessionStatus(sessionId: String) -> VoiceSessionStatusDetail?
+  func sessionStatus(
+    sessionId: String,
+    activityLimit: Int
+  ) -> VoiceSessionStatusDetail?
+  func sessionHistory(
+    sessionId: String?,
+    turnLimit: Int
+  ) async -> VoiceSessionHistory?
   func sendPrompt(sessionId: String, prompt: String) -> VoicePromptDeliveryResult
   func focusSession(sessionId: String) -> Bool
   func launchSession(
@@ -63,6 +79,15 @@ public protocol VoiceAgentToolExecuting: AnyObject {
   ) -> VoiceApprovalResponseResult
   func completionStream(sessionId: String) -> AsyncStream<SessionStatus>
   func latestResponse(sessionId: String?) async -> VoiceLatestResponse?
+}
+
+extension VoiceAgentToolExecuting {
+  public func sessionStatus(sessionId: String) -> VoiceSessionStatusDetail? {
+    sessionStatus(
+      sessionId: sessionId,
+      activityLimit: VoiceSessionStatusLimits.defaultActivityCount
+    )
+  }
 }
 
 @MainActor
@@ -171,15 +196,25 @@ public final class VoiceAgentToolExecutor: VoiceAgentToolExecuting {
     )
   }
 
-  public func sessionStatus(sessionId: String) -> VoiceSessionStatusDetail? {
+  public func sessionStatus(
+    sessionId: String,
+    activityLimit: Int
+  ) -> VoiceSessionStatusDetail? {
     if let resolvedSessionId = resolvedSessionID(forPendingID: sessionId) {
-      return sessionStatus(sessionId: resolvedSessionId)
+      return sessionStatus(
+        sessionId: resolvedSessionId,
+        activityLimit: activityLimit
+      )
     }
     guard let record = record(sessionId: sessionId) else {
       return nil
     }
+    let limit = min(
+      max(1, activityLimit),
+      VoiceSessionStatusLimits.maximumActivityCount
+    )
     let state = record.viewModel.monitorStates[sessionId]
-    let activities = Array(state?.recentActivities.suffix(3) ?? []).map { activity in
+    let activities = Array(state?.recentActivities.suffix(limit) ?? []).map { activity in
       VoiceSessionActivity(
         timestamp: activity.timestamp,
         description: Self.truncate(activity.description, limit: 200)
@@ -436,6 +471,47 @@ public final class VoiceAgentToolExecutor: VoiceAgentToolExecuting {
   }
 
   public func latestResponse(sessionId: String?) async -> VoiceLatestResponse? {
+    guard let transcript = resolveTranscript(sessionId: sessionId) else {
+      return nil
+    }
+    guard let text = await transcriptReader.latestAssistantText(
+      atPath: transcript.path,
+      provider: transcript.provider
+    ), !text.isEmpty else {
+      return nil
+    }
+    return VoiceLatestResponse(
+      sessionId: transcript.sessionId,
+      provider: transcript.provider,
+      name: transcript.name,
+      text: text
+    )
+  }
+
+  public func sessionHistory(
+    sessionId: String?,
+    turnLimit: Int
+  ) async -> VoiceSessionHistory? {
+    guard let transcript = resolveTranscript(sessionId: sessionId) else {
+      return nil
+    }
+    let turns = await transcriptReader.recentTurns(
+      atPath: transcript.path,
+      provider: transcript.provider,
+      turnLimit: turnLimit
+    )
+    guard !turns.isEmpty else { return nil }
+    return VoiceSessionHistory(
+      sessionId: transcript.sessionId,
+      provider: transcript.provider,
+      name: transcript.name,
+      turns: turns
+    )
+  }
+
+  private func resolveTranscript(
+    sessionId: String?
+  ) -> (sessionId: String, provider: SessionProviderKind, name: String, path: String)? {
     guard var lookupId = sessionId
       ?? targetResolver.resolve(manualSessionId: nil)?.sessionId else {
       return nil
@@ -452,18 +528,12 @@ public final class VoiceAgentToolExecutor: VoiceAgentToolExecuting {
         record.session.sessionFilePath
       }
     guard let path else { return nil }
-    guard let text = await transcriptReader.latestAssistantText(
-      atPath: path,
-      provider: record.provider
-    ), !text.isEmpty else {
-      return nil
-    }
-    return VoiceLatestResponse(
+    return (
       sessionId: lookupId,
       provider: record.provider,
       name: record.viewModel.sessionCustomNames[lookupId]
         ?? record.session.displayName,
-      text: text
+      path: path
     )
   }
 

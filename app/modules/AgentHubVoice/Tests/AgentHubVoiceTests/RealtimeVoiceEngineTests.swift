@@ -426,6 +426,206 @@ struct RealtimeVoiceEngineTests {
   }
 
   @Test
+  func backgroundUpdateDeliveryGatesMicrophoneUntilTurnSettles() async {
+    let transport = await FakeRealtimeTransport()
+    let audio = await FakeRealtimeAudioController()
+    let engine = makeEngine(transport: transport, audio: audio)
+
+    await engine.start(
+      service: OpenAIServiceFactory.service(apiKey: "test"),
+      settings: VoiceEngineSettings(allowBargeIn: false),
+      tools: VoiceToolRegistry(tools: [])
+    )
+    transport.yield(.sessionUpdated)
+    await waitUntil { engine.state == .idle }
+
+    engine.pushBackgroundUpdate("Session finished")
+    await waitUntil {
+      await transport.sentCommands().count == 2
+    }
+
+    // Between the flush and the announcement finishing, background noise
+    // must not reach the server as a phantom user turn.
+    await audio.yieldMicrophoneBuffer()
+    for _ in 0..<20 {
+      await Task.yield()
+    }
+    #expect(!(await sentInputAudio(transport)))
+    #expect(engine.microphoneLevel == 0)
+    // The gate is transient plumbing — it must not read as a user mute,
+    // but the UI must still be able to show the mic as paused.
+    #expect(!engine.isMicrophoneMuted)
+    #expect(engine.isMicrophoneGated)
+
+    transport.yield(.responseCreated(responseID: "announce-1"))
+    transport.yield(
+      .responseDone(
+        responseID: "announce-1",
+        status: "completed",
+        statusDetails: nil
+      )
+    )
+    await waitUntil { engine.state == .idle }
+    #expect(!engine.isMicrophoneGated)
+
+    await audio.yieldMicrophoneBuffer()
+    await waitUntil { await sentInputAudio(transport) }
+    #expect(await sentInputAudio(transport))
+  }
+
+  @Test
+  func bargeInKeepsMicrophoneLiveDuringBackgroundUpdateDelivery() async {
+    let transport = await FakeRealtimeTransport()
+    let audio = await FakeRealtimeAudioController()
+    let engine = makeEngine(transport: transport, audio: audio)
+
+    await engine.start(
+      service: OpenAIServiceFactory.service(apiKey: "test"),
+      settings: VoiceEngineSettings(allowBargeIn: true),
+      tools: VoiceToolRegistry(tools: [])
+    )
+    transport.yield(.sessionUpdated)
+    await waitUntil { engine.state == .idle }
+
+    engine.pushBackgroundUpdate("Session finished")
+    await waitUntil {
+      await transport.sentCommands().count == 2
+    }
+
+    await audio.yieldMicrophoneBuffer()
+    await waitUntil { await sentInputAudio(transport) }
+    #expect(await sentInputAudio(transport))
+    #expect(!engine.isMicrophoneGated)
+  }
+
+  @Test
+  func failedAnnouncementReleasesTheDeliveryGate() async {
+    let transport = await FakeRealtimeTransport()
+    let audio = await FakeRealtimeAudioController()
+    let engine = makeEngine(transport: transport, audio: audio)
+
+    await engine.start(
+      service: OpenAIServiceFactory.service(apiKey: "test"),
+      settings: VoiceEngineSettings(allowBargeIn: false),
+      tools: VoiceToolRegistry(tools: [])
+    )
+    transport.yield(.sessionUpdated)
+    await waitUntil { engine.state == .idle }
+
+    engine.pushBackgroundUpdate("Session finished")
+    await waitUntil {
+      await transport.sentCommands().count == 2
+    }
+
+    transport.yield(.responseCreated(responseID: "announce-1"))
+    transport.yield(
+      .responseDone(
+        responseID: "announce-1",
+        status: "failed",
+        statusDetails: [
+          "status_details": [
+            "type": "failed",
+            "error": [
+              "code": "server_error",
+              "message": "The server had a hiccup.",
+            ],
+          ]
+        ]
+      )
+    )
+    await waitUntil { engine.state == .idle }
+
+    await audio.yieldMicrophoneBuffer()
+    await waitUntil { await sentInputAudio(transport) }
+    #expect(await sentInputAudio(transport))
+  }
+
+  @Test
+  func standbyMutesMicrophoneWhileAwaitingBackgroundWork() async {
+    let transport = await FakeRealtimeTransport()
+    let audio = await FakeRealtimeAudioController()
+    let engine = makeEngine(transport: transport, audio: audio)
+
+    await engine.start(
+      service: OpenAIServiceFactory.service(apiKey: "test"),
+      settings: VoiceEngineSettings(allowBargeIn: false),
+      tools: VoiceToolRegistry(tools: [])
+    )
+    transport.yield(.sessionUpdated)
+    await waitUntil { engine.state == .idle }
+
+    engine.setAwaitingBackgroundWork(true)
+    #expect(engine.isStandbyMuted)
+    #expect(!engine.isMicrophoneMuted)
+
+    await audio.yieldMicrophoneBuffer()
+    for _ in 0..<20 {
+      await Task.yield()
+    }
+    #expect(!(await sentInputAudio(transport)))
+
+    engine.setAwaitingBackgroundWork(false)
+    #expect(!engine.isStandbyMuted)
+    await audio.yieldMicrophoneBuffer()
+    await waitUntil { await sentInputAudio(transport) }
+    #expect(await sentInputAudio(transport))
+  }
+
+  @Test
+  func standbyOverrideStaysReleasedUntilTheNextWaitBegins() async {
+    let transport = await FakeRealtimeTransport()
+    let audio = await FakeRealtimeAudioController()
+    let engine = makeEngine(transport: transport, audio: audio)
+
+    await engine.start(
+      service: OpenAIServiceFactory.service(apiKey: "test"),
+      settings: VoiceEngineSettings(allowBargeIn: false),
+      tools: VoiceToolRegistry(tools: [])
+    )
+    transport.yield(.sessionUpdated)
+    await waitUntil { engine.state == .idle }
+
+    engine.setAwaitingBackgroundWork(true)
+    #expect(engine.isStandbyMuted)
+
+    // The user taps unmute to talk mid-wait: standby releases and repeated
+    // "still waiting" signals must not re-mute them.
+    engine.overrideStandbyMute()
+    #expect(!engine.isStandbyMuted)
+    engine.setAwaitingBackgroundWork(true)
+    #expect(!engine.isStandbyMuted)
+
+    // A fresh wait after this one ends re-engages standby.
+    engine.setAwaitingBackgroundWork(false)
+    engine.setAwaitingBackgroundWork(true)
+    #expect(engine.isStandbyMuted)
+  }
+
+  @Test
+  func standbyNeverClobbersTheUserMute() async {
+    let transport = await FakeRealtimeTransport()
+    let audio = await FakeRealtimeAudioController()
+    let engine = makeEngine(transport: transport, audio: audio)
+
+    await engine.start(
+      service: OpenAIServiceFactory.service(apiKey: "test"),
+      settings: VoiceEngineSettings(allowBargeIn: false),
+      tools: VoiceToolRegistry(tools: [])
+    )
+    transport.yield(.sessionUpdated)
+    await waitUntil { engine.state == .idle }
+
+    engine.setMicrophoneMuted(true)
+    engine.setAwaitingBackgroundWork(true)
+    #expect(!engine.isStandbyMuted)
+    #expect(engine.isMicrophoneMuted)
+
+    // The wait ending must not unmute a user who muted themselves.
+    engine.setAwaitingBackgroundWork(false)
+    #expect(engine.isMicrophoneMuted)
+  }
+
+  @Test
   func assistantSpeakingFollowsAudiblePlaybackNotDeltaArrival() async {
     let transport = await FakeRealtimeTransport()
     let audio = await FakeRealtimeAudioController()
@@ -459,6 +659,13 @@ struct RealtimeVoiceEngineTests {
     await audio.yieldMicrophoneBuffer()
     await waitUntil { !engine.isAssistantSpeaking }
     #expect(!engine.isAssistantSpeaking)
+  }
+
+  private func sentInputAudio(_ transport: FakeRealtimeTransport) async -> Bool {
+    await transport.sentCommands().contains {
+      if case .inputAudio = $0 { return true }
+      return false
+    }
   }
 
   private func makeEngine(
