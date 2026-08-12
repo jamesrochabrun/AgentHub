@@ -1391,8 +1391,13 @@ public struct MultiProviderSessionsListView: View {
               )
 
               if isExpanded {
-                workspaceRows(for: groupWorkspaces, ownedItems: workspaceOwnedItems)
-                sessionRows(for: group.items.filter { !isWorkspaceOwned($0) })
+                // Indent module children so the module → session hierarchy reads
+                // at a glance.
+                VStack(alignment: .leading, spacing: 0) {
+                  workspaceRows(for: groupWorkspaces, ownedItems: workspaceOwnedItems)
+                  sessionRows(for: group.items.filter { !isWorkspaceOwned($0) })
+                }
+                .padding(.leading, 12)
               }
             }
 
