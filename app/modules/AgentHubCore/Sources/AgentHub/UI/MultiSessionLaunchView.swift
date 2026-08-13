@@ -77,6 +77,10 @@ public struct MultiSessionLaunchView: View {
           }
         }
 
+        if viewModel.launchMode == .manual && viewModel.selectedRepository != nil {
+          ContextLaunchSection(viewModel: viewModel)
+        }
+
         if viewModel.launchMode == .manual {
           if style == .compact {
             // Compact order: providers first, then work mode.

@@ -127,6 +127,11 @@ public final class MultiSessionLaunchViewModel {
   private let intelligenceViewModel: IntelligenceViewModel?
   private let worktreeBranchNamingService: (any WorktreeBranchNamingServiceProtocol)?
   private let worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)?
+  let contextProfileService: (any ContextProfileServiceProtocol)?
+  let contextFileLoader: any ContextFileLoading
+  private let contextAssembler: any ContextAssembling
+  private let contextPayloadStore: any ContextPayloadStoring
+  let contextTokenEstimator: any ContextTokenEstimating
   private var playedWorktreeSuccessPaths: Set<String> = []
   /// Stable id for the in-flight branch-naming step, so its progress maps to a
   /// single transient row in the unified top bar (the coordinator).
@@ -183,6 +188,21 @@ public final class MultiSessionLaunchViewModel {
   public var smartProvider: SmartProvider = .claude
   public var smartPlanText: String = ""
   public var smartOrchestrationPlan: OrchestrationPlan?
+
+  // MARK: - Context State
+
+  /// Profile pre-attached to the launch (the project default, or one the user
+  /// picked). Shown as a removable chip in the launcher.
+  public var attachedContextProfile: ContextProfile?
+  /// Ad-hoc curation from the Context Builder; overrides the attached profile.
+  public var pendingContextSelection: ContextSelection?
+  /// Selected paths that did not resolve in the repo, surfaced next to the chip.
+  public var contextMissingPaths: [String] = []
+  /// Approximate token cost of the active selection, for the chip row.
+  public var contextSummaryTokens: Int?
+  /// Once the user removes the chip, the default profile must not silently
+  /// reattach on the next repository refresh.
+  private var contextRemovedByUser = false
 
   // MARK: - Callbacks
 
@@ -242,7 +262,12 @@ public final class MultiSessionLaunchViewModel {
     worktreeService: GitWorktreeService = GitWorktreeService(),
     intelligenceViewModel: IntelligenceViewModel? = nil,
     worktreeBranchNamingService: (any WorktreeBranchNamingServiceProtocol)? = nil,
-    worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)? = nil
+    worktreeSuccessSoundService: (any WorktreeSuccessSoundServiceProtocol)? = nil,
+    contextProfileService: (any ContextProfileServiceProtocol)? = nil,
+    contextFileLoader: (any ContextFileLoading)? = nil,
+    contextAssembler: any ContextAssembling = ContextAssembler(),
+    contextPayloadStore: any ContextPayloadStoring = ContextPayloadStore(),
+    contextTokenEstimator: any ContextTokenEstimating = ContextTokenEstimator()
   ) {
     self.claudeViewModel = claudeViewModel
     self.codexViewModel = codexViewModel
@@ -250,6 +275,11 @@ public final class MultiSessionLaunchViewModel {
     self.intelligenceViewModel = intelligenceViewModel
     self.worktreeBranchNamingService = worktreeBranchNamingService
     self.worktreeSuccessSoundService = worktreeSuccessSoundService
+    self.contextProfileService = contextProfileService
+    self.contextFileLoader = contextFileLoader ?? ContextFileLoader()
+    self.contextAssembler = contextAssembler
+    self.contextPayloadStore = contextPayloadStore
+    self.contextTokenEstimator = contextTokenEstimator
   }
 
   // MARK: - Attachments
@@ -264,6 +294,118 @@ public final class MultiSessionLaunchViewModel {
       try? FileManager.default.removeItem(at: file.url)
     }
     attachedFiles.removeAll { $0.id == file.id }
+  }
+
+  // MARK: - Context
+
+  /// The selection that will launch: ad-hoc curation wins over the attached profile.
+  public var activeContextSelection: ContextSelection? {
+    let selection = pendingContextSelection ?? attachedContextProfile?.selection
+    guard let selection, !selection.isEmpty else { return nil }
+    return selection
+  }
+
+  public var contextProfilesAvailable: Bool { contextProfileService != nil }
+
+  /// Attaches the project's default profile as a removable chip. No-op when the
+  /// user already curated context or explicitly removed the chip.
+  public func loadDefaultContextProfile() async {
+    guard let repo = selectedRepository,
+      let contextProfileService,
+      attachedContextProfile == nil,
+      pendingContextSelection == nil,
+      !contextRemovedByUser
+    else { return }
+    guard let profile = try? await contextProfileService.defaultProfile(forProjectPath: repo.path) else { return }
+    // The repository can change while the profile loads; never attach across repos.
+    guard selectedRepository?.path == repo.path else { return }
+    attachedContextProfile = profile
+  }
+
+  public func attachContextProfile(_ profile: ContextProfile) {
+    attachedContextProfile = profile
+    pendingContextSelection = nil
+    contextMissingPaths = []
+    contextRemovedByUser = false
+  }
+
+  public func applyCuratedContext(_ selection: ContextSelection) {
+    pendingContextSelection = selection.isEmpty ? nil : selection
+    contextMissingPaths = []
+    contextRemovedByUser = selection.isEmpty
+  }
+
+  public func removeAttachedContextProfile() {
+    attachedContextProfile = nil
+    pendingContextSelection = nil
+    contextMissingPaths = []
+    contextSummaryTokens = nil
+    contextRemovedByUser = true
+  }
+
+  /// Cheap metrics pass for the chip row: approximate tokens plus which
+  /// selected paths do not resolve. Never loads file contents into UI state.
+  public func refreshContextSummary() async {
+    guard let repo = selectedRepository, let selection = activeContextSelection else {
+      contextSummaryTokens = nil
+      contextMissingPaths = []
+      return
+    }
+    let paths = selection.files.map(\.relativePath)
+    let metrics = await contextFileLoader.fileMetrics(relativePaths: paths, projectPath: repo.path)
+    let externalStatuses = await contextFileLoader.externalFileStatuses(
+      absolutePaths: selection.externalPaths
+    )
+
+    var missing = paths.filter { metrics[$0] == nil }
+    var tokens = metrics.values.reduce(0) {
+      $0 + contextTokenEstimator.estimatedTokens(forByteCount: $1.byteCount)
+    }
+    for (path, status) in externalStatuses {
+      switch status {
+      case .text(let fileMetrics):
+        tokens += contextTokenEstimator.estimatedTokens(forByteCount: fileMetrics.byteCount)
+      case .attachment:
+        // Only the referenced path costs tokens; the agent reads the file itself.
+        tokens += contextTokenEstimator.estimatedTokens(forByteCount: path.utf8.count)
+      case .missing:
+        missing.append(path)
+      }
+    }
+    contextMissingPaths = missing.sorted()
+    let snippetTokens = selection.textSnippets.reduce(0) {
+      $0 + contextTokenEstimator.estimatedTokens(forByteCount: $1.content.utf8.count)
+    }
+    contextSummaryTokens =
+      tokens + snippetTokens
+      + contextTokenEstimator.estimatedTokens(forByteCount: selection.instructions.utf8.count)
+  }
+
+  /// Loads, assembles, and materializes the active selection into the prompt
+  /// text handed to `startNewSessionInHub`. Nil when nothing is selected — the
+  /// launch then behaves exactly as before the context feature existed.
+  func resolveContextBlock(repoPath: String) async -> String? {
+    guard let selection = activeContextSelection else { return nil }
+    let projectLoad = await contextFileLoader.loadFiles(
+      relativePaths: selection.files.map(\.relativePath),
+      projectPath: repoPath
+    )
+    let externalLoad = await contextFileLoader.loadExternalFiles(
+      absolutePaths: selection.externalPaths
+    )
+    contextMissingPaths = (projectLoad.missing + externalLoad.missing).sorted()
+    let assembled = contextAssembler.assemble(ContextAssemblyInput(
+      files: projectLoad.loaded + externalLoad.loaded,
+      missingPaths: contextMissingPaths,
+      attachmentPaths: projectLoad.attachments + externalLoad.attachments,
+      textSnippets: selection.textSnippets,
+      instructions: selection.instructions
+    ))
+    guard !assembled.block.isEmpty else { return nil }
+    guard let payload = try? contextPayloadStore.materializeIfNeeded(block: assembled.block) else {
+      return assembled.block
+    }
+    return payload.promptText
   }
 
   // MARK: - Actions
@@ -540,6 +682,7 @@ public final class MultiSessionLaunchViewModel {
     let initialInputText: String? =
       trimmedPrompt.isEmpty && !attachmentPaths.isEmpty ? "\(attachmentPaths) " : nil
     let repoPath = repo.path
+    let contextBlock = await resolveContextBlock(repoPath: repoPath)
 
     switch workMode {
     case .local:
@@ -552,7 +695,12 @@ public final class MultiSessionLaunchViewModel {
           "\(Self.aiWorktreeLogPrefix, privacy: .public) Skipping AI worktree naming because the Start Session launch is in local mode"
         )
       }
-      try await launchLocalSessions(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
+      try await launchLocalSessions(
+        initialPrompt: initialPrompt,
+        initialInputText: initialInputText,
+        contextBlock: contextBlock,
+        repoPath: repoPath
+      )
     case .worktree:
       let providers = selectedProviders
       let worktreeNamingModeName = worktreeNamingMode.rawValue
@@ -589,13 +737,19 @@ public final class MultiSessionLaunchViewModel {
       }
 
       if providers.count > 1 {
-        try await launchBothProviders(initialPrompt: initialPrompt, initialInputText: initialInputText, repoPath: repoPath)
+        try await launchBothProviders(
+          initialPrompt: initialPrompt,
+          initialInputText: initialInputText,
+          contextBlock: contextBlock,
+          repoPath: repoPath
+        )
       } else if let provider = providers.first {
         switch provider {
         case .claude:
           try await launchSingleProvider(
             initialPrompt: initialPrompt,
             initialInputText: initialInputText,
+            contextBlock: contextBlock,
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: claudeViewModel,
@@ -609,6 +763,7 @@ public final class MultiSessionLaunchViewModel {
           try await launchSingleProvider(
             initialPrompt: initialPrompt,
             initialInputText: initialInputText,
+            contextBlock: contextBlock,
             repoPath: repoPath,
             branchName: singleBranchName,
             viewModel: codexViewModel,
@@ -951,12 +1106,21 @@ public final class MultiSessionLaunchViewModel {
     smartProvider = .claude
     smartPlanText = ""
     smartOrchestrationPlan = nil
+    attachedContextProfile = nil
+    pendingContextSelection = nil
+    contextMissingPaths = []
+    contextRemovedByUser = false
   }
 
   // MARK: - Private
 
   /// Starts sessions directly in repo directory without worktree creation
-  private func launchLocalSessions(initialPrompt: String?, initialInputText: String?, repoPath: String) async throws {
+  private func launchLocalSessions(
+    initialPrompt: String?,
+    initialInputText: String?,
+    contextBlock: String?,
+    repoPath: String
+  ) async throws {
     let providers = selectedProviders
 
     for provider in providers {
@@ -985,6 +1149,7 @@ public final class MultiSessionLaunchViewModel {
         worktree,
         initialPrompt: initialPrompt,
         initialInputText: initialInputText,
+        contextBlock: contextBlock,
         dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions,
         permissionModePlan: isPlanModeEnabled,
         worktreeName: claudeWorktreeOption
@@ -1001,6 +1166,7 @@ public final class MultiSessionLaunchViewModel {
         worktree,
         initialPrompt: initialPrompt,
         initialInputText: initialInputText,
+        contextBlock: contextBlock,
         permissionModePlan: isPlanModeEnabled
       )
     }
@@ -1009,7 +1175,12 @@ public final class MultiSessionLaunchViewModel {
     codexViewModel.refresh()
   }
 
-  private func launchBothProviders(initialPrompt: String?, initialInputText: String?, repoPath: String) async throws {
+  private func launchBothProviders(
+    initialPrompt: String?,
+    initialInputText: String?,
+    contextBlock: String?,
+    repoPath: String
+  ) async throws {
     // Ensure the repository is added to both providers
     claudeViewModel.addRepository(at: repoPath)
     codexViewModel.addRepository(at: repoPath)
@@ -1075,6 +1246,7 @@ public final class MultiSessionLaunchViewModel {
         worktree,
         initialPrompt: initialPrompt,
         initialInputText: initialInputText,
+        contextBlock: contextBlock,
         dangerouslySkipPermissions: claudeMode.dangerouslySkipPermissions,
         permissionModePlan: isPlanModeEnabled
       )
@@ -1093,6 +1265,7 @@ public final class MultiSessionLaunchViewModel {
         worktree,
         initialPrompt: initialPrompt,
         initialInputText: initialInputText,
+        contextBlock: contextBlock,
         permissionModePlan: isPlanModeEnabled
       )
     }
@@ -1104,6 +1277,7 @@ public final class MultiSessionLaunchViewModel {
   private func launchSingleProvider(
     initialPrompt: String?,
     initialInputText: String?,
+    contextBlock: String? = nil,
     repoPath: String,
     branchName: String,
     viewModel: CLISessionsViewModel,
@@ -1151,6 +1325,7 @@ public final class MultiSessionLaunchViewModel {
       worktree,
       initialPrompt: initialPrompt,
       initialInputText: initialInputText,
+      contextBlock: contextBlock,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan
     )

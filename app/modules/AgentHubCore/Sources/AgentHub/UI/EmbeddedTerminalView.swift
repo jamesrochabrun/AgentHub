@@ -433,10 +433,16 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       return
     }
 
-    // Normal prompt: send text then Enter
-    terminal.send(txt: prompt)
+    // Normal prompt: bracketed paste (a bare multi-line block would submit on
+    // its first newline), then Enter after a size-scaled delay so the CLI has
+    // processed the payload before the submit arrives.
+    terminal.send(TerminalPromptSubmissionPayload.textBytes(
+      prompt: prompt,
+      bracketedPasteMode: terminal.terminal?.bracketedPasteMode ?? false
+    ))
+    let delay = Self.submitDelay(forByteCount: prompt.utf8.count)
     Task { @MainActor [weak terminal] in
-      try? await Task.sleep(for: .milliseconds(100))
+      try? await Task.sleep(for: delay)
       terminal?.send([13])  // ASCII 13 = carriage return (Enter key)
     }
   }
@@ -461,11 +467,12 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
 
   /// Scales the delay between pasting text and pressing Enter so the CLI
   /// has time to process larger payloads before receiving the submit signal.
-  private static func submitDelay(forByteCount count: Int) -> Duration {
+  static func submitDelay(forByteCount count: Int) -> Duration {
     switch count {
-    case ..<500:   return .milliseconds(100)
-    case ..<2000:  return .milliseconds(250)
-    default:       return .milliseconds(500)
+    case ..<500:    return .milliseconds(100)
+    case ..<2000:   return .milliseconds(250)
+    case ..<16_384: return .milliseconds(500)
+    default:        return .seconds(1)
     }
   }
 

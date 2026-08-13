@@ -41,6 +41,9 @@ public struct AIModelOption: Identifiable, Hashable, Sendable {
   public let reasoningEfforts: [AIReasoningEffort]
   /// The model's default reasoning level, if the provider reports one.
   public let defaultReasoningEffort: String?
+  /// Context window in tokens, when the provider reports one (Codex's
+  /// `models_cache.json` carries `context_window`; Claude has no local source).
+  public let contextWindowTokens: Int?
 
   public var id: String { identifier }
 
@@ -49,12 +52,14 @@ public struct AIModelOption: Identifiable, Hashable, Sendable {
     displayName: String,
     detail: String? = nil,
     reasoningEfforts: [AIReasoningEffort] = [],
-    defaultReasoningEffort: String? = nil
+    defaultReasoningEffort: String? = nil,
+    contextWindowTokens: Int? = nil
   ) {
     self.identifier = identifier
     self.displayName = displayName
     self.detail = detail
     self.reasoningEfforts = reasoningEfforts
     self.defaultReasoningEffort = defaultReasoningEffort
+    self.contextWindowTokens = contextWindowTokens
   }
 }

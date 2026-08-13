@@ -29,6 +29,7 @@ struct ProjectDetailsSessionItem: Identifiable {
 
 private enum ProjectDetailsTab: String, CaseIterable, Identifiable {
   case sessions = "Sessions"
+  case context = "Context"
   case skills = "Skills"
   case rules = "Rules"
   case mcps = "MCPs"
@@ -38,7 +39,7 @@ private enum ProjectDetailsTab: String, CaseIterable, Identifiable {
 
 // MARK: - ProjectDetailsScopeFilter
 
-private enum ProjectDetailsScopeFilter: Hashable {
+enum ProjectDetailsScopeFilter: Hashable {
   case all
   case scope(ProjectAssetScope)
 
@@ -61,10 +62,13 @@ struct ProjectDetailsSheetView: View {
   let onSelectSession: (ProjectDetailsSessionItem) -> Void
 
   @State private var viewModel: ProjectDetailsViewModel
+  @State private var contextViewModel: ProjectContextViewModel
   @State private var selectedTab: ProjectDetailsTab = .sessions
   @State private var skillScopeFilter: ProjectDetailsScopeFilter = .all
+  @State private var contextScopeFilter: ProjectDetailsScopeFilter = .all
   @State private var selectedSkill: ProjectAgentSkill?
   @State private var selectedRule: ProjectAgentRule?
+  @State private var contextEditorState: ProjectContextEditorState?
   @Environment(\.colorScheme) private var colorScheme
 
   init(
@@ -73,6 +77,7 @@ struct ProjectDetailsSheetView: View {
     claudeViewModel: CLISessionsViewModel,
     codexViewModel: CLISessionsViewModel,
     inventoryService: any ProjectDetailsInventoryServiceProtocol = ProjectDetailsInventoryService.shared,
+    contextProfileService: (any ContextProfileServiceProtocol)? = nil,
     onDismiss: @escaping () -> Void,
     onSelectSession: @escaping (ProjectDetailsSessionItem) -> Void
   ) {
@@ -91,6 +96,10 @@ struct ProjectDetailsSheetView: View {
     _viewModel = State(initialValue: ProjectDetailsViewModel(
       projectPath: rootPath,
       service: inventoryService
+    ))
+    _contextViewModel = State(initialValue: ProjectContextViewModel(
+      projectPath: rootPath,
+      service: contextProfileService
     ))
   }
 
@@ -116,6 +125,7 @@ struct ProjectDetailsSheetView: View {
     .onChange(of: selectedTab) { _, _ in
       selectedSkill = nil
       selectedRule = nil
+      contextEditorState = nil
     }
     .background(Color.surfacePanel)
     .frame(
@@ -127,7 +137,10 @@ struct ProjectDetailsSheetView: View {
       maxHeight: .infinity
     )
     .onExitCommand { onDismiss() }
-    .task { await viewModel.load() }
+    .task {
+      await viewModel.load()
+      await contextViewModel.load()
+    }
   }
 
   // MARK: Header
@@ -179,6 +192,32 @@ struct ProjectDetailsSheetView: View {
     switch selectedTab {
     case .sessions:
       ProjectDetailsSessionsGrid(items: sessionItems, onSelect: onSelectSession)
+    case .context:
+      ZStack {
+        if let contextEditorState {
+          ProjectContextEditorView(
+            state: contextEditorState,
+            viewModel: contextViewModel,
+            onBack: { self.contextEditorState = nil }
+          )
+          .transition(.asymmetric(
+            insertion: .move(edge: .trailing).combined(with: .opacity),
+            removal: .move(edge: .trailing).combined(with: .opacity)
+          ))
+        } else {
+          ProjectContextTabView(
+            viewModel: contextViewModel,
+            scopeFilter: $contextScopeFilter,
+            onEdit: { contextEditorState = .edit($0) },
+            onNew: { contextEditorState = .create }
+          )
+          .transition(.asymmetric(
+            insertion: .move(edge: .leading).combined(with: .opacity),
+            removal: .move(edge: .leading).combined(with: .opacity)
+          ))
+        }
+      }
+      .animation(.spring(response: 0.32, dampingFraction: 0.86), value: contextEditorState?.id)
     case .skills:
       if let selectedSkill {
         ProjectSkillDetailView(skill: selectedSkill) {
@@ -215,6 +254,7 @@ struct ProjectDetailsSheetView: View {
   private func tabCount(_ tab: ProjectDetailsTab) -> Int {
     switch tab {
     case .sessions: return sessionItems.count
+    case .context: return contextViewModel.profiles.count
     case .skills: return viewModel.inventory.skills.count
     case .rules: return viewModel.inventory.rules.count
     case .mcps: return viewModel.inventory.mcpServers.count
@@ -569,18 +609,20 @@ private struct ProjectDetailsSkillsGrid: View {
 
 // MARK: - ProjectDetailsScopeFilterChips
 
-private struct ProjectDetailsScopeFilterChips: View {
+struct ProjectDetailsScopeFilterChips: View {
   @Binding var filter: ProjectDetailsScopeFilter
   let totalCount: Int
   let personalCount: Int
   let projectCount: Int
+  /// Display label for the personal scope ("Global" on the Context tab).
+  var personalLabel: String = "Personal"
 
   @Environment(\.runtimeTheme) private var runtimeTheme
 
   var body: some View {
     HStack(spacing: 8) {
       chip("All", count: totalCount, value: .all)
-      chip("Personal", count: personalCount, value: .scope(.personal))
+      chip(personalLabel, count: personalCount, value: .scope(.personal))
       chip("Project", count: projectCount, value: .scope(.project))
       Spacer(minLength: 0)
     }
@@ -910,7 +952,7 @@ struct ProjectAssetCardIcon: View {
 
 // MARK: - Empty & loading states
 
-private struct ProjectDetailsEmptyState: View {
+struct ProjectDetailsEmptyState: View {
   let systemImage: String
   let title: String
   let message: String
@@ -933,7 +975,7 @@ private struct ProjectDetailsEmptyState: View {
   }
 }
 
-private struct ProjectDetailsLoadingState: View {
+struct ProjectDetailsLoadingState: View {
   var body: some View {
     VStack(spacing: 10) {
       ProgressView()
@@ -948,7 +990,7 @@ private struct ProjectDetailsLoadingState: View {
 
 // MARK: - Card background
 
-private struct ProjectDetailsCardBackground: ViewModifier {
+struct ProjectDetailsCardBackground: ViewModifier {
   var highlighted = false
 
   @Environment(\.colorScheme) private var colorScheme
@@ -968,7 +1010,7 @@ private struct ProjectDetailsCardBackground: ViewModifier {
   }
 }
 
-private extension View {
+extension View {
   func projectDetailsCardBackground(highlighted: Bool = false) -> some View {
     modifier(ProjectDetailsCardBackground(highlighted: highlighted))
   }

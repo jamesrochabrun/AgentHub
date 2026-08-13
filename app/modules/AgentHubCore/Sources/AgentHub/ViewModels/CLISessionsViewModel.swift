@@ -3548,18 +3548,23 @@ public final class CLISessionsViewModel {
   /// Starts a new Claude session in the Hub's embedded terminal (not external terminal)
   /// - Parameters:
   ///   - worktree: The worktree to start the session in
+  ///   - contextBlock: Already-materialized curated context (inline block or
+  ///     temp-file reference prompt) prepended to the first message. Nil keeps
+  ///     the launch identical to a launch without the context feature.
   ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
   public func startNewSessionInHub(
     _ worktree: WorktreeBranch,
     launchPath: String? = nil,
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
+    contextBlock: String? = nil,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil
   ) {
-    let promptForTerminalSubmission = providerKind == .claude ? nonEmpty(initialPrompt) : nil
-    let promptForProcessLaunch = providerKind == .claude ? nil : initialPrompt
+    let mergedPrompt = Self.mergedLaunchPrompt(contextBlock: contextBlock, initialPrompt: initialPrompt)
+    let promptForTerminalSubmission = providerKind == .claude ? nonEmpty(mergedPrompt) : nil
+    let promptForProcessLaunch = providerKind == .claude ? nil : mergedPrompt
 
     // Each pending session gets a unique ID, so no need to clear existing terminals
     // Terminals are now keyed by session ID, not worktree path
@@ -3589,6 +3594,20 @@ public final class CLISessionsViewModel {
     Task { @MainActor in
       await watchForNewSession(pending: pending, worktree: worktree)
     }
+  }
+
+  /// Merges curated context with the user's first prompt — one rule for both
+  /// providers. Nil/empty context returns the prompt untouched, so a launch
+  /// without curated context is byte-for-byte today's behavior.
+  static func mergedLaunchPrompt(contextBlock: String?, initialPrompt: String?) -> String? {
+    guard let context = contextBlock?.trimmingCharacters(in: .whitespacesAndNewlines), !context.isEmpty else {
+      return initialPrompt
+    }
+    guard let prompt = initialPrompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+      return context
+        + "\n\nThis is background context for the tasks I'm about to give you. Load it and acknowledge in one line."
+    }
+    return context + "\n\n" + prompt
   }
 
   /// Removes a pending Hub session (e.g., if user cancels)

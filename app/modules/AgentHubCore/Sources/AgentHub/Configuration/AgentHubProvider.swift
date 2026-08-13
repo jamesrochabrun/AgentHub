@@ -145,6 +145,12 @@ public final class AgentHubProvider {
     return AIConfigService(metadataStore: store)
   }()
 
+  /// Saved context profiles (per-project and personal) for curated launch context
+  public private(set) lazy var contextProfileService: (any ContextProfileServiceProtocol)? = {
+    guard let store = metadataStore else { return nil }
+    return ContextProfileService(metadataStore: store)
+  }()
+
   /// Shared `claude -p` invocation service used by short, non-interactive
   /// callers (branch naming, session investigation, etc.).
   public private(set) lazy var programmaticClaudeService: any ClaudeProgrammaticServiceProtocol = ClaudeProgrammaticService(

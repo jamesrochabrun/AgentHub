@@ -113,7 +113,8 @@ public struct CodexModelCatalog: CodexModelCatalogProviding {
           displayName: displayName,
           detail: (trimmedDetail?.isEmpty == false) ? trimmedDetail : nil,
           reasoningEfforts: efforts,
-          defaultReasoningEffort: model.defaultReasoningLevel
+          defaultReasoningEffort: model.defaultReasoningLevel,
+          contextWindowTokens: model.contextWindow
         )
       }
   }
@@ -167,6 +168,7 @@ public struct CodexModelCatalog: CodexModelCatalogProviding {
     let priority: Int?
     let supportedReasoningLevels: [ReasoningLevel]?
     let defaultReasoningLevel: String?
+    let contextWindow: Int?
 
     private enum CodingKeys: String, CodingKey {
       case slug
@@ -176,6 +178,7 @@ public struct CodexModelCatalog: CodexModelCatalogProviding {
       case priority
       case supportedReasoningLevels = "supported_reasoning_levels"
       case defaultReasoningLevel = "default_reasoning_level"
+      case contextWindow = "context_window"
     }
   }
 

@@ -30,6 +30,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     static let createPinnedSessionOrder = "v13_create_pinned_session_order"
     static let createSessionMeasurements = "v14_create_session_measurements"
     static let addMeasurementProjectPath = "v15_add_measurement_project_path"
+    static let createContextProfiles = "v16_create_context_profiles"
   }
 
   static let migrationIdentifiers = [
@@ -47,7 +48,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     MigrationID.createAgentWorkspaces,
     MigrationID.createPinnedSessionOrder,
     MigrationID.createSessionMeasurements,
-    MigrationID.addMeasurementProjectPath
+    MigrationID.addMeasurementProjectPath,
+    MigrationID.createContextProfiles
   ]
 
   private let dbQueue: DatabaseQueue
@@ -295,6 +297,34 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
         on: "session_measurements",
         columns: ["projectPath"]
       )
+    }
+
+    // Named context profiles for curated launch context. projectPath "" is the
+    // personal (user-level) scope, matching the v15 sentinel convention. The
+    // partial unique index makes "one default per project" a database
+    // guarantee rather than app discipline.
+    //
+    // The drop guard clears a `context_profiles` table left by an abandoned
+    // experiment on a development branch (its `v11_create_context_profiles`
+    // was never in this lineage, so no migration here ever created that
+    // table). On databases from this lineage the drop is a no-op.
+    migrator.registerMigration(MigrationID.createContextProfiles) { db in
+      try db.execute(sql: "DROP TABLE IF EXISTS context_profiles")
+      try db.create(table: "context_profiles") { t in
+        t.column("id", .text).primaryKey(onConflict: .replace)
+        t.column("projectPath", .text).notNull().defaults(to: "").indexed()
+        t.column("scope", .text).notNull()
+        t.column("name", .text).notNull()
+        t.column("isDefault", .boolean).notNull().defaults(to: false)
+        t.column("createdAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+        t.column("payloadVersion", .integer).notNull()
+        t.column("payloadData", .blob).notNull()
+      }
+      try db.execute(sql: """
+        CREATE UNIQUE INDEX idx_context_profiles_default
+        ON context_profiles(projectPath) WHERE isDefault = 1
+        """)
     }
 
     return migrator
@@ -865,6 +895,108 @@ extension SessionMetadataStore {
         .filter(Column("projectPath") == "")
         .deleteAll(db)
     }
+  }
+}
+
+// MARK: - Context Profiles
+
+extension SessionMetadataStore {
+  /// Stores one context profile. `save` (upsert) so re-saving an edited profile
+  /// replaces rather than duplicates.
+  public func saveContextProfile(_ record: ContextProfileRecord) throws {
+    try dbQueue.write { db in
+      try record.save(db)
+    }
+  }
+
+  /// Project-scoped profiles for a project, name-ordered.
+  public func getContextProfiles(forProjectPath projectPath: String) throws -> [ContextProfileRecord] {
+    let key = MeasurementProjectScope.normalized(projectPath)
+    return try dbQueue.read { db in
+      try ContextProfileRecord
+        .filter(Column("projectPath") == key)
+        .order(Column("name").collating(.localizedCaseInsensitiveCompare))
+        .fetchAll(db)
+    }
+  }
+
+  /// Personal (user-level) profiles, name-ordered.
+  public func getPersonalContextProfiles() throws -> [ContextProfileRecord] {
+    try dbQueue.read { db in
+      try ContextProfileRecord
+        .filter(Column("projectPath") == "")
+        .order(Column("name").collating(.localizedCaseInsensitiveCompare))
+        .fetchAll(db)
+    }
+  }
+
+  /// Projects that have at least one profile — used to republish the JSON index
+  /// after a personal-scope mutation without loading every payload.
+  public func getProjectPathsWithContextProfiles() throws -> Set<String> {
+    try dbQueue.read { db in
+      let paths = try String.fetchAll(
+        db,
+        sql: "SELECT DISTINCT projectPath FROM \(ContextProfileRecord.databaseTableName)"
+      )
+      return Set(paths.filter { !$0.isEmpty })
+    }
+  }
+
+  public func deleteContextProfile(id: String) throws {
+    _ = try dbQueue.write { db in
+      try ContextProfileRecord.deleteOne(db, key: id)
+    }
+  }
+
+  /// Marks `id` as the project's default profile (or clears the default when
+  /// `id` is nil). One transaction: the old default is cleared before the new
+  /// one is set, so the partial unique index turns any race into a constraint
+  /// error instead of silent double-defaults. Personal profiles cannot be a
+  /// project default.
+  public func setDefaultContextProfile(id: String?, forProjectPath projectPath: String) throws {
+    let key = MeasurementProjectScope.normalized(projectPath)
+    try dbQueue.write { db in
+      try db.execute(
+        sql: "UPDATE \(ContextProfileRecord.databaseTableName) SET isDefault = 0 WHERE projectPath = ?",
+        arguments: [key]
+      )
+      guard let id else { return }
+      guard let record = try ContextProfileRecord.fetchOne(db, key: id),
+        record.projectPath == key,
+        record.scope == ContextProfileScope.project.rawValue
+      else {
+        throw DatabaseError(
+          resultCode: .SQLITE_CONSTRAINT,
+          message: "Default context profile must be a project-scoped profile of the same project."
+        )
+      }
+      try db.execute(
+        sql: "UPDATE \(ContextProfileRecord.databaseTableName) SET isDefault = 1 WHERE id = ?",
+        arguments: [id]
+      )
+    }
+  }
+
+  /// Synchronous read for launch-time chip gating, safe from non-async contexts.
+  public nonisolated func getDefaultContextProfileSync(forProjectPath projectPath: String) -> ContextProfileRecord? {
+    let key = MeasurementProjectScope.normalized(projectPath)
+    return try? dbQueue.read { db in
+      try ContextProfileRecord
+        .filter(Column("projectPath") == key)
+        .filter(Column("isDefault") == true)
+        .fetchOne(db)
+    }
+  }
+
+  /// Synchronous project-scoped profile list. Returns empty if unreadable.
+  public nonisolated func getContextProfilesSync(forProjectPath projectPath: String) -> [ContextProfileRecord] {
+    let key = MeasurementProjectScope.normalized(projectPath)
+    return (try? dbQueue.read { db in
+      try ContextProfileRecord
+        .filter(Column("projectPath") == key)
+        .order(Column("name").collating(.localizedCaseInsensitiveCompare))
+        .fetchAll(db)
+    }) ?? []
   }
 }
 

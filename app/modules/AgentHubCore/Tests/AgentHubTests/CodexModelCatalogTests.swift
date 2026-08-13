@@ -54,6 +54,21 @@ struct CodexModelCatalogTests {
     #expect(options.map(\.identifier) == ["gpt-5.5"])
   }
 
+  @Test("Parses the per-model context window when present")
+  func parsesContextWindow() throws {
+    let json = Data("""
+    {"models":[
+      {"slug":"gpt-5.6-sol","display_name":"GPT-5.6 Sol","visibility":"list","priority":1,"context_window":272000},
+      {"slug":"gpt-legacy","display_name":"Legacy","visibility":"list","priority":2}
+    ]}
+    """.utf8)
+
+    let options = try CodexModelCatalog.modelOptions(fromDebugModelsJSON: json)
+
+    #expect(options.first?.contextWindowTokens == 272_000)
+    #expect(options.last?.contextWindowTokens == nil)
+  }
+
   @Test("Parses per-model reasoning levels and the default")
   func parsesReasoningLevels() throws {
     let json = Data("""

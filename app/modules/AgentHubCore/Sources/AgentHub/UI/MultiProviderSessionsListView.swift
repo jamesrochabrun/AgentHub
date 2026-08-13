@@ -436,6 +436,7 @@ public struct MultiProviderSessionsListView: View {
         displayName: item.displayName,
         claudeViewModel: claudeViewModel,
         codexViewModel: codexViewModel,
+        contextProfileService: agentHub?.contextProfileService,
         onDismiss: { projectDetailsSheetItem = nil },
         onSelectSession: { sessionItem in
           projectDetailsSheetItem = nil
@@ -2337,7 +2338,8 @@ public struct MultiProviderSessionsListView: View {
       codexViewModel: codexViewModel,
       intelligenceViewModel: intelligenceViewModel,
       worktreeBranchNamingService: worktreeBranchNamingService,
-      worktreeSuccessSoundService: worktreeSuccessSoundService
+      worktreeSuccessSoundService: worktreeSuccessSoundService,
+      contextProfileService: agentHub?.contextProfileService
     )
   }
 

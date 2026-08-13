@@ -111,8 +111,15 @@ public struct SessionMonitorState: Equatable, Sendable {
 
   // MARK: - Context Window
 
-  /// Context window size (200K for Claude models)
-  public var contextWindowSize: Int { 200_000 }
+  /// Conservative default window (the Claude Code standard 200K).
+  public static let defaultContextWindowSize = ModelContextWindowResolver.conservativeDefaultTokens
+
+  /// Context window for this session's resolved model: Claude `[1m]`-suffixed
+  /// ids report 1M, Codex models report their cached `context_window`, and
+  /// everything else falls back to the conservative 200K.
+  public var contextWindowSize: Int {
+    ModelContextWindowResolver.window(forModelIdentifier: model)
+  }
 
   /// Context window usage as a percentage (0.0 to 1.0+)
   public var contextWindowUsagePercentage: Double {
