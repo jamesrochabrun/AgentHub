@@ -154,6 +154,8 @@ every edit; target the code you touched. Run the full suite only before opening/
 
 - Read `AccessorySessions.md` before editing accessory terminal panes, sub-session launch/detection, terminal workspace linked-session restore, or `session_relationships`.
 - Session/workspace management state belongs in `SessionMetadataStore` / SQLite, not UserDefaults.
+- Persistent-state paths (metadata sqlite, `approvals/`, `claims/`, `hooks/`) resolve through `AgentHubApplicationSupport.baseDirectoryURL` — never build `~/Library/Application Support/AgentHub` paths directly. Test processes are automatically sandboxed into a temp directory so no suite can touch real user state; `AGENTHUB_APP_SUPPORT_DIR` overrides explicitly.
+- Workspace-state saves are gated on one successful `readWorkspaceState` per run (`canPersistWorkspaceState`). Never treat a failed read as empty state and never bypass the gate in `persistWorkspaceState` — a failed read saved back over the row is how users lose their tracked projects and monitored sessions.
 - Do not add `AgentHubDefaults` keys for selected repositories, monitored session IDs, session restore state, repo mappings, terminal workspace state, or terminal/dev-server process cleanup state.
 - `managed_processes` is the SQLite authority for app-spawned terminal/dev-server cleanup. Store only process identity/routing metadata needed for cleanup (PID, process group, process start time, kind/provider/session/project context), never prompts, full environment, terminal contents, or other sensitive runtime payloads.
 - Never edit, rename, reorder, or delete existing `DatabaseMigrator` migrations. Add a new `vN_*` migration for every schema change.

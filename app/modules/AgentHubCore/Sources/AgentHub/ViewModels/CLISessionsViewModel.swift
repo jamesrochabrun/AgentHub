@@ -2450,9 +2450,41 @@ public final class CLISessionsViewModel {
 
   // MARK: - Persistence
 
+  /// Saves are disabled until the persisted workspace state has been read
+  /// successfully once this run. A failed read (locked or corrupt database)
+  /// must never be treated as "empty" and then written back over the user's
+  /// real tracked projects and monitored sessions.
+  @ObservationIgnored private var canPersistWorkspaceState = false
+  /// Test seam: lets unit tests simulate a failing workspace-state read.
+  @ObservationIgnored var workspaceStateReadOverride: ((SessionProviderKind) throws -> SessionWorkspaceState)?
+
+  private func readPersistedWorkspaceState() throws -> SessionWorkspaceState {
+    if let workspaceStateReadOverride {
+      return try workspaceStateReadOverride(providerKind)
+    }
+    guard let metadataStore else { return SessionWorkspaceState() }
+    return try metadataStore.readWorkspaceState(for: providerKind)
+  }
+
   private func restorePersistedRepositories() {
     Task {
-      let workspaceState = metadataStore?.getWorkspaceStateSync(for: providerKind) ?? SessionWorkspaceState()
+      var readState: SessionWorkspaceState?
+      for attempt in 1...3 {
+        do {
+          readState = try readPersistedWorkspaceState()
+          break
+        } catch {
+          AppLogger.session.error("Workspace state read failed (attempt \(attempt)/3): \(error.localizedDescription)")
+          if attempt < 3 {
+            try? await Task.sleep(for: .milliseconds(300))
+          }
+        }
+      }
+      guard let workspaceState = readState else {
+        AppLogger.session.error("Workspace state unreadable; workspace-state saves stay disabled this run to protect the persisted data")
+        return
+      }
+      canPersistWorkspaceState = true
       let paths = workspaceState.selectedRepositoryPaths
       // Retain every saved session ID before any restore step can fail. Even if
       // repositories or worktrees are unavailable this launch, the IDs keep
@@ -2695,6 +2727,10 @@ public final class CLISessionsViewModel {
 
   private func persistWorkspaceState() {
     guard let metadataStore else { return }
+    guard canPersistWorkspaceState else {
+      AppLogger.session.error("Skipped workspace-state save: persisted state has not been read successfully this run")
+      return
+    }
     let state = currentWorkspaceState()
     let providerKind = providerKind
 

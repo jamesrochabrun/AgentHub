@@ -9,14 +9,7 @@ import Foundation
 public enum ClaudeHookPaths {
 
   public static var appSupportBaseURL: URL {
-    let fm = FileManager.default
-    let base = (try? fm.url(
-      for: .applicationSupportDirectory,
-      in: .userDomainMask,
-      appropriateFor: nil,
-      create: true
-    )) ?? URL(fileURLWithPath: NSString(string: "~/Library/Application Support").expandingTildeInPath)
-    return base.appendingPathComponent("AgentHub", isDirectory: true)
+    AgentHubApplicationSupport.baseDirectoryURL
   }
 
   public static var claimsDirectoryURL: URL {

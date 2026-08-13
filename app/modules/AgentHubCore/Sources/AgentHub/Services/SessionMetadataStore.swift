@@ -56,30 +56,34 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
 
   // MARK: - Initialization
 
-  /// Creates a new metadata store at the default location
-  /// Database is stored in ~/Library/Application Support/AgentHub/session_metadata.sqlite
+  /// Creates a new metadata store at the default location:
+  /// `AgentHubApplicationSupport.baseDirectoryURL/session_metadata.sqlite`
+  /// (the real Application Support dir in the app; a temp sandbox under tests).
   public init() throws {
-    let appSupportURL = FileManager.default.urls(
-      for: .applicationSupportDirectory,
-      in: .userDomainMask
-    ).first!
-
-    let agentHubDir = appSupportURL.appendingPathComponent("AgentHub", isDirectory: true)
+    let agentHubDir = AgentHubApplicationSupport.baseDirectoryURL
     try FileManager.default.createDirectory(
       at: agentHubDir,
       withIntermediateDirectories: true
     )
 
     let dbPath = agentHubDir.appendingPathComponent("session_metadata.sqlite")
-    dbQueue = try DatabaseQueue(path: dbPath.path)
+    dbQueue = try DatabaseQueue(path: dbPath.path, configuration: Self.databaseConfiguration())
 
     try migrator.migrate(dbQueue)
   }
 
   /// Creates a store with a custom database path (for testing)
   public init(path: String) throws {
-    dbQueue = try DatabaseQueue(path: path)
+    dbQueue = try DatabaseQueue(path: path, configuration: Self.databaseConfiguration())
     try migrator.migrate(dbQueue)
+  }
+
+  /// Waits out transient cross-process lock contention instead of surfacing
+  /// SQLITE_BUSY immediately — a busy read must not masquerade as empty state.
+  private static func databaseConfiguration() -> Configuration {
+    var configuration = Configuration()
+    configuration.busyMode = .timeout(5)
+    return configuration
   }
 
   // MARK: - Migrations
@@ -504,13 +508,23 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
 
   // MARK: - Workspace State
 
-  public nonisolated func getWorkspaceStateSync(for provider: SessionProviderKind) -> SessionWorkspaceState {
-    (try? dbQueue.read { db in
+  /// Throwing read that distinguishes "no saved row" (returns an empty state)
+  /// from a failed read (throws). Callers deciding whether it is safe to
+  /// *write* workspace state must use this — treating a failed read as empty
+  /// and saving over it is how persisted repositories/sessions get lost.
+  public nonisolated func readWorkspaceState(for provider: SessionProviderKind) throws -> SessionWorkspaceState {
+    try dbQueue.read { db in
       try SessionWorkspaceStateRecord
         .filter(Column("provider") == provider.rawValue)
         .fetchOne(db)?
         .decodedState()
-    }) ?? SessionWorkspaceState()
+    } ?? SessionWorkspaceState()
+  }
+
+  /// Display-only convenience: errors collapse to an empty state. Never use
+  /// this to decide whether saving workspace state is safe.
+  public nonisolated func getWorkspaceStateSync(for provider: SessionProviderKind) -> SessionWorkspaceState {
+    (try? readWorkspaceState(for: provider)) ?? SessionWorkspaceState()
   }
 
   public func saveWorkspaceState(_ state: SessionWorkspaceState, for provider: SessionProviderKind) async throws {
