@@ -142,7 +142,71 @@ private struct MockScreenCapture: VoiceScreenCapturing {
 }
 
 @MainActor
+private final class StubVoiceMCPToolProvider: VoiceMCPToolProviding {
+  var tools: [VoiceTool] = []
+
+  func currentTools() -> [VoiceTool] { tools }
+  func refresh() async {}
+  func scheduleRefresh() {}
+  func discoverServers() async -> [VoiceMCPServerDescriptor] { [] }
+}
+
+@MainActor
 struct VoiceToolCatalogTests {
+  @Test
+  func assistantModeExcludesSessionMutatingAndCaptureToolsButKeepsMCP() {
+    let mcpProvider = StubVoiceMCPToolProvider()
+    mcpProvider.tools = [
+      VoiceTool(
+        name: "gmail__search_messages",
+        description: "Search the user's mailbox.",
+        parameters: ["type": "object"]
+      ) { _ in "{}" }
+    ]
+    let tools = VoiceToolCatalog(
+      executor: MockVoiceToolExecutor(),
+      screenCapture: MockScreenCapture(),
+      isScreenCaptureEnabled: { true },
+      mcpToolProvider: mcpProvider,
+      onBackgroundUpdate: { _ in }
+    ).makeTools(assistantMode: true)
+
+    #expect(
+      Set(tools.map(\.name)) == [
+        "list_sessions",
+        "get_session_status",
+        "read_session_response",
+        "read_session_history",
+        "watch_session",
+        "stop_watching",
+        "focus_session",
+        "list_worktrees",
+        "gmail__search_messages",
+      ]
+    )
+  }
+
+  @Test
+  func mcpToolsAreAppendedWhenProviderIsSupplied() {
+    let mcpProvider = StubVoiceMCPToolProvider()
+    mcpProvider.tools = [
+      VoiceTool(
+        name: "slack__send_message",
+        description: "Send a Slack message.",
+        parameters: ["type": "object"]
+      ) { _ in "{}" }
+    ]
+    let tools = VoiceToolCatalog(
+      executor: MockVoiceToolExecutor(),
+      screenCapture: MockScreenCapture(),
+      isScreenCaptureEnabled: { false },
+      mcpToolProvider: mcpProvider,
+      onBackgroundUpdate: { _ in }
+    ).makeTools()
+
+    #expect(tools.contains { $0.name == "slack__send_message" })
+  }
+
   @Test
   func exposesAllSchemasAndDisablesApprovalRetry() {
     let tools = VoiceToolCatalog(

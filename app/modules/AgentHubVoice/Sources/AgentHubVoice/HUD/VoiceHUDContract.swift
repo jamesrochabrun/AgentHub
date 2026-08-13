@@ -107,6 +107,11 @@ public struct VoiceHUDSettingsKeys: Sendable {
   /// Bool key: show live transcript text in the HUD instead of the voice
   /// visualizer. Off by default.
   public let showTranscript: String
+  /// Bool key: conversations run as a standalone assistant — no session
+  /// target, no session snapshot, and no tools that push content into a
+  /// session. The host reads the same key when building the tool registry.
+  /// Off by default.
+  public let assistantMode: String
 
   public init(
     mode: String,
@@ -119,7 +124,8 @@ public struct VoiceHUDSettingsKeys: Sendable {
     hudFrame: String,
     screenCaptureEnabled: String,
     onboardingCompleted: String,
-    showTranscript: String = "voice.showTranscript"
+    showTranscript: String = "voice.showTranscript",
+    assistantMode: String = "voice.assistantMode"
   ) {
     self.mode = mode
     self.realtimeModel = realtimeModel
@@ -132,6 +138,7 @@ public struct VoiceHUDSettingsKeys: Sendable {
     self.screenCaptureEnabled = screenCaptureEnabled
     self.onboardingCompleted = onboardingCompleted
     self.showTranscript = showTranscript
+    self.assistantMode = assistantMode
   }
 }
 

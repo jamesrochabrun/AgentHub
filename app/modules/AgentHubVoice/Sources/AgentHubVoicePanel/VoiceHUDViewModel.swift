@@ -21,6 +21,10 @@ public enum VoiceHUDMode: String, CaseIterable, Sendable {
 public final class VoiceHUDViewModel {
   public var mode: VoiceHUDMode
   public var manualTargetId: String?
+  /// Standalone-assistant conversations: no session target, and the host
+  /// builds a registry without session-mutating tools. Persisted so the
+  /// choice survives HUD dismissal.
+  public private(set) var isAssistantMode: Bool
   public private(set) var dictationController: DictationController?
   public private(set) var dictationTranscripts: [VoiceTranscriptEntry] = []
   public private(set) var localErrorMessage: String?
@@ -44,6 +48,9 @@ public final class VoiceHUDViewModel {
     mode = VoiceHUDMode(
       rawValue: defaults.string(forKey: configuration.settings.mode) ?? ""
     ) ?? .dictate
+    isAssistantMode = defaults.bool(
+      forKey: configuration.settings.assistantMode
+    )
   }
 
   public var targets: [VoiceHUDTarget] {
@@ -51,7 +58,7 @@ public final class VoiceHUDViewModel {
   }
 
   public var target: VoiceHUDTarget? {
-    host.resolveTarget(manualId: manualTargetId)
+    isAssistantMode ? nil : host.resolveTarget(manualId: manualTargetId)
   }
 
   public var realtimeState: VoiceEngineState {
@@ -154,6 +161,24 @@ public final class VoiceHUDViewModel {
 
   public func selectTarget(_ sessionId: String?) {
     manualTargetId = sessionId
+    setAssistantMode(false)
+  }
+
+  public func selectAssistantMode() {
+    manualTargetId = nil
+    setAssistantMode(true)
+  }
+
+  private func setAssistantMode(_ enabled: Bool) {
+    guard isAssistantMode != enabled else { return }
+    isAssistantMode = enabled
+    defaults.set(enabled, forKey: configuration.settings.assistantMode)
+    // The tool registry is captured at connect time, so a live conversation
+    // keeps its old tools — stop it rather than let the previous scope
+    // silently persist; the next tap reconnects with the right registry.
+    if mode == .converse {
+      engine.stop()
+    }
   }
 
   public func toggleMicrophone() {

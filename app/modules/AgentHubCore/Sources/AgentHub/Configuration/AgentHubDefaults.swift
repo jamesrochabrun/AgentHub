@@ -218,6 +218,16 @@ public enum AgentHubDefaults {
   /// visualizer. Type: Bool (default: false)
   public static let voiceShowTranscript = "\(keyPrefix)voice.showTranscript"
 
+  /// MCP servers (by name, from the user's Claude/Codex configs) whose tools
+  /// are exposed to voice conversations. Empty means no MCP tools.
+  /// Type: [String] (default: empty)
+  public static let voiceMCPEnabledServers = "\(keyPrefix)voice.mcpEnabledServers"
+
+  /// Whether voice conversations run as a standalone assistant: no session
+  /// target, no session snapshot, and no tools that push prompts or content
+  /// into a session. Type: Bool (default: false)
+  public static let voiceAssistantMode = "\(keyPrefix)voice.assistantMode"
+
   // MARK: - Feature Flags
 
   /// Whether smart mode (AI-powered orchestration planning) is enabled

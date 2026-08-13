@@ -28,7 +28,8 @@ extension VoiceHUDConfiguration {
         hudFrame: AgentHubDefaults.voiceHUDFrame,
         screenCaptureEnabled: AgentHubDefaults.voiceScreenCaptureEnabled,
         onboardingCompleted: AgentHubDefaults.voiceOnboardingCompleted,
-        showTranscript: AgentHubDefaults.voiceShowTranscript
+        showTranscript: AgentHubDefaults.voiceShowTranscript,
+        assistantMode: AgentHubDefaults.voiceAssistantMode
       ),
       accentColor: .brandSecondary
     )
@@ -62,14 +63,20 @@ public final class AgentHubVoiceHUDHost: VoiceHUDHost {
       .map(Self.hudTarget)
   }
 
+  private var isAssistantMode: Bool {
+    defaults.bool(forKey: AgentHubDefaults.voiceAssistantMode)
+  }
+
   public func makeToolRegistry() -> VoiceToolRegistry {
     VoiceToolRegistry(
-      tools: provider?.voiceToolCatalog.makeTools() ?? []
+      tools: provider?.voiceToolCatalog.makeTools(
+        assistantMode: isAssistantMode
+      ) ?? []
     )
   }
 
   public func makeSessionContext() -> String? {
-    guard let provider else { return nil }
+    guard let provider, !isAssistantMode else { return nil }
     return VoiceSessionContextBuilder.make(
       summary: provider.voiceToolExecutor.listSessions()
     )

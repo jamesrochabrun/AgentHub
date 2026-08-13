@@ -3,7 +3,16 @@ import Foundation
 
 @MainActor
 public protocol VoiceToolCataloging: AnyObject {
-  func makeTools() -> [VoiceTool]
+  /// `assistantMode` builds a standalone-assistant registry: read-only
+  /// session visibility plus MCP tools, and none of the tools that push
+  /// prompts or content into a session.
+  func makeTools(assistantMode: Bool) -> [VoiceTool]
+}
+
+public extension VoiceToolCataloging {
+  func makeTools() -> [VoiceTool] {
+    makeTools(assistantMode: false)
+  }
 }
 
 @MainActor
@@ -16,6 +25,7 @@ public final class VoiceToolCatalog: VoiceToolCataloging {
   private let executor: any VoiceAgentToolExecuting
   private let screenCapture: any VoiceScreenCapturing
   private let isScreenCaptureEnabled: @MainActor @Sendable () -> Bool
+  private let mcpToolProvider: (any VoiceMCPToolProviding)?
   private let onBackgroundUpdate: @MainActor @Sendable (String) -> Void
   private let onBackgroundWaitCountChanged:
     (@MainActor @Sendable (Int) -> Void)?
@@ -34,36 +44,49 @@ public final class VoiceToolCatalog: VoiceToolCataloging {
         forKey: AgentHubDefaults.voiceScreenCaptureEnabled
       ) as? Bool) ?? true
     },
+    mcpToolProvider: (any VoiceMCPToolProviding)? = nil,
     onBackgroundWaitCountChanged: (@MainActor @Sendable (Int) -> Void)? = nil,
     onBackgroundUpdate: @escaping @MainActor @Sendable (String) -> Void
   ) {
     self.executor = executor
     self.screenCapture = screenCapture
     self.isScreenCaptureEnabled = isScreenCaptureEnabled
+    self.mcpToolProvider = mcpToolProvider
     self.onBackgroundWaitCountChanged = onBackgroundWaitCountChanged
     self.onBackgroundUpdate = onBackgroundUpdate
   }
 
-  public func makeTools() -> [VoiceTool] {
+  public func makeTools(assistantMode: Bool) -> [VoiceTool] {
     var tools = [
       listSessionsTool(),
       sessionStatusTool(),
       readResponseTool(),
       readHistoryTool(),
-      sendPromptTool(),
       watchSessionTool(),
       stopWatchingTool(),
       focusSessionTool(),
       listWorktreesTool(),
-      launchSessionTool(),
-      createWorktreeTasksTool(),
-      approvalTool(),
     ]
-    if isScreenCaptureEnabled() {
-      tools.append(contentsOf: VoiceScreenCaptureTools.make(
-        capture: screenCapture,
-        isEnabled: isScreenCaptureEnabled
-      ))
+    if !assistantMode {
+      // Session-mutating tools stay out of assistant registries so an
+      // assistant conversation can never push prompts, approvals, or new
+      // sessions into the user's coding work. Screen capture is excluded too:
+      // its file paths are only consumable through send_prompt.
+      tools.append(contentsOf: [
+        sendPromptTool(),
+        launchSessionTool(),
+        createWorktreeTasksTool(),
+        approvalTool(),
+      ])
+      if isScreenCaptureEnabled() {
+        tools.append(contentsOf: VoiceScreenCaptureTools.make(
+          capture: screenCapture,
+          isEnabled: isScreenCaptureEnabled
+        ))
+      }
+    }
+    if let mcpToolProvider {
+      tools.append(contentsOf: mcpToolProvider.currentTools())
     }
     return tools
   }

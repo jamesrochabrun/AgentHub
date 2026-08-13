@@ -4,10 +4,23 @@ import SwiftUI
 struct VoiceTargetChip: View {
   let target: VoiceHUDTarget?
   let targets: [VoiceHUDTarget]
+  let isAssistantMode: Bool
   let onSelect: (String?) -> Void
+  let onSelectAssistant: () -> Void
 
   var body: some View {
     Menu {
+      Button {
+        onSelectAssistant()
+      } label: {
+        Label(
+          "Assistant · no session",
+          systemImage: isAssistantMode ? "checkmark" : "sparkles"
+        )
+      }
+
+      Divider()
+
       Button("Automatic target") {
         onSelect(nil)
       }
@@ -27,12 +40,12 @@ struct VoiceTargetChip: View {
       }
     } label: {
       HStack(spacing: 8) {
-        Image(systemName: "scope")
-        Text(target?.name ?? "No session target")
+        Image(systemName: isAssistantMode ? "sparkles" : "scope")
+        Text(chipTitle)
           .lineLimit(1)
         Spacer()
-        if let detail = target?.detail {
-          Text(detail)
+        if let chipDetail {
+          Text(chipDetail)
             .foregroundStyle(.secondary)
         }
         Image(systemName: "chevron.up.chevron.down")
@@ -45,5 +58,15 @@ struct VoiceTargetChip: View {
     }
     .menuStyle(.borderlessButton)
     .accessibilityLabel("Voice session target")
+  }
+
+  private var chipTitle: String {
+    if isAssistantMode { return "Assistant" }
+    return target?.name ?? "No session target"
+  }
+
+  private var chipDetail: String? {
+    if isAssistantMode { return "no session" }
+    return target?.detail
   }
 }

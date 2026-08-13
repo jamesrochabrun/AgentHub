@@ -270,9 +270,19 @@ public final class AgentHubProvider {
     targetResolver: voiceSessionTargetResolver
   )
 
+  /// Dedicated MCP gateway for voice tool calls. Separate instance from the
+  /// MCP Apps discovery service so long-running tool calls get a longer
+  /// request timeout without affecting app-resource discovery.
+  public private(set) lazy var voiceMCPDiscoveryService: any MCPAppDiscoveryServiceProtocol =
+    MCPAppDiscoveryService(requestTimeoutSeconds: 45)
+
+  public private(set) lazy var voiceMCPToolProvider: any VoiceMCPToolProviding =
+    VoiceMCPToolProvider(discovery: voiceMCPDiscoveryService)
+
   public private(set) lazy var voiceToolCatalog: any VoiceToolCataloging =
     VoiceToolCatalog(
       executor: voiceToolExecutor,
+      mcpToolProvider: voiceMCPToolProvider,
       onBackgroundWaitCountChanged: { [weak self] count in
         self?.realtimeVoiceEngine.setAwaitingBackgroundWork(count > 0)
       }
@@ -532,10 +542,15 @@ public final class AgentHubProvider {
   }
 
   public func shutdownMCPAppDiscoveryService() {
-    let service = mcpAppDiscoveryService
+    let services: [any MCPAppDiscoveryServiceProtocol] = [
+      mcpAppDiscoveryService,
+      voiceMCPDiscoveryService,
+    ]
     let semaphore = DispatchSemaphore(value: 0)
     Task.detached(priority: .utility) {
-      await service.shutdown()
+      for service in services {
+        await service.shutdown()
+      }
       semaphore.signal()
     }
     _ = semaphore.wait(timeout: .now() + 2.0)
