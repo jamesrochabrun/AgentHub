@@ -152,7 +152,7 @@ struct MultiSessionLaunchViewModelPreselectionTests {
     await fixture.claudeMonitor.setRepositories([repository])
     try await waitUntil { fixture.claudeViewModel.selectedRepositories == [repository] }
 
-    let didPreselect = await fixture.launchViewModel.preselectRepository(path: "/tmp/Repo/app")
+    let didPreselect = fixture.launchViewModel.preselectRepository(path: "/tmp/Repo/app")
 
     #expect(didPreselect)
     #expect(fixture.launchViewModel.selectedRepository?.path == "/tmp/Repo")
@@ -166,7 +166,7 @@ struct MultiSessionLaunchViewModelPreselectionTests {
     await fixture.claudeMonitor.setRepositories([repository])
     try await waitUntil { fixture.claudeViewModel.selectedRepositories == [repository] }
 
-    let didPreselect = await fixture.launchViewModel.preselectRepository(path: "/tmp/Repo-feature/app")
+    let didPreselect = fixture.launchViewModel.preselectRepository(path: "/tmp/Repo-feature/app")
 
     #expect(didPreselect)
     #expect(fixture.launchViewModel.selectedRepository?.path == "/tmp/Repo-feature")

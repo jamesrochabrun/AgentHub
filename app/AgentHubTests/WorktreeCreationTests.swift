@@ -1,3 +1,4 @@
+import AgentHubSessionGraph
 import Combine
 import Foundation
 import Testing
@@ -570,7 +571,7 @@ struct MultiSessionLaunchViewModelForkTests {
       sessionFilePath: "/tmp/session.jsonl"
     )
 
-    await vm.configureForFork(from: session, targetProvider: .codex)
+    vm.configureForFork(from: session, targetProvider: .codex)
 
     #expect(vm.selectedRepository?.path == "/tmp/repo")
     #expect(vm.launchMode == .manual)
@@ -604,7 +605,7 @@ struct MultiSessionLaunchViewModelForkTests {
       sessionFilePath: repo.repoPath + "/session.jsonl"
     )
 
-    await viewModel.configureForFork(from: session, targetProvider: .codex)
+    viewModel.configureForFork(from: session, targetProvider: .codex)
     await viewModel.launchSessions()
 
     let pending = try #require(codexViewModel.pendingHubSessions.first)

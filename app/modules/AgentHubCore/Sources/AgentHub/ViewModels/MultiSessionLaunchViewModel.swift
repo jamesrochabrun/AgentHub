@@ -138,6 +138,9 @@ public final class MultiSessionLaunchViewModel {
   private var namingCoordinatorOperationID: String?
   private var activeLaunchTask: Task<Void, Never>?
   private var activeWorktreeOperations: [WorktreeCreationOperationID: ActiveWorktreeOperation] = [:]
+  /// Monotonic token so a superseded branch load (repository changed while the
+  /// git fetch was in flight) discards its results instead of applying them.
+  @ObservationIgnored private var branchLoadGeneration = 0
 
   // MARK: - Form State
 
@@ -455,15 +458,17 @@ public final class MultiSessionLaunchViewModel {
 
   /// Preselects a repository already tracked by either provider.
   /// Returns true when a matching repository was found and selected.
+  /// Matching is synchronous so callers can present the launch sheet
+  /// immediately; call `beginBranchLoad()` (or await `loadBranches()`)
+  /// afterwards to populate branch state — this never touches git.
   @discardableResult
-  public func preselectRepository(path: String) async -> Bool {
+  public func preselectRepository(path: String) -> Bool {
     let combined = claudeViewModel.selectedRepositories + codexViewModel.selectedRepositories
     let normalizedPath = WorktreeModuleResolver.normalizedDirectoryPath(path)
     if let repository = combined.last(where: {
       WorktreeModuleResolver.normalizedDirectoryPath($0.path) == normalizedPath
     }) {
       selectedRepository = repository
-      await loadBranches()
       return true
     }
 
@@ -481,7 +486,6 @@ public final class MultiSessionLaunchViewModel {
     } else {
       selectedRepository = match.repository
     }
-    await loadBranches()
     return true
   }
 
@@ -492,10 +496,10 @@ public final class MultiSessionLaunchViewModel {
   public func configureForFork(
     from session: CLISession,
     targetProvider: SessionProviderKind
-  ) async -> Bool {
+  ) -> Bool {
     reset()
 
-    let didPreselect = await preselectRepository(path: session.projectPath)
+    let didPreselect = preselectRepository(path: session.projectPath)
     if !didPreselect {
       selectedRepository = SelectedRepository(
         path: session.projectPath,
@@ -509,7 +513,6 @@ public final class MultiSessionLaunchViewModel {
         ],
         isExpanded: true
       )
-      await loadBranches()
     }
 
     launchMode = .manual
@@ -532,13 +535,36 @@ public final class MultiSessionLaunchViewModel {
     let branchName = Self.forkBranchName(for: session)
     manualSingleBranchName = branchName
     manualSingleDirectoryName = directoryName(for: branchName)
+
+    // Branch data loads behind the sheet. Fork deliberately bases the new
+    // worktree on the session's current HEAD (`baseBranch = nil`), so the
+    // load must not apply the remote default when it lands.
+    beginBranchLoad(applyDefaultBaseBranch: false)
     return selectedRepository != nil
+  }
+
+  /// Starts a branch load without blocking the caller, so the launch sheet can
+  /// be presented immediately while git (including a network fetch) runs behind
+  /// its loading state. The loading flags are set synchronously so the sheet's
+  /// first frame never flashes an empty branch picker.
+  public func beginBranchLoad(applyDefaultBaseBranch: Bool = true) {
+    guard selectedRepository != nil else { return }
+    isLoadingBranches = true
+    isLoadingCurrentBranch = true
+    Task { @MainActor [weak self] in
+      await self?.loadBranches(applyDefaultBaseBranch: applyDefaultBaseBranch)
+    }
   }
 
   /// Loads local branches and current branch for the selected repository.
   /// Uses a single `git branch` call to get both, reducing process spawns from 3 to 1-2.
-  public func loadBranches() async {
+  /// When `applyDefaultBaseBranch` is false, values seeded by the caller
+  /// (fork's base branch and branch name) survive the load; only the picker
+  /// options are filled in.
+  public func loadBranches(applyDefaultBaseBranch: Bool = true) async {
     guard let repo = selectedRepository else { return }
+    branchLoadGeneration &+= 1
+    let generation = branchLoadGeneration
     isLoadingBranches = true
     isLoadingCurrentBranch = true
 
@@ -547,20 +573,28 @@ public final class MultiSessionLaunchViewModel {
       async let remoteDefaultBranch = worktreeService.fetchAndGetDefaultRemoteBaseBranch(at: repo.path)
       let result = try await localBranches
       let defaultRemoteBranch = try await remoteDefaultBranch
+      guard generation == branchLoadGeneration else { return }
 
       availableBranches = RemoteBranch.worktreeBaseOptions(
         localBranches: result.branches,
         remoteDefaultBranch: defaultRemoteBranch
       )
-      currentBranchName = result.currentBranchName
-      if let defaultRemoteBranch {
-        baseBranch = defaultRemoteBranch
-      } else if let first = availableBranches.first {
-        baseBranch = first
+      if applyDefaultBaseBranch {
+        currentBranchName = result.currentBranchName
+        if let defaultRemoteBranch {
+          baseBranch = defaultRemoteBranch
+        } else if let first = availableBranches.first {
+          baseBranch = first
+        }
+      } else if currentBranchName.isEmpty {
+        currentBranchName = result.currentBranchName
       }
     } catch {
+      guard generation == branchLoadGeneration else { return }
       availableBranches = []
-      currentBranchName = ""
+      if applyDefaultBaseBranch {
+        currentBranchName = ""
+      }
     }
 
     isLoadingBranches = false

@@ -2407,14 +2407,14 @@ public struct MultiProviderSessionsListView: View {
       return
     }
 
-    Task { @MainActor in
-      let didPreselect = await launchViewModel.preselectRepository(path: preferredRepositoryPath)
-      if didPreselect {
-        startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
-      } else if fallsBackToRepositoryPicker {
-        startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
-        launchViewModel.selectRepository()
-      }
+    if launchViewModel.preselectRepository(path: preferredRepositoryPath) {
+      // Present immediately; branches (including the remote fetch) load
+      // behind the sheet's loading state.
+      startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
+      launchViewModel.beginBranchLoad()
+    } else if fallsBackToRepositoryPicker {
+      startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
+      launchViewModel.selectRepository()
     }
   }
 
@@ -2452,14 +2452,8 @@ public struct MultiProviderSessionsListView: View {
   private func triggerForkSessionFlow(session: CLISession, targetProvider: SessionProviderKind) {
     let launchViewModel = makeLaunchViewModel()
 
-    Task { @MainActor in
-      let didConfigure = await launchViewModel.configureForFork(
-        from: session,
-        targetProvider: targetProvider
-      )
-      if didConfigure {
-        startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
-      }
+    if launchViewModel.configureForFork(from: session, targetProvider: targetProvider) {
+      startSessionSheetContext = StartSessionSheetContext(launchViewModel: launchViewModel)
     }
   }
 

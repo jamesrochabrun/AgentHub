@@ -1,3 +1,4 @@
+import AgentHubCLIKit
 import Foundation
 import Testing
 
