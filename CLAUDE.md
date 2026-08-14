@@ -139,8 +139,8 @@ every edit; target the code you touched. Run the full suite only before opening/
   whole `AgentHubCore` xcodebuild suite. Subsets: `./scripts/test.sh core` / `packages`. This is the
   full local gate. **CI (`.github/workflows/test.yml`) gates on the fast packages only** — the
   `AgentHubCore` suite is run locally, not in CI (slow to compile + timing-flaky on CI's older
-  Xcode; see `TestQuarantine.md`), so running it locally on your changes is essential. There is
-  intentionally **no** git pre-commit/pre-push hook — running tests is the agent's responsibility.
+  Xcode; see `TestQuarantine.md`), so running it locally on your changes is essential. No git hook
+  runs tests — that stays the agent's responsibility. The only hooks are the fast leak guard below.
 - The `AgentHubCore` tests run via the shared `AgentHubCore-Tests` scheme, driven **from the package
   dir** (`cd app/modules/AgentHubCore`), with per-test timeouts. `swift test` on `AgentHubCore` does
   **not** work (CodeEditSymbols xcassets); use the script / xcodebuild. The app scheme
@@ -407,3 +407,23 @@ The short version: GitHub observation is a shared actor service in `AgentHubGitH
 ## Git Commits
 
 - Never add "Co-Authored-By: Claude" or any Claude co-author line
+
+### Leak guard (this repo is public)
+
+`scripts/git_hooks/` holds a `commit-msg` + `pre-commit` pair that blocks configured terms —
+names that should not appear in public git text — from reaching commit messages, staged
+paths, or added lines. Run `./scripts/install-git-hooks.sh` once per
+clone; it sets `core.hooksPath`. The check is regex-only and instant — never add test runs to it.
+
+- Terms live in `scripts/git_hooks/blocked-terms.sha256` as **SHA-256 hashes, never plaintext**: a
+  readable denylist in a public repo would defeat its own purpose. Add one with
+  `scripts/git_hooks/leak_guard.py --add-term`, which prompts instead of taking argv so the term
+  stays out of shell history.
+- Matching is on whole alphanumeric tokens of the lowercased text, so `AirFoo/bar#123`,
+  `AirFooUI`, and `airfoo.yaml` all match; a term buried mid-word does not.
+- **Hooks cannot see PR bodies or issue comments** — `gh pr create --body` bypasses git entirely,
+  so pipe that prose through the guard first:
+  `scripts/git_hooks/leak_guard.py --stdin < body.md`.
+- Describe external or third-party sources generically. Never name companies, private trackers,
+  internal product names, or individuals in anything published.
+- `git commit --no-verify` bypasses the guard. Only for a reviewed, deliberate exception.

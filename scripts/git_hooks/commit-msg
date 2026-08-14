@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks commit messages that mention internal names. See leak_guard.py.
+# Bypass (intentional, reviewed): git commit --no-verify
+exec python3 "$(dirname "$0")/leak_guard.py" --message "$1"
