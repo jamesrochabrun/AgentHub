@@ -36,13 +36,15 @@ private actor ContextStubFileWatcher: SessionFileWatcherProtocol {
 // MARK: - Helpers
 
 @MainActor
-private func makeSessionsViewModel() -> CLISessionsViewModel {
+private func makeSessionsViewModel(provider: SessionProviderKind = .claude) -> CLISessionsViewModel {
   CLISessionsViewModel(
     monitorService: ContextStubMonitorService(),
     fileWatcher: ContextStubFileWatcher(),
     searchService: nil,
-    cliConfiguration: CLICommandConfiguration(command: "claude", mode: .claude),
-    providerKind: .claude,
+    cliConfiguration: provider == .claude
+      ? CLICommandConfiguration(command: "claude", mode: .claude)
+      : CLICommandConfiguration(command: "codex", mode: .codex),
+    providerKind: provider,
     approvalNotificationService: NoOpApprovalNotificationService()
   )
 }
@@ -80,31 +82,105 @@ private func write(_ relativePath: String, _ content: String, in project: URL) t
   try content.write(to: url, atomically: true, encoding: .utf8)
 }
 
-// MARK: - Prompt merging
+// MARK: - Out-of-band context routing
 
 @MainActor
-@Suite("Merged launch prompt")
-struct MergedLaunchPromptTests {
-  @Test("Nil or empty context leaves the prompt byte-identical")
-  func nilContextLeavesPromptUntouched() {
-    #expect(CLISessionsViewModel.mergedLaunchPrompt(contextBlock: nil, initialPrompt: "fix the bug") == "fix the bug")
-    #expect(CLISessionsViewModel.mergedLaunchPrompt(contextBlock: "  \n ", initialPrompt: "fix the bug") == "fix the bug")
-    #expect(CLISessionsViewModel.mergedLaunchPrompt(contextBlock: nil, initialPrompt: nil) == nil)
+@Suite("Launch context routing")
+struct LaunchContextRoutingTests {
+  private func makeWorktree() -> WorktreeBranch {
+    WorktreeBranch(name: "main", path: "/tmp/project", isWorktree: false)
   }
 
-  @Test("Context with a prompt is prepended with a blank line")
-  func contextPrepended() {
-    let merged = CLISessionsViewModel.mergedLaunchPrompt(
-      contextBlock: "<context>x</context>", initialPrompt: "fix the bug")
-    #expect(merged == "<context>x</context>\n\nfix the bug")
+  @Test("Claude: context rides the pending session, the first prompt stays pure")
+  func claudeContextNeverMergesIntoPrompt() throws {
+    let viewModel = makeSessionsViewModel()
+
+    viewModel.startNewSessionInHub(
+      makeWorktree(),
+      initialPrompt: "fix the bug",
+      contextBlock: "<context>x</context>"
+    )
+
+    let pending = try #require(viewModel.pendingHubSessions.first)
+    #expect(pending.launchContext == "<context>x</context>")
+    // Claude receives its prompt via the terminal paste — context must not be in it.
+    #expect(pending.initialPrompt == nil)
+    let pasted = viewModel.consumePendingPrompt(for: "pending-\(pending.id.uuidString)")
+    #expect(pasted == "fix the bug")
   }
 
-  @Test("Context with no prompt asks the agent to load and acknowledge")
-  func contextOnlyAddsTrailer() throws {
-    let merged = try #require(CLISessionsViewModel.mergedLaunchPrompt(
-      contextBlock: "<context>x</context>", initialPrompt: nil))
-    #expect(merged.hasPrefix("<context>x</context>"))
-    #expect(merged.contains("background context"))
+  @Test("Claude: context-only launch types nothing into the terminal")
+  func claudeContextOnlyLaunchHasNoFirstMessage() throws {
+    let viewModel = makeSessionsViewModel()
+
+    viewModel.startNewSessionInHub(makeWorktree(), contextBlock: "<context>x</context>")
+
+    let pending = try #require(viewModel.pendingHubSessions.first)
+    #expect(pending.launchContext == "<context>x</context>")
+    #expect(pending.initialPrompt == nil)
+    #expect(viewModel.consumePendingPrompt(for: "pending-\(pending.id.uuidString)") == nil)
+  }
+
+  @Test("Codex: context rides the pending session, argv prompt stays pure")
+  func codexContextNeverMergesIntoPrompt() throws {
+    let viewModel = makeSessionsViewModel(provider: .codex)
+
+    viewModel.startNewSessionInHub(
+      makeWorktree(),
+      initialPrompt: "fix the bug",
+      contextBlock: "<context>x</context>"
+    )
+
+    let pending = try #require(viewModel.pendingHubSessions.first)
+    #expect(pending.launchContext == "<context>x</context>")
+    // Codex receives its prompt as a positional argv argument — context must not be in it.
+    #expect(pending.initialPrompt == "fix the bug")
+    #expect(viewModel.consumePendingPrompt(for: "pending-\(pending.id.uuidString)") == nil)
+  }
+
+  @Test("Whitespace-only context launches byte-identical to no context")
+  func whitespaceContextIsDropped() throws {
+    let viewModel = makeSessionsViewModel()
+
+    viewModel.startNewSessionInHub(makeWorktree(), initialPrompt: "fix the bug", contextBlock: "  \n ")
+
+    let pending = try #require(viewModel.pendingHubSessions.first)
+    #expect(pending.launchContext == nil)
+    #expect(viewModel.consumePendingPrompt(for: "pending-\(pending.id.uuidString)") == "fix the bug")
+  }
+}
+
+@MainActor
+@Suite("Combined append-system-prompt")
+struct CombinedAppendSystemPromptTests {
+  @Test("Nil pieces collapse to nil")
+  func allNilIsNil() {
+    #expect(EmbeddedTerminalLaunchBuilder.combinedAppendSystemPrompt(
+      simulatorGuidance: nil, launchContext: nil) == nil)
+    #expect(EmbeddedTerminalLaunchBuilder.combinedAppendSystemPrompt(
+      simulatorGuidance: nil, launchContext: "  \n ") == nil)
+  }
+
+  @Test("Guidance alone passes through unchanged")
+  func guidanceAlone() {
+    let combined = EmbeddedTerminalLaunchBuilder.combinedAppendSystemPrompt(
+      simulatorGuidance: "verify in the simulator", launchContext: nil)
+    #expect(combined == "verify in the simulator")
+  }
+
+  @Test("Context alone gets the provenance preamble")
+  func contextAlone() {
+    let combined = EmbeddedTerminalLaunchBuilder.combinedAppendSystemPrompt(
+      simulatorGuidance: nil, launchContext: "<context>x</context>")
+    #expect(combined == EmbeddedTerminalLaunchBuilder.launchContextPreamble + "\n<context>x</context>")
+  }
+
+  @Test("Guidance comes first, then the context block")
+  func guidanceThenContext() {
+    let combined = EmbeddedTerminalLaunchBuilder.combinedAppendSystemPrompt(
+      simulatorGuidance: "verify in the simulator", launchContext: "<context>x</context>")
+    #expect(combined == "verify in the simulator\n\n"
+      + EmbeddedTerminalLaunchBuilder.launchContextPreamble + "\n<context>x</context>")
   }
 }
 

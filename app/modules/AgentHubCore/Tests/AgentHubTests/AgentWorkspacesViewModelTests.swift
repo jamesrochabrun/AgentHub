@@ -604,6 +604,7 @@ private final class WorkspaceTerminalSurfaceSpy: NSView, EmbeddedTerminalSurface
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String?,
     initialInputText: String?,
+    launchContext: String?,
     isDark: Bool,
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool,

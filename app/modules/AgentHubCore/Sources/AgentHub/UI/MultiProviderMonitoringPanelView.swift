@@ -546,6 +546,7 @@ public struct MultiProviderMonitoringPanelView: View {
             providerKind: item.providerKind,
             initialPrompt: pending.initialPrompt,
             initialInputText: pending.initialInputText,
+            launchContext: pending.launchContext,
             terminalKey: pendingId,
             viewModel: viewModel,
             contentMode: editorContentModeBinding(for: item),

@@ -283,8 +283,8 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(Array(args.suffix(2)) == ["--debug", "Start work"])
   }
 
-  @Test("New Claude sessions receive the appended system prompt; resumes do not")
-  func appendSystemPromptOnlyForNewClaudeSessions() {
+  @Test("Claude sessions receive the appended system prompt on launch and on resume")
+  func appendSystemPromptForClaudeSessions() {
     let config = CLICommandConfiguration.claudeDefault
 
     let newSession = config.argumentsForSession(
@@ -299,18 +299,25 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(newSession[flagIndex + 1].contains("XcodeBuildMCP"))
     #expect(newSession[flagIndex + 1].contains("build_run_sim"))
 
+    // System-prompt text is per-invocation, not conversation history: a
+    // resume that drops the flag silently loses launch context and guidance.
     let resumed = config.argumentsForSession(
       sessionId: "existing-session",
       prompt: nil,
       appendSystemPrompt: SimulatorAgentGuidance.systemPrompt
     )
-    #expect(!resumed.contains("--append-system-prompt"))
+    guard let resumedIndex = resumed.firstIndex(of: "--append-system-prompt") else {
+      Issue.record("missing --append-system-prompt in resume args \(resumed)")
+      return
+    }
+    #expect(resumed[resumedIndex + 1].contains("XcodeBuildMCP"))
+    #expect(Array(resumed.suffix(2)) == ["-r", "existing-session"])
 
     let withoutGuidance = config.argumentsForSession(sessionId: nil, prompt: nil)
     #expect(!withoutGuidance.contains("--append-system-prompt"))
   }
 
-  @Test("New Codex sessions receive developer instructions; resumes do not")
+  @Test("Codex sessions receive developer instructions on launch and on resume")
   func appendSystemPromptBecomesCodexDeveloperInstructions() {
     let config = CLICommandConfiguration.codexDefault
 
@@ -323,13 +330,19 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(args.contains { $0.hasPrefix("developer_instructions=") && $0.contains("XcodeBuildMCP") })
     #expect(args.contains { $0.hasPrefix("developer_instructions=") && $0.contains("build_sim") })
 
+    // developer_instructions is a config override, not history — resume must
+    // re-pass it just like a fresh launch.
     let resumed = config.argumentsForSession(
       sessionId: "existing-session",
       prompt: nil,
       appendSystemPrompt: SimulatorAgentGuidance.systemPrompt
     )
     #expect(!resumed.contains("--append-system-prompt"))
-    #expect(!resumed.contains { $0.hasPrefix("developer_instructions=") })
+    #expect(resumed.contains { $0.hasPrefix("developer_instructions=") && $0.contains("XcodeBuildMCP") })
+    #expect(Array(resumed.suffix(2)) == ["resume", "existing-session"])
+
+    let withoutGuidance = config.argumentsForSession(sessionId: "existing-session", prompt: nil)
+    #expect(!withoutGuidance.contains { $0.hasPrefix("developer_instructions=") })
   }
 
   @Test("Decodes previous CLI configuration payloads without extra args")

@@ -95,6 +95,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
   let cliConfiguration: CLICommandConfiguration
   let initialPrompt: String?  // Optional: prompt to include with resume command
   let initialInputText: String?  // Optional: text to prefill terminal input without Enter
+  let launchContext: String?  // Optional: curated context, delivered via the system-prompt channel
   let viewModel: CLISessionsViewModel?  // For shared terminal storage
   let dangerouslySkipPermissions: Bool  // One-shot flag for new sessions
   let permissionModePlan: Bool  // One-shot flag: start session in plan mode
@@ -110,6 +111,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
+    launchContext: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
@@ -124,6 +126,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
     self.cliConfiguration = cliConfiguration
     self.initialPrompt = initialPrompt
     self.initialInputText = initialInputText
+    self.launchContext = launchContext
     self.viewModel = viewModel
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
     self.permissionModePlan = permissionModePlan
@@ -176,6 +179,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
         cliConfiguration: cliConfiguration,
         initialPrompt: initialPrompt,
         initialInputText: initialInputText,
+        launchContext: launchContext,
         isDark: isDark,
         dangerouslySkipPermissions: dangerouslySkipPermissions,
         permissionModePlan: permissionModePlan,
@@ -197,6 +201,7 @@ public struct EmbeddedTerminalView: NSViewRepresentable {
       cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
       initialInputText: initialInputText,
+      launchContext: launchContext,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
@@ -297,6 +302,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
+    launchContext: String? = nil,
     isDark: Bool = true,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
@@ -328,6 +334,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       projectPath: projectPath,
       cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
+      launchContext: launchContext,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName
@@ -740,6 +747,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String? = nil,
+    launchContext: String? = nil,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil
@@ -749,6 +757,7 @@ public class TerminalContainerView: NSView, ManagedLocalProcessTerminalViewDeleg
       projectPath: projectPath,
       cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
+      launchContext: launchContext,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName,

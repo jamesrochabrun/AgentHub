@@ -67,6 +67,7 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
   private(set) var configuredShellPath: String?
   private(set) var configuredInitialPrompt: String?
   private(set) var configuredInitialInputText: String?
+  private(set) var configuredLaunchContext: String?
   private(set) var typedTexts: [String] = []
   private(set) var initialTypedTexts: [String] = []
   private(set) var sentPrompts: [String] = []
@@ -87,6 +88,7 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String?,
     initialInputText: String?,
+    launchContext: String?,
     isDark: Bool,
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool,
@@ -96,6 +98,7 @@ private final class TestTerminalSurface: NSView, EmbeddedTerminalSurface {
     configuredProjectPath = projectPath
     configuredInitialPrompt = initialPrompt
     configuredInitialInputText = initialInputText
+    configuredLaunchContext = launchContext
     configureCallCount += 1
   }
 

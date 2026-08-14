@@ -35,6 +35,7 @@ public protocol EmbeddedTerminalSurface: AnyObject {
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String?,
     initialInputText: String?,
+    launchContext: String?,
     isDark: Bool,
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool,

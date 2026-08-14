@@ -31,6 +31,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     static let createSessionMeasurements = "v14_create_session_measurements"
     static let addMeasurementProjectPath = "v15_add_measurement_project_path"
     static let createContextProfiles = "v16_create_context_profiles"
+    static let createSessionLaunchContext = "v17_create_session_launch_context"
   }
 
   static let migrationIdentifiers = [
@@ -49,7 +50,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     MigrationID.createPinnedSessionOrder,
     MigrationID.createSessionMeasurements,
     MigrationID.addMeasurementProjectPath,
-    MigrationID.createContextProfiles
+    MigrationID.createContextProfiles,
+    MigrationID.createSessionLaunchContext
   ]
 
   private let dbQueue: DatabaseQueue
@@ -329,6 +331,21 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
         CREATE UNIQUE INDEX idx_context_profiles_default
         ON context_profiles(projectPath) WHERE isDefault = 1
         """)
+    }
+
+    // Curated launch context per session, so resume launches can re-pass the
+    // out-of-band context (system-prompt channel) the session started with —
+    // that text never enters conversation history, unlike the old
+    // first-message injection.
+    migrator.registerMigration(MigrationID.createSessionLaunchContext) { db in
+      try db.create(table: "session_launch_context") { t in
+        t.column("sessionId", .text).primaryKey()
+        t.column("provider", .text).notNull()
+        t.column("projectPath", .text).notNull()
+        t.column("contextText", .text).notNull()
+        t.column("createdAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+      }
     }
 
     return migrator
@@ -1011,6 +1028,39 @@ extension SessionMetadataStore {
         .order(Column("name").collating(.localizedCaseInsensitiveCompare))
         .fetchAll(db)
     }) ?? []
+  }
+}
+
+// MARK: - Session Launch Context
+
+extension SessionMetadataStore {
+  /// Rows older than this are pruned on save: launch context is only re-read
+  /// when a session is resumed, and a month-old session losing its background
+  /// context is preferable to unbounded growth of up-to-48 KB rows.
+  public static let sessionLaunchContextMaxAge: TimeInterval = 30 * 24 * 60 * 60
+
+  /// Records the curated context a session was launched with (upsert), pruning
+  /// stale rows in the same transaction.
+  public func saveSessionLaunchContext(_ record: SessionLaunchContextRecord) throws {
+    try dbQueue.write { db in
+      let cutoff = Date().addingTimeInterval(-Self.sessionLaunchContextMaxAge)
+      try SessionLaunchContextRecord
+        .filter(Column("updatedAt") < cutoff)
+        .deleteAll(db)
+      var record = record
+      record.updatedAt = Date()
+      try record.save(db)
+    }
+  }
+
+  /// Synchronous read for command-line assembly at resume time, safe from
+  /// non-async contexts (mirrors `getAIConfigSync`).
+  public nonisolated func getSessionLaunchContextTextSync(for sessionId: String) -> String? {
+    try? dbQueue.read { db in
+      try SessionLaunchContextRecord
+        .fetchOne(db, key: sessionId)?
+        .contextText
+    }
   }
 }
 

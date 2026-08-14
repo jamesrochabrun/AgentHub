@@ -21,6 +21,7 @@ public struct MonitoringCardView: View {
   let providerKind: SessionProviderKind
   let initialPrompt: String?
   let initialInputText: String?
+  let launchContext: String?  // Curated context, delivered via the system-prompt channel
   let terminalKey: String?  // Key for terminal storage (session ID or "pending-{pendingId}")
   let viewModel: CLISessionsViewModel?
   let editorProjectPath: String
@@ -74,6 +75,7 @@ public struct MonitoringCardView: View {
     providerKind: SessionProviderKind = .claude,
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
+    launchContext: String? = nil,
     terminalKey: String? = nil,
     viewModel: CLISessionsViewModel? = nil,
     contentMode: Binding<MonitoringCardContentMode> = .constant(.terminal),
@@ -113,6 +115,7 @@ public struct MonitoringCardView: View {
     self.providerKind = providerKind
     self.initialPrompt = initialPrompt
     self.initialInputText = initialInputText
+    self.launchContext = launchContext
     self.terminalKey = terminalKey
     self.viewModel = viewModel
     self._contentMode = contentMode
@@ -976,6 +979,7 @@ public struct MonitoringCardView: View {
       cliConfiguration: liveCLIConfiguration,
       initialPrompt: initialPrompt,
       initialInputText: initialInputText,
+      launchContext: launchContext,
       viewModel: viewModel,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
@@ -1172,6 +1176,7 @@ private struct MonitoringCardTerminalContent: View {
   let cliConfiguration: CLICommandConfiguration
   let initialPrompt: String?
   let initialInputText: String?
+  let launchContext: String?
   let viewModel: CLISessionsViewModel?
   let dangerouslySkipPermissions: Bool
   let permissionModePlan: Bool
@@ -1188,6 +1193,7 @@ private struct MonitoringCardTerminalContent: View {
       cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
       initialInputText: initialInputText,
+      launchContext: launchContext,
       viewModel: viewModel,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,

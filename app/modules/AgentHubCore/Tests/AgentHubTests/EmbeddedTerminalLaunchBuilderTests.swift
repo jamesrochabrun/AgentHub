@@ -526,3 +526,162 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       .path
   }
 }
+
+@Suite("EmbeddedTerminalLaunchBuilder launch context")
+struct EmbeddedTerminalLaunchBuilderLaunchContextTests {
+  private let agentHubCLIPath = "/Applications/AgentHub.app/Contents/Helpers/agenthub"
+
+  private func makeStore() throws -> SessionMetadataStore {
+    try SessionMetadataStore(
+      path: FileManager.default.temporaryDirectory
+        .appendingPathComponent("AgentHubLaunchContextTests-\(UUID().uuidString).sqlite")
+        .path
+    )
+  }
+
+  private func makeProjectDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AgentHubLaunchContextProject-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
+  private func shellCommand(
+    sessionId: String?,
+    mode: CLICommandMode,
+    projectPath: String,
+    initialPrompt: String?,
+    launchContext: String?,
+    metadataStore: SessionMetadataStore?
+  ) throws -> String {
+    let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: sessionId,
+      projectPath: projectPath,
+      cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: mode),
+      initialPrompt: initialPrompt,
+      launchContext: launchContext,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: metadataStore,
+      agentHubCLIPath: agentHubCLIPath,
+      installAgentHubWorktreeSkill: {},
+      xcodeBuildMCPEnabled: false
+    )
+    guard case .success(let launch) = result else {
+      throw NSError(domain: "LaunchContextTests", code: 1)
+    }
+    return launch.shellCommand
+  }
+
+  @Test("Claude new session: context lands in --append-system-prompt, the prompt stays pure")
+  func claudeNewSessionCarriesContextInSystemPrompt() throws {
+    let project = try makeProjectDirectory()
+    defer { try? FileManager.default.removeItem(at: project) }
+
+    let command = try shellCommand(
+      sessionId: nil,
+      mode: .claude,
+      projectPath: project.path,
+      initialPrompt: "fix the bug",
+      launchContext: "<context>x</context>",
+      metadataStore: nil
+    )
+
+    #expect(command.contains("--append-system-prompt"))
+    #expect(command.contains(EmbeddedTerminalLaunchBuilder.launchContextPreamble))
+    #expect(command.contains("<context>x</context>"))
+    // The user's prompt remains the lone trailing positional argument.
+    #expect(command.hasSuffix("'fix the bug'"))
+  }
+
+  @Test("Codex new session: context lands in developer_instructions, the prompt stays pure")
+  func codexNewSessionCarriesContextInDeveloperInstructions() throws {
+    let project = try makeProjectDirectory()
+    defer { try? FileManager.default.removeItem(at: project) }
+
+    let command = try shellCommand(
+      sessionId: nil,
+      mode: .codex,
+      projectPath: project.path,
+      initialPrompt: "fix the bug",
+      launchContext: "<context>x</context>",
+      metadataStore: nil
+    )
+
+    #expect(command.contains("developer_instructions="))
+    #expect(command.contains(EmbeddedTerminalLaunchBuilder.launchContextPreamble))
+    #expect(command.contains("<context>x</context>"))
+    #expect(command.hasSuffix("'fix the bug'"))
+  }
+
+  @Test("Claude resume re-passes the persisted launch context")
+  func claudeResumeRereadsPersistedContext() async throws {
+    let project = try makeProjectDirectory()
+    defer { try? FileManager.default.removeItem(at: project) }
+    let store = try makeStore()
+    try await store.saveSessionLaunchContext(SessionLaunchContextRecord(
+      sessionId: "resumed-session",
+      provider: "Claude",
+      projectPath: project.path,
+      contextText: "<context>persisted</context>"
+    ))
+
+    let command = try shellCommand(
+      sessionId: "resumed-session",
+      mode: .claude,
+      projectPath: project.path,
+      initialPrompt: nil,
+      launchContext: nil,
+      metadataStore: store
+    )
+
+    #expect(command.contains("--append-system-prompt"))
+    #expect(command.contains("<context>persisted</context>"))
+    #expect(command.hasSuffix("'-r' 'resumed-session'"))
+  }
+
+  @Test("Codex resume re-passes the persisted launch context")
+  func codexResumeRereadsPersistedContext() async throws {
+    let project = try makeProjectDirectory()
+    defer { try? FileManager.default.removeItem(at: project) }
+    let store = try makeStore()
+    try await store.saveSessionLaunchContext(SessionLaunchContextRecord(
+      sessionId: "resumed-session",
+      provider: "Codex",
+      projectPath: project.path,
+      contextText: "<context>persisted</context>"
+    ))
+
+    let command = try shellCommand(
+      sessionId: "resumed-session",
+      mode: .codex,
+      projectPath: project.path,
+      initialPrompt: nil,
+      launchContext: nil,
+      metadataStore: store
+    )
+
+    #expect(command.contains("developer_instructions="))
+    #expect(command.contains("<context>persisted</context>"))
+    #expect(command.hasSuffix("'resume' 'resumed-session'"))
+  }
+
+  @Test("Resume without a persisted row adds no context flags")
+  func resumeWithoutPersistedRowAddsNothing() throws {
+    let project = try makeProjectDirectory()
+    defer { try? FileManager.default.removeItem(at: project) }
+    let store = try makeStore()
+
+    let command = try shellCommand(
+      sessionId: "resumed-session",
+      mode: .claude,
+      projectPath: project.path,
+      initialPrompt: nil,
+      launchContext: nil,
+      metadataStore: store
+    )
+
+    #expect(!command.contains("--append-system-prompt"))
+  }
+}

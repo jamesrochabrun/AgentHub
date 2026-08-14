@@ -49,6 +49,7 @@ public enum EmbeddedTerminalLaunchBuilder {
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String?,
+    launchContext: String? = nil,
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool,
     worktreeName: String?,
@@ -60,6 +61,7 @@ public enum EmbeddedTerminalLaunchBuilder {
       projectPath: projectPath,
       cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
+      launchContext: launchContext,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName,
@@ -79,6 +81,7 @@ public enum EmbeddedTerminalLaunchBuilder {
     projectPath: String,
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String?,
+    launchContext: String? = nil,
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool,
     worktreeName: String?,
@@ -146,7 +149,24 @@ public enum EmbeddedTerminalLaunchBuilder {
     // Xcode projects get simulator-loop guidance at system-prompt level so
     // agents verify through the same live app surface the user is watching.
     // Tied to the bootstrap: guidance without the tools misleads agents.
-    let appendSystemPrompt = xcodeBuildMCPBootstrap == nil ? nil : SimulatorAgentGuidance.systemPrompt
+    let simulatorGuidance = xcodeBuildMCPBootstrap == nil ? nil : SimulatorAgentGuidance.systemPrompt
+    // Curated launch context rides the same out-of-band channel (Claude
+    // `--append-system-prompt`, Codex `-c developer_instructions=`) instead of
+    // the first user message. New sessions get it from the launch flow; resume
+    // has no in-memory copy, so the text persisted at session resolution is
+    // re-passed — it never entered conversation history.
+    let resolvedLaunchContext: String?
+    if isNewSession {
+      resolvedLaunchContext = launchContext
+    } else if let sessionId, !sessionId.isEmpty {
+      resolvedLaunchContext = metadataStore?.getSessionLaunchContextTextSync(for: sessionId)
+    } else {
+      resolvedLaunchContext = nil
+    }
+    let appendSystemPrompt = combinedAppendSystemPrompt(
+      simulatorGuidance: simulatorGuidance,
+      launchContext: resolvedLaunchContext
+    )
     let args = cliConfiguration.argumentsForSession(
       sessionId: sessionId,
       prompt: initialPrompt,
@@ -262,6 +282,27 @@ public enum EmbeddedTerminalLaunchBuilder {
       environment["AGENTHUB_SESSION_ID"] = sessionId
     }
     return environment
+  }
+
+  /// One line of provenance so the agent knows the block below is deliberate
+  /// user input, not something that leaked into its system prompt.
+  static let launchContextPreamble =
+    "The user attached the following curated context when launching this session. Use it as background for their upcoming tasks."
+
+  /// Single append-system-prompt value both providers receive. Guidance first
+  /// (short operational instructions), then the bulky context block.
+  static func combinedAppendSystemPrompt(
+    simulatorGuidance: String?,
+    launchContext: String?
+  ) -> String? {
+    var parts: [String] = []
+    if let simulatorGuidance, !simulatorGuidance.isEmpty {
+      parts.append(simulatorGuidance)
+    }
+    if let context = launchContext?.trimmingCharacters(in: .whitespacesAndNewlines), !context.isEmpty {
+      parts.append(launchContextPreamble + "\n" + context)
+    }
+    return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
   }
 
   static func shellEscape(_ value: String) -> String {

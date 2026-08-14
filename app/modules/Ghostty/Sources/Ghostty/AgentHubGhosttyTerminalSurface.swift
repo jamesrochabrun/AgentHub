@@ -136,6 +136,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     cliConfiguration: CLICommandConfiguration,
     initialPrompt: String?,
     initialInputText: String?,
+    launchContext: String?,
     isDark: Bool,
     dangerouslySkipPermissions: Bool,
     permissionModePlan: Bool,
@@ -149,17 +150,22 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
     configuredSessionId = sessionId
     configuredProcessProvider = SessionProviderKind(cliMode: cliConfiguration.mode)
     configuredExpectedExecutable = cliConfiguration.executableName
-    self.metadataStore = metadataStore
+    // Keep the stored reference when a re-configure (e.g. restart) passes nil,
+    // so resume launches can still read AI config and persisted launch context.
+    if let metadataStore {
+      self.metadataStore = metadataStore
+    }
 
     let launch = EmbeddedTerminalLaunchBuilder.cliLaunch(
       sessionId: sessionId,
       projectPath: projectPath,
       cliConfiguration: cliConfiguration,
       initialPrompt: initialPrompt,
+      launchContext: launchContext,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName,
-      metadataStore: metadataStore
+      metadataStore: self.metadataStore
     )
 
     switch launch {
@@ -229,6 +235,7 @@ public final class AgentHubGhosttyTerminalSurface: NSView, EmbeddedTerminalSurfa
       cliConfiguration: cliConfiguration,
       initialPrompt: nil,
       initialInputText: nil,
+      launchContext: nil,
       isDark: currentIsDark,
       dangerouslySkipPermissions: false,
       permissionModePlan: false,

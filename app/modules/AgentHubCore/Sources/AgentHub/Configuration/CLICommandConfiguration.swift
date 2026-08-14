@@ -147,6 +147,13 @@ public struct CLICommandConfiguration: Codable, Sendable {
         ]
       }
 
+      // System-prompt text is per-invocation, not part of conversation
+      // history, so resume must re-pass it or the session silently loses the
+      // launch context / simulator guidance it started with.
+      if let appendSystemPrompt, !appendSystemPrompt.isEmpty {
+        providerArgs += ["--append-system-prompt", appendSystemPrompt]
+      }
+
       // Add flags only for NEW sessions (not resume)
       if isNewSession {
         if permissionModePlan {
@@ -154,9 +161,6 @@ public struct CLICommandConfiguration: Codable, Sendable {
           providerArgs += ["--permission-mode", "plan"]
         } else if dangerouslySkipPermissions {
           providerArgs.append("--dangerously-skip-permissions")
-        }
-        if let appendSystemPrompt, !appendSystemPrompt.isEmpty {
-          providerArgs += ["--append-system-prompt", appendSystemPrompt]
         }
         if let name = worktreeName {
           if name.isEmpty {
@@ -206,6 +210,12 @@ public struct CLICommandConfiguration: Codable, Sendable {
             agentHubEnvironment: agentHubMCPEnvironment,
             xcodeBuildMCP: xcodeBuildMCPBootstrap
           )
+        }
+        // developer_instructions is a config override, not conversation
+        // history — resume must re-pass it or the session loses its launch
+        // context / simulator guidance.
+        if let appendSystemPrompt, !appendSystemPrompt.isEmpty {
+          providerArgs += ["-c", "developer_instructions=\(tomlStringLiteral(appendSystemPrompt))"]
         }
         return assembleArguments(prefix: prefix, providerArgs: providerArgs, trailingArgs: ["resume", sessionId])
       }

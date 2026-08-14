@@ -929,6 +929,7 @@ public final class CLISessionsViewModel {
       cliConfiguration: CLICommandConfiguration,
       initialPrompt: String?,
       initialInputText: String?,
+      launchContext: String?,
       isDark: Bool,
       dangerouslySkipPermissions: Bool,
       permissionModePlan: Bool,
@@ -945,6 +946,7 @@ public final class CLISessionsViewModel {
         cliConfiguration,
         initialPrompt,
         initialInputText,
+        launchContext,
         isDark,
         dangerouslySkipPermissions,
         permissionModePlan,
@@ -956,6 +958,7 @@ public final class CLISessionsViewModel {
           cliConfiguration: cliConfiguration,
           initialPrompt: initialPrompt,
           initialInputText: initialInputText,
+          launchContext: launchContext,
           isDark: isDark,
           dangerouslySkipPermissions: dangerouslySkipPermissions,
           permissionModePlan: permissionModePlan,
@@ -975,17 +978,22 @@ public final class CLISessionsViewModel {
         cliConfiguration,
         _,
         _,
+        _,
         isDark,
         dangerouslySkipPermissions,
         permissionModePlan,
         worktreeName
       ):
+        // launchContext drops with the prompt: a relaunch from this descriptor
+        // resumes by real session id, and the resume path re-reads persisted
+        // context from the metadata store.
         return .cli(
           sessionId: sessionId,
           projectPath: projectPath,
           cliConfiguration: cliConfiguration,
           initialPrompt: nil,
           initialInputText: nil,
+          launchContext: nil,
           isDark: isDark,
           dangerouslySkipPermissions: dangerouslySkipPermissions,
           permissionModePlan: permissionModePlan,
@@ -1416,6 +1424,7 @@ public final class CLISessionsViewModel {
     cliConfiguration: CLICommandConfiguration? = nil,
     initialPrompt: String?,
     initialInputText: String? = nil,
+    launchContext: String? = nil,
     isDark: Bool = true,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
@@ -1429,6 +1438,9 @@ public final class CLISessionsViewModel {
         || sessionId?.hasPrefix("pending-") == true
     )
     let launchInitialPrompt = isNewSession ? initialPrompt : nil
+    // Resume launches re-read persisted context from the metadata store; the
+    // in-memory copy only rides along for brand-new sessions.
+    let newSessionLaunchContext = isNewSession ? launchContext : nil
     let descriptorInputText = key.hasPrefix("pending-")
       ? combinedInputText(initialInputText, queuedInputText)
       : queuedInputText
@@ -1439,6 +1451,7 @@ public final class CLISessionsViewModel {
       cliConfiguration: config,
       initialPrompt: launchInitialPrompt,
       initialInputText: descriptorInputText,
+      launchContext: newSessionLaunchContext,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
@@ -1476,6 +1489,7 @@ public final class CLISessionsViewModel {
       cliConfiguration: config,
       initialPrompt: launchInitialPrompt,
       initialInputText: createInputText,
+      launchContext: newSessionLaunchContext,
       isDark: isDark,
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
@@ -1624,6 +1638,7 @@ public final class CLISessionsViewModel {
       cliConfiguration: currentCLIConfiguration,
       initialPrompt: nil,
       initialInputText: nil,
+      launchContext: nil,
       isDark: true,
       dangerouslySkipPermissions: false,
       permissionModePlan: false,
@@ -3585,8 +3600,11 @@ public final class CLISessionsViewModel {
   /// - Parameters:
   ///   - worktree: The worktree to start the session in
   ///   - contextBlock: Already-materialized curated context (inline block or
-  ///     temp-file reference prompt) prepended to the first message. Nil keeps
-  ///     the launch identical to a launch without the context feature.
+  ///     temp-file reference prompt). Delivered out-of-band via the
+  ///     append-system-prompt channel (`--append-system-prompt` /
+  ///     `-c developer_instructions=`), never merged into the first user
+  ///     message. Nil keeps the launch identical to a launch without the
+  ///     context feature.
   ///   - dangerouslySkipPermissions: If true, adds --dangerously-skip-permissions flag
   public func startNewSessionInHub(
     _ worktree: WorktreeBranch,
@@ -3598,9 +3616,8 @@ public final class CLISessionsViewModel {
     permissionModePlan: Bool = false,
     worktreeName: String? = nil
   ) {
-    let mergedPrompt = Self.mergedLaunchPrompt(contextBlock: contextBlock, initialPrompt: initialPrompt)
-    let promptForTerminalSubmission = providerKind == .claude ? nonEmpty(mergedPrompt) : nil
-    let promptForProcessLaunch = providerKind == .claude ? nil : mergedPrompt
+    let promptForTerminalSubmission = providerKind == .claude ? nonEmpty(initialPrompt) : nil
+    let promptForProcessLaunch = providerKind == .claude ? nil : initialPrompt
 
     // Each pending session gets a unique ID, so no need to clear existing terminals
     // Terminals are now keyed by session ID, not worktree path
@@ -3609,6 +3626,7 @@ public final class CLISessionsViewModel {
       launchPath: launchPath,
       initialPrompt: promptForProcessLaunch,
       initialInputText: initialInputText,
+      launchContext: nonEmpty(contextBlock?.trimmingCharacters(in: .whitespacesAndNewlines)),
       dangerouslySkipPermissions: dangerouslySkipPermissions,
       permissionModePlan: permissionModePlan,
       worktreeName: worktreeName
@@ -3632,18 +3650,23 @@ public final class CLISessionsViewModel {
     }
   }
 
-  /// Merges curated context with the user's first prompt — one rule for both
-  /// providers. Nil/empty context returns the prompt untouched, so a launch
-  /// without curated context is byte-for-byte today's behavior.
-  static func mergedLaunchPrompt(contextBlock: String?, initialPrompt: String?) -> String? {
-    guard let context = contextBlock?.trimmingCharacters(in: .whitespacesAndNewlines), !context.isEmpty else {
-      return initialPrompt
+  /// Persists the curated context a pending session was launched with, keyed
+  /// by the real session id, so resume launches can re-pass it on the
+  /// append-system-prompt channel (that text never enters conversation
+  /// history). Fire-and-forget: the running session already has its context.
+  private func persistLaunchContext(pending: PendingHubSession, sessionId: String) {
+    guard let context = pending.launchContext, !context.isEmpty,
+          !sessionId.isEmpty, !sessionId.hasPrefix("pending-"),
+          let metadataStore else { return }
+    let record = SessionLaunchContextRecord(
+      sessionId: sessionId,
+      provider: providerKind.rawValue,
+      projectPath: pending.projectPath,
+      contextText: context
+    )
+    Task {
+      try? await metadataStore.saveSessionLaunchContext(record)
     }
-    guard let prompt = initialPrompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-      return context
-        + "\n\nThis is background context for the tasks I'm about to give you. Load it and acknowledge in one line."
-    }
-    return context + "\n\n" + prompt
   }
 
   /// Removes a pending Hub session (e.g., if user cancels)
@@ -3834,6 +3857,7 @@ public final class CLISessionsViewModel {
             // Remove pending only after finding the real session
             pendingHubSessions.removeAll { $0.id == pending.id }
             resolvedPendingSessions[pending.id] = session.id
+            persistLaunchContext(pending: pending, sessionId: session.id)
             AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(session.id.prefix(8), privacy: .public)")
             transferTerminal(fromPendingId: pending.id, toSessionId: session.id)
             transferAuxiliaryShellTerminal(fromPendingId: pending.id, toSessionId: session.id)
@@ -3851,6 +3875,7 @@ public final class CLISessionsViewModel {
             if let session = wt.sessions.first(where: { $0.id == sessionId }) {
               pendingHubSessions.removeAll { $0.id == pending.id }
               resolvedPendingSessions[pending.id] = session.id
+              persistLaunchContext(pending: pending, sessionId: session.id)
               AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(session.id.prefix(8), privacy: .public)")
               transferTerminal(fromPendingId: pending.id, toSessionId: session.id)
               transferAuxiliaryShellTerminal(fromPendingId: pending.id, toSessionId: session.id)
@@ -3894,6 +3919,7 @@ public final class CLISessionsViewModel {
 
           pendingHubSessions.removeAll { $0.id == pending.id }
           resolvedPendingSessions[pending.id] = sessionId
+          persistLaunchContext(pending: pending, sessionId: sessionId)
           AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(sessionId.prefix(8), privacy: .public)")
           transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
           transferAuxiliaryShellTerminal(fromPendingId: pending.id, toSessionId: sessionId)
@@ -3937,6 +3963,7 @@ public final class CLISessionsViewModel {
 
           pendingHubSessions.removeAll { $0.id == pending.id }
           resolvedPendingSessions[pending.id] = sessionId
+          persistLaunchContext(pending: pending, sessionId: sessionId)
           AppLogger.session.info("[HandleNewSession] Resolved: pending=\(pending.id.uuidString.prefix(8), privacy: .public) -> real=\(sessionId.prefix(8), privacy: .public)")
           transferTerminal(fromPendingId: pending.id, toSessionId: sessionId)
           transferAuxiliaryShellTerminal(fromPendingId: pending.id, toSessionId: sessionId)

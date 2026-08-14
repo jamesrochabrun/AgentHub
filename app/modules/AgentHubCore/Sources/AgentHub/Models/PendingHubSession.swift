@@ -16,6 +16,9 @@ public struct PendingHubSession: Identifiable {
   public let startedAt: Date
   public let initialPrompt: String?
   public let initialInputText: String?
+  /// Curated context delivered out-of-band (system-prompt channel), never
+  /// merged into the first user message.
+  public let launchContext: String?
   public let dangerouslySkipPermissions: Bool
   public let permissionModePlan: Bool
   /// nil = no worktree flag; "" = --worktree (auto-name); non-empty = --worktree <name>
@@ -26,6 +29,7 @@ public struct PendingHubSession: Identifiable {
     launchPath: String? = nil,
     initialPrompt: String? = nil,
     initialInputText: String? = nil,
+    launchContext: String? = nil,
     dangerouslySkipPermissions: Bool = false,
     permissionModePlan: Bool = false,
     worktreeName: String? = nil
@@ -36,6 +40,7 @@ public struct PendingHubSession: Identifiable {
     self.startedAt = Date()
     self.initialPrompt = initialPrompt
     self.initialInputText = initialInputText
+    self.launchContext = launchContext
     self.dangerouslySkipPermissions = dangerouslySkipPermissions
     self.permissionModePlan = permissionModePlan
     self.worktreeName = worktreeName
