@@ -296,6 +296,64 @@ struct ContextBuilderViewModelTests {
     }
   }
 
+  @Test("Clearing the selection clears the truncation banner too")
+  func emptySelectionClearsTruncationBanner() async throws {
+    try await withProject { project, viewModel, _ in
+      try write("huge.txt", String(repeating: "x", count: 60_000), in: project)
+      await viewModel.toggleSelection(relativePath: "huge.txt")
+      await viewModel.refreshPreview()
+      #expect(viewModel.previewTruncatedByteCount != nil)
+
+      viewModel.removeSelection(relativePath: "huge.txt")
+      await viewModel.refreshPreview()
+
+      #expect(viewModel.assembledPreview.isEmpty)
+      #expect(viewModel.previewTruncatedByteCount == nil)
+    }
+  }
+
+  @Test("Binary project files show as attachments in the selection rows")
+  func binaryProjectRowIsAttachment() async throws {
+    try await withProject { project, viewModel, _ in
+      let pdf = project.appendingPathComponent("spec.pdf")
+      try Data([0x25, 0x50, 0x44, 0x46, 0xFF, 0xFE]).write(to: pdf)
+
+      await viewModel.toggleSelection(relativePath: "spec.pdf")
+
+      let row = try #require(viewModel.selectedRows.first)
+      #expect(row.isAttachment)
+      #expect(!row.isMissing)
+    }
+  }
+
+  @Test("An untouched saved set keeps its identity for launch apply; edits drop it")
+  func unmodifiedSourceProfileGating() async throws {
+    try await withProject { project, viewModel, _ in
+      try write("a.swift", "let a = 1", in: project)
+      let profile = ContextProfile(
+        id: "set",
+        name: "Set",
+        scope: .project,
+        projectPath: project.path,
+        selection: ContextSelection(
+          files: [ContextFileSelection(relativePath: "a.swift")],
+          instructions: "keep"
+        )
+      )
+      await viewModel.applyProfile(profile)
+      #expect(viewModel.unmodifiedSourceProfile?.id == "set")
+
+      viewModel.instructions = "changed"
+      #expect(viewModel.unmodifiedSourceProfile == nil)
+
+      viewModel.instructions = "keep"
+      #expect(viewModel.unmodifiedSourceProfile?.id == "set")
+
+      viewModel.startNewDraft()
+      #expect(viewModel.unmodifiedSourceProfile == nil)
+    }
+  }
+
   @Test("File fallback hint appears when selected bytes exceed the threshold")
   func fallbackHint() async throws {
     let project = FileManager.default.temporaryDirectory

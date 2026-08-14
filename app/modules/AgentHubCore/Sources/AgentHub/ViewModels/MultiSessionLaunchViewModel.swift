@@ -164,7 +164,15 @@ public final class MultiSessionLaunchViewModel {
   public var manualCodexBranchName: String = ""
   public var manualCodexDirectoryName: String = ""
   public var baseBranch: RemoteBranch?
-  public var selectedRepository: SelectedRepository?
+  public var selectedRepository: SelectedRepository? {
+    didSet {
+      // Curated context is repo-specific: attached sets, ad-hoc curation, and
+      // the removed-chip suppression must never carry across a repo change.
+      if oldValue?.path != selectedRepository?.path {
+        resetContextState()
+      }
+    }
+  }
   public var carrySourceChangesPath: String?
 
   // MARK: - Loaded Data
@@ -346,6 +354,16 @@ public final class MultiSessionLaunchViewModel {
     contextRemovedByUser = true
   }
 
+  /// Drops all context state, including the removed-chip suppression, so the
+  /// next repository's default profile can attach.
+  private func resetContextState() {
+    attachedContextProfile = nil
+    pendingContextSelection = nil
+    contextMissingPaths = []
+    contextSummaryTokens = nil
+    contextRemovedByUser = false
+  }
+
   /// Cheap metrics pass for the chip row: approximate tokens plus which
   /// selected paths do not resolve. Never loads file contents into UI state.
   public func refreshContextSummary() async {
@@ -355,16 +373,16 @@ public final class MultiSessionLaunchViewModel {
       return
     }
     let paths = selection.files.map(\.relativePath)
-    let metrics = await contextFileLoader.fileMetrics(relativePaths: paths, projectPath: repo.path)
+    let projectStatuses = await contextFileLoader.projectFileStatuses(
+      relativePaths: paths, projectPath: repo.path
+    )
     let externalStatuses = await contextFileLoader.externalFileStatuses(
       absolutePaths: selection.externalPaths
     )
 
-    var missing = paths.filter { metrics[$0] == nil }
-    var tokens = metrics.values.reduce(0) {
-      $0 + contextTokenEstimator.estimatedTokens(forByteCount: $1.byteCount)
-    }
-    for (path, status) in externalStatuses {
+    var missing: [String] = []
+    var tokens = 0
+    for (path, status) in projectStatuses.merging(externalStatuses) { current, _ in current } {
       switch status {
       case .text(let fileMetrics):
         tokens += contextTokenEstimator.estimatedTokens(forByteCount: fileMetrics.byteCount)
@@ -1140,10 +1158,7 @@ public final class MultiSessionLaunchViewModel {
     smartProvider = .claude
     smartPlanText = ""
     smartOrchestrationPlan = nil
-    attachedContextProfile = nil
-    pendingContextSelection = nil
-    contextMissingPaths = []
-    contextRemovedByUser = false
+    resetContextState()
   }
 
   // MARK: - Private

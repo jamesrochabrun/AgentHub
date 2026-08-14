@@ -8,6 +8,7 @@ final class MockContextProfileService: ContextProfileServiceProtocol, @unchecked
   var storedProfiles: [ContextProfile] = []
   var defaultProfileResult: ContextProfile?
   private(set) var savedProfiles: [ContextProfile] = []
+  private(set) var savedProjectPaths: [String] = []
   private(set) var deletedIds: [String] = []
   private(set) var defaultRequests: [String?] = []
 
@@ -15,8 +16,9 @@ final class MockContextProfileService: ContextProfileServiceProtocol, @unchecked
     storedProfiles
   }
 
-  func save(_ profile: ContextProfile) async throws {
+  func save(_ profile: ContextProfile, projectPath: String) async throws {
     savedProfiles.append(profile)
+    savedProjectPaths.append(projectPath)
     storedProfiles.removeAll { $0.id == profile.id }
     storedProfiles.append(profile)
   }

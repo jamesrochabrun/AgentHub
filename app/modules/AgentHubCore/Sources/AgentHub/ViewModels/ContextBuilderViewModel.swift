@@ -165,6 +165,14 @@ public final class ContextBuilderViewModel {
     selectedRows.contains { $0.relativePath == relativePath }
   }
 
+  /// The saved set the editor state still matches exactly — launch mode uses
+  /// this so applying an untouched saved set keeps its identity (name, default
+  /// badge) instead of downgrading to ad-hoc curation.
+  public var unmodifiedSourceProfile: ContextProfile? {
+    guard let sourceProfile, !hasUnsavedChanges else { return nil }
+    return sourceProfile
+  }
+
   public func currentSelection() -> ContextSelection {
     ContextSelection(
       files: selectedRows.filter { !$0.isExternal }
@@ -223,45 +231,36 @@ public final class ContextBuilderViewModel {
     guard !selectedRows.isEmpty else { return }
     let projectPaths = selectedRows.filter { !$0.isExternal }.map(\.relativePath)
     let externalPaths = selectedRows.filter(\.isExternal).map(\.relativePath)
-    let metrics = await fileLoader.fileMetrics(relativePaths: projectPaths, projectPath: projectPath)
+    let projectStatuses = await fileLoader.projectFileStatuses(
+      relativePaths: projectPaths, projectPath: projectPath)
     let externalStatuses = await fileLoader.externalFileStatuses(absolutePaths: externalPaths)
 
     selectedRows = selectedRows.map { row in
-      if row.isExternal {
-        switch externalStatuses[row.relativePath] {
-        case .text(let fileMetrics):
-          return ContextSelectedFileRow(
-            relativePath: row.relativePath,
-            byteCount: fileMetrics.byteCount,
-            estimatedTokens: estimator.estimatedTokens(forByteCount: fileMetrics.byteCount),
-            isMissing: false,
-            isExternal: true
-          )
-        case .attachment:
-          return ContextSelectedFileRow(
-            relativePath: row.relativePath,
-            byteCount: nil,
-            estimatedTokens: estimator.estimatedTokens(forByteCount: row.relativePath.utf8.count),
-            isMissing: false,
-            isExternal: true,
-            isAttachment: true
-          )
-        case .missing, nil:
-          return ContextSelectedFileRow(
-            relativePath: row.relativePath, byteCount: nil, estimatedTokens: nil,
-            isMissing: true, isExternal: true)
-        }
-      }
-      if let fileMetrics = metrics[row.relativePath] {
+      let status = row.isExternal
+        ? externalStatuses[row.relativePath] : projectStatuses[row.relativePath]
+      switch status {
+      case .text(let fileMetrics):
         return ContextSelectedFileRow(
           relativePath: row.relativePath,
           byteCount: fileMetrics.byteCount,
           estimatedTokens: estimator.estimatedTokens(forByteCount: fileMetrics.byteCount),
-          isMissing: false
+          isMissing: false,
+          isExternal: row.isExternal
         )
+      case .attachment:
+        return ContextSelectedFileRow(
+          relativePath: row.relativePath,
+          byteCount: nil,
+          estimatedTokens: estimator.estimatedTokens(forByteCount: row.relativePath.utf8.count),
+          isMissing: false,
+          isExternal: row.isExternal,
+          isAttachment: true
+        )
+      case .missing, nil:
+        return ContextSelectedFileRow(
+          relativePath: row.relativePath, byteCount: nil, estimatedTokens: nil,
+          isMissing: true, isExternal: row.isExternal)
       }
-      return ContextSelectedFileRow(
-        relativePath: row.relativePath, byteCount: nil, estimatedTokens: nil, isMissing: true)
     }
   }
 
@@ -292,6 +291,7 @@ public final class ContextBuilderViewModel {
     let selection = currentSelection()
     guard !selection.isEmpty else {
       assembledPreview = ""
+      previewTruncatedByteCount = nil
       return
     }
     let projectLoad = await fileLoader.loadFiles(
@@ -357,7 +357,7 @@ public final class ContextBuilderViewModel {
       projectPath: projectPath,
       selection: currentSelection()
     )
-    try await profileService.save(profile)
+    try await profileService.save(profile, projectPath: projectPath)
     sourceProfile = profile
     await loadProfiles()
     return profile
@@ -378,7 +378,7 @@ public final class ContextBuilderViewModel {
   public func saveEditedProfile() async throws -> ContextProfile? {
     guard let profileService, var profile = sourceProfile else { return nil }
     profile.selection = currentSelection()
-    try await profileService.save(profile)
+    try await profileService.save(profile, projectPath: projectPath)
     sourceProfile = profile
     await loadProfiles()
     return profile

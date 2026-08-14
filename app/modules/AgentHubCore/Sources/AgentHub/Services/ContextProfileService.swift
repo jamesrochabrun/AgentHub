@@ -14,7 +14,10 @@ public protocol ContextProfileServiceProtocol: Sendable {
   /// Profiles applicable to a project: its project-scoped profiles first,
   /// then personal (user-level) ones, each group name-ordered.
   func profiles(forProjectPath projectPath: String) async throws -> [ContextProfile]
-  func save(_ profile: ContextProfile) async throws
+  /// `projectPath` is the project the caller is working in — required so a
+  /// personal-scope save (whose profile stores an empty path) still republishes
+  /// that project's JSON index. Mirrors `delete(id:projectPath:)`.
+  func save(_ profile: ContextProfile, projectPath: String) async throws
   func delete(id: String, projectPath: String) async throws
   /// Marks a project-scoped profile as the project's default (nil clears it).
   func setDefault(id: String?, forProjectPath projectPath: String) async throws
@@ -40,11 +43,11 @@ public actor ContextProfileService: ContextProfileServiceProtocol {
     return (project + personal).compactMap { try? $0.decodedProfile() }
   }
 
-  public func save(_ profile: ContextProfile) async throws {
+  public func save(_ profile: ContextProfile, projectPath: String) async throws {
     var stamped = profile
     stamped.updatedAt = Date()
     try await metadataStore.saveContextProfile(ContextProfileRecord(profile: stamped))
-    await republish(afterMutationOf: stamped.scope, projectPath: stamped.projectPath)
+    await republish(afterMutationOf: stamped.scope, projectPath: projectPath)
   }
 
   public func delete(id: String, projectPath: String) async throws {
@@ -99,12 +102,14 @@ public actor ContextProfileService: ContextProfileServiceProtocol {
     case .project:
       await republishIndex(forProjectPath: projectPath)
     case .personal:
-      let projectPaths = (try? await metadataStore.getProjectPathsWithContextProfiles()) ?? []
+      var projectPaths = (try? await metadataStore.getProjectPathsWithContextProfiles()) ?? []
+      // The working project may have no project-scoped profiles yet (a user's
+      // very first save can be personal) — it still needs its index written.
+      if !projectPath.isEmpty {
+        projectPaths.insert(projectPath)
+      }
       for path in projectPaths {
         await republishIndex(forProjectPath: path)
-      }
-      if !projectPath.isEmpty {
-        await republishIndex(forProjectPath: projectPath)
       }
     }
   }

@@ -25,8 +25,8 @@ struct ContextProfileServiceTests {
   @Test("Profiles list project-scoped first, then personal")
   func profilesListProjectFirst() async throws {
     try await withService { service, _ in
-      try await service.save(makePersonalProfile(id: "pers", name: "AAA Personal"))
-      try await service.save(makeProfile(id: "proj", name: "ZZZ Project"))
+      try await service.save(makePersonalProfile(id: "pers", name: "AAA Personal"), projectPath: "/tmp/project")
+      try await service.save(makeProfile(id: "proj", name: "ZZZ Project"), projectPath: "/tmp/project")
 
       let profiles = try await service.profiles(forProjectPath: "/tmp/project")
       #expect(profiles.map(\.id) == ["proj", "pers"])
@@ -36,7 +36,7 @@ struct ContextProfileServiceTests {
   @Test("Saving republishes the project's JSON index")
   func saveRepublishesIndex() async throws {
     try await withService { service, indexStore in
-      try await service.save(makeProfile(id: "proj", name: "Project profile"))
+      try await service.save(makeProfile(id: "proj", name: "Project profile"), projectPath: "/tmp/project")
 
       let index = try #require(indexStore.read(projectPath: "/tmp/project"))
       #expect(index.profiles.map(\.id) == ["proj"])
@@ -47,8 +47,8 @@ struct ContextProfileServiceTests {
   @Test("A personal save is merged into every project's index")
   func personalSaveMergesIntoProjectIndexes() async throws {
     try await withService { service, indexStore in
-      try await service.save(makeProfile(id: "proj", name: "Project profile"))
-      try await service.save(makePersonalProfile(id: "pers", name: "Personal profile"))
+      try await service.save(makeProfile(id: "proj", name: "Project profile"), projectPath: "/tmp/project")
+      try await service.save(makePersonalProfile(id: "pers", name: "Personal profile"), projectPath: "/tmp/project")
 
       let index = try #require(indexStore.read(projectPath: "/tmp/project"))
       #expect(Set(index.profiles.map(\.id)) == ["proj", "pers"])
@@ -56,10 +56,24 @@ struct ContextProfileServiceTests {
     }
   }
 
+  @Test("A first personal save still publishes the working project's index")
+  func firstPersonalSavePublishesWorkingProjectIndex() async throws {
+    try await withService { service, indexStore in
+      // No project-scoped profile exists yet — the regression this guards
+      // against left the index unwritten entirely in that case.
+      try await service.save(
+        makePersonalProfile(id: "pers", name: "Global set"), projectPath: "/tmp/project")
+
+      let index = try #require(indexStore.read(projectPath: "/tmp/project"))
+      #expect(index.profiles.map(\.id) == ["pers"])
+      #expect(index.profiles.first?.scope == "personal")
+    }
+  }
+
   @Test("Set-default flows through to the index and defaultProfile")
   func setDefaultFlowsThrough() async throws {
     try await withService { service, indexStore in
-      try await service.save(makeProfile(id: "proj", name: "Project profile"))
+      try await service.save(makeProfile(id: "proj", name: "Project profile"), projectPath: "/tmp/project")
       try await service.setDefault(id: "proj", forProjectPath: "/tmp/project")
 
       #expect(try await service.defaultProfile(forProjectPath: "/tmp/project")?.id == "proj")
@@ -71,8 +85,8 @@ struct ContextProfileServiceTests {
   @Test("Deleting removes the profile from the store and the index")
   func deleteRemovesEverywhere() async throws {
     try await withService { service, indexStore in
-      try await service.save(makeProfile(id: "a", name: "A"))
-      try await service.save(makeProfile(id: "b", name: "B"))
+      try await service.save(makeProfile(id: "a", name: "A"), projectPath: "/tmp/project")
+      try await service.save(makeProfile(id: "b", name: "B"), projectPath: "/tmp/project")
 
       try await service.delete(id: "a", projectPath: "/tmp/project")
 
@@ -89,7 +103,7 @@ struct ContextProfileServiceTests {
       var profile = makeProfile(id: "proj", name: "Project profile")
       profile.updatedAt = stale
 
-      try await service.save(profile)
+      try await service.save(profile, projectPath: "/tmp/project")
 
       let saved = try #require(try await service.profiles(forProjectPath: "/tmp/project").first)
       #expect(saved.updatedAt > stale)

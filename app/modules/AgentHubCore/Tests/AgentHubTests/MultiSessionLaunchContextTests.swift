@@ -329,6 +329,80 @@ struct MultiSessionLaunchContextTests {
     }
   }
 
+  @Test("Switching repositories drops the previous repo's context state")
+  func repoSwitchDropsContext() async {
+    let service = MockContextProfileService()
+    service.defaultProfileResult = makeProfile(id: "default", name: "Default", isDefault: true)
+    let viewModel = makeLaunchViewModel(profileService: service, repositoryPath: "/tmp/project-a")
+    await viewModel.loadDefaultContextProfile()
+    #expect(viewModel.attachedContextProfile?.id == "default")
+
+    viewModel.selectedRepository = SelectedRepository(path: "/tmp/project-b")
+
+    #expect(viewModel.attachedContextProfile == nil)
+    #expect(viewModel.pendingContextSelection == nil)
+    #expect(viewModel.contextMissingPaths.isEmpty)
+    #expect(viewModel.contextSummaryTokens == nil)
+  }
+
+  @Test("Removing the chip in one repo does not suppress the next repo's default")
+  func chipRemovalDoesNotLeakAcrossRepos() async {
+    let service = MockContextProfileService()
+    service.defaultProfileResult = makeProfile(id: "default", name: "Default", isDefault: true)
+    let viewModel = makeLaunchViewModel(profileService: service, repositoryPath: "/tmp/project-a")
+    await viewModel.loadDefaultContextProfile()
+    viewModel.removeAttachedContextProfile()
+    #expect(viewModel.attachedContextProfile == nil)
+
+    viewModel.selectedRepository = SelectedRepository(path: "/tmp/project-b")
+    await viewModel.loadDefaultContextProfile()
+
+    #expect(viewModel.attachedContextProfile?.id == "default")
+  }
+
+  @Test("Ad-hoc curation does not survive a repository switch")
+  func adHocCurationDoesNotSurviveRepoSwitch() {
+    let viewModel = makeLaunchViewModel(repositoryPath: "/tmp/project-a")
+    viewModel.applyCuratedContext(
+      ContextSelection(files: [ContextFileSelection(relativePath: "a.swift")]))
+    #expect(viewModel.activeContextSelection != nil)
+
+    viewModel.selectedRepository = SelectedRepository(path: "/tmp/project-b")
+    #expect(viewModel.activeContextSelection == nil)
+  }
+
+  @Test("Attaching a saved set restores its identity over ad-hoc curation")
+  func attachProfileKeepsIdentity() {
+    let viewModel = makeLaunchViewModel(repositoryPath: "/tmp/project")
+    viewModel.applyCuratedContext(
+      ContextSelection(files: [ContextFileSelection(relativePath: "x.swift")]))
+    let profile = makeProfile(id: "named", name: "Named")
+
+    viewModel.attachContextProfile(profile)
+
+    #expect(viewModel.attachedContextProfile?.id == "named")
+    #expect(viewModel.pendingContextSelection == nil)
+    #expect(viewModel.activeContextSelection == profile.selection)
+  }
+
+  @Test("Binary project files summarize and resolve as attachments, not missing")
+  func binaryProjectFileIsAttachment() async throws {
+    try await withTempProject { project in
+      try Data([0x25, 0x50, 0x44, 0x46, 0xFF]).write(
+        to: project.appendingPathComponent("spec.pdf"))
+      let viewModel = makeLaunchViewModel(repositoryPath: project.path)
+      viewModel.applyCuratedContext(
+        ContextSelection(files: [ContextFileSelection(relativePath: "spec.pdf")]))
+
+      await viewModel.refreshContextSummary()
+      #expect(viewModel.contextMissingPaths.isEmpty)
+
+      let block = try #require(await viewModel.resolveContextBlock(repoPath: project.path))
+      #expect(block.contains("spec.pdf (attachment — read separately)"))
+      #expect(!block.contains("spec.pdf (missing)"))
+    }
+  }
+
   @Test("Reset clears all context state")
   func resetClearsContext() async {
     let service = MockContextProfileService()

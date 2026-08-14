@@ -69,6 +69,37 @@ struct ContextPayloadStoreTests {
     }
   }
 
+  @Test("Pruning only touches payload files the store wrote")
+  func pruneIsScopedToOwnPayloads() throws {
+    try withTempDirectory { directory in
+      try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+      let foreignURL = directory.appendingPathComponent("user-notes.md")
+      let wrongExtensionURL = directory.appendingPathComponent("context-export.json")
+      try "keep me".write(to: foreignURL, atomically: true, encoding: .utf8)
+      try "{}".write(to: wrongExtensionURL, atomically: true, encoding: .utf8)
+      let staleDate = Date().addingTimeInterval(-ContextPayloadStore.stalePayloadMaxAge - 3600)
+      for url in [foreignURL, wrongExtensionURL] {
+        try FileManager.default.setAttributes(
+          [.modificationDate: staleDate], ofItemAtPath: url.path)
+      }
+
+      let store = ContextPayloadStore(directoryURL: directory, inlineByteThreshold: 10)
+      _ = try store.materializeIfNeeded(block: String(repeating: "c", count: 11))
+
+      #expect(FileManager.default.fileExists(atPath: foreignURL.path))
+      #expect(FileManager.default.fileExists(atPath: wrongExtensionURL.path))
+    }
+  }
+
+  @Test("The default directory resolves inside the sandboxed app-support base")
+  func defaultDirectoryIsSandboxSafe() {
+    let directory = ContextPayloadStore.defaultDirectoryURL()
+    #expect(directory.path.hasPrefix(AgentHubApplicationSupport.baseDirectoryURL.path))
+    // Under the test runner the base is a per-process temp sandbox, so payload
+    // writes in tests can never land in the user's real Application Support.
+    #expect(!directory.path.contains("/Library/Application Support/AgentHub/"))
+  }
+
   @Test("Threshold compares UTF-8 bytes, not characters")
   func thresholdUsesUTF8Bytes() throws {
     try withTempDirectory { directory in

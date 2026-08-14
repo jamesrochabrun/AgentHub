@@ -13,8 +13,10 @@ import AppKit
 import SwiftUI
 
 public enum ContextBuilderMode {
-  /// Launcher curation: primary button applies the selection to the pending launch.
-  case launch(onApply: (ContextSelection) -> Void)
+  /// Launcher curation: primary button applies the selection to the pending
+  /// launch. The profile is non-nil when the selection is an unmodified saved
+  /// set, so the caller can keep the set's identity instead of going ad-hoc.
+  case launch(onApply: (ContextSelection, ContextProfile?) -> Void)
   /// Context-set editing: primary button saves back into the set being edited.
   case editProfile(onSave: (ContextProfile) -> Void)
   /// New context set: primary button names and saves the selection.
@@ -96,7 +98,7 @@ public struct ContextBuilderView: View {
 
       if case .launch(let onApply) = mode {
         Button("Use This Context") {
-          onApply(viewModel.currentSelection())
+          onApply(viewModel.currentSelection(), viewModel.unmodifiedSourceProfile)
           onDismiss()
         }
         .keyboardShortcut(.defaultAction)

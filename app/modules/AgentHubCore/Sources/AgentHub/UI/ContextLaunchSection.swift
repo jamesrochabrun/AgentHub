@@ -144,8 +144,12 @@ struct ContextLaunchSection: View {
           estimator: viewModel.contextTokenEstimator,
           profileService: viewModel.contextProfileService
         ),
-        mode: .launch { selection in
-          viewModel.applyCuratedContext(selection)
+        mode: .launch { selection, unmodifiedProfile in
+          if let unmodifiedProfile {
+            viewModel.attachContextProfile(unmodifiedProfile)
+          } else {
+            viewModel.applyCuratedContext(selection)
+          }
           Task { await viewModel.refreshContextSummary() }
         },
         onDismiss: { showingContextBuilder = false }

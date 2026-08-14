@@ -42,11 +42,10 @@ public struct ContextPayloadStore: ContextPayloadStoring {
   public let directoryURL: URL
   public let inlineByteThreshold: Int
 
+  /// Resolves through `AgentHubApplicationSupport` so test processes and
+  /// `AGENTHUB_APP_SUPPORT_DIR` overrides never touch the user's real payloads.
   public static func defaultDirectoryURL(fileManager: FileManager = .default) -> URL {
-    let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-      ?? fileManager.temporaryDirectory
-    return base
-      .appendingPathComponent("AgentHub", isDirectory: true)
+    AgentHubApplicationSupport.baseDirectoryURL
       .appendingPathComponent("context", isDirectory: true)
       .appendingPathComponent("payloads", isDirectory: true)
   }
@@ -90,6 +89,9 @@ public struct ContextPayloadStore: ContextPayloadStoring {
 
     let cutoff = Date().addingTimeInterval(-Self.stalePayloadMaxAge)
     for url in contents {
+      // Only reap files this store wrote — never other content that ends up
+      // in (or shares) the directory.
+      guard url.lastPathComponent.hasPrefix("context-"), url.pathExtension == "md" else { continue }
       let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
         .contentModificationDate
       if let modified, modified < cutoff {

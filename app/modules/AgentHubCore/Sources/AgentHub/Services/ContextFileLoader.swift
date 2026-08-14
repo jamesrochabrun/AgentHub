@@ -44,8 +44,8 @@ public struct ContextFileLoadResult: Sendable {
   }
 }
 
-/// What an external (outside-the-repo) path resolves to.
-public enum ContextExternalFileStatus: Equatable, Sendable {
+/// What a selected path resolves to (project-relative or external).
+public enum ContextFileStatus: Equatable, Sendable {
   /// UTF-8 text small enough to inline.
   case text(TextFileMetrics)
   /// Exists but is referenced by path instead of inlined (binary or too large).
@@ -58,11 +58,15 @@ public protocol ContextFileLoading: Sendable {
   /// Metrics only (no contents retained) — cheap enough to refresh a token
   /// column on every selection toggle. Unreadable paths are omitted.
   func fileMetrics(relativePaths: [String], projectPath: String) async -> [String: TextFileMetrics]
+  /// Classifies project-relative paths without retaining contents: existing
+  /// text is `.text`, binary or oversized files are `.attachment` (they exist —
+  /// the agent reads them itself), unresolvable paths are `.missing`.
+  func projectFileStatuses(relativePaths: [String], projectPath: String) async -> [String: ContextFileStatus]
   /// Loads files from absolute paths outside the project root (other repos,
   /// documents, books). Binary or oversized files land in `attachments`.
   func loadExternalFiles(absolutePaths: [String]) async -> ContextFileLoadResult
   /// Classifies external paths without retaining contents.
-  func externalFileStatuses(absolutePaths: [String]) async -> [String: ContextExternalFileStatus]
+  func externalFileStatuses(absolutePaths: [String]) async -> [String: ContextFileStatus]
 }
 
 public actor ContextFileLoader: ContextFileLoading {
@@ -86,8 +90,9 @@ public actor ContextFileLoader: ContextFileLoading {
     let uniquePaths = orderedUnique(relativePaths)
     var loaded: [ContextLoadedFile] = []
     var missing: [String] = []
+    var attachments: [String] = []
 
-    await withTaskGroup(of: (String, ProjectTextFile?).self) { group in
+    await withTaskGroup(of: (String, ProjectFileRead).self) { group in
       var iterator = uniquePaths.makeIterator()
       var inFlight = 0
 
@@ -96,23 +101,26 @@ public actor ContextFileLoader: ContextFileLoading {
         inFlight += 1
         let absolutePath = Self.absolutePath(for: relativePath, projectPath: projectPath)
         group.addTask { [fileIndexService] in
-          let file = try? await fileIndexService.readTextFile(at: absolutePath, projectPath: projectPath)
-          return (relativePath, file)
+          (relativePath, await Self.readProjectFile(
+            atPath: absolutePath, projectPath: projectPath, fileIndexService: fileIndexService))
         }
       }
 
       for _ in 0..<maxConcurrentReads { addNext() }
 
-      for await (relativePath, file) in group {
+      for await (relativePath, read) in group {
         inFlight -= 1
-        if let file {
+        switch read {
+        case .text(let file):
           loaded.append(ContextLoadedFile(
             relativePath: relativePath,
             content: file.content,
             metrics: file.metrics
           ))
           cacheMetrics(file.metrics, relativePath: relativePath, projectPath: projectPath)
-        } else {
+        case .attachment:
+          attachments.append(relativePath)
+        case .missing:
           missing.append(relativePath)
         }
         addNext()
@@ -121,8 +129,34 @@ public actor ContextFileLoader: ContextFileLoading {
 
     return ContextFileLoadResult(
       loaded: loaded.sorted { $0.relativePath < $1.relativePath },
-      missing: missing.sorted()
+      missing: missing.sorted(),
+      attachments: attachments.sorted()
     )
+  }
+
+  public func projectFileStatuses(
+    relativePaths: [String], projectPath: String
+  ) async -> [String: ContextFileStatus] {
+    var statuses: [String: ContextFileStatus] = [:]
+    for relativePath in orderedUnique(relativePaths) {
+      let absolutePath = Self.absolutePath(for: relativePath, projectPath: projectPath)
+      if let entry = cachedMetricsEntry(atAbsolutePath: absolutePath) {
+        statuses[relativePath] = .text(entry.metrics)
+        continue
+      }
+      switch await Self.readProjectFile(
+        atPath: absolutePath, projectPath: projectPath, fileIndexService: fileIndexService
+      ) {
+      case .text(let file):
+        cacheMetrics(file.metrics, relativePath: relativePath, projectPath: projectPath)
+        statuses[relativePath] = .text(file.metrics)
+      case .attachment:
+        statuses[relativePath] = .attachment
+      case .missing:
+        statuses[relativePath] = .missing
+      }
+    }
+    return statuses
   }
 
   public func fileMetrics(relativePaths: [String], projectPath: String) async -> [String: TextFileMetrics] {
@@ -152,6 +186,53 @@ public actor ContextFileLoader: ContextFileLoading {
   }
 
   // MARK: - Private
+
+  private enum ProjectFileRead: Sendable {
+    case text(ProjectTextFile)
+    case attachment
+    case missing
+  }
+
+  /// Classifies and (when inlinable) reads one project file. Oversized files
+  /// are never read; binary files surface as the UTF-8 failure the read throws.
+  private static func readProjectFile(
+    atPath absolutePath: String,
+    projectPath: String,
+    fileIndexService: FileIndexService
+  ) async -> ProjectFileRead {
+    if let attributes = fileAttributes(atPath: absolutePath),
+      attributes.fileSize > maxProjectInlineBytes {
+      // Attachment paths are handed to the agent unread, so confinement must
+      // be checked here; inlined reads get the authoritative (symlink-
+      // resolving) check inside readTextFile.
+      return isWithinProject(absolutePath: absolutePath, projectPath: projectPath)
+        ? .attachment : .missing
+    }
+    do {
+      let file = try await fileIndexService.readTextFile(at: absolutePath, projectPath: projectPath)
+      return .text(file)
+    } catch let error as CocoaError where error.code == .fileReadCorruptFile {
+      // Exists inside the root but is not UTF-8 text (PDF, image, archive, …).
+      return .attachment
+    } catch {
+      return .missing
+    }
+  }
+
+  private static func isWithinProject(absolutePath: String, projectPath: String) -> Bool {
+    let root = URL(fileURLWithPath: projectPath).standardizedFileURL.path
+    let candidate = URL(fileURLWithPath: absolutePath).standardizedFileURL.path
+    return candidate == root || candidate.hasPrefix(root + "/")
+  }
+
+  private func cachedMetricsEntry(atAbsolutePath absolutePath: String) -> MetricsCacheEntry? {
+    guard let attributes = Self.fileAttributes(atPath: absolutePath),
+      let entry = metricsCache[absolutePath],
+      entry.fileSize == attributes.fileSize,
+      entry.modificationDate == attributes.modificationDate
+    else { return nil }
+    return entry
+  }
 
   private func cacheMetrics(_ metrics: TextFileMetrics, relativePath: String, projectPath: String) {
     let absolutePath = Self.absolutePath(for: relativePath, projectPath: projectPath)
@@ -185,6 +266,9 @@ public actor ContextFileLoader: ContextFileLoading {
   /// External text files above this size are referenced as attachments instead
   /// of inlined — a book-sized text would blow past any context window anyway.
   public static let maxExternalInlineBytes = 10 * 1024 * 1024
+  /// Project files share the same inline cap: oversized files exist and are
+  /// part of the context, so they are referenced, never reported missing.
+  public static let maxProjectInlineBytes = maxExternalInlineBytes
 
   public func loadExternalFiles(absolutePaths: [String]) async -> ContextFileLoadResult {
     var loaded: [ContextLoadedFile] = []
@@ -209,8 +293,8 @@ public actor ContextFileLoader: ContextFileLoading {
     )
   }
 
-  public func externalFileStatuses(absolutePaths: [String]) async -> [String: ContextExternalFileStatus] {
-    var statuses: [String: ContextExternalFileStatus] = [:]
+  public func externalFileStatuses(absolutePaths: [String]) async -> [String: ContextFileStatus] {
+    var statuses: [String: ContextFileStatus] = [:]
     for path in orderedUnique(absolutePaths) {
       switch Self.readExternalFile(atPath: path) {
       case .text(_, let metrics): statuses[path] = .text(metrics)

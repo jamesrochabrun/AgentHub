@@ -118,6 +118,72 @@ struct ContextFileLoaderTests {
     }
   }
 
+  @Test("Binary project files are attachments, not missing")
+  func binaryProjectFilesAreAttachments() async throws {
+    try await withProject { project, loader in
+      let binaryURL = project.appendingPathComponent("docs/spec.pdf")
+      try FileManager.default.createDirectory(
+        at: binaryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try Data([0x25, 0x50, 0x44, 0x46, 0xFF, 0xFE, 0x00, 0x01]).write(to: binaryURL)
+      try write("readme.md", "text", in: project)
+
+      let result = await loader.loadFiles(
+        relativePaths: ["docs/spec.pdf", "readme.md", "gone.md"],
+        projectPath: project.path
+      )
+
+      #expect(result.loaded.map(\.relativePath) == ["readme.md"])
+      #expect(result.attachments == ["docs/spec.pdf"])
+      #expect(result.missing == ["gone.md"])
+
+      let statuses = await loader.projectFileStatuses(
+        relativePaths: ["docs/spec.pdf", "readme.md", "gone.md"], projectPath: project.path)
+      #expect(statuses["docs/spec.pdf"] == .attachment)
+      #expect(statuses["gone.md"] == .missing)
+      if case .text(let metrics)? = statuses["readme.md"] {
+        #expect(metrics.byteCount == 4)
+      } else {
+        Issue.record("expected text status")
+      }
+    }
+  }
+
+  @Test("Oversized project files are attachments and are never inlined")
+  func oversizedProjectFilesAreAttachments() async throws {
+    try await withProject { project, loader in
+      let bigURL = project.appendingPathComponent("dump.txt")
+      try Data(count: ContextFileLoader.maxProjectInlineBytes + 1).write(to: bigURL)
+
+      let result = await loader.loadFiles(relativePaths: ["dump.txt"], projectPath: project.path)
+      #expect(result.loaded.isEmpty)
+      #expect(result.attachments == ["dump.txt"])
+      #expect(result.missing.isEmpty)
+
+      let statuses = await loader.projectFileStatuses(
+        relativePaths: ["dump.txt"], projectPath: project.path)
+      #expect(statuses["dump.txt"] == .attachment)
+    }
+  }
+
+  @Test("Oversized files outside the project root stay missing, not attachments")
+  func oversizedTraversalStaysMissing() async throws {
+    try await withProject { project, loader in
+      let outside = project.deletingLastPathComponent()
+        .appendingPathComponent("big-outside-\(UUID().uuidString).bin")
+      try Data(count: ContextFileLoader.maxProjectInlineBytes + 1).write(to: outside)
+      defer { try? FileManager.default.removeItem(at: outside) }
+
+      let result = await loader.loadFiles(
+        relativePaths: ["../\(outside.lastPathComponent)"],
+        projectPath: project.path
+      )
+
+      #expect(result.loaded.isEmpty)
+      #expect(result.attachments.isEmpty)
+      #expect(result.missing.count == 1)
+    }
+  }
+
   // MARK: - External files
 
   @Test("External files load by absolute path; binary files become attachments")

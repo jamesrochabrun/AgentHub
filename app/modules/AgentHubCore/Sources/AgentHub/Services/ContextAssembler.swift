@@ -75,14 +75,14 @@ public struct ContextAssembler: ContextAssembling {
 
     if !files.isEmpty {
       let fileBlocks = files.map { file in
-        "<file path=\"\(file.relativePath)\">\n\(file.content)\n</file>"
+        "<file path=\"\(Self.escapeAttribute(file.relativePath))\">\n\(file.content)\n</file>"
       }
       sections.append("<files>\n\(fileBlocks.joined(separator: "\n"))\n</files>")
     }
 
     if !snippets.isEmpty {
       let snippetBlocks = snippets.map { snippet in
-        "<snippet title=\"\(snippet.title)\">\n\(snippet.content)\n</snippet>"
+        "<snippet title=\"\(Self.escapeAttribute(snippet.title))\">\n\(snippet.content)\n</snippet>"
       }
       sections.append("<snippets>\n\(snippetBlocks.joined(separator: "\n"))\n</snippets>")
     }
@@ -102,5 +102,15 @@ public struct ContextAssembler: ContextAssembling {
     }
 
     return ContextAssemblyResult(block: "<context>\n\(sections.joined(separator: "\n"))\n</context>")
+  }
+
+  /// User-typed snippet titles and arbitrary paths land in attribute positions;
+  /// a stray `"` or `<` there would break the block structure for the agent.
+  private static func escapeAttribute(_ value: String) -> String {
+    value
+      .replacingOccurrences(of: "&", with: "&amp;")
+      .replacingOccurrences(of: "<", with: "&lt;")
+      .replacingOccurrences(of: ">", with: "&gt;")
+      .replacingOccurrences(of: "\"", with: "&quot;")
   }
 }

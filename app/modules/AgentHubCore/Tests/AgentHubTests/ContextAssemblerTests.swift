@@ -110,6 +110,22 @@ struct ContextAssemblerTests {
     #expect(result.block.contains("/Users/me/books/manual.pdf\n</attachments>"))
   }
 
+  @Test("Attribute values are escaped so user text cannot break the block")
+  func attributeValuesEscaped() {
+    let result = assembler.assemble(ContextAssemblyInput(
+      files: [loadedFile("dir/we\"ird & <odd>.swift", "let x = 1")],
+      textSnippets: [
+        ContextTextSnippet(id: "a", title: "spec\" mode=\"raw", content: "payload")
+      ]
+    ))
+
+    #expect(result.block.contains(
+      "<snippet title=\"spec&quot; mode=&quot;raw\">\npayload\n</snippet>"))
+    #expect(!result.block.contains("<snippet title=\"spec\" mode=\"raw\">"))
+    #expect(result.block.contains(
+      "<file path=\"dir/we&quot;ird &amp; &lt;odd&gt;.swift\">\nlet x = 1\n</file>"))
+  }
+
   @Test("Instructions are trimmed")
   func instructionsTrimmed() {
     let result = assembler.assemble(ContextAssemblyInput(
