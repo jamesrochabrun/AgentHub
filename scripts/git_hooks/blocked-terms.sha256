@@ -1,0 +1,8 @@
+# SHA-256 of blocked terms, one per line. Plaintext is deliberately
+# absent: this file lives in a PUBLIC repo, so listing the words here
+# would leak exactly what the guard protects.
+# Add a term with:  scripts/git_hooks/leak_guard.py --add-term
+ab7d0a36ecbe10c286f92a49bffb57ed6bf5bc6c3a3e15967f3ea8d028316969
+94adaa65c14b2425a09a40a08075dca90857505a6f5d239cfa07ecc48a6904e9
+3dc86300df42b52795a071e2474393f3adedc7052e7e775037c3dcb2b98dffb3
+cf743eed826021848763c51e53992d6b741845a8730ac797ec60b1ea4dde2715

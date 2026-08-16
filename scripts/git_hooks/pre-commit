@@ -1,0 +1,5 @@
+#!/bin/sh
+# Scans staged paths and added lines for internal names. Regex only -- this
+# hook stays instant. Tests are deliberately NOT run here; see CLAUDE.md.
+# Bypass (intentional, reviewed): git commit --no-verify
+exec python3 "$(dirname "$0")/leak_guard.py" --staged
