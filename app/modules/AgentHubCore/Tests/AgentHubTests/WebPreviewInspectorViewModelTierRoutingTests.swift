@@ -319,10 +319,16 @@ struct WebPreviewInspectorViewModelTierRoutingTests {
     let handoff = viewModel.takePendingDesignEditHandoff(previewContext: nil)
     #expect(handoff?.instruction.contains("line-height") == true)
     #expect(handoff?.instruction.contains("30px") == true)
+    // A failed direct write must not lose the value it started from.
+    #expect(handoff?.instruction.contains("- line-height: 26px → 30px") == true)
+    // The agent is told how the value is written today so it edits that
+    // declaration instead of inlining the computed value somewhere else.
+    #expect(viewModel.declaredStyleSources["line-height"] == "declared as `26px` in rule `.cta` (site.css)")
+    #expect(handoff?.instruction.contains("- line-height: declared as `26px` in rule `.cta` (site.css)") == true)
   }
 
-  @Test("With the flag disabled no tiers resolve and edits batch to the agent")
-  func disabledFlagKeepsAgentTier() async throws {
+  @Test("Queue-first (the default) keeps proven properties in the agent batch")
+  func queueFirstKeepsProvenPropertiesBatched() async throws {
     let coordinator = MockDirectWriter(outcomes: [])
     let fileService = TierMockFileService(files: [Self.indexPath: "<button class=\"cta\">Launch</button>"])
     let (viewModel, webView) = makeViewModel(
@@ -339,17 +345,53 @@ struct WebPreviewInspectorViewModelTierRoutingTests {
       recentActivities: [],
       stylesheetContext: Self.context
     )
-    try await Task.sleep(for: .milliseconds(50))
+    // Proving still runs with writes off — it is what tells the agent where
+    // the value is declared.
+    try await waitUntil { viewModel.styleTiers["line-height"] != nil }
 
-    #expect(viewModel.styleTiers.isEmpty)
-    #expect(viewModel.persistenceTierLabel == "Applies via agent · direct writes are disabled")
+    #expect(viewModel.persistenceTierLabel == "Applies via agent")
 
     viewModel.apply(DesignEdit(element: element, action: .updateProperty(.lineHeight, value: "30px")))
     try await Task.sleep(for: .milliseconds(40))
 
     let calls = await coordinator.recordedCalls()
+    let handoff = viewModel.takePendingDesignEditHandoff(previewContext: nil)
+
     #expect(calls.isEmpty)
-    #expect(viewModel.pendingEditCount == 1)
+    #expect(handoff?.instruction.contains("line-height: 26px → 30px") == true)
+    #expect(handoff?.instruction.contains("verified in styles/site.css") == true)
+  }
+
+  @Test("Queue-first batches static-preview text edits instead of writing the file")
+  func queueFirstBatchesTextEdits() async throws {
+    let coordinator = MockDirectWriter(outcomes: [])
+    let fileService = TierMockFileService(files: [
+      Self.indexPath: "<button class=\"cta\">Launch</button>"
+    ])
+    let (viewModel, webView) = makeViewModel(
+      coordinator: coordinator,
+      fileService: fileService,
+      flagEnabled: false
+    )
+    defer { _ = webView }
+    let element = makeTierElement()
+
+    await viewModel.inspect(
+      element: element,
+      previewFilePath: Self.indexPath,
+      recentActivities: [],
+      stylesheetContext: .directFile(servedFilePath: Self.indexPath, projectPath: "/project")
+    )
+
+    viewModel.updateContentValue("Launch now")
+    try await Task.sleep(for: .milliseconds(60))
+
+    let writes = await fileService.recordedWrites()
+    let handoff = viewModel.takePendingDesignEditHandoff(previewContext: nil)
+
+    #expect(writes.isEmpty)
+    #expect(handoff?.instruction.contains("text content: \"Launch\" → \"Launch now\"") == true)
+    #expect(handoff?.summary?.contains("Launch now") == true)
   }
 
   @Test("Static previews resolve direct targets through the static resolver")

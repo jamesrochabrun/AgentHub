@@ -53,14 +53,10 @@ struct WebPreviewQueuedContextView: View {
               .fill(Color.secondary.opacity(0.15))
           )
 
-        Text(
-          isQueueing
-            ? "Add more elements or regions before sending your next terminal message."
-            : "These updates will attach to the next terminal message you send."
-        )
-        .font(.caption)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
+        Text(headerHint)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
 
         Spacer()
 
@@ -83,6 +79,18 @@ struct WebPreviewQueuedContextView: View {
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 10)
+  }
+
+  /// Edits carry the project-convention preamble at send time, so say so —
+  /// the tray is where the user decides to hand them over.
+  private var headerHint: String {
+    if queuedItems.contains(where: { $0.origin == .designEdits }) {
+      return "Send hands these edits to the agent, applied with the project's existing conventions."
+    }
+    if isQueueing {
+      return "Add more elements or regions before sending your next terminal message."
+    }
+    return "These updates will attach to the next terminal message you send."
   }
 
   @ViewBuilder
@@ -196,6 +204,7 @@ struct WebPreviewQueuedContextView: View {
 
 private extension WebPreviewQueuedUpdate {
   var tint: Color {
+    if origin == .designEdits { return .purple }
     switch selection {
     case .element:
       return instruction == nil ? .blue : .accentColor

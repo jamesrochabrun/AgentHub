@@ -58,7 +58,15 @@ final class WebPreviewInspectorViewModel {
   /// Property → new value for the debounced Tier-1 flush ("" removes).
   private var pendingDirectWrites: [String: String] = [:]
   private var pendingDirectWriteTask: Task<Void, Never>?
+  /// Pre-edit value for each property currently routed to a direct write, so a
+  /// failed write downgrades into the agent batch with its original value
+  /// intact instead of a bare target value.
+  private var directWriteBaselineValues: [String: String] = [:]
   private var trackedTextToken: String?
+  /// The text the user typed in Edit Mode since the element was selected.
+  /// Set while an edit is in flight so the page's trimmed read-back cannot
+  /// echo back over it; cleared when the panel moves on or the edit is sent.
+  private var inFlightTextValue: String?
   private var trackedTextLocation: Int?
   private var trackedStructuredTextContent: SourceTextContentMapping?
   private var userConfirmedLowConfidenceFile = false
@@ -81,6 +89,12 @@ final class WebPreviewInspectorViewModel {
   /// element inside a frame, direct writes disabled, …).
   private(set) var styleTierGeneralReason: String?
   private(set) var sourceHints: [WebPreviewElementSourceHint] = []
+  /// Property → how the winning declaration is actually written in source
+  /// (`var(--token)`, `clamp(…)`, a literal) and which rule owns it. Handed to
+  /// the agent so it edits that declaration instead of pasting the computed
+  /// value over it. Dev-server previews only: static previews prove rules from
+  /// disk without reading declared values.
+  private(set) var declaredStyleSources: [String: String] = [:]
   /// Set when the latest direct write detached from a shared design token
   /// and can be promoted to a token-wide update instead.
   private(set) var tokenPromotionOffer: WebPreviewTokenPromotionOffer?
@@ -129,7 +143,7 @@ final class WebPreviewInspectorViewModel {
     self.directWriteCoordinator = directWriteCoordinator ?? WebPreviewDirectCSSWriteCoordinator(fileService: fileService)
     self.pageEnvironmentCapture = pageEnvironmentCapture ?? WebPreviewPageEnvironmentCapture()
     self.isDirectCSSWriteEnabled = isDirectCSSWriteEnabled ?? {
-      UserDefaults.standard.object(forKey: AgentHubDefaults.webPreviewDirectCSSWriteEnabled) as? Bool ?? true
+      UserDefaults.standard.object(forKey: AgentHubDefaults.webPreviewDirectCSSWriteEnabled) as? Bool ?? false
     }
   }
 
@@ -176,6 +190,10 @@ final class WebPreviewInspectorViewModel {
   }
 
   var persistenceTierLabel: String {
+    guard isDirectCSSWriteEnabled() else {
+      return "Applies via agent"
+    }
+
     let directFileNames = Set(styleTiers.values.compactMap { tier -> String? in
       guard case .direct(let target) = tier else { return nil }
       return URL(fileURLWithPath: target.filePath).lastPathComponent
@@ -268,6 +286,17 @@ final class WebPreviewInspectorViewModel {
     liveProperties?.content ?? "—"
   }
 
+  /// Text to seed the content editor with — never the "—" placeholder.
+  var editableContentText: String {
+    if let pendingText = inFlightTextValue {
+      return pendingText
+    }
+    if let content = liveProperties?.content {
+      return content
+    }
+    return selectedElement?.textContent ?? ""
+  }
+
   var hasConsoleEntries: Bool {
     !consoleEntries.isEmpty
   }
@@ -293,8 +322,8 @@ final class WebPreviewInspectorViewModel {
     }
     if pendingEditCount > 0 {
       return pendingEditCount == 1
-        ? "1 design change pending — Apply sends it to the agent"
-        : "\(pendingEditCount) design changes pending — Apply sends them to the agent"
+        ? "1 design change queued — Send hands it to the agent"
+        : "\(pendingEditCount) design changes queued — Send hands them to the agent"
     }
     if needsSourceConfirmation {
       return "Choose a source file to enable code editing"
@@ -422,6 +451,7 @@ final class WebPreviewInspectorViewModel {
     tokenPromotionOffer = nil
     sourceHints = []
     pendingDirectWrites = [:]
+    directWriteBaselineValues = [:]
     self.previewFilePath = previewFilePath
     self.stylesheetContext = stylesheetContext
     currentFilePath = nil
@@ -431,6 +461,7 @@ final class WebPreviewInspectorViewModel {
     trackedTextToken = nil
     trackedTextLocation = nil
     trackedStructuredTextContent = nil
+    inFlightTextValue = nil
     matchedSelector = element.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     styleValues = [:]
     activeCapabilities = [.code]
@@ -489,6 +520,7 @@ final class WebPreviewInspectorViewModel {
     tokenPromotionOffer = nil
     sourceHints = []
     pendingDirectWrites = [:]
+    directWriteBaselineValues = [:]
     stylesheetContext = nil
     previewFilePath = nil
     liveProperties = nil
@@ -502,6 +534,7 @@ final class WebPreviewInspectorViewModel {
     trackedTextToken = nil
     trackedTextLocation = nil
     trackedStructuredTextContent = nil
+    inFlightTextValue = nil
     matchedSelector = nil
     styleValues = [:]
     consoleEntries.removeAll()
@@ -530,7 +563,7 @@ final class WebPreviewInspectorViewModel {
       return
     }
 
-    if isDirectPreviewTarget {
+    if isDirectPreviewTarget, isDirectCSSWriteEnabled() {
       if let trackedStructuredTextContent,
          let selectedElement,
          let update = Self.updateStructuredTextContent(
@@ -584,6 +617,7 @@ final class WebPreviewInspectorViewModel {
         in: previewWebView
       )
     }
+    inFlightTextValue = value
     trackedTextToken = value
     trackedTextLocation = textLocation
     trackedStructuredTextContent = structuredMapping
@@ -646,43 +680,112 @@ final class WebPreviewInspectorViewModel {
     }
   }
 
-  /// Removes and returns the pending batch as an element-anchored agent
-  /// instruction. Returns nil when nothing is pending.
-  func takePendingDesignEditHandoff(previewContext: String?) -> WebPreviewPendingDesignEditHandoff? {
-    guard let batch = pendingEditBatch, !batch.isEmpty else {
-      pendingEditBatch = nil
-      return nil
-    }
-    pendingEditBatch = nil
+  /// Returns the pending batch as an element-anchored agent instruction
+  /// without consuming it. Used to mirror in-progress edits into the session's
+  /// queue, where they stay visible and removable until the user sends them.
+  func pendingDesignEditHandoff(previewContext: String?) -> WebPreviewPendingDesignEditHandoff? {
+    guard let batch = pendingEditBatch, !batch.isEmpty else { return nil }
 
     let candidateFiles = (resolution?.candidateFilePaths ?? []).map { displayPath(for: $0) }
+    let provenFiles = styleTiers.compactMapValues { tier -> String? in
+      guard case .direct(let target) = tier else { return nil }
+      return displayPath(for: target.filePath)
+    }
     guard let instruction = WebPreviewDesignEditPromptComposer.instruction(
       for: batch,
       previewContext: previewContext,
       candidateFiles: candidateFiles,
-      sourceHints: sourceHints.map(\.promptLine)
+      sourceHints: sourceHints.map(\.promptLine),
+      declaredSources: declaredStyleSources,
+      provenFiles: provenFiles
     ) else {
       return nil
     }
 
-    return WebPreviewPendingDesignEditHandoff(element: batch.element, instruction: instruction)
+    return WebPreviewPendingDesignEditHandoff(
+      element: batch.element,
+      instruction: instruction,
+      summary: WebPreviewDesignEditPromptComposer.summary(for: batch)
+    )
+  }
+
+  /// Removes and returns the pending batch as an element-anchored agent
+  /// instruction. Returns nil when nothing is pending.
+  func takePendingDesignEditHandoff(previewContext: String?) -> WebPreviewPendingDesignEditHandoff? {
+    let handoff = pendingDesignEditHandoff(previewContext: previewContext)
+    pendingEditBatch = nil
+    inFlightTextValue = nil
+    return handoff
   }
 
   func discardPendingEdits() {
     pendingEditBatch = nil
+    inFlightTextValue = nil
   }
 
   func refreshFromLiveElement(_ element: ElementInspectorData) {
     guard isCurrentLiveElementUpdate(element) else { return }
     selectedElement = element
-    liveProperties = WebPreviewLivePropertiesSnapshot(element: element)
-    toolbarValues = DesignToolbarValues(element: element)
+
+    // This fires for every DOM mutation on the selected element — including
+    // the live edits the user is typing right now. The captured text is
+    // trimmed and whitespace-collapsed by the page bridge, so echoing it back
+    // over an in-flight edit would eat trailing spaces (and with them the
+    // ability to start another word). In-flight values win over the echo.
+    let refreshedProperties = WebPreviewLivePropertiesSnapshot(element: element)
+    liveProperties = inFlightTextValue.map { refreshedProperties.updatingContent($0) }
+      ?? refreshedProperties
+    syncToolbarValues(with: element)
 
     if matchedSelector == nil {
       matchedSelector = element.cssSelector.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
     recomputeEditingState()
+  }
+
+
+  /// Refreshes the toolbar controls from a new DOM capture *in place*.
+  ///
+  /// Replacing `toolbarValues` would hand SwiftUI a new object on every
+  /// mutation, resetting bound editors (and the caret) mid-keystroke.
+  /// Properties the user has already edited keep their pending value so the
+  /// page's normalized read-back (`#fff` → `rgb(255, 255, 255)`) does not
+  /// fight the controls.
+  private func syncToolbarValues(with element: ElementInspectorData) {
+    let refreshed = DesignToolbarValues(element: element)
+
+    guard let values = toolbarValues, values.category == refreshed.category else {
+      toolbarValues = refreshed
+      return
+    }
+
+    var editedProperties = Set(pendingEditBatch?.styleChanges.map(\.property) ?? [])
+    editedProperties.formUnion(pendingDirectWrites.keys)
+
+    func adopt(_ property: String, _ apply: () -> Void) {
+      guard !editedProperties.contains(property) else { return }
+      apply()
+    }
+
+    values.fontFamilyOptions = refreshed.fontFamilyOptions
+    adopt("font-family") { values.fontFamily = refreshed.fontFamily }
+    adopt("color") { values.color = refreshed.color }
+    adopt("background-color") { values.backgroundColor = refreshed.backgroundColor }
+    adopt("font-size") { values.fontSize = refreshed.fontSize }
+    adopt("font-weight") { values.isBold = refreshed.isBold }
+    adopt("font-style") { values.isItalic = refreshed.isItalic }
+    adopt("text-align") { values.textAlign = refreshed.textAlign }
+    adopt("letter-spacing") { values.letterSpacing = refreshed.letterSpacing }
+    adopt("line-height") { values.lineHeight = refreshed.lineHeight }
+    adopt("border-radius") { values.borderRadius = refreshed.borderRadius }
+    adopt("padding") { values.padding = refreshed.padding }
+    adopt("margin") { values.margin = refreshed.margin }
+    adopt("object-fit") { values.objectFit = refreshed.objectFit }
+
+    if inFlightTextValue == nil {
+      values.textContent = refreshed.textContent
+    }
   }
 
   // MARK: - Private
@@ -809,10 +912,13 @@ final class WebPreviewInspectorViewModel {
         trackedTextLocation = Self.characterOffset(of: range, in: fileContent)
         trackedStructuredTextContent = nil
       } else if let mapping = Self.structuredTextContentMapping(for: selectedElement, in: fileContent) {
+        let hadInFlightText = inFlightTextValue != nil
         trackedTextToken = mapping.text
         trackedTextLocation = nil
         trackedStructuredTextContent = mapping
-        toolbarValues?.textContent = mapping.text
+        if !hadInFlightText {
+          toolbarValues?.textContent = mapping.text
+        }
       } else {
         trackedTextToken = nil
         trackedTextLocation = nil
@@ -845,7 +951,13 @@ final class WebPreviewInspectorViewModel {
     let mappedProperty = WebPreviewStyleProperty(rawValue: propertyName)
     let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
 
-    if case .direct = styleTiers[propertyName] {
+    if case .direct = styleTiers[propertyName], isDirectCSSWriteEnabled() {
+      if directWriteBaselineValues[propertyName] == nil, let mappedProperty {
+        let baseline = displayedStyleValue(for: mappedProperty)
+        if !baseline.isEmpty {
+          directWriteBaselineValues[propertyName] = baseline
+        }
+      }
       pendingDirectWrites[propertyName] = trimmedValue
       scheduleDirectWriteFlush()
     } else if trimmedValue.isEmpty {
@@ -877,12 +989,11 @@ final class WebPreviewInspectorViewModel {
     styleTiers = [:]
     styleTierReasons = [:]
     styleTierGeneralReason = nil
+    declaredStyleSources = [:]
     pageEnvironment = nil
 
-    guard isDirectCSSWriteEnabled() else {
-      styleTierGeneralReason = "direct writes are disabled"
-      return
-    }
+    // Proving runs even when direct writes are off: the winning declaration and
+    // its file are what tell the agent where to make the change.
     guard let stylesheetContext else {
       styleTierGeneralReason = "the preview source is unknown"
       return
@@ -945,8 +1056,12 @@ final class WebPreviewInspectorViewModel {
 
         var resolved: [String: WebPreviewStyleEditTier] = [:]
         var mappingCache: [WebPreviewCSSRuleLocator: StylesheetMappingResult] = [:]
+        var declaredSources: [String: String] = [:]
 
         for winner in provenance.winners {
+          if let declaredSource = Self.declaredSourceDescription(for: winner) {
+            declaredSources[winner.property] = declaredSource
+          }
           guard winner.isProvable, let rule = winner.rule else {
             reasons[winner.property] = Self.agentReason(for: winner)
             continue
@@ -1031,6 +1146,7 @@ final class WebPreviewInspectorViewModel {
           generalReason = "the element's styles couldn't be probed"
         }
         tiers = resolved
+        self.declaredStyleSources = declaredSources
       }
 
       guard !Task.isCancelled, self.selectedElement?.id == element.id else { return }
@@ -1039,6 +1155,34 @@ final class WebPreviewInspectorViewModel {
       self.styleTierGeneralReason = generalReason
       self.rerouteBatchedEditsAfterTierRefresh()
     }
+  }
+
+  /// Renders one winning declaration as a prompt line: the value as written
+  /// plus the rule that owns it, so the agent can find and edit the definition.
+  private static func declaredSourceDescription(for winner: WebPreviewPropertyWinner) -> String? {
+    let declaredValue = winner.declaredValue.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !declaredValue.isEmpty else { return nil }
+
+    var parts = ["declared as `\(declaredValue)`"]
+    if winner.isInline {
+      parts.append("in the element's inline style attribute")
+    } else if let rule = winner.rule {
+      var location = "in rule `\(rule.selectorText)`"
+      if let fileName = rule.stylesheetHref.flatMap(Self.stylesheetFileName) {
+        location += " (\(fileName))"
+      }
+      parts.append(location)
+    }
+    if winner.isImportant {
+      parts.append("marked !important")
+    }
+    return parts.joined(separator: " ")
+  }
+
+  private static func stylesheetFileName(_ href: String) -> String? {
+    let path = URL(string: href)?.path ?? href
+    let name = URL(fileURLWithPath: path).lastPathComponent
+    return name.isEmpty ? nil : name
   }
 
   /// Short label for why a winning declaration is not directly writable.
@@ -1066,10 +1210,13 @@ final class WebPreviewInspectorViewModel {
   /// batch; once proving completes, move every change whose property proved
   /// direct into the direct-write queue so it persists deterministically.
   private func rerouteBatchedEditsAfterTierRefresh() {
-    guard let batch = pendingEditBatch else { return }
+    guard isDirectCSSWriteEnabled(), let batch = pendingEditBatch else { return }
     var rerouted = false
     for change in batch.styleChanges {
       guard case .direct = styleTiers[change.property] else { continue }
+      if let oldValue = change.oldValue {
+        directWriteBaselineValues[change.property] = oldValue
+      }
       pendingDirectWrites[change.property] = change.newValue
       pendingEditBatch?.removeStyleChange(property: change.property)
       rerouted = true
@@ -1140,6 +1287,7 @@ final class WebPreviewInspectorViewModel {
       switch outcome {
       case .written(let newSHA256):
         target.contentSHA256 = newSHA256
+        directWriteBaselineValues[property] = nil
         styleTiers[property] = .direct(target)
         rebaseDirectTargets(filePath: target.filePath, to: newSHA256, excluding: property)
         await refreshCodeTabAfterDirectWrite(to: target.filePath)
@@ -1149,6 +1297,7 @@ final class WebPreviewInspectorViewModel {
         }
       case .writtenWithTokenDetachment(let newSHA256, let detachment):
         target.contentSHA256 = newSHA256
+        directWriteBaselineValues[property] = nil
         styleTiers[property] = .direct(target)
         rebaseDirectTargets(filePath: target.filePath, to: newSHA256, excluding: property)
         await refreshCodeTabAfterDirectWrite(to: target.filePath)
@@ -1264,7 +1413,11 @@ final class WebPreviewInspectorViewModel {
   private func downgradeToAgentBatch(property: String, value: String) {
     guard let selectedElement, !value.isEmpty else { return }
     ensurePendingBatch(for: selectedElement)
-    pendingEditBatch?.recordStyleChange(property: property, oldValue: nil, newValue: value)
+    pendingEditBatch?.recordStyleChange(
+      property: property,
+      oldValue: directWriteBaselineValues[property],
+      newValue: value
+    )
   }
 
   private func recordTextEdit(_ value: String, propagateLiveEdit: Bool) {
@@ -1281,6 +1434,7 @@ final class WebPreviewInspectorViewModel {
       ?? selectedElement.textContent.trimmingCharacters(in: .whitespacesAndNewlines)
     ensurePendingBatch(for: selectedElement)
     pendingEditBatch?.recordTextChange(oldText: oldText, newText: value)
+    inFlightTextValue = value
 
     liveProperties = liveProperties?.updatingContent(value)
     toolbarValues?.textContent = value

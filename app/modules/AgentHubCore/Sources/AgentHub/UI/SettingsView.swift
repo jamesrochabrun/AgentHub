@@ -105,7 +105,7 @@ public struct SettingsView: View {
   private var webPreviewDesignPanelEnabled: Bool = false
 
   @AppStorage(AgentHubDefaults.webPreviewDirectCSSWriteEnabled)
-  private var webPreviewDirectCSSWriteEnabled: Bool = true
+  private var webPreviewDirectCSSWriteEnabled: Bool = false
 
   @Environment(ThemeManager.self) private var themeManager
   @Environment(\.colorScheme) private var colorScheme
@@ -517,8 +517,8 @@ public struct SettingsView: View {
         )
 
         settingsToggle(
-          title: "Direct CSS writes in Edit Mode",
-          description: "Write style edits straight to the stylesheet when the exact rule is proven; otherwise they still apply via the agent",
+          title: "Write Edit Mode changes straight to source",
+          description: "Off: every change queues in the tray and the agent applies it with the project's conventions. On: proven style rules and static-preview text are written to the file immediately.",
           isOn: $webPreviewDirectCSSWriteEnabled
         )
 

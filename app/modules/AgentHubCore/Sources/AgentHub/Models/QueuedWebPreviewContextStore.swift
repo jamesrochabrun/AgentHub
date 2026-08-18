@@ -33,6 +33,23 @@ struct QueuedWebPreviewContextStore: Equatable, Sendable {
     queues[sessionID] = queue
   }
 
+  /// Adds or replaces the queued Edit Mode changes for one element.
+  mutating func upsertDesignEdits(
+    _ element: ElementInspectorData,
+    instruction: String,
+    detail: String?,
+    for sessionID: String
+  ) {
+    var queue = queue(for: sessionID)
+    queue.upsertDesignEdits(element, instruction: instruction, detail: detail)
+    queues[sessionID] = queue
+  }
+
+  /// The id of the queued design-edit chip for `element` in this session.
+  func designEditItemID(for element: ElementInspectorData, sessionID: String) -> UUID? {
+    queue(for: sessionID).designEditItemID(for: element)
+  }
+
   mutating func appendCrop(
     cropRect: CGRect,
     elements: [ElementInspectorData],

@@ -802,6 +802,19 @@ public final class CLISessionsViewModel {
     queuedWebPreviewContextStore = store
   }
 
+  /// Mirrors the visual editor's pending changes for one element into the
+  /// session's queue, replacing that element's chip instead of appending.
+  public func upsertQueuedWebPreviewDesignEdits(
+    _ element: ElementInspectorData,
+    instruction: String,
+    detail: String?,
+    for sessionID: String
+  ) {
+    var store = queuedWebPreviewContextStore
+    store.upsertDesignEdits(element, instruction: instruction, detail: detail, for: sessionID)
+    queuedWebPreviewContextStore = store
+  }
+
   public func queueWebPreviewCropUpdate(
     cropRect: CGRect,
     elements: [ElementInspectorData],

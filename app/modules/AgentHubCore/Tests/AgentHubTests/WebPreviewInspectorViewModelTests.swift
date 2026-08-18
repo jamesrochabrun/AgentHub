@@ -401,7 +401,9 @@ struct WebPreviewInspectorViewModelTests {
         projectPath: "/project",
         sourceResolver: resolver,
         fileService: fileService,
-        writeDebounceDuration: .milliseconds(10)
+        writeDebounceDuration: .milliseconds(10),
+        // Exercises the opt-in direct source write path.
+        isDirectCSSWriteEnabled: { true }
       )
     }
 
@@ -787,7 +789,9 @@ struct WebPreviewInspectorViewModelTests {
         sourceResolver: resolver,
         fileService: fileService,
         liveEditApplier: liveEditApplier,
-        writeDebounceDuration: .milliseconds(10)
+        writeDebounceDuration: .milliseconds(10),
+        // Exercises the opt-in direct source write path.
+        isDirectCSSWriteEnabled: { true }
       )
     }
     let element = makeElement(selector: "button", className: "", textContent: "Launch")
@@ -834,7 +838,9 @@ struct WebPreviewInspectorViewModelTests {
         sourceResolver: resolver,
         fileService: fileService,
         liveEditApplier: liveEditApplier,
-        writeDebounceDuration: .milliseconds(10)
+        writeDebounceDuration: .milliseconds(10),
+        // Exercises the opt-in direct source write path.
+        isDirectCSSWriteEnabled: { true }
       )
     }
     let element = makeElement(
@@ -888,7 +894,9 @@ struct WebPreviewInspectorViewModelTests {
         projectPath: "/project",
         sourceResolver: resolver,
         fileService: fileService,
-        writeDebounceDuration: .milliseconds(10)
+        writeDebounceDuration: .milliseconds(10),
+        // Exercises the opt-in direct source write path.
+        isDirectCSSWriteEnabled: { true }
       )
     }
     let element = makeElement(selector: "button", className: "", textContent: "Launch")
@@ -1355,6 +1363,117 @@ struct WebPreviewInspectorViewModelTests {
 
     #expect(pendingCount == 0)
     #expect(handoff == nil)
+  }
+
+  @Test("A trimmed live read-back cannot eat the trailing space being typed")
+  func liveElementRefreshPreservesInFlightText() async throws {
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(primaryFilePath: nil, candidateFilePaths: [], confidence: .low)
+    ])
+    let fileService = MockProjectFileService(files: [:])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-text-echo",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(
+      element: makeElement(textContent: "Launch"),
+      previewFilePath: nil,
+      recentActivities: []
+    )
+
+    await MainActor.run {
+      viewModel.updateContentValue("Launch ")
+      // The page reports element text trimmed after our own DOM mutation.
+      viewModel.refreshFromLiveElement(makeElement(textContent: "Launch"))
+    }
+
+    let editableText = await MainActor.run { viewModel.editableContentText }
+    let toolbarText = await MainActor.run { viewModel.toolbarValues?.textContent }
+    let pendingCount = await MainActor.run { viewModel.pendingEditCount }
+
+    #expect(editableText == "Launch ")
+    #expect(toolbarText == "Launch ")
+    #expect(pendingCount == 1)
+  }
+
+  @Test("A live read-back keeps the toolbar object and the user's edited values")
+  func liveElementRefreshKeepsToolbarStateInPlace() async throws {
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(primaryFilePath: nil, candidateFilePaths: [], confidence: .low)
+    ])
+    let fileService = MockProjectFileService(files: [:])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-toolbar-identity",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(
+      element: makeElement(computedStyles: ["font-size": "18px", "color": "rgb(0, 0, 0)"]),
+      previewFilePath: nil,
+      recentActivities: []
+    )
+
+    let (keptIdentity, fontSize, color) = await MainActor.run { () -> (Bool, Int?, String?) in
+      let before = viewModel.toolbarValues
+      viewModel.updateStyleValue(.fontSize, value: "24px")
+      // The page still reports the pre-edit font size on this capture.
+      viewModel.refreshFromLiveElement(
+        makeElement(computedStyles: ["font-size": "18px", "color": "rgb(10, 10, 10)"])
+      )
+      let after = viewModel.toolbarValues
+      return (before === after, after?.fontSize, after?.color)
+    }
+
+    #expect(keptIdentity)
+    #expect(fontSize == 24)
+    #expect(color == "rgb(10, 10, 10)")
+  }
+
+  @Test("Peeking at the pending batch leaves it queued")
+  func peekingPendingHandoffDoesNotConsumeBatch() async throws {
+    let resolver = MockWebPreviewSourceResolver(queuedResolutions: [
+      makeResolution(primaryFilePath: nil, candidateFilePaths: [], confidence: .low)
+    ])
+    let fileService = MockProjectFileService(files: [:])
+    let viewModel = await MainActor.run {
+      WebPreviewInspectorViewModel(
+        sessionID: "session-peek",
+        projectPath: "/project",
+        sourceResolver: resolver,
+        fileService: fileService,
+        writeDebounceDuration: .milliseconds(10)
+      )
+    }
+
+    await viewModel.inspect(
+      element: makeElement(computedStyles: ["color": "rgb(255, 0, 0)"]),
+      previewFilePath: nil,
+      recentActivities: []
+    )
+
+    await MainActor.run { viewModel.updateStyleValue(.textColor, value: "blue") }
+
+    let peeked = await MainActor.run { viewModel.pendingDesignEditHandoff(previewContext: nil) }
+    let countAfterPeek = await MainActor.run { viewModel.pendingEditCount }
+    let taken = await MainActor.run { viewModel.takePendingDesignEditHandoff(previewContext: nil) }
+    let countAfterTake = await MainActor.run { viewModel.pendingEditCount }
+
+    #expect(peeked?.instruction.contains("color") == true)
+    #expect(peeked?.summary?.contains("color") == true)
+    #expect(countAfterPeek == 1)
+    #expect(taken?.instruction == peeked?.instruction)
+    #expect(countAfterTake == 0)
   }
 }
 

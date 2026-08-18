@@ -16,7 +16,9 @@ enum WebPreviewDesignEditPromptComposer {
     for batch: WebPreviewPendingDesignEditBatch,
     previewContext: String? = nil,
     candidateFiles: [String] = [],
-    sourceHints: [String] = []
+    sourceHints: [String] = [],
+    declaredSources: [String: String] = [:],
+    provenFiles: [String: String] = [:]
   ) -> String? {
     guard !batch.isEmpty else { return nil }
 
@@ -36,6 +38,29 @@ enum WebPreviewDesignEditPromptComposer {
       } else {
         lines.append("- text content: \"\(textChange.newText)\"")
       }
+    }
+
+    let declarationSites = batch.styleChanges.compactMap { change -> String? in
+      let declared = declaredSources[change.property]
+      let provenFile = provenFiles[change.property]
+      switch (declared, provenFile) {
+      case (let declared?, let provenFile?):
+        return "- \(change.property): \(declared) — verified in \(provenFile)"
+      case (let declared?, nil):
+        return "- \(change.property): \(declared)"
+      case (nil, let provenFile?):
+        return "- \(change.property): declared in \(provenFile)"
+      case (nil, nil):
+        return nil
+      }
+    }
+    if !declarationSites.isEmpty {
+      lines.append("")
+      lines.append(
+        "Where these values live today (AgentHub matched the winning rule — "
+          + "change the declaration in place, do not paste the computed value elsewhere):"
+      )
+      lines.append(contentsOf: declarationSites)
     }
 
     if let previewContext, !previewContext.isEmpty {
@@ -63,5 +88,33 @@ enum WebPreviewDesignEditPromptComposer {
     )
 
     return lines.joined(separator: "\n")
+  }
+
+  /// Builds the compact one-line delta shown on the queued "Edits" chip.
+  /// Returns nil when the batch contains no changes.
+  static func summary(for batch: WebPreviewPendingDesignEditBatch) -> String? {
+    guard !batch.isEmpty else { return nil }
+
+    var parts = batch.styleChanges.map { change -> String in
+      if let oldValue = change.oldValue {
+        return "\(change.property) \(oldValue) → \(change.newValue)"
+      }
+      return "\(change.property) \(change.newValue)"
+    }
+
+    if let textChange = batch.textChange {
+      parts.append("text \u{201C}\(condensed(textChange.newText))\u{201D}")
+    }
+
+    return parts.joined(separator: " · ")
+  }
+
+  /// Collapses whitespace and clips long text so a chip stays one line.
+  private static func condensed(_ text: String, limit: Int = 60) -> String {
+    let collapsed = text
+      .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+      .joined(separator: " ")
+    guard collapsed.count > limit else { return collapsed }
+    return collapsed.prefix(limit).trimmingCharacters(in: .whitespaces) + "…"
   }
 }

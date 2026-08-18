@@ -140,6 +140,92 @@ struct WebPreviewContextQueueTests {
     #expect(queue.composedContextPrompt() != nil)
   }
 
+  @Test("Design edits upsert per element instead of piling up chips")
+  func designEditsUpsertPerElement() {
+    var queue = WebPreviewContextQueue()
+    let hero = makeElement(tagName: "H1", selector: ".hero h1")
+    let card = makeElement(tagName: "DIV", selector: ".pricing-card")
+
+    queue.upsertDesignEdits(hero, instruction: "font-size: 18px → 20px", detail: "font-size 18px → 20px")
+    let firstChipID = queue.items.first?.id
+    queue.upsertDesignEdits(card, instruction: "color: red → blue", detail: "color red → blue")
+
+    // A re-capture of the same element carries a new UUID; the chip must be
+    // replaced in place rather than duplicated.
+    let heroRecaptured = makeElement(tagName: "H1", selector: ".hero h1")
+    queue.upsertDesignEdits(
+      heroRecaptured,
+      instruction: "font-size: 18px → 24px",
+      detail: "font-size 18px → 24px"
+    )
+
+    #expect(queue.count == 2)
+    #expect(queue.items.first?.id == firstChipID)
+    #expect(queue.items.first?.detail == "font-size 18px → 24px")
+    #expect(queue.items.first?.kindLabel == "Edits")
+    #expect(queue.designEditItemID(for: heroRecaptured) == firstChipID)
+  }
+
+  @Test("A freeform chip for the same element is left alone by design-edit upserts")
+  func designEditsDoNotReplaceFreeformChips() {
+    var queue = WebPreviewContextQueue()
+    let hero = makeElement(tagName: "H1", selector: ".hero h1")
+
+    queue.append(hero, instruction: "Make this punchier")
+    queue.upsertDesignEdits(hero, instruction: "font-size: 18px → 20px")
+
+    #expect(queue.count == 2)
+    #expect(queue.items.first?.kindLabel == "Element")
+    #expect(queue.items.last?.kindLabel == "Edits")
+  }
+
+  @Test("Queued design edits lead the prompt with the project-convention rules")
+  func designEditsPrependConventionGuidance() {
+    var queue = WebPreviewContextQueue()
+    queue.upsertDesignEdits(
+      makeElement(tagName: "H1", selector: ".hero h1"),
+      instruction: "Apply these design changes to this element:\n- font-size: 18px → 20px"
+    )
+
+    let prompt = queue.composedContextPrompt()
+
+    #expect(prompt?.hasPrefix(WebPreviewDesignEditGuidance.preamble) == true)
+    #expect(prompt?.contains("Never replace a `var(--token)`") == true)
+    #expect(prompt?.contains("- font-size: 18px → 20px") == true)
+  }
+
+  @Test("The convention preamble appears once for a mixed queue")
+  func conventionGuidanceIsNotRepeated() {
+    var queue = WebPreviewContextQueue()
+    queue.append(makeElement(tagName: "DIV", selector: ".pricing-card"), instruction: "More contrast")
+    queue.upsertDesignEdits(
+      makeElement(tagName: "H1", selector: ".hero h1"),
+      instruction: "Apply these design changes to this element:\n- color: red → blue"
+    )
+    queue.upsertDesignEdits(
+      makeElement(tagName: "P", selector: ".hero p"),
+      instruction: "Apply these design changes to this element:\n- line-height: 26px → 30px"
+    )
+
+    let prompt = queue.composedContextPrompt() ?? ""
+    let firstRule = "Never replace a `var(--token)`"
+
+    #expect(prompt.hasPrefix(WebPreviewDesignEditGuidance.preamble))
+    #expect(prompt.components(separatedBy: firstRule).count - 1 == 1)
+    #expect(prompt.contains("## Update 1: Element"))
+    #expect(prompt.contains("## Update 3: Edits"))
+  }
+
+  @Test("Queues without design edits keep their prompt unchanged")
+  func freeformQueuesSkipGuidance() {
+    var queue = WebPreviewContextQueue()
+    queue.append(makeElement(tagName: "DIV", selector: ".pricing-card"), instruction: "More contrast")
+
+    let prompt = queue.composedContextPrompt() ?? ""
+
+    #expect(!prompt.contains(WebPreviewDesignEditGuidance.preamble))
+  }
+
   private func makeElement(
     tagName: String,
     selector: String,

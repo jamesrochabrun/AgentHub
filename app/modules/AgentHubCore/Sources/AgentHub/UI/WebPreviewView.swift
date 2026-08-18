@@ -354,7 +354,7 @@ public struct WebPreviewView: View {
       guard inspectState.isActive else { return }
       inspectState.activate(mode: newBehavior.canvasMode)
       if newBehavior != .edit {
-        flushPendingDesignEditsToQueue()
+        commitPendingDesignEditsToQueue()
       }
       Task {
         await inspectorViewModel.flushPendingWriteIfNeeded()
@@ -362,6 +362,9 @@ public struct WebPreviewView: View {
           await inspectorViewModel.closePanel()
         }
       }
+    }
+    .onChange(of: inspectorViewModel.pendingEditBatch) { _, _ in
+      mirrorPendingDesignEditsToQueue()
     }
     .onChange(of: selectedFilePath) { _, newPath in
       if let path = newPath {
@@ -628,14 +631,18 @@ public struct WebPreviewView: View {
           .keyboardShortcut("r", modifiers: .command)
         if showsInspectorRail || showsInlineDesignToolbar {
           Button("") {
-            if inspectorViewModel.pendingEditCount > 0 {
-              applyPendingDesignEdits()
+            if inspectorViewModel.pendingEditCount > 0 || !queuedContext.isEmpty {
+              sendAllQueuedUpdates()
             } else {
               handleManualUpdate()
             }
           }
           .keyboardShortcut(.return, modifiers: .command)
-          .disabled(inspectorViewModel.pendingEditCount == 0 && !updateState.isEnabled)
+          .disabled(
+            inspectorViewModel.pendingEditCount == 0
+              && queuedContext.isEmpty
+              && !updateState.isEnabled
+          )
         }
         if isEmbedded, let onToggleExpanded {
           Button("") { onToggleExpanded() }
@@ -712,7 +719,7 @@ public struct WebPreviewView: View {
             viewModel: inspectorViewModel,
             updateState: updateState,
             onUpdate: handleManualUpdate,
-            onApplyPendingEdits: applyPendingDesignEdits,
+            onApplyPendingEdits: sendAllQueuedUpdates,
             onClose: closeEditRail
           )
         }
@@ -1395,28 +1402,30 @@ public struct WebPreviewView: View {
           if showsInlineDesignToolbar,
              let element = inspectorViewModel.selectedElement,
              let toolbarValues = inspectorViewModel.toolbarValues {
-            DesignToolbarContent(
-              values: toolbarValues,
-              element: element,
-              isTextContentEditable: inspectorViewModel.canEditContent,
-              onEdit: inspectorViewModel.apply
-            )
+            VStack(alignment: .leading, spacing: 6) {
+              if inspectorViewModel.canEditContent {
+                WebPreviewTextContentEditor(
+                  elementKey: WebPreviewElementKey.make(for: element),
+                  sourceText: inspectorViewModel.editableContentText,
+                  onTextChange: inspectorViewModel.updateContentValue
+                )
+              }
+
+              // The toolbar's own text field is off: it clipped at three lines
+              // and re-read the page's trimmed text on every keystroke.
+              DesignToolbarContent(
+                values: toolbarValues,
+                element: element,
+                isTextContentEditable: false,
+                onEdit: inspectorViewModel.apply
+              )
+            }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
             .shadow(color: .black.opacity(0.08), radius: 12, y: 4)
             .contentShape(RoundedRectangle(cornerRadius: 12))
             .inspectOverlayCursor(label: "inlineDesignToolbar") { hovering in
-              handleInspectOverlayHover(hovering)
-            }
-          }
-          if inspectorViewModel.pendingEditCount > 0 {
-            WebPreviewPendingEditsBar(
-              count: inspectorViewModel.pendingEditCount,
-              tierLabel: inspectorViewModel.persistenceTierLabel,
-              onApply: applyPendingDesignEdits
-            )
-            .inspectOverlayCursor(label: "pendingEditsBar") { hovering in
               handleInspectOverlayHover(hovering)
             }
           }
@@ -1442,7 +1451,7 @@ public struct WebPreviewView: View {
       isSendShortcutEnabled: !inspectState.isInputShowing && !inspectState.isCropInputShowing,
       failureMessage: queueSendFailureMessage,
       onRemoveItem: removeQueuedContextElement,
-      onSendAll: sendQueuedUpdates,
+      onSendAll: sendAllQueuedUpdates,
       onClearAll: clearQueuedContext
     )
     .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -1616,30 +1625,67 @@ public struct WebPreviewView: View {
     }
   }
 
-  /// Sends the pending design-edit batch to the session terminal immediately.
-  /// Falls back to queueing when no terminal is available so nothing is lost.
-  private func applyPendingDesignEdits() {
-    queueSendFailureMessage = nil
+  /// Commits whatever is still being edited, then sends everything queued to
+  /// the session terminal. The queue survives a failed send, so nothing is
+  /// lost when no terminal is ready yet.
+  private func sendAllQueuedUpdates() {
+    commitPendingDesignEditsToQueue()
+    sendQueuedUpdates()
+  }
+
+  /// Commits the in-progress design-edit batch to the session's queue and stops
+  /// tracking it. Mirroring already keeps the chip current, and the upsert is
+  /// keyed by element, so this never duplicates a chip.
+  private func commitPendingDesignEditsToQueue() {
     guard let handoff = inspectorViewModel.takePendingDesignEditHandoff(
       previewContext: previewContextDescription
     ) else { return }
+    upsertQueuedDesignEdits(handoff)
+  }
 
-    var queue = WebPreviewContextQueue()
-    queue.append(handoff.element, instruction: handoff.instruction)
-
-    guard sendWebPreviewQueue(queue) else {
-      queueInspectUpdate(element: handoff.element, instruction: handoff.instruction, resetFailure: false)
+  /// Keeps the queue in step with the batch the user is editing right now, so
+  /// every change lands in the tray as an "Edits" chip the moment it is made
+  /// instead of only when the selection changes.
+  private func mirrorPendingDesignEditsToQueue() {
+    if let handoff = inspectorViewModel.pendingDesignEditHandoff(
+      previewContext: previewContextDescription
+    ) {
+      upsertQueuedDesignEdits(handoff)
       return
+    }
+
+    // A batch that still exists but holds nothing means the user reverted
+    // their edits, so the chip goes with them. A nil batch only means nothing
+    // is being edited — earlier chips for this element must survive that.
+    guard inspectorViewModel.pendingEditBatch?.isEmpty == true else { return }
+    removeQueuedDesignEditsForSelectedElement()
+  }
+
+  private func upsertQueuedDesignEdits(_ handoff: WebPreviewPendingDesignEditHandoff) {
+    queueSendFailureMessage = nil
+    if let viewModel {
+      viewModel.upsertQueuedWebPreviewDesignEdits(
+        handoff.element,
+        instruction: handoff.instruction,
+        detail: handoff.summary,
+        for: session.id
+      )
+    } else {
+      localContextQueue.upsertDesignEdits(
+        handoff.element,
+        instruction: handoff.instruction,
+        detail: handoff.summary
+      )
     }
   }
 
-  /// Moves the pending design-edit batch into the session's context queue,
-  /// where it is sent with the next terminal message and remains removable.
-  private func flushPendingDesignEditsToQueue() {
-    guard let handoff = inspectorViewModel.takePendingDesignEditHandoff(
-      previewContext: previewContextDescription
-    ) else { return }
-    queueInspectUpdate(element: handoff.element, instruction: handoff.instruction)
+  /// Drops the selected element's chip when its last pending edit is reverted.
+  private func removeQueuedDesignEditsForSelectedElement() {
+    guard let element = inspectorViewModel.selectedElement,
+          let itemID = queuedContext.designEditItemID(for: element) else {
+      return
+    }
+    removeQueuedContextItem(itemID)
   }
 
   private func toggleInspector() {
@@ -1675,7 +1721,7 @@ public struct WebPreviewView: View {
   }
 
   private func deactivateInspector() {
-    flushPendingDesignEditsToQueue()
+    commitPendingDesignEditsToQueue()
     withAnimation(inspectorToolsAnimation) {
       inspectState.deactivate()
     }
@@ -1703,7 +1749,7 @@ public struct WebPreviewView: View {
   }
 
   private func closeEditRail() {
-    flushPendingDesignEditsToQueue()
+    commitPendingDesignEditsToQueue()
     inspectState.dismissInput()
     Task {
       await inspectorViewModel.closePanel()
@@ -1841,7 +1887,7 @@ public struct WebPreviewView: View {
 
     guard isAdvancedEditingEnabled, inspectBehavior == .edit else { return }
 
-    flushPendingDesignEditsToQueue()
+    commitPendingDesignEditsToQueue()
     Task {
       await inspectorViewModel.inspect(
         element: element,
@@ -2023,6 +2069,7 @@ public struct WebPreviewView: View {
 
   private func clearQueuedContext() {
     queueSendFailureMessage = nil
+    inspectorViewModel.discardPendingEdits()
     if let viewModel {
       viewModel.clearQueuedWebPreviewContext(for: session.id)
     } else {
@@ -2067,6 +2114,16 @@ public struct WebPreviewView: View {
   }
 
   private func removeQueuedContextElement(_ elementID: UUID) {
+    // Removing the chip for the element being edited also drops the batch
+    // behind it, so the pending pill cannot outlive its queued edits.
+    if let element = inspectorViewModel.selectedElement,
+       queuedContext.designEditItemID(for: element) == elementID {
+      inspectorViewModel.discardPendingEdits()
+    }
+    removeQueuedContextItem(elementID)
+  }
+
+  private func removeQueuedContextItem(_ elementID: UUID) {
     queueSendFailureMessage = nil
     if let viewModel {
       viewModel.removeQueuedWebPreviewContextElement(elementID, for: session.id)

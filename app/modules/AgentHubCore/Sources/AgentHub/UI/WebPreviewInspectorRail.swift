@@ -72,9 +72,9 @@ struct WebPreviewInspectorRail: View {
 
       Spacer()
 
-      Button("Apply", action: onApplyPendingEdits)
+      Button("Send", action: onApplyPendingEdits)
         .controlSize(.small)
-        .help("Send these changes to the agent (⌘↵)")
+        .help("Send everything queued to the agent (⌘↵)")
     }
     .padding(.horizontal, 12)
     .padding(.vertical, 8)
@@ -280,17 +280,12 @@ struct WebPreviewInspectorRail: View {
   private var contentSection: some View {
     inspectorSection("Content") {
       Group {
-        if viewModel.canEditContent {
-          TextField(
-            "Content",
-            text: Binding(
-              get: { viewModel.contentDisplayText == "—" ? "" : viewModel.contentDisplayText },
-              set: { viewModel.updateContentValue($0) }
-            ),
-            axis: .vertical
+        if viewModel.canEditContent, let element = viewModel.selectedElement {
+          WebPreviewTextContentEditor(
+            elementKey: WebPreviewElementKey.make(for: element),
+            sourceText: viewModel.editableContentText,
+            onTextChange: viewModel.updateContentValue
           )
-          .textFieldStyle(.roundedBorder)
-          .font(.system(size: 13))
         } else {
           Text(viewModel.contentDisplayText)
             .font(.system(size: 13))

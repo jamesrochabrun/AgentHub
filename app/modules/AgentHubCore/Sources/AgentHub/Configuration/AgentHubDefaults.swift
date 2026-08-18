@@ -229,9 +229,10 @@ public enum AgentHubDefaults {
   /// Type: Bool (default: false)
   public static let webPreviewDesignPanelEnabled = "\(keyPrefix)developer.webPreviewDesignPanelEnabled"
 
-  /// Whether Edit Mode style changes with a proven CSS rule mapping write the
-  /// file directly instead of batching to the session's agent.
-  /// Type: Bool (default: true)
+  /// Whether Edit Mode writes proven changes straight to source (style rules
+  /// with a proven CSS mapping, text on a static preview) instead of queueing
+  /// every change for the session's agent.
+  /// Type: Bool (default: false — edits queue in the tray)
   public static let webPreviewDirectCSSWriteEnabled = "\(keyPrefix)features.webPreviewDirectCSSWrite"
 
   /// Whether SwiftUI previews are available in the iOS simulator side panel.

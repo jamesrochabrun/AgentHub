@@ -94,6 +94,14 @@ struct WebPreviewPendingDesignEditBatch: Equatable, Sendable {
 struct WebPreviewPendingDesignEditHandoff: Equatable, Sendable {
   let element: ElementInspectorData
   let instruction: String
+  /// Compact one-line delta for the queued "Edits" chip.
+  let summary: String?
+
+  init(element: ElementInspectorData, instruction: String, summary: String? = nil) {
+    self.element = element
+    self.instruction = instruction
+    self.summary = summary
+  }
 }
 
 private extension String {

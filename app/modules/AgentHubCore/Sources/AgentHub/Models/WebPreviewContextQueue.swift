@@ -16,25 +16,48 @@ struct WebPreviewQueuedUpdate: Identifiable, Equatable, Sendable {
     case crop(WebPreviewQueuedCropSelection)
   }
 
+  /// Where the queued instruction came from. Edit Mode changes carry
+  /// `.designEdits` so they upsert in place, render as an "Edits" chip, and
+  /// pull the convention-preserving preamble into the composed prompt.
+  enum Origin: Equatable, Sendable {
+    case freeform
+    case designEdits
+  }
+
   let id: UUID
   let selection: Selection
   let instruction: String?
+  let origin: Origin
+  /// Compact chip text shown instead of the full instruction, when set.
+  let detailOverride: String?
 
   init(
     id: UUID = UUID(),
     selection: Selection,
-    instruction: String? = nil
+    instruction: String? = nil,
+    origin: Origin = .freeform,
+    detailOverride: String? = nil
   ) {
     self.id = id
     self.selection = selection
     self.instruction = Self.normalizedInstruction(instruction)
+    self.origin = origin
+    self.detailOverride = Self.normalizedInstruction(detailOverride)
   }
 
   init(
     element: ElementInspectorData,
-    instruction: String? = nil
+    instruction: String? = nil,
+    origin: Origin = .freeform,
+    detailOverride: String? = nil
   ) {
-    self.init(id: element.id, selection: .element(element), instruction: instruction)
+    self.init(
+      id: element.id,
+      selection: .element(element),
+      instruction: instruction,
+      origin: origin,
+      detailOverride: detailOverride
+    )
   }
 
   init(
@@ -54,6 +77,7 @@ struct WebPreviewQueuedUpdate: Identifiable, Equatable, Sendable {
   }
 
   var kindLabel: String {
+    if origin == .designEdits { return "Edits" }
     switch selection {
     case .element: return instruction == nil ? "Context" : "Element"
     case .crop: return "Region"
@@ -61,6 +85,7 @@ struct WebPreviewQueuedUpdate: Identifiable, Equatable, Sendable {
   }
 
   var iconName: String {
+    if origin == .designEdits { return "slider.horizontal.3" }
     switch selection {
     case .element: return instruction == nil ? "square.and.arrow.up" : "cursorarrow.rays"
     case .crop: return "crop"
@@ -79,6 +104,10 @@ struct WebPreviewQueuedUpdate: Identifiable, Equatable, Sendable {
   }
 
   var detail: String {
+    if let detailOverride {
+      return detailOverride
+    }
+
     if let instruction {
       return instruction
     }
@@ -172,6 +201,56 @@ struct WebPreviewContextQueue: Equatable, Sendable {
     items.append(contentsOf: updates)
   }
 
+  /// Adds — or replaces in place — the queued Edit Mode changes for one
+  /// element. Edits accumulate per element instead of appending a new chip
+  /// for every keystroke or slider step, and the existing chip keeps its id
+  /// so the row stays stable and removable while the user keeps editing.
+  mutating func upsertDesignEdits(
+    _ element: ElementInspectorData,
+    instruction: String,
+    detail: String? = nil
+  ) {
+    let key = Self.designEditKey(for: element)
+    let existingIndex = items.firstIndex { item in
+      item.origin == .designEdits && Self.designEditKey(for: item) == key
+    }
+
+    guard let existingIndex else {
+      items.append(WebPreviewQueuedUpdate(
+        element: element,
+        instruction: instruction,
+        origin: .designEdits,
+        detailOverride: detail
+      ))
+      return
+    }
+
+    items[existingIndex] = WebPreviewQueuedUpdate(
+      id: items[existingIndex].id,
+      selection: .element(element),
+      instruction: instruction,
+      origin: .designEdits,
+      detailOverride: detail
+    )
+  }
+
+  /// The id of the queued design-edit chip for `element`, when one exists.
+  func designEditItemID(for element: ElementInspectorData) -> UUID? {
+    let key = Self.designEditKey(for: element)
+    return items.first { item in
+      item.origin == .designEdits && Self.designEditKey(for: item) == key
+    }?.id
+  }
+
+  private static func designEditKey(for element: ElementInspectorData) -> String {
+    WebPreviewElementKey.make(for: element)
+  }
+
+  private static func designEditKey(for item: WebPreviewQueuedUpdate) -> String? {
+    guard case .element(let element) = item.selection else { return nil }
+    return designEditKey(for: element)
+  }
+
   mutating func remove(id: UUID) {
     items.removeAll { $0.id == id }
   }
@@ -182,6 +261,10 @@ struct WebPreviewContextQueue: Equatable, Sendable {
 
   func composedContextPrompt() -> String? {
     guard !items.isEmpty else { return nil }
+    return prefixedWithDesignEditGuidance(composedBody())
+  }
+
+  private func composedBody() -> String {
     if items.count == 1, let item = items.first {
       return item.prompt
     }
@@ -203,6 +286,13 @@ struct WebPreviewContextQueue: Equatable, Sendable {
     }
 
     return lines.joined(separator: "\n")
+  }
+
+  /// Queued Edit Mode changes describe target values, not code, so the
+  /// convention rules lead the prompt — once, no matter how many chips.
+  private func prefixedWithDesignEditGuidance(_ body: String) -> String {
+    guard items.contains(where: { $0.origin == .designEdits }) else { return body }
+    return "\(WebPreviewDesignEditGuidance.preamble)\n\n\(body)"
   }
 
   /// Returns screenshot file paths from crop items, in queue order.
