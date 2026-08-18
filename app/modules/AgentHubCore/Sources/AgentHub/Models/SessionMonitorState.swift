@@ -52,6 +52,10 @@ public struct SessionMonitorState: Equatable, Sendable {
   // Localhost URL detected from agent's dev server output
   public var detectedLocalhostURL: URL?
 
+  // Claude artifacts published from this session (Claude only — Codex has no
+  // equivalent surface), oldest first
+  public var detectedArtifacts: [ClaudeArtifact]
+
   public init(
     status: SessionStatus = .idle,
     currentTool: String? = nil,
@@ -71,7 +75,8 @@ public struct SessionMonitorState: Equatable, Sendable {
     detectedResourceLinks: [ResourceLink] = [],
     detectedMCPAppResources: [MCPAppResourceDescriptor] = [],
     detectedMCPAppInvocations: [MCPAppInvocation] = [],
-    detectedLocalhostURL: URL? = nil
+    detectedLocalhostURL: URL? = nil,
+    detectedArtifacts: [ClaudeArtifact] = []
   ) {
     self.status = status
     self.currentTool = currentTool
@@ -92,6 +97,7 @@ public struct SessionMonitorState: Equatable, Sendable {
     self.detectedMCPAppResources = detectedMCPAppResources
     self.detectedMCPAppInvocations = detectedMCPAppInvocations
     self.detectedLocalhostURL = detectedLocalhostURL
+    self.detectedArtifacts = detectedArtifacts
   }
 
   // MARK: - Computed Properties

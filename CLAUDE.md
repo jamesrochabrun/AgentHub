@@ -294,6 +294,15 @@ Measurements are scoped to the **project**, not the session: they outlive the co
 
 Read **`Measurements.md`** before editing anything named `Measurement*`, the `SidePanelContent.measurements` case, `agenthub_record_measurement` / `agenthub_list_measurements`, or the `session_measurements` table.
 
+### Artifact Panel
+
+Artifacts an agent published to claude.ai during a session (`/design` canvases, reports, mockups) open in a dedicated side panel. Detection is passive and read-only, on the same rails as localhost web preview: `SessionJSONLParser` files an artifact from the `Artifact` tool's publish result (which carries the title and source path), from the `frame-link` entry Claude Code writes alongside it, or from a bare artifact URL in the transcript — into `SessionMonitorState.detectedArtifacts`. An **Artifact** button appears in the card header only once one has been detected, and toggles `SidePanelContent.artifact` open/closed.
+
+- **Claude only.** `CodexSessionJSONLParser` never files artifacts, and the card gates the button on `providerKind == .claude`.
+- Artifacts are keyed by the id in the URL, so a republish updates the existing entry and bumps `revision` — which is what makes an open panel reload — instead of appending a duplicate. The canonical URL drops query/fragment (`?via=auto_preview` is provenance, not identity).
+- `ArtifactWebView` uses the **default (persistent)** website data store: artifact pages are private to the signed-in account, so the sign-in has to survive a panel close and a relaunch. Links leaving claude.ai open in the user's browser. A signed-out load lands on Anthropic's sign-in page (`ClaudeArtifactURLDetector.isSignInURL`); the panel banners it as Anthropic's, not AgentHub's, and tells the user to sign in **in the panel**. A browser session is a different cookie jar and never carries over, so that banner must not offer an open-in-browser escape.
+- Detection changes belong in `ClaudeArtifactURLDetector` and need unit tests.
+
 ### Command Palette
 
 `CommandPaletteView` — Cmd+K for quick session/repository/action access.

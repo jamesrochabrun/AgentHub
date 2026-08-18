@@ -19,6 +19,7 @@ public struct SessionJSONLParser {
   private static let maxDetectedResourceLinks = 50
   private static let maxDetectedMCPAppResources = 50
   private static let maxDetectedMCPAppInvocations = 12
+  private static let maxDetectedArtifacts = 20
 
   // MARK: - Entry Types
 
@@ -30,6 +31,32 @@ public struct SessionJSONLParser {
     let message: MessageContent?
     let costUSD: Double?
     let durationMs: Int?
+    // `frame-link` entries: the artifact publish record Claude Code appends
+    // alongside the Artifact tool result (see `detectedArtifacts`).
+    let frameUrl: String?
+    let title: String?
+    let path: String?
+
+    private enum CodingKeys: String, CodingKey {
+      case type, timestamp, uuid, message, costUSD, durationMs, frameUrl, title, path
+    }
+
+    /// `title` and `path` are generic enough that some other entry type could
+    /// one day use them for a non-string value. Decoding them leniently keeps
+    /// that from throwing, which would drop the whole entry — and with it the
+    /// token counts and activity the rest of the parser depends on.
+    public init(from decoder: any Decoder) throws {
+      let container = try decoder.container(keyedBy: CodingKeys.self)
+      type = try container.decode(String.self, forKey: .type)
+      timestamp = try container.decodeIfPresent(String.self, forKey: .timestamp)
+      uuid = try container.decodeIfPresent(String.self, forKey: .uuid)
+      message = try container.decodeIfPresent(MessageContent.self, forKey: .message)
+      costUSD = try container.decodeIfPresent(Double.self, forKey: .costUSD)
+      durationMs = try container.decodeIfPresent(Int.self, forKey: .durationMs)
+      frameUrl = try? container.decodeIfPresent(String.self, forKey: .frameUrl)
+      title = try? container.decodeIfPresent(String.self, forKey: .title)
+      path = try? container.decodeIfPresent(String.self, forKey: .path)
+    }
   }
 
   /// Message content within an entry
@@ -100,8 +127,24 @@ public struct SessionJSONLParser {
     /// In-flight MCP tool calls keyed by tool_use id, finalized when the result arrives.
     public var pendingMCPInvocations: [String: MCPAppInvocation] = [:]
     public var detectedLocalhostURL: URL?
+    /// Claude artifacts published from this session, oldest first.
+    public var detectedArtifacts: [ClaudeArtifact] = []
+    /// In-flight `Artifact` tool calls keyed by tool_use id, so the URL in the
+    /// result can be filed with the title the agent published it under.
+    public var pendingArtifactPublishes: [String: PendingArtifactPublish] = [:]
 
     public init() {}
+  }
+
+  /// Title/source metadata from an in-flight `Artifact` tool call
+  public struct PendingArtifactPublish: Sendable {
+    public let title: String?
+    public let filePath: String?
+
+    public init(title: String?, filePath: String?) {
+      self.title = title
+      self.filePath = filePath
+    }
   }
 
   /// Info about a pending tool use
@@ -245,6 +288,21 @@ public struct SessionJSONLParser {
       // Summary entries may contain git branch info
       break
 
+    case "frame-link":
+      // Claude Code records every artifact publish as its own entry, with the
+      // title already resolved — the most direct signal we get.
+      if let frameUrl = entry.frameUrl,
+         let url = ClaudeArtifactURLDetector.canonicalURL(from: frameUrl) {
+        appendArtifact(
+          url: url,
+          title: entry.title,
+          filePath: entry.path,
+          timestamp: timestamp,
+          isPublish: true,
+          to: &result
+        )
+      }
+
     default:
       break
     }
@@ -297,6 +355,12 @@ public struct SessionJSONLParser {
             to: &result
           )
 
+          // Capture the artifact publish's title/source path; the URL only
+          // arrives with the tool result.
+          if name == artifactToolName {
+            result.pendingArtifactPublishes[id] = artifactPublish(from: block.input)
+          }
+
           // Capture the in-flight MCP tool call so we can render its app once
           // the result arrives (see `detectedMCPAppInvocations`).
           if let server = MCPAppResourceExtractor.serverName(fromToolName: name) {
@@ -331,6 +395,20 @@ public struct SessionJSONLParser {
             AppLogger.devServer.info("[SessionJSONLParser] Detected localhost URL from tool_result: \(localhostURL.absoluteString)")
             result.detectedLocalhostURL = localhostURL
           }
+          // An artifact URL in the result of the Artifact tool is a publish;
+          // the same URL echoed by any other tool is only a mention.
+          let publish = result.pendingArtifactPublishes.removeValue(forKey: toolUseId)
+          for url in extractArtifactURLs(from: block.content) {
+            appendArtifact(
+              url: url,
+              title: publish?.title,
+              filePath: publish?.filePath,
+              timestamp: timestamp,
+              isPublish: publish != nil,
+              to: &result
+            )
+          }
+
           appendResourceLinks(extractResourceLinks(from: block.content, timestamp: timestamp), to: &result)
           appendMCPAppResources(
             extractMCPAppResources(from: block.content, serverName: serverName),
@@ -365,6 +443,9 @@ public struct SessionJSONLParser {
           }
           appendResourceLinks(extractResourceLinks(from: text, timestamp: timestamp), to: &result)
           appendMCPAppResources(MCPAppResourceExtractor.extract(from: text), to: &result)
+          for url in ClaudeArtifactURLDetector.extractAll(from: text) {
+            appendArtifact(url: url, timestamp: timestamp, isPublish: false, to: &result)
+          }
           // Extract localhost URLs from assistant text (e.g. "Your app is running at http://localhost:5173")
           if let localhostURL = extractLocalhostURLFromText(text) {
             AppLogger.devServer.info("[SessionJSONLParser] Detected localhost URL from assistant text: \(localhostURL.absoluteString)")
@@ -713,6 +794,86 @@ public struct SessionJSONLParser {
   // MARK: - Localhost URL Extraction
 
   /// Extracts a localhost URL from tool_result content (AnyCodable: string or [{type, text}])
+  // MARK: - Artifacts
+
+  /// The tool Claude Code publishes artifacts with.
+  private static let artifactToolName = "Artifact"
+
+  private static func artifactPublish(from input: AnyCodable?) -> PendingArtifactPublish {
+    guard let dictionary = input?.value as? [String: Any] else {
+      return PendingArtifactPublish(title: nil, filePath: nil)
+    }
+
+    return PendingArtifactPublish(
+      title: dictionary["title"] as? String,
+      filePath: dictionary["file_path"] as? String
+    )
+  }
+
+  private static func extractArtifactURLs(from content: AnyCodable?) -> [URL] {
+    guard let content else { return [] }
+
+    if let text = content.value as? String {
+      return ClaudeArtifactURLDetector.extractAll(from: text)
+    }
+
+    if let blocks = content.value as? [[String: Any]] {
+      var seenURLs = Set<String>()
+      var urls: [URL] = []
+      for block in blocks {
+        guard let text = block["text"] as? String else { continue }
+        for url in ClaudeArtifactURLDetector.extractAll(from: text)
+        where seenURLs.insert(url.absoluteString).inserted {
+          urls.append(url)
+        }
+      }
+      return urls
+    }
+
+    return []
+  }
+
+  /// Files an artifact keyed by its id, so a republish updates the existing
+  /// entry — bumping `revision`, which is what makes an open panel reload —
+  /// rather than appending a duplicate. Most recently seen artifact stays last.
+  private static func appendArtifact(
+    url: URL,
+    title: String? = nil,
+    filePath: String? = nil,
+    timestamp: Date?,
+    isPublish: Bool,
+    to result: inout ParseResult
+  ) {
+    guard let identifier = ClaudeArtifactURLDetector.identifier(from: url) else { return }
+    let detectedAt = timestamp ?? Date()
+
+    if let index = result.detectedArtifacts.firstIndex(where: { $0.id == identifier }) {
+      var artifact = result.detectedArtifacts.remove(at: index)
+      artifact.title = title ?? artifact.title
+      artifact.filePath = filePath ?? artifact.filePath
+      artifact.detectedAt = detectedAt
+      if isPublish {
+        artifact.revision += 1
+      }
+      result.detectedArtifacts.append(artifact)
+    } else {
+      result.detectedArtifacts.append(
+        ClaudeArtifact(
+          id: identifier,
+          url: url,
+          title: title,
+          filePath: filePath,
+          revision: isPublish ? 1 : 0,
+          detectedAt: detectedAt
+        )
+      )
+    }
+
+    if result.detectedArtifacts.count > maxDetectedArtifacts {
+      result.detectedArtifacts.removeFirst(result.detectedArtifacts.count - maxDetectedArtifacts)
+    }
+  }
+
   private static func extractLocalhostURL(from content: AnyCodable?) -> URL? {
     guard let content = content else { return nil }
 

@@ -603,7 +603,8 @@ public actor SessionFileWatcher {
       detectedResourceLinks: result.detectedResourceLinks,
       detectedMCPAppResources: result.detectedMCPAppResources,
       detectedMCPAppInvocations: result.detectedMCPAppInvocations,
-      detectedLocalhostURL: result.detectedLocalhostURL
+      detectedLocalhostURL: result.detectedLocalhostURL,
+      detectedArtifacts: result.detectedArtifacts
     )
   }
 

@@ -43,6 +43,7 @@ public struct MonitoringCardView: View {
   let onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)?
   let onShowMCPApp: ((CLISession, String) -> Void)?
   let onShowMeasurement: ((CLISession) -> Void)?
+  let onShowArtifact: ((CLISession) -> Void)?
   let onShowSimulatorPreview: ((CLISession, String) -> Void)?
   let onFork: ((CLISession, SessionProviderKind) -> Void)?
   let onPromptConsumed: (() -> Void)?
@@ -99,6 +100,7 @@ public struct MonitoringCardView: View {
     onShowPendingChanges: ((CLISession, PendingToolUse) -> Void)? = nil,
     onShowMCPApp: ((CLISession, String) -> Void)? = nil,
     onShowMeasurement: ((CLISession) -> Void)? = nil,
+    onShowArtifact: ((CLISession) -> Void)? = nil,
     onShowSimulatorPreview: ((CLISession, String) -> Void)? = nil,
     onFork: ((CLISession, SessionProviderKind) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
@@ -139,6 +141,7 @@ public struct MonitoringCardView: View {
     self.onShowPendingChanges = onShowPendingChanges
     self.onShowMCPApp = onShowMCPApp
     self.onShowMeasurement = onShowMeasurement
+    self.onShowArtifact = onShowArtifact
     self.onShowSimulatorPreview = onShowSimulatorPreview
     self.onFork = onFork
     self.onPromptConsumed = onPromptConsumed
@@ -220,6 +223,18 @@ public struct MonitoringCardView: View {
   /// host-app resolution re-runs only when the agent makes a new app-bearing call.
   private var measurementCount: Int {
     viewModel?.measurements(for: session).count ?? 0
+  }
+
+  /// Claude-only: Codex has no artifact surface, so its parser never files any.
+  private var detectedArtifacts: [ClaudeArtifact] {
+    guard providerKind == .claude else { return [] }
+    return state?.detectedArtifacts ?? []
+  }
+
+  private var artifactButtonAccessibilityLabel: String {
+    detectedArtifacts.count == 1
+      ? "Open 1 published artifact"
+      : "Open \(detectedArtifacts.count) published artifacts"
   }
 
   private var measurementButtonAccessibilityLabel: String {
@@ -833,6 +848,28 @@ public struct MonitoringCardView: View {
           .buttonStyle(.agentHubOutlined)
           .help("Open measurements recorded in this session")
           .accessibilityLabel(measurementButtonAccessibilityLabel)
+        }
+
+        // Artifact button — only once the agent has actually published one to
+        // claude.ai, and only where the panel can host it.
+        if onShowArtifact != nil, !detectedArtifacts.isEmpty {
+          Button(action: {
+            onShowArtifact?(session)
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "sparkles.rectangle.stack")
+                .font(.caption2)
+              Text("Artifact")
+              if detectedArtifacts.count > 1 {
+                Text("\(detectedArtifacts.count)")
+                  .font(.system(.caption2, design: .monospaced))
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("Open artifacts published in this session")
+          .accessibilityLabel(artifactButtonAccessibilityLabel)
         }
 
         // Mermaid diagram button (only visible when mermaid content is detected)

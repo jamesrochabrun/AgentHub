@@ -23,6 +23,7 @@ enum SidePanelContent: Equatable {
   case mcpApp(sessionId: String, session: CLISession, projectPath: String)
   case simulator(sessionId: String, session: CLISession, projectPath: String)
   case measurements(sessionId: String, session: CLISession)
+  case artifact(sessionId: String, session: CLISession)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -43,6 +44,8 @@ enum SidePanelContent: Equatable {
     case (.simulator(let id1, _, let p1), .simulator(let id2, _, let p2)):
       return id1 == id2 && p1 == p2
     case (.measurements(let id1, _), .measurements(let id2, _)):
+      return id1 == id2
+    case (.artifact(let id1, _), .artifact(let id2, _)):
       return id1 == id2
     default: return false
     }
@@ -606,6 +609,12 @@ public struct MultiProviderMonitoringPanelView: View {
                 forItemID: item.id
               )
             },
+            onShowArtifact: { session in
+              toggleSidePanel(
+                .artifact(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
+            },
             onShowSimulatorPreview: { session, projectPath in
               toggleSidePanel(
                 .simulator(sessionId: session.id, session: session, projectPath: projectPath),
@@ -703,6 +712,12 @@ public struct MultiProviderMonitoringPanelView: View {
             onShowMeasurement: { session in
               toggleSidePanel(
                 .measurements(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
+            },
+            onShowArtifact: { session in
+              toggleSidePanel(
+                .artifact(sessionId: session.id, session: session),
                 forItemID: item.id
               )
             },
@@ -895,7 +910,7 @@ public struct MultiProviderMonitoringPanelView: View {
     switch content {
     case .edits, .plan:
       return true
-    case .diff, .webPreview, .mermaid, .gitHub, .mcpApp, .simulator, .measurements:
+    case .diff, .webPreview, .mermaid, .gitHub, .mcpApp, .simulator, .measurements, .artifact:
       return false
     }
   }
@@ -1140,6 +1155,14 @@ public struct MultiProviderMonitoringPanelView: View {
         viewModel: viewModel,
         onDismiss: closeEmbeddedSidePanel,
         isEmbedded: true
+      )
+    case .artifact(let sessionId, _):
+      ArtifactSidePanelView(
+        artifacts: viewModel.monitorStates[sessionId]?.detectedArtifacts ?? [],
+        onDismiss: closeEmbeddedSidePanel,
+        isEmbedded: true,
+        isExpanded: sidePanelExpansion.isExpanded(for: payload),
+        onToggleExpanded: { toggleEmbeddedSidePanelExpansion(for: payload) }
       )
     }
   }
