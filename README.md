@@ -113,6 +113,20 @@ Data sources are whatever the agent can already reach — local files, a CLI, or
 
 See **[`Measurements.md`](Measurements.md)** for the architecture, data flow, key files, invariants, and remaining work.
 
+## Studio
+
+Agents can render things that do not exist in the codebase yet — a report, a mockup, a diagram, or several variants of one component — with the bundled `agenthub_artifact` and `agenthub_design` tools. AgentHub materializes what they send into its own directory, serves it on `127.0.0.1`, and shows it in a dedicated **Studio** side panel that appears on the session card once the project has at least one. Works for Claude and Codex alike.
+
+- **`agenthub_artifact`** renders one self-contained HTML document, verbatim.
+- **`agenthub_design`** lays out N variants of one component side by side on an infinite pan/zoom canvas. Each variant's CSS is scoped to its own artboard (`body`, `:root` variables, `@media`, `@keyframes` all work per variant), so "show me four versions of this button" is a comparison, not a mess. Scripts are stripped; CSS that cannot be scoped is rejected at the tool boundary with a location.
+- **Point, comment, send.** The Canvas inspector overlay lets you click any element, describe a change, and send it to the agent — stamped with the variant it landed on. The prompt asks the agent to re-file with the same id (the panel updates in place) and forbids editing project files.
+- **Tweaks, shared across the canvas.** `agenthub_design` can declare a `props` schema (sliders, colors, selects, toggles, text) that every variant reads as `var(--name)`; the Tweaks panel moves all variants at once, so the same knob is compared across designs. Save defaults writes them back into the canvas; Ideas / Custom go to the agent as re-file requests. Documents get the same panel by calling `dc_set_props`.
+- **Promote…** is the one deliberate step from scratch surface to code: it asks the agent to implement a chosen variant in the real component, sending the original markup and CSS, never the scoped rewrite.
+- **Scoped to the project, not the session**, like measurements — a canvas outlives the conversation that produced it; worktrees roll up to their parent repo. `agenthub_list_artifacts` lets a session refine what is already on screen instead of filing near-duplicates.
+- **Never touches the repo.** Everything lives in Application Support (Settings › Studio shows per-project size and deletes); Export writes an HTML file wherever you choose.
+
+See **[`AgentHubStudio.md`](AgentHubStudio.md)** for the architecture, invariants, and remaining work.
+
 ## Storybook
 
 When AgentHub detects a Storybook configuration in a project, the regular **Preview** button on each session card is replaced by a dedicated **Storybook** button. Clicking it spawns the Storybook dev server (via `npm run storybook`) and opens the web preview pane pinned to the Storybook URL — independently of any other dev server the agent has running.

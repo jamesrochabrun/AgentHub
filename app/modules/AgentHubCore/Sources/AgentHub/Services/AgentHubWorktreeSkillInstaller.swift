@@ -80,6 +80,27 @@ enum AgentHubWorktreeSkillInstaller {
     skillMarkdown: String,
     openAIYAML: String
   ) throws {
+    try AgentHubBundledSkillFiles.installForAllProviders(
+      skillName: skillName,
+      homeDirectory: homeDirectory,
+      fileManager: fileManager,
+      skillMarkdown: skillMarkdown,
+      openAIYAML: openAIYAML
+    )
+  }
+}
+
+/// Writes one bundled skill into every provider's user-level skills directory
+/// (`~/.claude/skills/<name>/SKILL.md`, `~/.codex/skills/<name>/SKILL.md` +
+/// `agents/openai.yaml`). Idempotent: unchanged files are left untouched.
+enum AgentHubBundledSkillFiles {
+  static func installForAllProviders(
+    skillName: String,
+    homeDirectory: URL,
+    fileManager: FileManager = .default,
+    skillMarkdown: String,
+    openAIYAML: String
+  ) throws {
     let claudeSkillDirectory = homeDirectory
       .appendingPathComponent(".claude", isDirectory: true)
       .appendingPathComponent("skills", isDirectory: true)

@@ -2096,6 +2096,77 @@ public final class CLISessionsViewModel {
     }
   }
 
+  // MARK: - Studio
+
+  /// The Studio panel's model, shared with the other provider's view model so a
+  /// canvas filed from Codex shows for a Claude session in the same project.
+  /// Set by `AgentHubProvider`; nil in isolated tests.
+  public var studioLibrary: StudioLibrary?
+
+  /// The project bucket a session's project-scoped state lives in — measurements
+  /// and Studio artifacts share it (worktrees roll up to their parent repo).
+  public func projectScopeKey(for session: CLISession) -> String {
+    measurementProjectKey(for: session)
+  }
+
+  public func studioArtifacts(for session: CLISession) -> [StudioArtifact] {
+    studioLibrary?.artifacts(forProjectKey: projectScopeKey(for: session)) ?? []
+  }
+
+  public func hasStudioArtifacts(for session: CLISession) -> Bool {
+    !studioArtifacts(for: session).isEmpty
+  }
+
+  /// Takes an artifact filed by the CLI (via `StudioArtifactHandler`).
+  public func storeStudioArtifact(_ artifact: StudioArtifact, forSessionId sessionId: String) {
+    guard let studioLibrary else {
+      AppLogger.session.error("Dropping studio artifact \(artifact.id): no library wired.")
+      return
+    }
+    let session = monitoredSession(withId: sessionId)
+    let projectPath = session?.projectPath ?? artifact.sourceProjectPath ?? ""
+    guard !projectPath.isEmpty else {
+      AppLogger.session.error("Dropping studio artifact \(artifact.id): no project path to file it under.")
+      return
+    }
+
+    Task {
+      let key = await resolveMeasurementProjectKey(for: sessionId, projectPath: projectPath)
+      await studioLibrary.store(
+        artifact.stamped(branchName: session?.branchName),
+        projectKey: key,
+        sessionId: sessionId,
+        aliasPaths: projectScopeAliasPaths(forKey: key)
+      )
+    }
+  }
+
+  /// Reads a project's persisted artifacts back once (idempotent in the library).
+  public func loadStudioArtifacts(for session: CLISession) {
+    guard let studioLibrary, !session.id.hasPrefix("pending-") else { return }
+    Task {
+      let key = await resolveMeasurementProjectKey(for: session.id, projectPath: session.projectPath)
+      await studioLibrary.load(projectKey: key, aliasPaths: projectScopeAliasPaths(forKey: key))
+    }
+  }
+
+  public func deleteStudioArtifact(id: String, in session: CLISession) {
+    guard let studioLibrary else { return }
+    let key = projectScopeKey(for: session)
+    Task {
+      await studioLibrary.delete(id: id, projectKey: key, aliasPaths: projectScopeAliasPaths(forKey: key))
+    }
+  }
+
+  /// Every monitored session path that resolves to this project bucket, so the
+  /// CLI can find the index from `AGENTHUB_PROJECT_PATH` inside a worktree.
+  private func projectScopeAliasPaths(forKey key: String) -> [String] {
+    measurementProjectKeys
+      .filter { $0.value == key }
+      .compactMap { monitoredSession(withId: $0.key)?.projectPath }
+      .map(MeasurementProjectScope.normalized)
+  }
+
   // MARK: Re-running a measurement
 
   /// Measurements whose refresh has been handed to a session and not yet come back.

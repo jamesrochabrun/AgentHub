@@ -118,7 +118,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       worktreeName: nil,
       metadataStore: nil,
       agentHubCLIPath: agentHubCLIPath,
-      installAgentHubWorktreeSkill: { installCount += 1 }
+      installAgentHubWorktreeSkill: { installCount += 1 },
+      studioGuidanceEnabled: false
     )
 
     guard case .success(let launch) = result else {
@@ -155,7 +156,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       worktreeName: nil,
       metadataStore: nil,
       agentHubCLIPath: agentHubCLIPath,
-      installAgentHubWorktreeSkill: { installCount += 1 }
+      installAgentHubWorktreeSkill: { installCount += 1 },
+      studioGuidanceEnabled: false
     )
 
     guard case .success(let launch) = result else {
@@ -187,7 +189,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       worktreeName: nil,
       metadataStore: nil,
       agentHubCLIPath: agentHubCLIPath,
-      installAgentHubWorktreeSkill: { installCount += 1 }
+      installAgentHubWorktreeSkill: { installCount += 1 },
+      studioGuidanceEnabled: false
     )
 
     guard case .success(let launch) = result else {
@@ -241,6 +244,7 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: { installCount += 1 },
       xcodeBuildMCPEnabled: true,
+      studioGuidanceEnabled: false,
       xcodeBuildMCPToolingAvailable: { true }
     )
 
@@ -284,6 +288,7 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: {},
       xcodeBuildMCPEnabled: true,
+      studioGuidanceEnabled: false,
       xcodeBuildMCPToolingAvailable: { false },
       notifyXcodeBuildMCPToolingMissing: { notifyCount += 1 }
     )
@@ -323,6 +328,7 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: {},
       xcodeBuildMCPEnabled: false,
+      studioGuidanceEnabled: false,
       xcodeBuildMCPToolingAvailable: { true },
       notifyXcodeBuildMCPToolingMissing: { notifyCount += 1 }
     )
@@ -352,7 +358,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       metadataStore: nil,
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: { worktreeInstallCount += 1 },
-      removeLegacyAgentHubSessionNamingSkill: { namingSkillSweepCount += 1 }
+      removeLegacyAgentHubSessionNamingSkill: { namingSkillSweepCount += 1 },
+      studioGuidanceEnabled: false
     )
 
     guard case .success = result else {
@@ -376,7 +383,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       worktreeName: nil,
       metadataStore: nil,
       agentHubCLIPath: agentHubCLIPath,
-      installAgentHubWorktreeSkill: {}
+      installAgentHubWorktreeSkill: {},
+      studioGuidanceEnabled: false
     )
 
     guard case .success(let launch) = result else {
@@ -405,7 +413,8 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
       worktreeName: nil,
       metadataStore: nil,
       agentHubCLIPath: agentHubCLIPath,
-      installAgentHubWorktreeSkill: {}
+      installAgentHubWorktreeSkill: {},
+      studioGuidanceEnabled: false
     )
 
     guard case .success(let launch) = result else {
@@ -463,6 +472,78 @@ struct EmbeddedTerminalLaunchBuilderAgentHubCLITests {
     )
 
     #expect(try String(contentsOf: codexSkillURL, encoding: .utf8) == skillMarkdown)
+  }
+
+  @Test("Studio guidance rides the system-prompt channel for both providers when enabled")
+  func studioGuidanceInjectedWhenEnabled() throws {
+    for mode in [CLICommandMode.claude, .codex] {
+      let result = EmbeddedTerminalLaunchBuilder.cliLaunch(
+        sessionId: nil,
+        projectPath: "/tmp",
+        cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: mode),
+        initialPrompt: nil,
+        dangerouslySkipPermissions: false,
+        permissionModePlan: false,
+        worktreeName: nil,
+        metadataStore: nil,
+        agentHubCLIPath: agentHubCLIPath,
+        installAgentHubWorktreeSkill: {},
+        xcodeBuildMCPEnabled: false,
+        studioGuidanceEnabled: true
+      )
+      guard case .success(let launch) = result else {
+        Issue.record("Expected launch builder success")
+        return
+      }
+      let channel = mode == .claude ? "--append-system-prompt" : "developer_instructions="
+      #expect(launch.shellCommand.contains(channel))
+      #expect(launch.shellCommand.contains("agenthub_design"))
+      #expect(launch.shellCommand.contains("agenthub_list_artifacts"))
+    }
+
+    // No bundled CLI → the tools would not exist → no guidance either.
+    let withoutCLI = EmbeddedTerminalLaunchBuilder.cliLaunch(
+      sessionId: nil,
+      projectPath: "/tmp",
+      cliConfiguration: CLICommandConfiguration(command: "echo", additionalPaths: ["/bin"], mode: .claude),
+      initialPrompt: nil,
+      dangerouslySkipPermissions: false,
+      permissionModePlan: false,
+      worktreeName: nil,
+      metadataStore: nil,
+      agentHubCLIPath: "",
+      installAgentHubWorktreeSkill: {},
+      xcodeBuildMCPEnabled: false,
+      studioGuidanceEnabled: true
+    )
+    if case .success(let launch) = withoutCLI {
+      #expect(!launch.shellCommand.contains("agenthub_design"))
+    }
+  }
+
+  @Test("Bundled Studio skill installs for both providers and allows model invocation")
+  func bundledStudioSkillInstalls() throws {
+    let temporaryDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AgentHubStudioSkillTests-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+    try AgentHubStudioSkillInstaller.installBundledSkillForAllProviders(homeDirectory: temporaryDirectory)
+
+    let claude = try String(contentsOf: temporaryDirectory.appendingPathComponent(".claude/skills/agenthub-studio/SKILL.md"), encoding: .utf8)
+    let codex = try String(contentsOf: temporaryDirectory.appendingPathComponent(".codex/skills/agenthub-studio/SKILL.md"), encoding: .utf8)
+    let yaml = try String(contentsOf: temporaryDirectory.appendingPathComponent(".codex/skills/agenthub-studio/agents/openai.yaml"), encoding: .utf8)
+
+    #expect(claude == codex)
+    #expect(claude.hasPrefix("---\nname: agenthub-studio\n"))
+    #expect(claude.contains("user-invocable: true"))
+    // The model may invoke it from the description — unlike the task manager, which is user-only.
+    #expect(!claude.contains("disable-model-invocation: true"))
+    #expect(claude.contains("mcp__agenthub__agenthub_design"))
+    #expect(claude.contains("mcp__agenthub__agenthub_artifact"))
+    #expect(claude.contains("mcp__agenthub__agenthub_list_artifacts"))
+    #expect(claude.contains("mcp__agenthub__agenthub_get_artifact"))
+    #expect(yaml.contains("allow_implicit_invocation: true"))
+    #expect(yaml.contains("$agenthub-studio"))
   }
 
   @Test("Bundled task manager skill installs explicit invocation metadata")
@@ -566,7 +647,8 @@ struct EmbeddedTerminalLaunchBuilderLaunchContextTests {
       metadataStore: metadataStore,
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: {},
-      xcodeBuildMCPEnabled: false
+      xcodeBuildMCPEnabled: false,
+      studioGuidanceEnabled: false
     )
     guard case .success(let launch) = result else {
       throw NSError(domain: "LaunchContextTests", code: 1)

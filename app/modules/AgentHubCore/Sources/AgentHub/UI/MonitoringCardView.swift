@@ -44,6 +44,7 @@ public struct MonitoringCardView: View {
   let onShowMCPApp: ((CLISession, String) -> Void)?
   let onShowMeasurement: ((CLISession) -> Void)?
   let onShowArtifact: ((CLISession) -> Void)?
+  let onShowStudio: ((CLISession) -> Void)?
   let onShowSimulatorPreview: ((CLISession, String) -> Void)?
   let onFork: ((CLISession, SessionProviderKind) -> Void)?
   let onPromptConsumed: (() -> Void)?
@@ -101,6 +102,7 @@ public struct MonitoringCardView: View {
     onShowMCPApp: ((CLISession, String) -> Void)? = nil,
     onShowMeasurement: ((CLISession) -> Void)? = nil,
     onShowArtifact: ((CLISession) -> Void)? = nil,
+    onShowStudio: ((CLISession) -> Void)? = nil,
     onShowSimulatorPreview: ((CLISession, String) -> Void)? = nil,
     onFork: ((CLISession, SessionProviderKind) -> Void)? = nil,
     onPromptConsumed: (() -> Void)? = nil,
@@ -142,6 +144,7 @@ public struct MonitoringCardView: View {
     self.onShowMCPApp = onShowMCPApp
     self.onShowMeasurement = onShowMeasurement
     self.onShowArtifact = onShowArtifact
+    self.onShowStudio = onShowStudio
     self.onShowSimulatorPreview = onShowSimulatorPreview
     self.onFork = onFork
     self.onPromptConsumed = onPromptConsumed
@@ -235,6 +238,15 @@ public struct MonitoringCardView: View {
     detectedArtifacts.count == 1
       ? "Open 1 published artifact"
       : "Open \(detectedArtifacts.count) published artifacts"
+  }
+
+  /// Studio items filed for this session's project — shared across both providers.
+  private var studioArtifactCount: Int {
+    viewModel?.studioArtifacts(for: session).count ?? 0
+  }
+
+  private var studioButtonAccessibilityLabel: String {
+    studioArtifactCount == 1 ? "Open 1 Studio artifact" : "Open \(studioArtifactCount) Studio artifacts"
   }
 
   private var measurementButtonAccessibilityLabel: String {
@@ -349,6 +361,7 @@ public struct MonitoringCardView: View {
     // what this project already holds — not just what this session produced.
     .task(id: session.projectPath) {
       viewModel?.loadMeasurements(for: session)
+      viewModel?.loadStudioArtifacts(for: session)
     }
     .task(id: gitHubObservationTaskID) {
       if linkedPullRequests.isEmpty {
@@ -848,6 +861,28 @@ public struct MonitoringCardView: View {
           .buttonStyle(.agentHubOutlined)
           .help("Open measurements recorded in this session")
           .accessibilityLabel(measurementButtonAccessibilityLabel)
+        }
+
+        // Studio button — appears only once the agent has filed an artifact or
+        // design canvas for this project (Claude or Codex alike).
+        if onShowStudio != nil, studioArtifactCount > 0 {
+          Button(action: {
+            onShowStudio?(session)
+          }) {
+            HStack(spacing: 4) {
+              Image(systemName: "paintpalette")
+                .font(.caption2)
+              Text("Studio")
+              if studioArtifactCount > 1 {
+                Text("\(studioArtifactCount)")
+                  .font(.system(.caption2, design: .monospaced))
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .buttonStyle(.agentHubOutlined)
+          .help("Open artifacts and design canvases the agent rendered")
+          .accessibilityLabel(studioButtonAccessibilityLabel)
         }
 
         // Artifact button — only once the agent has actually published one to

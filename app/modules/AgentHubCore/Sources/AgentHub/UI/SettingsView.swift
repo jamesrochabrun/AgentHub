@@ -167,6 +167,11 @@ public struct SettingsView: View {
           Label("Measurements", systemImage: "chart.bar.doc.horizontal")
         }
 
+      StudioSettingsView()
+        .tabItem {
+          Label("Studio", systemImage: "paintpalette")
+        }
+
       appearanceSettingsForm
         .tabItem {
           Label("Appearance", systemImage: "paintpalette")

@@ -156,6 +156,7 @@ let package = Package(
         .copy("Design/Theme/BundledThemes"),
         .copy("Resources/ClaudeHook"),
         .copy("Resources/AgentHubWorktreeSkill"),
+        .copy("Resources/AgentHubStudioSkill"),
       ],
       swiftSettings: [
         .swiftLanguageMode(.v5)

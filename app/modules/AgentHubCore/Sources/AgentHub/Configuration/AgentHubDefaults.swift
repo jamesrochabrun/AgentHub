@@ -255,6 +255,8 @@ public enum AgentHubDefaults {
   /// server (simulator build/run, UI automation, screenshots) configured.
   /// Type: Bool (default: true)
   public static let xcodeBuildMCPEnabled = "\(keyPrefix)features.xcodeBuildMCPEnabled"
+  /// Whether agent sessions get the Studio system-prompt nudge (default on).
+  public static let studioAgentGuidanceEnabled = "\(keyPrefix)features.studioAgentGuidanceEnabled"
 
   /// Inspector payload level used by debug web preview inspect flows
   /// Type: String (default: "regular")

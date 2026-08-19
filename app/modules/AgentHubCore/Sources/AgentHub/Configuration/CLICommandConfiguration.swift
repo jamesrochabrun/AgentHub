@@ -125,6 +125,9 @@ public struct CLICommandConfiguration: Codable, Sendable {
     allowedTools: [String]? = nil,
     disallowedTools: [String]? = nil,
     codexApprovalPolicy: String? = nil,
+    /// The user's global `~/.codex/config.toml` approval policy, when AgentHub
+    /// passes none of its own. Only used to decide MCP tool approval modes.
+    codexGlobalApprovalPolicy: String? = nil,
     xcodeBuildMCPBootstrap: XcodeBuildMCPBootstrap? = nil,
     appendSystemPrompt: String? = nil
   ) -> [String] {
@@ -208,7 +211,8 @@ public struct CLICommandConfiguration: Codable, Sendable {
           providerArgs += codexMCPConfigArgs(
             agentHubCLIPath: agentHubMCPServerPath,
             agentHubEnvironment: agentHubMCPEnvironment,
-            xcodeBuildMCP: xcodeBuildMCPBootstrap
+            xcodeBuildMCP: xcodeBuildMCPBootstrap,
+            approvalPolicy: codexApprovalPolicy ?? codexGlobalApprovalPolicy
           )
         }
         // developer_instructions is a config override, not conversation
@@ -226,7 +230,8 @@ public struct CLICommandConfiguration: Codable, Sendable {
         providerArgs += codexMCPConfigArgs(
           agentHubCLIPath: agentHubMCPServerPath,
           agentHubEnvironment: agentHubMCPEnvironment,
-          xcodeBuildMCP: xcodeBuildMCPBootstrap
+          xcodeBuildMCP: xcodeBuildMCPBootstrap,
+          approvalPolicy: codexApprovalPolicy ?? codexGlobalApprovalPolicy
         )
       }
       if let appendSystemPrompt, !appendSystemPrompt.isEmpty {
@@ -395,10 +400,24 @@ public struct CLICommandConfiguration: Codable, Sendable {
     return encoded
   }
 
+  /// Codex prompts per MCP tool call unless the server's tools are marked
+  /// `auto` (`mcp_servers.<name>.default_tools_approval_mode`); under
+  /// `approval_policy = never` a prompt is not possible and the call fails with
+  /// "MCP tool call requires approval, but approval policy is never".
+  ///
+  /// The bundled `agenthub` server is always `auto`: its tools are AgentHub's
+  /// own, local, and scoped to AgentHub state (Studio, measurements, session
+  /// names, worktrees it manages) — a prompt per Studio render is noise, and a
+  /// hard failure defeats the feature. XcodeBuildMCP builds and drives
+  /// simulators, so it is `auto` only when the user already asked for
+  /// autonomy (`never` / `full-auto`); otherwise Codex's own default stands.
+  /// Older Codex ignores the key; newer rejects unknown *values*, so only the
+  /// documented `auto` is ever emitted.
   private func codexMCPConfigArgs(
     agentHubCLIPath: String?,
     agentHubEnvironment: [String: String],
-    xcodeBuildMCP: XcodeBuildMCPBootstrap?
+    xcodeBuildMCP: XcodeBuildMCPBootstrap?,
+    approvalPolicy: String? = nil
   ) -> [String] {
     var args: [String] = []
     if let agentHubCLIPath, !agentHubCLIPath.isEmpty {
@@ -408,7 +427,8 @@ public struct CLICommandConfiguration: Codable, Sendable {
       )
       args += [
         "-c", "mcp_servers.agenthub.command=\(tomlStringLiteral("/bin/sh"))",
-        "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", script]))"
+        "-c", "mcp_servers.agenthub.args=\(tomlStringArray(["-lc", script]))",
+        "-c", "mcp_servers.agenthub.default_tools_approval_mode=\(tomlStringLiteral("auto"))"
       ]
     }
     if let xcodeBuildMCP {
@@ -417,6 +437,9 @@ public struct CLICommandConfiguration: Codable, Sendable {
         "-c", "mcp_servers.XcodeBuildMCP.args=\(tomlStringArray(["-lc", xcodeBuildMCPShellScript()]))",
         "-c", "mcp_servers.XcodeBuildMCP.tool_timeout_sec=600"
       ]
+      if approvalPolicy == "never" || approvalPolicy == "full-auto" {
+        args += ["-c", "mcp_servers.XcodeBuildMCP.default_tools_approval_mode=\(tomlStringLiteral("auto"))"]
+      }
       for (key, value) in xcodeBuildMCP.environment.sorted(by: { $0.key < $1.key }) {
         args += ["-c", "mcp_servers.XcodeBuildMCP.env.\(key)=\(tomlStringLiteral(value))"]
       }

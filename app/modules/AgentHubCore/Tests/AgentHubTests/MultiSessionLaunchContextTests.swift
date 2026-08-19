@@ -175,6 +175,20 @@ struct CombinedAppendSystemPromptTests {
     #expect(combined == EmbeddedTerminalLaunchBuilder.launchContextPreamble + "\n<context>x</context>")
   }
 
+  @Test("Studio guidance slots after simulator guidance and before the context block")
+  func studioGuidanceOrdering() {
+    #expect(EmbeddedTerminalLaunchBuilder.combinedAppendSystemPrompt(
+      simulatorGuidance: nil, studioGuidance: "use studio", launchContext: nil) == "use studio")
+    let combined = EmbeddedTerminalLaunchBuilder.combinedAppendSystemPrompt(
+      simulatorGuidance: "verify in the simulator", studioGuidance: "use studio", launchContext: "<context>x</context>")
+    #expect(combined == "verify in the simulator\n\nuse studio\n\n"
+      + EmbeddedTerminalLaunchBuilder.launchContextPreamble + "\n<context>x</context>")
+    #expect(StudioAgentGuidance.systemPrompt.contains("agenthub_design"))
+    #expect(StudioAgentGuidance.systemPrompt.contains("agenthub_artifact"))
+    #expect(StudioAgentGuidance.systemPrompt.contains("agenthub_list_artifacts"))
+    #expect(StudioAgentGuidance.systemPrompt.contains("agenthub_get_artifact"))
+  }
+
   @Test("Guidance comes first, then the context block")
   func guidanceThenContext() {
     let combined = EmbeddedTerminalLaunchBuilder.combinedAppendSystemPrompt(

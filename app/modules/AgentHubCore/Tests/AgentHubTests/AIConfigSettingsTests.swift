@@ -154,6 +154,44 @@ struct CLICommandConfigurationArgumentHandlingTests {
     #expect(!args.contains { $0.contains("xcodebuildmcp@latest") })
   }
 
+  /// Codex prompts per MCP tool call unless the server is `auto`; under
+  /// `approval_policy = never` that prompt becomes a hard failure ("MCP tool
+  /// call requires approval, but approval policy is never"). The bundled
+  /// server must never hit that; XcodeBuildMCP only when the user asked for
+  /// autonomy.
+  @Test("Codex marks the bundled agenthub server auto-approved; XcodeBuildMCP only under autonomy policies")
+  func codexMCPToolApprovalModes() {
+    let config = CLICommandConfiguration.codexDefault
+    let helper = "/Applications/AgentHub.app/Contents/Helpers/agenthub"
+    let bootstrap = XcodeBuildMCPBootstrap(workingDirectory: "/repo", workspacePath: nil, simulatorUDID: nil)
+
+    let plain = config.argumentsForSession(sessionId: nil, prompt: nil, agentHubMCPServerPath: helper, xcodeBuildMCPBootstrap: bootstrap)
+    #expect(plain.contains("mcp_servers.agenthub.default_tools_approval_mode=\"auto\""))
+    #expect(!plain.contains("mcp_servers.XcodeBuildMCP.default_tools_approval_mode=\"auto\""))
+
+    for policy in ["never", "full-auto"] {
+      let args = config.argumentsForSession(sessionId: nil, prompt: nil, agentHubMCPServerPath: helper, codexApprovalPolicy: policy, xcodeBuildMCPBootstrap: bootstrap)
+      #expect(args.contains("mcp_servers.agenthub.default_tools_approval_mode=\"auto\""), "\(policy)")
+      #expect(args.contains("mcp_servers.XcodeBuildMCP.default_tools_approval_mode=\"auto\""), "\(policy)")
+    }
+    let onRequest = config.argumentsForSession(sessionId: nil, prompt: nil, agentHubMCPServerPath: helper, codexApprovalPolicy: "on-request", xcodeBuildMCPBootstrap: bootstrap)
+    #expect(!onRequest.contains("mcp_servers.XcodeBuildMCP.default_tools_approval_mode=\"auto\""))
+
+    // A global `never` (from ~/.codex/config.toml) counts when AgentHub passes no policy of its own;
+    // an explicit AgentHub policy wins over it.
+    let globalNever = config.argumentsForSession(sessionId: nil, prompt: nil, agentHubMCPServerPath: helper, codexGlobalApprovalPolicy: "never", xcodeBuildMCPBootstrap: bootstrap)
+    #expect(globalNever.contains("mcp_servers.XcodeBuildMCP.default_tools_approval_mode=\"auto\""))
+    #expect(!globalNever.contains("-a"))
+    let explicitWins = config.argumentsForSession(sessionId: nil, prompt: nil, agentHubMCPServerPath: helper, codexApprovalPolicy: "on-request", codexGlobalApprovalPolicy: "never", xcodeBuildMCPBootstrap: bootstrap)
+    #expect(!explicitWins.contains("mcp_servers.XcodeBuildMCP.default_tools_approval_mode=\"auto\""))
+
+    // Resume re-passes the MCP config, approval mode included.
+    let resumed = config.argumentsForSession(sessionId: "codex-session", prompt: nil, agentHubMCPServerPath: helper, codexApprovalPolicy: "never", xcodeBuildMCPBootstrap: bootstrap)
+    #expect(resumed.contains("mcp_servers.agenthub.default_tools_approval_mode=\"auto\""))
+    #expect(resumed.contains("mcp_servers.XcodeBuildMCP.default_tools_approval_mode=\"auto\""))
+    #expect(resumed.contains("resume"))
+  }
+
   @Test("XcodeBuildMCP does not require the AgentHub MCP helper")
   func xcodeBuildMCPDoesNotRequireAgentHubHelper() {
     let bootstrap = XcodeBuildMCPBootstrap(

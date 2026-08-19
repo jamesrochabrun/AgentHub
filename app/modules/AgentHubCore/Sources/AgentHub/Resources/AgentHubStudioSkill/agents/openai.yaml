@@ -1,0 +1,7 @@
+interface:
+  display_name: "AgentHub Studio"
+  short_description: "Render UI variants and visuals into AgentHub's Studio panel"
+  default_prompt: "Use $agenthub-studio to render: "
+
+policy:
+  allow_implicit_invocation: true

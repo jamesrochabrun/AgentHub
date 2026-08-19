@@ -55,6 +55,7 @@ public final class AgentHubProvider {
   private let worktreeDeletionRequestMonitorOverride: (any WorktreeDeletionRequestMonitorProtocol)?
   private let sessionNameRequestMonitorOverride: (any SessionNameRequestMonitorProtocol)?
   private let measurementRecordMonitorOverride: (any MeasurementRecordMonitorProtocol)?
+  private let studioArtifactMonitorOverride: (any StudioArtifactMonitorProtocol)?
 
   // MARK: - Lazy Services
 
@@ -198,6 +199,28 @@ public final class AgentHubProvider {
     codexTarget: codexSessionsViewModel
   )
 
+  /// Studio artifacts for every project, shared by both provider view models.
+  /// Paths resolve through `AgentHubApplicationSupport` so a test process never
+  /// touches the real index or document store; the CLI computes the same
+  /// directory from `AGENTHUB_APP_SUPPORT_DIR` / Application Support.
+  public private(set) lazy var studioLibrary: StudioLibrary = StudioLibrary(
+    persistence: metadataStore,
+    index: StudioIndexStore(
+      directoryURL: AgentHubApplicationSupport.baseDirectoryURL.appendingPathComponent("studio-index", isDirectory: true)
+    )
+  )
+
+  /// Watches Studio artifacts written by the bundled `agenthub` MCP server.
+  public private(set) lazy var studioArtifactMonitor: any StudioArtifactMonitorProtocol = studioArtifactMonitorOverride
+    ?? StudioArtifactMonitor(queue: StudioArtifactQueue(
+      directoryURL: AgentHubApplicationSupport.baseDirectoryURL.appendingPathComponent("studio-records", isDirectory: true)
+    ))
+
+  public private(set) lazy var studioArtifactHandler: any StudioArtifactHandlingProtocol = StudioArtifactHandler(
+    claudeTarget: claudeSessionsViewModel,
+    codexTarget: codexSessionsViewModel
+  )
+
   /// Watches the worktree-progress sidecar directory the `agenthub` CLI writes
   /// during MCP-initiated creations, so the app can surface live git progress.
   public private(set) lazy var worktreeProgressSidecarWatcher: any WorktreeProgressSidecarWatcherProtocol = WorktreeProgressSidecarWatcher()
@@ -216,6 +239,7 @@ public final class AgentHubProvider {
   private var isWorktreeDeletionRequestMonitoringStarted = false
   private var isSessionNameRequestMonitoringStarted = false
   private var isMeasurementRecordMonitoringStarted = false
+  private var isStudioArtifactMonitoringStarted = false
   private var isWorktreeProgressMonitoringStarted = false
 
   // MARK: - GitHub Integration
@@ -354,7 +378,8 @@ public final class AgentHubProvider {
     worktreeLaunchRequestMonitor: (any WorktreeLaunchRequestMonitorProtocol)? = nil,
     worktreeDeletionRequestMonitor: (any WorktreeDeletionRequestMonitorProtocol)? = nil,
     sessionNameRequestMonitor: (any SessionNameRequestMonitorProtocol)? = nil,
-    measurementRecordMonitor: (any MeasurementRecordMonitorProtocol)? = nil
+    measurementRecordMonitor: (any MeasurementRecordMonitorProtocol)? = nil,
+    studioArtifactMonitor: (any StudioArtifactMonitorProtocol)? = nil
   ) {
     self.configuration = configuration
     terminalBackend = .storedPreference
@@ -366,6 +391,7 @@ public final class AgentHubProvider {
     worktreeDeletionRequestMonitorOverride = worktreeDeletionRequestMonitor
     sessionNameRequestMonitorOverride = sessionNameRequestMonitor
     measurementRecordMonitorOverride = measurementRecordMonitor
+    studioArtifactMonitorOverride = studioArtifactMonitor
     if let metadataStore {
       Task {
         await TerminalProcessRegistry.shared.configure(store: metadataStore)
@@ -510,6 +536,7 @@ public final class AgentHubProvider {
       terminalWorkspaceStore: metadataStore
     )
     vm.agentHubProvider = self
+    vm.studioLibrary = studioLibrary
     return vm
   }
 
@@ -552,7 +579,25 @@ public final class AgentHubProvider {
     startWorktreeDeletionQueueMonitoring()
     startSessionNameQueueMonitoring()
     startMeasurementRecordMonitoring()
+    startStudioArtifactMonitoring()
     startWorktreeProgressMonitoring()
+  }
+
+  private func startStudioArtifactMonitoring() {
+    guard !isStudioArtifactMonitoringStarted else { return }
+    isStudioArtifactMonitoringStarted = true
+
+    let monitor = studioArtifactMonitor
+    let library = studioLibrary
+    Task {
+      await library.reconcileStorage()
+      await monitor.start { [weak self] queued in
+        guard let self else {
+          throw StudioArtifactHandlingError.sessionUnavailable
+        }
+        try await self.studioArtifactHandler.handle(queued.artifact)
+      }
+    }
   }
 
   private func startWorktreeProgressMonitoring() {
@@ -664,6 +709,15 @@ public final class AgentHubProvider {
       isMeasurementRecordMonitoringStarted = false
 
       let monitor = measurementRecordMonitor
+      Task {
+        await monitor.stop()
+      }
+    }
+
+    if isStudioArtifactMonitoringStarted {
+      isStudioArtifactMonitoringStarted = false
+
+      let monitor = studioArtifactMonitor
       Task {
         await monitor.stop()
       }

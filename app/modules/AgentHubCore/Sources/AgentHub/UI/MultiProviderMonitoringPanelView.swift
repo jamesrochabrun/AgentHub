@@ -23,7 +23,10 @@ enum SidePanelContent: Equatable {
   case mcpApp(sessionId: String, session: CLISession, projectPath: String)
   case simulator(sessionId: String, session: CLISession, projectPath: String)
   case measurements(sessionId: String, session: CLISession)
-  case artifact(sessionId: String, session: CLISession)
+  /// A claude.ai artifact the agent published (detected in the transcript).
+  case claudeArtifact(sessionId: String, session: CLISession)
+  /// AgentHub Studio: artifacts and design canvases filed with agenthub_artifact / agenthub_design.
+  case studio(sessionId: String, session: CLISession)
 
   static func == (lhs: SidePanelContent, rhs: SidePanelContent) -> Bool {
     switch (lhs, rhs) {
@@ -45,7 +48,9 @@ enum SidePanelContent: Equatable {
       return id1 == id2 && p1 == p2
     case (.measurements(let id1, _), .measurements(let id2, _)):
       return id1 == id2
-    case (.artifact(let id1, _), .artifact(let id2, _)):
+    case (.claudeArtifact(let id1, _), .claudeArtifact(let id2, _)):
+      return id1 == id2
+    case (.studio(let id1, _), .studio(let id2, _)):
       return id1 == id2
     default: return false
     }
@@ -611,7 +616,13 @@ public struct MultiProviderMonitoringPanelView: View {
             },
             onShowArtifact: { session in
               toggleSidePanel(
-                .artifact(sessionId: session.id, session: session),
+                .claudeArtifact(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
+            },
+            onShowStudio: { session in
+              toggleSidePanel(
+                .studio(sessionId: session.id, session: session),
                 forItemID: item.id
               )
             },
@@ -717,7 +728,13 @@ public struct MultiProviderMonitoringPanelView: View {
             },
             onShowArtifact: { session in
               toggleSidePanel(
-                .artifact(sessionId: session.id, session: session),
+                .claudeArtifact(sessionId: session.id, session: session),
+                forItemID: item.id
+              )
+            },
+            onShowStudio: { session in
+              toggleSidePanel(
+                .studio(sessionId: session.id, session: session),
                 forItemID: item.id
               )
             },
@@ -910,7 +927,7 @@ public struct MultiProviderMonitoringPanelView: View {
     switch content {
     case .edits, .plan:
       return true
-    case .diff, .webPreview, .mermaid, .gitHub, .mcpApp, .simulator, .measurements, .artifact:
+    case .diff, .webPreview, .mermaid, .gitHub, .mcpApp, .simulator, .measurements, .claudeArtifact, .studio:
       return false
     }
   }
@@ -1156,13 +1173,27 @@ public struct MultiProviderMonitoringPanelView: View {
         onDismiss: closeEmbeddedSidePanel,
         isEmbedded: true
       )
-    case .artifact(let sessionId, _):
+    case .claudeArtifact(let sessionId, _):
       ArtifactSidePanelView(
         artifacts: viewModel.monitorStates[sessionId]?.detectedArtifacts ?? [],
         onDismiss: closeEmbeddedSidePanel,
         isEmbedded: true,
         isExpanded: sidePanelExpansion.isExpanded(for: payload),
         onToggleExpanded: { toggleEmbeddedSidePanelExpansion(for: payload) }
+      )
+    case .studio(_, let session):
+      StudioSidePanelView(
+        session: session,
+        viewModel: viewModel,
+        onDismiss: closeEmbeddedSidePanel,
+        isEmbedded: true,
+        isExpanded: sidePanelExpansion.isExpanded(for: payload),
+        onToggleExpanded: { toggleEmbeddedSidePanelExpansion(for: payload) },
+        onSendPrompt: { prompt, sess in
+          if !viewModel.sendPromptToActiveTerminal(forKey: sess.id, prompt: prompt) {
+            viewModel.showTerminalWithPrompt(for: sess, prompt: prompt)
+          }
+        }
       )
     }
   }

@@ -69,6 +69,7 @@ public enum EmbeddedTerminalLaunchBuilder {
       agentHubCLIPath: agentHubCLIPath,
       installAgentHubWorktreeSkill: {
         AgentHubWorktreeSkillInstaller.installBundledSkillForAllProvidersBestEffort()
+        AgentHubStudioSkillInstaller.installBundledSkillForAllProvidersBestEffort()
       },
       removeLegacyAgentHubSessionNamingSkill: {
         AgentHubSessionNamingSkillCleanup.removeInstalledSkillBestEffort()
@@ -90,6 +91,8 @@ public enum EmbeddedTerminalLaunchBuilder {
     installAgentHubWorktreeSkill: () -> Void,
     removeLegacyAgentHubSessionNamingSkill: () -> Void = {},
     xcodeBuildMCPEnabled: Bool = XcodeBuildMCPPreflight.isEnabled(),
+    studioGuidanceEnabled: Bool = StudioAgentGuidance.isEnabled(),
+    codexGlobalApprovalPolicy: String? = CodexGlobalConfigReader.approvalPolicy(),
     xcodeBuildMCPToolingAvailable: () -> Bool = { XcodeBuildMCPPreflight.nodeToolingAvailable() },
     notifyXcodeBuildMCPToolingMissing: () -> Void = { Task { @MainActor in XcodeBuildMCPNodeNotice.notifyOnce() } }
   ) -> Result<EmbeddedTerminalLaunch, EmbeddedTerminalLaunchError> {
@@ -150,6 +153,11 @@ public enum EmbeddedTerminalLaunchBuilder {
     // agents verify through the same live app surface the user is watching.
     // Tied to the bootstrap: guidance without the tools misleads agents.
     let simulatorGuidance = xcodeBuildMCPBootstrap == nil ? nil : SimulatorAgentGuidance.systemPrompt
+    // Studio guidance rides the same channel, tied to the bundled MCP server
+    // being attached: the tools it names must actually exist in the session.
+    let studioGuidance = studioGuidanceEnabled && resolvedAgentHubCLIPath?.isEmpty == false
+      ? StudioAgentGuidance.systemPrompt
+      : nil
     // Curated launch context rides the same out-of-band channel (Claude
     // `--append-system-prompt`, Codex `-c developer_instructions=`) instead of
     // the first user message. New sessions get it from the launch flow; resume
@@ -165,6 +173,7 @@ public enum EmbeddedTerminalLaunchBuilder {
     }
     let appendSystemPrompt = combinedAppendSystemPrompt(
       simulatorGuidance: simulatorGuidance,
+      studioGuidance: studioGuidance,
       launchContext: resolvedLaunchContext
     )
     let args = cliConfiguration.argumentsForSession(
@@ -189,6 +198,7 @@ public enum EmbeddedTerminalLaunchBuilder {
       allowedTools: allowedTools.isEmpty ? nil : allowedTools,
       disallowedTools: disallowedTools.isEmpty ? nil : disallowedTools,
       codexApprovalPolicy: aiConfig?.approvalPolicy,
+      codexGlobalApprovalPolicy: codexGlobalApprovalPolicy,
       xcodeBuildMCPBootstrap: xcodeBuildMCPBootstrap,
       appendSystemPrompt: appendSystemPrompt
     )
@@ -293,11 +303,15 @@ public enum EmbeddedTerminalLaunchBuilder {
   /// (short operational instructions), then the bulky context block.
   static func combinedAppendSystemPrompt(
     simulatorGuidance: String?,
+    studioGuidance: String? = nil,
     launchContext: String?
   ) -> String? {
     var parts: [String] = []
     if let simulatorGuidance, !simulatorGuidance.isEmpty {
       parts.append(simulatorGuidance)
+    }
+    if let studioGuidance, !studioGuidance.isEmpty {
+      parts.append(studioGuidance)
     }
     if let context = launchContext?.trimmingCharacters(in: .whitespacesAndNewlines), !context.isEmpty {
       parts.append(launchContextPreamble + "\n" + context)

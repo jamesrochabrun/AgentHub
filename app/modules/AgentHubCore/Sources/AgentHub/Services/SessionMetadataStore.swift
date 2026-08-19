@@ -32,6 +32,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     static let addMeasurementProjectPath = "v15_add_measurement_project_path"
     static let createContextProfiles = "v16_create_context_profiles"
     static let createSessionLaunchContext = "v17_create_session_launch_context"
+    static let createStudioArtifacts = "v18_create_studio_artifacts"
   }
 
   static let migrationIdentifiers = [
@@ -51,7 +52,8 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
     MigrationID.createSessionMeasurements,
     MigrationID.addMeasurementProjectPath,
     MigrationID.createContextProfiles,
-    MigrationID.createSessionLaunchContext
+    MigrationID.createSessionLaunchContext,
+    MigrationID.createStudioArtifacts
   ]
 
   private let dbQueue: DatabaseQueue
@@ -348,6 +350,24 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
       }
     }
 
+    // Artifacts an agent filed into the Studio panel (agenthub_artifact /
+    // agenthub_design). Keyed by the id the CLI generated so a re-file — or a
+    // queue entry drained twice — replaces rather than duplicates. Scoped to a
+    // project from day one, like measurements after v15.
+    migrator.registerMigration(MigrationID.createStudioArtifacts) { db in
+      try db.create(table: "studio_artifacts") { t in
+        t.column("id", .text).primaryKey(onConflict: .replace)
+        t.column("projectPath", .text).notNull().indexed()
+        t.column("sessionId", .text).notNull()
+        t.column("provider", .text).notNull()
+        t.column("kind", .text).notNull()
+        t.column("createdAt", .datetime).notNull()
+        t.column("updatedAt", .datetime).notNull()
+        t.column("payloadVersion", .integer).notNull()
+        t.column("payloadData", .blob).notNull()
+      }
+    }
+
     return migrator
   }
 
@@ -519,6 +539,7 @@ public actor SessionMetadataStore: TerminalWorkspaceStoreProtocol, AgentWorkspac
       _ = try SessionRepoMapping.deleteAll(db)
       _ = try PinnedSessionOrderRecord.deleteAll(db)
       _ = try SessionMeasurementRecord.deleteAll(db)
+      _ = try StudioArtifactRecord.deleteAll(db)
       _ = try SessionMetadata.deleteAll(db)
     }
   }
@@ -924,6 +945,53 @@ extension SessionMetadataStore {
     try dbQueue.write { db in
       try SessionMeasurementRecord
         .filter(Column("projectPath") == "")
+        .deleteAll(db)
+    }
+  }
+}
+
+// MARK: - Studio Artifacts
+
+extension SessionMetadataStore: StudioPersisting {
+  /// Stores one artifact. `save` (upsert) so a re-file or a queue entry drained
+  /// twice is idempotent.
+  public func saveStudioArtifact(_ record: StudioArtifactRecord) throws {
+    try dbQueue.write { db in
+      try record.save(db)
+    }
+  }
+
+  /// Artifacts for a project, newest first. Spans every session and both providers.
+  public func getStudioArtifacts(forProjectPath projectPath: String) throws -> [StudioArtifactRecord] {
+    let key = MeasurementProjectScope.normalized(projectPath)
+    return try dbQueue.read { db in
+      try StudioArtifactRecord
+        .filter(Column("projectPath") == key)
+        .order(Column("createdAt").desc, Column("id").desc)
+        .fetchAll(db)
+    }
+  }
+
+  /// Every stored artifact, for the Settings management view and launch reconcile.
+  public func getAllStudioArtifacts() throws -> [StudioArtifactRecord] {
+    try dbQueue.read { db in
+      try StudioArtifactRecord
+        .order(Column("createdAt").desc, Column("id").desc)
+        .fetchAll(db)
+    }
+  }
+
+  public func deleteStudioArtifact(id: String) throws {
+    _ = try dbQueue.write { db in
+      try StudioArtifactRecord.deleteOne(db, key: id)
+    }
+  }
+
+  public func deleteAllStudioArtifacts(forProjectPath projectPath: String) throws {
+    let key = MeasurementProjectScope.normalized(projectPath)
+    _ = try dbQueue.write { db in
+      try StudioArtifactRecord
+        .filter(Column("projectPath") == key)
         .deleteAll(db)
     }
   }
