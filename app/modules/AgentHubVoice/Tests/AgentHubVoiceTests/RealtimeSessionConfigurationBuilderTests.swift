@@ -3,6 +3,16 @@ import Testing
 @testable import AgentHubVoice
 
 struct RealtimeSessionConfigurationBuilderTests {
+  private func stubTool(named name: String) -> VoiceTool {
+    VoiceTool(
+      name: name,
+      description: "Stub",
+      parameters: ["type": "object"]
+    ) { _ in
+      "{}"
+    }
+  }
+
   @Test
   func buildsAudioSemanticVADAndFunctionTools() throws {
     let tool = VoiceTool(
@@ -60,7 +70,10 @@ struct RealtimeSessionConfigurationBuilderTests {
         language: "es",
         allowBargeIn: false
       ),
-      tools: VoiceToolRegistry(tools: [])
+      tools: VoiceToolRegistry(tools: [
+        stubTool(named: "send_prompt"),
+        stubTool(named: "list_sessions"),
+      ])
     )
 
     let data = try JSONEncoder().encode(configuration)
@@ -86,6 +99,57 @@ struct RealtimeSessionConfigurationBuilderTests {
     // Pinning must not drop the session/approval discipline rules.
     #expect(instructions.contains("call list_sessions"))
     #expect(instructions.contains("explicit confirmation"))
+  }
+
+  @Test
+  func assistantRegistriesGetTheAssistantPersonaWithoutSessionDiscipline() {
+    // No send_prompt = standalone assistant: it must be told to answer
+    // directly and must not carry session-controller or approval rules.
+    let assistant = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [stubTool(named: "gmail__search_messages")])
+    )
+    #expect(assistant.contains("cannot send prompts"))
+    #expect(!assistant.contains("voice controller"))
+    #expect(!assistant.contains("explicit confirmation"))
+    #expect(!assistant.contains("list_sessions"))
+
+    let controller = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [stubTool(named: "send_prompt")])
+    )
+    #expect(controller.contains("voice controller"))
+    #expect(controller.contains("explicit confirmation"))
+    #expect(!controller.contains("cannot send prompts"))
+  }
+
+  @Test
+  func assistantRegistriesWithSessionVisibilityGetReadOnlyDiscipline() {
+    let instructions = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [
+        stubTool(named: "list_sessions"),
+        stubTool(named: "read_session_response"),
+      ])
+    )
+    #expect(instructions.contains("read-only visibility"))
+    #expect(instructions.contains("call list_sessions"))
+    #expect(!instructions.contains("explicit confirmation"))
+  }
+
+  @Test
+  func mcpServerRosterIsAnnouncedWhenMCPToolsArePresent() {
+    let withMCP = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [
+        stubTool(named: "gmail__search_messages"),
+        stubTool(named: "gmail__send_message"),
+        stubTool(named: "slack__post"),
+        stubTool(named: "list_sessions"),
+      ])
+    )
+    #expect(withMCP.contains("MCP servers: gmail, slack"))
+
+    let withoutMCP = RealtimeSessionConfigurationBuilder.instructions(
+      for: VoiceToolRegistry(tools: [stubTool(named: "list_sessions")])
+    )
+    #expect(!withoutMCP.contains("MCP servers"))
   }
 
   @Test

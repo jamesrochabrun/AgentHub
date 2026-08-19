@@ -6,6 +6,24 @@ public enum RealtimeSessionConfigurationBuilder {
     You are AgentHub's concise voice controller. Keep spoken responses brief and natural.
     """
 
+  /// Persona for registries without session-mutating tools (no `send_prompt`):
+  /// a standalone assistant that answers directly instead of delegating.
+  private static let assistantPersona = """
+    You are a concise, hands-free voice assistant. Keep spoken responses brief and natural.
+    Answer the user directly using your tools. In this mode you cannot send prompts, files,
+    or any content into a coding session — never claim you did, and never suggest routing an
+    answer through a session; just answer yourself.
+    """
+
+  /// Read-only session guidance for assistant registries that still expose
+  /// session visibility tools.
+  private static let assistantSessionReadDiscipline = """
+    You have read-only visibility into the user's coding sessions. Before referring to a
+    session, call list_sessions and use only session IDs returned by tools; never invent or
+    guess a session ID. When the user asks what a session said, found, or produced, call
+    read_session_response and answer with a concise spoken summary of its content.
+    """
+
   private static let followUserLanguage = """
     Reply in the language the user is currently speaking. If the language is unclear, use English.
     Do not switch languages because of background audio or your own spoken response.
@@ -54,20 +72,30 @@ public enum RealtimeSessionConfigurationBuilder {
     language: String? = nil,
     sessionContext: String? = nil
   ) -> String {
-    var combined: String
+    // `send_prompt` marks a session-controller registry; without it the
+    // conversation is a standalone assistant and must not be instructed to
+    // route anything through sessions.
+    let isSessionController = tools.tools.contains { $0.name == "send_prompt" }
+    let hasSessionVisibility = tools.tools.contains { $0.name == "list_sessions" }
+
+    var blocks: [String] = [isSessionController ? persona : assistantPersona]
     if let language, let name = languageName(for: language) {
       // A pinned language must REPLACE the follow-the-user's-language
       // directive, not join it: sending both contradictory rules lets
       // background audio or distorted transcription flip the reply language.
-      let pinnedLanguage = """
+      blocks.append("""
         Always speak and respond in \(name), regardless of the language the \
         user's audio appears to be in. Never switch languages mid-conversation.
-        """
-      combined = [persona, pinnedLanguage, sessionDiscipline]
-        .joined(separator: "\n")
+        """)
     } else {
-      combined = instructions
+      blocks.append(followUserLanguage)
     }
+    if isSessionController {
+      blocks.append(sessionDiscipline)
+    } else if hasSessionVisibility {
+      blocks.append(assistantSessionReadDiscipline)
+    }
+    var combined = blocks.joined(separator: "\n")
     let hasScreenCapture = tools.tools.contains { $0.name == "capture_screen" }
     if hasScreenCapture {
       combined += "\n" + screenCaptureInstructions
@@ -79,6 +107,16 @@ public enum RealtimeSessionConfigurationBuilder {
     let hasSessionHistory = tools.tools.contains { $0.name == "read_session_history" }
     if hasSessionHistory {
       combined += "\n" + sessionHistoryInstructions
+    }
+    let mcpServers = mcpServerNames(in: tools)
+    if !mcpServers.isEmpty {
+      combined += """
+        \nYou also have external tools from the user's MCP servers: \
+        \(mcpServers.joined(separator: ", ")). Their tool names are prefixed \
+        with the server name. When the user asks what you can do or which \
+        tools you have, name these servers and briefly say what their tools \
+        offer.
+        """
     }
     if let sessionContext = sessionContext?.trimmingCharacters(
       in: .whitespacesAndNewlines
@@ -131,5 +169,19 @@ public enum RealtimeSessionConfigurationBuilder {
 
   static func languageName(for code: String) -> String? {
     Locale(identifier: "en_US").localizedString(forLanguageCode: code)
+  }
+
+  /// MCP-bridged tools are namespaced `{server}__{tool}`; every other tool
+  /// name in the catalog is a plain snake_case verb, so a `__` separator
+  /// reliably marks an MCP tool.
+  static func mcpServerNames(in tools: VoiceToolRegistry) -> [String] {
+    Set(
+      tools.tools.compactMap { tool -> String? in
+        guard let range = tool.name.range(of: "__"),
+              range.lowerBound != tool.name.startIndex else { return nil }
+        return String(tool.name[..<range.lowerBound])
+      }
+    )
+    .sorted()
   }
 }

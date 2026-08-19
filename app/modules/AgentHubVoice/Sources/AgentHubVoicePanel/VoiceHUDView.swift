@@ -40,7 +40,9 @@ public struct VoiceHUDView: View {
       VoiceTargetChip(
         target: viewModel.target,
         targets: viewModel.targets,
-        onSelect: viewModel.selectTarget
+        isAssistantMode: viewModel.isAssistantMode,
+        onSelect: viewModel.selectTarget,
+        onSelectAssistant: viewModel.selectAssistantMode
       )
 
       if showsTranscript {

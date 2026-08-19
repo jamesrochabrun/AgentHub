@@ -40,6 +40,8 @@ public struct VoiceSettingsView: View {
   private var showTranscript = false
 
   @State private var showsOnboarding = false
+  @State private var mcpServers: [VoiceMCPServerDescriptor] = []
+  @State private var enabledMCPServers: Set<String> = []
 
   public init() {}
 
@@ -65,6 +67,12 @@ public struct VoiceSettingsView: View {
         onShowOnboarding: { showsOnboarding = true }
       )
 
+      VoiceMCPToolsSettingsSection(
+        servers: mcpServers,
+        isEnabled: { enabledMCPServers.contains($0.name) },
+        onToggle: setMCPServer
+      )
+
       VoiceRealtimeSettingsSection(
         realtimeModel: $realtimeModel,
         voiceName: $voiceName,
@@ -76,6 +84,7 @@ public struct VoiceSettingsView: View {
     .formStyle(.grouped)
     .task {
       await loadAPIKey()
+      await loadMCPServers()
     }
     .onChange(of: voiceEnabled) { _, enabled in
       agentHub?.voiceControlCoordinator.setEnabled(enabled)
@@ -98,6 +107,28 @@ public struct VoiceSettingsView: View {
     } catch {
       saveMessage = error.localizedDescription
     }
+  }
+
+  private func loadMCPServers() async {
+    enabledMCPServers = Set(
+      UserDefaults.standard.stringArray(
+        forKey: AgentHubDefaults.voiceMCPEnabledServers
+      ) ?? []
+    )
+    mcpServers = await agentHub?.voiceMCPToolProvider.discoverServers() ?? []
+  }
+
+  private func setMCPServer(_ server: VoiceMCPServerDescriptor, enabled: Bool) {
+    if enabled {
+      enabledMCPServers.insert(server.name)
+    } else {
+      enabledMCPServers.remove(server.name)
+    }
+    UserDefaults.standard.set(
+      enabledMCPServers.sorted(),
+      forKey: AgentHubDefaults.voiceMCPEnabledServers
+    )
+    agentHub?.voiceMCPToolProvider.scheduleRefresh()
   }
 
   private func saveAPIKey() {
